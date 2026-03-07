@@ -1,0 +1,104 @@
+"""Input normalization - converts various input sources into a WorkRequest dataclass."""
+import json
+import os
+import subprocess
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class WorkRequest:
+    """Normalized work request from any input source."""
+    source_type: str  # "github_issue", "beads", "prompt", "spec_file"
+    title: str
+    description: str = ""
+    source_ref: Optional[str] = None
+    priority: int = 2
+
+
+def normalize_prompt(text: str) -> WorkRequest:
+    """Create a WorkRequest from a plain text prompt."""
+    return WorkRequest(source_type="prompt", title=text)
+
+
+def normalize_spec_file(path: str) -> WorkRequest:
+    """Create a WorkRequest from a spec file, extracting title from first markdown heading."""
+    with open(path, "r") as f:
+        content = f.read()
+    title = ""
+    for line in content.splitlines():
+        if line.startswith("#"):
+            title = line.lstrip("#").strip()
+            break
+    if not title:
+        title = os.path.basename(path)
+    return WorkRequest(
+        source_type="spec_file",
+        title=title,
+        description=content,
+        source_ref=path,
+    )
+
+
+def normalize_github_issue(ref: str) -> WorkRequest:
+    """Create a WorkRequest from a GitHub issue reference like 'gh:issue:42'."""
+    parts = ref.split(":")
+    issue_num = parts[-1]
+    result = subprocess.run(
+        ["gh", "issue", "view", issue_num, "--json", "title,body"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to fetch issue {issue_num}: {result.stderr}")
+    data = json.loads(result.stdout)
+    return WorkRequest(
+        source_type="github_issue",
+        title=data["title"],
+        description=data.get("body", ""),
+        source_ref=f"gh:{issue_num}",
+    )
+
+
+def normalize_beads_task(ref: str) -> WorkRequest:
+    """Create a WorkRequest from a beads task reference like 'bd:bd-a1b2'."""
+    parts = ref.split(":", 1)
+    task_id = parts[-1]
+    result = subprocess.run(
+        ["bd", "show", task_id],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to fetch beads task {task_id}: {result.stderr}")
+    # Parse title from output (first line with the title)
+    title = ""
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if "\u00b7" in line and task_id in line:
+            # Format: "\u25cb bd-a1b2 \u00b7 Task Title   [\u25cf P1 \u00b7 OPEN]"
+            parts = line.split("\u00b7")
+            if len(parts) >= 2:
+                title = parts[1].strip().split("[")[0].strip()
+                break
+    if not title:
+        title = task_id
+    return WorkRequest(
+        source_type="beads",
+        title=title,
+        source_ref=f"bd:{task_id}",
+    )
+
+
+def normalize(source_type: str, source_value: str) -> WorkRequest:
+    """Dispatch to the appropriate normalize_* function based on source_type."""
+    if source_type == "prompt":
+        return normalize_prompt(source_value)
+    elif source_type == "spec":
+        return normalize_spec_file(source_value)
+    elif source_value.startswith("gh:issue:"):
+        return normalize_github_issue(source_value)
+    elif source_value.startswith("bd:"):
+        return normalize_beads_task(source_value)
+    else:
+        raise ValueError(f"Unknown source: {source_type}={source_value}")
