@@ -52,24 +52,29 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
         json.dump(result, f, indent=2)
 
 
-def run_stage(stage: Stage, context: dict, settings_path: str = ".claude/settings.json") -> dict:
+def run_stage(stage: Stage, context: dict, settings_path: str = ".claude/settings.json") -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
     Gets stage config via get_stage_config(), calls run_agent() with the
     appropriate agent path, prompt, max_turns, and schema.
 
-    Returns the agent's JSON output.
+    Returns (structured_output, raw_envelope) tuple. The structured_output
+    is the schema-conforming result used by pipeline logic. The raw_envelope
+    is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
     prompt = context.get("prompt", "")
-    result = run_agent(
+    raw = run_agent(
         prompt=prompt,
         agent=_agent_path(config["agent"]),
         max_turns=config["max_turns"],
         output_format="json",
         json_schema=_schema_path(config["schema"]),
     )
-    return result
+    # claude CLI returns a JSON envelope; extract structured_output if present
+    if isinstance(raw, dict) and "structured_output" in raw:
+        return raw["structured_output"], raw
+    return raw, raw
 
 
 def check_loop_limit(
@@ -187,10 +192,10 @@ def run_pipeline(
         save_status(status, status_path)
 
         # Run the stage
-        result = run_stage(current_stage, context, settings_path)
+        result, raw_envelope = run_stage(current_stage, context, settings_path)
 
-        # Save stage output for resume
-        _save_stage_output(current_stage, result, logs_dir)
+        # Save full envelope for resume/debugging
+        _save_stage_output(current_stage, raw_envelope, logs_dir)
 
         # Mark stage completed
         update_stage(status, current_stage.value, status="completed")

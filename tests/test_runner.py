@@ -18,16 +18,26 @@ def test_run_stage_calls_agent():
     mock_config = {"agent": "planner", "model": "opus", "max_turns": 40, "schema": "plan.json"}
     with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
         with patch("worca.orchestrator.runner.run_agent", return_value={"approach": "test"}) as mock_run:
-            result = run_stage(Stage.PLAN, {"prompt": "build auth"})
+            result, raw = run_stage(Stage.PLAN, {"prompt": "build auth"})
     mock_run.assert_called_once()
     assert result == {"approach": "test"}
+
+
+def test_run_stage_extracts_structured_output():
+    mock_config = {"agent": "planner", "model": "opus", "max_turns": 40, "schema": "plan.json"}
+    envelope = {"type": "result", "structured_output": {"approach": "test"}, "total_cost_usd": 1.0}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value=envelope):
+            result, raw = run_stage(Stage.PLAN, {"prompt": "build auth"})
+    assert result == {"approach": "test"}
+    assert raw == envelope
 
 
 def test_run_stage_passes_correct_args():
     mock_config = {"agent": "tester", "model": "sonnet", "max_turns": 20, "schema": "test.json"}
     with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
         with patch("worca.orchestrator.runner.run_agent", return_value={"passed": True}) as mock_run:
-            result = run_stage(Stage.TEST, {"prompt": "run tests"})
+            result, raw = run_stage(Stage.TEST, {"prompt": "run tests"})
     call_kwargs = mock_run.call_args
     # Agent path should contain the agent name
     assert ".claude/agents/core/tester.md" in str(call_kwargs)
