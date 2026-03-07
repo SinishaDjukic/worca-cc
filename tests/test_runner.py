@@ -29,9 +29,10 @@ def test_run_stage_passes_correct_args():
         with patch("worca.orchestrator.runner.run_agent", return_value={"passed": True}) as mock_run:
             result = run_stage(Stage.TEST, {"prompt": "run tests"})
     call_kwargs = mock_run.call_args
-    # Verify the agent name from config was passed
-    assert call_kwargs[1].get("agent") == "tester" or call_kwargs[0][1] == "tester" or \
-        "tester" in str(call_kwargs)
+    # Agent path should contain the agent name
+    assert ".claude/agents/core/tester.md" in str(call_kwargs)
+    # Schema path should be resolved
+    assert ".claude/worca/schemas/test.json" in str(call_kwargs)
 
 
 def test_check_loop_limit_within_limit(tmp_path):

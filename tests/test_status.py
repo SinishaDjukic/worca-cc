@@ -121,7 +121,7 @@ def test_init_status_has_all_stages():
     wr = {"title": "Add auth", "type": "feature"}
     result = init_status(wr, "feat/auth")
     assert "stages" in result
-    for stage in ["plan", "coordinate", "implement", "test", "review"]:
+    for stage in ["plan", "coordinate", "implement", "test", "review", "pr"]:
         assert stage in result["stages"]
         assert result["stages"][stage]["status"] == "pending"
 
@@ -142,4 +142,25 @@ def test_init_status_has_milestones():
     wr = {"title": "Task"}
     result = init_status(wr, "feat/task")
     assert "milestones" in result
-    assert isinstance(result["milestones"], dict)
+    assert result["milestones"]["plan_approved"] is None
+    assert result["milestones"]["pr_approved"] is None
+    assert result["milestones"]["deploy_approved"] is None
+
+
+def test_init_status_has_stage_field():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["stage"] == "plan"
+
+
+def test_init_status_has_started_at():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "started_at" in result
+    assert "T" in result["started_at"]  # ISO format
+
+
+def test_init_status_has_pr_review_outcome():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["pr_review_outcome"] is None

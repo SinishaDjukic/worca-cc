@@ -2,10 +2,11 @@
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 
-PIPELINE_STAGES = ["plan", "coordinate", "implement", "test", "review"]
+PIPELINE_STAGES = ["plan", "coordinate", "implement", "test", "review", "pr"]
 
 
 def load_status(path: str = ".worca/status.json") -> dict:
@@ -60,12 +61,20 @@ def set_milestone(status: dict, milestone: str, value: bool) -> dict:
 def init_status(work_request: dict, branch: str) -> dict:
     """Create a fresh status dict with all stages set to 'pending'.
 
-    Populates work_request and branch.
+    Populates work_request and branch per the design doc schema.
     """
     status = {
         "work_request": work_request,
+        "stage": "plan",
         "branch": branch,
+        "worktree": None,
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "stages": {stage: {"status": "pending"} for stage in PIPELINE_STAGES},
-        "milestones": {},
+        "milestones": {
+            "plan_approved": None,
+            "pr_approved": None,
+            "deploy_approved": None,
+        },
+        "pr_review_outcome": None,
     }
     return status

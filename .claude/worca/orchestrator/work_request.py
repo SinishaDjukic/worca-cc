@@ -91,14 +91,21 @@ def normalize_beads_task(ref: str) -> WorkRequest:
 
 
 def normalize(source_type: str, source_value: str) -> WorkRequest:
-    """Dispatch to the appropriate normalize_* function based on source_type."""
+    """Dispatch to the appropriate normalize_* function.
+
+    source_type can be "prompt", "spec", or "source" (auto-detect from value).
+    For "source", the value is sniffed: gh:issue:N → GitHub, bd:ID → Beads.
+    """
     if source_type == "prompt":
         return normalize_prompt(source_value)
     elif source_type == "spec":
         return normalize_spec_file(source_value)
-    elif source_value.startswith("gh:issue:"):
-        return normalize_github_issue(source_value)
-    elif source_value.startswith("bd:"):
-        return normalize_beads_task(source_value)
+    elif source_type == "source" or source_value.startswith(("gh:", "bd:")):
+        if source_value.startswith("gh:issue:"):
+            return normalize_github_issue(source_value)
+        elif source_value.startswith("bd:"):
+            return normalize_beads_task(source_value)
+        else:
+            raise ValueError(f"Unknown source reference format: {source_value}")
     else:
-        raise ValueError(f"Unknown source: {source_type}={source_value}")
+        raise ValueError(f"Unknown source type: {source_type}={source_value}")

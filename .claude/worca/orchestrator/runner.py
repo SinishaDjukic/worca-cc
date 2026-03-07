@@ -5,6 +5,7 @@ Orchestrates the full pipeline from plan through PR.
 
 import json
 import os
+import re
 from typing import Optional
 
 from worca.orchestrator.stages import Stage, can_transition, get_stage_config, STAGE_AGENT_MAP
@@ -24,11 +25,38 @@ class PipelineError(Exception):
     pass
 
 
+def _sanitize_branch_name(title: str) -> str:
+    """Convert a title to a valid git branch name."""
+    name = title.lower().strip()
+    name = re.sub(r'[^a-z0-9\-]', '-', name)
+    name = re.sub(r'-+', '-', name)
+    name = name.strip('-')
+    return f"worca/{name[:40]}"
+
+
+def _agent_path(agent_name: str) -> str:
+    """Resolve agent name to the .md definition file path."""
+    return f".claude/agents/core/{agent_name}.md"
+
+
+def _schema_path(schema_name: str) -> str:
+    """Resolve schema filename to full path."""
+    return f".claude/worca/schemas/{schema_name}"
+
+
+def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs") -> None:
+    """Save stage output to a log file for resume support."""
+    os.makedirs(logs_dir, exist_ok=True)
+    path = os.path.join(logs_dir, f"{stage.value}.json")
+    with open(path, "w") as f:
+        json.dump(result, f, indent=2)
+
+
 def run_stage(stage: Stage, context: dict, settings_path: str = ".claude/settings.json") -> dict:
     """Run a single pipeline stage.
 
     Gets stage config via get_stage_config(), calls run_agent() with the
-    appropriate agent, prompt, and max_turns.
+    appropriate agent path, prompt, max_turns, and schema.
 
     Returns the agent's JSON output.
     """
@@ -36,8 +64,10 @@ def run_stage(stage: Stage, context: dict, settings_path: str = ".claude/setting
     prompt = context.get("prompt", "")
     result = run_agent(
         prompt=prompt,
-        agent=config["agent"],
+        agent=_agent_path(config["agent"]),
         max_turns=config["max_turns"],
+        output_format="json",
+        json_schema=_schema_path(config["schema"]),
     )
     return result
 
@@ -76,6 +106,7 @@ def handle_pr_review(outcome: str, status: dict) -> tuple:
         Tuple of (next_stage_or_None, updated_status).
         None for next_stage means pipeline is complete or stopped.
     """
+    status["pr_review_outcome"] = outcome
     if outcome == "approve":
         return (None, status)
     elif outcome == "request_changes":
@@ -106,27 +137,50 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    # Create branch
-    branch_name = f"worca/{work_request.title.lower().replace(' ', '-')[:40]}"
-    create_branch(branch_name)
+    logs_dir = os.path.join(os.path.dirname(status_path), "logs")
 
-    # Initialize status
-    wr_dict = {
-        "source_type": work_request.source_type,
-        "title": work_request.title,
-        "description": work_request.description,
-    }
-    status = init_status(wr_dict, branch_name)
-    save_status(status, status_path)
+    # Check for resume
+    existing = load_status(status_path)
+    if existing:
+        from worca.orchestrator.resume import find_resume_point
+        resume_stage = find_resume_point(existing)
+        if resume_stage is not None:
+            status = existing
+            branch_name = status.get("branch", "")
+        else:
+            return existing  # all done
+    else:
+        # Fresh start
+        branch_name = _sanitize_branch_name(work_request.title)
+        create_branch(branch_name)
+
+        wr_dict = {
+            "source_type": work_request.source_type,
+            "title": work_request.title,
+            "description": work_request.description,
+            "source_ref": work_request.source_ref,
+            "priority": work_request.priority,
+        }
+        status = init_status(wr_dict, branch_name)
+        save_status(status, status_path)
+        resume_stage = None
 
     context = {"prompt": work_request.description or work_request.title}
     loop_counters = {}
 
     stage_order = [Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
-    stage_idx = 0
+
+    # Determine starting index
+    if resume_stage:
+        stage_idx = stage_order.index(resume_stage)
+    else:
+        stage_idx = 0
 
     while stage_idx < len(stage_order):
         current_stage = stage_order[stage_idx]
+
+        # Update current stage tracker
+        status["stage"] = current_stage.value
 
         # Mark stage as in_progress
         update_stage(status, current_stage.value, status="in_progress")
@@ -134,6 +188,9 @@ def run_pipeline(
 
         # Run the stage
         result = run_stage(current_stage, context, settings_path)
+
+        # Save stage output for resume
+        _save_stage_output(current_stage, result, logs_dir)
 
         # Mark stage completed
         update_stage(status, current_stage.value, status="completed")
@@ -157,7 +214,6 @@ def run_pipeline(
                     raise LoopExhaustedError(
                         f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                     )
-                # Go back to implement
                 stage_idx = stage_order.index(Stage.IMPLEMENT)
                 continue
 
@@ -170,7 +226,7 @@ def run_pipeline(
                     raise PipelineError("PR rejected")
                 # approved — continue to PR
             elif next_stage == Stage.IMPLEMENT:
-                loop_key = "review_implement"
+                loop_key = "pr_changes"
                 loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
                 if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path):
                     raise LoopExhaustedError(
@@ -179,7 +235,7 @@ def run_pipeline(
                 stage_idx = stage_order.index(Stage.IMPLEMENT)
                 continue
             elif next_stage == Stage.PLAN:
-                loop_key = "review_plan"
+                loop_key = "restart_planning"
                 loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
                 if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path):
                     raise LoopExhaustedError(
