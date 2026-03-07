@@ -32,6 +32,15 @@ STAGE_AGENT_MAP = {
     Stage.PR: "guardian",
 }
 
+STAGE_SCHEMA_MAP = {
+    Stage.PLAN: "plan.json",
+    Stage.COORDINATE: "coordinate.json",
+    Stage.IMPLEMENT: "implement.json",
+    Stage.TEST: "test_result.json",
+    Stage.REVIEW: "review.json",
+    Stage.PR: "pr.json",
+}
+
 
 def can_transition(from_stage: Stage, to_stage: Stage) -> bool:
     """Return True if transition from from_stage to to_stage is valid."""
@@ -51,5 +60,5 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
         "agent": agent_name,
         "model": agent_config.get("model", "sonnet"),
         "max_turns": agent_config.get("max_turns", 30),
-        "schema": f"{stage.value}.json",
+        "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }

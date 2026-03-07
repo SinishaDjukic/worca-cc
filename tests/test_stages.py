@@ -167,11 +167,17 @@ class TestGetStageConfig:
         assert config["max_turns"] == 30
         assert config["schema"] == "implement.json"
 
-    def test_schema_matches_stage_value(self, tmp_path):
+    def test_schema_matches_stage_map(self, tmp_path):
+        from worca.orchestrator.stages import STAGE_SCHEMA_MAP
         missing = str(tmp_path / "nonexistent.json")
         for stage in Stage:
             config = get_stage_config(stage, settings_path=missing)
-            assert config["schema"] == f"{stage.value}.json"
+            assert config["schema"] == STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json")
+
+    def test_test_stage_uses_test_result_schema(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.TEST, settings_path=missing)
+        assert config["schema"] == "test_result.json"
 
     def test_handles_malformed_json(self, tmp_path):
         bad_file = tmp_path / "bad.json"
