@@ -2,24 +2,24 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit",
+        "matcher": {"tools": ["Bash", "Write", "Edit"]},
         "hooks": [
-          "uv run .claude/hooks/pre_tool_use.py"
+          {"type": "command", "command": "uv run .claude/hooks/pre_tool_use.py"}
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": {"tools": ["Bash"]},
         "hooks": [
-          "uv run .claude/hooks/post_tool_use.py"
+          {"type": "command", "command": "uv run .claude/hooks/post_tool_use.py"}
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          "uv run .claude/hooks/user_prompt_submit.py"
+          {"type": "command", "command": "uv run .claude/hooks/user_prompt_submit.py"}
         ]
       }
     ]
