@@ -8,14 +8,18 @@ from typing import Optional
 def build_command(
     prompt: str,
     agent: str,
-    max_turns: int,
     output_format: str = "json",
     json_schema: Optional[str] = None,
     **kwargs,
 ) -> list[str]:
     """Build the claude CLI command list without executing.
 
-    Useful for inspection and logging.
+    Args:
+        prompt: The prompt to send to the agent.
+        agent: Path to the agent .md file (e.g. ".claude/agents/core/planner.md").
+        output_format: Output format ("text", "json", "stream-json").
+        json_schema: Inline JSON schema string for structured output, or path
+                     to a .json file (will be read and inlined).
     """
     cmd = [
         "claude",
@@ -23,33 +27,41 @@ def build_command(
         prompt,
         "--agent",
         agent,
-        "--max-turns",
-        str(max_turns),
         "--output-format",
         output_format,
+        "--no-session-persistence",
         "--dangerously-skip-permissions",
-        "--no-resume",
     ]
     if json_schema is not None:
-        cmd.extend(["--json-schema", json_schema])
+        # If it looks like a file path, read its contents
+        schema_str = json_schema
+        if json_schema.endswith(".json"):
+            try:
+                with open(json_schema) as f:
+                    schema_str = f.read().strip()
+            except FileNotFoundError:
+                pass  # Use the raw string as-is
+        cmd.extend(["--json-schema", schema_str])
     return cmd
 
 
 def run_agent(
     prompt: str,
     agent: str,
-    max_turns: int,
+    max_turns: int = 0,
     output_format: str = "json",
     json_schema: Optional[str] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
+
+    Note: max_turns is accepted for API compatibility but not passed to the CLI
+    (claude -p does not support --max-turns). Use --max-budget-usd for cost control.
 
     Raises RuntimeError on subprocess failure or JSON parse failure.
     """
     cmd = build_command(
         prompt,
         agent=agent,
-        max_turns=max_turns,
         output_format=output_format,
         json_schema=json_schema,
     )
@@ -59,4 +71,4 @@ def run_agent(
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse JSON output: {e}")
+        raise RuntimeError(f"Failed to parse JSON output: {e}\nRaw output: {result.stdout[:500]}")

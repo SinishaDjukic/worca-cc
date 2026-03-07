@@ -9,49 +9,61 @@ from worca.utils.claude_cli import run_agent, build_command
 # --- build_command ---
 
 def test_build_command_basic():
-    cmd = build_command("do stuff", agent="planner", max_turns=40)
+    cmd = build_command("do stuff", agent="planner")
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "do stuff" in cmd
     assert "--agent" in cmd
     assert "planner" in cmd
-    assert "--max-turns" in cmd
-    assert "40" in cmd
 
 
 def test_build_command_default_output_format():
-    cmd = build_command("prompt", agent="coder", max_turns=10)
+    cmd = build_command("prompt", agent="coder")
     assert "--output-format" in cmd
     idx = cmd.index("--output-format")
     assert cmd[idx + 1] == "json"
 
 
 def test_build_command_with_json_schema():
-    cmd = build_command("prompt", agent="coder", max_turns=10, json_schema='{"type":"object"}')
+    cmd = build_command("prompt", agent="coder", json_schema='{"type":"object"}')
     assert "--json-schema" in cmd
     idx = cmd.index("--json-schema")
     assert cmd[idx + 1] == '{"type":"object"}'
 
 
 def test_build_command_without_json_schema():
-    cmd = build_command("prompt", agent="coder", max_turns=10)
+    cmd = build_command("prompt", agent="coder")
     assert "--json-schema" not in cmd
 
 
 def test_build_command_includes_dangerously_skip_permissions():
-    cmd = build_command("prompt", agent="planner", max_turns=5)
+    cmd = build_command("prompt", agent="planner")
     assert "--dangerously-skip-permissions" in cmd
 
 
-def test_build_command_includes_no_resume():
-    cmd = build_command("prompt", agent="planner", max_turns=5)
-    assert "--no-resume" in cmd
+def test_build_command_includes_no_session_persistence():
+    cmd = build_command("prompt", agent="planner")
+    assert "--no-session-persistence" in cmd
+
+
+def test_build_command_no_max_turns():
+    """max-turns is not a valid claude CLI flag."""
+    cmd = build_command("prompt", agent="planner")
+    assert "--max-turns" not in cmd
 
 
 def test_build_command_custom_output_format():
-    cmd = build_command("prompt", agent="planner", max_turns=5, output_format="text")
+    cmd = build_command("prompt", agent="planner", output_format="text")
     idx = cmd.index("--output-format")
     assert cmd[idx + 1] == "text"
+
+
+def test_build_command_reads_schema_file(tmp_path):
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text('{"type":"object","required":["name"]}')
+    cmd = build_command("prompt", agent="coder", json_schema=str(schema_file))
+    idx = cmd.index("--json-schema")
+    assert cmd[idx + 1] == '{"type":"object","required":["name"]}'
 
 
 # --- run_agent ---
@@ -102,3 +114,14 @@ def test_run_agent_passes_correct_command():
     assert "--agent" in args
     assert "implementer" in args
     assert "--json-schema" in args
+
+
+def test_run_agent_max_turns_accepted_but_ignored():
+    """max_turns is accepted for API compatibility but not passed to CLI."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"ok": true}'
+    with patch("worca.utils.claude_cli.subprocess.run", return_value=mock_result) as mock_run:
+        run_agent("prompt", agent="planner", max_turns=999)
+    args = mock_run.call_args[0][0]
+    assert "--max-turns" not in args

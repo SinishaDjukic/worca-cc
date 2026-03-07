@@ -32,18 +32,18 @@ def save_status(status: dict, path: str = ".worca/status.json") -> None:
         f.write("\n")
 
 
-def update_stage(status: dict, stage: str, **kwargs) -> dict:
-    """Update status['stages'][stage] with kwargs.
+def update_stage(pipeline_status: dict, stage: str, **kwargs) -> dict:
+    """Update pipeline_status['stages'][stage] with kwargs.
 
     Creates the 'stages' key if it doesn't exist.
     Returns the updated status dict (mutated in place).
     """
-    if "stages" not in status:
-        status["stages"] = {}
-    if stage not in status["stages"]:
-        status["stages"][stage] = {}
-    status["stages"][stage].update(kwargs)
-    return status
+    if "stages" not in pipeline_status:
+        pipeline_status["stages"] = {}
+    if stage not in pipeline_status["stages"]:
+        pipeline_status["stages"][stage] = {}
+    pipeline_status["stages"][stage].update(kwargs)
+    return pipeline_status
 
 
 def set_milestone(status: dict, milestone: str, value: bool) -> dict:
