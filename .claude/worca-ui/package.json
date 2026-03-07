@@ -1,0 +1,28 @@
+{
+  "name": "worca-ui",
+  "version": "0.1.0",
+  "description": "Pipeline monitoring UI for worca-cc",
+  "type": "module",
+  "bin": {
+    "worca-ui": "./bin/worca-ui.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/index.js --debug",
+    "build": "node scripts/build-frontend.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "lit-html": "^3.3.1",
+    "marked": "^17.0.1",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.1",
+    "vitest": "^4.0.15"
+  }
+}
