@@ -1,0 +1,57 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          "uv run .claude/hooks/pre_tool_use.py"
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          "uv run .claude/hooks/post_tool_use.py"
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          "uv run .claude/hooks/user_prompt_submit.py"
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pytest *)",
+      "Bash(bd *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Read(*)"
+    ]
+  },
+  "worca": {
+    "agents": {
+      "planner":      { "model": "opus",   "max_turns": 40 },
+      "coordinator":  { "model": "opus",   "max_turns": 30 },
+      "implementer":  { "model": "sonnet", "max_turns": 85 },
+      "tester":       { "model": "sonnet", "max_turns": 40 },
+      "guardian":     { "model": "opus",   "max_turns": 30 }
+    },
+    "loops": {
+      "implement_test": 10,
+      "code_review": 5,
+      "pr_changes": 3,
+      "restart_planning": 2
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": true,
+      "deploy_approval": true
+    }
+  }
+}
