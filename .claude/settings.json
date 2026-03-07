@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": {"tools": ["Bash", "Write", "Edit"]},
+        "matcher": "Bash|Write|Edit",
         "hooks": [
           {"type": "command", "command": "uv run .claude/hooks/pre_tool_use.py"}
         ]
@@ -10,7 +10,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": {"tools": ["Bash"]},
+        "matcher": "Bash",
         "hooks": [
           {"type": "command", "command": "uv run .claude/hooks/post_tool_use.py"}
         ]
