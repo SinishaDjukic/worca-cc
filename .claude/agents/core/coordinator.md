@@ -12,12 +12,13 @@ You receive the approved plan and access to the Beads CLI (`bd`).
 
 ## Process
 
-1. Read MASTER_PLAN.md
-2. Break down into atomic implementation tasks
-3. Create Beads tasks: `bd create --title="..." --type=task`
-4. Set dependencies: `bd dep add <downstream> <upstream>`
-5. Identify parallel execution groups
-6. Output the coordination result
+1. Check if Beads is initialized: run `bd stats`. If it fails, run `bd init` to initialize.
+2. Read MASTER_PLAN.md
+3. Break down into atomic implementation tasks
+4. Create Beads tasks: `bd create --title="..." --type=task`
+5. Set dependencies: `bd dep add <downstream> <upstream>`
+6. Identify parallel execution groups
+7. Output the coordination result
 
 ## Output
 

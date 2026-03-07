@@ -6,6 +6,7 @@ Orchestrates the full pipeline from plan through PR.
 import json
 import os
 import re
+import subprocess
 from typing import Optional
 
 from worca.orchestrator.stages import Stage, can_transition, get_stage_config, STAGE_AGENT_MAP
@@ -52,22 +53,31 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
         json.dump(result, f, indent=2)
 
 
-def run_stage(stage: Stage, context: dict, settings_path: str = ".claude/settings.json") -> tuple[dict, dict]:
+def run_stage(
+    stage: Stage,
+    context: dict,
+    settings_path: str = ".claude/settings.json",
+    msize: int = 1,
+) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
     Gets stage config via get_stage_config(), calls run_agent() with the
     appropriate agent path, prompt, max_turns, and schema.
+
+    Args:
+        msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
     is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
+    max_turns = config["max_turns"] * msize
     prompt = context.get("prompt", "")
     raw = run_agent(
         prompt=prompt,
         agent=_agent_path(config["agent"]),
-        max_turns=config["max_turns"],
+        max_turns=max_turns,
         output_format="json",
         json_schema=_schema_path(config["schema"]),
     )
@@ -81,12 +91,16 @@ def check_loop_limit(
     loop_name: str,
     current_iteration: int,
     settings_path: str = ".claude/settings.json",
+    mloops: int = 1,
 ) -> bool:
     """Check if the current iteration is within the configured loop limit.
 
     Reads loop limits from settings.json under worca.loops namespace.
     Returns True if current_iteration < limit, False if exhausted.
     If no limit configured, defaults to 10.
+
+    Args:
+        mloops: Multiplier for the loop limit (1-10). E.g. mloops=2 doubles max loops.
     """
     default_limit = 10
     try:
@@ -96,7 +110,7 @@ def check_loop_limit(
         settings = {}
 
     loops = settings.get("worca", {}).get("loops", {})
-    limit = loops.get(loop_name, default_limit)
+    limit = loops.get(loop_name, default_limit) * mloops
     return current_iteration < limit
 
 
@@ -124,10 +138,26 @@ def handle_pr_review(outcome: str, status: dict) -> tuple:
         raise PipelineError(f"Unknown PR review outcome: {outcome}")
 
 
+def _ensure_beads_initialized() -> None:
+    """Check if beads is initialized in the current project, init if not."""
+    import subprocess
+    result = subprocess.run(
+        ["bd", "stats"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        init_result = subprocess.run(
+            ["bd", "init"], capture_output=True, text=True
+        )
+        if init_result.returncode != 0:
+            raise PipelineError(f"Failed to initialize beads: {init_result.stderr}")
+
+
 def run_pipeline(
     work_request: WorkRequest,
     settings_path: str = ".claude/settings.json",
     status_path: str = ".worca/status.json",
+    msize: int = 1,
+    mloops: int = 1,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -137,6 +167,10 @@ def run_pipeline(
     Handles loops:
     - test failure -> back to implement
     - review changes -> back to implement
+
+    Args:
+        msize: Multiplier for max_turns per stage (1-10).
+        mloops: Multiplier for max loop iterations (1-10).
 
     Checks loop limits, raises LoopExhaustedError when exceeded.
     Saves status after each stage transition.
@@ -187,12 +221,16 @@ def run_pipeline(
         # Update current stage tracker
         status["stage"] = current_stage.value
 
+        # Ensure beads is initialized before coordinate stage
+        if current_stage == Stage.COORDINATE:
+            _ensure_beads_initialized()
+
         # Mark stage as in_progress
         update_stage(status, current_stage.value, status="in_progress")
         save_status(status, status_path)
 
         # Run the stage
-        result, raw_envelope = run_stage(current_stage, context, settings_path)
+        result, raw_envelope = run_stage(current_stage, context, settings_path, msize=msize)
 
         # Save full envelope for resume/debugging
         _save_stage_output(current_stage, raw_envelope, logs_dir)
@@ -215,7 +253,7 @@ def run_pipeline(
             if not passed:
                 loop_key = "implement_test"
                 loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path):
+                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
                     raise LoopExhaustedError(
                         f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                     )
@@ -233,7 +271,7 @@ def run_pipeline(
             elif next_stage == Stage.IMPLEMENT:
                 loop_key = "pr_changes"
                 loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path):
+                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
                     raise LoopExhaustedError(
                         f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                     )
@@ -242,7 +280,7 @@ def run_pipeline(
             elif next_stage == Stage.PLAN:
                 loop_key = "restart_planning"
                 loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path):
+                if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
                     raise LoopExhaustedError(
                         f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                     )

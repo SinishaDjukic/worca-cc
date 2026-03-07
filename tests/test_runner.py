@@ -8,6 +8,7 @@ from worca.orchestrator.runner import (
     run_stage,
     check_loop_limit,
     handle_pr_review,
+    _ensure_beads_initialized,
     LoopExhaustedError,
     PipelineError,
 )
@@ -102,3 +103,75 @@ def test_handle_pr_reject():
 def test_handle_pr_restart():
     stage, status = handle_pr_review("restart_planning", {"stage": "review"})
     assert stage == Stage.PLAN
+
+
+# --- msize multiplier ---
+
+def test_run_stage_msize_multiplies_max_turns():
+    mock_config = {"agent": "planner", "model": "opus", "max_turns": 40, "schema": "plan.json"}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value={"ok": True}) as mock_run:
+            run_stage(Stage.PLAN, {"prompt": "test"}, msize=3)
+    call_kwargs = mock_run.call_args
+    assert call_kwargs.kwargs.get("max_turns") == 120  # 40 * 3
+
+
+def test_run_stage_msize_default_is_1():
+    mock_config = {"agent": "planner", "model": "opus", "max_turns": 40, "schema": "plan.json"}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value={"ok": True}) as mock_run:
+            run_stage(Stage.PLAN, {"prompt": "test"})
+    call_kwargs = mock_run.call_args
+    assert call_kwargs.kwargs.get("max_turns") == 40
+
+
+# --- mloops multiplier ---
+
+def test_check_loop_limit_mloops_multiplies(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 5}}}))
+    # Without multiplier: 5 is at limit
+    assert check_loop_limit("implement_test", 5, str(settings)) is False
+    # With mloops=2: limit becomes 10
+    assert check_loop_limit("implement_test", 5, str(settings), mloops=2) is True
+    assert check_loop_limit("implement_test", 10, str(settings), mloops=2) is False
+
+
+def test_check_loop_limit_mloops_default_is_1(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 5}}}))
+    assert check_loop_limit("implement_test", 4, str(settings)) is True
+    assert check_loop_limit("implement_test", 5, str(settings)) is False
+
+
+# --- _ensure_beads_initialized ---
+
+def test_ensure_beads_initialized_already_init():
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("worca.orchestrator.runner.subprocess.run", return_value=mock_result) as mock_run:
+        _ensure_beads_initialized()
+    # Should only call bd stats, not bd init
+    mock_run.assert_called_once()
+    assert mock_run.call_args[0][0] == ["bd", "stats"]
+
+
+def test_ensure_beads_initialized_runs_init():
+    stats_fail = MagicMock(returncode=1)
+    init_ok = MagicMock(returncode=0)
+    with patch("worca.orchestrator.runner.subprocess.run", side_effect=[stats_fail, init_ok]) as mock_run:
+        _ensure_beads_initialized()
+    assert mock_run.call_count == 2
+    assert mock_run.call_args_list[0][0][0] == ["bd", "stats"]
+    assert mock_run.call_args_list[1][0][0] == ["bd", "init"]
+
+
+def test_ensure_beads_initialized_raises_on_init_failure():
+    stats_fail = MagicMock(returncode=1)
+    init_fail = MagicMock(returncode=1, stderr="no git repo")
+    with patch("worca.orchestrator.runner.subprocess.run", side_effect=[stats_fail, init_fail]):
+        try:
+            _ensure_beads_initialized()
+            assert False, "Should have raised"
+        except PipelineError as e:
+            assert "beads" in str(e).lower()

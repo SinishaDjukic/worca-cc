@@ -23,6 +23,12 @@ def main():
                         help="Path to settings.json")
     parser.add_argument("--status-dir", default=".worca",
                         help="Directory for pipeline status files")
+    parser.add_argument("--msize", type=int, default=1, choices=range(1, 11),
+                        metavar="[1-10]",
+                        help="Task size multiplier for max_turns per stage (default: 1)")
+    parser.add_argument("--mloops", type=int, default=1, choices=range(1, 11),
+                        metavar="[1-10]",
+                        help="Loop multiplier for max loop iterations (default: 1)")
 
     args = parser.parse_args()
 
@@ -35,12 +41,18 @@ def main():
         work_request = normalize("source", args.source)
 
     print(f"Starting pipeline: {work_request.title}")
+    if args.msize > 1:
+        print(f"  Size multiplier: {args.msize}x turns")
+    if args.mloops > 1:
+        print(f"  Loop multiplier: {args.mloops}x loops")
 
     try:
         status = run_pipeline(
             work_request,
             settings_path=args.settings,
             status_path=os.path.join(args.status_dir, "status.json"),
+            msize=args.msize,
+            mloops=args.mloops,
         )
         print(json.dumps(status, indent=2))
     except LoopExhaustedError as e:
