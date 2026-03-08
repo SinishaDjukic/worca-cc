@@ -11,7 +11,6 @@ export function runDetailView(run, settings = {}) {
   const title = run.work_request?.title || 'Untitled Run';
   const branch = run.work_request?.branch || '';
   const pr = run.pr_url || null;
-  const status = run.stage || 'pending';
   const duration = run.started_at
     ? formatDuration(elapsed(run.started_at, run.completed_at || null))
     : '';
