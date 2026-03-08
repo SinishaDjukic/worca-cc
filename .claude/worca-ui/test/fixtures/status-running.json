@@ -1,0 +1,16 @@
+{
+  "started_at": "2026-03-08T10:00:00Z",
+  "stage": "implement",
+  "work_request": {
+    "title": "Add user authentication",
+    "branch": "feature/user-auth"
+  },
+  "stages": {
+    "plan": { "status": "completed", "started_at": "2026-03-08T10:00:00Z", "completed_at": "2026-03-08T10:02:00Z" },
+    "coordinate": { "status": "completed", "started_at": "2026-03-08T10:02:00Z", "completed_at": "2026-03-08T10:03:00Z" },
+    "implement": { "status": "in_progress", "started_at": "2026-03-08T10:03:00Z", "task_progress": "2/5", "iteration": 1 },
+    "test": { "status": "pending" },
+    "review": { "status": "pending" },
+    "pr": { "status": "pending" }
+  }
+}

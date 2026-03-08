@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-03-08T10:00:00Z",
+  "completed_at": "2026-03-08T10:15:00Z",
+  "stage": "pr",
+  "work_request": {
+    "title": "Add user authentication",
+    "branch": "feature/user-auth"
+  },
+  "pr_url": "https://github.com/example/repo/pull/42",
+  "stages": {
+    "plan": { "status": "completed", "started_at": "2026-03-08T10:00:00Z", "completed_at": "2026-03-08T10:02:00Z" },
+    "coordinate": { "status": "completed", "started_at": "2026-03-08T10:02:00Z", "completed_at": "2026-03-08T10:03:00Z" },
+    "implement": { "status": "completed", "started_at": "2026-03-08T10:03:00Z", "completed_at": "2026-03-08T10:08:00Z", "iteration": 2, "task_progress": "5/5" },
+    "test": { "status": "completed", "started_at": "2026-03-08T10:08:00Z", "completed_at": "2026-03-08T10:11:00Z" },
+    "review": { "status": "completed", "started_at": "2026-03-08T10:11:00Z", "completed_at": "2026-03-08T10:13:00Z" },
+    "pr": { "status": "completed", "started_at": "2026-03-08T10:13:00Z", "completed_at": "2026-03-08T10:15:00Z" }
+  }
+}

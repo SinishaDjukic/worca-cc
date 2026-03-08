@@ -1,0 +1,25 @@
+{
+  "worca": {
+    "agents": {
+      "planner": { "model": "opus", "max_turns": 40 },
+      "coordinator": { "model": "opus", "max_turns": 30 },
+      "implementer": { "model": "sonnet", "max_turns": 85 },
+      "tester": { "model": "sonnet", "max_turns": 40 },
+      "guardian": { "model": "opus", "max_turns": 30 }
+    },
+    "loops": {
+      "implement_test": 10,
+      "code_review": 5
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": true
+    },
+    "ui": {
+      "stages": {
+        "deploy": { "label": "Deploy", "icon": "rocket" },
+        "plan": { "label": "Planning" }
+      }
+    }
+  }
+}

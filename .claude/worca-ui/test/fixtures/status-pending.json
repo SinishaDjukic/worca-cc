@@ -1,0 +1,16 @@
+{
+  "started_at": "2026-03-08T10:00:00Z",
+  "stage": "plan",
+  "work_request": {
+    "title": "Add user authentication",
+    "branch": "feature/user-auth"
+  },
+  "stages": {
+    "plan": { "status": "pending" },
+    "coordinate": { "status": "pending" },
+    "implement": { "status": "pending" },
+    "test": { "status": "pending" },
+    "review": { "status": "pending" },
+    "pr": { "status": "pending" }
+  }
+}

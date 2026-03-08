@@ -1,0 +1,16 @@
+{
+  "started_at": "2026-03-08T10:00:00Z",
+  "stage": "test",
+  "work_request": {
+    "title": "Add user authentication",
+    "branch": "feature/user-auth"
+  },
+  "stages": {
+    "plan": { "status": "completed", "started_at": "2026-03-08T10:00:00Z", "completed_at": "2026-03-08T10:02:00Z" },
+    "coordinate": { "status": "completed", "started_at": "2026-03-08T10:02:00Z", "completed_at": "2026-03-08T10:03:00Z" },
+    "implement": { "status": "completed", "started_at": "2026-03-08T10:03:00Z", "completed_at": "2026-03-08T10:08:00Z" },
+    "test": { "status": "error", "started_at": "2026-03-08T10:08:00Z", "completed_at": "2026-03-08T10:10:00Z", "error": "3 tests failed: auth.test.js" },
+    "review": { "status": "pending" },
+    "pr": { "status": "pending" }
+  }
+}
