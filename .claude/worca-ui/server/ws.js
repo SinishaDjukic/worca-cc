@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { watch, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
-import { discoverRuns, createRunId } from './watcher.js';
+import { discoverRuns } from './watcher.js';
 import { readLastLines, resolveLogPath } from './log-tailer.js';
 import { readSettings } from './settings-reader.js';
 import { readPreferences, writePreferences } from './preferences.js';
@@ -101,11 +101,10 @@ export function attachWsServer(httpServer, config) {
     }, REFRESH_DEBOUNCE_MS);
   }
 
-  const statusPath = join(worcaDir, 'status.json');
   let statusWatcher = null;
   try {
     if (existsSync(worcaDir)) {
-      statusWatcher = watch(worcaDir, { recursive: false }, (eventType, filename) => {
+      statusWatcher = watch(worcaDir, { recursive: false }, (_eventType, filename) => {
         if (filename === 'status.json') {
           scheduleRefresh();
         }
@@ -135,15 +134,6 @@ export function attachWsServer(httpServer, config) {
       });
       logWatchers.set(key, watcher);
     } catch { /* ignore */ }
-  }
-
-  function stopWatchingLogFile(stage) {
-    const key = stage || '__orchestrator__';
-    const watcher = logWatchers.get(key);
-    if (watcher) {
-      watcher.close();
-      logWatchers.delete(key);
-    }
   }
 
   // Heartbeat
