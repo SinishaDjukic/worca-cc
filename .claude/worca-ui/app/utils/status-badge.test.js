@@ -17,9 +17,16 @@ describe('status-badge', () => {
   it('returns fallback for unknown', () => {
     expect(statusClass('whatever')).toBe('status-unknown');
   });
-  it('statusIcon returns correct symbols', () => {
-    expect(statusIcon('completed')).toBe('\u2713');
-    expect(statusIcon('error')).toBe('\u2717');
-    expect(statusIcon('pending')).toBe('\u25CB');
+  it('statusIcon returns SVG strings for known statuses', () => {
+    expect(statusIcon('completed')).toContain('<svg');
+    expect(statusIcon('completed')).toContain('</svg>');
+    expect(statusIcon('error')).toContain('<svg');
+    expect(statusIcon('pending')).toContain('<svg');
+  });
+  it('statusIcon returns ? for unknown', () => {
+    expect(statusIcon('whatever')).toBe('?');
+  });
+  it('statusIcon adds icon-spin class for in_progress', () => {
+    expect(statusIcon('in_progress')).toContain('class="icon-spin"');
   });
 });

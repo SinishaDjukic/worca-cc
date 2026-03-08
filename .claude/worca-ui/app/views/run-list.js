@@ -1,4 +1,5 @@
 import { html } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { formatDuration, elapsed } from '../utils/duration.js';
 
@@ -22,7 +23,7 @@ export function runListView(runs, filter, { onSelectRun }) {
 
         return html`
           <div class="run-list-item" @click=${() => onSelectRun(run.id)}>
-            <span class="run-list-status ${statusClass(status)}">${statusIcon(status)}</span>
+            <span class="run-list-status ${statusClass(status)}">${unsafeHTML(statusIcon(status))}</span>
             <div class="run-list-info">
               <span class="run-list-title">${title}</span>
               <span class="run-list-meta">${run.stage || 'pending'} \u00B7 ${duration}</span>

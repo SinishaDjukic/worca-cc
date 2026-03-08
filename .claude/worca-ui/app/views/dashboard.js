@@ -1,4 +1,6 @@
 import { html } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { iconSvg, Activity, CircleCheck, CircleAlert } from '../utils/icons.js';
 
 export function dashboardView(state) {
   const runs = Object.values(state.runs);
@@ -13,15 +15,18 @@ export function dashboardView(state) {
     <div class="dashboard">
       <h2 class="dashboard-title">Pipeline Overview</h2>
       <div class="dashboard-stats">
-        <div class="stat-card">
+        <div class="stat-card stat-active">
+          <div class="stat-icon">${unsafeHTML(iconSvg(Activity, 28))}</div>
           <span class="stat-number">${active.length}</span>
           <span class="stat-label">Active</span>
         </div>
-        <div class="stat-card">
+        <div class="stat-card stat-completed">
+          <div class="stat-icon">${unsafeHTML(iconSvg(CircleCheck, 28))}</div>
           <span class="stat-number">${completed.length}</span>
           <span class="stat-label">Completed</span>
         </div>
-        <div class="stat-card">
+        <div class="stat-card stat-errors">
+          <div class="stat-icon">${unsafeHTML(iconSvg(CircleAlert, 28))}</div>
           <span class="stat-number">${errored.length}</span>
           <span class="stat-label">Errors</span>
         </div>

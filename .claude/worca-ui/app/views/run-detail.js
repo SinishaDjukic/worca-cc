@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { stageTimelineView } from './stage-timeline.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { formatDuration, elapsed } from '../utils/duration.js';
@@ -24,10 +25,10 @@ export function runDetailView(run, settings = {}) {
       <div class="run-header">
         <div class="run-header-left">
           <h2 class="run-title">${title}</h2>
-          <span class="status-badge ${statusClass(run.active ? 'in_progress' : 'completed')}">
-            ${statusIcon(run.active ? 'in_progress' : 'completed')}
+          <sl-badge variant="${run.active ? 'warning' : 'success'}" pill>
+            ${unsafeHTML(statusIcon(run.active ? 'in_progress' : 'completed', 12))}
             ${run.active ? 'Running' : 'Completed'}
-          </span>
+          </sl-badge>
         </div>
         <div class="run-header-right">
           ${branch ? html`<span class="run-meta"><span class="meta-label">Branch:</span> ${branch}</span>` : nothing}
@@ -49,12 +50,14 @@ export function runDetailView(run, settings = {}) {
             : '';
 
           return html`
-            <details class="stage-panel" ?open=${stageStatus === 'in_progress'}>
-              <summary class="stage-panel-header">
-                <span class="stage-panel-icon ${statusClass(stageStatus)}">${statusIcon(stageStatus)}</span>
+            <sl-details ?open=${stageStatus === 'in_progress'} class="stage-panel">
+              <div slot="summary" class="stage-panel-header">
+                <span class="stage-panel-icon ${statusClass(stageStatus)}">${unsafeHTML(statusIcon(stageStatus))}</span>
                 <span class="stage-panel-label">${label}</span>
-                <span class="stage-panel-status">${stageStatus.replace(/_/g, ' ')}</span>
-              </summary>
+                <sl-badge variant="${stageStatus === 'completed' ? 'success' : stageStatus === 'error' ? 'danger' : stageStatus === 'in_progress' ? 'warning' : 'neutral'}" pill>
+                  ${stageStatus.replace(/_/g, ' ')}
+                </sl-badge>
+              </div>
               <div class="stage-detail">
                 ${stage.started_at ? html`<div class="detail-row"><span class="detail-label">Started:</span> ${new Date(stage.started_at).toLocaleTimeString()}</div>` : nothing}
                 ${stage.completed_at ? html`<div class="detail-row"><span class="detail-label">Completed:</span> ${new Date(stage.completed_at).toLocaleTimeString()}</div>` : nothing}
@@ -64,7 +67,7 @@ export function runDetailView(run, settings = {}) {
                 ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                 ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
               </div>
-            </details>
+            </sl-details>
           `;
         })}
       </div>

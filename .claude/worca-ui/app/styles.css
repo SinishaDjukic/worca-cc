@@ -1,15 +1,17 @@
 /* ============================================================
-   WORCA UI — Complete Stylesheet
-   Light/dark themes, component styles, pipeline visualization
+   WORCA UI — Modernized Stylesheet
+   Inter font, Shoelace tokens, Lucide icons, xterm terminal
    ============================================================ */
 
 /* --- 1. CSS Custom Properties (Light Theme Default) --- */
 :root {
-  --sidebar-width: 240px;
+  --sidebar-width: 250px;
   --fg: #1e293b;
   --bg: #ffffff;
   --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
   --border: #e2e8f0;
+  --border-subtle: rgba(226, 232, 240, 0.6);
   --muted: #94a3b8;
   --accent: #3b82f6;
   --accent-hover: #2563eb;
@@ -25,13 +27,28 @@
   --log-fg: #e2e8f0;
 
   /* Shadows & radii */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
-  --radius: 6px;
-  --radius-lg: 8px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.03), 0 4px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.02), 0 10px 20px rgba(0, 0, 0, 0.06);
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 
   /* Transitions */
-  --transition-fast: 0.15s ease;
+  --transition-fast: 0.2s ease-out;
+
+  /* Shoelace token mapping */
+  --sl-color-primary-600: var(--accent);
+  --sl-color-success-600: var(--status-completed);
+  --sl-color-warning-600: var(--status-in-progress);
+  --sl-color-danger-600: var(--status-error);
+  --sl-color-neutral-600: var(--status-pending);
+  --sl-border-radius-medium: var(--radius);
+  --sl-border-radius-large: var(--radius-lg);
+  --sl-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  --sl-shadow-small: var(--shadow-sm);
+  --sl-shadow-medium: var(--shadow-md);
 }
 
 /* --- 2. Dark Theme Overrides --- */
@@ -39,12 +56,20 @@
   --fg: #e2e8f0;
   --bg: #0f172a;
   --bg-secondary: #1e293b;
+  --bg-tertiary: #1a2332;
   --border: #334155;
+  --border-subtle: rgba(51, 65, 85, 0.6);
   --muted: #64748b;
   --accent: #60a5fa;
   --accent-hover: #93bbfd;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.15), 0 4px 8px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1), 0 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+/* Apply Shoelace dark theme when our dark theme is active */
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 /* --- 3. Reset --- */
@@ -58,14 +83,18 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--fg);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 /* --- 4. App Shell --- */
@@ -83,7 +112,8 @@ html, body {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid var(--border-subtle);
   overflow-y: auto;
   overflow-x: hidden;
   transition: width var(--transition-fast), min-width var(--transition-fast);
@@ -103,11 +133,11 @@ html, body {
 
 .sidebar-logo {
   padding: 20px 16px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .logo-text {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -133,7 +163,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  padding: 8px 12px;
   cursor: pointer;
   color: var(--fg);
   border-radius: var(--radius);
@@ -143,8 +173,23 @@ html, body {
   font-weight: 500;
 }
 
+.sidebar-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-item-left svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
 .sidebar-item:hover {
   background: var(--border);
+}
+
+.sidebar-item:hover .sidebar-item-left svg {
+  opacity: 1;
 }
 
 .sidebar-item.active {
@@ -152,27 +197,50 @@ html, body {
   color: #ffffff;
 }
 
-.sidebar-item.active .badge {
-  background: rgba(255, 255, 255, 0.25);
-  color: #ffffff;
+.sidebar-item.active .sidebar-item-left svg {
+  opacity: 1;
+}
+
+.sidebar-item.active sl-badge {
+  --sl-color-neutral-0: transparent;
 }
 
 /* --- 8. Sidebar Footer --- */
 .sidebar-footer {
   margin-top: auto;
   padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
+.theme-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.theme-toggle-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
 /* --- 9. Main Content --- */
 .main-content {
   flex: 1;
   overflow: auto;
-  padding: 24px;
+  padding: 24px 32px;
   background: var(--bg);
 }
 
@@ -183,19 +251,47 @@ html, body {
   justify-content: space-between;
   padding: 16px 0;
   margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.run-header-title {
-  font-size: 20px;
+.run-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-title {
+  font-size: 22px;
   font-weight: 600;
   color: var(--fg);
+  letter-spacing: -0.01em;
 }
 
-.run-header-meta {
-  font-size: 12px;
+.run-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.run-meta {
+  font-size: 13px;
   color: var(--muted);
-  margin-top: 4px;
+}
+
+.meta-label {
+  font-weight: 500;
+  color: var(--fg);
+  opacity: 0.7;
+}
+
+.run-pr-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.run-pr-link:hover {
+  text-decoration: underline;
 }
 
 /* --- 11. Stage Timeline --- */
@@ -203,7 +299,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 0;
+  padding: 28px 0;
   gap: 0;
   overflow-x: auto;
 }
@@ -212,14 +308,14 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   position: relative;
-  min-width: 80px;
+  min-width: 90px;
 }
 
 .stage-icon {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -227,7 +323,12 @@ html, body {
   font-size: 18px;
   border: 3px solid var(--border);
   background: var(--bg);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.stage-icon svg {
+  width: 22px;
+  height: 22px;
 }
 
 .stage-node.status-pending .stage-icon {
@@ -236,18 +337,19 @@ html, body {
 
 .stage-node.status-in-progress .stage-icon {
   border-color: var(--status-in-progress);
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
 }
 
 .stage-node.status-completed .stage-icon {
   border-color: var(--status-completed);
   background: var(--status-completed);
   color: #ffffff;
+  transform: scale(1.05);
 }
 
 .stage-node.status-error .stage-icon {
   border-color: var(--status-error);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
 }
 
 .stage-label {
@@ -258,29 +360,55 @@ html, body {
   white-space: nowrap;
 }
 
-/* --- 12. Pulse Animation --- */
+/* --- 12. Pulse & Spin Animations --- */
 .stage-node.pulse .stage-icon {
   animation: stage-pulse 2s ease-in-out infinite;
 }
 
 @keyframes stage-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
   }
   50% {
-    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.08);
+    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.06);
   }
+}
+
+.icon-spin {
+  animation: icon-spin 1.5s linear infinite;
+}
+
+@keyframes icon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Rotating conic gradient for in-progress nodes */
+.stage-node.status-in-progress .stage-icon {
+  background: conic-gradient(from var(--spin-angle, 0deg), var(--status-in-progress), transparent, var(--status-in-progress));
+  background-clip: padding-box;
+  animation: conic-spin 2s linear infinite;
+}
+
+@keyframes conic-spin {
+  to { --spin-angle: 360deg; }
+}
+
+@property --spin-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
 }
 
 /* --- 13. Stage Connector --- */
 .stage-connector {
-  width: 32px;
-  height: 3px;
+  width: 36px;
+  height: 4px;
   background: var(--border);
   border-radius: 2px;
   flex-shrink: 0;
   align-self: center;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   transition: background var(--transition-fast);
 }
 
@@ -289,16 +417,75 @@ html, body {
 }
 
 /* --- 14. Stage Detail & Panel --- */
-.stage-detail {
-  padding: 16px 0;
+.stage-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
 }
 
-.stage-panel {
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+sl-details.stage-panel {
+  --border-color: var(--border-subtle);
+  --border-radius: var(--radius-lg);
+}
+
+sl-details.stage-panel::part(base) {
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  margin-top: 8px;
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+sl-details.stage-panel::part(header) {
+  padding: 12px 16px;
+}
+
+sl-details.stage-panel::part(content) {
+  padding: 0 16px 16px;
+}
+
+.stage-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.stage-panel-icon {
+  display: flex;
+  align-items: center;
+}
+
+.stage-panel-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.stage-panel-label {
+  font-weight: 500;
+  font-size: 14px;
+  flex: 1;
+}
+
+.stage-detail {
+  padding: 4px 0;
+}
+
+.detail-row {
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.detail-label {
+  font-weight: 500;
+  color: var(--fg);
+  opacity: 0.7;
+  margin-right: 4px;
+}
+
+.detail-error {
+  color: var(--status-error);
 }
 
 /* --- 15. Loop Indicator --- */
@@ -306,11 +493,14 @@ html, body {
   position: absolute;
   top: -4px;
   right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   font-size: 10px;
   font-weight: 600;
   background: var(--accent);
   color: #ffffff;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: 10px;
   line-height: 1.3;
 }
@@ -319,96 +509,65 @@ html, body {
 .milestone-marker {
   position: absolute;
   bottom: -6px;
-  font-size: 12px;
   color: var(--status-in-progress);
 }
 
 /* --- 17. Log Viewer --- */
-.log-viewer {
-  background: var(--log-bg);
-  color: var(--log-fg);
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  border-radius: var(--radius-lg);
-  padding: 12px 16px;
-  overflow-y: auto;
-  max-height: 400px;
-  border: 1px solid var(--border);
+.log-viewer-container {
+  margin-top: 24px;
 }
 
-.log-line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.log-line .log-timestamp {
-  color: #64748b;
-  flex-shrink: 0;
-  font-size: 11px;
-}
-
-.log-line .log-stage-tag {
-  flex-shrink: 0;
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.log-line .log-message {
-  flex: 1;
-}
-
-/* --- 18. Log Controls --- */
 .log-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0;
+  gap: 10px;
+  padding: 10px 0;
 }
 
-.log-controls select,
-.log-controls input {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 12px;
-  outline: none;
-  transition: border-color var(--transition-fast);
+.log-controls sl-select {
+  min-width: 160px;
 }
 
-.log-controls select:focus,
-.log-controls input:focus {
-  border-color: var(--accent);
-}
-
-.log-controls input {
+.log-controls sl-input {
   flex: 1;
-  min-width: 120px;
+  min-width: 140px;
 }
 
-.log-controls label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-  cursor: pointer;
-  white-space: nowrap;
+.log-terminal-wrapper {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
 }
 
-/* --- 19. Status Badge --- */
+.log-terminal {
+  height: 420px;
+  background: var(--log-bg);
+}
+
+/* xterm.js overrides */
+.log-terminal .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.log-terminal .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-terminal .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+.log-terminal .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* --- 18. Status Badge --- */
 .status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 11px;
@@ -417,44 +576,28 @@ html, body {
   letter-spacing: 0.02em;
 }
 
+.status-badge svg {
+  width: 12px;
+  height: 12px;
+}
+
 .status-pending {
-  background: rgba(148, 163, 184, 0.15);
   color: var(--status-pending);
 }
 
 .status-in-progress {
-  background: rgba(245, 158, 11, 0.15);
   color: var(--status-in-progress);
 }
 
 .status-completed {
-  background: rgba(34, 197, 94, 0.15);
   color: var(--status-completed);
 }
 
 .status-error {
-  background: rgba(239, 68, 68, 0.15);
   color: var(--status-error);
 }
 
-/* --- 20. Theme Toggle --- */
-.theme-toggle {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  cursor: pointer;
-  color: var(--fg);
-  font-size: 16px;
-  line-height: 1;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.theme-toggle:hover {
-  background: var(--border);
-}
-
-/* --- 21. Connection Indicator --- */
+/* --- 19. Connection Indicator --- */
 .connection-indicator {
   display: flex;
   align-items: center;
@@ -488,60 +631,110 @@ html, body {
   50% { opacity: 0.3; }
 }
 
-/* --- 22. Run List --- */
+/* --- 20. Run List --- */
 .run-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .run-list-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border: 1px solid var(--border);
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  background: var(--bg);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .run-list-item:hover {
   background: var(--bg-secondary);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
-.run-list-item .run-title {
+.run-list-status {
+  display: flex;
+  align-items: center;
+}
+
+.run-list-status svg {
+  width: 18px;
+  height: 18px;
+}
+
+.run-list-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-list-title {
   font-weight: 500;
-  font-size: 13px;
+  font-size: 14px;
 }
 
-.run-list-item .run-time {
-  font-size: 11px;
+.run-list-meta {
+  font-size: 12px;
   color: var(--muted);
 }
 
-/* --- 23. Dashboard --- */
+/* --- 21. Dashboard --- */
 .dashboard {
+  padding: 0;
+}
+
+.dashboard-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 12px;
+}
+
+.dashboard-stats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
-  padding: 16px 0;
 }
 
-/* --- 24. Stat Card --- */
+/* --- 22. Stat Card --- */
 .stat-card {
-  padding: 20px;
-  border: 1px solid var(--border);
+  padding: 24px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg);
   box-shadow: var(--shadow-sm);
   text-align: center;
+  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
+.stat-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.stat-icon {
+  margin-bottom: 8px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.stat-active .stat-icon { color: var(--status-in-progress); opacity: 1; }
+.stat-completed .stat-icon { color: var(--status-completed); opacity: 1; }
+.stat-errors .stat-icon { color: var(--status-error); opacity: 1; }
+
 .stat-card .stat-number {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--fg);
   line-height: 1.2;
@@ -552,10 +745,11 @@ html, body {
   color: var(--muted);
   margin-top: 4px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  font-weight: 500;
 }
 
-/* --- 25. Empty State --- */
+/* --- 23. Empty State --- */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -568,12 +762,7 @@ html, body {
   gap: 8px;
 }
 
-.empty-state .empty-icon {
-  font-size: 32px;
-  opacity: 0.5;
-}
-
-/* --- 26. Badge --- */
+/* --- 24. Badge --- */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -589,25 +778,7 @@ html, body {
   line-height: 1;
 }
 
-/* --- 27. Scrollbar Styling (Log Viewer) --- */
-.log-viewer::-webkit-scrollbar {
-  width: 6px;
-}
-
-.log-viewer::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.log-viewer::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
-}
-
-.log-viewer::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-
-/* General scrollbar styling */
+/* --- 25. Scrollbar Styling --- */
 .sidebar::-webkit-scrollbar,
 .main-content::-webkit-scrollbar {
   width: 6px;
@@ -624,7 +795,7 @@ html, body {
   border-radius: 3px;
 }
 
-/* --- 28. Utility --- */
+/* --- 26. Utility --- */
 .visually-hidden {
   position: absolute;
   width: 1px;

@@ -1,4 +1,6 @@
 import { html } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { iconSvg, Sun, Moon, Activity, Archive } from '../utils/icons.js';
 
 export function sidebarView(state, route, connectionState, { onNavigate, onThemeToggle }) {
   const { runs, preferences } = state;
@@ -11,6 +13,8 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
   const connLabel = connectionState === 'open' ? 'Connected'
     : connectionState === 'reconnecting' ? 'Reconnecting\u2026' : 'Disconnected';
 
+  const themeIcon = preferences.theme === 'dark' ? iconSvg(Sun, 18) : iconSvg(Moon, 18);
+
   return html`
     <aside class="sidebar ${preferences.sidebarCollapsed ? 'collapsed' : ''}">
       <div class="sidebar-logo">
@@ -21,13 +25,19 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
         <div class="sidebar-section-header">Pipeline</div>
         <div class="sidebar-item ${route.section === 'active' ? 'active' : ''}"
              @click=${() => onNavigate('active')}>
-          Active
-          ${activeCount > 0 ? html`<span class="badge">${activeCount}</span>` : ''}
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Activity, 16))}
+            <span>Active</span>
+          </span>
+          ${activeCount > 0 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>` : ''}
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
              @click=${() => onNavigate('history')}>
-          History
-          ${historyCount > 0 ? html`<span class="badge">${historyCount}</span>` : ''}
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Archive, 16))}
+            <span>History</span>
+          </span>
+          ${historyCount > 0 ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>` : ''}
         </div>
       </div>
 
@@ -36,9 +46,11 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
           <span class="conn-dot"></span>
           <span class="conn-label">${connLabel}</span>
         </div>
-        <button class="theme-toggle" @click=${onThemeToggle}>
-          ${preferences.theme === 'dark' ? '\u2600' : '\u263E'}
-        </button>
+        <button
+          class="theme-toggle-btn"
+          aria-label="Toggle theme"
+          @click=${onThemeToggle}
+        >${unsafeHTML(themeIcon)}</button>
       </div>
     </aside>
   `;

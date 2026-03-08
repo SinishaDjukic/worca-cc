@@ -7,7 +7,17 @@ import { sidebarView } from './views/sidebar.js';
 import { runDetailView } from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
-import { logViewerView } from './views/log-viewer.js';
+import { logViewerView, writeLogLine, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
+
+// Register Shoelace components (tree-shaken — only imports what we use)
+import '@shoelace-style/shoelace/dist/components/details/details.js';
+import '@shoelace-style/shoelace/dist/components/select/select.js';
+import '@shoelace-style/shoelace/dist/components/option/option.js';
+import '@shoelace-style/shoelace/dist/components/input/input.js';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
+
+import '@shoelace-style/shoelace/dist/components/badge/badge.js';
+import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
 const store = createStore();
 const ws = createWsClient();
@@ -44,13 +54,16 @@ ws.on('run-update', (payload) => {
 ws.on('log-line', (payload) => {
   if (payload) {
     store.appendLog(payload);
+    writeLogLine(payload);
   }
 });
 
 ws.on('log-bulk', (payload) => {
   if (payload && Array.isArray(payload.lines)) {
     for (const line of payload.lines) {
-      store.appendLog({ stage: payload.stage, line });
+      const entry = { stage: payload.stage, line };
+      store.appendLog(entry);
+      writeLogLine(entry);
     }
   }
 });
@@ -100,11 +113,16 @@ onHashChange((newRoute) => {
     ws.send('unsubscribe-run').catch(() => {});
     ws.send('unsubscribe-log').catch(() => {});
     store.clearLog();
+    clearTerminal();
   }
 
   if (route.runId && route.runId !== prevRunId) {
     ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
     ws.send('subscribe-log', { stage: null }).catch(() => {});
+  }
+
+  if (!route.runId && prevRunId) {
+    disposeTerminal();
   }
 
   rerender();
@@ -130,12 +148,16 @@ function handleThemeToggle() {
 
 function handleStageFilter(stage) {
   logFilter = stage;
+  clearTerminal();
+  store.clearLog();
+  ws.send('unsubscribe-log').catch(() => {});
+  ws.send('subscribe-log', { stage: stage === '*' ? null : stage }).catch(() => {});
   rerender();
 }
 
 function handleSearch(term) {
   logSearch = term;
-  rerender();
+  searchTerminal(term);
 }
 
 function handleToggleAutoScroll() {
@@ -207,10 +229,9 @@ function rerender() {
     </div>
   `, appEl);
 
-  // Auto-scroll log viewer
-  if (autoScroll) {
-    const logEl = document.getElementById('log-lines');
-    if (logEl) logEl.scrollTop = logEl.scrollHeight;
+  // Mount xterm terminal after render if in run view
+  if (route.runId) {
+    mountTerminal(route.runId);
   }
 }
 

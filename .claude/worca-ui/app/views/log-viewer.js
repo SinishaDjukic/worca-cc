@@ -1,34 +1,169 @@
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { iconSvg, ArrowDown, Pause, Search } from '../utils/icons.js';
+
+// ANSI color palette for stage tags
+const STAGE_COLORS = [
+  '\x1b[36m',  // cyan
+  '\x1b[33m',  // yellow
+  '\x1b[35m',  // magenta
+  '\x1b[32m',  // green
+  '\x1b[34m',  // blue
+  '\x1b[91m',  // bright red
+  '\x1b[96m',  // bright cyan
+  '\x1b[93m',  // bright yellow
+];
+const RESET = '\x1b[0m';
+const DIM = '\x1b[2m';
+
+const stageColorCache = new Map();
+let colorIdx = 0;
+
+function stageColor(stage) {
+  if (!stageColorCache.has(stage)) {
+    stageColorCache.set(stage, STAGE_COLORS[colorIdx % STAGE_COLORS.length]);
+    colorIdx++;
+  }
+  return stageColorCache.get(stage);
+}
+
+// Terminal state (module-level singleton)
+let terminal = null;
+let fitAddon = null;
+let searchAddon = null;
+let lastRunId = null;
+let resizeObserver = null;
+
+async function ensureTerminal(container) {
+  if (terminal && container.querySelector('.xterm')) {
+    fitAddon.fit();
+    return;
+  }
+
+  // Lazy-load xterm to keep initial bundle light when not in run view
+  const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
+    import('xterm'),
+    import('@xterm/addon-fit'),
+    import('@xterm/addon-search'),
+  ]);
+
+  terminal = new Terminal({
+    theme: {
+      background: '#0f172a',
+      foreground: '#e2e8f0',
+      cursor: '#60a5fa',
+      selectionBackground: 'rgba(96, 165, 250, 0.3)',
+    },
+    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+    fontSize: 13,
+    lineHeight: 1.4,
+    scrollback: 50000,
+    convertEol: true,
+    cursorBlink: false,
+    disableStdin: true,
+  });
+
+  fitAddon = new FitAddon();
+  searchAddon = new SearchAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.loadAddon(searchAddon);
+
+  terminal.open(container);
+  fitAddon.fit();
+
+  // Observe container resize
+  resizeObserver = new ResizeObserver(() => {
+    if (fitAddon) fitAddon.fit();
+  });
+  resizeObserver.observe(container);
+}
+
+export function writeLogLine(entry) {
+  if (!terminal) return;
+  const ts = entry.timestamp ? `${DIM}${entry.timestamp}${RESET} ` : '';
+  const stage = entry.stage ? `${stageColor(entry.stage)}[${entry.stage.toUpperCase()}]${RESET} ` : '';
+  const msg = entry.line || entry;
+  terminal.writeln(`${ts}${stage}${msg}`);
+}
+
+export function clearTerminal() {
+  if (terminal) terminal.clear();
+  stageColorCache.clear();
+  colorIdx = 0;
+}
+
+export function disposeTerminal() {
+  if (resizeObserver) resizeObserver.disconnect();
+  if (terminal) terminal.dispose();
+  terminal = null;
+  fitAddon = null;
+  searchAddon = null;
+  resizeObserver = null;
+  lastRunId = null;
+}
+
+export function searchTerminal(term) {
+  if (searchAddon && term) {
+    searchAddon.findNext(term, { incremental: true });
+  }
+}
+
+export function getTerminalInstance() {
+  return terminal;
+}
+
+/**
+ * Mount the terminal into the container after lit-html renders.
+ * Call this from main.js after rerender().
+ */
+export async function mountTerminal(runId) {
+  const container = document.getElementById('log-terminal');
+  if (!container) return;
+
+  if (runId !== lastRunId) {
+    clearTerminal();
+    lastRunId = runId;
+  }
+
+  await ensureTerminal(container);
+}
 
 export function logViewerView(state, { onStageFilter, onSearch, onToggleAutoScroll, autoScroll }) {
   const { logLines } = state;
   const stages = [...new Set(logLines.map(l => l.stage).filter(Boolean))];
 
   return html`
-    <div class="log-viewer">
+    <div class="log-viewer-container">
       <div class="log-controls">
-        <select class="log-stage-filter" @change=${(e) => onStageFilter(e.target.value)}>
-          <option value="*">All Stages</option>
-          ${stages.map(s => html`<option value="${s}">${s}</option>`)}
-        </select>
-        <input class="log-search" type="text" placeholder="Filter logs\u2026"
-               @input=${(e) => onSearch(e.target.value)} />
-        <button class="log-autoscroll-btn ${autoScroll ? 'active' : ''}"
-                @click=${onToggleAutoScroll}
-                title="${autoScroll ? 'Auto-scroll on' : 'Auto-scroll off'}">
-          ${autoScroll ? '\u2193 Auto' : '\u2193 Paused'}
-        </button>
+        <sl-select
+          placeholder="All Stages"
+          size="small"
+          clearable
+          @sl-change=${(e) => onStageFilter(e.target.value || '*')}
+        >
+          ${stages.map(s => html`<sl-option value="${s}">${s}</sl-option>`)}
+        </sl-select>
+        <sl-input
+          class="log-search"
+          type="text"
+          placeholder="Search logs\u2026"
+          size="small"
+          clearable
+          @sl-input=${(e) => onSearch(e.target.value)}
+        >
+          <span slot="prefix">${unsafeHTML(iconSvg(Search, 14))}</span>
+        </sl-input>
+        <sl-button
+          size="small"
+          variant="${autoScroll ? 'primary' : 'default'}"
+          @click=${onToggleAutoScroll}
+        >
+          ${unsafeHTML(iconSvg(autoScroll ? ArrowDown : Pause, 14))}
+          ${autoScroll ? 'Auto' : 'Paused'}
+        </sl-button>
       </div>
-      <div class="log-lines" id="log-lines">
-        ${logLines.length === 0
-          ? html`<div class="log-empty">No log output yet</div>`
-          : logLines.map(entry => html`
-            <div class="log-line">
-              ${entry.timestamp ? html`<span class="log-timestamp">${entry.timestamp}</span>` : nothing}
-              ${entry.stage ? html`<span class="log-stage-tag">${entry.stage}</span>` : nothing}
-              <span class="log-text">${entry.line || entry}</span>
-            </div>
-          `)}
+      <div class="log-terminal-wrapper">
+        <div id="log-terminal" class="log-terminal"></div>
       </div>
     </div>
   `;
