@@ -46,4 +46,29 @@ describe('watcher', () => {
     expect(runs.length).toBe(1);
     expect(runs[0].active).toBe(false);
   });
+
+  it('discoverRuns preserves iterations array in status', () => {
+    const status = {
+      started_at: '2026-03-08T12:00:00Z',
+      stage: 'implement',
+      work_request: { title: 'iter test' },
+      stages: {
+        plan: { status: 'completed' },
+        implement: {
+          status: 'in_progress',
+          iterations: [
+            { iteration: 1, files_changed: 3 },
+            { iteration: 2, files_changed: 1 }
+          ]
+        }
+      }
+    };
+    writeFileSync(join(dir, 'status.json'), JSON.stringify(status));
+    const runs = discoverRuns(dir);
+    expect(runs.length).toBe(1);
+    expect(runs[0].stages.implement.iterations).toEqual([
+      { iteration: 1, files_changed: 3 },
+      { iteration: 2, files_changed: 1 }
+    ]);
+  });
 });

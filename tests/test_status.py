@@ -2,7 +2,7 @@
 
 import json
 
-from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status
+from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status, start_iteration, complete_iteration
 
 
 # --- load_status ---
@@ -164,3 +164,85 @@ def test_init_status_has_pr_review_outcome():
     wr = {"title": "Task"}
     result = init_status(wr, "feat/task")
     assert result["pr_review_outcome"] is None
+
+
+# --- start_iteration ---
+
+def test_start_iteration_creates_list():
+    status = {"stages": {"plan": {"status": "pending"}}}
+    iteration = start_iteration(status, "plan")
+    assert "iterations" in status["stages"]["plan"]
+    assert len(status["stages"]["plan"]["iterations"]) == 1
+    assert iteration["status"] == "in_progress"
+    assert "started_at" in iteration
+
+
+def test_start_iteration_appends():
+    status = {"stages": {"plan": {"status": "running"}}}
+    start_iteration(status, "plan")
+    start_iteration(status, "plan")
+    assert len(status["stages"]["plan"]["iterations"]) == 2
+
+
+def test_start_iteration_sets_number():
+    status = {"stages": {"implement": {}}}
+    first = start_iteration(status, "implement")
+    second = start_iteration(status, "implement")
+    assert first["number"] == 1
+    assert second["number"] == 2
+
+
+def test_start_iteration_updates_iteration_counter():
+    status = {"stages": {"test": {}}}
+    start_iteration(status, "test")
+    assert status["stages"]["test"]["iteration"] == 1
+    start_iteration(status, "test")
+    assert status["stages"]["test"]["iteration"] == 2
+
+
+def test_start_iteration_passes_kwargs():
+    status = {"stages": {"plan": {}}}
+    iteration = start_iteration(status, "plan", agent="planner", model="opus", trigger="human")
+    assert iteration["agent"] == "planner"
+    assert iteration["model"] == "opus"
+    assert iteration["trigger"] == "human"
+
+
+# --- complete_iteration ---
+
+def test_complete_iteration_sets_fields():
+    status = {"stages": {"plan": {}}}
+    start_iteration(status, "plan")
+    completed = complete_iteration(
+        status, "plan",
+        status="complete",
+        completed_at="2026-03-09T00:00:00+00:00",
+        duration_ms=1500,
+        turns=3,
+        cost_usd=0.05,
+    )
+    assert completed["status"] == "complete"
+    assert completed["completed_at"] == "2026-03-09T00:00:00+00:00"
+    assert completed["duration_ms"] == 1500
+    assert completed["turns"] == 3
+    assert completed["cost_usd"] == 0.05
+
+
+def test_complete_iteration_merges_output():
+    status = {"stages": {"implement": {}}}
+    start_iteration(status, "implement")
+    output = {"files_changed": ["a.py", "b.py"], "summary": "Added feature"}
+    completed = complete_iteration(status, "implement", output=output)
+    assert completed["output"] == output
+    # Original fields from start_iteration are preserved
+    assert completed["number"] == 1
+    assert completed["started_at"] is not None
+
+
+def test_complete_iteration_on_empty_raises():
+    status = {"stages": {"plan": {"status": "pending"}}}
+    try:
+        complete_iteration(status, "plan")
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "No iterations to complete" in str(exc)

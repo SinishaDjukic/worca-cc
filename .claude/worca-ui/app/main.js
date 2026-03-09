@@ -8,7 +8,7 @@ import { runDetailView } from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
 import { settingsView, loadSettings } from './views/settings.js';
-import { logViewerView, writeLogLine, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
+import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
@@ -37,6 +37,7 @@ let autoScroll = true;
 let logFilter = '*';
 let logSearch = '';
 let settings = {};
+let logIterationFilter = null; // null = all iterations, number = specific
 let pipelineAction = null; // null | 'stopping' | 'resuming'
 let actionError = null; // null | string (error message, auto-clears)
 
@@ -71,6 +72,10 @@ ws.on('run-update', (payload) => {
 ws.on('log-line', (payload) => {
   if (payload) {
     store.appendLog(payload);
+    // Show iteration separator when iteration changes
+    if (payload.iteration && payload.iteration > 1 && payload._iterStart) {
+      writeIterationSeparator(payload.iteration);
+    }
     writeLogLine(payload);
   }
 });
@@ -169,10 +174,24 @@ function handleThemeToggle() {
 
 function handleStageFilter(stage) {
   logFilter = stage;
+  logIterationFilter = null;
   clearTerminal();
   store.clearLog();
   ws.send('unsubscribe-log').catch(() => {});
   ws.send('subscribe-log', { stage: stage === '*' ? null : stage, runId: route.runId }).catch(() => {});
+  rerender();
+}
+
+function handleIterationFilter(iteration) {
+  logIterationFilter = iteration;
+  clearTerminal();
+  store.clearLog();
+  ws.send('unsubscribe-log').catch(() => {});
+  ws.send('subscribe-log', {
+    stage: logFilter === '*' ? null : logFilter,
+    runId: route.runId,
+    iteration: iteration,
+  }).catch(() => {});
   rerender();
 }
 
@@ -326,14 +345,25 @@ function mainContentView() {
 
   if (route.runId) {
     const run = state.runs[route.runId];
+    // Compute iteration counts per stage from run status
+    const stageIterations = {};
+    if (run?.stages) {
+      for (const [key, stage] of Object.entries(run.stages)) {
+        const iters = stage.iterations || [];
+        if (iters.length > 0) stageIterations[key] = iters.length;
+      }
+    }
+    const logState = filteredLogState(state);
+    logState.currentLogStage = logFilter === '*' ? null : logFilter;
     return html`
       ${runDetailView(run, settings)}
-      ${logViewerView(filteredLogState(state), {
+      ${logViewerView(logState, {
         onStageFilter: handleStageFilter,
+        onIterationFilter: handleIterationFilter,
         onSearch: handleSearch,
         onToggleAutoScroll: handleToggleAutoScroll,
         autoScroll,
-        runStages: run?.stages ? Object.keys(run.stages) : []
+        stageIterations,
       })}
     `;
   }

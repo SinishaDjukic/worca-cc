@@ -1308,7 +1308,76 @@ sl-details.stage-panel::part(content) {
   border-color: var(--accent);
 }
 
-/* --- 27. Utility --- */
+/* --- 27. Iteration Tabs & Details --- */
+
+/* Iteration tabs inside stage panels */
+.stage-panel sl-tab-group {
+  --indicator-color: var(--accent);
+}
+
+.stage-panel sl-tab::part(base) {
+  font-size: 12px;
+  padding: 6px 12px;
+  gap: 4px;
+}
+
+.stage-panel sl-tab-panel::part(base) {
+  padding: 8px 0 0;
+}
+
+.iter-status-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.iter-status-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.iter-status-icon.success { color: var(--status-completed); }
+.iter-status-icon.failure { color: var(--status-error); }
+.iter-status-icon.in-progress { color: var(--status-in-progress); }
+
+/* Iteration detail inside tab panel */
+.iteration-detail {
+  padding: 4px 0;
+}
+
+.iteration-detail .detail-row {
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.iteration-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+}
+
+.iteration-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.iteration-outcome.success { color: var(--status-completed); }
+.iteration-outcome.failure { color: var(--status-error); }
+
+/* Iteration selector in log controls */
+.log-controls sl-select:nth-of-type(2) {
+  min-width: 140px;
+}
+
+/* --- 28. Utility --- */
 .visually-hidden {
   position: absolute;
   width: 1px;

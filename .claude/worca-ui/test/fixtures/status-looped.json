@@ -1,6 +1,6 @@
 {
   "started_at": "2026-03-08T10:00:00Z",
-  "completed_at": "2026-03-08T10:15:00Z",
+  "completed_at": "2026-03-08T10:45:00Z",
   "stage": "pr",
   "work_request": {
     "title": "Add user authentication",
@@ -53,50 +53,75 @@
     "implement": {
       "status": "completed",
       "started_at": "2026-03-08T10:03:00Z",
-      "completed_at": "2026-03-08T10:08:00Z",
-      "iteration": 2,
-      "task_progress": "5/5",
+      "completed_at": "2026-03-08T10:30:00Z",
+      "iteration": 3,
       "iterations": [
         {
           "number": 1,
           "status": "completed",
           "started_at": "2026-03-08T10:03:00Z",
-          "completed_at": "2026-03-08T10:05:30Z",
-          "duration_ms": 150000,
+          "completed_at": "2026-03-08T10:10:00Z",
+          "duration_ms": 420000,
           "agent": "implementer",
           "model": "sonnet",
-          "turns": 12,
-          "cost_usd": 0.10,
+          "turns": 15,
+          "cost_usd": 0.12,
           "trigger": "initial",
           "outcome": "test_failure"
         },
         {
           "number": 2,
           "status": "completed",
-          "started_at": "2026-03-08T10:05:30Z",
-          "completed_at": "2026-03-08T10:08:00Z",
-          "duration_ms": 150000,
+          "started_at": "2026-03-08T10:15:00Z",
+          "completed_at": "2026-03-08T10:23:00Z",
+          "duration_ms": 480000,
           "agent": "implementer",
           "model": "sonnet",
-          "turns": 10,
-          "cost_usd": 0.08,
+          "turns": 22,
+          "cost_usd": 0.18,
           "trigger": "test_failure",
+          "outcome": "review_changes"
+        },
+        {
+          "number": 3,
+          "status": "completed",
+          "started_at": "2026-03-08T10:25:00Z",
+          "completed_at": "2026-03-08T10:30:00Z",
+          "duration_ms": 300000,
+          "agent": "implementer",
+          "model": "opus",
+          "turns": 8,
+          "cost_usd": 0.45,
+          "trigger": "review_changes",
           "outcome": "success"
         }
       ]
     },
     "test": {
       "status": "completed",
-      "started_at": "2026-03-08T10:08:00Z",
-      "completed_at": "2026-03-08T10:11:00Z",
-      "iteration": 1,
+      "started_at": "2026-03-08T10:10:00Z",
+      "completed_at": "2026-03-08T10:35:00Z",
+      "iteration": 2,
       "iterations": [
         {
           "number": 1,
           "status": "completed",
-          "started_at": "2026-03-08T10:08:00Z",
-          "completed_at": "2026-03-08T10:11:00Z",
-          "duration_ms": 180000,
+          "started_at": "2026-03-08T10:10:00Z",
+          "completed_at": "2026-03-08T10:14:00Z",
+          "duration_ms": 240000,
+          "agent": "tester",
+          "model": "sonnet",
+          "turns": 10,
+          "cost_usd": 0.08,
+          "trigger": "initial",
+          "outcome": "test_failure"
+        },
+        {
+          "number": 2,
+          "status": "completed",
+          "started_at": "2026-03-08T10:31:00Z",
+          "completed_at": "2026-03-08T10:35:00Z",
+          "duration_ms": 240000,
           "agent": "tester",
           "model": "sonnet",
           "turns": 8,
@@ -108,20 +133,20 @@
     },
     "review": {
       "status": "completed",
-      "started_at": "2026-03-08T10:11:00Z",
-      "completed_at": "2026-03-08T10:13:00Z",
+      "started_at": "2026-03-08T10:35:00Z",
+      "completed_at": "2026-03-08T10:40:00Z",
       "iteration": 1,
       "iterations": [
         {
           "number": 1,
           "status": "completed",
-          "started_at": "2026-03-08T10:11:00Z",
-          "completed_at": "2026-03-08T10:13:00Z",
-          "duration_ms": 120000,
+          "started_at": "2026-03-08T10:35:00Z",
+          "completed_at": "2026-03-08T10:40:00Z",
+          "duration_ms": 300000,
           "agent": "guardian",
           "model": "opus",
-          "turns": 4,
-          "cost_usd": 0.30,
+          "turns": 6,
+          "cost_usd": 0.40,
           "trigger": "initial",
           "outcome": "success"
         }
@@ -129,20 +154,20 @@
     },
     "pr": {
       "status": "completed",
-      "started_at": "2026-03-08T10:13:00Z",
-      "completed_at": "2026-03-08T10:15:00Z",
+      "started_at": "2026-03-08T10:40:00Z",
+      "completed_at": "2026-03-08T10:45:00Z",
       "iteration": 1,
       "iterations": [
         {
           "number": 1,
           "status": "completed",
-          "started_at": "2026-03-08T10:13:00Z",
-          "completed_at": "2026-03-08T10:15:00Z",
-          "duration_ms": 120000,
+          "started_at": "2026-03-08T10:40:00Z",
+          "completed_at": "2026-03-08T10:45:00Z",
+          "duration_ms": 300000,
           "agent": "guardian",
           "model": "opus",
-          "turns": 3,
-          "cost_usd": 0.20,
+          "turns": 4,
+          "cost_usd": 0.25,
           "trigger": "initial",
           "outcome": "success"
         }

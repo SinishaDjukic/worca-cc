@@ -3,12 +3,12 @@
  * Handles client connections, message routing, file watching, and log tailing.
  */
 import { WebSocketServer } from 'ws';
-import { watch, existsSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { watch, existsSync, readFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns } from './watcher.js';
-import { readLastLines, resolveLogPath, countLines, readLinesFrom, listLogFiles } from './log-tailer.js';
+import { readLastLines, resolveLogPath, resolveIterationLogPath, countLines, readLinesFrom, listLogFiles, listIterationFiles } from './log-tailer.js';
 import { readSettings } from './settings-reader.js';
 import { readPreferences, writePreferences } from './preferences.js';
 
@@ -116,24 +116,24 @@ export function attachWsServer(httpServer, config) {
   // Track line counts per log file so we only send new lines
   const logLineCounts = new Map();
 
-  // Start watching a log file for a stage
-  function watchLogFile(stage) {
-    const logPath = resolveLogPath(worcaDir, stage);
-    const key = stage || '__orchestrator__';
+  // Start watching a single log file
+  function watchSingleLogFile(stage, filePath, iteration) {
+    const key = iteration != null ? `${stage}__iter${iteration}` : (stage || '__orchestrator__');
     if (logWatchers.has(key)) return;
     try {
-      if (!existsSync(logPath)) return;
-      logLineCounts.set(key, countLines(logPath));
-      const watcher = watch(logPath, (eventType) => {
+      if (!existsSync(filePath)) return;
+      logLineCounts.set(key, countLines(filePath));
+      const watcher = watch(filePath, (eventType) => {
         if (eventType === 'change') {
           try {
             const prevCount = logLineCounts.get(key) || 0;
-            const newLines = readLinesFrom(logPath, prevCount);
+            const newLines = readLinesFrom(filePath, prevCount);
             if (newLines.length > 0) {
               logLineCounts.set(key, prevCount + newLines.length);
               for (const line of newLines) {
                 broadcastToLogSubscribers(stage, 'log-line', {
                   stage: stage || 'orchestrator',
+                  iteration: iteration ?? undefined,
                   line,
                 });
               }
@@ -145,24 +145,72 @@ export function attachWsServer(httpServer, config) {
     } catch { /* ignore */ }
   }
 
+  // Start watching log files for a stage (handles both nested iteration dirs and flat files)
+  function watchLogFile(stage) {
+    if (!stage) {
+      // Orchestrator — single flat file
+      const logPath = resolveLogPath(worcaDir, null);
+      watchSingleLogFile(null, logPath, null);
+      return;
+    }
+    // Check if nested iteration directory exists
+    const stageDir = resolveLogPath(worcaDir, stage);
+    if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
+      // Watch each iteration file
+      const iters = listIterationFiles(worcaDir, stage);
+      for (const { iteration, path } of iters) {
+        watchSingleLogFile(stage, path, iteration);
+      }
+      // Watch the stage directory for new iteration files
+      const dirKey = `${stage}__dir`;
+      if (!logWatchers.has(dirKey)) {
+        try {
+          const dirWatcher = watch(stageDir, (eventType, filename) => {
+            if (filename && /^iter-\d+\.log$/.test(filename)) {
+              const iterNum = parseInt(filename.match(/\d+/)[0]);
+              const iterPath = join(stageDir, filename);
+              watchSingleLogFile(stage, iterPath, iterNum);
+            }
+          });
+          logWatchers.set(dirKey, dirWatcher);
+        } catch { /* ignore */ }
+      }
+    } else {
+      // Legacy flat file fallback
+      const logPath = join(worcaDir, 'logs', `${stage}.log`);
+      watchSingleLogFile(stage, logPath, null);
+    }
+  }
+
   // Watch all existing log files and the logs directory for new ones
   function watchAllLogFiles() {
     const logFiles = listLogFiles(worcaDir);
+    const watchedStages = new Set();
     for (const { stage } of logFiles) {
+      if (watchedStages.has(stage)) continue;
+      watchedStages.add(stage);
       const actualStage = stage === 'orchestrator' ? null : stage;
       watchLogFile(actualStage);
     }
-    // Watch logs directory for newly created .log files
+    // Watch logs directory for newly created files and directories
     const logsDir = join(worcaDir, 'logs');
     const dirKey = '__logs_dir__';
     if (logWatchers.has(dirKey)) return;
     if (!existsSync(logsDir)) return;
     try {
-      const dirWatcher = watch(logsDir, (eventType, filename) => {
-        if (filename && filename.endsWith('.log')) {
+      const dirWatcher = watch(logsDir, (_eventType, filename) => {
+        if (!filename) return;
+        if (filename.endsWith('.log')) {
+          // Legacy flat file
           const stage = filename.replace('.log', '');
           const actualStage = stage === 'orchestrator' ? null : stage;
           watchLogFile(actualStage);
+        } else {
+          // Could be a new stage directory — try watching it
+          const stagePath = join(logsDir, filename);
+          if (existsSync(stagePath) && statSync(stagePath).isDirectory()) {
+            watchLogFile(filename);
+          }
         }
       });
       logWatchers.set(dirKey, dirWatcher);
@@ -205,6 +253,71 @@ export function attachWsServer(httpServer, config) {
     for (const w of logWatchers.values()) w.close();
     logWatchers.clear();
   });
+
+  function _sendArchivedLogs(ws, archivedLogDir, stage, iteration) {
+    try {
+      if (stage) {
+        // Check nested dir first
+        const stageDir = join(archivedLogDir, stage);
+        if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
+          const files = readdirSync(stageDir)
+            .filter(f => /^iter-\d+\.log$/.test(f))
+            .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
+          for (const f of files) {
+            const iterNum = parseInt(f.match(/\d+/)[0]);
+            if (iteration != null && iterNum !== iteration) continue;
+            const lines = readLastLines(join(stageDir, f), 200);
+            if (lines.length > 0) {
+              ws.send(JSON.stringify({
+                id: `evt-${Date.now()}-iter${iterNum}`, ok: true, type: 'log-bulk',
+                payload: { stage, iteration: iterNum, lines },
+              }));
+            }
+          }
+        } else {
+          // Legacy flat file
+          const logPath = join(archivedLogDir, `${stage}.log`);
+          const lines = readLastLines(logPath, 200);
+          if (lines.length > 0) {
+            ws.send(JSON.stringify({
+              id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
+              payload: { stage, lines },
+            }));
+          }
+        }
+      } else {
+        // All stages — scan for both nested dirs and flat files
+        const entries = readdirSync(archivedLogDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith('.log')) {
+            const s2 = entry.name.replace('.log', '');
+            const lines = readLastLines(join(archivedLogDir, entry.name), 200);
+            if (lines.length > 0) {
+              ws.send(JSON.stringify({
+                id: `evt-${Date.now()}-${s2}`, ok: true, type: 'log-bulk',
+                payload: { stage: s2, lines },
+              }));
+            }
+          } else if (entry.isDirectory()) {
+            const stageDir2 = join(archivedLogDir, entry.name);
+            const iterFiles = readdirSync(stageDir2)
+              .filter(f => /^iter-\d+\.log$/.test(f))
+              .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
+            for (const f of iterFiles) {
+              const iterNum = parseInt(f.match(/\d+/)[0]);
+              const lines = readLastLines(join(stageDir2, f), 200);
+              if (lines.length > 0) {
+                ws.send(JSON.stringify({
+                  id: `evt-${Date.now()}-${entry.name}-iter${iterNum}`, ok: true, type: 'log-bulk',
+                  payload: { stage: entry.name, iteration: iterNum, lines },
+                }));
+              }
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
 
   async function handleMessage(ws, data) {
     let json;
@@ -266,7 +379,7 @@ export function attachWsServer(httpServer, config) {
 
     // subscribe-log
     if (req.type === 'subscribe-log') {
-      const { stage, runId } = req.payload || {};
+      const { stage, runId, iteration } = req.payload || {};
       const s = ensureSubs(ws);
       s.logStage = stage || '*';
       // Acknowledge the subscription
@@ -278,51 +391,55 @@ export function attachWsServer(httpServer, config) {
 
       if (isArchived) {
         // Static archived logs — send bulk, no file watching
+        _sendArchivedLogs(ws, archivedLogDir, stage, iteration);
+      } else {
+        // Live run — with file watching
         if (stage) {
-          const logPath = join(archivedLogDir, `${stage}.log`);
-          const lines = readLastLines(logPath, 200);
-          if (lines.length > 0) {
-            ws.send(JSON.stringify({
-              id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
-              payload: { stage, lines },
-            }));
-          }
-        } else {
-          try {
-            const files = readdirSync(archivedLogDir)
-              .filter(f => f.endsWith('.log'))
-              .map(f => ({ stage: f.replace('.log', ''), path: join(archivedLogDir, f) }));
-            for (const { stage: s2, path } of files) {
-              const lines = readLastLines(path, 200);
+          if (iteration != null) {
+            // Specific iteration
+            const logPath = resolveIterationLogPath(worcaDir, stage, iteration);
+            const lines = readLastLines(logPath, 200);
+            if (lines.length > 0) {
+              ws.send(JSON.stringify({
+                id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
+                payload: { stage, iteration, lines },
+              }));
+            }
+          } else {
+            // All iterations for this stage
+            const stageDir = resolveLogPath(worcaDir, stage);
+            if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
+              const iters = listIterationFiles(worcaDir, stage);
+              for (const { iteration: iterNum, path } of iters) {
+                const lines = readLastLines(path, 200);
+                if (lines.length > 0) {
+                  ws.send(JSON.stringify({
+                    id: `evt-${Date.now()}-iter${iterNum}`, ok: true, type: 'log-bulk',
+                    payload: { stage, iteration: iterNum, lines },
+                  }));
+                }
+              }
+            } else {
+              // Legacy flat file fallback
+              const logPath = join(worcaDir, 'logs', `${stage}.log`);
+              const lines = readLastLines(logPath, 200);
               if (lines.length > 0) {
                 ws.send(JSON.stringify({
-                  id: `evt-${Date.now()}-${s2}`, ok: true, type: 'log-bulk',
-                  payload: { stage: s2, lines },
+                  id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
+                  payload: { stage, lines },
                 }));
               }
             }
-          } catch { /* ignore */ }
-        }
-      } else {
-        // Live run — existing behavior with file watching
-        if (stage) {
-          const logPath = resolveLogPath(worcaDir, stage);
-          const lines = readLastLines(logPath, 200);
-          if (lines.length > 0) {
-            ws.send(JSON.stringify({
-              id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
-              payload: { stage, lines },
-            }));
           }
           watchLogFile(stage);
         } else {
           const logFiles = listLogFiles(worcaDir);
-          for (const { stage: s2, path } of logFiles) {
+          for (const { stage: s2, iteration: iterNum, path } of logFiles) {
             const lines = readLastLines(path, 200);
             if (lines.length > 0) {
               ws.send(JSON.stringify({
-                id: `evt-${Date.now()}-${s2}`, ok: true, type: 'log-bulk',
-                payload: { stage: s2, lines },
+                id: `evt-${Date.now()}-${s2}-${iterNum || 0}`, ok: true, type: 'log-bulk',
+                payload: { stage: s2, iteration: iterNum ?? undefined, lines },
               }));
             }
           }

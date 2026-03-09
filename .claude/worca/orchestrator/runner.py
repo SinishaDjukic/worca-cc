@@ -17,7 +17,10 @@ from worca.orchestrator.stages import (
     Stage, can_transition, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
 )
 from worca.orchestrator.work_request import WorkRequest
-from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status
+from worca.state.status import (
+    load_status, save_status, update_stage, set_milestone, init_status,
+    start_iteration, complete_iteration,
+)
 from worca.utils.claude_cli import run_agent, terminate_current
 from worca.utils.git import create_branch
 
@@ -238,10 +241,11 @@ def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> No
             _log(f"{stage_label} verdict: {outcome}", level)
 
 
-def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs") -> None:
-    """Save stage output to a log file for resume support."""
-    os.makedirs(logs_dir, exist_ok=True)
-    path = os.path.join(logs_dir, f"{stage.value}.json")
+def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
+    """Save stage output to a per-iteration log file for resume support."""
+    stage_dir = os.path.join(logs_dir, stage.value)
+    os.makedirs(stage_dir, exist_ok=True)
+    path = os.path.join(stage_dir, f"iter-{iteration}.json")
     with open(path, "w") as f:
         json.dump(result, f, indent=2)
 
@@ -251,6 +255,7 @@ def run_stage(
     context: dict,
     settings_path: str = ".claude/settings.json",
     msize: int = 1,
+    iteration: int = 1,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -259,6 +264,7 @@ def run_stage(
 
     Args:
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
+        iteration: Current iteration number (1-indexed). Controls log file path.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -267,7 +273,9 @@ def run_stage(
     config = get_stage_config(stage, settings_path=settings_path)
     max_turns = config["max_turns"] * msize
     prompt = context.get("prompt", "")
-    log_path = os.path.join(".worca/logs", f"{stage.value}.log")
+    log_dir = os.path.join(".worca/logs", stage.value)
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"iter-{iteration}.log")
     raw = run_agent(
         prompt=prompt,
         agent=_agent_path(config["agent"]),
@@ -435,33 +443,52 @@ def run_pipeline(
         else:
             stage_idx = 0
 
+        # Track triggers for loop-back iterations
+        _next_trigger = {}  # {stage_value: trigger_reason}
+
         while stage_idx < len(stage_order):
             current_stage = stage_order[stage_idx]
 
             # Update current stage tracker
             status["stage"] = current_stage.value
 
-            # Reset stage data and mark as in_progress
-            # Clear all previous loop data (completed_at, turns, cost_usd, error, etc.)
+            # Determine iteration trigger and number
+            trigger = _next_trigger.pop(current_stage.value, "initial")
             stage_config = get_stage_config(current_stage, settings_path=settings_path)
+
+            # Preserve existing iterations but reset stage-level status
+            prev_iterations = status.get("stages", {}).get(current_stage.value, {}).get("iterations", [])
+            prev_iteration_count = status.get("stages", {}).get(current_stage.value, {}).get("iteration")
             stage_started = datetime.now(timezone.utc).isoformat()
-            prev_iteration = status.get("stages", {}).get(current_stage.value, {}).get("iteration")
             status["stages"][current_stage.value] = {
                 "status": "in_progress",
                 "started_at": stage_started,
                 "agent": stage_config["agent"],
                 "model": stage_config["model"],
             }
-            if prev_iteration:
-                status["stages"][current_stage.value]["iteration"] = prev_iteration
+            if prev_iterations:
+                status["stages"][current_stage.value]["iterations"] = prev_iterations
+            if prev_iteration_count:
+                status["stages"][current_stage.value]["iteration"] = prev_iteration_count
+
+            # Start a new iteration record
+            iter_record = start_iteration(
+                status, current_stage.value,
+                agent=stage_config["agent"],
+                model=stage_config["model"],
+                trigger=trigger,
+            )
+            iter_num = iter_record["number"]
             save_status(status, status_path)
 
             stage_label = current_stage.value.upper()
-            _log(f"{stage_label} starting...")
+            iter_label = f" (iter {iter_num})" if iter_num > 1 else ""
+            _log(f"{stage_label}{iter_label} starting...")
             t0 = time.time()
 
             # Check shutdown flag between stages
             if _shutdown_requested:
+                complete_iteration(status, current_stage.value, status="interrupted")
                 update_stage(status, current_stage.value, status="interrupted")
                 save_status(status, status_path)
                 raise PipelineInterrupted("Pipeline interrupted before stage start")
@@ -472,9 +499,17 @@ def run_pipeline(
                 if current_stage == Stage.COORDINATE:
                     _ensure_beads_initialized()
 
-                result, raw_envelope = run_stage(current_stage, context, settings_path, msize=msize)
+                result, raw_envelope = run_stage(
+                    current_stage, context, settings_path,
+                    msize=msize, iteration=iter_num,
+                )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
+                complete_iteration(
+                    status, current_stage.value,
+                    status="interrupted",
+                    completed_at=stage_completed,
+                )
                 update_stage(
                     status, current_stage.value,
                     status="interrupted",
@@ -484,6 +519,12 @@ def run_pipeline(
                 raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}")
             except Exception as e:
                 stage_completed = datetime.now(timezone.utc).isoformat()
+                complete_iteration(
+                    status, current_stage.value,
+                    status="error",
+                    completed_at=stage_completed,
+                    error=str(e),
+                )
                 update_stage(
                     status, current_stage.value,
                     status="error",
@@ -494,29 +535,44 @@ def run_pipeline(
                 raise
 
             elapsed = time.time() - t0
-            _log(f"{stage_label} completed ({_format_duration(elapsed)})", "ok")
+            _log(f"{stage_label}{iter_label} completed ({_format_duration(elapsed)})", "ok")
 
             # Log detailed metrics
             if isinstance(raw_envelope, dict):
                 _log_stage_metrics(stage_label, result, raw_envelope)
 
-            # Save full envelope for resume/debugging
-            _save_stage_output(current_stage, raw_envelope, logs_dir)
+            # Save full envelope for resume/debugging (per-iteration)
+            _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
 
-            # Mark stage completed with timing and metrics
+            # Build iteration completion kwargs
             stage_completed = datetime.now(timezone.utc).isoformat()
+            iter_extras = {
+                "status": "completed",
+                "completed_at": stage_completed,
+                "duration_ms": int(elapsed * 1000),
+            }
+            if isinstance(raw_envelope, dict):
+                if raw_envelope.get("num_turns"):
+                    iter_extras["turns"] = raw_envelope["num_turns"]
+                if raw_envelope.get("total_cost_usd"):
+                    iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+            if isinstance(result, dict):
+                iter_extras["output"] = result
+
+            # Mark stage and iteration completed
             stage_extras = {"status": "completed", "completed_at": stage_completed}
             if isinstance(raw_envelope, dict):
                 if raw_envelope.get("num_turns"):
                     stage_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     stage_extras["cost_usd"] = raw_envelope["total_cost_usd"]
-            update_stage(status, current_stage.value, **stage_extras)
-            save_status(status, status_path)
 
             # Milestone gate after PLAN
             if current_stage == Stage.PLAN:
                 approved = result.get("approved", True)
+                iter_extras["outcome"] = "success" if approved else "rejected"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
                 set_milestone(status, "plan_approved", approved)
                 save_status(status, status_path)
                 if not approved:
@@ -525,9 +581,13 @@ def run_pipeline(
                 _log("PLAN approved", "ok")
 
             # Handle test results
-            if current_stage == Stage.TEST:
+            elif current_stage == Stage.TEST:
                 passed = result.get("passed", False)
                 if not passed:
+                    iter_extras["outcome"] = "test_failure"
+                    complete_iteration(status, current_stage.value, **iter_extras)
+                    update_stage(status, current_stage.value, **stage_extras)
+                    save_status(status, status_path)
                     if Stage.IMPLEMENT not in stage_order:
                         _log("Tests failed but IMPLEMENT stage is disabled — treating as pass", "warn")
                     else:
@@ -539,17 +599,25 @@ def run_pipeline(
                             raise LoopExhaustedError(
                                 f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                             )
-                        update_stage(status, Stage.IMPLEMENT.value, iteration=loop_counters[loop_key])
-                        save_status(status, status_path)
+                        _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
                         stage_idx = stage_order.index(Stage.IMPLEMENT)
                         continue
+                else:
+                    iter_extras["outcome"] = "success"
+                    complete_iteration(status, current_stage.value, **iter_extras)
+                    update_stage(status, current_stage.value, **stage_extras)
+                    save_status(status, status_path)
                 _log(f"Tests passed", "ok")
 
             # Handle review results
-            if current_stage == Stage.REVIEW:
+            elif current_stage == Stage.REVIEW:
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
                 next_stage, status = handle_pr_review(outcome, status)
+                iter_extras["outcome"] = outcome
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, status_path)
                 if next_stage is None:
                     if outcome == "reject":
                         _log("PR rejected — stopping", "err")
@@ -567,8 +635,7 @@ def run_pipeline(
                             raise LoopExhaustedError(
                                 f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                             )
-                        update_stage(status, Stage.IMPLEMENT.value, iteration=loop_counters[loop_key])
-                        save_status(status, status_path)
+                        _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
                         stage_idx = stage_order.index(Stage.IMPLEMENT)
                         continue
                 elif next_stage == Stage.PLAN:
@@ -582,28 +649,36 @@ def run_pipeline(
                             raise LoopExhaustedError(
                                 f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
                             )
-                        update_stage(status, Stage.PLAN.value, iteration=loop_counters[loop_key])
-                        save_status(status, status_path)
+                        _next_trigger[Stage.PLAN.value] = "restart_planning"
                         stage_idx = stage_order.index(Stage.PLAN)
                         continue
+
+            # Default: complete iteration for stages without special handling
+            else:
+                iter_extras["outcome"] = "success"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, status_path)
 
             stage_idx += 1
 
         total_elapsed = time.time() - pipeline_t0
 
-        # Pipeline summary
+        # Pipeline summary — read from nested per-iteration log files
         total_cost = 0
         total_turns = 0
         for stage_file in ["plan", "coordinate", "implement", "test", "review", "pr"]:
-            log_path = os.path.join(logs_dir, f"{stage_file}.json")
-            if os.path.exists(log_path):
-                try:
-                    with open(log_path) as f:
-                        env = json.load(f)
-                    total_cost += env.get("total_cost_usd", 0) or 0
-                    total_turns += env.get("num_turns", 0) or 0
-                except (json.JSONDecodeError, OSError):
-                    pass
+            stage_dir = os.path.join(logs_dir, stage_file)
+            if os.path.isdir(stage_dir):
+                import glob
+                for iter_path in glob.glob(os.path.join(stage_dir, "iter-*.json")):
+                    try:
+                        with open(iter_path) as f:
+                            env = json.load(f)
+                        total_cost += env.get("total_cost_usd", 0) or 0
+                        total_turns += env.get("num_turns", 0) or 0
+                    except (json.JSONDecodeError, OSError):
+                        pass
 
         # Mark pipeline as completed with timestamp
         status["completed_at"] = datetime.now(timezone.utc).isoformat()

@@ -4,6 +4,7 @@ Provides functions to find where to resume a pipeline, reconstruct context
 from saved stage outputs, and check if a status file supports resumption.
 """
 
+import glob
 import json
 import os
 from typing import Optional
@@ -50,6 +51,15 @@ def reconstruct_context(status: dict, logs_dir: str = ".worca/logs") -> dict:
     for stage in STAGE_ORDER:
         stage_status = stages.get(stage.value, {}).get("status", "pending")
         if stage_status == "completed":
+            # Try nested per-iteration log files first
+            stage_dir = os.path.join(logs_dir, stage.value)
+            if os.path.isdir(stage_dir):
+                iter_files = sorted(glob.glob(os.path.join(stage_dir, "iter-*.json")))
+                if iter_files:
+                    with open(iter_files[-1]) as f:
+                        context[stage.value] = json.load(f)
+                    continue
+            # Fall back to legacy flat file
             log_path = os.path.join(logs_dir, f"{stage.value}.json")
             if os.path.exists(log_path):
                 with open(log_path) as f:

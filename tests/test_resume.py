@@ -147,3 +147,44 @@ def test_can_resume_false_all_pending(tmp_path):
     with open(status_path, "w") as f:
         json.dump(status, f)
     assert can_resume(status_path) is False
+
+
+def test_reconstruct_context_reads_nested_logs(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "plan"))
+    os.makedirs(os.path.join(logs_dir, "coordinate"))
+
+    with open(os.path.join(logs_dir, "plan", "iter-1.json"), "w") as f:
+        json.dump({"approach": "modular"}, f)
+    with open(os.path.join(logs_dir, "coordinate", "iter-1.json"), "w") as f:
+        json.dump({"tasks": ["a", "b"]}, f)
+
+    status = {
+        "stages": {
+            "plan": {"status": "completed"},
+            "coordinate": {"status": "completed"},
+            "implement": {"status": "in_progress"},
+        }
+    }
+    ctx = reconstruct_context(status, logs_dir)
+    assert ctx["plan"] == {"approach": "modular"}
+    assert ctx["coordinate"] == {"tasks": ["a", "b"]}
+    assert "implement" not in ctx
+
+
+def test_reconstruct_context_picks_latest_iteration(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "implement"))
+
+    with open(os.path.join(logs_dir, "implement", "iter-1.json"), "w") as f:
+        json.dump({"files_changed": 2}, f)
+    with open(os.path.join(logs_dir, "implement", "iter-2.json"), "w") as f:
+        json.dump({"files_changed": 1}, f)
+
+    status = {
+        "stages": {
+            "implement": {"status": "completed"},
+        }
+    }
+    ctx = reconstruct_context(status, logs_dir)
+    assert ctx["implement"] == {"files_changed": 1}

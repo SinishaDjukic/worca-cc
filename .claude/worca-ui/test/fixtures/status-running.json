@@ -6,9 +6,66 @@
     "branch": "feature/user-auth"
   },
   "stages": {
-    "plan": { "status": "completed", "started_at": "2026-03-08T10:00:00Z", "completed_at": "2026-03-08T10:02:00Z" },
-    "coordinate": { "status": "completed", "started_at": "2026-03-08T10:02:00Z", "completed_at": "2026-03-08T10:03:00Z" },
-    "implement": { "status": "in_progress", "started_at": "2026-03-08T10:03:00Z", "task_progress": "2/5", "iteration": 1 },
+    "plan": {
+      "status": "completed",
+      "started_at": "2026-03-08T10:00:00Z",
+      "completed_at": "2026-03-08T10:02:00Z",
+      "iteration": 1,
+      "iterations": [
+        {
+          "number": 1,
+          "status": "completed",
+          "started_at": "2026-03-08T10:00:00Z",
+          "completed_at": "2026-03-08T10:02:00Z",
+          "duration_ms": 120000,
+          "agent": "planner",
+          "model": "opus",
+          "turns": 5,
+          "cost_usd": 0.35,
+          "trigger": "initial",
+          "outcome": "success"
+        }
+      ]
+    },
+    "coordinate": {
+      "status": "completed",
+      "started_at": "2026-03-08T10:02:00Z",
+      "completed_at": "2026-03-08T10:03:00Z",
+      "iteration": 1,
+      "iterations": [
+        {
+          "number": 1,
+          "status": "completed",
+          "started_at": "2026-03-08T10:02:00Z",
+          "completed_at": "2026-03-08T10:03:00Z",
+          "duration_ms": 60000,
+          "agent": "coordinator",
+          "model": "opus",
+          "turns": 3,
+          "cost_usd": 0.15,
+          "trigger": "initial",
+          "outcome": "success"
+        }
+      ]
+    },
+    "implement": {
+      "status": "in_progress",
+      "started_at": "2026-03-08T10:03:00Z",
+      "task_progress": "2/5",
+      "iteration": 1,
+      "iterations": [
+        {
+          "number": 1,
+          "status": "in_progress",
+          "started_at": "2026-03-08T10:03:00Z",
+          "agent": "implementer",
+          "model": "sonnet",
+          "turns": 7,
+          "cost_usd": 0.05,
+          "trigger": "initial"
+        }
+      ]
+    },
     "test": { "status": "pending" },
     "review": { "status": "pending" },
     "pr": { "status": "pending" }

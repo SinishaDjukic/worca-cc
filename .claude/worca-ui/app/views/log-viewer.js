@@ -128,9 +128,17 @@ export async function mountTerminal(runId) {
   await ensureTerminal(container);
 }
 
-export function logViewerView(state, { onStageFilter, onSearch, onToggleAutoScroll, autoScroll }) {
+export function writeIterationSeparator(iterNum) {
+  if (!terminal) return;
+  terminal.writeln(`\n${DIM}${'─'.repeat(40)} Iteration ${iterNum} ${'─'.repeat(40)}${RESET}\n`);
+}
+
+export function logViewerView(state, { onStageFilter, onIterationFilter, onSearch, onToggleAutoScroll, autoScroll, stageIterations }) {
   const { logLines } = state;
   const stages = [...new Set(logLines.map(l => l.stage).filter(Boolean))];
+  const currentStage = state.currentLogStage;
+  const iterCount = stageIterations?.[currentStage] || 0;
+  const showIterationSelector = currentStage && currentStage !== '*' && iterCount > 1;
 
   return html`
     <div class="log-viewer-container">
@@ -143,6 +151,18 @@ export function logViewerView(state, { onStageFilter, onSearch, onToggleAutoScro
         >
           ${stages.map(s => html`<sl-option value="${s}">${s}</sl-option>`)}
         </sl-select>
+        ${showIterationSelector ? html`
+          <sl-select
+            placeholder="All Iterations"
+            size="small"
+            clearable
+            @sl-change=${(e) => onIterationFilter(e.target.value ? parseInt(e.target.value) : null)}
+          >
+            ${Array.from({length: iterCount}, (_, i) =>
+              html`<sl-option value="${i + 1}">Iteration ${i + 1}</sl-option>`
+            )}
+          </sl-select>
+        ` : nothing}
         <sl-input
           class="log-search"
           type="text"
