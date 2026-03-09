@@ -30,6 +30,8 @@ def main():
                         metavar="[1-10]",
                         help="Loop multiplier for max loop iterations (default: 1)")
     parser.add_argument("--plan", help="Path to pre-made plan file (skips PLAN stage)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume a previous run from status.json instead of starting fresh")
 
     args = parser.parse_args()
 
@@ -53,6 +55,7 @@ def main():
         status = run_pipeline(
             work_request,
             plan_file=args.plan,
+            resume=args.resume,
             settings_path=args.settings,
             status_path=os.path.join(args.status_dir, "status.json"),
             msize=args.msize,

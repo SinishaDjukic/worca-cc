@@ -360,6 +360,7 @@ def _ensure_beads_initialized() -> None:
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
+    resume: bool = False,
     settings_path: str = ".claude/settings.json",
     status_path: str = ".worca/status.json",
     msize: int = 1,
@@ -377,6 +378,9 @@ def run_pipeline(
     Args:
         plan_file: Path to a pre-made plan file. When provided, its content is
             written to MASTER_PLAN.md and the PLAN stage is skipped.
+        resume: If True, attempt to resume a previous run for the same work
+            request from status.json. If False (default), always start fresh
+            and archive any existing run.
         msize: Multiplier for max_turns per stage (1-10).
         mloops: Multiplier for max loop iterations (1-10).
 
@@ -397,8 +401,8 @@ def run_pipeline(
     existing = load_status(status_path)
     resume_stage = None
 
-    if existing and _is_same_work_request(existing.get("work_request", {}), work_request):
-        # Same work request — try to resume
+    if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
+        # Explicit resume requested and same work request found
         from worca.orchestrator.resume import find_resume_point
         resume_stage = find_resume_point(existing)
         if resume_stage is not None:
@@ -409,7 +413,7 @@ def run_pipeline(
             _log("Pipeline already completed", "ok")
             return existing  # all done
     else:
-        # Different work request or no existing run — archive and start fresh
+        # Fresh start — archive any existing run
         if existing:
             old_title = existing.get("work_request", {}).get("title", "unknown")
             _log(f"Archiving previous run: {old_title}")
