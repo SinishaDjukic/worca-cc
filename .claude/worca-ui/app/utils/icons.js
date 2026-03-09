@@ -21,6 +21,14 @@ import Activity from 'lucide/dist/esm/icons/activity';
 import Archive from 'lucide/dist/esm/icons/archive';
 import Search from 'lucide/dist/esm/icons/search';
 import ArrowLeft from 'lucide/dist/esm/icons/arrow-left';
+import Square from 'lucide/dist/esm/icons/square';
+import Play from 'lucide/dist/esm/icons/play';
+import Users from 'lucide/dist/esm/icons/users';
+import Shield from 'lucide/dist/esm/icons/shield';
+import GitBranch from 'lucide/dist/esm/icons/git-branch';
+import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
+import Save from 'lucide/dist/esm/icons/save';
+import Settings from 'lucide/dist/esm/icons/settings';
 
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -46,5 +54,6 @@ export {
   Circle, CircleCheck, CircleAlert, Loader,
   Sun, Moon, Flag, RefreshCw, ArrowDown, Pause,
   Zap, Clock, AlertTriangle,
-  Activity, Archive, Search, ArrowLeft
+  Activity, Archive, Search, ArrowLeft,
+  Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings
 };
