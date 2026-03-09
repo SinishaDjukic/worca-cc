@@ -3,10 +3,12 @@
  * Handles client connections, message routing, file watching, and log tailing.
  */
 import { WebSocketServer } from 'ws';
-import { watch, existsSync } from 'node:fs';
+import { watch, existsSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn, execFileSync } from 'node:child_process';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns } from './watcher.js';
-import { readLastLines, resolveLogPath } from './log-tailer.js';
+import { readLastLines, resolveLogPath, countLines, readLinesFrom, listLogFiles } from './log-tailer.js';
 import { readSettings } from './settings-reader.js';
 import { readPreferences, writePreferences } from './preferences.js';
 
@@ -111,6 +113,9 @@ export function attachWsServer(httpServer, config) {
     }
   } catch { /* ignore - dir may not exist yet */ }
 
+  // Track line counts per log file so we only send new lines
+  const logLineCounts = new Map();
+
   // Start watching a log file for a stage
   function watchLogFile(stage) {
     const logPath = resolveLogPath(worcaDir, stage);
@@ -118,20 +123,49 @@ export function attachWsServer(httpServer, config) {
     if (logWatchers.has(key)) return;
     try {
       if (!existsSync(logPath)) return;
+      logLineCounts.set(key, countLines(logPath));
       const watcher = watch(logPath, (eventType) => {
         if (eventType === 'change') {
           try {
-            const lines = readLastLines(logPath, 1);
-            if (lines.length > 0) {
-              broadcastToLogSubscribers(stage, 'log-line', {
-                stage: stage || 'orchestrator',
-                line: lines[lines.length - 1]
-              });
+            const prevCount = logLineCounts.get(key) || 0;
+            const newLines = readLinesFrom(logPath, prevCount);
+            if (newLines.length > 0) {
+              logLineCounts.set(key, prevCount + newLines.length);
+              for (const line of newLines) {
+                broadcastToLogSubscribers(stage, 'log-line', {
+                  stage: stage || 'orchestrator',
+                  line,
+                });
+              }
             }
           } catch { /* ignore */ }
         }
       });
       logWatchers.set(key, watcher);
+    } catch { /* ignore */ }
+  }
+
+  // Watch all existing log files and the logs directory for new ones
+  function watchAllLogFiles() {
+    const logFiles = listLogFiles(worcaDir);
+    for (const { stage } of logFiles) {
+      const actualStage = stage === 'orchestrator' ? null : stage;
+      watchLogFile(actualStage);
+    }
+    // Watch logs directory for newly created .log files
+    const logsDir = join(worcaDir, 'logs');
+    const dirKey = '__logs_dir__';
+    if (logWatchers.has(dirKey)) return;
+    if (!existsSync(logsDir)) return;
+    try {
+      const dirWatcher = watch(logsDir, (eventType, filename) => {
+        if (filename && filename.endsWith('.log')) {
+          const stage = filename.replace('.log', '');
+          const actualStage = stage === 'orchestrator' ? null : stage;
+          watchLogFile(actualStage);
+        }
+      });
+      logWatchers.set(dirKey, dirWatcher);
     } catch { /* ignore */ }
   }
 
@@ -232,17 +266,69 @@ export function attachWsServer(httpServer, config) {
 
     // subscribe-log
     if (req.type === 'subscribe-log') {
-      const { stage } = req.payload || {};
+      const { stage, runId } = req.payload || {};
       const s = ensureSubs(ws);
       s.logStage = stage || '*';
-      // Send last 100 lines as bulk
-      const logPath = resolveLogPath(worcaDir, stage || null);
-      const lines = readLastLines(logPath, 100);
-      ws.send(JSON.stringify(makeOk(req, {
-        stage: stage || 'orchestrator',
-        lines
-      })));
-      watchLogFile(stage || null);
+      // Acknowledge the subscription
+      ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
+
+      // Check if this is an archived run (logs in .worca/results/{runId}/)
+      const archivedLogDir = runId ? join(worcaDir, 'results', runId) : null;
+      const isArchived = archivedLogDir && existsSync(archivedLogDir);
+
+      if (isArchived) {
+        // Static archived logs — send bulk, no file watching
+        if (stage) {
+          const logPath = join(archivedLogDir, `${stage}.log`);
+          const lines = readLastLines(logPath, 200);
+          if (lines.length > 0) {
+            ws.send(JSON.stringify({
+              id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
+              payload: { stage, lines },
+            }));
+          }
+        } else {
+          try {
+            const files = readdirSync(archivedLogDir)
+              .filter(f => f.endsWith('.log'))
+              .map(f => ({ stage: f.replace('.log', ''), path: join(archivedLogDir, f) }));
+            for (const { stage: s2, path } of files) {
+              const lines = readLastLines(path, 200);
+              if (lines.length > 0) {
+                ws.send(JSON.stringify({
+                  id: `evt-${Date.now()}-${s2}`, ok: true, type: 'log-bulk',
+                  payload: { stage: s2, lines },
+                }));
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      } else {
+        // Live run — existing behavior with file watching
+        if (stage) {
+          const logPath = resolveLogPath(worcaDir, stage);
+          const lines = readLastLines(logPath, 200);
+          if (lines.length > 0) {
+            ws.send(JSON.stringify({
+              id: `evt-${Date.now()}`, ok: true, type: 'log-bulk',
+              payload: { stage, lines },
+            }));
+          }
+          watchLogFile(stage);
+        } else {
+          const logFiles = listLogFiles(worcaDir);
+          for (const { stage: s2, path } of logFiles) {
+            const lines = readLastLines(path, 200);
+            if (lines.length > 0) {
+              ws.send(JSON.stringify({
+                id: `evt-${Date.now()}-${s2}`, ok: true, type: 'log-bulk',
+                payload: { stage: s2, lines },
+              }));
+            }
+          }
+          watchAllLogFiles();
+        }
+      }
       return;
     }
 
@@ -270,6 +356,79 @@ export function attachWsServer(httpServer, config) {
       // Broadcast to all clients
       broadcast('preferences', merged);
       ws.send(JSON.stringify(makeOk(req, merged)));
+      return;
+    }
+
+    // stop-run: send SIGTERM to the running pipeline
+    if (req.type === 'stop-run') {
+      let pid = null;
+      const pidPath = join(worcaDir, 'pipeline.pid');
+
+      // Try PID file first
+      if (existsSync(pidPath)) {
+        try {
+          pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+          process.kill(pid, 0); // verify alive
+        } catch {
+          try { unlinkSync(pidPath); } catch {}
+          pid = null;
+        }
+      }
+
+      // Fallback: find pipeline process by command line
+      if (!pid) {
+        try {
+          const out = execFileSync('pgrep', ['-f', 'run_pipeline\\.py'], { encoding: 'utf8', timeout: 3000 });
+          const pids = out.trim().split('\n').map(s => parseInt(s, 10)).filter(n => n > 0);
+          if (pids.length > 0) pid = pids[0];
+        } catch { /* no matching process */ }
+      }
+
+      if (!pid) {
+        ws.send(JSON.stringify(makeError(req, 'not_running', 'No running pipeline found')));
+        return;
+      }
+
+      try {
+        process.kill(pid, 'SIGTERM');
+        ws.send(JSON.stringify(makeOk(req, { stopped: true, pid })));
+      } catch (e) {
+        try { unlinkSync(pidPath); } catch {}
+        ws.send(JSON.stringify(makeError(req, 'not_running', `Failed to stop pipeline: ${e.message}`)));
+      }
+      return;
+    }
+
+    // resume-run: spawn a new pipeline process with --resume
+    if (req.type === 'resume-run') {
+      const pidPath = join(worcaDir, 'pipeline.pid');
+      // Check not already running
+      if (existsSync(pidPath)) {
+        try {
+          const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+          process.kill(pid, 0); // throws if dead
+          ws.send(JSON.stringify(makeError(req, 'already_running', `Pipeline already running (PID ${pid})`)));
+          return;
+        } catch {
+          // Stale PID, safe to proceed
+          try { unlinkSync(pidPath); } catch {}
+        }
+      }
+      const statusPath = join(worcaDir, 'status.json');
+      if (!existsSync(statusPath)) {
+        ws.send(JSON.stringify(makeError(req, 'no_status', 'No status.json found to resume')));
+        return;
+      }
+      const env = { ...process.env };
+      delete env.CLAUDECODE;
+      const child = spawn('python', ['.claude/scripts/run_pipeline.py', '--resume'], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: process.cwd(),
+        env,
+      });
+      child.unref();
+      ws.send(JSON.stringify(makeOk(req, { resumed: true, pid: child.pid })));
       return;
     }
 

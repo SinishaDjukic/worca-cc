@@ -1,8 +1,8 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Sun, Moon, Activity, Archive } from '../utils/icons.js';
+import { iconSvg, Activity, Archive, Settings } from '../utils/icons.js';
 
-export function sidebarView(state, route, connectionState, { onNavigate, onThemeToggle }) {
+export function sidebarView(state, route, connectionState, { onNavigate }) {
   const { runs, preferences } = state;
   const runList = Object.values(runs);
   const activeCount = runList.filter(r => r.active).length;
@@ -12,8 +12,6 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
     : connectionState === 'reconnecting' ? 'reconnecting' : 'disconnected';
   const connLabel = connectionState === 'open' ? 'Connected'
     : connectionState === 'reconnecting' ? 'Reconnecting\u2026' : 'Disconnected';
-
-  const themeIcon = preferences.theme === 'dark' ? iconSvg(Sun, 18) : iconSvg(Moon, 18);
 
   return html`
     <aside class="sidebar ${preferences.sidebarCollapsed ? 'collapsed' : ''}">
@@ -27,7 +25,7 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
              @click=${() => onNavigate('active')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Activity, 16))}
-            <span>Active</span>
+            <span>Running</span>
           </span>
           ${activeCount > 0 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>` : ''}
         </div>
@@ -47,10 +45,10 @@ export function sidebarView(state, route, connectionState, { onNavigate, onTheme
           <span class="conn-label">${connLabel}</span>
         </div>
         <button
-          class="theme-toggle-btn"
-          aria-label="Toggle theme"
-          @click=${onThemeToggle}
-        >${unsafeHTML(themeIcon)}</button>
+          class="theme-toggle-btn ${route.section === 'settings' ? 'active' : ''}"
+          aria-label="Settings"
+          @click=${() => onNavigate('settings')}
+        >${unsafeHTML(iconSvg(Settings, 18))}</button>
       </div>
     </aside>
   `;

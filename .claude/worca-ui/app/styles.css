@@ -286,6 +286,77 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1.3;
 }
 
+.content-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.action-btn:hover {
+  background: var(--border);
+}
+
+.action-btn--danger {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.action-btn--danger:hover {
+  background: var(--status-error);
+  color: #ffffff;
+}
+
+.action-btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.action-btn--primary:hover {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+  background: var(--bg-secondary);
+  color: inherit;
+}
+
+.error-dialog-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+}
+.error-dialog-body p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.error-dialog-icon {
+  color: var(--status-error);
+  flex-shrink: 0;
+}
+
 /* --- 10. Run Header --- */
 .run-header {
   display: flex;
@@ -338,8 +409,8 @@ h1, h2, h3, h4, h5, h6 {
 
 .run-meta-grid {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 20px;
+  flex-direction: column;
+  gap: 6px;
   padding: 12px 16px;
   background: var(--bg-hover);
   border-radius: var(--radius-md);
@@ -347,6 +418,37 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 13px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.run-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.timing-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-strip-item {
+  white-space: nowrap;
+}
+
+.run-card .timing-strip {
+  font-size: 12px;
+  gap: 6px 16px;
+  padding-left: 26px;
+}
+
+.stage-detail .timing-strip {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 /* --- 11. Stage Timeline --- */
@@ -422,20 +524,7 @@ h1, h2, h3, h4, h5, h6 {
   letter-spacing: 0.04em;
 }
 
-/* --- 12. Pulse & Spin Animations --- */
-.stage-node.pulse .stage-icon {
-  animation: stage-pulse 2s ease-in-out infinite;
-}
-
-@keyframes stage-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.06);
-  }
-}
-
+/* --- 12. Spin Animation --- */
 .icon-spin {
   animation: icon-spin 1.5s linear infinite;
 }
@@ -443,23 +532,6 @@ h1, h2, h3, h4, h5, h6 {
 @keyframes icon-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-/* Rotating conic gradient for in-progress nodes */
-.stage-node.status-in-progress .stage-icon {
-  background: conic-gradient(from var(--spin-angle, 0deg), var(--status-in-progress), transparent, var(--status-in-progress));
-  background-clip: padding-box;
-  animation: conic-spin 2s linear infinite;
-}
-
-@keyframes conic-spin {
-  to { --spin-angle: 360deg; }
-}
-
-@property --spin-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
 }
 
 /* --- 13. Stage Connector --- */
@@ -476,6 +548,30 @@ h1, h2, h3, h4, h5, h6 {
 
 .stage-connector.completed {
   background: var(--status-completed);
+}
+
+/* --- 13b. Prompt Panel --- */
+.run-prompt-panel {
+  margin-bottom: 16px;
+}
+
+.run-prompt-summary {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.run-prompt-body {
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 8px 0;
 }
 
 /* --- 14. Stage Detail & Panel --- */
@@ -526,7 +622,33 @@ sl-details.stage-panel::part(content) {
 .stage-panel-label {
   font-weight: 500;
   font-size: 14px;
-  flex: 1;
+}
+
+.stage-panel-meta {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.stage-meta-icon {
+  display: inline-flex;
+  opacity: 0.6;
+}
+
+.stage-meta-iteration {
+  color: var(--status-in-progress);
+  font-weight: 600;
 }
 
 .stage-detail {
@@ -595,6 +717,12 @@ sl-details.stage-panel::part(content) {
 .log-controls sl-input {
   flex: 1;
   min-width: 140px;
+}
+
+.log-controls sl-input [slot="prefix"] {
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
 }
 
 .log-terminal-wrapper {
@@ -901,7 +1029,251 @@ sl-details.stage-panel::part(content) {
   border-radius: 3px;
 }
 
-/* --- 26. Utility --- */
+/* --- 26. Settings Page --- */
+.settings-page {
+  padding: 0;
+}
+
+.settings-page sl-tab-group {
+  --indicator-color: var(--accent);
+}
+
+.settings-page sl-tab::part(base) {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 16px;
+  gap: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.settings-page sl-tab svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.settings-page sl-tab-panel::part(base) {
+  padding: 20px 0 0;
+}
+
+.settings-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.settings-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.settings-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-card-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.settings-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: capitalize;
+}
+
+.settings-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.settings-field-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.settings-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.settings-switch-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-tab-actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-tab-actions sl-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Pipeline flow visualization */
+.pipeline-flow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 0;
+  overflow-x: auto;
+}
+
+.pipeline-stage-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  min-width: 90px;
+}
+
+.pipeline-stage-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pipeline-stage-agent {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pipeline-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* Dispatch table */
+.settings-dispatch-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-dispatch-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-dispatch-agent {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  text-transform: capitalize;
+}
+
+/* Permissions list */
+.settings-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-perm-item {
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.settings-perm-item code {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+}
+
+.settings-muted {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Settings toast overlay */
+.settings-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  max-width: 360px;
+}
+
+/* Active state for settings button in sidebar */
+.theme-toggle-btn.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+/* --- 27. Utility --- */
 .visually-hidden {
   position: absolute;
   width: 1px;
