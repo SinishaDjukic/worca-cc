@@ -98,6 +98,9 @@ export function attachWsServer(httpServer, config) {
         if (active) {
           broadcastToSubscribers(active.id, 'run-snapshot', active);
         }
+        // Broadcast updated runs list so list views auto-update
+        const settings = readSettings(settingsPath);
+        broadcast('runs-list', { runs, settings });
       } catch { /* ignore */ }
     }, REFRESH_DEBOUNCE_MS);
   }
