@@ -1,4 +1,9 @@
-"""Wrapper for the claude -p CLI."""
+"""Wrapper for the claude -p CLI with stream-json support.
+
+Uses --output-format stream-json --verbose to get real-time NDJSON events
+from the claude CLI. Each event is written to a log file for UI streaming.
+The final 'result' event contains the structured output (same as --output-format json).
+"""
 
 import json
 import os
@@ -6,7 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
-from typing import Optional
+from typing import Optional, Callable
 
 from worca.utils.env import get_env
 
@@ -33,7 +38,7 @@ def terminate_current():
 def build_command(
     prompt: str,
     agent: str,
-    output_format: str = "json",
+    output_format: str = "stream-json",
     json_schema: Optional[str] = None,
     **kwargs,
 ) -> list[str]:
@@ -57,6 +62,8 @@ def build_command(
         "--no-session-persistence",
         "--dangerously-skip-permissions",
     ]
+    if output_format == "stream-json":
+        cmd.append("--verbose")
     if json_schema is not None:
         # If it looks like a file path, read its contents
         schema_str = json_schema
@@ -70,23 +77,149 @@ def build_command(
     return cmd
 
 
+def _format_log_line(event: dict) -> Optional[str]:
+    """Convert a stream-json event into a human-readable log line.
+
+    Returns None for events that shouldn't be logged (system hooks, etc.).
+    """
+    etype = event.get("type", "")
+    subtype = event.get("subtype", "")
+
+    if etype == "system":
+        if subtype == "init":
+            model = event.get("model", "?")
+            return f"[init] model={model}"
+        # Skip hook events — noisy
+        return None
+
+    if etype == "assistant":
+        msg = event.get("message", {})
+        content_blocks = msg.get("content", [])
+        parts = []
+        for block in content_blocks:
+            if block.get("type") == "text":
+                text = block.get("text", "").strip()
+                if text:
+                    parts.append(text)
+            elif block.get("type") == "tool_use":
+                tool = block.get("name", "?")
+                inp = block.get("input", {})
+                # Summarize tool input
+                if tool == "Read":
+                    detail = inp.get("file_path", "")
+                elif tool == "Write":
+                    detail = inp.get("file_path", "")
+                elif tool == "Edit":
+                    detail = inp.get("file_path", "")
+                elif tool == "Bash":
+                    detail = inp.get("command", "")[:120]
+                elif tool == "Grep":
+                    detail = inp.get("pattern", "")
+                elif tool == "Glob":
+                    detail = inp.get("pattern", "")
+                elif tool == "Agent":
+                    detail = inp.get("description", "")
+                else:
+                    detail = ""
+                parts.append(f"[tool:{tool}] {detail}")
+            elif block.get("type") == "tool_result":
+                # Tool results in assistant messages — skip detail
+                pass
+        if parts:
+            return " | ".join(parts)
+        return None
+
+    if etype == "user":
+        # User messages contain tool results
+        content = event.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tool_id = block.get("tool_use_id", "")[:8]
+                    is_error = block.get("is_error", False)
+                    status = "ERROR" if is_error else "ok"
+                    return f"[result:{status}] {tool_id}"
+        return None
+
+    if etype == "result":
+        cost = event.get("total_cost_usd", 0)
+        turns = event.get("num_turns", 0)
+        duration = event.get("duration_ms", 0)
+        return f"[done] turns={turns} cost=${cost:.3f} duration={duration / 1000:.1f}s"
+
+    return None
+
+
+def process_stream(
+    stdout,
+    log_file=None,
+    on_event: Optional[Callable[[dict], None]] = None,
+) -> dict:
+    """Read NDJSON events from stdout and return the result event.
+
+    Args:
+        stdout: File-like object yielding lines of NDJSON.
+        log_file: Open file to write human-readable log lines to.
+        on_event: Optional callback invoked for each parsed event.
+
+    Returns the parsed result event dict, or raises RuntimeError if not found.
+    """
+    result_event = None
+
+    for raw_line in stdout:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            # Not valid JSON — write raw to log
+            if log_file:
+                log_file.write(raw_line if isinstance(raw_line, str) else raw_line.decode())
+                log_file.flush()
+            continue
+
+        if on_event:
+            on_event(event)
+
+        # Write human-readable summary to log
+        if log_file:
+            log_line = _format_log_line(event)
+            if log_line:
+                log_file.write(log_line + "\n")
+                log_file.flush()
+
+        if event.get("type") == "result":
+            result_event = event
+
+    if result_event is None:
+        raise RuntimeError("No result event found in stream-json output")
+
+    return result_event
+
+
 def run_agent(
     prompt: str,
     agent: str,
     max_turns: int = 0,
-    output_format: str = "json",
+    output_format: str = "stream-json",
     json_schema: Optional[str] = None,
     log_path: Optional[str] = None,
+    on_event: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
+
+    Uses stream-json format to get real-time events. The final result event
+    is returned (same structure as --output-format json).
 
     Note: max_turns is accepted for API compatibility but not passed to the CLI
     (claude -p does not support --max-turns). Use --max-budget-usd for cost control.
 
     Args:
-        log_path: If provided, tee stderr to this file for UI log streaming.
+        log_path: If provided, write human-readable event summaries to this file.
+        on_event: Optional callback invoked for each stream-json event.
 
-    Raises RuntimeError on subprocess failure or JSON parse failure.
+    Raises RuntimeError on subprocess failure or missing result.
     """
     cmd = build_command(
         prompt,
@@ -97,48 +230,57 @@ def run_agent(
 
     global _current_proc
 
-    if log_path:
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=get_env(), start_new_session=True,
-        )
-    else:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=sys.stderr,
-            text=True, env=get_env(), start_new_session=True,
-        )
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=get_env(), start_new_session=True,
+    )
 
     with _proc_lock:
         _current_proc = proc
 
     try:
+        log_file = None
         if log_path:
-            def _tee_stderr():
-                with open(log_path, "w") as lf:
-                    for line in proc.stderr:
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
-                        lf.write(line)
-                        lf.flush()
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            log_file = open(log_path, "w")
 
-            t = threading.Thread(target=_tee_stderr, daemon=True)
-            t.start()
-            stdout = proc.stdout.read()
-            t.join()
-        else:
-            stdout = proc.stdout.read()
+        # Tee stderr to console in background
+        def _tee_stderr():
+            for line in proc.stderr:
+                sys.stderr.write(line)
+                sys.stderr.flush()
 
+        stderr_thread = threading.Thread(target=_tee_stderr, daemon=True)
+        stderr_thread.start()
+
+        # Process stdout stream events
+        result_event = process_stream(
+            proc.stdout,
+            log_file=log_file,
+            on_event=on_event,
+        )
+
+        stderr_thread.join(timeout=5)
         proc.wait()
+
+        if log_file:
+            log_file.close()
+            log_file = None
+
     finally:
         with _proc_lock:
             _current_proc = None
+        if log_file:
+            log_file.close()
 
     if proc.returncode < 0:
         raise InterruptedError(f"claude agent killed by signal {-proc.returncode}")
     if proc.returncode != 0:
-        raise RuntimeError(f"claude agent failed (exit code {proc.returncode})")
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse JSON output: {e}\nRaw output: {stdout[:500]}")
+        is_error = result_event.get("is_error", False) if result_event else True
+        error_msg = result_event.get("result", "") if result_event else ""
+        raise RuntimeError(
+            f"claude agent failed (exit code {proc.returncode})"
+            + (f": {error_msg[:500]}" if error_msg else "")
+        )
+
+    return result_event

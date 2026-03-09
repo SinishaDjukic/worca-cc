@@ -272,7 +272,7 @@ def run_stage(
         prompt=prompt,
         agent=_agent_path(config["agent"]),
         max_turns=max_turns,
-        output_format="json",
+        output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
         log_path=log_path,
     )
