@@ -34,5 +34,7 @@ def get_env(**overrides: str) -> dict[str, str]:
     extra = os.pathsep.join(d for d in _extra_dirs if d not in existing)
     if extra:
         env["PATH"] = f"{extra}{os.pathsep}{existing}"
+    # Remove CLAUDECODE to allow nested claude CLI invocations
+    env.pop("CLAUDECODE", None)
     env.update(overrides)
     return env
