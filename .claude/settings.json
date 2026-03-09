@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/pre_tool_use.py"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/pre_tool_use.py\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post_tool_use.py"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/post_tool_use.py\""
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/user_prompt_submit.py"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/user_prompt_submit.py\""
           }
         ]
       }

@@ -82,7 +82,7 @@ export function listLogFiles(worcaDir) {
           stage: entry.name.replace('.log', ''),
           path: join(logsDir, entry.name),
         });
-      } else if (entry.isDirectory() && STAGE_ORDER.includes(entry.name)) {
+      } else if (entry.isDirectory()) {
         // Nested stage directory — list iteration files
         const iters = listIterationFiles(worcaDir, entry.name);
         for (const iter of iters) {

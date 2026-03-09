@@ -36,5 +36,8 @@ def get_env(**overrides: str) -> dict[str, str]:
         env["PATH"] = f"{extra}{os.pathsep}{existing}"
     # Remove CLAUDECODE to allow nested claude CLI invocations
     env.pop("CLAUDECODE", None)
+    # Set project root so hooks can force cwd back after agent `cd` commands
+    if "WORCA_PROJECT_ROOT" not in env:
+        env["WORCA_PROJECT_ROOT"] = os.getcwd()
     env.update(overrides)
     return env

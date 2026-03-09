@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, ArrowDown, Pause, Search } from '../utils/icons.js';
+import { iconSvg, ArrowDown, Pause, Search, Star } from '../utils/icons.js';
 
 // ANSI color palette for stage tags
 const STAGE_COLORS = [
@@ -151,7 +151,7 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
           clearable
           @sl-change=${(e) => onStageFilter(e.target.value || '*')}
         >
-          ${stages.map(s => html`<sl-option value="${s}">${s}</sl-option>`)}
+          ${stages.map(s => html`<sl-option value="${s}">${s === 'orchestrator' ? html`<span style="display:inline-flex;align-items:center;gap:4px">${unsafeHTML(iconSvg(Star, 12))} ORCHESTRATOR</span>` : s.toUpperCase()}</sl-option>`)}
         </sl-select>
         ${showIterationSelector ? html`
           <sl-select

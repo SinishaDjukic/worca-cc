@@ -145,6 +145,22 @@ export function attachWsServer(httpServer, config) {
     } catch { /* ignore */ }
   }
 
+  // Set up a directory watcher for a stage directory (watches for new iteration files)
+  function watchStageDir(stage, stageDir) {
+    const dirKey = `${stage}__dir`;
+    if (logWatchers.has(dirKey)) return;
+    try {
+      const dirWatcher = watch(stageDir, (eventType, filename) => {
+        if (filename && /^iter-\d+\.log$/.test(filename)) {
+          const iterNum = parseInt(filename.match(/\d+/)[0]);
+          const iterPath = join(stageDir, filename);
+          watchSingleLogFile(stage, iterPath, iterNum);
+        }
+      });
+      logWatchers.set(dirKey, dirWatcher);
+    } catch { /* ignore */ }
+  }
+
   // Start watching log files for a stage (handles both nested iteration dirs and flat files)
   function watchLogFile(stage) {
     if (!stage) {
@@ -156,29 +172,20 @@ export function attachWsServer(httpServer, config) {
     // Check if nested iteration directory exists
     const stageDir = resolveLogPath(worcaDir, stage);
     if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
-      // Watch each iteration file
+      // Watch each existing iteration file
       const iters = listIterationFiles(worcaDir, stage);
       for (const { iteration, path } of iters) {
         watchSingleLogFile(stage, path, iteration);
       }
       // Watch the stage directory for new iteration files
-      const dirKey = `${stage}__dir`;
-      if (!logWatchers.has(dirKey)) {
-        try {
-          const dirWatcher = watch(stageDir, (eventType, filename) => {
-            if (filename && /^iter-\d+\.log$/.test(filename)) {
-              const iterNum = parseInt(filename.match(/\d+/)[0]);
-              const iterPath = join(stageDir, filename);
-              watchSingleLogFile(stage, iterPath, iterNum);
-            }
-          });
-          logWatchers.set(dirKey, dirWatcher);
-        } catch { /* ignore */ }
-      }
+      watchStageDir(stage, stageDir);
     } else {
-      // Legacy flat file fallback
+      // Directory doesn't exist yet — legacy flat file fallback
       const logPath = join(worcaDir, 'logs', `${stage}.log`);
-      watchSingleLogFile(stage, logPath, null);
+      if (existsSync(logPath)) {
+        watchSingleLogFile(stage, logPath, null);
+      }
+      // Don't give up — the logs dir watcher will pick up new stage dirs
     }
   }
 
@@ -206,11 +213,19 @@ export function attachWsServer(httpServer, config) {
           const actualStage = stage === 'orchestrator' ? null : stage;
           watchLogFile(actualStage);
         } else {
-          // Could be a new stage directory — try watching it
+          // New stage directory — set up watchers for it
           const stagePath = join(logsDir, filename);
-          if (existsSync(stagePath) && statSync(stagePath).isDirectory()) {
-            watchLogFile(filename);
-          }
+          try {
+            if (existsSync(stagePath) && statSync(stagePath).isDirectory()) {
+              // Watch existing iteration files
+              const iters = listIterationFiles(worcaDir, filename);
+              for (const { iteration, path } of iters) {
+                watchSingleLogFile(filename, path, iteration);
+              }
+              // Watch for new iteration files
+              watchStageDir(filename, stagePath);
+            }
+          } catch { /* ignore */ }
         }
       });
       logWatchers.set(dirKey, dirWatcher);

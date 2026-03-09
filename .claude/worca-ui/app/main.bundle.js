@@ -8375,6 +8375,16 @@ var Cpu = [
   ["rect", { x: "8", y: "8", width: "8", height: "8", rx: "1" }]
 ];
 
+// node_modules/lucide/dist/esm/icons/star.js
+var Star = [
+  [
+    "path",
+    {
+      d: "M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+    }
+  ]
+];
+
 // app/utils/icons.js
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -9306,7 +9316,7 @@ function logViewerView(state, { onStageFilter, onIterationFilter, onSearch, onTo
           clearable
           @sl-change=${(e10) => onStageFilter(e10.target.value || "*")}
         >
-          ${stages.map((s4) => b`<sl-option value="${s4}">${s4}</sl-option>`)}
+          ${stages.map((s4) => b`<sl-option value="${s4}">${s4 === "orchestrator" ? b`<span style="display:inline-flex;align-items:center;gap:4px">${o2(iconSvg(Star, 12))} ORCHESTRATOR</span>` : s4.toUpperCase()}</sl-option>`)}
         </sl-select>
         ${showIterationSelector ? b`
           <sl-select
@@ -19841,6 +19851,7 @@ lucide/dist/esm/icons/save.js:
 lucide/dist/esm/icons/settings.js:
 lucide/dist/esm/icons/timer.js:
 lucide/dist/esm/icons/cpu.js:
+lucide/dist/esm/icons/star.js:
   (**
    * @license lucide v0.577.0 - ISC
    *

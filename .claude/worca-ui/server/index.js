@@ -13,13 +13,26 @@ for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '--host' && process.argv[i + 1]) host = process.argv[++i];
 }
 
-const cwd = process.cwd();
-const app = createApp({ settingsPath: join(cwd, '.claude', 'settings.json') });
+// Resolve project root: walk up from cwd until we find .claude/settings.json
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+function findProjectRoot(startDir) {
+  let dir = startDir;
+  while (dir !== dirname(dir)) {
+    if (existsSync(join(dir, '.claude', 'settings.json'))) return dir;
+    dir = dirname(dir);
+  }
+  return startDir; // fallback
+}
+
+const projectRoot = findProjectRoot(process.cwd());
+const app = createApp({ settingsPath: join(projectRoot, '.claude', 'settings.json') });
 const server = createServer(app);
 
 attachWsServer(server, {
-  worcaDir: join(cwd, '.worca'),
-  settingsPath: join(cwd, '.claude', 'settings.json'),
+  worcaDir: join(projectRoot, '.worca'),
+  settingsPath: join(projectRoot, '.claude', 'settings.json'),
   prefsPath: join(homedir(), '.worca', 'preferences.json')
 });
 

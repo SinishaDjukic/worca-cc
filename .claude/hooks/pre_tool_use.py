@@ -16,10 +16,39 @@ except ImportError:
     sys.exit(0)
 
 
+def _needs_cwd_fix(tool_name, tool_input):
+    """Check if this Bash command needs a project root cd prefix.
+
+    Returns the modified command string, or None if no fix needed.
+    When WORCA_PROJECT_ROOT is set (by the pipeline runner), every Bash
+    command is prefixed with `cd $root &&` so that agent `cd` commands
+    cannot permanently shift the working directory and break subsequent
+    commands and hooks.
+    """
+    if tool_name != "Bash":
+        return None
+    project_root = os.environ.get("WORCA_PROJECT_ROOT")
+    if not project_root:
+        return None
+    command = tool_input.get("command", "")
+    if not command:
+        return None
+    # Don't double-prefix if already starts with cd to the project root
+    if command.startswith(f"cd {project_root}"):
+        return None
+    return f"cd {project_root} && {command}"
+
+
 def main():
     data = json.load(sys.stdin)
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
+
+    # Check if we need to fix the cwd for this command
+    fixed_command = _needs_cwd_fix(tool_name, tool_input)
+    if fixed_command is not None:
+        # Update tool_input for guard/plan checks below
+        tool_input["command"] = fixed_command
 
     # Guard check first
     code, reason = check_guard(tool_name, tool_input)
@@ -32,6 +61,16 @@ def main():
     if code != 0:
         print(reason, file=sys.stderr)
         sys.exit(code)
+
+    # If we modified the command, output the updated input via hook protocol
+    if fixed_command is not None:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {"command": fixed_command},
+            }
+        }))
 
     sys.exit(0)
 
