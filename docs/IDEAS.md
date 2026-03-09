@@ -324,21 +324,21 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 
 | ID | Priority | Feature | Area | Status | Plan |
 |----|----------|---------|------|--------|------|
-| W-000 | P0 | Settings REST API | ui | [x] In Progress | [settings-page.md](plans/2026-03-09-settings-page.md), [pipeline-stage-editor.md](plans/2026-03-09-pipeline-stage-editor.md) |
-| W-009 | P1 | Pipeline Control Actions | ui | [ ] | — |
+| W-000 | P0 | Settings REST API | ui | [x] In Progress | [W-000-settings-rest-api.md](plans/W-000-settings-rest-api.md) |
+| W-009 | P1 | Pipeline Control Actions | ui | [ ] | [W-009-pipeline-control-actions.md](plans/W-009-pipeline-control-actions.md) |
 | W-010 | P1 | Approval Gate UI | ui | [ ] | — |
 | W-001 | P1 | Pipeline Resume & Checkpointing | cc | [ ] | — |
 | W-011 | P1 | Beads Integration Panel | ui | [ ] | — |
 | W-002 | P2 | Parallel Implementer Execution | cc | [ ] | — |
 | W-005 | P2 | Agent Memory & Context Sharing | cc | [ ] | — |
-| W-006 | P2 | Cost & Token Tracking | cc | [ ] | — |
-| W-015 | P2 | Token & Cost Dashboard | ui | [ ] | — |
-| W-014 | P2 | Browser Notifications | ui | [ ] | — |
-| W-003 | P2 | Pipeline Events & Webhooks | cc | [ ] | — |
+| W-006 | P2 | Cost & Token Tracking | cc | [ ] | [W-006-cost-token-tracking.md](plans/W-006-cost-token-tracking.md) |
+| W-015 | P2 | Token & Cost Dashboard | ui | [ ] | [W-015-token-cost-dashboard.md](plans/W-015-token-cost-dashboard.md) |
+| W-014 | P2 | Browser Notifications | ui | [ ] | [W-014-browser-notifications.md](plans/W-014-browser-notifications.md) |
+| W-003 | P2 | Pipeline Events & Webhooks | cc | [ ] | [W-003-pipeline-events-webhooks.md](plans/W-003-pipeline-events-webhooks.md) |
 | W-004 | P3 | Work Request Queue | cc | [ ] | — |
 | W-012 | P3 | Log Search & Filtering | ui | [ ] | — |
 | W-013 | P3 | Run Comparison View | ui | [ ] | — |
-| W-007 | P3 | Dry Run Mode | cc | [ ] | — |
+| W-007 | P3 | Dry Run Mode | cc | [ ] | [W-007-dry-run-mode.md](plans/W-007-dry-run-mode.md) |
 | W-008 | P3 | Configurable Agent Prompts | cc | [ ] | — |
 | W-016 | P4 | Pipeline Templates | ui | [ ] | — |
 | W-017 | P4 | Multi-Project Support | ui | [ ] | — |
@@ -350,10 +350,17 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 - **Status:** `[x]` = in progress or done, `[ ]` = not started
 - **Plan:** link to existing design/plan document, `—` = no plan yet
 
-## Appendix B: Existing Plan Files
+## Appendix B: Plan Files
 
 | File | Covers |
 |------|--------|
+| [W-000-settings-rest-api.md](plans/W-000-settings-rest-api.md) | W-000: Settings REST API (consolidated) |
+| [W-003-pipeline-events-webhooks.md](plans/W-003-pipeline-events-webhooks.md) | W-003: Pipeline Events & Webhooks |
+| [W-006-cost-token-tracking.md](plans/W-006-cost-token-tracking.md) | W-006: Cost & Token Tracking |
+| [W-007-dry-run-mode.md](plans/W-007-dry-run-mode.md) | W-007: Dry Run Mode |
+| [W-009-pipeline-control-actions.md](plans/W-009-pipeline-control-actions.md) | W-009: Pipeline Control Actions |
+| [W-014-browser-notifications.md](plans/W-014-browser-notifications.md) | W-014: Browser Notifications |
+| [W-015-token-cost-dashboard.md](plans/W-015-token-cost-dashboard.md) | W-015: Token & Cost Dashboard |
 | [worca-ui-design.md](plans/2026-03-08-worca-ui-design.md) | Original UI architecture and design spec |
 | [worca-ui-plan.md](plans/2026-03-08-worca-ui-plan.md) | UI implementation plan (initial build) |
 | [worca-ui-modernize-design.md](plans/2026-03-08-worca-ui-modernize-design.md) | Shoelace + xterm.js modernization |
