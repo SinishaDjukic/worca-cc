@@ -650,8 +650,10 @@ def run_pipeline(
                     title=work_request.title,
                 )
 
-            # Set env var for hooks
+            # Set env vars for hooks
             os.environ["WORCA_PLAN_FILE"] = status["plan_file"]
+            if status.get("run_id"):
+                os.environ["WORCA_RUN_ID"] = status["run_id"]
 
             # Render agent templates with plan_file and other vars
             if run_dir:
@@ -1029,3 +1031,4 @@ def run_pipeline(
         _remove_pid(status_path)
         _close_orchestrator_log()
         os.environ.pop("WORCA_PLAN_FILE", None)
+        os.environ.pop("WORCA_RUN_ID", None)

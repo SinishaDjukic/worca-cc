@@ -39,16 +39,47 @@ def _needs_cwd_fix(tool_name, tool_input):
     return f"cd {project_root} && {command}"
 
 
+def _fix_bd_create_external_ref(tool_name, tool_input):
+    """Auto-inject --external-ref into bd create commands when missing.
+
+    When WORCA_RUN_ID is set (pipeline is running), any `bd create` command
+    that lacks --external-ref gets it appended automatically. This ensures
+    beads issues are linked to their pipeline run regardless of LLM compliance.
+
+    Returns the modified command string, or None if no fix needed.
+    """
+    if tool_name != "Bash":
+        return None
+    run_id = os.environ.get("WORCA_RUN_ID")
+    if not run_id:
+        return None
+    command = tool_input.get("command", "")
+    if "bd create" not in command:
+        return None
+    if "--external-ref" in command:
+        return None
+    # Append --external-ref to each bd create invocation in the command
+    return command.replace("bd create", f'bd create --external-ref="worca:{run_id}"')
+
+
 def main():
     data = json.load(sys.stdin)
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
 
+    command_modified = False
+
     # Check if we need to fix the cwd for this command
     fixed_command = _needs_cwd_fix(tool_name, tool_input)
     if fixed_command is not None:
-        # Update tool_input for guard/plan checks below
         tool_input["command"] = fixed_command
+        command_modified = True
+
+    # Auto-inject --external-ref into bd create commands
+    ref_fixed = _fix_bd_create_external_ref(tool_name, tool_input)
+    if ref_fixed is not None:
+        tool_input["command"] = ref_fixed
+        command_modified = True
 
     # Guard check first
     code, reason = check_guard(tool_name, tool_input)
@@ -63,12 +94,12 @@ def main():
         sys.exit(code)
 
     # If we modified the command, output the updated input via hook protocol
-    if fixed_command is not None:
+    if command_modified:
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
-                "updatedInput": {"command": fixed_command},
+                "updatedInput": {"command": tool_input["command"]},
             }
         }))
 
