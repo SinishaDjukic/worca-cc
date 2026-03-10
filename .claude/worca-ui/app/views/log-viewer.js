@@ -33,6 +33,7 @@ let fitAddon = null;
 let searchAddon = null;
 let lastRunId = null;
 let resizeObserver = null;
+let pendingInit = null;
 
 async function ensureTerminal(container) {
   if (terminal && container.querySelector('.xterm')) {
@@ -40,42 +41,50 @@ async function ensureTerminal(container) {
     return;
   }
 
-  // Lazy-load xterm to keep initial bundle light when not in run view
-  const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
-    import('xterm'),
-    import('@xterm/addon-fit'),
-    import('@xterm/addon-search'),
-  ]);
+  // Guard against concurrent creation (multiple rerender() calls)
+  if (pendingInit) { await pendingInit; return; }
 
-  terminal = new Terminal({
-    theme: {
-      background: '#0f172a',
-      foreground: '#e2e8f0',
-      cursor: '#60a5fa',
-      selectionBackground: 'rgba(96, 165, 250, 0.3)',
-    },
-    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-    fontSize: 13,
-    lineHeight: 1.4,
-    scrollback: 50000,
-    convertEol: true,
-    cursorBlink: false,
-    disableStdin: true,
-  });
+  pendingInit = (async () => {
+    // Lazy-load xterm to keep initial bundle light when not in run view
+    const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
+      import('xterm'),
+      import('@xterm/addon-fit'),
+      import('@xterm/addon-search'),
+    ]);
 
-  fitAddon = new FitAddon();
-  searchAddon = new SearchAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(searchAddon);
+    terminal = new Terminal({
+      theme: {
+        background: '#0f172a',
+        foreground: '#e2e8f0',
+        cursor: '#60a5fa',
+        selectionBackground: 'rgba(96, 165, 250, 0.3)',
+      },
+      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+      fontSize: 13,
+      lineHeight: 1.4,
+      scrollback: 50000,
+      convertEol: true,
+      cursorBlink: false,
+      disableStdin: true,
+    });
 
-  terminal.open(container);
-  fitAddon.fit();
+    fitAddon = new FitAddon();
+    searchAddon = new SearchAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
 
-  // Observe container resize
-  resizeObserver = new ResizeObserver(() => {
-    if (fitAddon) fitAddon.fit();
-  });
-  resizeObserver.observe(container);
+    terminal.open(container);
+    fitAddon.fit();
+
+    // Observe container resize
+    resizeObserver = new ResizeObserver(() => {
+      if (fitAddon) fitAddon.fit();
+    });
+    resizeObserver.observe(container);
+  })();
+
+  await pendingInit;
+  pendingInit = null;
 }
 
 export function writeLogLine(entry) {
@@ -87,7 +96,13 @@ export function writeLogLine(entry) {
 }
 
 export function clearTerminal() {
-  if (terminal) terminal.clear();
+  if (resizeObserver) resizeObserver.disconnect();
+  if (terminal) terminal.dispose();
+  terminal = null;
+  fitAddon = null;
+  searchAddon = null;
+  resizeObserver = null;
+  pendingInit = null;
   stageColorCache.clear();
   colorIdx = 0;
 }
@@ -99,6 +114,7 @@ export function disposeTerminal() {
   fitAddon = null;
   searchAddon = null;
   resizeObserver = null;
+  pendingInit = null;
   lastRunId = null;
 }
 
@@ -140,7 +156,7 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
   const stages = configStages || logStages;
   const currentStage = state.currentLogStage;
   const iterCount = stageIterations?.[currentStage] || 0;
-  const showIterationSelector = currentStage && currentStage !== '*' && iterCount > 1;
+  const showIterationSelector = currentStage && currentStage !== '*' && iterCount > 0;
 
   // When no specific stage is selected, show a prompt instead of concatenated logs
   const hasStageSelected = currentStage && currentStage !== '*';
@@ -151,7 +167,6 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
         <div slot="summary" class="log-history-header">
           <span class="log-history-icon">${unsafeHTML(iconSvg(Clock, 16))}</span>
           <span class="log-history-title">Log History</span>
-          ${hasStageSelected ? html`<sl-badge variant="neutral" pill>${currentStage.toUpperCase()}</sl-badge>` : nothing}
         </div>
         <div class="log-history-body">
           <div class="log-controls">
@@ -166,9 +181,8 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
             </sl-select>
             ${showIterationSelector ? html`
               <sl-select
-                placeholder="All Iterations"
+                .value=${String(state.currentLogIteration || iterCount)}
                 size="small"
-                clearable
                 @sl-change=${(e) => onIterationFilter(e.target.value ? parseInt(e.target.value) : null)}
               >
                 ${Array.from({length: iterCount}, (_, i) =>

@@ -32,6 +32,7 @@ let terminal = null;
 let fitAddon = null;
 let resizeObserver = null;
 let lastRunId = null;
+let pendingInit = null;
 
 /** The stage key currently being tracked (e.g. 'implement', 'test') */
 let activeStage = null;
@@ -42,37 +43,45 @@ async function ensureTerminal(container) {
     return;
   }
 
-  const [{ Terminal }, { FitAddon }] = await Promise.all([
-    import('xterm'),
-    import('@xterm/addon-fit'),
-  ]);
+  // Guard against concurrent creation (multiple rerender() calls)
+  if (pendingInit) { await pendingInit; return; }
 
-  terminal = new Terminal({
-    theme: {
-      background: '#0f172a',
-      foreground: '#e2e8f0',
-      cursor: '#60a5fa',
-      selectionBackground: 'rgba(96, 165, 250, 0.3)',
-    },
-    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-    fontSize: 13,
-    lineHeight: 1.4,
-    scrollback: 10000,
-    convertEol: true,
-    cursorBlink: false,
-    disableStdin: true,
-  });
+  pendingInit = (async () => {
+    const [{ Terminal }, { FitAddon }] = await Promise.all([
+      import('xterm'),
+      import('@xterm/addon-fit'),
+    ]);
 
-  fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
+    terminal = new Terminal({
+      theme: {
+        background: '#0f172a',
+        foreground: '#e2e8f0',
+        cursor: '#60a5fa',
+        selectionBackground: 'rgba(96, 165, 250, 0.3)',
+      },
+      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+      fontSize: 13,
+      lineHeight: 1.4,
+      scrollback: 10000,
+      convertEol: true,
+      cursorBlink: false,
+      disableStdin: true,
+    });
 
-  terminal.open(container);
-  fitAddon.fit();
+    fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
 
-  resizeObserver = new ResizeObserver(() => {
-    if (fitAddon) fitAddon.fit();
-  });
-  resizeObserver.observe(container);
+    terminal.open(container);
+    fitAddon.fit();
+
+    resizeObserver = new ResizeObserver(() => {
+      if (fitAddon) fitAddon.fit();
+    });
+    resizeObserver.observe(container);
+  })();
+
+  await pendingInit;
+  pendingInit = null;
 }
 
 /**
@@ -108,6 +117,7 @@ export function disposeLiveTerminal() {
   terminal = null;
   fitAddon = null;
   resizeObserver = null;
+  pendingInit = null;
   lastRunId = null;
   activeStage = null;
 }

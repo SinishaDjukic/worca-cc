@@ -1695,7 +1695,7 @@ sl-details.live-output-panel::part(content) {
   margin-top: 16px;
 }
 
-@media (min-width: 1201px) {
+@media (min-width: 1800px) {
   .run-detail-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;

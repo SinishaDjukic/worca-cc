@@ -247,11 +247,23 @@ function handleSaveNotifications(notifPrefs) {
 
 function handleStageFilter(stage) {
   logFilter = stage;
-  logIterationFilter = null;
+  // Auto-select last iteration when a stage is chosen
+  if (stage !== '*') {
+    const run = store.getState().runs[route.runId];
+    const stageData = run?.stages?.[stage];
+    const iterCount = stageData?.iterations?.length || 0;
+    logIterationFilter = iterCount > 0 ? iterCount : null;
+  } else {
+    logIterationFilter = null;
+  }
   clearTerminal();
   store.clearLog();
   ws.send('unsubscribe-log').catch(() => {});
-  ws.send('subscribe-log', { stage: stage === '*' ? null : stage, runId: route.runId }).catch(() => {});
+  ws.send('subscribe-log', {
+    stage: stage === '*' ? null : stage,
+    runId: route.runId,
+    iteration: logIterationFilter,
+  }).catch(() => {});
   rerender();
 }
 
@@ -429,6 +441,7 @@ function mainContentView() {
     }
     const logState = filteredLogState(state);
     logState.currentLogStage = logFilter === '*' ? null : logFilter;
+    logState.currentLogIteration = logIterationFilter;
     const isRunning = !!run?.active;
     const liveStage = getActiveStage();
     // Initialize active stage tracking on first render
