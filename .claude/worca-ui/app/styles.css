@@ -678,6 +678,38 @@ sl-details.stage-panel::part(content) {
   padding: 0 16px 16px;
 }
 
+.stage-content-wrapper {
+  position: relative;
+}
+
+.stage-copy-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  z-index: 1;
+}
+
+.stage-copy-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.stage-copy-btn svg {
+  flex-shrink: 0;
+}
+
 .stage-panel-header {
   display: flex;
   align-items: center;

@@ -51,6 +51,52 @@ function _stageCost(iterations) {
   return iterations.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
 }
 
+function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
+  const iterations = stage.iterations || [];
+  const wallMs = _stageWallMs(stage);
+  return {
+    stage: key,
+    status: stage.status,
+    agent: stageAgent || undefined,
+    model: stageModel || undefined,
+    cost_usd: _stageCost(iterations),
+    duration: wallMs > 0 ? formatDuration(wallMs) : undefined,
+    duration_ms: wallMs > 0 ? wallMs : undefined,
+    started_at: stage.started_at || undefined,
+    completed_at: stage.completed_at || undefined,
+    error: stage.error || undefined,
+    iterations: iterations.map(it => ({
+      number: it.number,
+      status: it.status,
+      outcome: it.outcome || undefined,
+      trigger: it.trigger || undefined,
+      agent: it.agent || undefined,
+      model: it.model || undefined,
+      turns: it.turns || undefined,
+      cost_usd: it.cost_usd || undefined,
+      duration_ms: it.duration_ms || undefined,
+      started_at: it.started_at || undefined,
+      completed_at: it.completed_at || undefined,
+    })),
+    prompts: promptData ? {
+      agent_instructions: promptData.agentInstructions || undefined,
+      user_prompt: promptData.userPrompt || undefined,
+    } : undefined,
+  };
+}
+
+/** Wall-clock ms from earliest iteration start to latest iteration end. */
+function _stageWallMs(stage) {
+  const iters = stage.iterations || [];
+  let earliest = stage.started_at || null;
+  let latest = stage.completed_at || null;
+  for (const it of iters) {
+    if (it.started_at && (!earliest || it.started_at < earliest)) earliest = it.started_at;
+    if (it.completed_at && (!latest || it.completed_at > latest)) latest = it.completed_at;
+  }
+  return earliest ? elapsed(earliest, latest || null) : 0;
+}
+
 function timingStripView(startedAt, completedAt, extra = nothing) {
   const dur = startedAt ? formatDuration(elapsed(startedAt, completedAt || null)) : '';
   return html`
@@ -175,9 +221,8 @@ export function runDetailView(run, settings = {}, options = {}) {
           const stageStatus = resolveStatus(stage.status || 'pending', run.active);
           const stageAgent = stage.agent || agents[key]?.agent || key;
           const stageModel = stage.model || agents[key]?.model || '';
-          const stageDuration = stage.started_at
-            ? formatDuration(elapsed(stage.started_at, stage.completed_at || null))
-            : '';
+          const stageMs = _stageWallMs(stage);
+          const stageDuration = stageMs > 0 ? formatDuration(stageMs) : '';
           const iterations = stage.iterations || [];
           const hasMultipleIterations = iterations.length > 1;
           const stageCost = _stageCost(iterations);
@@ -219,45 +264,54 @@ export function runDetailView(run, settings = {}, options = {}) {
               </div>
               ${(() => {
                 const promptData = stageStatus !== 'pending' ? options.promptCache?.[key] : null;
+                const copyBtn = html`
+                  <button class="stage-copy-btn" title="Copy stage data as JSON" @click=${(e) => {
+                    const json = _stageToJson(key, stage, stageAgent, stageModel, promptData);
+                    _copyToClipboard(JSON.stringify(json, null, 2), e.currentTarget);
+                  }}>
+                    ${unsafeHTML(iconSvg(ClipboardCopy, 12))} Copy
+                  </button>
+                `;
                 if (hasMultipleIterations) {
-                  const stageTotalDurSec = iterations.reduce((sum, it) => {
-                    if (it.duration_ms) return sum + it.duration_ms / 1000;
-                    if (it.started_at) return sum + elapsed(it.started_at, it.completed_at || null);
-                    return sum;
-                  }, 0);
-                  const stageTotalDur = formatDuration(stageTotalDurSec);
+                  const stageTotalDur = stageMs > 0 ? formatDuration(stageMs) : '';
                   return html`
-                    <div class="stage-totals-strip">
-                      <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
-                      <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
+                    <div class="stage-content-wrapper">
+                      ${copyBtn}
+                      <div class="stage-totals-strip">
+                        <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
+                        <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
+                      </div>
+                      <sl-tab-group>
+                        ${iterations.map(iter => html`
+                          <sl-tab slot="nav" panel="iter-${key}-${iter.number}">
+                            Iter ${iter.number} ${_iterStatusIcon(iter)}
+                          </sl-tab>
+                        `)}
+                        ${iterations.map(iter => html`
+                          <sl-tab-panel name="iter-${key}-${iter.number}">
+                            ${_iterationDetailView(iter, key, stageAgent, promptData)}
+                          </sl-tab-panel>
+                        `)}
+                      </sl-tab-group>
                     </div>
-                    <sl-tab-group>
-                      ${iterations.map(iter => html`
-                        <sl-tab slot="nav" panel="iter-${key}-${iter.number}">
-                          Iter ${iter.number} ${_iterStatusIcon(iter)}
-                        </sl-tab>
-                      `)}
-                      ${iterations.map(iter => html`
-                        <sl-tab-panel name="iter-${key}-${iter.number}">
-                          ${_iterationDetailView(iter, key, stageAgent, promptData)}
-                        </sl-tab-panel>
-                      `)}
-                    </sl-tab-group>
                   `;
                 }
                 return html`
-                  <div class="stage-detail">
-                    ${timingStripView(stage.started_at, stage.completed_at)}
-                    <div class="stage-info-strip">
-                      ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
-                      ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
-                      ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
+                  <div class="stage-content-wrapper">
+                    ${copyBtn}
+                    <div class="stage-detail">
+                      ${timingStripView(stage.started_at, stage.completed_at)}
+                      <div class="stage-info-strip">
+                        ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
+                      </div>
+                      ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
+                      ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
+                      ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
+                      ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
+                      ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
-                    ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
-                    ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
-                    ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
-                    ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                    ${promptData ? _agentPromptSection(key, promptData) : nothing}
                   </div>
                 `;
               })()}
