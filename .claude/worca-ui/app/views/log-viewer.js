@@ -47,7 +47,7 @@ async function ensureTerminal(container) {
   pendingInit = (async () => {
     // Lazy-load xterm to keep initial bundle light when not in run view
     const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
-      import('xterm'),
+      import('@xterm/xterm'),
       import('@xterm/addon-fit'),
       import('@xterm/addon-search'),
     ]);

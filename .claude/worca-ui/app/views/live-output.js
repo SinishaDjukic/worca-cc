@@ -48,7 +48,7 @@ async function ensureTerminal(container) {
 
   pendingInit = (async () => {
     const [{ Terminal }, { FitAddon }] = await Promise.all([
-      import('xterm'),
+      import('@xterm/xterm'),
       import('@xterm/addon-fit'),
     ]);
 

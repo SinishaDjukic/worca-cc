@@ -1,63 +1,95 @@
 # E2E Visual Test Procedures
 
-These tests are executed via Playwright MCP browser tools during development review.
+Manual visual tests using Playwright MCP browser tools.
 
 ## Prerequisites
 
-Start the server with test data:
-```bash
-cd /Volumes/Apps/dev/ccexperiments/worca-cc
-mkdir -p .worca/logs .worca/results
-cp .claude/worca-ui/test/fixtures/status-running.json .worca/status.json
-node .claude/worca-ui/server/index.js --port 3402
-```
+1. Start the dev server: `node bin/serve.js`
+2. Open browser to `http://localhost:3000`
 
 ## Test Cases
 
-### 1. Sidebar renders
-- Navigate to http://127.0.0.1:3402
-- Verify "WORCA" logo visible
-- Verify "Pipeline" section header
-- Verify "Active" and "History" navigation items
+### 1. Sidebar Renders
+- [ ] Sidebar appears on left side with WORCA logo
+- [ ] "Running" and "History" nav items visible under "Pipeline" section
+- [ ] "New Pipeline" button visible
+- [ ] Settings button at bottom of sidebar
+- [ ] Connection indicator shows "Connected" (green dot)
 
-### 2. Theme toggle
-- Click theme toggle button (moon icon)
-- Verify `data-theme="dark"` on `<html>`
-- Click again to restore light theme
+### 2. Theme Toggle
+- [ ] Navigate to Settings page via sidebar button
+- [ ] Toggle theme from light to dark
+- [ ] Verify background, text, and component colors update
+- [ ] Refresh page — theme persists
 
-### 3. Empty dashboard
-- Start server without .worca/status.json
-- Navigate to http://127.0.0.1:3402
-- Verify "No active pipeline runs" message
+### 3. Empty Dashboard
+- [ ] On first load, dashboard shows stat cards (Total: 0, Active: 0, Completed: 0, Errors: 0)
+- [ ] "No running pipelines" empty state shown
+- [ ] "New Pipeline" button visible
 
-### 4. Active run appears
-- Copy status-running.json to .worca/status.json
-- Reload page
-- Verify run appears in Active list
+### 4. Active Run Appears
+- [ ] Start a pipeline run externally
+- [ ] Dashboard active count increments
+- [ ] Sidebar "Running" badge count updates
+- [ ] Run card appears in Active Runs section with title, branch, status badge
 
-### 5. Run detail
-- Click on a run
-- Verify stage timeline renders with correct state icons
-- Verify run header shows title, status, branch
+### 5. Run Detail
+- [ ] Click on a run card to navigate to run detail
+- [ ] Run header shows title, status badge, branch, duration
+- [ ] PR link visible if `pr_url` present
+- [ ] Timing strip shows Started/Finished/Duration
+- [ ] Pipeline cost shown when iterations have `cost_usd`
 
-### 6. Stage timeline states
-- Verify completed stages show checkmark
-- Verify in_progress stage pulses
-- Verify pending stages show circle
+### 6. Stage Timeline States
+- [ ] Pending stages show circle icon (gray)
+- [ ] In-progress stage shows spinner icon with pulse animation
+- [ ] Completed stages show check icon (green)
+- [ ] Error stages show alert icon (red)
+- [ ] Interrupted stages show pause icon (yellow) for inactive runs
+- [ ] Connector lines between stages, completed connectors highlighted
+- [ ] Loop indicator shows iteration count with refresh icon
 
-### 7. Log viewer
-- Verify log panel renders at bottom
-- Verify stage filter dropdown present
-- Verify search input present
+### 7. Stage Detail Panels
+- [ ] Each stage has an expandable panel (sl-details)
+- [ ] In-progress stage auto-expanded
+- [ ] Panel header shows icon, label, iteration count, cost, time, duration, status badge
+- [ ] Single iteration: shows timing strip, agent/model info, turns, cost
+- [ ] Multiple iterations: shows tab group with tabs per iteration
+- [ ] Copy button copies stage data as JSON
+- [ ] Agent Instructions section expandable with user prompt and system prompt
 
-### 8. Generic stages
-- Write status.json with custom "deploy" stage
-- Verify it renders with title-cased label
+### 8. Log Viewer
+- [ ] Log History panel at bottom of run detail (collapsible)
+- [ ] Stage filter dropdown lists orchestrator + pipeline stages
+- [ ] Selecting a stage loads xterm terminal with colored log output
+- [ ] Iteration selector appears when stage has multiple iterations
+- [ ] Search input filters within terminal (xterm search addon)
+- [ ] Auto-scroll toggle (Auto/Paused)
+- [ ] Without stage selected: shows "Select a stage" prompt
 
-### 9. Connection status
-- Verify green dot when connected
-- Stop server, verify red dot appears
+### 9. Generic Stages
+- [ ] Stages are derived entirely from data (status.json)
+- [ ] No hardcoded stage names — adding a new stage key renders correctly
+- [ ] Stage labels come from settings `ui.stages[key].label` or title-cased key
 
-### 10. Live update
-- Modify .worca/status.json while UI is open
-- Verify UI updates automatically
+### 10. Connection Status
+- [ ] When server is running: green dot, "Connected"
+- [ ] Stop server: dot turns red, "Disconnected"
+- [ ] Restart server: auto-reconnects, dot turns green, "Connected"
+- [ ] During reconnect: "Reconnecting..." shown
+
+### 11. Live Update
+- [ ] With run in progress, stage status changes reflect in real-time
+- [ ] Stage timeline updates as stages complete
+- [ ] Run card status badge updates
+- [ ] Log lines stream in real-time to terminal
+
+### 12. Run List Views
+- [ ] "Running" section shows only active runs
+- [ ] "History" section shows only completed/inactive runs
+- [ ] Empty states shown when no runs match filter
+
+### 13. New Pipeline Page
+- [ ] "New Pipeline" button opens new-run form
+- [ ] Form fields for prompt, branch, model selection
+- [ ] Submit starts a pipeline run

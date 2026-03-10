@@ -2007,3 +2007,180 @@ sl-details.live-output-panel::part(content) {
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* ============================================================
+   Beads Integration Panel
+   ============================================================ */
+
+.beads-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0 0 40px;
+}
+
+/* --- Filter bar --- */
+
+.beads-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.beads-filters sl-select {
+  min-width: 160px;
+}
+
+.beads-filter-count {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* --- Issue list --- */
+
+.beads-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.beads-issue-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: start;
+  gap: 10px 14px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast);
+}
+
+.beads-issue-row:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.beads-issue-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.beads-issue-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beads-issue-excerpt {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beads-issue-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.beads-dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.beads-dep-chip--blocked {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.beads-issue-actions {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+/* --- Dependency graph --- */
+
+.beads-graph-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.beads-graph-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.beads-graph-container {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 16px;
+}
+
+.beads-graph-container svg {
+  display: block;
+}
+
+.beads-graph-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.beads-graph-node--ready rect {
+  stroke: var(--status-completed);
+}
+
+.beads-graph-node--in_progress rect {
+  stroke: var(--status-in-progress);
+}
+
+.beads-graph-node--blocked rect {
+  stroke: var(--status-error);
+  stroke-dasharray: 4 2;
+}
+
+.beads-graph-node text {
+  font-size: 11px;
+  font-family: var(--sl-font-sans);
+  fill: var(--fg);
+}
+
+.beads-graph-node-id {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.beads-graph-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.beads-graph-edge--blocked {
+  stroke: var(--status-error);
+  stroke-dasharray: 4 2;
+}

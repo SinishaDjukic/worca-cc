@@ -18,7 +18,7 @@ async function run() {
   const vendorAssets = [
     ['@shoelace-style/shoelace/dist/themes/light.css', 'shoelace-light.css'],
     ['@shoelace-style/shoelace/dist/themes/dark.css', 'shoelace-dark.css'],
-    ['xterm/css/xterm.css', 'xterm.css'],
+    ['@xterm/xterm/css/xterm.css', 'xterm.css'],
   ];
   for (const [src, dest] of vendorAssets) {
     const srcPath = path.join(repoRoot, 'node_modules', src);

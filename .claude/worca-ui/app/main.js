@@ -15,6 +15,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
 import { createNotificationManager } from './notifications.js';
+import { beadsPanelView } from './views/beads-panel.js';
 
 // Register Shoelace components (tree-shaken — only imports what we use)
 import '@shoelace-style/shoelace/dist/components/details/details.js';
@@ -50,6 +51,10 @@ let restartStageConfirmOpen = false;
 let restartStageKey = null;
 const promptCache = {}; // { [runId]: { [stage]: { agentInstructions, userPrompt, agent } } }
 let promptCachePending = new Set(); // tracks in-flight fetches
+let beadsStatusFilter = 'all';
+let beadsPriorityFilter = 'all';
+let beadsStarting = null; // null | issueId
+let beadsStartError = null; // null | string
 
 function fetchAgentPrompts(runId, stages) {
   if (!runId || !stages) return;
@@ -166,6 +171,12 @@ ws.on('preferences', (payload) => {
   }
 });
 
+ws.on('beads-update', (payload) => {
+  if (payload) {
+    store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, loading: false } });
+  }
+});
+
 ws.on('run-started', () => {
   ws.send('list-runs').then(payload => {
     const runs = {};
@@ -211,6 +222,10 @@ ws.onConnection((state) => {
     ws.send('get-preferences').then(prefs => {
       store.setState({ preferences: prefs });
       applyTheme(prefs.theme || 'light');
+    }).catch(() => {});
+
+    ws.send('list-beads-issues').then(payload => {
+      store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, loading: false } });
     }).catch(() => {});
 
     // Subscribe to active run if selected
@@ -439,6 +454,38 @@ function handleBack() {
   }
 }
 
+// --- Beads actions ---
+
+function handleBeadsStatusFilter(value) {
+  beadsStatusFilter = value;
+  rerender();
+}
+
+function handleBeadsPriorityFilter(value) {
+  beadsPriorityFilter = value;
+  rerender();
+}
+
+async function handleStartBeadsIssue(issueId) {
+  beadsStarting = issueId;
+  beadsStartError = null;
+  rerender();
+  try {
+    await ws.send('start-beads-issue', { issueId });
+    beadsStarting = null;
+    navigate('active', null);
+  } catch (err) {
+    beadsStarting = null;
+    beadsStartError = err?.message || 'Failed to start pipeline';
+    rerender();
+  }
+}
+
+function handleDismissBeadsError() {
+  beadsStartError = null;
+  rerender();
+}
+
 // --- Render ---
 
 function contentHeaderView() {
@@ -491,6 +538,9 @@ function contentHeaderView() {
           </button>`;
       }
     }
+  } else if (route.section === 'beads') {
+    title = 'Beads Issues';
+    showBack = true;
   } else if (route.section === 'active') {
     title = 'Running Pipelines';
     showBack = true;
@@ -573,6 +623,19 @@ function mainContentView() {
         </div>
       </div>
     `;
+  }
+
+  if (route.section === 'beads') {
+    return beadsPanelView(state.beads, {
+      statusFilter: beadsStatusFilter,
+      priorityFilter: beadsPriorityFilter,
+      starting: beadsStarting,
+      startError: beadsStartError,
+      onStatusFilter: handleBeadsStatusFilter,
+      onPriorityFilter: handleBeadsPriorityFilter,
+      onStartIssue: handleStartBeadsIssue,
+      onDismissError: handleDismissBeadsError,
+    });
   }
 
   if (route.section === 'new-run') {

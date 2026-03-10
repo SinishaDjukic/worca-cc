@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { validateSettingsPayload } from './settings-validator.js';
 import { startPipeline, stopPipeline, restartStage } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
+import { listIssues, getIssue, dbExists } from './beads-reader.js';
 
 function readFullSettings(settingsPath) {
   try {
@@ -191,6 +192,52 @@ export function createApp(options = {}) {
         return res.status(400).json({ ok: false, error: err.message });
       }
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/beads/issues
+  app.get('/api/beads/issues', (_req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const beadsDbPath = join(worcaDir, '..', '.beads', 'beads.db');
+    if (!dbExists(beadsDbPath)) {
+      return res.json({ ok: true, issues: [], dbExists: false });
+    }
+    try {
+      const issues = listIssues(beadsDbPath);
+      res.json({ ok: true, issues, dbExists: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/beads/issues/:id/start
+  app.post('/api/beads/issues/:id/start', async (req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const issueId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(issueId) || issueId <= 0) {
+      return res.status(400).json({ ok: false, error: 'Issue ID must be a positive integer' });
+    }
+    const beadsDbPath = join(worcaDir, '..', '.beads', 'beads.db');
+    const issue = getIssue(beadsDbPath, issueId);
+    if (!issue) {
+      return res.status(404).json({ ok: false, error: `Issue ${issueId} not found` });
+    }
+    if (issue.status !== 'ready') {
+      return res.status(409).json({ ok: false, error: `Issue ${issueId} is not in 'ready' state (current: ${issue.status})` });
+    }
+    if (issue.blocked_by.length > 0) {
+      return res.status(409).json({ ok: false, error: `Issue ${issueId} is blocked by issues: ${issue.blocked_by.join(', ')}` });
+    }
+    try {
+      const prompt = `[Beads #${issue.id}] ${issue.title}\n\n${(issue.body || '').trim()}`.trim();
+      const result = await startPipeline(worcaDir, { inputType: 'prompt', inputValue: prompt, msize: 1, mloops: 1 });
+      if (app.locals.broadcast) {
+        app.locals.broadcast('run-started', { pid: result.pid });
+      }
+      res.json({ ok: true, pid: result.pid, issueId, prompt });
+    } catch (err) {
+      const status = (err.message || '').includes('already running') ? 409 : 500;
+      res.status(status).json({ ok: false, error: err.message });
     }
   });
 

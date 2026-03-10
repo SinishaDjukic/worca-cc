@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline } from './process-manager.js';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns } from './watcher.js';
+import { listIssues, getIssue, dbExists as beadsDbExists } from './beads-reader.js';
 import { readLastLines, resolveLogPath, resolveIterationLogPath, countLines, readLinesFrom, listLogFiles, listIterationFiles } from './log-tailer.js';
 import { readSettings } from './settings-reader.js';
 import { readPreferences, writePreferences } from './preferences.js';
@@ -307,6 +308,29 @@ export function attachWsServer(httpServer, config) {
     } catch { /* ignore */ }
   }
 
+  // Beads database watcher
+  const beadsDbPath = join(worcaDir, '..', '.beads', 'beads.db');
+  let beadsWatcher = null;
+  let BEADS_REFRESH_TIMER = null;
+  const BEADS_DEBOUNCE_MS = 200;
+
+  function scheduleBeadsRefresh() {
+    if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
+    BEADS_REFRESH_TIMER = setTimeout(() => {
+      BEADS_REFRESH_TIMER = null;
+      try {
+        const issues = listIssues(beadsDbPath);
+        broadcast('beads-update', { issues, dbExists: true });
+      } catch { /* ignore */ }
+    }, BEADS_DEBOUNCE_MS);
+  }
+
+  if (existsSync(beadsDbPath)) {
+    try {
+      beadsWatcher = watch(beadsDbPath, () => scheduleBeadsRefresh());
+    } catch { /* ignore */ }
+  }
+
   // Heartbeat
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
@@ -341,6 +365,7 @@ export function attachWsServer(httpServer, config) {
     clearInterval(heartbeat);
     if (statusWatcher) statusWatcher.close();
     if (activeRunWatcher) activeRunWatcher.close();
+    if (beadsWatcher) beadsWatcher.close();
     for (const w of logWatchers.values()) w.close();
     logWatchers.clear();
   });
@@ -681,6 +706,48 @@ export function attachWsServer(httpServer, config) {
         ws.send(JSON.stringify(makeOk(req, { resumed: true, pid: result.pid })));
       } catch (e) {
         ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));
+      }
+      return;
+    }
+
+    // list-beads-issues
+    if (req.type === 'list-beads-issues') {
+      if (!beadsDbExists(beadsDbPath)) {
+        ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false })));
+        return;
+      }
+      const issues = listIssues(beadsDbPath);
+      ws.send(JSON.stringify(makeOk(req, { issues, dbExists: true })));
+      return;
+    }
+
+    // start-beads-issue
+    if (req.type === 'start-beads-issue') {
+      const { issueId } = req.payload || {};
+      if (!Number.isInteger(issueId) || issueId <= 0) {
+        ws.send(JSON.stringify(makeError(req, 'bad_request', 'payload.issueId (positive integer) required')));
+        return;
+      }
+      const issue = getIssue(beadsDbPath, issueId);
+      if (!issue) {
+        ws.send(JSON.stringify(makeError(req, 'not_found', `Issue ${issueId} not found`)));
+        return;
+      }
+      if (issue.status !== 'ready') {
+        ws.send(JSON.stringify(makeError(req, 'not_ready', `Issue ${issueId} is not ready (status: ${issue.status})`)));
+        return;
+      }
+      if (issue.blocked_by.length > 0) {
+        ws.send(JSON.stringify(makeError(req, 'blocked', `Issue ${issueId} is blocked by: ${issue.blocked_by.join(', ')}`)));
+        return;
+      }
+      try {
+        const prompt = `[Beads #${issue.id}] ${issue.title}\n\n${(issue.body || '').trim()}`.trim();
+        const result = await pmStartPipeline(worcaDir, { inputType: 'prompt', inputValue: prompt, msize: 1, mloops: 1 });
+        broadcast('run-started', { pid: result.pid });
+        ws.send(JSON.stringify(makeOk(req, { pid: result.pid, issueId })));
+      } catch (e) {
+        ws.send(JSON.stringify(makeError(req, 'start_failed', e.message)));
       }
       return;
     }

@@ -38,6 +38,9 @@ import Coins from 'lucide/dist/esm/icons/coins';
 import Bell from 'lucide/dist/esm/icons/bell';
 import Plus from 'lucide/dist/esm/icons/plus';
 import RotateCcw from 'lucide/dist/esm/icons/rotate-ccw';
+import List from 'lucide/dist/esm/icons/list';
+import Lock from 'lucide/dist/esm/icons/lock';
+import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -64,5 +67,6 @@ export {
   Sun, Moon, Flag, RefreshCw, ArrowDown, Pause,
   Zap, Clock, AlertTriangle,
   Activity, Archive, Search, ArrowLeft,
-  Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings, Timer, Cpu, Star, FileText, ClipboardCopy, Coins, Bell, Plus, RotateCcw
+  Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings, Timer, Cpu, Star, FileText, ClipboardCopy, Coins, Bell, Plus, RotateCcw,
+  List, Lock, ArrowRight
 };

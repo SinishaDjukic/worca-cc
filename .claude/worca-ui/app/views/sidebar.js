@@ -1,12 +1,16 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Activity, Archive, Settings, Plus } from '../utils/icons.js';
+import { iconSvg, Activity, Archive, Settings, Plus, List } from '../utils/icons.js';
 
 export function sidebarView(state, route, connectionState, { onNavigate }) {
   const { runs, preferences } = state;
   const runList = Object.values(runs);
   const activeCount = runList.filter(r => r.active).length;
   const historyCount = runList.filter(r => !r.active).length;
+
+  const beadsIssues = state.beads?.issues || [];
+  const beadsReady = beadsIssues.filter(i => i.status === 'ready' && (i.blocked_by?.length ?? 0) === 0).length;
+  const beadsDbExists = state.beads?.dbExists ?? false;
 
   const connClass = connectionState === 'open' ? 'connected'
     : connectionState === 'reconnecting' ? 'reconnecting' : 'disconnected';
@@ -45,6 +49,20 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
           ${historyCount > 0 ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>` : ''}
         </div>
       </div>
+
+      ${beadsDbExists ? html`
+        <div class="sidebar-section">
+          <div class="sidebar-section-header">Work</div>
+          <div class="sidebar-item ${route.section === 'beads' ? 'active' : ''}"
+               @click=${() => onNavigate('beads')}>
+            <span class="sidebar-item-left">
+              ${unsafeHTML(iconSvg(List, 16))}
+              <span>Beads</span>
+            </span>
+            ${beadsReady > 0 ? html`<sl-badge variant="success" pill>${beadsReady}</sl-badge>` : ''}
+          </div>
+        </div>
+      ` : ''}
 
       <div class="sidebar-footer">
         <div class="connection-indicator ${connClass}">
