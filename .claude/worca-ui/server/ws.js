@@ -445,18 +445,32 @@ export function attachWsServer(httpServer, config) {
       }
       const agentName = run.stages?.[stage]?.agent || stage;
 
-      // Prefer real prompt stored in status.json by PromptBuilder
+      // Build per-iteration prompts from iteration records
+      const iterations = run.stages?.[stage]?.iterations || [];
+      const iterationPrompts = iterations.map((iter, idx) => {
+        const prompt = iter.prompt || null;
+        return { iteration: iter.number ?? idx, prompt };
+      });
+
+      // Stage-level prompt as fallback (for stages with no per-iteration data)
       const storedPrompt = run.stages?.[stage]?.prompt;
-      let userPrompt;
+      let fallbackPrompt;
       let promptSource;
       if (storedPrompt) {
-        userPrompt = storedPrompt;
+        fallbackPrompt = storedPrompt;
         promptSource = 'actual';
       } else {
-        // Fallback: reconstruct from work request (legacy runs without PromptBuilder)
         const rawPrompt = run.work_request?.description || run.work_request?.title || '';
-        userPrompt = _buildStagePrompt(stage, rawPrompt);
+        fallbackPrompt = _buildStagePrompt(stage, rawPrompt);
         promptSource = 'reconstructed';
+      }
+
+      // If no iteration has a stored prompt, use the fallback for all
+      const hasIterationPrompts = iterationPrompts.some(ip => ip.prompt != null);
+      if (!hasIterationPrompts) {
+        for (const ip of iterationPrompts) {
+          ip.prompt = fallbackPrompt;
+        }
       }
 
       // Try to read rendered agent .md from run dir, then results dir
@@ -471,7 +485,13 @@ export function attachWsServer(httpServer, config) {
           break;
         }
       }
-      ws.send(JSON.stringify(makeOk(req, { agentInstructions, userPrompt, promptSource, agent: agentName })));
+      ws.send(JSON.stringify(makeOk(req, {
+        agentInstructions,
+        userPrompt: fallbackPrompt, // backward compat
+        iterationPrompts,
+        promptSource,
+        agent: agentName,
+      })));
       return;
     }
 

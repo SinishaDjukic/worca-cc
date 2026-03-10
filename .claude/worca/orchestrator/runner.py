@@ -819,6 +819,7 @@ def run_pipeline(
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
             if usage:
                 iter_extras["token_usage"] = usage
+            iter_extras["prompt"] = rendered_prompt
             if isinstance(result, dict):
                 iter_extras["output"] = result
 

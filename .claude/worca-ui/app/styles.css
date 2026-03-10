@@ -397,6 +397,11 @@ h1, h2, h3, h4, h5, h6 {
   opacity: 0.7;
 }
 
+.meta-value {
+  font-weight: 600;
+  color: var(--fg);
+}
+
 .run-pr-link {
   color: var(--accent);
   text-decoration: none;
@@ -472,6 +477,27 @@ h1, h2, h3, h4, h5, h6 {
 
 .run-branch .stage-meta-icon {
   opacity: 0.5;
+}
+
+.pipeline-cost-strip {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.stage-totals-strip {
+  display: flex;
+  gap: 20px;
+  padding: 6px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.stage-totals-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .stage-info-strip {

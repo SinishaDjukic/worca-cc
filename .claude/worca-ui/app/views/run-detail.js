@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { stageTimelineView } from './stage-timeline.js';
 import { statusClass, statusIcon, resolveStatus } from '../utils/status-badge.js';
 import { formatDuration, elapsed, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy } from '../utils/icons.js';
+import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins } from '../utils/icons.js';
 
 function _lastStageEnd(stages) {
   if (!stages) return null;
@@ -47,31 +47,44 @@ function _outcomeLabel(outcome) {
   return html`<span class="iteration-outcome ${cls}">${outcome.replace(/_/g, ' ')}</span>`;
 }
 
+function _stageCost(iterations) {
+  return iterations.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
+}
+
 function timingStripView(startedAt, completedAt, extra = nothing) {
   const dur = startedAt ? formatDuration(elapsed(startedAt, completedAt || null)) : '';
   return html`
     <div class="timing-strip">
-      ${startedAt ? html`<span class="timing-strip-item"><span class="meta-label">Started:</span> ${formatTimestamp(startedAt)}</span>` : nothing}
-      ${completedAt ? html`<span class="timing-strip-item"><span class="meta-label">Finished:</span> ${formatTimestamp(completedAt)}</span>` : nothing}
-      ${dur ? html`<span class="timing-strip-item"><span class="meta-label">Duration:</span> ${dur}</span>` : nothing}
+      ${startedAt ? html`<span class="timing-strip-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>` : nothing}
+      ${completedAt ? html`<span class="timing-strip-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(completedAt)}</span></span>` : nothing}
+      ${dur ? html`<span class="timing-strip-item"><span class="meta-label">Duration:</span> <span class="meta-value">${dur}</span></span>` : nothing}
       ${extra}
     </div>
   `;
 }
 
-function _iterationDetailView(iter, stageKey, stageAgent) {
+function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
   const agentName = iter.agent || stageAgent || stageKey;
   const model = iter.model || '';
+  const iterNum = iter.number ?? 0;
+  // Find the prompt for this iteration
+  const iterPrompts = promptData?.iterationPrompts || [];
+  const iterPrompt = iterPrompts.find(ip => ip.iteration === iterNum);
+  const userPrompt = iterPrompt?.prompt || promptData?.userPrompt || null;
+  const iterPromptData = userPrompt ? { agentInstructions: promptData?.agentInstructions, userPrompt } : promptData;
+  const iterDur = iter.started_at ? formatDuration(elapsed(iter.started_at, iter.completed_at || null)) : '';
   return html`
     <div class="iteration-detail">
       ${timingStripView(iter.started_at, iter.completed_at)}
       <div class="stage-info-strip">
         ${agentName ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${agentName}${model ? html` <span class="text-muted">(${model})</span>` : ''}</span>` : nothing}
-        ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> ${iter.turns}</span>` : nothing}
-        ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> $${Number(iter.cost_usd).toFixed(2)}</span>` : nothing}
+        ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iter.turns}</span></span>` : nothing}
+        ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Iteration Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
+        ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Iteration Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
       </div>
       ${iter.trigger ? html`<div class="detail-row">${_triggerLabel(iter.trigger)}</div>` : nothing}
       ${iter.outcome ? html`<div class="detail-row">${_outcomeLabel(iter.outcome)}</div>` : nothing}
+      ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
 }
@@ -83,7 +96,7 @@ function _copyToClipboard(text, btn) {
   });
 }
 
-function _agentPromptSection(stageKey, promptData) {
+function _agentPromptSection(_stageKey, promptData) {
   if (!promptData) return nothing;
   const { agentInstructions, userPrompt } = promptData;
   if (!agentInstructions && !userPrompt) return nothing;
@@ -145,6 +158,15 @@ export function runDetailView(run, settings = {}, options = {}) {
           </div>
         ` : nothing}
         ${timingStripView(run.started_at, endTime)}
+        ${(() => {
+          const allIters = Object.values(stages).flatMap(s => s.iterations || []);
+          const pipelineCost = allIters.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
+          return pipelineCost > 0 ? html`
+            <div class="pipeline-cost-strip">
+              <span class="meta-label">Pipeline Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span>
+            </div>
+          ` : nothing;
+        })()}
       </div>
 
       <div class="stage-panels">
@@ -158,6 +180,7 @@ export function runDetailView(run, settings = {}, options = {}) {
             : '';
           const iterations = stage.iterations || [];
           const hasMultipleIterations = iterations.length > 1;
+          const stageCost = _stageCost(iterations);
 
           return html`
             <sl-details ?open=${stageStatus === 'in_progress'} class="stage-panel">
@@ -168,19 +191,25 @@ export function runDetailView(run, settings = {}, options = {}) {
                   ${hasMultipleIterations ? html`
                     <span class="stage-meta-item stage-meta-iteration">
                       <span class="stage-meta-icon">${unsafeHTML(iconSvg(RefreshCw, 11))}</span>
-                      ${iterations.length} iterations
+                      <span class="meta-value">${iterations.length} iterations</span>
+                    </span>
+                  ` : nothing}
+                  ${stageCost > 0 ? html`
+                    <span class="stage-meta-item">
+                      <span class="stage-meta-icon">${unsafeHTML(iconSvg(Coins, 11))}</span>
+                      <span class="meta-value">$${stageCost.toFixed(2)}</span>
                     </span>
                   ` : nothing}
                   ${stage.completed_at ? html`
                     <span class="stage-meta-item">
                       <span class="stage-meta-icon">${unsafeHTML(iconSvg(Clock, 11))}</span>
-                      ${formatTimestamp(stage.completed_at)}
+                      <span class="meta-value">${formatTimestamp(stage.completed_at)}</span>
                     </span>
                   ` : nothing}
                   ${stageDuration ? html`
                     <span class="stage-meta-item">
                       <span class="stage-meta-icon">${unsafeHTML(iconSvg(Timer, 11))}</span>
-                      ${stageDuration}
+                      <span class="meta-value">${stageDuration}</span>
                     </span>
                   ` : nothing}
                 </span>
@@ -188,34 +217,50 @@ export function runDetailView(run, settings = {}, options = {}) {
                   ${stageStatus.replace(/_/g, ' ')}
                 </sl-badge>
               </div>
-              ${hasMultipleIterations ? html`
-                <sl-tab-group>
-                  ${iterations.map(iter => html`
-                    <sl-tab slot="nav" panel="iter-${key}-${iter.number}">
-                      Iter ${iter.number} ${_iterStatusIcon(iter)}
-                    </sl-tab>
-                  `)}
-                  ${iterations.map(iter => html`
-                    <sl-tab-panel name="iter-${key}-${iter.number}">
-                      ${_iterationDetailView(iter, key, stageAgent)}
-                    </sl-tab-panel>
-                  `)}
-                </sl-tab-group>
-              ` : html`
-                <div class="stage-detail">
-                  ${timingStripView(stage.started_at, stage.completed_at)}
-                  <div class="stage-info-strip">
-                    ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
-                    ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> ${iterations[0].turns}</span>` : nothing}
-                    ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> $${Number(iterations[0].cost_usd).toFixed(2)}</span>` : nothing}
+              ${(() => {
+                const promptData = stageStatus !== 'pending' ? options.promptCache?.[key] : null;
+                if (hasMultipleIterations) {
+                  const stageTotalDurSec = iterations.reduce((sum, it) => {
+                    if (it.duration_ms) return sum + it.duration_ms / 1000;
+                    if (it.started_at) return sum + elapsed(it.started_at, it.completed_at || null);
+                    return sum;
+                  }, 0);
+                  const stageTotalDur = formatDuration(stageTotalDurSec);
+                  return html`
+                    <div class="stage-totals-strip">
+                      <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
+                      <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
+                    </div>
+                    <sl-tab-group>
+                      ${iterations.map(iter => html`
+                        <sl-tab slot="nav" panel="iter-${key}-${iter.number}">
+                          Iter ${iter.number} ${_iterStatusIcon(iter)}
+                        </sl-tab>
+                      `)}
+                      ${iterations.map(iter => html`
+                        <sl-tab-panel name="iter-${key}-${iter.number}">
+                          ${_iterationDetailView(iter, key, stageAgent, promptData)}
+                        </sl-tab-panel>
+                      `)}
+                    </sl-tab-group>
+                  `;
+                }
+                return html`
+                  <div class="stage-detail">
+                    ${timingStripView(stage.started_at, stage.completed_at)}
+                    <div class="stage-info-strip">
+                      ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
+                      ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
+                      ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
+                    </div>
+                    ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
+                    ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
+                    ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
+                    ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
+                    ${promptData ? _agentPromptSection(key, promptData) : nothing}
                   </div>
-                  ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
-                  ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
-                  ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
-                  ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                </div>
-              `}
-              ${stageStatus !== 'pending' ? _agentPromptSection(key, options.promptCache?.[key]) : nothing}
+                `;
+              })()}
             </sl-details>
           `;
         })}

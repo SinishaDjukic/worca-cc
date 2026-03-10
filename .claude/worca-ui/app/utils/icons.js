@@ -34,6 +34,7 @@ import Cpu from 'lucide/dist/esm/icons/cpu';
 import Star from 'lucide/dist/esm/icons/star';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import ClipboardCopy from 'lucide/dist/esm/icons/clipboard-copy';
+import Coins from 'lucide/dist/esm/icons/coins';
 
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -60,5 +61,5 @@ export {
   Sun, Moon, Flag, RefreshCw, ArrowDown, Pause,
   Zap, Clock, AlertTriangle,
   Activity, Archive, Search, ArrowLeft,
-  Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings, Timer, Cpu, Star, FileText, ClipboardCopy
+  Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings, Timer, Cpu, Star, FileText, ClipboardCopy, Coins
 };

@@ -5,11 +5,11 @@
 
 ---
 
-## 0. In Progress
+## 0. Completed
 
 ### W-000: Settings REST API
 
-**Status:** In Progress
+**Status:** Done
 
 **Problem:** The Settings UI (4 tabs: agents, pipeline, governance, preferences) can render configuration but has no backend endpoints to load and save it.
 
@@ -101,6 +101,8 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 ---
 
 ### W-006: Cost & Token Tracking
+
+**Status:** Done — [PR #1](https://github.com/SinishaDjukic/worca-cc/pull/1)
 
 **Problem:** No visibility into how many tokens each agent/stage/run consumes. Opus stages are expensive; without data, optimization is guesswork.
 
@@ -324,14 +326,14 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 
 | ID | Priority | Feature | Area | Status | Plan |
 |----|----------|---------|------|--------|------|
-| W-000 | P0 | Settings REST API | ui | [x] In Progress | [W-000-settings-rest-api.md](plans/W-000-settings-rest-api.md) |
+| W-000 | P0 | Settings REST API | ui | [x] Done | [W-000-settings-rest-api.md](plans/W-000-settings-rest-api.md) |
 | W-009 | P1 | Pipeline Control Actions | ui | [ ] | [W-009-pipeline-control-actions.md](plans/W-009-pipeline-control-actions.md) |
 | W-010 | P1 | Approval Gate UI | ui | [ ] | — |
 | W-001 | P1 | Pipeline Resume & Checkpointing | cc | [ ] | — |
 | W-011 | P1 | Beads Integration Panel | ui | [ ] | — |
 | W-002 | P2 | Parallel Implementer Execution | cc | [ ] | — |
 | W-005 | P2 | Agent Memory & Context Sharing | cc | [ ] | — |
-| W-006 | P2 | Cost & Token Tracking | cc | [ ] | [W-006-cost-token-tracking.md](plans/W-006-cost-token-tracking.md) |
+| W-006 | P2 | Cost & Token Tracking | cc | [x] Done | [W-006-cost-token-tracking.md](plans/W-006-cost-token-tracking.md) |
 | W-015 | P2 | Token & Cost Dashboard | ui | [ ] | [W-015-token-cost-dashboard.md](plans/W-015-token-cost-dashboard.md) |
 | W-014 | P2 | Browser Notifications | ui | [ ] | [W-014-browser-notifications.md](plans/W-014-browser-notifications.md) |
 | W-003 | P2 | Pipeline Events & Webhooks | cc | [ ] | [W-003-pipeline-events-webhooks.md](plans/W-003-pipeline-events-webhooks.md) |
