@@ -1,6 +1,5 @@
 # W-009: Pipeline Control Actions
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Transform worca-ui from a read-only monitoring dashboard into a full pipeline control plane. Users will be able to start new pipeline runs, stop active runs with confirmation, and restart individual failed stages -- all from the browser.
 

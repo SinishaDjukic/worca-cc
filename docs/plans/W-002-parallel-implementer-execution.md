@@ -1,6 +1,5 @@
 # W-002: Parallel Implementer Execution
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Eliminate the sequential bottleneck in the IMPLEMENT stage by allowing the coordinator's independent task groups to be executed by multiple implementer agents simultaneously, each in its own isolated git worktree. Time-to-completion for multi-task work requests is reduced proportionally to parallelism. Results are merged back into the pipeline branch before the TEST stage proceeds.
 

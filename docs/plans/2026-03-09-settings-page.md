@@ -1,6 +1,5 @@
 # Settings Page Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a full-page Settings view to worca-ui that visualizes and allows editing all pipeline configuration from `.claude/settings.json`.
 

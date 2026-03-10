@@ -1,6 +1,5 @@
 # W-013: Run Comparison View
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a side-by-side run comparison mode to worca-ui so that users can select any two historical (or mixed active/historical) runs and inspect them together -- stage statuses, timing, cost, iteration counts, and log output -- without juggling two browser tabs.
 

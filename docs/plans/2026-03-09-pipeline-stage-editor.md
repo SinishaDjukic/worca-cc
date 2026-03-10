@@ -1,6 +1,5 @@
 # Pipeline Stage Editor — Full Configuration via UI
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make every pipeline configuration parameter editable through the UI, including per-stage enable/disable toggles and agent assignment.
 

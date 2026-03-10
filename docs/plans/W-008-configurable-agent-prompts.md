@@ -1,6 +1,5 @@
 # W-008: Configurable Agent Prompts
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Allow target projects to customize agent behavior without forking the core prompt files. A project places overlay files in `.claude/agents/overrides/` and the pipeline merges them into the rendered agent prompts before any stage runs. This enables per-project conventions (e.g., "always use TypeScript strict mode", "follow our commit message format") while preserving governance guards that cannot be overridden.
 

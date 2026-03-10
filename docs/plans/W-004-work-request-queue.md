@@ -1,6 +1,5 @@
 # W-004: Work Request Queue
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Allow users to enqueue multiple work requests and have the pipeline process them sequentially without manual intervention between runs. A persistent queue file tracks pending, in-progress, and completed items with priority ordering. New CLI flags (`--queue`, `--from-beads`) load the queue and drain it. The worca-ui dashboard gains a queue panel showing queue depth, current item, and per-item status.
 

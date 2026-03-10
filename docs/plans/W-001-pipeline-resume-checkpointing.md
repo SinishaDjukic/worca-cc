@@ -1,6 +1,5 @@
 # W-001: Pipeline Resume & Checkpointing
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make interrupted pipeline runs recoverable without re-running completed stages. Today, if a machine restarts, a network call fails, or the user hits Ctrl-C mid-run, all progress is lost. This plan closes four concrete gaps in the existing skeleton: (1) the `PromptBuilder` is not seeded from saved checkpoint data on resume, so agents lose context from completed stages; (2) the git branch is read from status on resume but the working tree is never switched to it; (3) `find_resume_point` treats only `in_progress` and `pending` as resumable -- stages that died with `error` status are silently skipped; (4) there is no divergence guard to detect that the codebase changed since the checkpoint was written. The plan also adds a `--run-id` shortcut to resume without re-supplying the original prompt, and expands test coverage to match the new behaviour.
 

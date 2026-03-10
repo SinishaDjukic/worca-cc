@@ -1,6 +1,5 @@
 # W-011: Beads Integration Panel
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Surface Beads issue data (the task management layer stored in `.beads/beads.db`) directly inside the worca-ui dashboard, eliminating the need to use the CLI to browse and select work. Users will see a live count of ready issues in the sidebar, browse and filter all open issues in a dedicated Beads view, start a pipeline run from any ready issue with one click, and visualize inter-issue dependencies in a simple graph layout.
 

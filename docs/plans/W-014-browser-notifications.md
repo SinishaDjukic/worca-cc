@@ -1,6 +1,5 @@
 # W-014: Browser Notifications
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Notify users via the Web Notifications API when pipeline events need attention, so they can switch to other work and be pulled back only when action is required.
 

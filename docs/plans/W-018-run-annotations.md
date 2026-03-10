@@ -1,6 +1,5 @@
 # W-018: Run Annotations
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Give users the ability to annotate historical runs with tags, free-text notes, and a pin flag so that "Run abc123" becomes "auth migration, rolled back — hotfix" searchable and sortable across the full run list.
 

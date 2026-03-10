@@ -1,6 +1,5 @@
 # W-017: Multi-Project Support
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Allow a single worca-ui server instance to monitor multiple project directories simultaneously. Developers who work across several repos currently must run one server per project; after this change, they register all project paths in a global config file and switch between them via a sidebar project picker or view them aggregated on a cross-project dashboard.
 

@@ -1,6 +1,5 @@
 # W-010: Approval Gate UI
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** When the pipeline hits an approval gate — currently gated in the terminal — the worca-ui should interrupt with a modal dialog that lets the user review context, type a decision, and unblock the pipeline from the browser. Today, a user watching the UI sees the pipeline stalled with no way to act; they must switch to the terminal and type a response by hand. This feature adds a bidirectional approval channel: the runner writes a pending approval request to `.worca/approvals/{run_id}.json`, the WebSocket server detects the file, broadcasts an `approval-pending` event to all connected clients, and the UI renders a blocking modal. The user approves, rejects, or provides feedback; the server writes the resolution back to the same file; the runner polls the file, reads the decision, and continues. Timeout support auto-rejects after a configurable number of seconds so an unattended pipeline does not hang forever.
 

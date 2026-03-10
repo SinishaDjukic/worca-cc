@@ -1,6 +1,5 @@
 # W-016: Pipeline Templates
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Eliminate repetitive pipeline reconfiguration by introducing named templates that capture complete `worca` pipeline configurations. Users pick a template when starting a new run, can save their current settings as a custom template, and can manage their template library from the Settings UI.
 

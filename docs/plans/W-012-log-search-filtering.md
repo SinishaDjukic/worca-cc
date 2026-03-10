@@ -1,6 +1,5 @@
 # W-012: Log Search & Filtering
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Transform the worca-ui log viewer from a basic stage-filtered terminal into a fully searchable, filterable, and exportable log analysis tool. Users will be able to search logs with regex, filter by log level, restrict to a time range, bookmark lines, and download filtered output — all without leaving the browser.
 
