@@ -10,7 +10,7 @@ You work on a single Beads task at a time in an isolated worktree.
 
 ## Process
 
-1. Check ready work: `bd ready`
+1. If a bead ID is provided in the prompt, use it directly (skip to step 3). Otherwise, find work: `bd ready`
 2. Claim a task: `bd update <id> --status=in_progress`
 3. Read the task description: `bd show <id>`
 4. Implement using TDD:

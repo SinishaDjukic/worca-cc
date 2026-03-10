@@ -2,9 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ReviewOutput",
   "type": "object",
-  "required": ["approved"],
+  "required": ["outcome"],
   "properties": {
-    "approved": { "type": "boolean" },
+    "outcome": { "type": "string", "enum": ["approve", "request_changes", "reject", "restart_planning"] },
     "issues": {
       "type": "array",
       "items": {

@@ -384,6 +384,7 @@ export function attachWsServer(httpServer, config) {
     } catch { /* ignore */ }
   }
 
+  // Legacy fallback prefixes — only used when status.json lacks a stored prompt
   const STAGE_PROMPT_PREFIX = {
     plan: 'Create a detailed implementation plan for the following work request. Write the plan to the designated plan file.\n\nWork request: ',
     coordinate: 'Decompose the following work request into Beads tasks with dependencies. Do NOT implement anything — only create tasks using `bd create`.\n\nWork request: ',
@@ -443,8 +444,20 @@ export function attachWsServer(httpServer, config) {
         return;
       }
       const agentName = run.stages?.[stage]?.agent || stage;
-      const rawPrompt = run.work_request?.description || run.work_request?.title || '';
-      const userPrompt = _buildStagePrompt(stage, rawPrompt);
+
+      // Prefer real prompt stored in status.json by PromptBuilder
+      const storedPrompt = run.stages?.[stage]?.prompt;
+      let userPrompt;
+      let promptSource;
+      if (storedPrompt) {
+        userPrompt = storedPrompt;
+        promptSource = 'actual';
+      } else {
+        // Fallback: reconstruct from work request (legacy runs without PromptBuilder)
+        const rawPrompt = run.work_request?.description || run.work_request?.title || '';
+        userPrompt = _buildStagePrompt(stage, rawPrompt);
+        promptSource = 'reconstructed';
+      }
 
       // Try to read rendered agent .md from run dir, then results dir
       let agentInstructions = null;
@@ -458,7 +471,7 @@ export function attachWsServer(httpServer, config) {
           break;
         }
       }
-      ws.send(JSON.stringify(makeOk(req, { agentInstructions, userPrompt, agent: agentName })));
+      ws.send(JSON.stringify(makeOk(req, { agentInstructions, userPrompt, promptSource, agent: agentName })));
       return;
     }
 

@@ -11,14 +11,16 @@ You receive a work request (GitHub issue, Beads task, prompt, or spec file) and 
 ## Process
 
 1. Read and understand the work request
-2. Explore the codebase to understand existing architecture
-3. Identify affected components and potential risks
-4. Create `{plan_file}` with:
+2. Read CLAUDE.md for project context: tech stack, build/test commands, architecture overview, and coding conventions
+3. Explore the codebase to understand existing architecture
+4. Identify affected components and potential risks
+5. Create `{plan_file}` with:
    - Problem statement
    - Proposed approach
    - Task breakdown (high-level)
    - Test strategy
-5. Wait for human approval at the PLAN APPROVAL milestone gate
+   - Branch naming
+6. Wait for human approval at the PLAN APPROVAL milestone gate
 
 ## Output
 

@@ -18,6 +18,7 @@
       }
     },
     "test_strategy": { "type": "string" },
-    "branch_name": { "type": "string" }
+    "branch_name": { "type": "string" },
+    "approved": { "type": "boolean" }
   }
 }

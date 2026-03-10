@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
     Stage, can_transition, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
 )
@@ -21,6 +22,7 @@ from worca.state.status import (
     load_status, save_status, update_stage, set_milestone, init_status,
     start_iteration, complete_iteration,
 )
+from worca.utils.beads import bd_ready, bd_update
 from worca.utils.claude_cli import run_agent, terminate_current
 from worca.utils.git import create_branch
 
@@ -380,6 +382,7 @@ def run_stage(
     appropriate agent path, prompt, max_turns, and schema.
 
     Args:
+        context: Dict with 'prompt', '_run_dir', '_logs_dir' keys.
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
 
@@ -459,6 +462,22 @@ def handle_pr_review(outcome: str, status: dict) -> tuple:
         return (Stage.PLAN, status)
     else:
         return (None, status)
+
+
+def _query_ready_bead() -> dict | None:
+    """Query bd ready and return the first available bead, or None."""
+    try:
+        items = bd_ready()
+        if items:
+            return items[0]
+    except Exception:
+        pass
+    return None
+
+
+def _claim_bead(bead_id: str) -> bool:
+    """Claim a bead by setting its status to in_progress."""
+    return bd_update(bead_id, status="in_progress")
 
 
 def _ensure_beads_initialized() -> None:
@@ -599,6 +618,12 @@ def run_pipeline(
         }
         loop_counters = {}
 
+        # Initialize PromptBuilder for context threading across stages
+        prompt_builder = PromptBuilder(
+            work_request.title,
+            work_request.description,
+        )
+
         stage_order = get_enabled_stages(settings_path)
 
         # Handle plan file
@@ -707,6 +732,23 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 raise PipelineInterrupted("Pipeline interrupted before stage start")
 
+            # Try to assign a specific bead before implement stage
+            if current_stage == Stage.IMPLEMENT:
+                bead = _query_ready_bead()
+                if bead:
+                    _claim_bead(bead["id"])
+                    prompt_builder.update_context("assigned_bead_id", bead["id"])
+                    prompt_builder.update_context("assigned_bead_title", bead["title"])
+                    prompt_builder.update_context("assigned_bead_description", bead["description"])
+
+            # Build stage-specific prompt via PromptBuilder
+            pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
+            rendered_prompt = prompt_builder.build(current_stage.value, pb_iteration)
+
+            # Store rendered prompt in status for UI visibility
+            status["stages"][current_stage.value]["prompt"] = rendered_prompt
+            save_status(status, actual_status_path)
+
             # Run the stage
             try:
                 # Ensure beads is initialized before coordinate stage
@@ -793,11 +835,41 @@ def run_pipeline(
                     _log("PLAN not approved — stopping", "err")
                     raise PipelineError("Plan not approved")
                 _log("PLAN approved", "ok")
+                # Thread plan outputs into PromptBuilder for downstream stages
+                prompt_builder.update_context("plan_approach", result.get("approach", ""))
+                prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
+
+            # Handle coordinate results
+            elif current_stage == Stage.COORDINATE:
+                iter_extras["outcome"] = "success"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, actual_status_path)
+                # Thread coordinate outputs into PromptBuilder
+                prompt_builder.update_context("beads_ids", result.get("beads_ids", []))
+                prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
+
+            # Handle implement results
+            elif current_stage == Stage.IMPLEMENT:
+                iter_extras["outcome"] = "success"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, actual_status_path)
+                # Thread implement outputs into PromptBuilder
+                prompt_builder.update_context("files_changed", result.get("files_changed", []))
+                prompt_builder.update_context("tests_added", result.get("tests_added", []))
 
             # Handle test results
             elif current_stage == Stage.TEST:
                 passed = result.get("passed", False)
+                # Thread test outputs into PromptBuilder
+                prompt_builder.update_context("test_passed", passed)
+                prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
+                prompt_builder.update_context("proof_artifacts", result.get("proof_artifacts", []))
                 if not passed:
+                    # Thread test failures for the implement retry; clear stale review context
+                    prompt_builder.update_context("test_failures", result.get("failures", []))
+                    prompt_builder.update_context("review_issues", None)
                     iter_extras["outcome"] = "test_failure"
                     complete_iteration(status, current_stage.value, **iter_extras)
                     update_stage(status, current_stage.value, **stage_extras)
@@ -807,6 +879,7 @@ def run_pipeline(
                     else:
                         loop_key = "implement_test"
                         loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
+                        loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                         _log(f"Tests failed — looping back to IMPLEMENT (iteration {loop_counters[loop_key]})", "warn")
                         if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
                             _log(f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations", "err")
@@ -838,11 +911,15 @@ def run_pipeline(
                         raise PipelineError("PR rejected")
                     _log("Review approved", "ok")
                 elif next_stage == Stage.IMPLEMENT:
+                    # Thread review feedback for the implement retry; clear stale test context
+                    prompt_builder.update_context("review_issues", result.get("issues", []))
+                    prompt_builder.update_context("test_failures", None)
                     if Stage.IMPLEMENT not in stage_order:
                         _log("Changes requested but IMPLEMENT stage is disabled — skipping loop", "warn")
                     else:
                         loop_key = "pr_changes"
                         loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
+                        loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                         _log(f"Changes requested — looping back to IMPLEMENT (iteration {loop_counters[loop_key]})", "warn")
                         if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
                             _log(f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations", "err")
