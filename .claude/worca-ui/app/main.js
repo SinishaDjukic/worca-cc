@@ -9,6 +9,7 @@ import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
 import { settingsView, loadSettings } from './views/settings.js';
 import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
+import { liveOutputView, writeLiveLogLine, writeLiveIterationSeparator, clearLiveTerminal, mountLiveTerminal, disposeLiveTerminal, updateActiveStage, getActiveStage } from './views/live-output.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
@@ -63,6 +64,29 @@ function fetchAgentPrompts(runId, stages) {
   }
 }
 
+// --- Auto-reset log filter on stage transition ---
+
+function findActiveStage(run) {
+  if (!run || !run.stages) return null;
+  for (const [key, stage] of Object.entries(run.stages)) {
+    if (stage.status === 'in_progress') return key;
+  }
+  return null;
+}
+
+function autoResetLogFilterOnStageChange(prevRun, newRun) {
+  const prevStage = findActiveStage(prevRun);
+  const newStage = findActiveStage(newRun);
+  if (newStage && prevStage !== newStage) {
+    logFilter = '*';
+    logIterationFilter = null;
+    clearTerminal();
+    store.clearLog();
+    ws.send('unsubscribe-log').catch(() => {});
+    ws.send('subscribe-log', { stage: null, runId: newRun.id }).catch(() => {});
+  }
+}
+
 // --- Wire WS events to state ---
 
 ws.on('runs-list', (payload) => {
@@ -79,6 +103,10 @@ ws.on('run-snapshot', (payload) => {
     const prevRun = store.getState().runs[payload.id] ?? null;
     notificationManager.handleRunUpdate(payload.id, payload, prevRun);
     store.setRun(payload.id, payload);
+    if (route.runId === payload.id) {
+      autoResetLogFilterOnStageChange(prevRun, payload);
+      updateActiveStage(payload);
+    }
     if (pipelineAction) {
       pipelineAction = null;
       rerender();
@@ -91,6 +119,10 @@ ws.on('run-update', (payload) => {
     const prevRun = store.getState().runs[payload.id] ?? null;
     notificationManager.handleRunUpdate(payload.id, payload, prevRun);
     store.setRun(payload.id, payload);
+    if (route.runId === payload.id) {
+      autoResetLogFilterOnStageChange(prevRun, payload);
+      updateActiveStage(payload);
+    }
     if (pipelineAction) { pipelineAction = null; rerender(); }
   }
 });
@@ -100,9 +132,13 @@ ws.on('log-line', (payload) => {
     store.appendLog(payload);
     // Show iteration separator when iteration changes
     if (payload.iteration && payload.iteration > 1 && payload._iterStart) {
-      writeIterationSeparator(payload.iteration);
+      // Log History: only write separators when a specific stage is selected
+      if (logFilter !== '*') writeIterationSeparator(payload.iteration);
+      writeLiveIterationSeparator(payload.iteration);
     }
-    writeLogLine(payload);
+    // Log History: only write to the history terminal when a specific stage is selected
+    if (logFilter !== '*') writeLogLine(payload);
+    writeLiveLogLine(payload);
   }
 });
 
@@ -111,7 +147,9 @@ ws.on('log-bulk', (payload) => {
     for (const line of payload.lines) {
       const entry = { stage: payload.stage, line };
       store.appendLog(entry);
-      writeLogLine(entry);
+      // Log History: only write to the history terminal when a specific stage is selected
+      if (logFilter !== '*') writeLogLine(entry);
+      writeLiveLogLine(entry);
     }
   }
 });
@@ -162,9 +200,12 @@ onHashChange((newRoute) => {
     ws.send('unsubscribe-log').catch(() => {});
     store.clearLog();
     clearTerminal();
+    clearLiveTerminal();
   }
 
   if (route.runId && route.runId !== prevRunId) {
+    logFilter = '*';
+    logIterationFilter = null;
     ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
     ws.send('subscribe-log', { stage: null, runId: route.runId }).catch(() => {});
   }
@@ -175,6 +216,7 @@ onHashChange((newRoute) => {
 
   if (!route.runId && prevRunId) {
     disposeTerminal();
+    disposeLiveTerminal();
   }
 
   rerender();
@@ -387,17 +429,30 @@ function mainContentView() {
     }
     const logState = filteredLogState(state);
     logState.currentLogStage = logFilter === '*' ? null : logFilter;
+    const isRunning = !!run?.active;
+    const liveStage = getActiveStage();
+    // Initialize active stage tracking on first render
+    if (run && !liveStage) {
+      updateActiveStage(run);
+    }
     return html`
-      ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {} })}
-      ${logViewerView(logState, {
-        onStageFilter: handleStageFilter,
-        onIterationFilter: handleIterationFilter,
-        onSearch: handleSearch,
-        onToggleAutoScroll: handleToggleAutoScroll,
-        autoScroll,
-        stageIterations,
-        runStages: run?.stages,
-      })}
+      <div class="run-detail-layout">
+        <div class="run-detail-layout__stages">
+          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {} })}
+        </div>
+        <div class="run-detail-layout__logs">
+          ${liveOutputView(getActiveStage(), isRunning)}
+          ${logViewerView(logState, {
+            onStageFilter: handleStageFilter,
+            onIterationFilter: handleIterationFilter,
+            onSearch: handleSearch,
+            onToggleAutoScroll: handleToggleAutoScroll,
+            autoScroll,
+            stageIterations,
+            runStages: run?.stages,
+          })}
+        </div>
+      </div>
     `;
   }
 
@@ -462,9 +517,11 @@ function rerender() {
     ` : ''}
   `, appEl);
 
-  // Mount xterm terminal after render if in run view
+  // Mount xterm terminals after render if in run view
   if (route.runId) {
-    mountTerminal(route.runId);
+    // Log History: only mount when a specific stage is selected (terminal div exists)
+    if (logFilter !== '*') mountTerminal(route.runId);
+    mountLiveTerminal(route.runId);
   }
 }
 

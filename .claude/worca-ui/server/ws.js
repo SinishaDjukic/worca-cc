@@ -124,6 +124,11 @@ export function attachWsServer(httpServer, config) {
   function setupStatusWatcher() {
     if (statusWatcher) statusWatcher.close();
     const runDir = resolveActiveRunDir();
+    // When the active run changes, close stale log watchers so fresh ones
+    // are created for the new run's files (fixes logWatchers.has() guard).
+    if (watchedRunDir !== null && runDir !== watchedRunDir) {
+      clearLogWatchers();
+    }
     watchedRunDir = runDir;
     try {
       if (existsSync(runDir)) {
@@ -156,6 +161,19 @@ export function attachWsServer(httpServer, config) {
 
   // Track line counts per log file so we only send new lines
   const logLineCounts = new Map();
+
+  /**
+   * Close all active log watchers and reset tracking state.
+   * Must be called when watchedRunDir changes so stale watcher keys
+   * from the previous run don't prevent new watchers from being created.
+   */
+  function clearLogWatchers() {
+    for (const w of logWatchers.values()) {
+      try { w.close(); } catch { /* ignore */ }
+    }
+    logWatchers.clear();
+    logLineCounts.clear();
+  }
 
   // Start watching a single log file
   function watchSingleLogFile(stage, filePath, iteration) {
@@ -199,6 +217,14 @@ export function attachWsServer(httpServer, config) {
         }
       });
       logWatchers.set(dirKey, dirWatcher);
+      // Backfill files created in the race window between directory creation
+      // and watcher establishment. The watchSingleLogFile guard
+      // (logWatchers.has(key)) will naturally deduplicate.
+      const logsBase = resolveLogsBaseDir();
+      const backfill = listIterationFiles(logsBase, stage);
+      for (const { iteration, path } of backfill) {
+        watchSingleLogFile(stage, path, iteration);
+      }
     } catch { /* ignore */ }
   }
 

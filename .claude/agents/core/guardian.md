@@ -11,7 +11,7 @@ You receive the test results and proof status from the Tester. You have access t
 ## Process
 
 1. Verify proof status = verified (reject if failed)
-2. Review all changes: `git diff main..HEAD`
+2. Review all changes against the base branch: detect it via `git symbolic-ref refs/remotes/origin/HEAD | sed 's|refs/remotes/origin/||'` or fall back to `main`/`master`, then run `git diff <base>..HEAD`
 3. Create PR: `gh pr create --title "..." --body "..."`
 4. Run code review (up to 5 iterations):
    - Review code for quality, security, correctness

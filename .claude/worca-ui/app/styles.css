@@ -774,9 +774,71 @@ sl-details.stage-panel::part(content) {
   color: var(--status-in-progress);
 }
 
-/* --- 17. Log Viewer --- */
-.log-viewer-container {
-  margin-top: 24px;
+/* --- 17. Log Viewer (Log History) --- */
+.log-history-container {
+  margin-top: 20px;
+}
+
+sl-details.log-history-panel::part(base) {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+sl-details.log-history-panel::part(header) {
+  padding: 10px 16px;
+}
+
+sl-details.log-history-panel::part(content) {
+  padding: 0;
+}
+
+.log-history-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.log-history-icon {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.log-history-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.log-history-body {
+  border-top: 1px solid var(--border-subtle);
+  padding: 0 16px 16px;
+}
+
+.log-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  color: var(--muted);
+  text-align: center;
+  gap: 12px;
+}
+
+.log-history-empty-icon {
+  display: flex;
+  align-items: center;
+  opacity: 0.4;
+}
+
+.log-history-empty p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .log-controls {
@@ -1539,6 +1601,128 @@ sl-details.agent-prompt-section::part(content) {
 /* Iteration selector in log controls */
 .log-controls sl-select:nth-of-type(2) {
   min-width: 140px;
+}
+
+/* --- 27b. Live Output Panel --- */
+.live-output-container {
+  margin-top: 20px;
+}
+
+sl-details.live-output-panel::part(base) {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+sl-details.live-output-panel::part(header) {
+  padding: 10px 16px;
+}
+
+sl-details.live-output-panel::part(content) {
+  padding: 0;
+}
+
+.live-output-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.live-output-icon {
+  display: flex;
+  align-items: center;
+  color: var(--status-in-progress);
+}
+
+.live-output-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.live-output-terminal-wrapper {
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  overflow: hidden;
+}
+
+.live-output-terminal {
+  height: 280px;
+  background: var(--log-bg);
+}
+
+/* xterm.js overrides for live output */
+.live-output-terminal .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.live-output-terminal .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.live-output-terminal .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+.live-output-terminal .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* --- 27c. Run Detail Two-Column Layout --- */
+.run-detail-layout {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-detail-layout__stages {
+  min-width: 0;
+}
+
+.run-detail-layout__logs {
+  min-width: 0;
+}
+
+/* Remove top margin from live-output and log-history when inside the layout columns,
+   since the grid gap handles spacing */
+.run-detail-layout__logs .live-output-container {
+  margin-top: 0;
+}
+
+.run-detail-layout__logs .log-history-container {
+  margin-top: 16px;
+}
+
+@media (min-width: 1201px) {
+  .run-detail-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .run-detail-layout__logs {
+    position: sticky;
+    top: 0;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  /* Subtle scrollbar for the sticky logs column */
+  .run-detail-layout__logs::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .run-detail-layout__logs::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .run-detail-layout__logs::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
 }
 
 /* --- 28. Utility --- */

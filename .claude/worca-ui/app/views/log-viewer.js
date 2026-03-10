@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, ArrowDown, Pause, Search, Star } from '../utils/icons.js';
+import { iconSvg, ArrowDown, Pause, Search, Star, Clock } from '../utils/icons.js';
 
 // ANSI color palette for stage tags
 const STAGE_COLORS = [
@@ -142,51 +142,71 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
   const iterCount = stageIterations?.[currentStage] || 0;
   const showIterationSelector = currentStage && currentStage !== '*' && iterCount > 1;
 
+  // When no specific stage is selected, show a prompt instead of concatenated logs
+  const hasStageSelected = currentStage && currentStage !== '*';
+
   return html`
-    <div class="log-viewer-container">
-      <div class="log-controls">
-        <sl-select
-          placeholder="All Stages"
-          size="small"
-          clearable
-          @sl-change=${(e) => onStageFilter(e.target.value || '*')}
-        >
-          ${stages.map(s => html`<sl-option value="${s}">${s === 'orchestrator' ? html`<span style="display:inline-flex;align-items:center;gap:4px">${unsafeHTML(iconSvg(Star, 12))} ORCHESTRATOR</span>` : s.toUpperCase()}</sl-option>`)}
-        </sl-select>
-        ${showIterationSelector ? html`
-          <sl-select
-            placeholder="All Iterations"
-            size="small"
-            clearable
-            @sl-change=${(e) => onIterationFilter(e.target.value ? parseInt(e.target.value) : null)}
-          >
-            ${Array.from({length: iterCount}, (_, i) =>
-              html`<sl-option value="${i + 1}">Iteration ${i + 1}</sl-option>`
-            )}
-          </sl-select>
-        ` : nothing}
-        <sl-input
-          class="log-search"
-          type="text"
-          placeholder="Search logs\u2026"
-          size="small"
-          clearable
-          @sl-input=${(e) => onSearch(e.target.value)}
-        >
-          <span slot="prefix">${unsafeHTML(iconSvg(Search, 14))}</span>
-        </sl-input>
-        <sl-button
-          size="small"
-          variant="${autoScroll ? 'primary' : 'default'}"
-          @click=${onToggleAutoScroll}
-        >
-          ${unsafeHTML(iconSvg(autoScroll ? ArrowDown : Pause, 14))}
-          ${autoScroll ? 'Auto' : 'Paused'}
-        </sl-button>
-      </div>
-      <div class="log-terminal-wrapper">
-        <div id="log-terminal" class="log-terminal"></div>
-      </div>
+    <div class="log-history-container">
+      <sl-details class="log-history-panel">
+        <div slot="summary" class="log-history-header">
+          <span class="log-history-icon">${unsafeHTML(iconSvg(Clock, 16))}</span>
+          <span class="log-history-title">Log History</span>
+          ${hasStageSelected ? html`<sl-badge variant="neutral" pill>${currentStage.toUpperCase()}</sl-badge>` : nothing}
+        </div>
+        <div class="log-history-body">
+          <div class="log-controls">
+            <sl-select
+              .value=${currentStage || ''}
+              placeholder="Select a stage\u2026"
+              size="small"
+              clearable
+              @sl-change=${(e) => onStageFilter(e.target.value || '*')}
+            >
+              ${stages.map(s => html`<sl-option value="${s}">${s === 'orchestrator' ? html`<span style="display:inline-flex;align-items:center;gap:4px">${unsafeHTML(iconSvg(Star, 12))} ORCHESTRATOR</span>` : s.toUpperCase()}</sl-option>`)}
+            </sl-select>
+            ${showIterationSelector ? html`
+              <sl-select
+                placeholder="All Iterations"
+                size="small"
+                clearable
+                @sl-change=${(e) => onIterationFilter(e.target.value ? parseInt(e.target.value) : null)}
+              >
+                ${Array.from({length: iterCount}, (_, i) =>
+                  html`<sl-option value="${i + 1}">Iteration ${i + 1}</sl-option>`
+                )}
+              </sl-select>
+            ` : nothing}
+            <sl-input
+              class="log-search"
+              type="text"
+              placeholder="Search logs\u2026"
+              size="small"
+              clearable
+              @sl-input=${(e) => onSearch(e.target.value)}
+            >
+              <span slot="prefix">${unsafeHTML(iconSvg(Search, 14))}</span>
+            </sl-input>
+            <sl-button
+              size="small"
+              variant="${autoScroll ? 'primary' : 'default'}"
+              @click=${onToggleAutoScroll}
+            >
+              ${unsafeHTML(iconSvg(autoScroll ? ArrowDown : Pause, 14))}
+              ${autoScroll ? 'Auto' : 'Paused'}
+            </sl-button>
+          </div>
+          ${hasStageSelected ? html`
+            <div class="log-terminal-wrapper">
+              <div id="log-terminal" class="log-terminal"></div>
+            </div>
+          ` : html`
+            <div class="log-history-empty">
+              <span class="log-history-empty-icon">${unsafeHTML(iconSvg(Clock, 32))}</span>
+              <p>Select a stage from the dropdown to review past output.</p>
+            </div>
+          `}
+        </div>
+      </sl-details>
     </div>
   `;
 }
