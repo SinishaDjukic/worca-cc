@@ -8,7 +8,7 @@ import { runDetailView } from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
 import { settingsView, loadSettings } from './views/settings.js';
-import { newRunView } from './views/new-run.js';
+import { newRunView, submitNewRun, getNewRunSubmitState } from './views/new-run.js';
 import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
 import { liveOutputView, writeLiveLogLine, writeLiveIterationSeparator, clearLiveTerminal, mountLiveTerminal, disposeLiveTerminal, updateActiveStage, getActiveStage } from './views/live-output.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
@@ -500,6 +500,15 @@ function contentHeaderView() {
   } else if (route.section === 'new-run') {
     title = 'New Pipeline';
     showBack = true;
+    const nrs = getNewRunSubmitState();
+    const runs = Object.values(state.runs);
+    const isRunning = runs.some(r => r.active);
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || isRunning}
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active') })}>
+        ${unsafeHTML(iconSvg(Play, 14))}
+        ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
+      </button>`;
   } else if (route.section === 'settings') {
     title = 'Settings';
     showBack = true;
@@ -567,7 +576,7 @@ function mainContentView() {
   }
 
   if (route.section === 'new-run') {
-    return newRunView(state, { rerender, onStarted: () => navigate('active', null) });
+    return newRunView(state, { rerender });
   }
 
   if (route.section === 'settings') {

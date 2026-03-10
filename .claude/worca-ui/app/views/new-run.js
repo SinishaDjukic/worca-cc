@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Play, FileText } from '../utils/icons.js';
+import { iconSvg, FileText } from '../utils/icons.js';
 
 // Module-level state
 let inputType = 'prompt';
@@ -46,9 +46,62 @@ function groupedPlanFiles(files) {
   return groups;
 }
 
-export function newRunView(state, { rerender, onStarted }) {
-  const runs = Object.values(state.runs);
-  const isRunning = runs.some(r => r.active);
+export function getNewRunSubmitState() {
+  return { submitStatus, isSubmitting: submitStatus === 'submitting' };
+}
+
+export async function submitNewRun({ rerender, onStarted }) {
+  const inputEl = document.getElementById('new-run-input-value');
+  const msizeEl = document.getElementById('new-run-msize');
+  const mloopsEl = document.getElementById('new-run-mloops');
+
+  const inputValue = inputEl?.value?.trim() || '';
+  if (!inputValue) {
+    submitStatus = 'error';
+    submitError = 'Please enter a value.';
+    rerender();
+    return;
+  }
+
+  const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
+  const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
+
+  submitStatus = 'submitting';
+  submitError = '';
+  rerender();
+
+  try {
+    const body = {
+      inputType,
+      inputValue,
+      msize: Math.max(1, Math.min(10, msize)),
+      mloops: Math.max(1, Math.min(10, mloops)),
+    };
+    if (selectedPlan) body.planFile = selectedPlan;
+
+    const res = await fetch('/api/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+    if (data.ok) {
+      submitStatus = null;
+      onStarted();
+    } else {
+      submitStatus = 'error';
+      submitError = data.error || 'Failed to start pipeline';
+      rerender();
+    }
+  } catch (err) {
+    submitStatus = 'error';
+    submitError = err.message || 'Network error';
+    rerender();
+  }
+}
+
+export function newRunView(state, { rerender }) {
 
   function handleInputTypeChange(e) {
     inputType = e.target.value;
@@ -90,66 +143,12 @@ export function newRunView(state, { rerender, onStarted }) {
     rerender();
   }
 
-  async function handleSubmit() {
-    const inputEl = document.getElementById('new-run-input-value');
-    const msizeEl = document.getElementById('new-run-msize');
-    const mloopsEl = document.getElementById('new-run-mloops');
-
-    const inputValue = inputEl?.value?.trim() || '';
-    if (!inputValue) {
-      submitStatus = 'error';
-      submitError = 'Please enter a value.';
-      rerender();
-      return;
-    }
-
-    const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
-    const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
-
-    submitStatus = 'submitting';
-    submitError = '';
-    rerender();
-
-    try {
-      const body = {
-        inputType,
-        inputValue,
-        msize: Math.max(1, Math.min(10, msize)),
-        mloops: Math.max(1, Math.min(10, mloops)),
-      };
-      if (selectedPlan) body.planFile = selectedPlan;
-
-      const res = await fetch('/api/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const data = await res.json();
-      if (data.ok) {
-        submitStatus = null;
-        onStarted();
-      } else {
-        submitStatus = 'error';
-        submitError = data.error || 'Failed to start pipeline';
-        rerender();
-      }
-    } catch (err) {
-      submitStatus = 'error';
-      submitError = err.message || 'Network error';
-      rerender();
-    }
-  }
-
   const filtered = filteredPlanFiles();
   const grouped = groupedPlanFiles(filtered);
 
   return html`
     <div class="new-run-page">
-      <div class="new-run-header">
-        <h2>Start New Pipeline</h2>
-        <p class="text-muted">Configure and launch a new pipeline run.</p>
-      </div>
+      ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
       <div class="new-run-form">
         <div class="new-run-section">
@@ -165,13 +164,14 @@ export function newRunView(state, { rerender, onStarted }) {
           <div class="settings-field">
             <label class="settings-label">${inputLabel(inputType)}</label>
             ${inputType === 'prompt'
-              ? html`<sl-textarea id="new-run-input-value" rows="4" placeholder="Describe what the pipeline should do..."></sl-textarea>`
+              ? html`<sl-textarea id="new-run-input-value" rows="8" placeholder="Describe what the pipeline should do..."></sl-textarea>`
               : html`<sl-input id="new-run-input-value" placeholder=${inputType === 'source' ? 'https://github.com/...' : 'path/to/spec.md'}></sl-input>`
             }
           </div>
         </div>
 
-        <sl-details summary="Advanced Options">
+        <div class="new-run-section">
+          <h3 class="new-run-section-title">Advanced Options</h3>
           <div class="new-run-advanced">
             <div class="new-run-grid">
               <div class="settings-field">
@@ -218,20 +218,6 @@ export function newRunView(state, { rerender, onStarted }) {
               <span class="settings-field-hint">Skips the planning stage. Relative to project root.</span>
             </div>
           </div>
-        </sl-details>
-
-        <div class="new-run-actions">
-          <sl-button
-            variant="primary"
-            size="large"
-            ?disabled=${submitStatus === 'submitting' || isRunning}
-            @click=${handleSubmit}
-          >
-            ${unsafeHTML(iconSvg(Play, 16))}
-            ${submitStatus === 'submitting' ? 'Starting...' : 'Start Pipeline'}
-          </sl-button>
-          ${isRunning ? html`<span class="new-run-warning">A pipeline is currently running.</span>` : nothing}
-          ${submitStatus === 'error' ? html`<span class="new-run-error">${submitError}</span>` : nothing}
         </div>
       </div>
     </div>
