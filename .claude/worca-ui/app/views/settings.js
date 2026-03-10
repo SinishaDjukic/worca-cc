@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings } from '../utils/icons.js';
+import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings, Bell } from '../utils/icons.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 const STAGE_AGENT_MAP = {
@@ -361,6 +361,96 @@ function preferencesTab(preferences, onThemeToggle) {
   `;
 }
 
+const NOTIF_EVENT_LABELS = {
+  run_completed: { label: 'Run Completed', desc: 'When a pipeline run finishes successfully' },
+  run_failed: { label: 'Run Failed', desc: 'When a pipeline run fails at any stage' },
+  approval_needed: { label: 'Approval Required', desc: 'When a stage is waiting for plan or PR approval' },
+  test_failures: { label: 'Test Failures', desc: 'When a test iteration ends with failures' },
+  loop_limit_warning: { label: 'Loop Limit Warning', desc: 'When a stage approaches its configured loop limit' },
+};
+
+function notificationsTab(preferences, { rerender, onSaveNotifications }) {
+  const notifPrefs = preferences?.notifications || {};
+  const enabled = notifPrefs.enabled ?? true;
+  const sound = notifPrefs.sound ?? false;
+  const events = notifPrefs.events || {};
+
+  const permission = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+  const permBadge = permission === 'granted'
+    ? html`<sl-badge variant="success" pill>Granted</sl-badge>`
+    : permission === 'denied'
+      ? html`<sl-badge variant="danger" pill>Blocked</sl-badge>`
+      : permission === 'default'
+        ? html`<sl-badge variant="neutral" pill>Not Yet Asked</sl-badge>`
+        : html`<sl-badge variant="neutral" pill>Not Supported</sl-badge>`;
+
+  const notGranted = permission !== 'granted';
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Browser Notifications</h3>
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+        <span style="font-size: 13px; color: var(--muted);">Permission Status:</span>
+        ${permBadge}
+        ${permission === 'default' ? html`
+          <sl-button size="small" variant="primary" @click=${async () => {
+            if (typeof Notification !== 'undefined') {
+              await Notification.requestPermission();
+              rerender();
+            }
+          }}>Enable Notifications</sl-button>
+        ` : ''}
+      </div>
+
+      ${notGranted ? html`
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">
+          ${permission === 'denied' ? 'Notifications are blocked. Enable in your browser settings to use these controls.' : 'Grant notification permission to use these controls.'}
+        </div>
+      ` : ''}
+
+      <div class="settings-switches">
+        <div class="settings-switch-row">
+          <sl-switch id="notif-enabled" ?checked=${enabled} size="small" ?disabled=${notGranted}>Notifications Enabled</sl-switch>
+          <span class="settings-switch-desc">Master toggle for all browser notifications</span>
+        </div>
+        <div class="settings-switch-row">
+          <sl-switch id="notif-sound" ?checked=${sound} size="small" ?disabled=${notGranted}>Sound for Critical Events</sl-switch>
+          <span class="settings-switch-desc">Play a short audio cue for failed runs and approval requests</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Notification Events</h3>
+      <div class="settings-switches">
+        ${Object.entries(NOTIF_EVENT_LABELS).map(([key, { label, desc }]) => html`
+          <div class="settings-switch-row">
+            <sl-switch id="notif-evt-${key}" ?checked=${events[key] ?? true} size="small" ?disabled=${notGranted}>${label}</sl-switch>
+            <span class="settings-switch-desc">${desc}</span>
+          </div>
+        `)}
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button variant="primary" size="small" ?disabled=${notGranted} @click=${() => {
+          const notifEnabled = document.getElementById('notif-enabled')?.checked ?? true;
+          const notifSound = document.getElementById('notif-sound')?.checked ?? false;
+          const eventPrefs = {};
+          for (const key of Object.keys(NOTIF_EVENT_LABELS)) {
+            eventPrefs[key] = document.getElementById(`notif-evt-${key}`)?.checked ?? true;
+          }
+          onSaveNotifications({
+            enabled: notifEnabled,
+            sound: notifSound,
+            events: eventPrefs,
+          });
+        }}>
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save Notifications
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
 // --- Feedback alert ---
 
 function feedbackAlert(rerender) {
@@ -378,7 +468,7 @@ function feedbackAlert(rerender) {
 
 // --- Main export ---
 
-export function settingsView(preferences, { rerender, onThemeToggle }) {
+export function settingsView(preferences, { rerender, onThemeToggle, onSaveNotifications }) {
   if (!settingsData) {
     return html`<div class="empty-state">Loading settings\u2026</div>`;
   }
@@ -406,11 +496,16 @@ export function settingsView(preferences, { rerender, onThemeToggle }) {
           ${unsafeHTML(iconSvg(Settings, 14))}
           Preferences
         </sl-tab>
+        <sl-tab slot="nav" panel="notifications">
+          ${unsafeHTML(iconSvg(Bell, 14))}
+          Notifications
+        </sl-tab>
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="preferences">${preferencesTab(preferences, onThemeToggle)}</sl-tab-panel>
+        <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;

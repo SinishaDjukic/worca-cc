@@ -11,7 +11,8 @@ export function createStore(initial = {}) {
     logLines: initial.logLines ?? [],
     preferences: {
       theme: initial.preferences?.theme ?? 'light',
-      sidebarCollapsed: initial.preferences?.sidebarCollapsed ?? false
+      sidebarCollapsed: initial.preferences?.sidebarCollapsed ?? false,
+      notifications: initial.preferences?.notifications ?? null
     }
   };
 
@@ -37,7 +38,8 @@ export function createStore(initial = {}) {
         next.runs === state.runs &&
         next.logLines === state.logLines &&
         next.preferences.theme === state.preferences.theme &&
-        next.preferences.sidebarCollapsed === state.preferences.sidebarCollapsed
+        next.preferences.sidebarCollapsed === state.preferences.sidebarCollapsed &&
+        next.preferences.notifications === state.preferences.notifications
       ) return;
       state = next;
       emit();

@@ -1558,3 +1558,44 @@ sl-details.agent-prompt-section::part(content) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* --- 29. Notification Banner --- */
+.notification-banner {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.notification-banner--info {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+.notification-banner--warning {
+  background: color-mix(in srgb, var(--status-in-progress) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--status-in-progress) 25%, var(--border));
+}
+
+.notification-banner-text {
+  flex: 1;
+  font-size: 0.875rem;
+}
+
+.notification-banner-dismiss {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--muted);
+  opacity: 0.6;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  transition: opacity var(--transition-fast);
+}
+
+.notification-banner-dismiss:hover {
+  opacity: 1;
+}

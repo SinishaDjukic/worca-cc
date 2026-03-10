@@ -12,6 +12,7 @@ import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mo
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
+import { createNotificationManager } from './notifications.js';
 
 // Register Shoelace components (tree-shaken — only imports what we use)
 import '@shoelace-style/shoelace/dist/components/details/details.js';
@@ -31,6 +32,7 @@ import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 
 const store = createStore();
 const ws = createWsClient();
+const notificationManager = createNotificationManager({ store, ws, getSettings: () => settings });
 let route = parseHash(location.hash);
 let connectionState = ws.getState();
 let autoScroll = true;
@@ -74,6 +76,8 @@ ws.on('runs-list', (payload) => {
 
 ws.on('run-snapshot', (payload) => {
   if (payload && payload.id) {
+    const prevRun = store.getState().runs[payload.id] ?? null;
+    notificationManager.handleRunUpdate(payload.id, payload, prevRun);
     store.setRun(payload.id, payload);
     if (pipelineAction) {
       pipelineAction = null;
@@ -84,6 +88,8 @@ ws.on('run-snapshot', (payload) => {
 
 ws.on('run-update', (payload) => {
   if (payload && payload.id) {
+    const prevRun = store.getState().runs[payload.id] ?? null;
+    notificationManager.handleRunUpdate(payload.id, payload, prevRun);
     store.setRun(payload.id, payload);
     if (pipelineAction) { pipelineAction = null; rerender(); }
   }
@@ -190,6 +196,11 @@ function handleThemeToggle() {
   ws.send('set-preferences', { theme: next }).catch(() => {});
   store.setState({ preferences: { theme: next } });
   applyTheme(next);
+}
+
+function handleSaveNotifications(notifPrefs) {
+  ws.send('set-preferences', { notifications: notifPrefs }).catch(() => {});
+  store.setState({ preferences: { notifications: notifPrefs } });
 }
 
 function handleStageFilter(stage) {
@@ -391,7 +402,7 @@ function mainContentView() {
   }
 
   if (route.section === 'settings') {
-    return settingsView(state.preferences, { rerender, onThemeToggle: handleThemeToggle });
+    return settingsView(state.preferences, { rerender, onThemeToggle: handleThemeToggle, onSaveNotifications: handleSaveNotifications });
   }
 
   if (route.section === 'history') {
@@ -433,6 +444,7 @@ function rerender() {
         onNavigate: handleNavigate
       })}
       <main class="main-content">
+        ${notificationManager.renderBanner()}
         ${contentHeaderView()}
         ${mainContentView()}
       </main>
@@ -458,6 +470,7 @@ function rerender() {
 
 // --- Bootstrap ---
 
+notificationManager.setRerender(rerender);
 store.subscribe(() => rerender());
 applyTheme(store.getState().preferences.theme);
 if (route.section === 'settings') {
