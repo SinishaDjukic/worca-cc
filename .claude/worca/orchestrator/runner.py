@@ -25,6 +25,8 @@ from worca.state.status import (
 from worca.utils.beads import bd_ready, bd_update
 from worca.utils.claude_cli import run_agent, terminate_current
 from worca.utils.git import create_branch
+from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
+from worca.utils.stats import update_cumulative_stats
 
 
 class LoopExhaustedError(Exception):
@@ -739,7 +741,7 @@ def run_pipeline(
                     _claim_bead(bead["id"])
                     prompt_builder.update_context("assigned_bead_id", bead["id"])
                     prompt_builder.update_context("assigned_bead_title", bead["title"])
-                    prompt_builder.update_context("assigned_bead_description", bead["description"])
+                    prompt_builder.update_context("assigned_bead_description", bead.get("description", ""))
 
             # Build stage-specific prompt via PromptBuilder
             pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
@@ -800,6 +802,9 @@ def run_pipeline(
             # Save full envelope for resume/debugging (per-iteration)
             _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
 
+            # Extract token usage from the raw envelope
+            usage = extract_token_usage(raw_envelope) if isinstance(raw_envelope, dict) else {}
+
             # Build iteration completion kwargs
             stage_completed = datetime.now(timezone.utc).isoformat()
             iter_extras = {
@@ -812,6 +817,8 @@ def run_pipeline(
                     iter_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+            if usage:
+                iter_extras["token_usage"] = usage
             if isinstance(result, dict):
                 iter_extras["output"] = result
 
@@ -822,6 +829,17 @@ def run_pipeline(
                     stage_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     stage_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+
+            # Compute stage-level token aggregate across all iterations
+            all_iter_usages = []
+            for it in status.get("stages", {}).get(current_stage.value, {}).get("iterations", []):
+                it_usage = it.get("token_usage")
+                if it_usage:
+                    all_iter_usages.append(it_usage)
+            if usage:
+                all_iter_usages.append(usage)
+            if all_iter_usages:
+                stage_extras["token_usage"] = aggregate_token_usage(all_iter_usages)
 
             # Milestone gate after PLAN
             if current_stage == Stage.PLAN:
@@ -955,25 +973,42 @@ def run_pipeline(
 
         total_elapsed = time.time() - pipeline_t0
 
-        # Pipeline summary — read from nested per-iteration log files
-        total_cost = 0
-        total_turns = 0
-        for stage_file in ["plan", "coordinate", "implement", "test", "review", "pr"]:
-            stage_dir = os.path.join(logs_dir, stage_file)
-            if os.path.isdir(stage_dir):
-                import glob
-                for iter_path in glob.glob(os.path.join(stage_dir, "iter-*.json")):
-                    try:
-                        with open(iter_path) as f:
-                            env = json.load(f)
-                        total_cost += env.get("total_cost_usd", 0) or 0
-                        total_turns += env.get("num_turns", 0) or 0
-                    except (json.JSONDecodeError, OSError):
-                        pass
+        # Compute run-level token aggregate from stage data
+        all_iter_usages = []
+        by_stage_agg = {}
+        for stage_name, stage_data in status.get("stages", {}).items():
+            stage_token = stage_data.get("token_usage")
+            if stage_token:
+                by_stage_agg[stage_name] = stage_token
+            for it in stage_data.get("iterations", []):
+                it_usage = it.get("token_usage")
+                if it_usage:
+                    all_iter_usages.append(it_usage)
+
+        if all_iter_usages:
+            run_agg = aggregate_token_usage(all_iter_usages)
+            run_agg["by_model"] = aggregate_by_model(all_iter_usages)
+            run_agg["by_stage"] = by_stage_agg
+            status["token_usage"] = run_agg
+
+        # Extract totals for logging
+        run_token = status.get("token_usage", {})
+        total_cost = run_token.get("total_cost_usd", 0)
+        total_turns = run_token.get("num_turns", 0)
 
         # Mark pipeline as completed with timestamp
         status["completed_at"] = datetime.now(timezone.utc).isoformat()
         save_status(status, actual_status_path)
+
+        # Update cumulative stats
+        stats_dir = os.path.join(os.path.dirname(actual_status_path), "..", "..", "stats")
+        if run_dir:
+            stats_dir = os.path.join(os.path.dirname(os.path.dirname(run_dir)), "stats")
+        stats_path = os.path.join(stats_dir, "cumulative.json")
+        try:
+            update_cumulative_stats(status, stats_path)
+        except Exception as e:
+            _log(f"Warning: failed to update cumulative stats: {e}", "warn")
 
         _log(f"Pipeline completed in {_format_duration(total_elapsed)}", "ok")
         summary_parts = []
@@ -981,6 +1016,9 @@ def run_pipeline(
             summary_parts.append(f"turns={total_turns}")
         if total_cost:
             summary_parts.append(f"cost=${total_cost:.2f}")
+        total_tokens = run_token.get("input_tokens", 0) + run_token.get("output_tokens", 0)
+        if total_tokens:
+            summary_parts.append(f"tokens={total_tokens:,}")
         if summary_parts:
             _log(f"Totals: {' | '.join(summary_parts)}")
 

@@ -104,6 +104,24 @@
       "deploy_approval": true
     },
     "plan_path_template": "docs/plans/{timestamp}-{title_slug}.md",
+    "pricing": {
+      "models": {
+        "opus": {
+          "input_per_mtok": 15.00,
+          "output_per_mtok": 75.00,
+          "cache_write_per_mtok": 18.75,
+          "cache_read_per_mtok": 1.50
+        },
+        "sonnet": {
+          "input_per_mtok": 3.00,
+          "output_per_mtok": 15.00,
+          "cache_write_per_mtok": 3.75,
+          "cache_read_per_mtok": 0.30
+        }
+      },
+      "currency": "USD",
+      "last_updated": "2025-05-01"
+    },
     "governance": {
       "guards": {
         "block_rm_rf": true,

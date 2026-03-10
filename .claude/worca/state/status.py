@@ -110,6 +110,73 @@ def complete_iteration(pipeline_status: dict, stage: str, **kwargs) -> dict:
     return current
 
 
+def get_stage_token_usage(status: dict, stage: str) -> dict:
+    """Get aggregate token_usage for a stage by summing its iterations.
+
+    Args:
+        status: Pipeline status dict.
+        stage: Stage name (e.g. "plan", "implement").
+
+    Returns:
+        Aggregate token_usage dict. Returns empty dict if no data available.
+    """
+    from worca.utils.token_usage import aggregate_token_usage
+
+    stage_data = status.get("stages", {}).get(stage, {})
+
+    # If stage already has a computed token_usage, return it
+    if "token_usage" in stage_data:
+        return stage_data["token_usage"]
+
+    # Otherwise, compute from iterations
+    iterations = stage_data.get("iterations", [])
+    usages = [it.get("token_usage", {}) for it in iterations if it.get("token_usage")]
+    if not usages:
+        return {}
+    return aggregate_token_usage(usages)
+
+
+def get_run_token_usage(status: dict) -> dict:
+    """Get aggregate token_usage for the entire run by summing across stages.
+
+    Args:
+        status: Pipeline status dict.
+
+    Returns:
+        Aggregate token_usage dict with by_model and by_stage breakdowns.
+        Returns empty dict if no data available.
+    """
+    from worca.utils.token_usage import aggregate_token_usage, aggregate_by_model
+
+    # If run already has a computed token_usage, return it
+    if "token_usage" in status:
+        return status["token_usage"]
+
+    all_usages = []
+    by_stage = {}
+    stages = status.get("stages", {})
+
+    for stage_name, stage_data in stages.items():
+        stage_usage = get_stage_token_usage(status, stage_name)
+        if stage_usage:
+            by_stage[stage_name] = stage_usage
+
+        # Collect per-iteration usages for by_model aggregation
+        iterations = stage_data.get("iterations", [])
+        for it in iterations:
+            usage = it.get("token_usage")
+            if usage:
+                all_usages.append(usage)
+
+    if not all_usages:
+        return {}
+
+    result = aggregate_token_usage(all_usages)
+    result["by_model"] = aggregate_by_model(all_usages)
+    result["by_stage"] = by_stage
+    return result
+
+
 def init_status(work_request: dict, branch: str) -> dict:
     """Create a fresh status dict with all stages set to 'pending'.
 

@@ -164,8 +164,11 @@ def process_stream(
         on_event: Optional callback invoked for each parsed event.
 
     Returns the parsed result event dict, or raises RuntimeError if not found.
+    The result event will have ``_resolved_model`` set from the system.init
+    event if the result event does not already contain a ``model`` field.
     """
     result_event = None
+    resolved_model = None
 
     for raw_line in stdout:
         line = raw_line.strip()
@@ -183,6 +186,10 @@ def process_stream(
         if on_event:
             on_event(event)
 
+        # Capture model from system.init event
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            resolved_model = event.get("model")
+
         # Write human-readable summary to log
         if log_file:
             log_line = _format_log_line(event)
@@ -195,6 +202,10 @@ def process_stream(
 
     if result_event is None:
         raise RuntimeError("No result event found in stream-json output")
+
+    # Attach resolved model to result event if not already present
+    if resolved_model and "model" not in result_event:
+        result_event["_resolved_model"] = resolved_model
 
     return result_event
 
