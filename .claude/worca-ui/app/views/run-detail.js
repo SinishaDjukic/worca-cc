@@ -85,16 +85,19 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
   };
 }
 
-/** Wall-clock ms from earliest iteration start to latest iteration end. */
+/** Total ms the stage actually ran — sum of all iteration durations. */
 function _stageWallMs(stage) {
   const iters = stage.iterations || [];
-  let earliest = stage.started_at || null;
-  let latest = stage.completed_at || null;
-  for (const it of iters) {
-    if (it.started_at && (!earliest || it.started_at < earliest)) earliest = it.started_at;
-    if (it.completed_at && (!latest || it.completed_at > latest)) latest = it.completed_at;
+  if (iters.length === 0) {
+    return stage.started_at ? elapsed(stage.started_at, stage.completed_at || null) : 0;
   }
-  return earliest ? elapsed(earliest, latest || null) : 0;
+  let total = 0;
+  for (const it of iters) {
+    if (it.started_at) {
+      total += elapsed(it.started_at, it.completed_at || null);
+    }
+  }
+  return total;
 }
 
 function timingStripView(startedAt, completedAt, extra = nothing) {

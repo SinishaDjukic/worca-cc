@@ -292,6 +292,22 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
 }
 
+.beads-db-path {
+  font-size: 0.75rem;
+  color: var(--fg);
+  opacity: 0.6;
+  text-align: right;
+  line-height: 1.4;
+}
+.beads-db-path svg {
+  vertical-align: -2px;
+  opacity: 0.7;
+}
+.beads-db-path code {
+  font-size: 0.7rem;
+  opacity: 0.9;
+}
+
 .action-btn {
   display: inline-flex;
   align-items: center;

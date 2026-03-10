@@ -4,7 +4,7 @@
  */
 import { WebSocketServer } from 'ws';
 import { watch, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline } from './process-manager.js';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns } from './watcher.js';
@@ -309,7 +309,7 @@ export function attachWsServer(httpServer, config) {
   }
 
   // Beads database watcher
-  const beadsDbPath = join(worcaDir, '..', '.beads', 'beads.db');
+  const beadsDbPath = resolve(join(worcaDir, '..', '.beads', 'beads.db'));
   let beadsWatcher = null;
   let BEADS_REFRESH_TIMER = null;
   const BEADS_DEBOUNCE_MS = 200;
@@ -320,7 +320,7 @@ export function attachWsServer(httpServer, config) {
       BEADS_REFRESH_TIMER = null;
       try {
         const issues = listIssues(beadsDbPath);
-        broadcast('beads-update', { issues, dbExists: true });
+        broadcast('beads-update', { issues, dbExists: true, dbPath: beadsDbPath });
       } catch { /* ignore */ }
     }, BEADS_DEBOUNCE_MS);
   }
@@ -713,11 +713,11 @@ export function attachWsServer(httpServer, config) {
     // list-beads-issues
     if (req.type === 'list-beads-issues') {
       if (!beadsDbExists(beadsDbPath)) {
-        ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false })));
+        ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false, dbPath: beadsDbPath })));
         return;
       }
       const issues = listIssues(beadsDbPath);
-      ws.send(JSON.stringify(makeOk(req, { issues, dbExists: true })));
+      ws.send(JSON.stringify(makeOk(req, { issues, dbExists: true, dbPath: beadsDbPath })));
       return;
     }
 

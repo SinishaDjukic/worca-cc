@@ -200,11 +200,11 @@ export function createApp(options = {}) {
     if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
     const beadsDbPath = join(worcaDir, '..', '.beads', 'beads.db');
     if (!dbExists(beadsDbPath)) {
-      return res.json({ ok: true, issues: [], dbExists: false });
+      return res.json({ ok: true, issues: [], dbExists: false, dbPath: beadsDbPath });
     }
     try {
       const issues = listIssues(beadsDbPath);
-      res.json({ ok: true, issues, dbExists: true });
+      res.json({ ok: true, issues, dbExists: true, dbPath: beadsDbPath });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

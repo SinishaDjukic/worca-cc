@@ -12,7 +12,7 @@ import { newRunView, submitNewRun, getNewRunSubmitState } from './views/new-run.
 import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
 import { liveOutputView, writeLiveLogLine, writeLiveIterationSeparator, clearLiveTerminal, mountLiveTerminal, disposeLiveTerminal, updateActiveStage, getActiveStage } from './views/live-output.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle } from './utils/icons.js';
+import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle, Database } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
 import { createNotificationManager } from './notifications.js';
 import { beadsPanelView } from './views/beads-panel.js';
@@ -173,7 +173,7 @@ ws.on('preferences', (payload) => {
 
 ws.on('beads-update', (payload) => {
   if (payload) {
-    store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, loading: false } });
+    store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, dbPath: payload.dbPath || null, loading: false } });
   }
 });
 
@@ -225,7 +225,7 @@ ws.onConnection((state) => {
     }).catch(() => {});
 
     ws.send('list-beads-issues').then(payload => {
-      store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, loading: false } });
+      store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, dbPath: payload.dbPath || null, loading: false } });
     }).catch(() => {});
 
     // Subscribe to active run if selected
@@ -541,6 +541,10 @@ function contentHeaderView() {
   } else if (route.section === 'beads') {
     title = 'Beads Issues';
     showBack = true;
+    const dbPath = state.beads?.dbPath;
+    if (dbPath) {
+      actionButton = html`<span class="beads-db-path">${unsafeHTML(iconSvg(Database, 12))} Beads DB<br><code>${dbPath}</code></span>`;
+    }
   } else if (route.section === 'active') {
     title = 'Running Pipelines';
     showBack = true;
