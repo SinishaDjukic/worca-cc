@@ -10,14 +10,14 @@ export function listIssues(beadsDb) {
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT id, title, body, status, priority, created_at
+      `SELECT id, title, description AS body, status, priority, created_at, external_ref
        FROM issues
-       WHERE status NOT IN ('done','cancelled')
-       ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id ASC`
+       WHERE status NOT IN ('closed','tombstone')
+       ORDER BY priority ASC, id ASC`
     ).all();
 
     const depStmt = db.prepare(
-      `SELECT depends_on_id FROM issue_dependencies WHERE issue_id = ?`
+      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`
     );
     const statusMap = new Map(rows.map(r => [r.id, r.status]));
 
@@ -38,13 +38,13 @@ export function listIssuesByExternalRef(beadsDb, externalRef) {
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT id, title, body, status, priority, created_at, external_ref
+      `SELECT id, title, description AS body, status, priority, created_at, external_ref
        FROM issues WHERE external_ref = ?
        ORDER BY priority ASC, id ASC`
     ).all(externalRef);
 
     const depStmt = db.prepare(
-      `SELECT depends_on_id FROM issue_dependencies WHERE issue_id = ?`
+      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`
     );
     const statusMap = new Map(rows.map(r => [r.id, r.status]));
 
@@ -65,13 +65,13 @@ export function getIssue(beadsDb, id) {
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const row = db.prepare(
-      `SELECT id, title, body, status, priority, created_at
+      `SELECT id, title, description AS body, status, priority, created_at, external_ref
        FROM issues WHERE id = ?`
     ).get(id);
     if (!row) return null;
 
     const depends_on = db.prepare(
-      `SELECT depends_on_id FROM issue_dependencies WHERE issue_id = ?`
+      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`
     ).all(id).map(d => d.depends_on_id);
 
     const blocked_by = [];
@@ -79,7 +79,7 @@ export function getIssue(beadsDb, id) {
       const dep = db.prepare(
         `SELECT status FROM issues WHERE id = ?`
       ).get(depId);
-      if (dep && dep.status !== 'done' && dep.status !== 'cancelled') {
+      if (dep && dep.status !== 'closed' && dep.status !== 'tombstone') {
         blocked_by.push(depId);
       }
     }

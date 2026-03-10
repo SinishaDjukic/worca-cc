@@ -56,6 +56,11 @@ let beadsPriorityFilter = 'all';
 let beadsStarting = null; // null | issueId
 let beadsStartError = null; // null | string
 const runBeads = new Map(); // runId → issues[]
+const stageIterationTab = new Map(); // stageKey → iterationNumber (user's last manual choice)
+
+function handleStageTabChange(stageKey, iterationNumber) {
+  stageIterationTab.set(stageKey, iterationNumber);
+}
 
 function fetchRunBeads(runId) {
   if (!runId) return;
@@ -256,6 +261,7 @@ onHashChange((newRoute) => {
   route = newRoute;
 
   if (prevRunId && prevRunId !== route.runId) {
+    stageIterationTab.clear();
     ws.send('unsubscribe-run').catch(() => {});
     ws.send('unsubscribe-log').catch(() => {});
     store.clearLog();
@@ -624,7 +630,7 @@ function mainContentView() {
     return html`
       <div class="run-detail-layout">
         <div class="run-detail-layout__stages">
-          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, beads: runBeads.get(route.runId) })}
+          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, beads: runBeads.get(route.runId), stageIterationTab, onStageTabChange: handleStageTabChange })}
         </div>
         <div class="run-detail-layout__logs">
           ${liveOutputView(getActiveStage(), isRunning)}

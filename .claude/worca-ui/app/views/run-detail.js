@@ -5,6 +5,7 @@ import { statusClass, statusIcon, resolveStatus } from '../utils/status-badge.js
 import { formatDuration, elapsed, formatTimestamp } from '../utils/duration.js';
 import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins, RotateCcw } from '../utils/icons.js';
 import { beadsDependencyGraph, priorityVariant, statusVariant } from './beads-panel.js';
+import { resolveIterationTab } from './stage-tab-memory.js';
 
 function _lastStageEnd(stages) {
   if (!stages) return null;
@@ -199,7 +200,7 @@ function _runBeadsSection(beads) {
         ${beads.map(issue => html`
           <div class="run-bead-row">
             <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
-            <sl-badge variant="${priorityVariant(issue.priority)}" pill>${issue.priority}</sl-badge>
+            <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
             <span class="run-bead-id">#${issue.id}</span>
             <span class="run-bead-title">${issue.title}</span>
           </div>
@@ -266,7 +267,15 @@ export function runDetailView(run, settings = {}, options = {}) {
           const stageCost = _stageCost(iterations);
 
           return html`
-            <sl-details ?open=${stageStatus === 'in_progress'} class="stage-panel">
+            <sl-details ?open=${stageStatus === 'in_progress'} class="stage-panel"
+              @sl-after-show=${(e) => {
+                if (!hasMultipleIterations) return;
+                const tabGroup = e.target.querySelector('sl-tab-group');
+                if (!tabGroup) return;
+                const targetIter = resolveIterationTab(options.stageIterationTab, key, iterations);
+                const panelName = `iter-${key}-${targetIter}`;
+                requestAnimationFrame(() => tabGroup.show(panelName));
+              }}>
               <div slot="summary" class="stage-panel-header">
                 <span class="stage-panel-icon ${statusClass(stageStatus)}">${unsafeHTML(statusIcon(stageStatus))}</span>
                 <span class="stage-panel-label">${label}</span>
@@ -319,7 +328,11 @@ export function runDetailView(run, settings = {}, options = {}) {
                         <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
                         <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
                       </div>
-                      <sl-tab-group>
+                      <sl-tab-group @sl-tab-show=${(e) => {
+                        const panel = e.detail.name;
+                        const num = parseInt(panel.split('-').pop(), 10);
+                        if (!isNaN(num)) options.onStageTabChange?.(key, num);
+                      }}>
                         ${iterations.map(iter => html`
                           <sl-tab slot="nav" panel="iter-${key}-${iter.number}">
                             Iter ${iter.number} ${_iterStatusIcon(iter)}

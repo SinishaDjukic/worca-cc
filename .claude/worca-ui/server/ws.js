@@ -749,8 +749,8 @@ export function attachWsServer(httpServer, config) {
         ws.send(JSON.stringify(makeError(req, 'not_found', `Issue ${issueId} not found`)));
         return;
       }
-      if (issue.status !== 'ready') {
-        ws.send(JSON.stringify(makeError(req, 'not_ready', `Issue ${issueId} is not ready (status: ${issue.status})`)));
+      if (issue.status !== 'open') {
+        ws.send(JSON.stringify(makeError(req, 'not_ready', `Issue ${issueId} is not open (status: ${issue.status})`)));
         return;
       }
       if (issue.blocked_by.length > 0) {

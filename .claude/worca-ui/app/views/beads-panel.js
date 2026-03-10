@@ -3,14 +3,14 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, Lock, Loader } from '../utils/icons.js';
 
 export function priorityVariant(priority) {
-  if (priority === 'high') return 'danger';
-  if (priority === 'medium') return 'warning';
+  if (priority === 0 || priority === 1) return 'danger';
+  if (priority === 2) return 'warning';
   return 'neutral';
 }
 
 export function statusVariant(status) {
-  if (status === 'ready') return 'success';
-  if (status === 'in_progress') return 'primary';
+  if (status === 'open') return 'success';
+  if (status === 'closed') return 'neutral';
   return 'neutral';
 }
 
@@ -121,12 +121,12 @@ function escapeXml(str) {
 
 function beadsIssueRow(issue, { starting, onStartIssue }) {
   const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
-  const canStart = issue.status === 'ready' && !isBlocked && starting === null;
+  const canStart = issue.status === 'open' && !isBlocked && starting === null;
   const isStarting = starting === issue.id;
 
   return html`
     <div class="beads-issue-row">
-      <sl-badge variant="${priorityVariant(issue.priority)}" pill>${issue.priority}</sl-badge>
+      <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
       <sl-badge variant="${statusVariant(issue.status)}">${issue.status}</sl-badge>
       <div class="beads-issue-body">
         <div class="beads-issue-title">${issue.title}</div>
@@ -167,7 +167,7 @@ export function beadsPanelView(beads, {
 
   let filtered = beads.issues ?? [];
   if (statusFilter !== 'all') filtered = filtered.filter(i => i.status === statusFilter);
-  if (priorityFilter !== 'all') filtered = filtered.filter(i => i.priority === priorityFilter);
+  if (priorityFilter !== 'all') filtered = filtered.filter(i => String(i.priority) === priorityFilter);
 
   if (beads.issues.length === 0) {
     return html`<div class="empty-state">No open Beads issues found.</div>`;
@@ -179,15 +179,15 @@ export function beadsPanelView(beads, {
         <div class="beads-filters">
           <sl-select value=${statusFilter} @sl-change=${(e) => onStatusFilter(e.target.value)}>
             <sl-option value="all">All statuses</sl-option>
-            <sl-option value="ready">Ready</sl-option>
-            <sl-option value="backlog">Backlog</sl-option>
-            <sl-option value="in_progress">In Progress</sl-option>
+            <sl-option value="open">Open</sl-option>
           </sl-select>
           <sl-select value=${priorityFilter} @sl-change=${(e) => onPriorityFilter(e.target.value)}>
             <sl-option value="all">All priorities</sl-option>
-            <sl-option value="high">High</sl-option>
-            <sl-option value="medium">Medium</sl-option>
-            <sl-option value="low">Low</sl-option>
+            <sl-option value="0">P0 - Critical</sl-option>
+            <sl-option value="1">P1 - High</sl-option>
+            <sl-option value="2">P2 - Medium</sl-option>
+            <sl-option value="3">P3 - Low</sl-option>
+            <sl-option value="4">P4 - Backlog</sl-option>
           </sl-select>
           <span class="beads-filter-count">0 issues</span>
         </div>
