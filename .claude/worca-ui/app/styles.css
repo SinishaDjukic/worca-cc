@@ -1144,6 +1144,7 @@ sl-details.log-history-panel::part(content) {
 .stat-active .stat-icon-ring { background: color-mix(in srgb, var(--status-in-progress) 12%, transparent); color: var(--status-in-progress); }
 .stat-completed .stat-icon-ring { background: color-mix(in srgb, var(--status-completed) 12%, transparent); color: var(--status-completed); }
 .stat-errors .stat-icon-ring { background: color-mix(in srgb, var(--status-error) 12%, transparent); color: var(--status-error); }
+.stat-cost-total .stat-icon-ring { background: color-mix(in srgb, #10b981 12%, transparent); color: #10b981; }
 
 .stat-body {
   display: flex;
