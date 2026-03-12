@@ -88,6 +88,14 @@ The dashboard provides:
 - Settings viewer
 - New run launcher
 
+After modifying any source files in `worca-ui/app/`, rebuild the bundle:
+
+```bash
+cd .claude/worca-ui && npm run build
+```
+
+This runs esbuild to produce `app/main.bundle.js`, which the server loads by default. Without rebuilding, changes to the source files won't take effect.
+
 ## Configuration
 
 All configuration lives in `.claude/settings.json` under the `worca` key:

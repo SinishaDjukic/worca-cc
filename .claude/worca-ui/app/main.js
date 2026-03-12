@@ -4,7 +4,7 @@ import { createWsClient } from './ws.js';
 import { parseHash, onHashChange, navigate } from './router.js';
 import { applyTheme } from './utils/theme.js';
 import { sidebarView } from './views/sidebar.js';
-import { runDetailView } from './views/run-detail.js';
+import { runDetailView, runBeadsSectionView } from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
 import { settingsView, loadSettings } from './views/settings.js';
@@ -725,7 +725,7 @@ function mainContentView() {
     return html`
       <div class="run-detail-layout">
         <div class="run-detail-layout__stages">
-          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, beads: runBeads.get(route.runId), stageIterationTab, onStageTabChange: handleStageTabChange })}
+          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, stageIterationTab, onStageTabChange: handleStageTabChange })}
         </div>
         <div class="run-detail-layout__logs">
           ${liveOutputView(getActiveStage(), isRunning)}
@@ -738,6 +738,7 @@ function mainContentView() {
             stageIterations,
             runStages: run?.stages,
           })}
+          ${runBeadsSectionView(runBeads.get(route.runId))}
         </div>
       </div>
     `;

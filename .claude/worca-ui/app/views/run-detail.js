@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { stageTimelineView } from './stage-timeline.js';
 import { statusClass, statusIcon, resolveStatus } from '../utils/status-badge.js';
 import { formatDuration, elapsed, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins, RotateCcw } from '../utils/icons.js';
+import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins, RotateCcw, List } from '../utils/icons.js';
 import { beadsDependencyGraph, priorityVariant, statusVariant } from './beads-panel.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 
@@ -184,34 +184,45 @@ function _agentPromptSection(_stageKey, promptData) {
   `;
 }
 
-function _runBeadsSection(beads) {
+export function runBeadsSectionView(beads) {
   if (!beads) return nothing;
   if (beads.length === 0) {
     return html`
       <div class="run-beads-section">
-        <div class="run-beads-header">Linked Beads Issues</div>
-        <div class="run-beads-empty">No linked Beads issues</div>
+        <sl-details class="run-beads-panel">
+          <div slot="summary" class="run-beads-header">
+            <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
+            <span class="run-beads-title">Beads</span>
+          </div>
+          <div class="run-beads-empty">No linked Beads issues</div>
+        </sl-details>
       </div>
     `;
   }
   return html`
     <div class="run-beads-section">
-      <div class="run-beads-header">Linked Beads Issues <span class="run-beads-count">${beads.length}</span></div>
-      <div class="run-beads-list">
-        ${beads.map(issue => html`
-          <div class="run-bead-row">
-            <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
-            <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-            <span class="run-bead-id">#${issue.id}</span>
-            <span class="run-bead-title">${issue.title}</span>
-          </div>
-        `)}
-      </div>
-      ${beads.length > 1 ? html`
-        <div class="run-beads-graph">
-          ${unsafeHTML(beadsDependencyGraph(beads))}
+      <sl-details class="run-beads-panel">
+        <div slot="summary" class="run-beads-header">
+          <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
+          <span class="run-beads-title">Beads</span>
+          <span class="run-beads-count">${beads.length}</span>
         </div>
-      ` : ''}
+        <div class="run-beads-list">
+          ${beads.map(issue => html`
+            <div class="run-bead-row">
+              <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+              <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+              <span class="run-bead-id">#${issue.id}</span>
+              <span class="run-bead-title">${issue.title}</span>
+            </div>
+          `)}
+        </div>
+        ${beads.length > 1 ? html`
+          <div class="run-beads-graph">
+            ${unsafeHTML(beadsDependencyGraph(beads))}
+          </div>
+        ` : ''}
+      </sl-details>
     </div>
   `;
 }
@@ -251,8 +262,6 @@ export function runDetailView(run, settings = {}, options = {}) {
           ` : nothing;
         })()}
       </div>
-
-      ${_runBeadsSection(options.beads)}
 
       <div class="stage-panels">
         ${Object.entries(stages).map(([key, stage]) => {
