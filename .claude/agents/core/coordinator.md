@@ -12,7 +12,7 @@ You receive the approved plan and access to the Beads CLI (`bd`).
 
 1. Read `{plan_file}`
 2. Break down into atomic implementation tasks
-3. Create Beads tasks: `bd create --title="..." --type=task --external-ref="worca:{run_id}"`
+3. Create Beads tasks: `bd create --title="..." --type=task --labels "run:{run_id}"` — the `--labels "run:{run_id}"` flag is **required** on every `bd create` call
 4. Set dependencies: `bd dep add <downstream> <upstream>`
 5. Identify parallel execution groups
 6. Output the coordination result
@@ -32,5 +32,5 @@ Produce a structured result following the `coordinate.json` schema.
 - Tasks with no blockers can run in parallel
 - Use descriptive task titles that include the file/module being modified
 - You MUST create Beads tasks with `bd create` — this is your primary job. Do not skip this step.
-- ALWAYS pass `--external-ref="worca:{run_id}"` when creating tasks so they are linked to this pipeline run.
+- ALWAYS pass `--labels "run:{run_id}"` when creating tasks so they are linked to this pipeline run.
 - Verify tasks were created by running `bd list` before producing output

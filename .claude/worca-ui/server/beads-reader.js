@@ -33,15 +33,17 @@ export function listIssues(beadsDb) {
   }
 }
 
-export function listIssuesByExternalRef(beadsDb, externalRef) {
+export function listIssuesByLabel(beadsDb, label) {
   let db;
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT id, title, description AS body, status, priority, created_at, external_ref
-       FROM issues WHERE external_ref = ?
-       ORDER BY priority ASC, id ASC`
-    ).all(externalRef);
+      `SELECT i.id, i.title, i.description AS body, i.status, i.priority, i.created_at
+       FROM issues i
+       JOIN labels l ON l.issue_id = i.id
+       WHERE l.label = ?
+       ORDER BY i.priority ASC, i.id ASC`
+    ).all(label);
 
     const depStmt = db.prepare(
       `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`
@@ -65,11 +67,13 @@ export function listUnlinkedIssues(beadsDb) {
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT id, title, description AS body, status, priority, created_at, external_ref
-       FROM issues
-       WHERE (external_ref IS NULL OR external_ref = '')
-         AND status NOT IN ('closed','tombstone')
-       ORDER BY priority ASC, id ASC`
+      `SELECT i.id, i.title, i.description AS body, i.status, i.priority, i.created_at
+       FROM issues i
+       WHERE NOT EXISTS (
+         SELECT 1 FROM labels l WHERE l.issue_id = i.id AND l.label LIKE 'run:%'
+       )
+       AND i.status NOT IN ('closed','tombstone')
+       ORDER BY i.priority ASC, i.id ASC`
     ).all();
 
     const depStmt = db.prepare(
@@ -89,17 +93,17 @@ export function listUnlinkedIssues(beadsDb) {
   }
 }
 
-export function countIssuesByExternalRef(beadsDb) {
+export function countIssuesByRunLabel(beadsDb) {
   let db;
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT external_ref, COUNT(*) AS count FROM issues
-       WHERE external_ref LIKE 'worca:%' GROUP BY external_ref`
+      `SELECT l.label, COUNT(*) AS count FROM labels l
+       WHERE l.label LIKE 'run:%' GROUP BY l.label`
     ).all();
     const counts = {};
     for (const row of rows) {
-      const runId = row.external_ref.replace('worca:', '');
+      const runId = row.label.replace('run:', '');
       counts[runId] = row.count;
     }
     return counts;
@@ -110,14 +114,14 @@ export function countIssuesByExternalRef(beadsDb) {
   }
 }
 
-export function listDistinctExternalRefs(beadsDb) {
+export function listDistinctRunLabels(beadsDb) {
   let db;
   try {
     db = new Database(beadsDb, { readonly: true, fileMustExist: true });
     const rows = db.prepare(
-      `SELECT DISTINCT external_ref FROM issues WHERE external_ref LIKE 'worca:%'`
+      `SELECT DISTINCT label FROM labels WHERE label LIKE 'run:%'`
     ).all();
-    return rows.map(r => r.external_ref);
+    return rows.map(r => r.label);
   } catch {
     return [];
   } finally {

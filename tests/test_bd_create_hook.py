@@ -1,15 +1,17 @@
-"""Tests for bd create --external-ref auto-injection hook."""
+"""Tests for bd create run-label linking in post_tool_use hook."""
 import os
 import sys
+from unittest.mock import patch, call
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
 
-from hooks.pre_tool_use import _fix_bd_create_external_ref
+from hooks.post_tool_use import _link_bd_create_to_run
 
 
-class TestFixBdCreateExternalRef:
-    """Test _fix_bd_create_external_ref auto-injection."""
+class TestLinkBdCreateToRun:
+    """Test _link_bd_create_to_run label tagging."""
 
     def setup_method(self):
         os.environ.pop("WORCA_RUN_ID", None)
@@ -17,58 +19,85 @@ class TestFixBdCreateExternalRef:
     def teardown_method(self):
         os.environ.pop("WORCA_RUN_ID", None)
 
-    def test_no_fix_when_no_run_id(self):
-        result = _fix_bd_create_external_ref("Bash", {"command": 'bd create --title="test" --type=task'})
-        assert result is None
+    def test_no_action_when_no_run_id(self):
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="test"'},
+                {"stdout": "✓ Created issue: bd-abc", "exit_code": 0},
+            )
+            mock_run.assert_not_called()
 
-    def test_no_fix_for_non_bash_tool(self):
+    def test_no_action_for_non_bash_tool(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        result = _fix_bd_create_external_ref("Write", {"command": 'bd create --title="test"'})
-        assert result is None
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Write",
+                {"command": 'bd create --title="test"'},
+                {"stdout": "✓ Created issue: bd-abc", "exit_code": 0},
+            )
+            mock_run.assert_not_called()
 
-    def test_no_fix_when_no_bd_create(self):
+    def test_no_action_when_no_bd_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        result = _fix_bd_create_external_ref("Bash", {"command": "bd list"})
-        assert result is None
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": "bd list"},
+                {"stdout": "", "exit_code": 0},
+            )
+            mock_run.assert_not_called()
 
-    def test_no_fix_when_external_ref_already_present(self):
+    def test_no_action_on_failed_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        cmd = 'bd create --title="test" --type=task --external-ref="worca:20260310-211756"'
-        result = _fix_bd_create_external_ref("Bash", {"command": cmd})
-        assert result is None
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="test"'},
+                {"stdout": "Error: something failed", "exit_code": 1},
+            )
+            mock_run.assert_not_called()
 
-    def test_injects_external_ref(self):
+    def test_adds_label_on_successful_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        cmd = 'bd create --title="test" --type=task'
-        result = _fix_bd_create_external_ref("Bash", {"command": cmd})
-        assert result is not None
-        assert '--external-ref="worca:20260310-211756"' in result
-        assert '--title="test"' in result
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="test" --type=task'},
+                {"stdout": "✓ Created issue: bd-abc", "exit_code": 0},
+            )
+            mock_run.assert_called_once_with(
+                ["bd", "label", "add", "bd-abc", "run:20260310-211756"],
+                capture_output=True, text=True,
+            )
 
-    def test_injects_into_multiple_bd_create_in_chain(self):
+    def test_handles_multiple_creates_in_chain(self):
         os.environ["WORCA_RUN_ID"] = "run-123"
-        cmd = 'bd create --title="A" --type=task && bd create --title="B" --type=task'
-        result = _fix_bd_create_external_ref("Bash", {"command": cmd})
-        assert result is not None
-        assert result.count('--external-ref="worca:run-123"') == 2
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="A" && bd create --title="B"'},
+                {
+                    "stdout": "✓ Created issue: bd-aaa\n✓ Created issue: bd-bbb",
+                    "exit_code": 0,
+                },
+            )
+            assert mock_run.call_count == 2
+            mock_run.assert_any_call(
+                ["bd", "label", "add", "bd-aaa", "run:run-123"],
+                capture_output=True, text=True,
+            )
+            mock_run.assert_any_call(
+                ["bd", "label", "add", "bd-bbb", "run:run-123"],
+                capture_output=True, text=True,
+            )
 
-    def test_preserves_other_flags(self):
+    def test_no_action_when_stdout_has_no_created_line(self):
         os.environ["WORCA_RUN_ID"] = "run-456"
-        cmd = 'bd create --title="Fix bug" --type=bug --priority=1 --description="details"'
-        result = _fix_bd_create_external_ref("Bash", {"command": cmd})
-        assert "--priority=1" in result
-        assert '--description="details"' in result
-        assert '--external-ref="worca:run-456"' in result
-
-    def test_no_fix_for_empty_command(self):
-        os.environ["WORCA_RUN_ID"] = "run-789"
-        result = _fix_bd_create_external_ref("Bash", {"command": ""})
-        assert result is None
-
-    def test_works_with_cd_prefix(self):
-        os.environ["WORCA_RUN_ID"] = "run-abc"
-        cmd = 'cd /project && bd create --title="test" --type=task'
-        result = _fix_bd_create_external_ref("Bash", {"command": cmd})
-        assert result is not None
-        assert "cd /project &&" in result
-        assert '--external-ref="worca:run-abc"' in result
+        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="test"'},
+                {"stdout": "Some other output", "exit_code": 0},
+            )
+            mock_run.assert_not_called()

@@ -17,12 +17,11 @@ except ImportError:
 
 
 def _link_bd_create_to_run(tool_name, tool_input, tool_response):
-    """After a successful bd create, set external_ref to link it to the current run.
+    """After a successful bd create, add a run label to link it to the current run.
 
     When WORCA_RUN_ID is set (pipeline is running), any successful `bd create`
-    output is parsed for the issue ID, then `bd update` sets the external_ref.
-    This is more reliable than PreToolUse updatedInput which only works for the
-    first tool call in a batch.
+    output is parsed for the issue ID, then `bd label add` tags it with
+    ``run:<run_id>`` so multiple beads can share the same run reference.
     """
     if tool_name != "Bash":
         return
@@ -32,20 +31,17 @@ def _link_bd_create_to_run(tool_name, tool_input, tool_response):
     command = tool_input.get("command", "")
     if "bd create" not in command:
         return
-    if "--external-ref" in command:
-        return
     stdout = tool_response.get("stdout", "")
     exit_code = tool_response.get("exit_code", 1)
     if exit_code != 0:
         return
-    match = re.search(r"Created\s+(\S+):", stdout)
-    if not match:
-        return
-    issue_id = match.group(1)
-    subprocess.run(
-        ["bd", "update", issue_id, f"--external-ref=worca:{run_id}"],
-        capture_output=True, text=True
-    )
+    # Match all created issue IDs (may be multiple in chained commands)
+    for match in re.finditer(r"Created issue:\s+(\S+)", stdout):
+        issue_id = match.group(1)
+        subprocess.run(
+            ["bd", "label", "add", issue_id, f"run:{run_id}"],
+            capture_output=True, text=True
+        )
 
 
 def main():
