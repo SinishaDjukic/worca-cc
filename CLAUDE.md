@@ -32,6 +32,16 @@ pytest tests/ -v
 npx vitest run .claude/worca-ui/server/  # UI server tests
 ```
 
+## worca-ui Development
+
+After modifying any source files in `.claude/worca-ui/app/`, rebuild the bundle:
+
+```bash
+cd .claude/worca-ui && npm run build
+```
+
+This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes won't take effect.
+
 ## Plans & Roadmap
 
 - All feature plans go in `docs/plans/` with the naming convention `W-NNN-short-description.md`
