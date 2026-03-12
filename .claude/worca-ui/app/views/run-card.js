@@ -11,6 +11,15 @@ const BADGE_VARIANT = {
   pending: 'neutral'
 };
 
+function _lastStageEnd(stages) {
+  if (!stages) return null;
+  let latest = null;
+  for (const s of Object.values(stages)) {
+    if (s.completed_at && (!latest || s.completed_at > latest)) latest = s.completed_at;
+  }
+  return latest;
+}
+
 /**
  * Shared run card component used in both run-list and dashboard active list.
  * Shows title, overall status icon, duration, and stage badges.
@@ -19,8 +28,9 @@ export function runCardView(run, { onClick, beadsCount } = {}) {
   const title = run.work_request?.title || 'Untitled';
   const isActive = run.active;
   const overallStatus = isActive ? 'in_progress' : (run.stage === 'error' ? 'error' : 'completed');
-  const duration = run.started_at && run.completed_at
-    ? formatDuration(elapsed(run.started_at, run.completed_at))
+  const endTime = run.completed_at || _lastStageEnd(run.stages);
+  const duration = run.started_at && endTime
+    ? formatDuration(elapsed(run.started_at, endTime))
     : run.started_at && isActive
       ? formatDuration(elapsed(run.started_at, null))
       : 'N/A';
@@ -36,7 +46,7 @@ export function runCardView(run, { onClick, beadsCount } = {}) {
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> ${branch}</span></div>` : nothing}
       <div class="run-card-meta">
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> ${formatTimestamp(run.started_at)}</span>
-        <span class="run-card-meta-item"><span class="meta-label">Finished:</span> ${formatTimestamp(run.completed_at)}</span>
+        <span class="run-card-meta-item"><span class="meta-label">Finished:</span> ${formatTimestamp(endTime)}</span>
         <span class="run-card-meta-item"><span class="meta-label">Duration:</span> ${duration}</span>
       </div>
       ${stages.length > 0 ? html`

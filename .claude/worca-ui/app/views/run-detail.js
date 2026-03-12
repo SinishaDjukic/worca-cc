@@ -91,19 +91,20 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
 function _stageWallMs(stage) {
   const iters = stage.iterations || [];
   if (iters.length === 0) {
-    return stage.started_at ? elapsed(stage.started_at, stage.completed_at || null) : 0;
+    if (!stage.started_at || !stage.completed_at) return 0;
+    return elapsed(stage.started_at, stage.completed_at);
   }
   let total = 0;
   for (const it of iters) {
-    if (it.started_at) {
-      total += elapsed(it.started_at, it.completed_at || null);
+    if (it.started_at && it.completed_at) {
+      total += elapsed(it.started_at, it.completed_at);
     }
   }
   return total;
 }
 
 function timingStripView(startedAt, completedAt, extra = nothing) {
-  const dur = startedAt ? formatDuration(elapsed(startedAt, completedAt || null)) : '';
+  const dur = startedAt && completedAt ? formatDuration(elapsed(startedAt, completedAt)) : '';
   return html`
     <div class="timing-strip">
       ${startedAt ? html`<span class="timing-strip-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>` : nothing}
@@ -222,8 +223,7 @@ export function runDetailView(run, settings = {}, options = {}) {
 
   const branch = run.branch || run.work_request?.branch || '';
   const pr = run.pr_url || null;
-  const endTime = run.completed_at
-    || (!run.active ? _lastStageEnd(run.stages) : null);
+  const endTime = run.completed_at || _lastStageEnd(run.stages);
   const stages = run.stages || {};
   const stageUi = settings.stageUi || {};
   const agents = settings.agents || {};
