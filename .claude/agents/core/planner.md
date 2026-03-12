@@ -20,7 +20,7 @@ You receive a work request (GitHub issue, Beads task, prompt, or spec file) and 
    - Task breakdown (high-level)
    - Test strategy
    - Branch naming
-6. Wait for human approval at the PLAN APPROVAL milestone gate
+6. Set `approved: true` in your output — plan approval is handled by the pipeline
 
 ## Output
 
