@@ -10,7 +10,7 @@ let planFiles = null; // cached response
 let planFilter = '';
 let planDropdownOpen = false;
 let selectedPlan = '';
-let branches = null; // cached branch list
+let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
 
 function inputLabel(type) {
@@ -20,14 +20,14 @@ function inputLabel(type) {
 }
 
 function fetchBranches() {
-  if (branches) return Promise.resolve(branches);
+  if (branches !== null) return Promise.resolve(branches);
   return fetch('/api/branches')
     .then(r => r.json())
     .then(data => {
-      if (data.ok) branches = data.branches;
-      return branches || [];
+      branches = (data.ok && data.branches) || [];
+      return branches;
     })
-    .catch(() => []);
+    .catch(() => { branches = []; return []; });
 }
 
 function fetchPlanFiles() {
@@ -122,8 +122,10 @@ export function newRunView(state, { rerender }) {
     rerender();
   }
 
-  // Fetch branches on first render
-  fetchBranches().then(() => rerender());
+  // Fetch branches once (null = not yet fetched)
+  if (branches === null) {
+    fetchBranches().then(() => rerender());
+  }
 
   function handleBranchChange(e) {
     selectedBranch = e.target.value;
