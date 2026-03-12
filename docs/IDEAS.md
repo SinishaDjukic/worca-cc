@@ -324,6 +324,22 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 
 ---
 
+### W-019: Beads-by-Run with Kanban Visualization
+
+**Problem:** The beads page shows all open issues globally with no way to filter by pipeline run. Users can't see which beads were created for a specific run or their completion status. Historical context is lost.
+
+**Proposal:** Enhance the beads page with a run selector dropdown. When a run is selected, display its beads (all statuses) as a kanban board with three columns: Open | In Progress | Closed. Dependency arrows connect cards across columns. Unlinked beads (no `external_ref`) shown via a separate "Unlinked Issues" filter option.
+
+**Considerations:**
+- Depends on `external_ref` linking (fixed in `ccb7e11` — hooks now resolve from main repo root)
+- Kanban shown only for run-filtered view; "All" and "Unlinked" keep existing list + DAG graph
+- Server needs new queries: unlinked issues and distinct external refs for run selector population
+- SVG overlay for dependency arrows between kanban cards
+
+**Plan:** [W-019-beads-by-run-kanban.md](plans/W-019-beads-by-run-kanban.md)
+
+---
+
 ## Appendix A: Prioritized Feature Table
 
 | ID | Priority | Feature | Area | Status | Plan |
@@ -347,6 +363,7 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 | W-016 | P4 | Pipeline Templates | ui | [ ] | [W-016-pipeline-templates.md](plans/W-016-pipeline-templates.md) |
 | W-017 | P4 | Multi-Project Support | ui | [ ] | [W-017-multi-project-support.md](plans/W-017-multi-project-support.md) |
 | W-018 | P4 | Run Annotations | ui | [ ] | [W-018-run-annotations.md](plans/W-018-run-annotations.md) |
+| W-019 | P2 | Beads-by-Run Kanban | ui | [ ] | [W-019-beads-by-run-kanban.md](plans/W-019-beads-by-run-kanban.md) |
 
 **Legend:**
 - **ID:** Unique identifier (`W-` prefix). Use to reference ideas in plans, beads, and commits.
@@ -377,6 +394,7 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 | [W-016-pipeline-templates.md](plans/W-016-pipeline-templates.md) | W-016: Pipeline Templates |
 | [W-017-multi-project-support.md](plans/W-017-multi-project-support.md) | W-017: Multi-Project Support |
 | [W-018-run-annotations.md](plans/W-018-run-annotations.md) | W-018: Run Annotations |
+| [W-019-beads-by-run-kanban.md](plans/W-019-beads-by-run-kanban.md) | W-019: Beads-by-Run Kanban |
 | [worca-ui-design.md](plans/2026-03-08-worca-ui-design.md) | Original UI architecture and design spec |
 | [worca-ui-plan.md](plans/2026-03-08-worca-ui-plan.md) | UI implementation plan (initial build) |
 | [worca-ui-modernize-design.md](plans/2026-03-08-worca-ui-modernize-design.md) | Shoelace + xterm.js modernization |
