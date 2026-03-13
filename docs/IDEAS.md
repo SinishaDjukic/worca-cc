@@ -364,6 +364,23 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 
 **Plan:** [W-021-sticky-header-v2.md](plans/W-021-sticky-header-v2.md)
 
+### W-022: API Duration & Turn Metrics in Pipeline UI
+
+**Status:** Open
+
+**Problem:** The pipeline detail page shows cost per stage and iteration but lacks API duration and turn count metrics. `duration_api_ms` (time spent in LLM API calls vs tool execution) is available from the SDK but not stored. Turn counts are stored per iteration but not surfaced as stage/pipeline totals.
+
+**Proposal:**
+1. **Store `duration_api_ms`** — capture from the SDK result and persist alongside existing `duration_ms` per iteration
+2. **Pipeline header** — show "Total API Duration" and "Total Turns" next to existing "Pipeline Cost"
+3. **Stage panels** — show aggregated API duration and turn count in the stage header meta strip (alongside existing cost and wall-clock duration)
+4. **Iteration detail** — show "API Duration" per iteration (alongside existing "Iteration Duration")
+
+**Considerations:**
+- `duration_api_ms` measures only LLM round-trip time; `duration_ms - duration_api_ms` = tool execution time — useful for identifying bottlenecks
+- Turn counts per stage help gauge agent efficiency (fewer turns = better prompting)
+- Requires changes to both worca-cc (capture & store) and worca-ui (display)
+
 ---
 
 ## Appendix A: Prioritized Feature Table
@@ -392,6 +409,7 @@ run_pipeline.py --from-beads  # pull all bd ready issues
 | W-019 | P2 | Beads-by-Run Kanban | ui | [x] Done | [W-019-beads-by-run-kanban.md](plans/W-019-beads-by-run-kanban.md) |
 | W-020 | P2 | Latest Iteration Tab on Expand | ui | [x] Done | [W-020-latest-iteration-tab-on-expand.md](plans/W-020-latest-iteration-tab-on-expand.md) |
 | W-021 | P2 | Sticky Header for Content Pages | ui | [x] Done | [W-021-sticky-header-v2.md](plans/W-021-sticky-header-v2.md) |
+| W-022 | P2 | API Duration & Turn Metrics | cc+ui | [ ] | — |
 
 **Legend:**
 - **ID:** Unique identifier (`W-` prefix). Use to reference ideas in plans, beads, and commits.
