@@ -114,22 +114,43 @@ class PromptBuilder:
         test_failure_history = self._context.get("test_failure_history") or []
         review_history = self._context.get("review_history") or []
         attempt_count = len(review_history) or len(test_failure_history) or iteration
+        assigned = self._context.get("assigned_bead_id")
 
         # -- Priority header --
-        if test_failures:
-            parts.append(
-                f"## PRIORITY: Fix Test Failures (attempt {attempt_count})\n\n"
-                "The implementation is already in place. Your ONLY task is to fix the "
-                "failing tests listed below. Do NOT re-implement the plan from scratch. "
-                "Do NOT just rebuild and exit."
-            )
-        elif review_issues:
-            parts.append(
-                f"## PRIORITY: Fix Review Issues (attempt {attempt_count})\n\n"
-                "The implementation is already in place. Your ONLY task is to fix the "
-                "specific issues listed below. Do NOT re-implement the plan from scratch. "
-                "Do NOT just rebuild and exit."
-            )
+        if assigned:
+            # Per-bead retry (legacy path, kept for compatibility)
+            if test_failures:
+                parts.append(
+                    f"## PRIORITY: Fix Test Failures (attempt {attempt_count})\n\n"
+                    "The implementation is already in place. Your ONLY task is to fix the "
+                    "failing tests listed below. Do NOT re-implement the plan from scratch. "
+                    "Do NOT just rebuild and exit."
+                )
+            elif review_issues:
+                parts.append(
+                    f"## PRIORITY: Fix Review Issues (attempt {attempt_count})\n\n"
+                    "The implementation is already in place. Your ONLY task is to fix the "
+                    "specific issues listed below. Do NOT re-implement the plan from scratch. "
+                    "Do NOT just rebuild and exit."
+                )
+        else:
+            # Fix mode: no specific bead, fix all issues across the project
+            if test_failures:
+                parts.append(
+                    f"## PRIORITY: Fix All Issues — Test Failures (attempt {attempt_count})\n\n"
+                    "All tasks have been implemented. Your ONLY task is to fix the "
+                    "failing tests listed below. You have full access to the codebase — "
+                    "fix whatever is broken. Do NOT re-implement the plan from scratch. "
+                    "Do NOT use `bd ready` or `bd close`."
+                )
+            elif review_issues:
+                parts.append(
+                    f"## PRIORITY: Fix All Issues — Review Issues (attempt {attempt_count})\n\n"
+                    "All tasks have been implemented. Your ONLY task is to fix the "
+                    "specific issues listed below. You have full access to the codebase — "
+                    "fix whatever is broken. Do NOT re-implement the plan from scratch. "
+                    "Do NOT use `bd ready` or `bd close`."
+                )
 
         # -- Current issues to fix --
         if test_failures:

@@ -92,6 +92,7 @@ def test_build_implement_without_assigned_bead():
 
 def test_build_implement_with_test_failures():
     pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("assigned_bead_id", "bd-abc123")
     pb.update_context("test_failures", [
         {"test_name": "test_login_valid", "error": "AssertionError: 401 != 200"},
         {"test_name": "test_token_refresh", "error": "KeyError: 'refresh_token'"},
@@ -107,6 +108,7 @@ def test_build_implement_with_test_failures():
 
 def test_build_implement_with_review_issues():
     pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("assigned_bead_id", "bd-abc123")
     pb.update_context("review_issues", [
         {"file": "auth.py", "line": 42, "severity": "critical", "description": "SQL injection"},
     ])
@@ -129,6 +131,7 @@ def test_build_implement_no_loop_context_at_iteration_0():
 def test_build_implement_cleared_context_not_shown():
     """When test_failures is set to None (cleared), it should not appear."""
     pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("assigned_bead_id", "bd-abc123")
     pb.update_context("test_failures", None)
     pb.update_context("review_issues", [
         {"file": "x.py", "line": 1, "severity": "minor", "description": "style"},
@@ -141,6 +144,7 @@ def test_build_implement_cleared_context_not_shown():
 def test_build_implement_retry_shows_history():
     """Review history from multiple attempts is shown in retry prompt."""
     pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("assigned_bead_id", "bd-abc123")
     pb.update_context("review_history", [
         {"attempt": 1, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug1"}]},
         {"attempt": 2, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug1 still"}]},

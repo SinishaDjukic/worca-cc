@@ -337,7 +337,7 @@ def test_run_pipeline_with_plan_file_skips_plan_stage(tmp_path):
 
     stages_run = []
 
-    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1):
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None):
         stages_run.append(stage.value)
         return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
 
@@ -392,7 +392,7 @@ def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Test master plan")
 
-    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1):
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None):
         return {"beads_ids": []}, {"type": "result"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
@@ -507,7 +507,7 @@ def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Add user auth")
 
-    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1):
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None):
         return {"approved": True}, {"type": "result"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):

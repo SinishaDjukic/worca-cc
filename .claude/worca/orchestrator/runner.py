@@ -377,6 +377,7 @@ def run_stage(
     settings_path: str = ".claude/settings.json",
     msize: int = 1,
     iteration: int = 1,
+    prompt_override: str = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -387,6 +388,8 @@ def run_stage(
         context: Dict with 'prompt', '_run_dir', '_logs_dir' keys.
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
+        prompt_override: When provided, used instead of context["prompt"].
+            This allows PromptBuilder output to reach the agent directly.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -394,7 +397,7 @@ def run_stage(
     """
     config = get_stage_config(stage, settings_path=settings_path)
     max_turns = config["max_turns"] * msize
-    raw_prompt = context.get("prompt", "")
+    raw_prompt = prompt_override or context.get("prompt", "")
     prompt = _build_stage_prompt(stage, raw_prompt)
     logs_dir = context.get("_logs_dir", ".worca/logs")
     run_dir = context.get("_run_dir")
@@ -740,20 +743,27 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 raise PipelineInterrupted("Pipeline interrupted before stage start")
 
-            # Try to assign a specific bead before implement stage
+            # --- Phase 1 bead assignment (IMPLEMENT only) ---
             if current_stage == Stage.IMPLEMENT:
-                bead = _query_ready_bead()
-                if bead:
-                    bead_id = bead["id"]
-                    _claim_bead(bead_id)
-                    prompt_builder.update_context("assigned_bead_id", bead_id)
-                    prompt_builder.update_context("assigned_bead_title", bead["title"])
-                    # Fetch full description via bd show
-                    try:
-                        details = bd_show(bead_id)
-                        prompt_builder.update_context("assigned_bead_description", details.get("description", ""))
-                    except Exception:
-                        prompt_builder.update_context("assigned_bead_description", "")
+                impl_trigger = _next_trigger.get(Stage.IMPLEMENT.value, "initial")
+                if impl_trigger in ("initial", "next_bead"):
+                    # Phase 1: implement all beads sequentially
+                    bead = _query_ready_bead()
+                    if bead:
+                        bead_id = bead["id"]
+                        _claim_bead(bead_id)
+                        prompt_builder.update_context("assigned_bead_id", bead_id)
+                        prompt_builder.update_context("assigned_bead_title", bead["title"])
+                        try:
+                            details = bd_show(bead_id)
+                            prompt_builder.update_context("assigned_bead_description", details.get("description", ""))
+                        except Exception:
+                            prompt_builder.update_context("assigned_bead_description", "")
+                elif impl_trigger in ("test_failure", "review_changes"):
+                    # Phase 3: fix mode — no bead assignment
+                    prompt_builder.update_context("assigned_bead_id", None)
+                    prompt_builder.update_context("assigned_bead_title", None)
+                    prompt_builder.update_context("assigned_bead_description", None)
 
             # Build stage-specific prompt via PromptBuilder
             if current_stage.value == "implement":
@@ -773,9 +783,12 @@ def run_pipeline(
                 if current_stage == Stage.COORDINATE:
                     _ensure_beads_initialized()
 
+                # Pass rendered_prompt as prompt_override so PromptBuilder
+                # output actually reaches the agent (not just stored for UI)
                 result, raw_envelope = run_stage(
                     current_stage, context, settings_path,
                     msize=msize, iteration=iter_num,
+                    prompt_override=rendered_prompt,
                 )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -894,17 +907,58 @@ def run_pipeline(
                     else:
                         _log(f"Failed to label beads with {run_label}", "warn")
 
-            # Handle implement results
+            # Handle implement results — batch-then-test flow
             elif current_stage == Stage.IMPLEMENT:
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
-                # Thread implement outputs into PromptBuilder
-                prompt_builder.update_context("files_changed", result.get("files_changed", []))
-                prompt_builder.update_context("tests_added", result.get("tests_added", []))
 
-            # Handle test results
+                # Thread implement outputs into PromptBuilder
+                new_files = result.get("files_changed", [])
+                new_tests = result.get("tests_added", [])
+                prompt_builder.update_context("files_changed", new_files)
+                prompt_builder.update_context("tests_added", new_tests)
+
+                impl_trigger = trigger  # trigger was popped earlier in the loop
+                if impl_trigger in ("initial", "next_bead"):
+                    # Phase 1: close the bead we just implemented
+                    claimed_bead = prompt_builder.get_context("assigned_bead_id")
+                    if claimed_bead:
+                        if bd_close(claimed_bead, reason="implemented"):
+                            _log(f"Closed bead {claimed_bead}", "ok")
+                        else:
+                            _log(f"Failed to close bead {claimed_bead}", "warn")
+
+                    # Accumulate files across all beads
+                    all_files = prompt_builder.get_context("all_files_changed") or []
+                    all_files.extend(new_files)
+                    prompt_builder.update_context("all_files_changed", all_files)
+                    all_tests = prompt_builder.get_context("all_tests_added") or []
+                    all_tests.extend(new_tests)
+                    prompt_builder.update_context("all_tests_added", all_tests)
+
+                    loop_counters["bead_iteration"] = loop_counters.get("bead_iteration", 0) + 1
+                    loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
+
+                    # Check for more beads
+                    next_bead = _query_ready_bead()
+                    if next_bead and Stage.IMPLEMENT in stage_order:
+                        if check_loop_limit("bead_iteration", loop_counters["bead_iteration"], settings_path, mloops=mloops):
+                            _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
+                            _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
+                            stage_idx = stage_order.index(Stage.IMPLEMENT)
+                            continue
+                        else:
+                            _log(f"Bead iteration limit reached after {loop_counters['bead_iteration']} beads", "warn")
+
+                    # All beads done — set accumulated files for TEST/REVIEW
+                    prompt_builder.update_context("files_changed", list(set(all_files)))
+                    prompt_builder.update_context("tests_added", list(set(all_tests)))
+                    _log("All beads implemented — advancing to TEST", "ok")
+                # Phase 3 (fix mode): just fall through to TEST with current files
+
+            # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
                 passed = result.get("passed", False)
                 # Thread test outputs into PromptBuilder
@@ -912,7 +966,6 @@ def run_pipeline(
                 prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
                 prompt_builder.update_context("proof_artifacts", result.get("proof_artifacts", []))
                 if not passed:
-                    claimed_bead = prompt_builder._context.get("assigned_bead_id")
                     new_failures = result.get("failures", [])
                     # Accumulate test failure history
                     prev_history = prompt_builder.get_context("test_failure_history") or []
@@ -928,50 +981,26 @@ def run_pipeline(
                     if Stage.IMPLEMENT not in stage_order:
                         _log("Tests failed but IMPLEMENT stage is disabled — treating as pass", "warn")
                     else:
-                        # Per-bead test failure limit
-                        bead_loop_key = f"implement_test:{claimed_bead}" if claimed_bead else "implement_test"
-                        loop_counters[bead_loop_key] = loop_counters.get(bead_loop_key, 0) + 1
+                        # Flat test-fix counter (not per-bead)
+                        loop_counters["implement_test"] = loop_counters.get("implement_test", 0) + 1
                         loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                         bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                         prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                        _log(f"Tests failed — looping back to IMPLEMENT (attempt {loop_counters[bead_loop_key]} for {claimed_bead or 'unknown'})", "warn")
-                        if not check_loop_limit("implement_test", loop_counters[bead_loop_key], settings_path, mloops=mloops):
-                            # Defer this bead instead of crashing
-                            _log(f"Bead {claimed_bead} stuck after {loop_counters[bead_loop_key]} test cycles — deferring", "warn")
-                            if claimed_bead:
-                                bd_update(claimed_bead, status="open", notes=f"Deferred: {len(new_failures)} test failures unresolved")
-                                prompt_builder.update_context("assigned_bead_id", None)
-                            next_bead = _query_ready_bead()
-                            if next_bead and Stage.IMPLEMENT in stage_order:
-                                loop_key = "bead_iteration"
-                                loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                                _log(f"Moving to next bead after test deferral (bead {loop_counters[loop_key]})", "ok")
-                                if check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
-                                    prompt_builder.update_context("test_passed", None)
-                                    prompt_builder.update_context("test_coverage", None)
-                                    prompt_builder.update_context("proof_artifacts", None)
-                                    prompt_builder.update_context("test_failures", None)
-                                    prompt_builder.update_context("review_issues", None)
-                                    prompt_builder.update_context("review_history", None)
-                                    prompt_builder.update_context("test_failure_history", None)
-                                    prompt_builder.update_context("files_changed", None)
-                                    prompt_builder.update_context("bead_prompt_iteration", 0)
-                                    _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                                    stage_idx = stage_order.index(Stage.IMPLEMENT)
-                                    continue
-                            _log("No more beads available after test deferral — finishing", "warn")
-                        else:
+                        _log(f"Tests failed — looping back to IMPLEMENT fix mode (attempt {loop_counters['implement_test']})", "warn")
+                        if check_loop_limit("implement_test", loop_counters["implement_test"], settings_path, mloops=mloops):
                             _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
                             continue
+                        else:
+                            _log(f"Test fix limit exhausted after {loop_counters['implement_test']} attempts — finishing", "warn")
                 else:
                     iter_extras["outcome"] = "success"
                     complete_iteration(status, current_stage.value, **iter_extras)
                     update_stage(status, current_stage.value, **stage_extras)
                     save_status(status, actual_status_path)
-                _log(f"Tests passed", "ok")
+                    _log("Tests passed", "ok")
 
-            # Handle review results
+            # Handle review results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.REVIEW:
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
@@ -986,75 +1015,15 @@ def run_pipeline(
                         raise PipelineError("PR rejected")
                     _log("Review approved", "ok")
 
-                    # Close the claimed bead
-                    claimed_bead = prompt_builder._context.get("assigned_bead_id")
-                    if claimed_bead:
-                        if bd_close(claimed_bead, reason="review approved"):
-                            _log(f"Closed bead {claimed_bead}", "ok")
-                        else:
-                            _log(f"Failed to close bead {claimed_bead}", "warn")
-
-                    # Check for more ready beads
-                    next_bead = _query_ready_bead()
-                    if next_bead and Stage.IMPLEMENT in stage_order:
-                        loop_key = "bead_iteration"
-                        loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                        loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
-                        _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters[loop_key]})", "ok")
-                        if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
-                            _log(f"Bead iteration limit reached after {loop_counters[loop_key]} beads", "warn")
-                        else:
-                            # Clear stale context from previous bead's test/review cycle
-                            prompt_builder.update_context("test_passed", None)
-                            prompt_builder.update_context("test_coverage", None)
-                            prompt_builder.update_context("proof_artifacts", None)
-                            prompt_builder.update_context("test_failures", None)
-                            prompt_builder.update_context("review_issues", None)
-                            prompt_builder.update_context("review_history", None)
-                            prompt_builder.update_context("test_failure_history", None)
-                            prompt_builder.update_context("files_changed", None)
-                            prompt_builder.update_context("bead_prompt_iteration", 0)
-                            _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                            stage_idx = stage_order.index(Stage.IMPLEMENT)
-                            continue
-
                 elif next_stage == Stage.IMPLEMENT:
-                    claimed_bead = prompt_builder._context.get("assigned_bead_id")
                     new_issues = result.get("issues", [])
 
                     # Severity-gate: only loop back for critical/major issues
                     critical_issues = [i for i in new_issues if i.get("severity") in ("critical", "major")]
                     if not critical_issues:
                         _log("Only minor/suggestion issues — treating as approve", "ok")
-                        # Close bead and continue to next
-                        if claimed_bead:
-                            if bd_close(claimed_bead, reason="review approved (minor issues only)"):
-                                _log(f"Closed bead {claimed_bead}", "ok")
-                            else:
-                                _log(f"Failed to close bead {claimed_bead}", "warn")
-                        next_bead = _query_ready_bead()
-                        if next_bead and Stage.IMPLEMENT in stage_order:
-                            loop_key = "bead_iteration"
-                            loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                            loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
-                            _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters[loop_key]})", "ok")
-                            if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
-                                _log(f"Bead iteration limit reached after {loop_counters[loop_key]} beads", "warn")
-                            else:
-                                prompt_builder.update_context("test_passed", None)
-                                prompt_builder.update_context("test_coverage", None)
-                                prompt_builder.update_context("proof_artifacts", None)
-                                prompt_builder.update_context("test_failures", None)
-                                prompt_builder.update_context("review_issues", None)
-                                prompt_builder.update_context("review_history", None)
-                                prompt_builder.update_context("test_failure_history", None)
-                                prompt_builder.update_context("files_changed", None)
-                                prompt_builder.update_context("bead_prompt_iteration", 0)
-                                _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                                stage_idx = stage_order.index(Stage.IMPLEMENT)
-                                continue
                     else:
-                        # Accumulate review history (append, don't replace)
+                        # Accumulate review history
                         prev_history = prompt_builder.get_context("review_history") or []
                         prev_history.append({"attempt": len(prev_history) + 1, "issues": new_issues})
                         prompt_builder.update_context("review_history", prev_history)
@@ -1065,44 +1034,19 @@ def run_pipeline(
                         if Stage.IMPLEMENT not in stage_order:
                             _log("Changes requested but IMPLEMENT stage is disabled — skipping loop", "warn")
                         else:
-                            # Per-bead retry limit
-                            bead_loop_key = f"pr_changes:{claimed_bead}" if claimed_bead else "pr_changes"
-                            loop_counters[bead_loop_key] = loop_counters.get(bead_loop_key, 0) + 1
+                            # Flat review-fix counter (not per-bead)
+                            loop_counters["pr_changes"] = loop_counters.get("pr_changes", 0) + 1
                             loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                             bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                             prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                            _log(f"Changes requested — looping back to IMPLEMENT (attempt {loop_counters[bead_loop_key]} for {claimed_bead or 'unknown'})", "warn")
-                            if not check_loop_limit("pr_changes", loop_counters[bead_loop_key], settings_path, mloops=mloops):
-                                # Defer this bead instead of crashing
-                                _log(f"Bead {claimed_bead} stuck after {loop_counters[bead_loop_key]} review cycles — deferring", "warn")
-                                if claimed_bead:
-                                    unresolved = "; ".join(f"[{i.get('severity')}] {i.get('file','?')}:{i.get('line','?')}" for i in critical_issues)
-                                    bd_update(claimed_bead, status="open", notes=f"Deferred: {unresolved}")
-                                    prompt_builder.update_context("assigned_bead_id", None)
-                                # Try next bead instead of crashing
-                                next_bead = _query_ready_bead()
-                                if next_bead and Stage.IMPLEMENT in stage_order:
-                                    loop_key = "bead_iteration"
-                                    loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                                    _log(f"Moving to next bead after deferral (bead {loop_counters[loop_key]})", "ok")
-                                    if check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
-                                        prompt_builder.update_context("test_passed", None)
-                                        prompt_builder.update_context("test_coverage", None)
-                                        prompt_builder.update_context("proof_artifacts", None)
-                                        prompt_builder.update_context("test_failures", None)
-                                        prompt_builder.update_context("review_issues", None)
-                                        prompt_builder.update_context("review_history", None)
-                                        prompt_builder.update_context("test_failure_history", None)
-                                        prompt_builder.update_context("files_changed", None)
-                                        prompt_builder.update_context("bead_prompt_iteration", 0)
-                                        _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                                        stage_idx = stage_order.index(Stage.IMPLEMENT)
-                                        continue
-                                _log("No more beads available after deferral — finishing", "warn")
-                            else:
+                            _log(f"Changes requested — looping back to IMPLEMENT fix mode (attempt {loop_counters['pr_changes']})", "warn")
+                            if check_loop_limit("pr_changes", loop_counters["pr_changes"], settings_path, mloops=mloops):
                                 _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
                                 stage_idx = stage_order.index(Stage.IMPLEMENT)
                                 continue
+                            else:
+                                _log(f"Review fix limit exhausted after {loop_counters['pr_changes']} attempts — finishing", "warn")
+
                 elif next_stage == Stage.PLAN:
                     if Stage.PLAN not in stage_order:
                         _log("Restart planning requested but PLAN stage is disabled — skipping loop", "warn")
