@@ -21,6 +21,7 @@ def _make_raw_envelope(
     cache_read=200,
     turns=5,
     duration_ms=10000,
+    duration_api_ms=8000,
     model="claude-sonnet-4-20250514",
 ):
     """Create a realistic raw envelope as returned by claude CLI."""
@@ -30,6 +31,7 @@ def _make_raw_envelope(
         "total_cost_usd": cost,
         "num_turns": turns,
         "duration_ms": duration_ms,
+        "duration_api_ms": duration_api_ms,
         "_resolved_model": model,
         "usage": {
             "input_tokens": input_tokens,
@@ -43,12 +45,13 @@ def _make_raw_envelope(
 
 def test_extract_token_usage_from_envelope():
     """Token usage extraction produces correct structure from raw envelope."""
-    envelope = _make_raw_envelope(cost=0.42, input_tokens=28500, output_tokens=4200)
+    envelope = _make_raw_envelope(cost=0.42, input_tokens=28500, output_tokens=4200, duration_api_ms=19500)
     usage = extract_token_usage(envelope)
 
     assert usage["input_tokens"] == 28500
     assert usage["output_tokens"] == 4200
     assert usage["total_cost_usd"] == 0.42
+    assert usage["duration_api_ms"] == 19500
     assert usage["model"] == "claude-sonnet-4-20250514"
 
 
@@ -64,6 +67,7 @@ def test_token_usage_in_iteration_record():
         status, "plan",
         status="completed",
         duration_ms=10000,
+        duration_api_ms=8000,
         turns=5,
         cost_usd=0.25,
         token_usage=usage,
@@ -74,6 +78,25 @@ def test_token_usage_in_iteration_record():
     assert iteration["token_usage"]["input_tokens"] == 5000
     assert iteration["token_usage"]["output_tokens"] == 1000
     assert iteration["token_usage"]["model"] == "claude-sonnet-4-20250514"
+    assert iteration["duration_api_ms"] == 8000
+
+
+def test_duration_api_ms_aggregated_across_iterations():
+    """duration_api_ms is summed correctly across multiple iterations."""
+    status = init_status({"title": "Test"}, "test/branch")
+
+    start_iteration(status, "implement", agent="implementer", model="sonnet")
+    usage1 = extract_token_usage(_make_raw_envelope(duration_api_ms=5000))
+    complete_iteration(status, "implement", status="completed",
+                       duration_api_ms=5000, token_usage=usage1)
+
+    start_iteration(status, "implement", agent="implementer", model="sonnet")
+    usage2 = extract_token_usage(_make_raw_envelope(duration_api_ms=7000))
+    complete_iteration(status, "implement", status="completed",
+                       duration_api_ms=7000, token_usage=usage2)
+
+    stage_usage = get_stage_token_usage(status, "implement")
+    assert stage_usage["duration_api_ms"] == 12000
 
 
 def test_stage_token_aggregation_across_iterations():

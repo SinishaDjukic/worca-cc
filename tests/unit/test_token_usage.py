@@ -19,6 +19,7 @@ def test_extract_complete_envelope():
         "type": "result",
         "total_cost_usd": 0.42,
         "duration_ms": 45200,
+        "duration_api_ms": 38000,
         "num_turns": 12,
         "_resolved_model": "claude-sonnet-4-20250514",
         "usage": {
@@ -35,8 +36,21 @@ def test_extract_complete_envelope():
     assert result["cache_read_input_tokens"] == 8500
     assert result["total_cost_usd"] == 0.42
     assert result["duration_ms"] == 45200
+    assert result["duration_api_ms"] == 38000
     assert result["num_turns"] == 12
     assert result["model"] == "claude-sonnet-4-20250514"
+
+
+def test_extract_duration_api_ms_missing_defaults_to_zero():
+    raw = {"type": "result", "total_cost_usd": 0.1, "duration_ms": 5000}
+    result = extract_token_usage(raw)
+    assert result["duration_api_ms"] == 0
+
+
+def test_extract_duration_api_ms_none_treated_as_zero():
+    raw = {"type": "result", "duration_api_ms": None}
+    result = extract_token_usage(raw)
+    assert result["duration_api_ms"] == 0
 
 
 def test_extract_missing_usage():
@@ -113,6 +127,7 @@ def test_aggregate_multiple_records():
             "cache_read_input_tokens": 300,
             "total_cost_usd": 0.10,
             "duration_ms": 5000,
+            "duration_api_ms": 4000,
             "num_turns": 3,
         },
         {
@@ -122,6 +137,7 @@ def test_aggregate_multiple_records():
             "cache_read_input_tokens": 600,
             "total_cost_usd": 0.20,
             "duration_ms": 8000,
+            "duration_api_ms": 6500,
             "num_turns": 5,
         },
     ]
@@ -132,6 +148,7 @@ def test_aggregate_multiple_records():
     assert result["cache_read_input_tokens"] == 900
     assert abs(result["total_cost_usd"] - 0.30) < 1e-9
     assert result["duration_ms"] == 13000
+    assert result["duration_api_ms"] == 10500
     assert result["num_turns"] == 8
     assert result["iteration_count"] == 2
 
@@ -141,6 +158,7 @@ def test_aggregate_empty_list():
     assert result["input_tokens"] == 0
     assert result["output_tokens"] == 0
     assert result["total_cost_usd"] == 0
+    assert result["duration_api_ms"] == 0
     assert result["iteration_count"] == 0
 
 
