@@ -58,6 +58,16 @@ function _runDuration(run) {
   return 0;
 }
 
+function _runApiDuration(run) {
+  let total = 0;
+  for (const stage of Object.values(run.stages || {})) {
+    for (const iter of stage.iterations || []) {
+      total += iter.duration_api_ms || 0;
+    }
+  }
+  return total;
+}
+
 function _lastStageEnd(stages) {
   if (!stages) return null;
   let latest = null;
@@ -198,6 +208,7 @@ function runRow(run, tokenData, expandedRun, { onToggleRun }) {
         <span class="cost-run-cost">${unsafeHTML(iconSvg(Coins, 12))} ${_formatCost(cost)}</span>
         <span class="cost-run-turns">${unsafeHTML(iconSvg(RefreshCw, 12))} ${turns} turns</span>
         <span class="cost-run-duration">${unsafeHTML(iconSvg(Timer, 12))} ${dur > 0 ? formatDuration(dur) : '-'}</span>
+        ${(() => { const apiMs = _runApiDuration(run); return apiMs > 0 ? html`<span class="cost-run-api-duration">${unsafeHTML(iconSvg(Cpu, 12))} API ${formatDuration(apiMs)}</span>` : nothing; })()}
         <span class="cost-run-chevron">${isExpanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       ${isExpanded ? html`
@@ -212,6 +223,7 @@ function runRow(run, tokenData, expandedRun, { onToggleRun }) {
                 <th>Cost</th>
                 <th>Turns</th>
                 <th>Duration</th>
+                <th>API Duration</th>
                 <th>Input</th>
                 <th>Output</th>
                 <th>Cache Read</th>
@@ -224,7 +236,7 @@ function runRow(run, tokenData, expandedRun, { onToggleRun }) {
                 const iters = stage?.iterations || [];
                 const stageTokens = runTokens[name] || [];
                 if (iters.length === 0) {
-                  return html`<tr class="cost-table-stage"><td>${name}</td><td colspan="8" class="cost-muted">-</td></tr>`;
+                  return html`<tr class="cost-table-stage"><td>${name}</td><td colspan="9" class="cost-muted">-</td></tr>`;
                 }
                 return iters.map((iter, idx) => {
                   const tokens = stageTokens[idx] || {};
@@ -235,6 +247,7 @@ function runRow(run, tokenData, expandedRun, { onToggleRun }) {
                       <td>${_formatCost(iter.cost_usd)}</td>
                       <td>${iter.turns || '-'}</td>
                       <td>${iter.duration_ms ? formatDuration(iter.duration_ms) : '-'}</td>
+                      <td>${iter.duration_api_ms ? formatDuration(iter.duration_api_ms) : '-'}</td>
                       <td>${tokens.inputTokens ? _formatTokens(tokens.inputTokens) : '-'}</td>
                       <td>${tokens.outputTokens ? _formatTokens(tokens.outputTokens) : '-'}</td>
                       <td>${tokens.cacheReadInputTokens ? _formatTokens(tokens.cacheReadInputTokens) : '-'}</td>

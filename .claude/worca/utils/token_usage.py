@@ -32,6 +32,7 @@ def extract_token_usage(raw_envelope: dict) -> dict:
         "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
         "total_cost_usd": raw_envelope.get("total_cost_usd", 0) or 0,
         "duration_ms": raw_envelope.get("duration_ms", 0) or 0,
+        "duration_api_ms": raw_envelope.get("duration_api_ms", 0) or 0,
         "num_turns": raw_envelope.get("num_turns", 0) or 0,
         "model": raw_envelope.get("_resolved_model") or raw_envelope.get("model", ""),
     }
@@ -46,6 +47,7 @@ def _empty_token_usage() -> dict:
         "cache_read_input_tokens": 0,
         "total_cost_usd": 0,
         "duration_ms": 0,
+        "duration_api_ms": 0,
         "num_turns": 0,
         "model": "",
     }
@@ -58,6 +60,7 @@ _SUMMABLE_FIELDS = [
     "cache_read_input_tokens",
     "total_cost_usd",
     "duration_ms",
+    "duration_api_ms",
     "num_turns",
 ]
 

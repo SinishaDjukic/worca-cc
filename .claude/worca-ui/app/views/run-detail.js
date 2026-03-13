@@ -77,6 +77,7 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       turns: it.turns || undefined,
       cost_usd: it.cost_usd || undefined,
       duration_ms: it.duration_ms || undefined,
+      duration_api_ms: it.duration_api_ms || undefined,
       started_at: it.started_at || undefined,
       completed_at: it.completed_at || undefined,
     })),
@@ -131,6 +132,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       <div class="stage-info-strip">
         ${agentName ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${agentName}${model ? html` <span class="text-muted">(${model})</span>` : ''}</span>` : nothing}
         ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iter.turns}</span></span>` : nothing}
+        ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round(iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at) * 100)}%)` : ''}</span></span>` : nothing}
         ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Iteration Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
         ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Iteration Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
       </div>
@@ -255,9 +257,18 @@ export function runDetailView(run, settings = {}, options = {}) {
         ${(() => {
           const allIters = Object.values(stages).flatMap(s => s.iterations || []);
           const pipelineCost = allIters.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
-          return pipelineCost > 0 ? html`
+          const pipelineApiMs = allIters.reduce((sum, it) => sum + (it.duration_api_ms || 0), 0);
+          const pipelineTurns = allIters.reduce((sum, it) => sum + (it.turns || 0), 0);
+          const pipelineWallMs = allIters.reduce((sum, it) => {
+            if (it.started_at && it.completed_at) return sum + elapsed(it.started_at, it.completed_at);
+            return sum;
+          }, 0);
+          const apiPct = pipelineWallMs > 0 && pipelineApiMs > 0 ? Math.round(pipelineApiMs / pipelineWallMs * 100) : 0;
+          return (pipelineCost > 0 || pipelineApiMs > 0 || pipelineTurns > 0) ? html`
             <div class="pipeline-cost-strip">
-              <span class="meta-label">Pipeline Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span>
+              ${pipelineCost > 0 ? html`<span class="meta-label">Pipeline Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span>` : nothing}
+              ${pipelineApiMs > 0 ? html`<span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(pipelineApiMs)}${apiPct > 0 ? ` (${apiPct}%)` : ''}</span>` : nothing}
+              ${pipelineTurns > 0 ? html`<span class="meta-label">Total Turns:</span> <span class="meta-value">${pipelineTurns}</span>` : nothing}
             </div>
           ` : nothing;
         })()}
@@ -295,6 +306,12 @@ export function runDetailView(run, settings = {}, options = {}) {
                       <span class="meta-value">${iterations.length} iterations</span>
                     </span>
                   ` : nothing}
+                  ${(() => { const t = iterations.reduce((s, it) => s + (it.turns || 0), 0); return t > 0 ? html`
+                    <span class="stage-meta-item">
+                      <span class="stage-meta-icon">${unsafeHTML(iconSvg(RefreshCw, 11))}</span>
+                      <span class="meta-value">${t} turns</span>
+                    </span>
+                  ` : nothing; })()}
                   ${stageCost > 0 ? html`
                     <span class="stage-meta-item">
                       <span class="stage-meta-icon">${unsafeHTML(iconSvg(Coins, 11))}</span>
@@ -333,10 +350,18 @@ export function runDetailView(run, settings = {}, options = {}) {
                   return html`
                     <div class="stage-content-wrapper">
                       ${copyBtn}
-                      <div class="stage-totals-strip">
-                        <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
-                        <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
-                      </div>
+                      ${(() => {
+                        const stageApiMs = iterations.reduce((sum, it) => sum + (it.duration_api_ms || 0), 0);
+                        const stageTurns = iterations.reduce((sum, it) => sum + (it.turns || 0), 0);
+                        const stageApiPct = stageMs > 0 && stageApiMs > 0 ? Math.round(stageApiMs / stageMs * 100) : 0;
+                        return html`
+                          <div class="stage-totals-strip">
+                            <span class="stage-totals-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${stageCost.toFixed(2)}</span></span>
+                            <span class="stage-totals-item"><span class="meta-label">Duration:</span> <span class="meta-value">${stageTotalDur}</span></span>
+                            ${stageApiMs > 0 ? html`<span class="stage-totals-item"><span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(stageApiMs)}${stageApiPct > 0 ? ` (${stageApiPct}%)` : ''}</span></span>` : nothing}
+                            ${stageTurns > 0 ? html`<span class="stage-totals-item"><span class="meta-label">Turns:</span> <span class="meta-value">${stageTurns}</span></span>` : nothing}
+                          </div>`;
+                      })()}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -364,6 +389,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       <div class="stage-info-strip">
                         ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round(iterations[0].duration_api_ms / stageMs * 100)}%)` : ''}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
                       </div>
                       ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
