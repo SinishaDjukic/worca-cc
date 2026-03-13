@@ -97,8 +97,8 @@ export function createApp(options = {}) {
     if (typeof inputValue !== 'string' || inputValue.trim().length === 0) {
       return res.status(400).json({ ok: false, error: 'inputValue must be a non-empty string' });
     }
-    if (inputValue.length > 10000) {
-      return res.status(400).json({ ok: false, error: 'inputValue must be 10,000 characters or less' });
+    if (inputValue.length > 50000) {
+      return res.status(400).json({ ok: false, error: 'inputValue must be 50,000 characters or less' });
     }
     const msizeVal = msize != null ? Math.max(1, Math.min(10, Math.round(Number(msize)))) : 1;
     const mloopsVal = mloops != null ? Math.max(1, Math.min(10, Math.round(Number(mloops)))) : 1;
