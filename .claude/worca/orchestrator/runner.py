@@ -764,6 +764,7 @@ def run_pipeline(
 
             # Store rendered prompt in status for UI visibility
             status["stages"][current_stage.value]["prompt"] = rendered_prompt
+            iter_record["prompt"] = rendered_prompt
             save_status(status, actual_status_path)
 
             # Run the stage
