@@ -23,12 +23,20 @@ worca-cc is a 5-agent pipeline that plans, coordinates, implements, tests, and r
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` command)
 - Git
 - [beads](https://github.com/nightconcept/beads) CLI for task management and work coordination
+  ```bash
+  npm install -g @beads/bd@0.49.0
+  ```
+  Use version 0.49.0 specifically — later versions require Dolt DB, which is not needed for this project.
 
 ## Installation
 
 ```bash
 # Clone the repo
 git clone https://github.com/SinishaDjukic/worca-cc.git
+
+# Install beads CLI (uninstall any existing version first)
+npm uninstall -g @beads/bd
+npm install -g @beads/bd@0.49.0
 
 # Install in your project
 cp -R worca-cc/.claude/ your-project/.claude/
