@@ -136,12 +136,14 @@ const pipelineTurns = allIters.reduce((sum, it) => sum + (it.turns || 0), 0);
 Render as a single `pipeline-cost-strip` row with all three metrics:
 
 ```
-Pipeline Cost: $3.43    API Duration: 8m 22s    Total Turns: 109
+Pipeline Cost: $3.43    API Duration: 8m 22s (70%)    Total Turns: 109
 ```
+
+The percentage is `Math.round(pipelineApiMs / pipelineWallMs * 100)` where `pipelineWallMs` is the total wall-clock duration across all iterations. Only show the percentage if both values are > 0.
 
 **Naming:**
 - **"Pipeline Cost:"** — existing, unchanged
-- **"API Duration:"** — new, uses `meta-label` + `meta-value` classes
+- **"API Duration:"** — new, value format: `Xm Xs (N%)`, uses `meta-label` + `meta-value` classes
 - **"Total Turns:"** — new, uses `meta-label` + `meta-value` classes
 
 Only show each metric if its value is > 0.
@@ -178,22 +180,24 @@ Cost: $1.06    Duration: 3m 15s
 Add **API Duration** and **Turns**:
 
 ```
-Cost: $1.06    Duration: 3m 15s    API Duration: 2m 50s    Turns: 10
+Cost: $1.06    Duration: 3m 15s    API Duration: 2m 50s (87%)    Turns: 10
 ```
 
 Compute:
 ```javascript
 const stageApiMs = iterations.reduce((sum, it) => sum + (it.duration_api_ms || 0), 0);
+const stageWallMs = _stageWallMs(stage);  // already computed above as stageMs
 const stageTurns = iterations.reduce((sum, it) => sum + (it.turns || 0), 0);
+const stageApiPct = stageWallMs > 0 ? Math.round(stageApiMs / stageWallMs * 100) : 0;
 ```
 
 **Naming:**
 - **"Cost:"** — existing, unchanged
 - **"Duration:"** — existing, unchanged
-- **"API Duration:"** — new
+- **"API Duration:"** — new, value format: `Xm Xs (N%)`
 - **"Turns:"** — new
 
-Only show each if value > 0.
+Only show each if value > 0. Only show percentage if wall-clock duration > 0.
 
 #### 3c. Single-iteration stage info strip (expanded, single-iteration stages)
 
@@ -207,10 +211,10 @@ Turns: 5    Cost: $0.38
 Add **API Duration** after Turns:
 
 ```
-Turns: 5    API Duration: 1m 50s    Cost: $0.38
+Turns: 5    API Duration: 1m 50s (76%)    Cost: $0.38
 ```
 
-Use `iterations[0].duration_api_ms` with `formatDuration()`. Only show if present.
+Use `iterations[0].duration_api_ms` with `formatDuration()`. Percentage computed against the stage wall-clock duration. Only show if present.
 
 ---
 
@@ -226,10 +230,12 @@ Turns: 5    Iteration Cost: $0.42    Iteration Duration: 2m 10s
 Add **API Duration** between Turns and Iteration Cost:
 
 ```
-Turns: 5    API Duration: 1m 50s    Iteration Cost: $0.42    Iteration Duration: 2m 10s
+Turns: 5    API Duration: 1m 50s (85%)    Iteration Cost: $0.42    Iteration Duration: 2m 10s
 ```
 
 **Naming:** "API Duration:" (not "Iteration API Duration" — keep it short since we're already inside an iteration context).
+
+Percentage computed against the iteration wall-clock duration: `Math.round(iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at) * 100)`. Only show percentage if both values are available.
 
 Only show if `iter.duration_api_ms` is truthy. Use `formatDuration(iter.duration_api_ms)`.
 
@@ -276,14 +282,16 @@ duration_api_ms: it.duration_api_ms || undefined,
 
 | Location | Label | Example |
 |----------|-------|---------|
-| Pipeline header | **"API Duration:"** | API Duration: 8m 22s |
+| Pipeline header | **"API Duration:"** | API Duration: 8m 22s (70%) |
 | Pipeline header | **"Total Turns:"** | Total Turns: 109 |
 | Stage header meta (collapsed) | icon + **"N turns"** | ⟳ 10 turns |
-| Stage totals strip (expanded) | **"API Duration:"** | API Duration: 2m 50s |
+| Stage totals strip (expanded) | **"API Duration:"** | API Duration: 2m 50s (87%) |
 | Stage totals strip (expanded) | **"Turns:"** | Turns: 10 |
-| Single-iteration info strip | **"API Duration:"** | API Duration: 1m 50s |
-| Iteration detail | **"API Duration:"** | API Duration: 1m 50s |
+| Single-iteration info strip | **"API Duration:"** | API Duration: 1m 50s (76%) |
+| Iteration detail | **"API Duration:"** | API Duration: 1m 50s (85%) |
 | Cost dashboard table header | **"API Duration"** | column header |
+
+The percentage in parentheses shows what fraction of wall-clock time was spent in API calls. This helps identify whether bottlenecks are in the LLM or in tool execution.
 
 All labels use `meta-label` class for consistency. All values use `meta-value` class.
 
@@ -303,7 +311,7 @@ All labels use `meta-label` class for consistency. All values use `meta-value` c
 
 1. Run a pipeline (or use an existing completed run)
 2. Open the run detail page
-3. Verify pipeline header shows: `Pipeline Cost: $X.XX    API Duration: Xm Xs    Total Turns: N`
+3. Verify pipeline header shows: `Pipeline Cost: $X.XX    API Duration: Xm Xs (N%)    Total Turns: N`
 4. Verify each stage collapsed header shows turns pill
 5. Expand a multi-iteration stage — verify totals strip shows API Duration and Turns
 6. Check iteration tabs — verify API Duration appears per iteration
