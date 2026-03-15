@@ -93,9 +93,8 @@
       }
     },
     "loops": {
-      "implement_test": 10,
-      "code_review": 5,
-      "pr_changes": 3,
+      "implement_test": 5,
+      "pr_changes": 5,
       "restart_planning": 2
     },
     "milestones": {

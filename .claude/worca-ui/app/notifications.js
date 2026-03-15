@@ -149,7 +149,6 @@ export function detectLoopLimitWarning(runId, newRun, prevRun, settings, warnedL
   // Map loop config keys to stage names
   const loopStageMap = {
     implement_test: ['implement', 'test'],
-    code_review: ['review'],
     pr_changes: ['pr'],
     restart_planning: ['plan'],
   };

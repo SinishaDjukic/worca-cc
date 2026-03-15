@@ -433,7 +433,7 @@ def check_loop_limit(
     Args:
         mloops: Multiplier for the loop limit (1-10). E.g. mloops=2 doubles max loops.
     """
-    default_limit = 10
+    default_limit = 5
     try:
         with open(settings_path) as f:
             settings = json.load(f)
@@ -626,6 +626,7 @@ def run_pipeline(
             "_logs_dir": logs_dir,
         }
         loop_counters = {}
+        max_beads = 0
 
         # Initialize PromptBuilder for context threading across stages
         prompt_builder = PromptBuilder(
@@ -897,6 +898,7 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 # Thread coordinate outputs into PromptBuilder
                 beads_ids = result.get("beads_ids", [])
+                max_beads = len(beads_ids)
                 prompt_builder.update_context("beads_ids", beads_ids)
                 prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
                 # Link beads to this run via label
@@ -939,17 +941,18 @@ def run_pipeline(
                     prompt_builder.update_context("all_tests_added", all_tests)
 
                     loop_counters["bead_iteration"] = loop_counters.get("bead_iteration", 0) + 1
-                    loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
 
                     # Check for more beads
                     next_bead = _query_ready_bead()
                     if next_bead and Stage.IMPLEMENT in stage_order:
-                        if check_loop_limit("bead_iteration", loop_counters["bead_iteration"], settings_path, mloops=mloops):
+                        if loop_counters["bead_iteration"] < max_beads:
                             _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
                             _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
                             continue
                         else:
+                            if next_bead:
+                                _log(f"Bead limit reached ({max_beads}) but bd ready still has beads — possible stale beads from prior run", "warn")
                             _log(f"Bead iteration limit reached after {loop_counters['bead_iteration']} beads", "warn")
 
                     # All beads done — set accumulated files for TEST/REVIEW
@@ -983,7 +986,6 @@ def run_pipeline(
                     else:
                         # Flat test-fix counter (not per-bead)
                         loop_counters["implement_test"] = loop_counters.get("implement_test", 0) + 1
-                        loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                         bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                         prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
                         _log(f"Tests failed — looping back to IMPLEMENT fix mode (attempt {loop_counters['implement_test']})", "warn")
@@ -1036,7 +1038,6 @@ def run_pipeline(
                         else:
                             # Flat review-fix counter (not per-bead)
                             loop_counters["pr_changes"] = loop_counters.get("pr_changes", 0) + 1
-                            loop_counters["implement_iteration"] = loop_counters.get("implement_iteration", 0) + 1
                             bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                             prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
                             _log(f"Changes requested — looping back to IMPLEMENT fix mode (attempt {loop_counters['pr_changes']})", "warn")

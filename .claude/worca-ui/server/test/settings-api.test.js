@@ -27,7 +27,7 @@ const SAMPLE_SETTINGS = {
   worca: {
     stages: { plan: { agent: 'planner', enabled: true }, implement: { agent: 'implementer', enabled: true } },
     agents: { planner: { model: 'opus', max_turns: 100 }, implementer: { model: 'sonnet', max_turns: 300 } },
-    loops: { implement_test: 10, code_review: 5, pr_changes: 3, restart_planning: 2 },
+    loops: { implement_test: 3, pr_changes: 3, restart_planning: 2 },
     milestones: { plan_approval: true, pr_approval: true, deploy_approval: true },
     governance: {
       guards: { block_rm_rf: true, block_env_write: true, block_force_push: true, restrict_git_commit: true },
@@ -127,9 +127,9 @@ describe('POST /api/settings', () => {
   });
 
   it('merges worca.loops correctly', async () => {
-    const res = await post({ worca: { loops: { implement_test: 5, code_review: 2, pr_changes: 1, restart_planning: 1 } } });
+    const res = await post({ worca: { loops: { implement_test: 5, pr_changes: 1, restart_planning: 1 } } });
     const data = await res.json();
-    expect(data.worca.loops).toEqual({ implement_test: 5, code_review: 2, pr_changes: 1, restart_planning: 1 });
+    expect(data.worca.loops).toEqual({ implement_test: 5, pr_changes: 1, restart_planning: 1 });
   });
 
   it('merges worca.stages correctly', async () => {
@@ -147,7 +147,7 @@ describe('POST /api/settings', () => {
   });
 
   it('preserves hooks even if the client sends a hooks key', async () => {
-    const res = await post({ hooks: { evil: true }, worca: { loops: { implement_test: 1, code_review: 1, pr_changes: 1, restart_planning: 1 } } });
+    const res = await post({ hooks: { evil: true }, worca: { loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 } } });
     expect(res.status).toBe(200);
     const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(raw.hooks).toEqual(SAMPLE_SETTINGS.hooks);
@@ -176,7 +176,7 @@ describe('POST /api/settings', () => {
   });
 
   it('written file is valid JSON with 2-space indent and trailing newline', async () => {
-    await post({ worca: { loops: { implement_test: 1, code_review: 1, pr_changes: 1, restart_planning: 1 } } });
+    await post({ worca: { loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 } } });
     const content = readFileSync(settingsPath, 'utf8');
     expect(content.endsWith('\n')).toBe(true);
     // Verify 2-space indent

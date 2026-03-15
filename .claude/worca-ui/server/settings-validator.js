@@ -2,7 +2,7 @@
 const VALID_AGENTS = ['planner', 'coordinator', 'implementer', 'tester', 'guardian'];
 const VALID_STAGES = ['plan', 'coordinate', 'implement', 'test', 'review', 'pr'];
 const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
-const VALID_LOOPS = ['implement_test', 'code_review', 'pr_changes', 'restart_planning'];
+const VALID_LOOPS = ['implement_test', 'pr_changes', 'restart_planning'];
 const VALID_MILESTONES = ['plan_approval', 'pr_approval', 'deploy_approval'];
 const VALID_GUARDS = ['block_rm_rf', 'block_env_write', 'block_force_push', 'restrict_git_commit'];
 

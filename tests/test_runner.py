@@ -80,16 +80,16 @@ def test_check_loop_limit_exceeded_over(tmp_path):
 def test_check_loop_limit_default_when_missing(tmp_path):
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"worca": {}}))
-    # No loops configured, default to 10
-    assert check_loop_limit("implement_test", 9, str(settings)) is True
-    assert check_loop_limit("implement_test", 10, str(settings)) is False
+    # No loops configured, default to 5
+    assert check_loop_limit("implement_test", 4, str(settings)) is True
+    assert check_loop_limit("implement_test", 5, str(settings)) is False
 
 
 def test_check_loop_limit_default_when_no_file(tmp_path):
     missing = tmp_path / "nonexistent.json"
-    # Default to 10 when file doesn't exist
-    assert check_loop_limit("implement_test", 5, str(missing)) is True
-    assert check_loop_limit("implement_test", 10, str(missing)) is False
+    # Default to 5 when file doesn't exist
+    assert check_loop_limit("implement_test", 4, str(missing)) is True
+    assert check_loop_limit("implement_test", 5, str(missing)) is False
 
 
 def test_handle_pr_approve():
@@ -524,3 +524,140 @@ def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
     assert result["plan_file"] is not None
     assert "add-user-auth" in result["plan_file"]
     assert result["plan_file"].startswith("docs/plans/")
+
+
+# --- bead limit from coordinator ---
+
+def test_bead_limit_derived_from_coordinator(tmp_path):
+    """Bead loop stops at exactly len(beads_ids), not a config value."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": True},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {
+                "coordinator": {"model": "opus", "max_turns": 10},
+                "implementer": {"model": "sonnet", "max_turns": 10},
+            },
+            "loops": {"implement_test": 3},
+        }
+    }))
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Test bead limit")
+
+    # Coordinator returns 3 beads
+    bead_ids = ["beads-aaa", "beads-bbb", "beads-ccc"]
+    implement_count = [0]
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None):
+        if stage == Stage.COORDINATE:
+            return {"beads_ids": bead_ids, "dependency_graph": {}}, {"type": "result"}
+        elif stage == Stage.IMPLEMENT:
+            implement_count[0] += 1
+            return {"files_changed": [], "tests_added": []}, {"type": "result"}
+        return {}, {"type": "result"}
+
+    # Always return a bead — the max_beads counter should be the limit
+    call_count = [0]
+    def mock_query_ready():
+        call_count[0] += 1
+        return {"id": f"beads-{call_count[0]:03d}", "title": f"Bead {call_count[0]}"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner._query_ready_bead", side_effect=mock_query_ready):
+            with patch("worca.orchestrator.runner._claim_bead", return_value=True):
+                with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
+                    with patch("worca.orchestrator.runner.bd_close", return_value=True):
+                        with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
+                            with patch("worca.orchestrator.runner.create_branch"):
+                                with patch("worca.orchestrator.runner._write_pid"):
+                                    with patch("worca.orchestrator.runner._remove_pid"):
+                                        run_pipeline(
+                                            wr,
+                                            plan_file=str(plan),
+                                            settings_path=str(settings),
+                                            status_path=status_path,
+                                        )
+
+    # Should have implemented exactly 3 beads (matching coordinator output, not config)
+    assert implement_count[0] == 3
+
+
+def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
+    """Warning is logged when bd ready returns beads beyond expected count."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": True},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {
+                "coordinator": {"model": "opus", "max_turns": 10},
+                "implementer": {"model": "sonnet", "max_turns": 10},
+            },
+            "loops": {"implement_test": 3},
+        }
+    }))
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Test stale beads")
+
+    # Coordinator returns 2 beads
+    bead_ids = ["beads-aaa", "beads-bbb"]
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None):
+        if stage == Stage.COORDINATE:
+            return {"beads_ids": bead_ids, "dependency_graph": {}}, {"type": "result"}
+        elif stage == Stage.IMPLEMENT:
+            return {"files_changed": [], "tests_added": []}, {"type": "result"}
+        return {}, {"type": "result"}
+
+    # Mock _query_ready_bead to always return a bead (simulating stale beads)
+    def mock_query_ready():
+        return {"id": "beads-stale", "title": "Stale bead"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner._query_ready_bead", side_effect=mock_query_ready):
+            with patch("worca.orchestrator.runner._claim_bead", return_value=True):
+                with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
+                    with patch("worca.orchestrator.runner.bd_close", return_value=True):
+                        with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
+                            with patch("worca.orchestrator.runner.create_branch"):
+                                with patch("worca.orchestrator.runner._write_pid"):
+                                    with patch("worca.orchestrator.runner._remove_pid"):
+                                        run_pipeline(
+                                            wr,
+                                            plan_file=str(plan),
+                                            settings_path=str(settings),
+                                            status_path=status_path,
+                                        )
+
+    # Check that the stale bead warning was printed to stderr
+    captured = capsys.readouterr()
+    assert "stale beads" in captured.err.lower()

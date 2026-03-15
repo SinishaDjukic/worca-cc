@@ -132,7 +132,7 @@ function readAgentsFromDom() {
 
 function readPipelineFromDom() {
   const loops = {};
-  for (const key of ['implement_test', 'code_review', 'pr_changes', 'restart_planning']) {
+  for (const key of ['implement_test', 'pr_changes', 'restart_planning']) {
     const el = document.getElementById(`loop-${key}`);
     loops[key] = parseInt(el?.value, 10) || 0;
   }
@@ -262,7 +262,6 @@ function pipelineTab(worca, rerender) {
       <div class="settings-grid">
         ${[
           { key: 'implement_test', label: 'Implement \u2194 Test' },
-          { key: 'code_review', label: 'Code Review' },
           { key: 'pr_changes', label: 'PR Changes' },
           { key: 'restart_planning', label: 'Restart Planning' }
         ].map(item => html`

@@ -8,8 +8,7 @@
       "guardian": { "model": "opus", "max_turns": 30 }
     },
     "loops": {
-      "implement_test": 10,
-      "code_review": 5
+      "implement_test": 3
     },
     "milestones": {
       "plan_approval": true,
