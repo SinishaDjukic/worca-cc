@@ -7,14 +7,14 @@ worca-cc is a 5-agent pipeline that plans, coordinates, implements, tests, and r
 ## Features
 
 - **6-stage pipeline** — Plan → Coordinate → Implement → Test → Review → PR
-- **5 specialized agents** — Planner and Coordinator on Opus, Implementer and Tester on Sonnet, Guardian on Opus
-- **Governance hooks** — block dangerous operations (rm -rf, force push, env writes), enforce test gates, validate plans
+- **5 specialized agents** — Planner and Coordinator on Opus, Implementer and Tester on Sonnet, Guardian on Opus (fully configurable: model and max turns per agent)
+- **Governance hooks** — block dangerous operations (rm -rf, force push, env writes), enforce test gates, validate plans (fully configurable: each guard can be toggled independently)
 - **Real-time dashboard** (worca-ui) — pipeline status, log viewer, settings editor, beads integration, token costs
 - **Multiple work sources** — prompt, spec file, GitHub issue (`gh:issue:42`), beads task (`bd:bd-abc`)
-- **Token and cost tracking** — per-agent usage with model-specific pricing
+- **Token and cost tracking** — per-agent usage with model-specific pricing (fully configurable: custom pricing per model)
 - **Resume interrupted runs** — checkpoint to `status.json` and pick up where you left off
-- **Loop controls** — configurable iteration limits for implement/test cycles, code review, and PR updates
-- **Human approval gates** — optional checkpoints after planning, before merge, and before deploy
+- **Loop controls** — configurable iteration limits for implement/test cycles, code review, and PR updates (fully configurable: per-loop-type limits + global multiplier)
+- **Human approval gates** — optional checkpoints after planning, before merge, and before deploy (fully configurable: enable/disable per gate)
 
 ## Prerequisites
 
@@ -81,20 +81,60 @@ python .claude/scripts/run_pipeline.py --spec spec.md --plan plan.md
 
 `--prompt`, `--spec`, and `--source` are mutually exclusive — provide one.
 
-## Dashboard
+## Dashboard (worca-ui)
 
 ```bash
 cd .claude/worca-ui && npm start
 # Opens http://127.0.0.1:3400
 ```
 
-The dashboard provides:
-- Pipeline stage timeline with live progress
-- Log viewer with real-time streaming (xterm)
-- Beads task panel with dependency tracking
-- Token usage and cost breakdown per agent
-- Settings viewer
-- New run launcher
+A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
+
+### Pipeline Detail
+
+Full stage timeline with iteration counts, costs, duration, and API time. Expand any stage to see per-iteration metrics. Collapsible log viewer and linked beads panel at the bottom.
+
+![Pipeline Detail](docs/screenshots/pipeline-detail.png)
+
+Expand a stage to drill into individual iterations — each shows agent, turns, cost, duration, and outcome.
+
+![Pipeline Detail — IMPLEMENT expanded](docs/screenshots/pipeline-detail-implement.png)
+
+The log viewer streams real-time agent output. Filter by stage and iteration to review past runs.
+
+![Pipeline Detail — Log History](docs/screenshots/pipeline-detail-logs.png)
+
+### Run History
+
+Browse completed and interrupted runs. Each card shows the branch, timing, and stage completion badges.
+
+![Run History](docs/screenshots/history.png)
+
+### New Pipeline
+
+Start a run from a prompt, GitHub issue, or spec file. Advanced options for size/loop multipliers, branch selection, and pre-made plan files.
+
+![New Pipeline](docs/screenshots/new-pipeline.png)
+
+### Beads Task Board
+
+Kanban view of tasks created by the Coordinator, filtered by run. Shows priority badges, dependency chains, and status across Open/In Progress/Closed columns.
+
+![Beads Kanban](docs/screenshots/beads-kanban.png)
+
+### Token & Cost Dashboard
+
+Per-run cost breakdown with a stage-proportional bar chart. Detailed table showing cost, turns, duration, and API duration per iteration.
+
+![Cost Dashboard](docs/screenshots/costs.png)
+
+### Settings
+
+Configure agent models and max turns, pipeline stages, governance rules, and notification preferences — all saved to `.claude/settings.json`.
+
+![Settings](docs/screenshots/settings.png)
+
+### Development
 
 After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
