@@ -48,9 +48,14 @@ def main():
     elif args.source:
         work_request = normalize("source", args.source)
 
+    # Resolve plan: explicit --plan wins, then auto-detected from issue body
+    plan_file = args.plan or work_request.plan_path
+
     print(f"Starting pipeline: {work_request.title}")
-    if args.plan:
-        print(f"  Pre-made plan: {args.plan} (skipping PLAN stage)")
+    if plan_file and args.plan:
+        print(f"  Pre-made plan: {plan_file} (skipping PLAN stage)")
+    elif plan_file:
+        print(f"  Auto-detected plan from issue: {plan_file} (skipping PLAN stage)")
     if args.msize > 1:
         print(f"  Size multiplier: {args.msize}x turns")
     if args.mloops > 1:
@@ -61,7 +66,7 @@ def main():
     try:
         status = run_pipeline(
             work_request,
-            plan_file=args.plan,
+            plan_file=plan_file,
             resume=args.resume,
             settings_path=args.settings,
             status_path=os.path.join(args.status_dir, "status.json"),

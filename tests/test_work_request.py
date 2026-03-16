@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock, ANY
 
 from worca.orchestrator.work_request import (
     WorkRequest,
+    _extract_plan_path,
     normalize_prompt,
     normalize_spec_file,
     normalize_github_issue,
@@ -25,6 +26,7 @@ class TestWorkRequest:
         assert wr.description == ""
         assert wr.source_ref is None
         assert wr.priority == 2
+        assert wr.plan_path is None
 
     def test_all_fields(self):
         wr = WorkRequest(
@@ -226,3 +228,78 @@ class TestNormalize:
             assert False, "Should have raised ValueError"
         except ValueError as e:
             assert "Unknown source" in str(e)
+
+
+# --- _extract_plan_path ---
+
+class TestExtractPlanPath:
+    def test_extracts_plan_link(self, tmp_path, monkeypatch):
+        plan = tmp_path / "docs" / "plans"
+        plan.mkdir(parents=True)
+        (plan / "W-023-batch.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [W-023-batch.md](docs/plans/W-023-batch.md)"
+        assert _extract_plan_path(body) == "docs/plans/W-023-batch.md"
+
+    def test_returns_none_when_file_missing(self):
+        body = "## Plan\n\n- [W-099-missing.md](docs/plans/W-099-missing.md)"
+        assert _extract_plan_path(body) is None
+
+    def test_returns_none_when_no_link(self):
+        body = "Just a description with no plan link."
+        assert _extract_plan_path(body) is None
+
+    def test_returns_none_for_empty_body(self):
+        assert _extract_plan_path("") is None
+        assert _extract_plan_path(None) is None
+
+    def test_picks_first_matching_link(self, tmp_path, monkeypatch):
+        plan = tmp_path / "docs" / "plans"
+        plan.mkdir(parents=True)
+        (plan / "W-001-first.md").write_text("# First")
+        (plan / "W-002-second.md").write_text("# Second")
+        monkeypatch.chdir(tmp_path)
+
+        body = (
+            "- [first](docs/plans/W-001-first.md)\n"
+            "- [second](docs/plans/W-002-second.md)"
+        )
+        assert _extract_plan_path(body) == "docs/plans/W-001-first.md"
+
+    def test_ignores_non_plan_links(self):
+        body = "See [README](README.md) and [docs](docs/other.md)"
+        assert _extract_plan_path(body) is None
+
+
+# --- normalize_github_issue with plan_path ---
+
+class TestNormalizeGithubIssuePlanPath:
+    def _mock_gh(self, mock_subprocess, title, body):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({"title": title, "body": body})
+        mock_subprocess.run.return_value = mock_result
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_sets_plan_path_when_link_and_file_exist(self, mock_subprocess, tmp_path, monkeypatch):
+        plan = tmp_path / "docs" / "plans"
+        plan.mkdir(parents=True)
+        (plan / "W-023-batch.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        self._mock_gh(mock_subprocess, "W-023: Batch", "## Plan\n\n- [plan](docs/plans/W-023-batch.md)")
+        wr = normalize_github_issue("gh:issue:30")
+        assert wr.plan_path == "docs/plans/W-023-batch.md"
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_plan_path_none_when_file_missing(self, mock_subprocess):
+        self._mock_gh(mock_subprocess, "W-099: Missing", "## Plan\n\n- [plan](docs/plans/W-099-missing.md)")
+        wr = normalize_github_issue("gh:issue:99")
+        assert wr.plan_path is None
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_plan_path_none_when_no_link(self, mock_subprocess):
+        self._mock_gh(mock_subprocess, "Simple issue", "Just a bug description.")
+        wr = normalize_github_issue("gh:issue:5")
+        assert wr.plan_path is None
