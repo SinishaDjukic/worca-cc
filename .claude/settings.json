@@ -35,12 +35,66 @@
   },
   "permissions": {
     "allow": [
+      "Bash(cat:*)",
+      "Bash(command cat:*)",
+      "Bash(command curl:*)",
+      "Bash(command cut:*)",
+      "Bash(command diff:*)",
+      "Bash(command du:*)",
+      "Bash(command find:*)",
+      "Bash(command git branch:*)",
+      "Bash(command git diff:*)",
+      "Bash(command git log:*)",
+      "Bash(command git ls-files:*)",
+      "Bash(command git status:*)",
+      "Bash(command grep:*)",
+      "Bash(command head:*)",
+      "Bash(command identify:*)",
+      "Bash(command jq:*)",
+      "Bash(command ls:*)",
+      "Bash(command lsof:*)",
+      "Bash(command ps:*)",
+      "Bash(command ss:*)",
+      "Bash(command tail:*)",
+      "Bash(command wc:*)",
+      "Bash(command xargs command grep:*)",
+      "Bash(curl:*)",
+      "Bash(do echo:*)",
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(gh api:*)",
+      "Bash(git branch:*)",
+      "Bash(git diff:*)",
+      "Bash(git grep:*)",
+      "Bash(git help:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git show:*)",
+      "Bash(git status:*)",
+      "Bash(GITHUB_TOKEN= gh api:*)",
+      "Bash(grep:*)",
+      "Bash(jar tf:*)",
+      "Bash(ls:*)",
+      "Bash(node -e:*)",
+      "Bash(npm info:*)",
+      "Bash(rg:*)",
+      "Bash(test:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
       "Bash(pytest *)",
       "Bash(bd *)",
-      "Bash(git status)",
-      "Bash(git diff *)",
-      "Bash(git log *)",
-      "Read(*)"
+      "Read(*)",
+      "mcp__context7__get-library-docs",
+      "mcp__context7__query-docs",
+      "mcp__context7__resolve-library-id",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_network_requests",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_tabs",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch"
     ]
   },
   "worca": {
@@ -80,11 +134,11 @@
         "max_turns": 300
       },
       "implementer": {
-        "model": "sonnet",
+        "model": "opus",
         "max_turns": 300
       },
       "tester": {
-        "model": "sonnet",
+        "model": "opus",
         "max_turns": 100
       },
       "guardian": {
@@ -106,16 +160,16 @@
     "pricing": {
       "models": {
         "opus": {
-          "input_per_mtok": 15.00,
-          "output_per_mtok": 75.00,
+          "input_per_mtok": 15,
+          "output_per_mtok": 75,
           "cache_write_per_mtok": 18.75,
-          "cache_read_per_mtok": 1.50
+          "cache_read_per_mtok": 1.5
         },
         "sonnet": {
-          "input_per_mtok": 3.00,
-          "output_per_mtok": 15.00,
+          "input_per_mtok": 3,
+          "output_per_mtok": 15,
           "cache_write_per_mtok": 3.75,
-          "cache_read_per_mtok": 0.30
+          "cache_read_per_mtok": 0.3
         }
       },
       "currency": "USD",

@@ -50,10 +50,12 @@ class TestBlockEnvAccess:
         assert code == 2
 
     def test_allows_env_sample(self):
+        os.environ.pop("WORCA_AGENT", None)
         code, reason = check_guard("Write", {"file_path": "/project/.env.sample"})
         assert code == 0
 
     def test_allows_env_example(self):
+        os.environ.pop("WORCA_AGENT", None)
         code, reason = check_guard("Edit", {"file_path": "/project/.env.example"})
         assert code == 0
 
@@ -159,12 +161,15 @@ class TestBlockPlannerWrites:
             del os.environ["WORCA_AGENT"]
 
     def test_allows_planner_write_master_plan(self):
+        saved_plan_file = os.environ.pop("WORCA_PLAN_FILE", None)
         os.environ["WORCA_AGENT"] = "planner"
         try:
             code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
             assert code == 0
         finally:
             del os.environ["WORCA_AGENT"]
+            if saved_plan_file is not None:
+                os.environ["WORCA_PLAN_FILE"] = saved_plan_file
 
     def test_allows_implementer_write_source(self):
         os.environ["WORCA_AGENT"] = "implementer"

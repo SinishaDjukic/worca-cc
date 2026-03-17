@@ -126,8 +126,8 @@ ws.on('runs-list', (payload) => {
   for (const run of (payload.runs || [])) {
     runs[run.id] = run;
   }
-  store.setState({ runs });
   if (payload.settings) settings = payload.settings;
+  store.setState({ runs });
 });
 
 ws.on('run-snapshot', (payload) => {
