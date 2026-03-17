@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, FileText } from '../utils/icons.js';
+import { getDefaults } from './settings.js';
 
 // Module-level state
 let inputType = 'prompt';
@@ -200,13 +201,13 @@ export function newRunView(state, { rerender }) {
             <div class="new-run-grid">
               <div class="settings-field">
                 <label class="settings-label">Size Multiplier (msize)</label>
-                <sl-input id="new-run-msize" type="number" min="1" max="10" value="1"></sl-input>
+                <sl-input id="new-run-msize" type="number" min="1" max="10" value="${getDefaults().msize}"></sl-input>
                 <span class="settings-field-hint">Scales max_turns per stage (1-10)</span>
               </div>
 
               <div class="settings-field">
                 <label class="settings-label">Loop Multiplier (mloops)</label>
-                <sl-input id="new-run-mloops" type="number" min="1" max="10" value="1"></sl-input>
+                <sl-input id="new-run-mloops" type="number" min="1" max="10" value="${getDefaults().mloops}"></sl-input>
                 <span class="settings-field-hint">Scales max loop iterations (1-10)</span>
               </div>
             </div>

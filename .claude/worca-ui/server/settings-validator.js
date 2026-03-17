@@ -5,6 +5,8 @@ const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
 const VALID_LOOPS = ['implement_test', 'pr_changes', 'restart_planning'];
 const VALID_MILESTONES = ['plan_approval', 'pr_approval', 'deploy_approval'];
 const VALID_GUARDS = ['block_rm_rf', 'block_env_write', 'block_force_push', 'restrict_git_commit'];
+const VALID_PRICING_MODELS = ['opus', 'sonnet'];
+const VALID_PRICING_FIELDS = ['input_per_mtok', 'output_per_mtok', 'cache_write_per_mtok', 'cache_read_per_mtok'];
 
 export function validateSettingsPayload(body) {
   const details = [];
@@ -71,6 +73,73 @@ export function validateSettingsPayload(body) {
           if (!Number.isInteger(val) || val < 0 || val > 100) {
             details.push(`Loop "${key}" must be a non-negative integer, max 100`);
           }
+        }
+      }
+    }
+
+    // plan_path_template
+    if (w.plan_path_template !== undefined) {
+      if (typeof w.plan_path_template !== 'string' || w.plan_path_template.length === 0) {
+        details.push('plan_path_template must be a non-empty string');
+      } else if (w.plan_path_template.length > 500) {
+        details.push('plan_path_template must be at most 500 characters');
+      }
+    }
+
+    // defaults
+    if (w.defaults !== undefined) {
+      if (typeof w.defaults !== 'object' || w.defaults === null || Array.isArray(w.defaults)) {
+        details.push('defaults must be an object');
+      } else {
+        if (w.defaults.msize !== undefined) {
+          if (!Number.isInteger(w.defaults.msize) || w.defaults.msize < 1 || w.defaults.msize > 10) {
+            details.push('defaults.msize must be an integer between 1 and 10');
+          }
+        }
+        if (w.defaults.mloops !== undefined) {
+          if (!Number.isInteger(w.defaults.mloops) || w.defaults.mloops < 1 || w.defaults.mloops > 10) {
+            details.push('defaults.mloops must be an integer between 1 and 10');
+          }
+        }
+      }
+    }
+
+    // pricing
+    if (w.pricing !== undefined) {
+      if (typeof w.pricing !== 'object' || w.pricing === null || Array.isArray(w.pricing)) {
+        details.push('pricing must be an object');
+      } else {
+        const p = w.pricing;
+        if (p.models !== undefined) {
+          if (typeof p.models !== 'object' || p.models === null || Array.isArray(p.models)) {
+            details.push('pricing.models must be an object');
+          } else {
+            for (const [model, costs] of Object.entries(p.models)) {
+              if (!VALID_PRICING_MODELS.includes(model)) {
+                details.push(`Unknown pricing model: "${model}"`);
+                continue;
+              }
+              if (typeof costs !== 'object' || costs === null || Array.isArray(costs)) {
+                details.push(`pricing.models.${model} must be an object`);
+                continue;
+              }
+              for (const [field, val] of Object.entries(costs)) {
+                if (!VALID_PRICING_FIELDS.includes(field)) {
+                  details.push(`Unknown pricing field "${field}" for model "${model}"`);
+                  continue;
+                }
+                if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) {
+                  details.push(`pricing.models.${model}.${field} must be a non-negative finite number`);
+                }
+              }
+            }
+          }
+        }
+        if (p.currency !== undefined && typeof p.currency !== 'string') {
+          details.push('pricing.currency must be a string');
+        }
+        if (p.last_updated !== undefined && typeof p.last_updated !== 'string') {
+          details.push('pricing.last_updated must be a string');
         }
       }
     }

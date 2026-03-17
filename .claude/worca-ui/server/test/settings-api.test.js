@@ -175,6 +175,41 @@ describe('POST /api/settings', () => {
     expect(data.worca.stages).toEqual(SAMPLE_SETTINGS.worca.stages);
   });
 
+  it('merges plan_path_template into worca', async () => {
+    const res = await post({ worca: { plan_path_template: 'custom/{title_slug}.md' } });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca.plan_path_template).toBe('custom/{title_slug}.md');
+    // Other worca keys preserved
+    expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+  });
+
+  it('merges worca.defaults correctly', async () => {
+    const res = await post({ worca: { defaults: { msize: 3, mloops: 5 } } });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca.defaults).toEqual({ msize: 3, mloops: 5 });
+    // Other worca keys preserved
+    expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+  });
+
+  it('merges worca.pricing correctly', async () => {
+    const pricing = {
+      models: {
+        opus: { input_per_mtok: 20, output_per_mtok: 80, cache_write_per_mtok: 20, cache_read_per_mtok: 2 },
+        sonnet: { input_per_mtok: 5, output_per_mtok: 20, cache_write_per_mtok: 5, cache_read_per_mtok: 0.5 },
+      },
+      currency: 'USD',
+      last_updated: '2026-03-17',
+    };
+    const res = await post({ worca: { pricing } });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca.pricing).toEqual(pricing);
+    // Other worca keys preserved
+    expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+  });
+
   it('written file is valid JSON with 2-space indent and trailing newline', async () => {
     await post({ worca: { loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 } } });
     const content = readFileSync(settingsPath, 'utf8');
@@ -264,6 +299,44 @@ describe('POST /api/settings - validation rejections', () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error.details).toContainEqual(expect.stringContaining('unknown_agent'));
+  });
+
+  it('rejects non-string plan_path_template', async () => {
+    const res = await post({ worca: { plan_path_template: 42 } });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(expect.stringContaining('plan_path_template'));
+  });
+
+  it('rejects defaults.msize outside 1-10', async () => {
+    const res = await post({ worca: { defaults: { msize: 0 } } });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(expect.stringContaining('msize'));
+  });
+
+  it('rejects non-object defaults', async () => {
+    const res = await post({ worca: { defaults: 'bad' } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects empty plan_path_template', async () => {
+    const res = await post({ worca: { plan_path_template: '' } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects negative pricing cost values', async () => {
+    const res = await post({ worca: { pricing: { models: { opus: { input_per_mtok: -5 } } } } });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(expect.stringContaining('non-negative'));
+  });
+
+  it('rejects unknown pricing model names', async () => {
+    const res = await post({ worca: { pricing: { models: { gpt4: { input_per_mtok: 1 } } } } });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(expect.stringContaining('Unknown pricing model'));
   });
 
   it('rejects non-object request bodies', async () => {

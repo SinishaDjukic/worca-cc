@@ -1496,9 +1496,79 @@ sl-details.log-history-panel::part(content) {
   font-size: 12px;
 }
 
+.settings-perm-item--editable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-perm-item--editable sl-input {
+  flex: 1;
+}
+
+.perm-remove-btn {
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.perm-remove-btn:hover {
+  color: var(--danger, #e74c3c);
+}
+
 .settings-muted {
   font-size: 13px;
   color: var(--muted);
+}
+
+/* Pricing table */
+.pricing-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+
+.pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pricing-table th,
+.pricing-table td {
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Right-align number columns (all except the model name column) */
+.pricing-table th:not(:first-child),
+.pricing-table td:not(:first-child) {
+  text-align: right;
+}
+
+.pricing-table th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pricing-model-name {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.pricing-table sl-input {
+  min-width: 90px;
+  max-width: 130px;
+}
+
+.pricing-info {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
 }
 
 /* Settings toast overlay */

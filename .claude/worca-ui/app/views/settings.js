@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings, Bell } from '../utils/icons.js';
+import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings, Bell, Plus, X } from '../utils/icons.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 const STAGE_AGENT_MAP = {
@@ -23,6 +23,22 @@ const DEFAULT_STAGES = {
   test:       { agent: 'tester',      enabled: true },
   review:     { agent: 'guardian',     enabled: true },
   pr:         { agent: 'guardian',     enabled: true }
+};
+
+export const PRICING_MODELS = ['opus', 'sonnet'];
+export const PRICING_FIELDS = [
+  { key: 'input_per_mtok', label: 'Input/MTok' },
+  { key: 'output_per_mtok', label: 'Output/MTok' },
+  { key: 'cache_write_per_mtok', label: 'Cache Write/MTok' },
+  { key: 'cache_read_per_mtok', label: 'Cache Read/MTok' },
+];
+export const DEFAULT_PRICING = {
+  models: {
+    opus: { input_per_mtok: 15, output_per_mtok: 75, cache_write_per_mtok: 18.75, cache_read_per_mtok: 1.5 },
+    sonnet: { input_per_mtok: 3, output_per_mtok: 15, cache_write_per_mtok: 3.75, cache_read_per_mtok: 0.3 },
+  },
+  currency: 'USD',
+  last_updated: '2025-05-01',
 };
 
 const GUARD_RULES = [
@@ -64,6 +80,23 @@ export async function loadSettings() {
         if (!settingsData.worca.stages[stage]) {
           settingsData.worca.stages[stage] = { ...DEFAULT_STAGES[stage] };
         }
+      }
+    }
+    if (!settingsData.worca.plan_path_template) {
+      settingsData.worca.plan_path_template = 'docs/plans/{timestamp}-{title_slug}.md';
+    }
+    if (!settingsData.worca.defaults) {
+      settingsData.worca.defaults = { msize: 1, mloops: 1 };
+    }
+    if (!settingsData.worca.pricing) {
+      settingsData.worca.pricing = { ...DEFAULT_PRICING, models: { ...DEFAULT_PRICING.models } };
+    } else {
+      if (!settingsData.worca.pricing.models) settingsData.worca.pricing.models = {};
+      for (const model of PRICING_MODELS) {
+        settingsData.worca.pricing.models[model] = {
+          ...DEFAULT_PRICING.models[model],
+          ...(settingsData.worca.pricing.models[model] || {}),
+        };
       }
     }
     if (!settingsData.worca.governance) {
@@ -136,7 +169,15 @@ function readPipelineFromDom() {
     const el = document.getElementById(`loop-${key}`);
     loops[key] = parseInt(el?.value, 10) || 0;
   }
-  return { loops };
+  const planPathEl = document.getElementById('plan-path-template');
+  const plan_path_template = planPathEl?.value?.trim() || '';
+  const msizeEl = document.getElementById('defaults-msize');
+  const mloopsEl = document.getElementById('defaults-mloops');
+  const defaults = {
+    msize: parseInt(msizeEl?.value, 10) || 1,
+    mloops: parseInt(mloopsEl?.value, 10) || 1,
+  };
+  return { loops, plan_path_template, defaults };
 }
 
 function readStagesFromDom() {
@@ -169,6 +210,33 @@ function readGovernanceFromDom() {
   }
 
   return { guards, test_gate_strikes, dispatch };
+}
+
+export function readPermissionsFromDom() {
+  const inputs = document.querySelectorAll('.perm-input');
+  return Array.from(inputs)
+    .map(el => el.value.trim())
+    .filter(v => v.length > 0);
+}
+
+export function readPricingFromDom() {
+  const models = {};
+  for (const model of PRICING_MODELS) {
+    models[model] = {};
+    for (const field of PRICING_FIELDS) {
+      const el = document.getElementById(`pricing-${model}-${field.key}`);
+      models[model][field.key] = parseFloat(el?.value) || 0;
+    }
+  }
+  return {
+    models,
+    currency: DEFAULT_PRICING.currency,
+    last_updated: new Date().toISOString().slice(0, 10),
+  };
+}
+
+export function getDefaults() {
+  return settingsData?.worca?.defaults || { msize: 1, mloops: 1 };
 }
 
 // --- Tab views ---
@@ -272,11 +340,34 @@ function pipelineTab(worca, rerender) {
         `)}
       </div>
 
+      <h3 class="settings-section-title">Plan Path Template</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Path Template</label>
+          <sl-input id="plan-path-template" value="${worca.plan_path_template || ''}" size="small" placeholder="docs/plans/{timestamp}-{title_slug}.md"></sl-input>
+          <span class="settings-field-hint">Placeholders: {timestamp}, {title_slug} — Default: docs/plans/{timestamp}-{title_slug}.md</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Run Defaults</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Size Multiplier (msize)</label>
+          <sl-input id="defaults-msize" type="number" value="${(worca.defaults || {}).msize || 1}" size="small" min="1" max="10"></sl-input>
+          <span class="settings-field-hint">Scales max_turns per stage</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Loop Multiplier (mloops)</label>
+          <sl-input id="defaults-mloops" type="number" value="${(worca.defaults || {}).mloops || 1}" size="small" min="1" max="10"></sl-input>
+          <span class="settings-field-hint">Scales max loop iterations</span>
+        </div>
+      </div>
+
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
-          const { loops } = readPipelineFromDom();
+          const { loops, plan_path_template, defaults } = readPipelineFromDom();
           const stages = readStagesFromDom();
-          saveSettings({ worca: { ...settingsData.worca, loops, stages }, permissions: settingsData.permissions }, rerender);
+          saveSettings({ worca: { ...settingsData.worca, loops, stages, plan_path_template, defaults }, permissions: settingsData.permissions }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Pipeline
@@ -290,7 +381,8 @@ function governanceTab(worca, permissions, rerender) {
   const governance = worca.governance || DEFAULT_GOVERNANCE;
   const guards = governance.guards || DEFAULT_GOVERNANCE.guards;
   const dispatch = governance.dispatch || DEFAULT_GOVERNANCE.dispatch;
-  const permList = permissions.allow || [];
+  if (!permissions.allow) permissions.allow = [];
+  const permList = permissions.allow;
 
   return html`
     <div class="settings-tab-content">
@@ -326,16 +418,31 @@ function governanceTab(worca, permissions, rerender) {
       </div>
 
       <h3 class="settings-section-title">Permissions</h3>
-      <div class="settings-permissions">
-        ${permList.length > 0
-          ? permList.map(p => html`<div class="settings-perm-item"><code>${p}</code></div>`)
-          : html`<span class="settings-muted">No permissions configured</span>`}
+      <div class="settings-permissions" id="permissions-list">
+        ${permList.map((p, i) => html`
+          <div class="settings-perm-item settings-perm-item--editable">
+            <sl-input class="perm-input" value="${p}" size="small" placeholder="e.g. Bash(pytest *)"></sl-input>
+            <sl-icon-button name="x" label="Remove" class="perm-remove-btn" @click=${() => {
+              permList.splice(i, 1);
+              rerender();
+            }}>${unsafeHTML(iconSvg(X, 14))}</sl-icon-button>
+          </div>
+        `)}
+        ${permList.length === 0 ? html`<span class="settings-muted">No permissions configured</span>` : nothing}
       </div>
+      <sl-button size="small" variant="text" @click=${() => {
+        permList.push('');
+        rerender();
+      }}>
+        ${unsafeHTML(iconSvg(Plus, 14))}
+        Add Permission
+      </sl-button>
 
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const governance = readGovernanceFromDom();
-          saveSettings({ worca: { ...settingsData.worca, governance }, permissions: settingsData.permissions }, rerender);
+          const allow = readPermissionsFromDom();
+          saveSettings({ worca: { ...settingsData.worca, governance }, permissions: { allow } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Governance
@@ -345,8 +452,11 @@ function governanceTab(worca, permissions, rerender) {
   `;
 }
 
-function preferencesTab(preferences, onThemeToggle) {
+function preferencesTab(preferences, worca, { onThemeToggle, rerender }) {
   const theme = preferences?.theme || 'light';
+  const pricing = worca.pricing || DEFAULT_PRICING;
+  const models = pricing.models || DEFAULT_PRICING.models;
+
   return html`
     <div class="settings-tab-content">
       <h3 class="settings-section-title">Appearance</h3>
@@ -355,6 +465,54 @@ function preferencesTab(preferences, onThemeToggle) {
           <sl-switch ?checked=${theme === 'dark'} size="small" @sl-change=${onThemeToggle}>Dark Mode</sl-switch>
           <span class="settings-switch-desc">Toggle between light and dark theme</span>
         </div>
+      </div>
+
+      <h3 class="settings-section-title">Pricing</h3>
+      <div class="pricing-table-wrap">
+        <table class="pricing-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              ${PRICING_FIELDS.map(f => html`<th>${f.label}</th>`)}
+            </tr>
+          </thead>
+          <tbody>
+            ${PRICING_MODELS.map(model => {
+              const costs = models[model] || DEFAULT_PRICING.models[model];
+              return html`
+                <tr>
+                  <td class="pricing-model-name">${model}</td>
+                  ${PRICING_FIELDS.map(f => html`
+                    <td>
+                      <sl-input
+                        id="pricing-${model}-${f.key}"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value="${costs[f.key] ?? 0}"
+                        size="small"
+                      ></sl-input>
+                    </td>
+                  `)}
+                </tr>
+              `;
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div class="pricing-info">
+        <span class="settings-muted">Currency: ${pricing.currency || 'USD'}</span>
+        <span class="settings-muted">Last updated: ${pricing.last_updated || 'N/A'}</span>
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button variant="primary" size="small" @click=${() => {
+          const pricingData = readPricingFromDom();
+          saveSettings({ worca: { ...settingsData.worca, pricing: pricingData }, permissions: settingsData.permissions }, rerender);
+        }}>
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save Pricing
+        </sl-button>
       </div>
     </div>
   `;
@@ -503,9 +661,12 @@ export function settingsView(preferences, { rerender, onThemeToggle, onSaveNotif
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
-        <sl-tab-panel name="preferences">${preferencesTab(preferences, onThemeToggle)}</sl-tab-panel>
+        <sl-tab-panel name="preferences">${preferencesTab(preferences, worca, { onThemeToggle, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;
 }
+
+// Test-only export
+export { preferencesTab as _preferencesTab };
