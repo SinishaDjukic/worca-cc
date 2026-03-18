@@ -88,39 +88,79 @@ export function createApp(options = {}) {
   app.post('/api/runs', async (req, res) => {
     if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
 
-    const { inputType, inputValue, msize, mloops, planFile, branch } = req.body || {};
+    const body = req.body || {};
 
-    // Validation
-    if (!['prompt', 'source', 'spec'].includes(inputType)) {
-      return res.status(400).json({ ok: false, error: 'inputType must be "prompt", "source", or "spec"' });
+    // Backwards compat: detect old { inputType, inputValue } format
+    let { sourceType, sourceValue, prompt, planFile, msize, mloops, branch } = body;
+    if (body.inputType && sourceType === undefined) {
+      if (body.inputType === 'prompt') {
+        sourceType = 'none';
+        prompt = body.inputValue;
+      } else {
+        sourceType = body.inputType;
+        sourceValue = body.inputValue;
+      }
     }
-    if (typeof inputValue !== 'string' || inputValue.trim().length === 0) {
-      return res.status(400).json({ ok: false, error: 'inputValue must be a non-empty string' });
+
+    // Default sourceType
+    sourceType = sourceType || 'none';
+
+    // Validation: sourceType must be valid
+    if (!['none', 'source', 'spec'].includes(sourceType)) {
+      return res.status(400).json({ ok: false, error: 'sourceType must be "none", "source", or "spec"' });
     }
-    if (inputValue.length > 50000) {
-      return res.status(400).json({ ok: false, error: 'inputValue must be 50,000 characters or less' });
+
+    // Validation: sourceValue required when sourceType is source or spec
+    if (sourceType !== 'none') {
+      if (typeof sourceValue !== 'string' || sourceValue.trim().length === 0) {
+        return res.status(400).json({ ok: false, error: 'sourceValue must be a non-empty string when sourceType is "source" or "spec"' });
+      }
+      if (sourceValue.length > 50000) {
+        return res.status(400).json({ ok: false, error: 'sourceValue must be 50,000 characters or less' });
+      }
+      sourceValue = sourceValue.trim();
     }
+
+    // Validation: prompt length
+    if (prompt != null && typeof prompt === 'string' && prompt.length > 50000) {
+      return res.status(400).json({ ok: false, error: 'prompt must be 50,000 characters or less' });
+    }
+    if (typeof prompt === 'string') prompt = prompt.trim() || undefined;
+
+    // Validation: planFile
+    if (planFile !== undefined && planFile !== null) {
+      if (typeof planFile !== 'string' || planFile.trim().length === 0) {
+        return res.status(400).json({ ok: false, error: 'planFile must be a non-empty string if provided' });
+      }
+    }
+
+    const hasSource = sourceType !== 'none' && sourceValue;
+    const hasPlan = typeof planFile === 'string' && planFile.trim().length > 0;
+    const hasPrompt = typeof prompt === 'string' && prompt.length > 0;
+
+    // Validation: at least one of source, planFile, or prompt required
+    if (!hasSource && !hasPlan && !hasPrompt) {
+      return res.status(400).json({ ok: false, error: 'At least one of source, planFile, or prompt is required' });
+    }
+
     const msizeVal = msize != null ? Math.max(1, Math.min(10, Math.round(Number(msize)))) : 1;
     const mloopsVal = mloops != null ? Math.max(1, Math.min(10, Math.round(Number(mloops)))) : 1;
-    if (planFile !== undefined && planFile !== null && (typeof planFile !== 'string' || planFile.trim().length === 0)) {
-      return res.status(400).json({ ok: false, error: 'planFile must be a non-empty string if provided' });
-    }
 
     try {
       const result = await startPipeline(worcaDir, {
-        inputType,
-        inputValue: inputValue.trim(),
+        sourceType,
+        sourceValue: hasSource ? sourceValue : undefined,
+        prompt: hasPrompt ? prompt : undefined,
         msize: msizeVal,
         mloops: mloopsVal,
-        planFile: planFile || undefined,
+        planFile: hasPlan ? planFile.trim() : undefined,
         branch: branch || undefined,
         projectRoot,
       });
-      // Broadcast run-started if broadcast is available
       if (app.locals.broadcast) {
         app.locals.broadcast('run-started', { pid: result.pid });
       }
-      res.json({ ok: true, pid: result.pid, inputType, inputValue: inputValue.trim() });
+      res.json({ ok: true, pid: result.pid, sourceType, prompt });
     } catch (err) {
       if (err.code === 'already_running') {
         return res.status(409).json({ ok: false, error: err.message });

@@ -4,7 +4,7 @@ import { iconSvg, FileText } from '../utils/icons.js';
 import { getDefaults } from './settings.js';
 
 // Module-level state
-let inputType = 'prompt';
+let sourceType = 'none';
 let submitStatus = null; // null | 'submitting' | 'error'
 let submitError = '';
 let planFiles = null; // cached response
@@ -14,10 +14,22 @@ let selectedPlan = '';
 let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
 
-function inputLabel(type) {
+/**
+ * Reset module state for testing or re-initialization.
+ */
+export function resetNewRunState(overrides = {}) {
+  sourceType = overrides.sourceType ?? 'none';
+  submitStatus = null;
+  submitError = '';
+  selectedPlan = overrides.selectedPlan ?? '';
+  planFilter = overrides.selectedPlan ?? '';
+  selectedBranch = '';
+}
+
+function sourceLabel(type) {
   if (type === 'source') return 'GitHub Issue URL';
   if (type === 'spec') return 'Spec File Path';
-  return 'Prompt';
+  return '';
 }
 
 function fetchBranches() {
@@ -65,14 +77,30 @@ export function getNewRunSubmitState() {
 }
 
 export async function submitNewRun({ rerender, onStarted }) {
-  const inputEl = document.getElementById('new-run-input-value');
+  const sourceValueEl = document.getElementById('new-run-source-value');
+  const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
   const mloopsEl = document.getElementById('new-run-mloops');
 
-  const inputValue = inputEl?.value?.trim() || '';
-  if (!inputValue) {
+  const sourceValue = sourceValueEl?.value?.trim() || '';
+  const promptValue = promptEl?.value?.trim() || '';
+
+  const hasSource = sourceType !== 'none' && sourceValue.length > 0;
+  const hasPlan = !!selectedPlan;
+  const hasPrompt = promptValue.length > 0;
+
+  // Validation: sourceType requires a sourceValue
+  if (sourceType !== 'none' && !sourceValue) {
     submitStatus = 'error';
-    submitError = 'Please enter a value.';
+    submitError = `Please enter a ${sourceLabel(sourceType).toLowerCase()}.`;
+    rerender();
+    return;
+  }
+
+  // Validation: at least one of source, plan, or prompt required
+  if (!hasSource && !hasPlan && !hasPrompt) {
+    submitStatus = 'error';
+    submitError = 'Please provide at least one of: a work source, a plan file, or a prompt.';
     rerender();
     return;
   }
@@ -86,12 +114,13 @@ export async function submitNewRun({ rerender, onStarted }) {
 
   try {
     const body = {
-      inputType,
-      inputValue,
+      sourceType,
       msize: Math.max(1, Math.min(10, msize)),
       mloops: Math.max(1, Math.min(10, mloops)),
     };
-    if (selectedPlan) body.planFile = selectedPlan;
+    if (hasSource) body.sourceValue = sourceValue;
+    if (hasPrompt) body.prompt = promptValue;
+    if (hasPlan) body.planFile = selectedPlan;
     if (selectedBranch) body.branch = selectedBranch;
 
     const res = await fetch('/api/runs', {
@@ -118,8 +147,8 @@ export async function submitNewRun({ rerender, onStarted }) {
 
 export function newRunView(state, { rerender }) {
 
-  function handleInputTypeChange(e) {
-    inputType = e.target.value;
+  function handleSourceTypeChange(e) {
+    sourceType = e.target.value;
     rerender();
   }
 
@@ -171,30 +200,77 @@ export function newRunView(state, { rerender }) {
   const filtered = filteredPlanFiles();
   const grouped = groupedPlanFiles(filtered);
 
+  const hasSource = sourceType !== 'none';
+  const hasPlan = !!selectedPlan;
+  const promptRequired = !hasSource && !hasPlan;
+  const promptLabel = promptRequired ? 'Prompt (required)' : 'Additional Instructions (optional)';
+
   return html`
     <div class="new-run-page">
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
       <div class="new-run-form">
+        <!-- Section 1: Work Source -->
         <div class="new-run-section">
+          <h3 class="new-run-section-title">Work Source</h3>
           <div class="settings-field">
-            <label class="settings-label">Input Type</label>
-            <sl-select id="new-run-input-type" value=${inputType} @sl-change=${handleInputTypeChange}>
-              <sl-option value="prompt">Prompt</sl-option>
+            <label class="settings-label">Source Type</label>
+            <sl-select id="new-run-source-type" value=${sourceType} @sl-change=${handleSourceTypeChange}>
+              <sl-option value="none">None</sl-option>
               <sl-option value="source">GitHub Issue</sl-option>
               <sl-option value="spec">Spec File</sl-option>
             </sl-select>
           </div>
 
+          ${sourceType !== 'none' ? html`
+            <div class="settings-field">
+              <label class="settings-label">${sourceLabel(sourceType)}</label>
+              <sl-input id="new-run-source-value" placeholder=${sourceType === 'source' ? 'https://github.com/...' : 'path/to/spec.md'}></sl-input>
+            </div>
+          ` : nothing}
+
           <div class="settings-field">
-            <label class="settings-label">${inputLabel(inputType)}</label>
-            ${inputType === 'prompt'
-              ? html`<sl-textarea id="new-run-input-value" rows="8" placeholder="Describe what the pipeline should do..."></sl-textarea>`
-              : html`<sl-input id="new-run-input-value" placeholder=${inputType === 'source' ? 'https://github.com/...' : 'path/to/spec.md'}></sl-input>`
-            }
+            <label class="settings-label">Plan File (optional)</label>
+            <div class="plan-autocomplete">
+              <sl-input
+                id="new-run-plan"
+                placeholder="Type to search plan files..."
+                .value=${planFilter}
+                @sl-input=${handlePlanInput}
+                @sl-focus=${handlePlanFocus}
+                @sl-blur=${handlePlanBlur}
+                clearable
+                @sl-clear=${handlePlanClear}
+              >
+                <span slot="prefix">${unsafeHTML(iconSvg(FileText, 14))}</span>
+              </sl-input>
+              ${planDropdownOpen && filtered.length > 0 ? html`
+                <div class="plan-dropdown">
+                  ${Object.entries(grouped).map(([dir, files]) => html`
+                    <div class="plan-group-header">${dir}/</div>
+                    ${files.map(f => html`
+                      <div class="plan-item" @mousedown=${() => handlePlanSelect(f)}>
+                        ${f.name}
+                      </div>
+                    `)}
+                  `)}
+                </div>
+              ` : nothing}
+            </div>
+            <span class="settings-field-hint">Skips the planning stage. Relative to project root.</span>
           </div>
         </div>
 
+        <!-- Section 2: Prompt -->
+        <div class="new-run-section">
+          <h3 class="new-run-section-title">Prompt</h3>
+          <div class="settings-field">
+            <label class="settings-label">${promptLabel}</label>
+            <sl-textarea id="new-run-prompt" rows="8" placeholder="Describe what the pipeline should do..."></sl-textarea>
+          </div>
+        </div>
+
+        <!-- Section 3: Advanced Options -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Advanced Options</h3>
           <div class="new-run-advanced">
@@ -221,37 +297,6 @@ export function newRunView(state, { rerender }) {
                 `)}
               </sl-select>
               <span class="settings-field-hint">Use an existing branch instead of creating a new one</span>
-            </div>
-
-            <div class="settings-field">
-              <label class="settings-label">Plan File (optional)</label>
-              <div class="plan-autocomplete">
-                <sl-input
-                  id="new-run-plan"
-                  placeholder="Type to search plan files..."
-                  .value=${planFilter}
-                  @sl-input=${handlePlanInput}
-                  @sl-focus=${handlePlanFocus}
-                  @sl-blur=${handlePlanBlur}
-                  clearable
-                  @sl-clear=${handlePlanClear}
-                >
-                  <span slot="prefix">${unsafeHTML(iconSvg(FileText, 14))}</span>
-                </sl-input>
-                ${planDropdownOpen && filtered.length > 0 ? html`
-                  <div class="plan-dropdown">
-                    ${Object.entries(grouped).map(([dir, files]) => html`
-                      <div class="plan-group-header">${dir}/</div>
-                      ${files.map(f => html`
-                        <div class="plan-item" @mousedown=${() => handlePlanSelect(f)}>
-                          ${f.name}
-                        </div>
-                      `)}
-                    `)}
-                  </div>
-                ` : nothing}
-              </div>
-              <span class="settings-field-hint">Skips the planning stage. Relative to project root.</span>
             </div>
           </div>
         </div>

@@ -55,7 +55,13 @@ export async function startPipeline(worcaDir, opts = {}) {
 
   if (opts.resume) {
     args.push('--resume');
+  } else if (opts.sourceType !== undefined) {
+    // New format: separate source and prompt args
+    if (opts.sourceType === 'source') args.push('--source', opts.sourceValue);
+    else if (opts.sourceType === 'spec') args.push('--spec', opts.sourceValue);
+    if (opts.prompt) args.push('--prompt', opts.prompt);
   } else {
+    // Legacy format: inputType/inputValue
     const flag = opts.inputType === 'source' ? '--source'
       : opts.inputType === 'spec' ? '--spec'
       : '--prompt';

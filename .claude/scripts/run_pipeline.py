@@ -15,12 +15,12 @@ from worca.state.status import load_status
 from worca.utils.gh_issues import gh_issue_fail
 
 
-def main():
+def create_parser():
+    """Create the argument parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(description="Run worca-cc pipeline")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--prompt", help="Text prompt for work request")
-    group.add_argument("--source", help="Source reference (gh:issue:42, bd:bd-abc)")
-    group.add_argument("--spec", help="Path to spec file")
+    parser.add_argument("--prompt", help="Text prompt for work request")
+    parser.add_argument("--source", help="Source reference (gh:issue:42, bd:bd-abc)")
+    parser.add_argument("--spec", help="Path to spec file")
     parser.add_argument("--settings", default=".claude/settings.json",
                         help="Path to settings.json")
     parser.add_argument("--status-dir", default=".worca",
@@ -35,20 +35,56 @@ def main():
     parser.add_argument("--resume", action="store_true",
                         help="Resume a previous run from status.json instead of starting fresh")
     parser.add_argument("--branch", help="Use an existing branch instead of creating a new one")
+    return parser
 
-    args = parser.parse_args()
 
-    # Normalize input to WorkRequest
-    if args.prompt:
-        work_request = normalize("prompt", args.prompt)
-        # When --plan is also provided, read the plan file as the description
-        if args.plan and os.path.isfile(args.plan):
-            with open(args.plan) as f:
-                work_request.description = f.read()
+def build_work_request(args):
+    """Validate args and build a WorkRequest with prompt merging.
+
+    Validation:
+    - --source and --spec are mutually exclusive
+    - At least one of --prompt/--source/--spec/--plan is required
+
+    Prompt merging: when --prompt accompanies a source/spec/plan,
+    it is appended as '## Additional Instructions' to the description.
+    """
+    # Validation: --source and --spec are mutually exclusive
+    if args.source and args.spec:
+        print("error: --source and --spec are mutually exclusive", file=sys.stderr)
+        raise SystemExit(2)
+
+    # Validation: at least one arg required
+    if not any([args.prompt, args.source, args.spec, args.plan]):
+        print("error: at least one of --prompt, --source, --spec, or --plan is required",
+              file=sys.stderr)
+        raise SystemExit(2)
+
+    # Normalize: source/spec/plan take priority, prompt-only is fallback
+    has_primary = args.source or args.spec or args.plan
+    if args.source:
+        work_request = normalize("source", args.source)
     elif args.spec:
         work_request = normalize("spec", args.spec)
-    elif args.source:
-        work_request = normalize("source", args.source)
+    elif args.plan:
+        work_request = normalize("plan", args.plan)
+    else:
+        work_request = normalize("prompt", args.prompt)
+
+    # Prompt merging: append as Additional Instructions when prompt
+    # accompanies a primary source
+    if args.prompt and has_primary:
+        if work_request.description:
+            work_request.description += f"\n\n## Additional Instructions\n\n{args.prompt}"
+        else:
+            work_request.description = f"## Additional Instructions\n\n{args.prompt}"
+
+    return work_request
+
+
+def main():
+    parser = create_parser()
+    args = parser.parse_args()
+    work_request = build_work_request(args)
 
     # Resolve plan: explicit --plan wins, then auto-detected from issue body
     plan_file = args.plan or work_request.plan_path

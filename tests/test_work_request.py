@@ -1,10 +1,13 @@
 """Tests for worca.orchestrator.work_request module."""
 import json
+import subprocess
 from unittest.mock import patch, MagicMock, ANY
 
 from worca.orchestrator.work_request import (
     WorkRequest,
     _extract_plan_path,
+    generate_smart_title,
+    normalize_plan_file,
     normalize_prompt,
     normalize_spec_file,
     normalize_github_issue,
@@ -43,6 +46,151 @@ class TestWorkRequest:
         assert wr.priority == 1
 
 
+# --- generate_smart_title ---
+
+class TestGenerateSmartTitle:
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_returns_title_on_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="Add user authentication flow\n"
+        )
+        result = generate_smart_title("# Auth\n\nImplement login and signup...")
+        assert result == "Add user authentication flow"
+        # Verify claude was called with haiku model
+        args = mock_run.call_args
+        cmd = args[0][0]
+        assert "claude" in cmd
+        assert "--model" in cmd
+        assert "haiku" in cmd
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_truncates_content_to_10k(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="Long doc title\n")
+        long_content = "x" * 20_000
+        generate_smart_title(long_content)
+        # The prompt passed to claude should contain truncated content
+        cmd = mock_run.call_args[0][0]
+        prompt_arg_idx = cmd.index("-p") + 1
+        assert len(cmd[prompt_arg_idx]) <= 11_000  # 10k content + prompt text
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_returns_empty_on_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=30)
+        result = generate_smart_title("some content")
+        assert result == ""
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_returns_empty_on_nonzero_exit(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+        result = generate_smart_title("some content")
+        assert result == ""
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_returns_empty_on_exception(self, mock_run):
+        mock_run.side_effect = OSError("command not found")
+        result = generate_smart_title("some content")
+        assert result == ""
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_returns_empty_for_empty_content(self, mock_run):
+        result = generate_smart_title("")
+        assert result == ""
+        mock_run.assert_not_called()
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_strips_whitespace_from_output(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="  Title with spaces  \n\n"
+        )
+        result = generate_smart_title("content")
+        assert result == "Title with spaces"
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_rejects_title_over_100_chars(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="A" * 101 + "\n"
+        )
+        result = generate_smart_title("content")
+        assert result == ""
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_rejects_title_with_newlines(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="Line one\nLine two\n"
+        )
+        result = generate_smart_title("content")
+        assert result == ""
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_passes_source_hint_in_prompt(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="Auth feature\n")
+        generate_smart_title("content", source_hint="spec file: auth.md")
+        cmd = mock_run.call_args[0][0]
+        prompt_arg_idx = cmd.index("-p") + 1
+        assert "auth.md" in cmd[prompt_arg_idx]
+
+
+# --- normalize_plan_file ---
+
+class TestNormalizePlanFile:
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_reads_file_and_uses_smart_title(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Smart LLM Generated Title"
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Plan Heading\n\nSome plan content.")
+        wr = normalize_plan_file(str(plan))
+        assert wr.source_type == "plan_file"
+        assert wr.title == "Smart LLM Generated Title"
+        assert "Some plan content" in wr.description
+        assert wr.source_ref == str(plan)
+        assert wr.plan_path == str(plan)
+        mock_smart_title.assert_called_once()
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_falls_back_to_heading_when_smart_title_empty(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
+        plan = tmp_path / "plan.md"
+        plan.write_text("# My Plan Heading\n\nDetails here.")
+        wr = normalize_plan_file(str(plan))
+        assert wr.title == "My Plan Heading"
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_falls_back_to_filename_when_no_heading(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
+        plan = tmp_path / "my-plan.md"
+        plan.write_text("No heading here, just content.")
+        wr = normalize_plan_file(str(plan))
+        assert wr.title == "my-plan.md"
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_uses_provided_content_instead_of_reading_file(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Title From Content"
+        plan = tmp_path / "plan.md"
+        plan.write_text("File content on disk")
+        wr = normalize_plan_file(str(plan), content="Provided content override")
+        assert wr.description == "Provided content override"
+        # smart_title called with provided content, not file content
+        mock_smart_title.assert_called_once_with("Provided content override", source_hint=ANY)
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_empty_file(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
+        plan = tmp_path / "empty.md"
+        plan.write_text("")
+        wr = normalize_plan_file(str(plan))
+        assert wr.title == "empty.md"
+        assert wr.description == ""
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_plan_path_set_to_file_path(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Title"
+        plan = tmp_path / "docs" / "plans" / "W-027.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("# W-027\n\nPlan details.")
+        wr = normalize_plan_file(str(plan))
+        assert wr.plan_path == str(plan)
+
+
 # --- normalize_prompt ---
 
 class TestNormalizePrompt:
@@ -64,33 +212,60 @@ class TestNormalizePrompt:
 # --- normalize_spec_file ---
 
 class TestNormalizeSpecFile:
-    def test_extracts_title_from_heading(self, tmp_path):
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_uses_smart_title_when_available(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Smart Spec Title From LLM"
         spec = tmp_path / "auth.md"
         spec.write_text("# User Authentication\n\nAdd login flow.")
         wr = normalize_spec_file(str(spec))
         assert wr.source_type == "spec_file"
-        assert wr.title == "User Authentication"
+        assert wr.title == "Smart Spec Title From LLM"
         assert "login flow" in wr.description
         assert wr.source_ref == str(spec)
+        mock_smart_title.assert_called_once()
 
-    def test_uses_filename_when_no_heading(self, tmp_path):
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_falls_back_to_heading_when_smart_title_empty(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
+        spec = tmp_path / "auth.md"
+        spec.write_text("# User Authentication\n\nAdd login flow.")
+        wr = normalize_spec_file(str(spec))
+        assert wr.title == "User Authentication"
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_falls_back_to_filename_when_no_heading(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
         spec = tmp_path / "notes.md"
         spec.write_text("Just some notes without a heading.")
         wr = normalize_spec_file(str(spec))
         assert wr.title == "notes.md"
 
-    def test_full_content_in_description(self, tmp_path):
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_full_content_in_description(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Title"
         content = "# Title\n\nLine 1\nLine 2"
         spec = tmp_path / "full.md"
         spec.write_text(content)
         wr = normalize_spec_file(str(spec))
         assert wr.description == content
 
-    def test_extracts_h2_heading(self, tmp_path):
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_extracts_h2_heading_as_fallback(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
         spec = tmp_path / "h2.md"
         spec.write_text("## Subsection Title\n\nContent here.")
         wr = normalize_spec_file(str(spec))
         assert wr.title == "Subsection Title"
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_passes_source_hint_with_filename(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Generated Title"
+        spec = tmp_path / "my-feature.md"
+        spec.write_text("Some content here.")
+        normalize_spec_file(str(spec))
+        mock_smart_title.assert_called_once_with(
+            "Some content here.", source_hint="spec file: my-feature.md"
+        )
 
 
 # --- normalize_github_issue ---
@@ -195,7 +370,9 @@ class TestNormalize:
         assert wr.source_type == "prompt"
         assert wr.title == "Do something"
 
-    def test_dispatches_spec(self, tmp_path):
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_dispatches_spec(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = ""
         spec = tmp_path / "spec.md"
         spec.write_text("# My Spec\n\nDetails.")
         wr = normalize("spec", str(spec))
@@ -221,6 +398,26 @@ class TestNormalize:
 
         wr = normalize("beads", "bd:bd-x1")
         assert wr.source_type == "beads"
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_dispatches_plan(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Plan Title"
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Plan\n\nContent.")
+        wr = normalize("plan", str(plan))
+        assert wr.source_type == "plan_file"
+        assert wr.title == "Plan Title"
+        assert wr.plan_path == str(plan)
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_dispatches_plan_with_kwargs(self, mock_smart_title, tmp_path):
+        mock_smart_title.return_value = "Kwargs Title"
+        plan = tmp_path / "plan.md"
+        plan.write_text("File content on disk")
+        wr = normalize("plan", str(plan), content="Overridden content")
+        assert wr.source_type == "plan_file"
+        assert wr.title == "Kwargs Title"
+        assert wr.description == "Overridden content"
 
     def test_raises_on_unknown_source(self):
         try:
