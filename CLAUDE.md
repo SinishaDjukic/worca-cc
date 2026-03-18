@@ -8,6 +8,9 @@ Autonomous software development pipeline combining orchestration with governance
 # Copy .claude/ folder to your target project
 cp -R .claude/ my-project/.claude/
 
+# Build the UI (required on first setup)
+cd my-project/.claude/worca-ui && npm install && npm run build && cd -
+
 # Interactive mode
 cd my-project && claude
 
