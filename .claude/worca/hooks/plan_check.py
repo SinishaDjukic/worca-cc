@@ -34,6 +34,10 @@ def check_plan(tool_name: str, tool_input: dict) -> tuple:
         return (0, "")
 
     plan_file = os.environ.get("WORCA_PLAN_FILE", "MASTER_PLAN.md")
+    if not os.path.isabs(plan_file):
+        project_root = os.environ.get("WORCA_PROJECT_ROOT", "")
+        if project_root:
+            plan_file = os.path.join(project_root, plan_file)
     if not os.path.exists(plan_file):
         return (2, "Blocked: no approved plan file found ({}). Create a plan first.".format(plan_file))
 

@@ -13,6 +13,28 @@ import { readLastLines, resolveLogPath, resolveIterationLogPath, countLines, rea
 import { readSettings } from './settings-reader.js';
 import { readPreferences, writePreferences } from './preferences.js';
 
+/**
+ * Resolve the active run directory for a given worca base dir.
+ * Returns `<worcaDir>/runs/<runId>` as long as runId is non-empty,
+ * without gating on the existence of status.json.
+ *
+ * @param {string} worcaDir
+ * @returns {string}
+ */
+export function resolveActiveRunDir(worcaDir) {
+  const activeRunPath = join(worcaDir, 'active_run');
+  if (existsSync(activeRunPath)) {
+    try {
+      const runId = readFileSync(activeRunPath, 'utf8').trim();
+      if (runId) return join(worcaDir, 'runs', runId);
+    } catch { /* ignore */ }
+  }
+  return worcaDir; // legacy fallback
+}
+
+// Internal alias used by the closure inside attachWsServer
+const _resolveActiveRunDir = resolveActiveRunDir;
+
 /** @type {ReturnType<typeof setTimeout> | null} */
 let REFRESH_TIMER = null;
 const REFRESH_DEBOUNCE_MS = 75;
@@ -93,6 +115,8 @@ export function attachWsServer(httpServer, config) {
     if (REFRESH_TIMER) clearTimeout(REFRESH_TIMER);
     REFRESH_TIMER = setTimeout(() => {
       REFRESH_TIMER = null;
+      let settings = {};
+      try { settings = readSettings(settingsPath); } catch { /* ignore */ }
       try {
         const runs = discoverRuns(worcaDir);
         const active = runs.find(r => r.active);
@@ -100,7 +124,6 @@ export function attachWsServer(httpServer, config) {
           broadcastToSubscribers(active.id, 'run-snapshot', active);
         }
         // Broadcast updated runs list so list views auto-update
-        const settings = readSettings(settingsPath);
         broadcast('runs-list', { runs, settings });
       } catch { /* ignore */ }
     }, REFRESH_DEBOUNCE_MS);
@@ -108,22 +131,14 @@ export function attachWsServer(httpServer, config) {
 
   // Resolve the active run's base directory (for logs and status watching)
   function resolveActiveRunDir() {
-    const activeRunPath = join(worcaDir, 'active_run');
-    if (existsSync(activeRunPath)) {
-      try {
-        const runId = readFileSync(activeRunPath, 'utf8').trim();
-        const runDir = join(worcaDir, 'runs', runId);
-        if (existsSync(join(runDir, 'status.json'))) return runDir;
-      } catch { /* ignore */ }
-    }
-    return worcaDir; // legacy fallback
+    return _resolveActiveRunDir(worcaDir);
   }
 
   let statusWatcher = null;
   let watchedRunDir = null;
 
   function setupStatusWatcher() {
-    if (statusWatcher) statusWatcher.close();
+    if (statusWatcher) { statusWatcher.close(); statusWatcher = null; }
     const runDir = resolveActiveRunDir();
     // When the active run changes, close stale log watchers so fresh ones
     // are created for the new run's files (fixes logWatchers.has() guard).
@@ -131,15 +146,27 @@ export function attachWsServer(httpServer, config) {
       clearLogWatchers();
     }
     watchedRunDir = runDir;
-    try {
-      if (existsSync(runDir)) {
-        statusWatcher = watch(runDir, { recursive: false }, (_eventType, filename) => {
-          if (filename === 'status.json') {
-            scheduleRefresh();
-          }
-        });
-      }
-    } catch { /* ignore */ }
+
+    function tryWatch() {
+      if (statusWatcher) return; // already established
+      try {
+        if (existsSync(runDir)) {
+          statusWatcher = watch(runDir, { recursive: false }, (_eventType, filename) => {
+            if (!filename || filename === 'status.json') {
+              scheduleRefresh();
+            }
+          });
+        } else {
+          // Run directory not created yet — retry after a short delay.
+          // Self-cancels if the active run has changed by then.
+          setTimeout(() => {
+            if (resolveActiveRunDir() === runDir) tryWatch();
+          }, 500);
+        }
+      } catch { /* ignore */ }
+    }
+
+    tryWatch();
   }
   setupStatusWatcher();
 
@@ -148,7 +175,7 @@ export function attachWsServer(httpServer, config) {
   try {
     if (existsSync(worcaDir)) {
       activeRunWatcher = watch(worcaDir, { recursive: false }, (_eventType, filename) => {
-        if (filename === 'active_run' || filename === 'status.json') {
+        if (!filename || filename === 'active_run' || filename === 'status.json') {
           // Re-setup status watcher if active run changed
           const newRunDir = resolveActiveRunDir();
           if (newRunDir !== watchedRunDir) {

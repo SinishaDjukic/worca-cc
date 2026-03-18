@@ -8,6 +8,8 @@ from worca.hooks.plan_check import check_plan
 def in_tmp(tmp_path, monkeypatch):
     """Change to a temp directory for plan file detection."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WORCA_PLAN_FILE", raising=False)
+    monkeypatch.delenv("WORCA_PROJECT_ROOT", raising=False)
     return tmp_path
 
 
