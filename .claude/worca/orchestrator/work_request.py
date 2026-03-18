@@ -10,6 +10,8 @@ from worca.utils.env import get_env
 
 # Matches markdown links to plan files: [text](docs/plans/something.md)
 _PLAN_LINK_RE = re.compile(r"\[.*?\]\((docs/plans/[^\)]+\.md)\)")
+# Matches GitHub issue URLs: https://github.com/owner/repo/issues/42
+_GH_ISSUE_URL_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/issues/(\d+)$")
 
 
 @dataclass
@@ -126,6 +128,10 @@ def normalize(source_type: str, source_value: str) -> WorkRequest:
     elif source_type == "spec":
         return normalize_spec_file(source_value)
     elif source_type == "source" or source_value.startswith(("gh:", "bd:")):
+        # Convert GitHub URLs to gh:issue:N format
+        gh_url_match = _GH_ISSUE_URL_RE.match(source_value)
+        if gh_url_match:
+            source_value = f"gh:issue:{gh_url_match.group(1)}"
         if source_value.startswith("gh:issue:"):
             return normalize_github_issue(source_value)
         elif source_value.startswith("bd:"):
