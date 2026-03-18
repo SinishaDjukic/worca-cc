@@ -39,6 +39,12 @@ describe('protocol', () => {
     expect(isMessageType('bogus')).toBe(false);
   });
 
+  it('MESSAGE_TYPES includes bead query types', () => {
+    expect(MESSAGE_TYPES).toContain('list-beads-counts');
+    expect(MESSAGE_TYPES).toContain('list-beads-refs');
+    expect(MESSAGE_TYPES).toContain('list-beads-unlinked');
+  });
+
   it('isRequest validates envelope shape', () => {
     expect(isRequest({ id: '1', type: 'list-runs' })).toBe(true);
     expect(isRequest({ id: '1' })).toBe(false);
