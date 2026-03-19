@@ -105,6 +105,8 @@ New function near `run_stage()` (~line 486). Resolves script path from `worca.st
 
 A default preflight script ships with worca-cc at `.claude/scripts/preflight_checks.py` (see 1.3). Users can replace or extend it via the `worca.stages.preflight.script` setting.
 
+**Important:** When preflight fails, the LEARN stage must be **skipped**. Preflight failure means the environment is broken (e.g., `claude` CLI not found), so LEARN (which calls `claude -p`) would also fail. In the `except PipelineError` block in `run_pipeline()`, check `status["stage"] == "preflight"` and skip `_run_learn_stage()` if so.
+
 ### 1.5 Integrate into stage loop
 
 In the main `while` loop, add a branch before `run_stage()`:
