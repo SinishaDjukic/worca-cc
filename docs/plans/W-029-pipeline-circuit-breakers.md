@@ -49,37 +49,61 @@ Add `"preflight"` to the `PIPELINE_STAGES` constant so `init_status()` creates t
 
 Standalone script, no worca imports. Runs checks sequentially, outputs JSON on stdout.
 
-**Checks (in order):**
-1. `claude_cli` — `shutil.which("claude")` + `claude --version`
-2. `git_repo` — `git rev-parse --is-inside-work-tree`
-3. `bd_cli` — `shutil.which("bd")`
-4. `gh_cli` — `shutil.which("gh")`
-5. `venv_active` — check `VIRTUAL_ENV` env var (warn-only, not a failure)
-6. `pytest` — `shutil.which("pytest")`
-7. `settings_json` — exists, valid JSON, has `worca` key
-8. `agent_templates` — all 5 core `.md` files present in `.claude/agents/core/`
-9. `disk_space` — at least 1GB free
+Since worca-cc is portable (`cp -R .claude/` into any project), the default checks must be **language-agnostic**. Language/tool-specific checks default to `"warn"` and can be promoted to `"fail"` per-project via `worca.preflight.require` in settings.json.
+
+**Checks — always fail (universal, required by pipeline):**
+
+| Check | What it validates |
+|---|---|
+| `claude_cli` | `shutil.which("claude")` + `claude --version` |
+| `git_repo` | `git rev-parse --is-inside-work-tree` |
+| `bd_cli` | `shutil.which("bd")` |
+| `settings_json` | exists, valid JSON, has `worca` key |
+| `agent_templates` | all 5 core `.md` files present in `.claude/agents/core/` |
+| `disk_space` | at least 1GB free |
+
+**Checks — warn by default (language/tool-specific, opt-in to require):**
+
+| Check | What it validates | Promote via |
+|---|---|---|
+| `gh_cli` | `shutil.which("gh")` | `"require": ["gh_cli"]` |
+| `python_available` | `shutil.which("python3")` or `python` | `"require": ["python_available"]` |
+| `pytest` | `shutil.which("pytest")` | `"require": ["pytest"]` |
+| `node_available` | `shutil.which("node")` | `"require": ["node_available"]` |
+
+The script reads `worca.preflight.require` (a list of check names) from settings.json. Any check listed there is promoted from `"warn"` to `"fail"`. Example for a Python project:
+
+```json
+"preflight": {
+  "enabled": true,
+  "script": ".claude/scripts/preflight_checks.py",
+  "require": ["python_available", "pytest"]
+}
+```
 
 **Output format:**
 ```json
 {
   "status": "pass | fail",
   "checks": [
-    {"name": "claude_cli", "status": "pass", "message": "claude CLI 1.0.40"}
+    {"name": "claude_cli", "status": "pass", "message": "claude CLI 1.0.40"},
+    {"name": "node_available", "status": "warn", "message": "node not found (optional)"}
   ],
-  "summary": "8/9 checks passed, 1 failed"
+  "summary": "6/10 checks passed, 0 failed, 4 warnings"
 }
 ```
 
-**Exit codes:** 0 = all pass, 1 = check failures, 2 = script crashed.
+**Exit codes:** 0 = all pass (warnings OK), 1 = one or more failures, 2 = script crashed.
 
-Each check returns `"pass"`, `"fail"`, or `"warn"`. Only `"fail"` counts toward failure.
+Each check returns `"pass"`, `"fail"`, or `"warn"`. Only `"fail"` counts toward failure. Warnings are logged but do not block the pipeline.
 
 ### 1.4 Create `run_preflight()` in runner.py
 
 **File:** `.claude/worca/orchestrator/runner.py`
 
-New function near `run_stage()` (~line 486). Resolves script path from `worca.stages.preflight.script` setting (default: `.claude/scripts/preflight_checks.py`). Runs via `subprocess.Popen()` with `sys.executable`. Captures stdout/stderr, writes to log file at `.worca/runs/{run_id}/logs/preflight/iter-{n}.log`. Parses JSON, logs each check result. Raises `PipelineError` on non-zero exit.
+New function near `run_stage()` (~line 486). Resolves script path from `worca.stages.preflight.script` setting (default: `.claude/scripts/preflight_checks.py`). If the script does not exist, **skip preflight with a warning** (log "Preflight script not found, skipping", mark stage as completed+skipped, return) — do not block the pipeline. When the script exists: runs via `subprocess.Popen()` with `sys.executable`. Captures stdout/stderr, writes to log file at `.worca/runs/{run_id}/logs/preflight/iter-{n}.log`. Parses JSON, logs each check result. Raises `PipelineError` on non-zero exit.
+
+A default preflight script ships with worca-cc at `.claude/scripts/preflight_checks.py` (see 1.3). Users can replace or extend it via the `worca.stages.preflight.script` setting.
 
 ### 1.5 Integrate into stage loop
 
@@ -113,9 +137,12 @@ Add to `.claude/settings.json` under `worca.stages`:
 ```json
 "preflight": {
   "enabled": true,
-  "script": ".claude/scripts/preflight_checks.py"
+  "script": ".claude/scripts/preflight_checks.py",
+  "require": []
 }
 ```
+
+The `require` array is empty by default (language-agnostic). Projects add check names to promote them from warn to fail, e.g. `["python_available", "pytest"]` for Python projects or `["node_available"]` for Node projects.
 
 ---
 
