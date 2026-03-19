@@ -10,7 +10,7 @@ import { scrollOnExpand } from '../utils/scroll.js';
 
 /**
  * Render a stacked horizontal timing bar at the pipeline level.
- * Segments: Thinking (AI) | Tools (AI) | Rest of Pipeline
+ * Segments: Thinking (Agent) | Tools (Agent) | Rest of Pipeline
  * 100% = pipeline wall time (started_at → last stage end).
  */
 function _pipelineTimingBar(allIters, pipelineWallMs) {
@@ -33,17 +33,13 @@ function _pipelineTimingBar(allIters, pipelineWallMs) {
   const restPct = Math.max(0, 100 - thinkingPct - toolsPct);
 
   const segments = [
-    { key: 'thinking', pct: thinkingPct, ms: thinkingMs, label: 'Thinking (AI)', desc: 'Time spent on model inference (API round-trips)', cls: 'timing-bar-thinking' },
-    { key: 'tools', pct: toolsPct, ms: toolsMs, label: 'Tools (AI)', desc: 'Time spent executing tools (bash, file I/O, subprocesses)', cls: 'timing-bar-tools' },
+    { key: 'thinking', pct: thinkingPct, ms: thinkingMs, label: 'Thinking (Agent)', desc: 'Time spent on model inference (API round-trips)', cls: 'timing-bar-thinking' },
+    { key: 'tools', pct: toolsPct, ms: toolsMs, label: 'Tools (Agent)', desc: 'Time spent executing tools (bash, file I/O, subprocesses)', cls: 'timing-bar-tools' },
     { key: 'rest', pct: restPct, ms: restMs, label: 'Rest of Pipeline', desc: 'Orchestration, status writes, stage transitions, retry delays', cls: 'timing-bar-rest' },
   ].filter(s => s.pct > 0);
 
   return html`
     <div class="pipeline-timing-bar-container">
-      <div class="pipeline-timing-bar-label">
-        <span class="meta-label">Session:</span>
-        <span class="meta-value">${formatDuration(pipelineWallMs)}</span>
-      </div>
       <div class="pipeline-timing-bar">
         ${segments.map(s => html`
           <sl-tooltip>
