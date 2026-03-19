@@ -35,6 +35,8 @@ def create_parser():
     parser.add_argument("--resume", action="store_true",
                         help="Resume a previous run from status.json instead of starting fresh")
     parser.add_argument("--branch", help="Use an existing branch instead of creating a new one")
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="Skip the PREFLIGHT stage (useful when environment is known-good)")
     return parser
 
 
@@ -100,6 +102,8 @@ def main():
         print(f"  Loop multiplier: {args.mloops}x loops")
     if args.branch:
         print(f"  Using existing branch: {args.branch}")
+    if args.skip_preflight:
+        print(f"  Skipping preflight checks")
 
     try:
         status = run_pipeline(
@@ -111,6 +115,7 @@ def main():
             msize=args.msize,
             mloops=args.mloops,
             branch=args.branch,
+            skip_preflight=args.skip_preflight,
         )
         print(json.dumps(status, indent=2))
     except LoopExhaustedError as e:

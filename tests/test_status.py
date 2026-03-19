@@ -2,7 +2,17 @@
 
 import json
 
-from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status, start_iteration, complete_iteration
+from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status, start_iteration, complete_iteration, PIPELINE_STAGES
+
+
+# --- PIPELINE_STAGES ---
+
+def test_pipeline_stages_includes_preflight():
+    assert "preflight" in PIPELINE_STAGES
+
+
+def test_preflight_is_first_in_pipeline_stages():
+    assert PIPELINE_STAGES[0] == "preflight"
 
 
 # --- load_status ---
@@ -121,7 +131,7 @@ def test_init_status_has_all_stages():
     wr = {"title": "Add auth", "type": "feature"}
     result = init_status(wr, "feat/auth")
     assert "stages" in result
-    for stage in ["plan", "coordinate", "implement", "test", "review", "pr"]:
+    for stage in ["preflight", "plan", "coordinate", "implement", "test", "review", "pr"]:
         assert stage in result["stages"]
         assert result["stages"][stage]["status"] == "pending"
 

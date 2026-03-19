@@ -52,7 +52,10 @@ export function listIssuesByLabel(beadsDb, label) {
 
     return rows.map(row => {
       const depends_on = depStmt.all(row.id).map(d => d.depends_on_id);
-      const blocked_by = depends_on.filter(depId => statusMap.has(depId));
+      const blocked_by = depends_on.filter(depId => {
+        const s = statusMap.get(depId);
+        return s && s !== 'closed';
+      });
       return { ...row, depends_on, blocked_by };
     });
   } catch {

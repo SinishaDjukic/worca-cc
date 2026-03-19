@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Lock, Loader } from '../utils/icons.js';
+import { iconSvg, Lock, Loader, Circle, CircleCheck, CircleAlert } from '../utils/icons.js';
 import { runCardView } from './run-card.js';
 
 export function priorityVariant(priority) {
@@ -17,8 +17,26 @@ export function statusVariant(status) {
 }
 
 export function beadsStatusClass(issue) {
+  if (issue.status === 'closed') return 'closed';
   if (issue.blocked_by && issue.blocked_by.length > 0) return 'blocked';
   return issue.status;
+}
+
+// Status icon data for beads (maps bead status to lucide icon + CSS color var)
+const BEAD_STATUS_ICON = {
+  open:        { icon: Circle,      color: 'var(--status-completed)' },
+  in_progress: { icon: Loader,      color: 'var(--status-in-progress)' },
+  closed:      { icon: CircleCheck,  color: 'var(--status-completed)' },
+  blocked:     { icon: Lock,         color: 'var(--status-blocked)' },
+};
+
+function beadDepStatusIcon(depId, issuesById) {
+  const dep = issuesById.get(depId);
+  if (!dep) return iconSvg(Circle, 10);
+  const sc = beadsStatusClass(dep);
+  const entry = BEAD_STATUS_ICON[sc] || BEAD_STATUS_ICON.open;
+  const cls = sc === 'in_progress' ? 'icon-spin' : '';
+  return `<span style="color:${entry.color};display:inline-flex">${iconSvg(entry.icon, 10, cls)}</span>`;
 }
 
 function computeLayers(issues) {
@@ -45,6 +63,7 @@ export function beadsDependencyGraph(issues) {
   if (!issues || issues.length === 0) return '';
 
   const NODE_W = 140, NODE_H = 40, H_GAP = 60, V_GAP = 24, PADDING = 16;
+  const issuesById = new Map(issues.map(i => [i.id, i]));
   const layers = computeLayers(issues);
   const maxLayer = Math.max(...layers.values(), 0);
 
@@ -69,6 +88,7 @@ export function beadsDependencyGraph(issues) {
     }
   }
 
+  // Edge color based on dependency (source) status: closed = satisfied (gray), else blocking (red)
   let edges = '';
   for (const issue of issues) {
     const to = positions.get(issue.id);
@@ -81,13 +101,15 @@ export function beadsDependencyGraph(issues) {
       const x2 = to.x;
       const y2 = to.y + NODE_H / 2;
       const cx = Math.round((x1 + x2) / 2);
-      const isBlocked = issue.blocked_by && issue.blocked_by.includes(depId);
-      const cls = isBlocked ? 'beads-graph-edge beads-graph-edge--blocked' : 'beads-graph-edge';
-      const marker = isBlocked ? 'url(#beads-arrow-blocked)' : 'url(#beads-arrow)';
+      const dep = issuesById.get(depId);
+      const isSatisfied = dep && dep.status === 'closed';
+      const cls = isSatisfied ? 'beads-graph-edge beads-graph-edge--satisfied' : 'beads-graph-edge beads-graph-edge--blocking';
+      const marker = isSatisfied ? 'url(#beads-arrow-satisfied)' : 'url(#beads-arrow-blocking)';
       edges += `<path class="${cls}" d="M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}" marker-end="${marker}"/>`;
     }
   }
 
+  // Node border color matches bead status
   let nodes = '';
   for (const issue of issues) {
     const pos = positions.get(issue.id);
@@ -104,11 +126,11 @@ export function beadsDependencyGraph(issues) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
     <defs>
-      <marker id="beads-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <marker id="beads-arrow-satisfied" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border)"/>
       </marker>
-      <marker id="beads-arrow-blocked" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--status-error)"/>
+      <marker id="beads-arrow-blocking" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--status-blocked)"/>
       </marker>
     </defs>
     ${edges}
@@ -120,7 +142,7 @@ function escapeXml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function beadsIssueRow(issue, { starting, onStartIssue }) {
+function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
   const isClosed = issue.status === 'closed';
   const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
   const canStart = issue.status === 'open' && !isBlocked && starting === null;
@@ -135,12 +157,16 @@ function beadsIssueRow(issue, { starting, onStartIssue }) {
         ${issue.body ? html`<div class="beads-issue-excerpt">${(issue.body || '').slice(0, 120)}</div>` : ''}
         ${issue.depends_on && issue.depends_on.length > 0 ? html`
           <div class="beads-issue-deps">
-            ${issue.depends_on.map(depId => html`
-              <span class="beads-dep-chip ${issue.blocked_by && issue.blocked_by.includes(depId) ? 'beads-dep-chip--blocked' : ''}">
-                ${issue.blocked_by && issue.blocked_by.includes(depId) ? unsafeHTML(iconSvg(Lock, 10)) : ''}
-                #${depId}
-              </span>
-            `)}
+            ${issue.depends_on.map(depId => {
+              const depSc = issuesById ? beadsStatusClass(issuesById.get(depId) || { status: 'open' }) : 'open';
+              const chipClass = depSc === 'blocked' || depSc === 'open' || depSc === 'in_progress' ? 'beads-dep-chip--blocking' : 'beads-dep-chip--satisfied';
+              return html`
+                <span class="beads-dep-chip ${chipClass}">
+                  ${unsafeHTML(beadDepStatusIcon(depId, issuesById || new Map()))}
+                  #${depId}
+                </span>
+              `;
+            })}
           </div>
         ` : ''}
       </div>
@@ -186,6 +212,7 @@ export function beadsRunListView(runs, { onSelectRun, beadsCounts = {} }) {
 // --- Kanban board view ---
 
 function beadsKanbanView(issues, { starting, onStartIssue }) {
+  const issuesById = new Map(issues.map(i => [i.id, i]));
   const columns = [
     { key: 'open', label: 'Open', items: [] },
     { key: 'in_progress', label: 'In Progress', items: [] },
@@ -224,9 +251,13 @@ function beadsKanbanView(issues, { starting, onStartIssue }) {
                 </div>
                 <div class="beads-kanban-card-title">${issue.title}</div>
                 ${isBlocked ? html`
-                  <div class="beads-kanban-card-blocked">
-                    ${unsafeHTML(iconSvg(Lock, 10))}
-                    blocked by: ${issue.blocked_by.map(id => `#${id}`).join(', ')}
+                  <div class="beads-kanban-card-deps">
+                    ${issue.blocked_by.map(depId => html`
+                      <span class="beads-dep-chip beads-dep-chip--blocking">
+                        ${unsafeHTML(beadDepStatusIcon(depId, issuesById))}
+                        #${depId}
+                      </span>
+                    `)}
                   </div>
                 ` : ''}
               </div>

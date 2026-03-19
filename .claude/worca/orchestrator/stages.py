@@ -6,6 +6,7 @@ from typing import Optional
 
 class Stage(Enum):
     """Pipeline stages in order."""
+    PREFLIGHT = "preflight"
     PLAN = "plan"
     COORDINATE = "coordinate"
     IMPLEMENT = "implement"
@@ -16,6 +17,7 @@ class Stage(Enum):
 
 
 TRANSITIONS = {
+    Stage.PREFLIGHT: {Stage.PLAN},
     Stage.PLAN: {Stage.COORDINATE},
     Stage.COORDINATE: {Stage.IMPLEMENT},
     Stage.IMPLEMENT: {Stage.TEST},
@@ -25,6 +27,7 @@ TRANSITIONS = {
 }
 
 STAGE_AGENT_MAP = {
+    Stage.PREFLIGHT: None,
     Stage.PLAN: "planner",
     Stage.COORDINATE: "coordinator",
     Stage.IMPLEMENT: "implementer",
@@ -35,6 +38,7 @@ STAGE_AGENT_MAP = {
 }
 
 STAGE_SCHEMA_MAP = {
+    Stage.PREFLIGHT: None,
     Stage.PLAN: "plan.json",
     Stage.COORDINATE: "coordinate.json",
     Stage.IMPLEMENT: "implement.json",
@@ -51,7 +55,7 @@ def can_transition(from_stage: Stage, to_stage: Stage) -> bool:
 
 
 # Canonical stage order (not configurable — use enabled flag to skip)
-STAGE_ORDER = [Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
+STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
 
 
 def _read_settings(settings_path: str) -> dict:
@@ -97,7 +101,10 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     # Determine agent: prefer stages config, fall back to hardcoded map
     stages_config = worca.get("stages", {})
     stage_entry = stages_config.get(stage.value, {})
-    agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP[stage]
+    agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
+
+    if agent_name is None:
+        return {"agent": None, "model": None, "max_turns": None, "schema": None}
 
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})

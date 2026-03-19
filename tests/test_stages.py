@@ -37,8 +37,15 @@ class TestStageEnum:
     def test_pr_value(self):
         assert Stage.PR.value == "pr"
 
-    def test_has_exactly_seven_stages(self):
-        assert len(Stage) == 7
+    def test_has_exactly_eight_stages(self):
+        assert len(Stage) == 8
+
+    def test_preflight_value(self):
+        assert Stage.PREFLIGHT.value == "preflight"
+
+    def test_preflight_is_first_member(self):
+        members = list(Stage)
+        assert members[0] == Stage.PREFLIGHT
 
 
 # --- TRANSITIONS dict ---
@@ -62,9 +69,22 @@ class TestTransitions:
     def test_pr_is_terminal(self):
         assert TRANSITIONS[Stage.PR] == set()
 
+    def test_preflight_transitions_to_plan_only(self):
+        assert TRANSITIONS[Stage.PREFLIGHT] == {Stage.PLAN}
+
     def test_all_pipeline_stages_have_transition_entries(self):
         for stage in STAGE_ORDER:
             assert stage in TRANSITIONS
+
+
+# --- STAGE_ORDER ---
+
+class TestStageOrder:
+    def test_preflight_is_first_in_stage_order(self):
+        assert STAGE_ORDER[0] == Stage.PREFLIGHT
+
+    def test_plan_follows_preflight_in_stage_order(self):
+        assert STAGE_ORDER[1] == Stage.PLAN
 
 
 # --- can_transition ---
@@ -126,9 +146,19 @@ class TestStageAgentMap:
     def test_pr_maps_to_guardian(self):
         assert STAGE_AGENT_MAP[Stage.PR] == "guardian"
 
+    def test_preflight_agent_is_none(self):
+        assert STAGE_AGENT_MAP[Stage.PREFLIGHT] is None
+
     def test_all_stages_have_agent_mappings(self):
         for stage in Stage:
             assert stage in STAGE_AGENT_MAP
+
+
+# --- STAGE_SCHEMA_MAP for PREFLIGHT ---
+
+class TestPreflightSchemaMap:
+    def test_preflight_schema_is_none(self):
+        assert STAGE_SCHEMA_MAP[Stage.PREFLIGHT] is None
 
 
 # --- get_stage_config ---
@@ -200,6 +230,14 @@ class TestGetStageConfig:
         assert config["model"] == "claude-sonnet-4-6"
         assert config["max_turns"] == 30
 
+    def test_preflight_returns_null_config(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.PREFLIGHT, settings_path=missing)
+        assert config["agent"] is None
+        assert config["model"] is None
+        assert config["max_turns"] is None
+        assert config["schema"] is None
+
 
 class TestGetStageConfigWithStages:
     """Tests for get_stage_config reading agent from worca.stages."""
@@ -262,7 +300,7 @@ class TestGetEnabledStages:
         settings_file.write_text(json.dumps({}))
         stages = get_enabled_stages(str(settings_file))
         assert stages == [
-            Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT,
+            Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT,
             Stage.TEST, Stage.REVIEW, Stage.PR
         ]
 
@@ -279,7 +317,7 @@ class TestGetEnabledStages:
         stages = get_enabled_stages(str(settings_file))
         assert Stage.TEST not in stages
         assert stages == [
-            Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT,
+            Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT,
             Stage.REVIEW, Stage.PR
         ]
 
@@ -296,7 +334,7 @@ class TestGetEnabledStages:
         settings_file.write_text(json.dumps(settings))
         stages = get_enabled_stages(str(settings_file))
         assert stages == [
-            Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.PR
+            Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.PR
         ]
 
     def test_preserves_stage_order(self, tmp_path):
@@ -310,14 +348,15 @@ class TestGetEnabledStages:
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps(settings))
         stages = get_enabled_stages(str(settings_file))
-        # Order is preserved: plan, implement, test, review, pr
-        assert stages[0] == Stage.PLAN
-        assert stages[1] == Stage.IMPLEMENT
+        # Order is preserved: preflight, plan, implement, test, review, pr
+        assert stages[0] == Stage.PREFLIGHT
+        assert stages[1] == Stage.PLAN
+        assert stages[2] == Stage.IMPLEMENT
 
     def test_handles_missing_settings_file(self, tmp_path):
         missing = str(tmp_path / "nonexistent.json")
         stages = get_enabled_stages(missing)
-        assert len(stages) == 6  # all enabled by default
+        assert len(stages) == 7  # all enabled by default (preflight + 6)
 
     def test_enabled_true_explicitly(self, tmp_path):
         settings = {

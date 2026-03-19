@@ -49,6 +49,105 @@ function _outcomeLabel(outcome) {
   return html`<span class="iteration-outcome ${cls}">${outcome.replace(/_/g, ' ')}</span>`;
 }
 
+function _classificationVariant(category) {
+  if (category === 'infra_transient') return 'warning';
+  if (category === 'infra_permanent' || category === 'logic_stuck' || category === 'env_missing') return 'danger';
+  return 'neutral';
+}
+
+function _classificationStripView(iter) {
+  const c = iter.classification;
+  if (!c) return nothing;
+  const variant = _classificationVariant(c.category);
+  return html`
+    <div class="classification-strip">
+      <span class="classification-strip-item">
+        <span class="classification-strip-label">Category:</span>
+        <sl-badge variant="${variant}" pill>${c.category}</sl-badge>
+      </span>
+      <span class="classification-strip-item">
+        <span class="classification-strip-label">Retriable:</span>
+        <span class="classification-strip-value">${c.retriable ? 'yes' : 'no'}</span>
+      </span>
+      <span class="classification-strip-item">
+        <span class="classification-strip-label">Similar:</span>
+        <span class="classification-strip-value">${c.similar_to_previous ? 'yes' : 'no'}</span>
+      </span>
+      ${c.remediation ? html`
+        <span class="classification-strip-item classification-remediation">
+          <span class="classification-strip-label">Remediation:</span>
+          <span class="classification-strip-value">${c.remediation}</span>
+        </span>
+      ` : nothing}
+    </div>
+  `;
+}
+
+function _circuitBreakerBannerView(run, settings) {
+  const cb = run.circuit_breaker;
+  if (!cb) return nothing;
+  if (cb.tripped) {
+    return html`
+      <sl-alert class="circuit-breaker-banner" variant="danger" open>
+        <strong>Circuit breaker tripped:</strong> ${cb.tripped_reason || 'Pipeline halted due to repeated errors.'}
+      </sl-alert>
+    `;
+  }
+  const failures = cb.consecutive_failures || 0;
+  if (failures > 0) {
+    const threshold = (settings.circuit_breaker || {}).max_consecutive_failures ?? 3;
+    return html`
+      <sl-alert class="circuit-breaker-banner" variant="warning" open>
+        <strong>Circuit breaker warning:</strong> ${String(failures)}/${String(threshold)} consecutive failures.
+      </sl-alert>
+    `;
+  }
+  return nothing;
+}
+
+function _preflightCheckBadgeVariant(status) {
+  if (status === 'pass') return 'success';
+  if (status === 'warn') return 'warning';
+  if (status === 'fail') return 'danger';
+  return 'neutral';
+}
+
+function _preflightChecksView(stage, iter) {
+  const isSkipped = stage.skipped || iter.outcome === 'skipped';
+  if (isSkipped) {
+    return html`<div class="preflight-checks-view"><sl-badge variant="neutral" pill>Skipped</sl-badge></div>`;
+  }
+  const output = iter.output || {};
+  const checks = output.checks || [];
+  const summary = output.summary || '';
+  if (!checks.length && !summary) return nothing;
+  return html`
+    <div class="preflight-checks-view">
+      ${summary ? html`<div class="preflight-summary">${summary}</div>` : nothing}
+      ${checks.length > 0 ? html`
+        <table class="preflight-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Check</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${checks.map(check => html`
+              <tr>
+                <td><sl-badge variant="${_preflightCheckBadgeVariant(check.status)}" pill>${check.status}</sl-badge></td>
+                <td class="preflight-check-name">${check.name}</td>
+                <td class="preflight-check-message">${check.message || ''}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+      ` : nothing}
+    </div>
+  `;
+}
+
 function _stageCost(iterations) {
   return iterations.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
 }
@@ -138,6 +237,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       </div>
       ${iter.trigger ? html`<div class="detail-row">${_triggerLabel(iter.trigger)}</div>` : nothing}
       ${iter.outcome ? html`<div class="detail-row">${_outcomeLabel(iter.outcome)}</div>` : nothing}
+      ${_classificationStripView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
@@ -245,6 +345,7 @@ export function runDetailView(run, settings = {}, options = {}) {
   return html`
     <div class="run-detail">
       ${stageTimelineView(stages, stageUi, run.active)}
+      ${_circuitBreakerBannerView(run, settings)}
 
       <div class="run-info-section">
         ${branch ? html`
@@ -397,6 +498,8 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
+                      ${iterations.length === 1 ? _classificationStripView(iterations[0]) : nothing}
+                      ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
                   </div>

@@ -72,6 +72,11 @@
       "learn": {
         "agent": "learner",
         "enabled": false
+      },
+      "preflight": {
+        "enabled": true,
+        "script": ".claude/scripts/preflight_checks.py",
+        "require": []
       }
     },
     "agents": {
@@ -133,6 +138,13 @@
       },
       "currency": "USD",
       "last_updated": "2025-05-01"
+    },
+    "circuit_breaker": {
+      "enabled": true,
+      "max_consecutive_failures": 3,
+      "transient_retry_count": 3,
+      "transient_retry_backoff_seconds": [10, 30, 90],
+      "classifier_model": "haiku"
     },
     "governance": {
       "guards": {

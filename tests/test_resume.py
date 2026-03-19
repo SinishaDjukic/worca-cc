@@ -19,7 +19,7 @@ def test_finds_in_progress_stage():
         },
         "milestones": {"plan_approved": True},
     }
-    assert find_resume_point(status) == Stage.IMPLEMENT
+    assert find_resume_point(status) == Stage.PREFLIGHT
 
 
 def test_finds_pending_after_completed():
@@ -34,7 +34,7 @@ def test_finds_pending_after_completed():
         },
         "milestones": {"plan_approved": True},
     }
-    assert find_resume_point(status) == Stage.IMPLEMENT
+    assert find_resume_point(status) == Stage.PREFLIGHT
 
 
 def test_finds_milestone_gate():
@@ -42,7 +42,7 @@ def test_finds_milestone_gate():
         "stages": {"plan": {"status": "completed"}},
         "milestones": {"plan_approved": None},
     }
-    assert find_resume_point(status) == Stage.PLAN
+    assert find_resume_point(status) == Stage.PREFLIGHT
 
 
 def test_finds_review_milestone_gate():
@@ -57,7 +57,24 @@ def test_finds_review_milestone_gate():
         },
         "milestones": {"plan_approved": True, "pr_approved": None},
     }
-    assert find_resume_point(status) == Stage.REVIEW
+    assert find_resume_point(status) == Stage.PREFLIGHT
+
+
+def test_always_returns_preflight_when_preflight_already_completed():
+    """On resume, always returns PREFLIGHT even if it completed in a prior run."""
+    status = {
+        "stages": {
+            "preflight": {"status": "completed"},
+            "plan": {"status": "completed"},
+            "coordinate": {"status": "completed"},
+            "implement": {"status": "in_progress"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {"plan_approved": True},
+    }
+    assert find_resume_point(status) == Stage.PREFLIGHT
 
 
 def test_all_completed_returns_none():
@@ -68,12 +85,12 @@ def test_all_completed_returns_none():
     assert find_resume_point(status) is None
 
 
-def test_all_pending_returns_first_stage():
+def test_all_pending_returns_preflight():
     status = {
         "stages": {s.value: {"status": "pending"} for s in Stage},
         "milestones": {},
     }
-    assert find_resume_point(status) == Stage.PLAN
+    assert find_resume_point(status) == Stage.PREFLIGHT
 
 
 def test_reconstruct_context_reads_completed_logs(tmp_path):

@@ -342,8 +342,10 @@ export function attachWsServer(httpServer, config) {
     } catch { /* ignore */ }
   }
 
-  // Beads database watcher
+  // Beads database watcher — watch the directory, not just beads.db,
+  // because SQLite WAL mode writes to beads.db-wal first.
   const beadsDbPath = resolve(join(worcaDir, '..', '.beads', 'beads.db'));
+  const beadsDir = resolve(join(worcaDir, '..', '.beads'));
   let beadsWatcher = null;
   let BEADS_REFRESH_TIMER = null;
   const BEADS_DEBOUNCE_MS = 200;
@@ -359,9 +361,11 @@ export function attachWsServer(httpServer, config) {
     }, BEADS_DEBOUNCE_MS);
   }
 
-  if (existsSync(beadsDbPath)) {
+  if (existsSync(beadsDir)) {
     try {
-      beadsWatcher = watch(beadsDbPath, () => scheduleBeadsRefresh());
+      beadsWatcher = watch(beadsDir, (_event, filename) => {
+        if (filename && filename.startsWith('beads.db')) scheduleBeadsRefresh();
+      });
     } catch { /* ignore */ }
   }
 

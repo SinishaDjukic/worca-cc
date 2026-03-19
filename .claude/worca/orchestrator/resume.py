@@ -9,34 +9,37 @@ import json
 import os
 from typing import Optional
 
-from worca.orchestrator.stages import Stage
+from worca.orchestrator.stages import Stage, STAGE_ORDER
 from worca.state.status import load_status
-
-STAGE_ORDER = [Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
 
 
 def find_resume_point(status: dict) -> Optional[Stage]:
     """Find the stage where the pipeline should resume.
 
-    Scans stages in order. Returns the first stage that is "in_progress" or
-    "pending" after a "completed" one. If a milestone gate is pending
-    (e.g. plan_approved=None after plan=completed), returns the current stage
-    for the gate. If all completed, returns None.
+    Always returns PREFLIGHT to re-validate the environment on every resume,
+    regardless of its previous completion status. Circuit breaker state in
+    status["circuit_breaker"] is preserved automatically since it lives in the
+    status dict.
+
+    Returns None only when all stages are genuinely completed and no milestone
+    gates are pending.
     """
     stages = status.get("stages", {})
     milestones = status.get("milestones", {})
 
-    for stage in STAGE_ORDER:
-        stage_status = stages.get(stage.value, {}).get("status", "pending")
-        if stage_status == "completed":
-            # Check if milestone gate is pending
-            if stage == Stage.PLAN and milestones.get("plan_approved") is None:
-                return stage
-            if stage == Stage.REVIEW and milestones.get("pr_approved") is None:
-                return stage
-            continue
-        if stage_status in ("in_progress", "pending"):
-            return stage
+    all_stages_done = all(
+        stages.get(stage.value, {}).get("status", "pending") == "completed"
+        for stage in STAGE_ORDER
+    )
+    if not all_stages_done:
+        return Stage.PREFLIGHT
+
+    # All stages completed — check milestone gates
+    if milestones.get("plan_approved") is None:
+        return Stage.PREFLIGHT
+    if milestones.get("pr_approved") is None:
+        return Stage.PREFLIGHT
+
     return None  # all completed
 
 

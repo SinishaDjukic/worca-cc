@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PIPELINE_STAGES = ["plan", "coordinate", "implement", "test", "review", "pr"]
+PIPELINE_STAGES = ["preflight", "plan", "coordinate", "implement", "test", "review", "pr"]
 
 
 def load_status(path: str = ".worca/status.json") -> dict:

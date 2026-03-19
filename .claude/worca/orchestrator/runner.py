@@ -13,6 +13,11 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from worca.orchestrator.error_classifier import (
+    classify_error, record_failure, record_success,
+    should_halt, get_retry_delay, get_circuit_breaker_state,
+    CATEGORY_TRANSIENT,
+)
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
     Stage, can_transition, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
@@ -38,6 +43,11 @@ class LoopExhaustedError(Exception):
 
 class PipelineError(Exception):
     """Raised when pipeline encounters an unrecoverable error."""
+    pass
+
+
+class CircuitBreakerTripped(PipelineError):
+    """Raised when the circuit breaker halts the pipeline."""
     pass
 
 
@@ -485,6 +495,84 @@ def run_stage(
     return raw, raw
 
 
+def run_preflight(
+    context: dict,
+    settings_path: str = ".claude/settings.json",
+    iteration: int = 1,
+) -> dict:
+    """Run the preflight checks script.
+
+    Reads the script path from worca.stages.preflight.script in settings.
+    If the script does not exist, returns a skipped result with a warning.
+    Otherwise runs the script via subprocess.Popen with sys.executable,
+    captures stdout/stderr, writes to log file, parses JSON, logs each check.
+
+    Returns:
+        Parsed JSON dict from the script, or a skipped indicator dict.
+
+    Raises:
+        PipelineError: When the script exits with non-zero code or output
+            is not valid JSON.
+    """
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        settings = {}
+
+    default_script = ".claude/scripts/preflight_checks.py"
+    script_path = (
+        settings.get("worca", {})
+        .get("stages", {})
+        .get("preflight", {})
+        .get("script", default_script)
+    )
+
+    if not os.path.exists(script_path):
+        _log(f"Preflight script not found at {script_path!r}, skipping", "warn")
+        return {"status": "skipped", "checks": [], "summary": "preflight skipped (script not found)"}
+
+    logs_dir = context.get("_logs_dir", ".worca/logs")
+    log_dir = os.path.join(logs_dir, "preflight")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"iter-{iteration}.log")
+
+    proc = subprocess.Popen(
+        [sys.executable, script_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = proc.communicate()
+
+    with open(log_path, "w") as log_file:
+        log_file.write(stdout)
+        if stderr:
+            log_file.write("\n--- STDERR ---\n")
+            log_file.write(stderr)
+
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError:
+        raise PipelineError(f"Preflight script output is not valid JSON: {stdout[:200]!r}")
+
+    for check in result.get("checks", []):
+        name = check.get("name", "?")
+        check_status = check.get("status", "?")
+        msg = check.get("message", "")
+        level = "ok" if check_status == "pass" else "warn" if check_status == "warn" else "err"
+        _log(f"  preflight/{name}: {check_status} — {msg}", level)
+
+    summary = result.get("summary", "")
+    if summary:
+        _log(f"Preflight: {summary}")
+
+    if proc.returncode != 0:
+        raise PipelineError(f"Preflight failed: {summary}")
+
+    return result
+
+
 def check_loop_limit(
     loop_name: str,
     current_iteration: int,
@@ -577,6 +665,7 @@ def run_pipeline(
     msize: int = 1,
     mloops: int = 1,
     branch: Optional[str] = None,
+    skip_preflight: bool = False,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -836,17 +925,20 @@ def run_pipeline(
                     prompt_builder.update_context("assigned_bead_title", None)
                     prompt_builder.update_context("assigned_bead_description", None)
 
-            # Build stage-specific prompt via PromptBuilder
-            if current_stage.value == "implement":
-                pb_iteration = prompt_builder.get_context("bead_prompt_iteration") or 0
-            else:
-                pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
-            rendered_prompt = prompt_builder.build(current_stage.value, pb_iteration)
+            # Build stage-specific prompt via PromptBuilder (skip for script-based stages)
+            if current_stage != Stage.PREFLIGHT:
+                if current_stage.value == "implement":
+                    pb_iteration = prompt_builder.get_context("bead_prompt_iteration") or 0
+                else:
+                    pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
+                rendered_prompt = prompt_builder.build(current_stage.value, pb_iteration)
 
-            # Store rendered prompt in status for UI visibility
-            status["stages"][current_stage.value]["prompt"] = rendered_prompt
-            iter_record["prompt"] = rendered_prompt
-            save_status(status, actual_status_path)
+                # Store rendered prompt in status for UI visibility
+                status["stages"][current_stage.value]["prompt"] = rendered_prompt
+                iter_record["prompt"] = rendered_prompt
+                save_status(status, actual_status_path)
+            else:
+                rendered_prompt = None
 
             # Run the stage
             try:
@@ -854,13 +946,34 @@ def run_pipeline(
                 if current_stage == Stage.COORDINATE:
                     _ensure_beads_initialized()
 
-                # Pass rendered_prompt as prompt_override so PromptBuilder
-                # output actually reaches the agent (not just stored for UI)
-                result, raw_envelope = run_stage(
-                    current_stage, context, settings_path,
-                    msize=msize, iteration=iter_num,
-                    prompt_override=rendered_prompt,
-                )
+                if current_stage == Stage.PREFLIGHT and skip_preflight:
+                    _log("PREFLIGHT skipped (--skip-preflight)", "warn")
+                    stage_completed = datetime.now(timezone.utc).isoformat()
+                    complete_iteration(
+                        status, current_stage.value,
+                        status="completed",
+                        completed_at=stage_completed,
+                    )
+                    update_stage(
+                        status, current_stage.value,
+                        status="completed",
+                        skipped=True,
+                        completed_at=stage_completed,
+                    )
+                    save_status(status, actual_status_path)
+                    stage_idx += 1
+                    continue
+                elif current_stage == Stage.PREFLIGHT:
+                    result = run_preflight(context, settings_path, iteration=iter_num)
+                    raw_envelope = {"type": "preflight", "checks": result.get("checks", [])}
+                else:
+                    # Pass rendered_prompt as prompt_override so PromptBuilder
+                    # output actually reaches the agent (not just stored for UI)
+                    result, raw_envelope = run_stage(
+                        current_stage, context, settings_path,
+                        msize=msize, iteration=iter_num,
+                        prompt_override=rendered_prompt,
+                    )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
@@ -890,7 +1003,45 @@ def run_pipeline(
                     error=str(e),
                 )
                 save_status(status, actual_status_path)
+
+                # Circuit breaker integration
+                try:
+                    with open(settings_path) as _sf:
+                        _cb_config = json.load(_sf).get("worca", {}).get("circuit_breaker", {})
+                except Exception:
+                    _cb_config = {}
+
+                if _cb_config.get("enabled", False) and current_stage != Stage.PREFLIGHT:
+                    _failure_history = get_circuit_breaker_state(status).get("failure_history", [])
+                    classification = classify_error(
+                        str(e), current_stage.value, _failure_history, settings_path
+                    )
+                    record_failure(status, current_stage.value, str(e), classification)
+                    iter_record["classification"] = classification
+                    save_status(status, actual_status_path)
+
+                    _cat = classification.get("category", "unknown")
+                    _retriable = classification.get("retriable", False)
+                    _log(f"Error classified: {_cat} (retriable={_retriable})")
+
+                    halt, reason = should_halt(status, classification, settings_path)
+                    if halt:
+                        status["circuit_breaker"]["tripped"] = True
+                        status["circuit_breaker"]["tripped_reason"] = reason
+                        save_status(status, actual_status_path)
+                        raise CircuitBreakerTripped(reason)
+
+                    if _retriable and _cat == CATEGORY_TRANSIENT:
+                        _retry_attempt = get_circuit_breaker_state(status)["consecutive_failures"] - 1
+                        _delay = get_retry_delay(_retry_attempt, settings_path)
+                        if _delay is not None:
+                            _log(f"Transient error — retrying in {_delay}s", "warn")
+                            time.sleep(_delay)
+                            continue
+
                 raise
+            else:
+                record_success(status)
 
             elapsed = time.time() - t0
             _log(f"{stage_label}{iter_label} completed ({_format_duration(elapsed)})", "ok")
@@ -944,8 +1095,17 @@ def run_pipeline(
             if all_iter_usages:
                 stage_extras["token_usage"] = aggregate_token_usage(all_iter_usages)
 
+            # Handle PREFLIGHT completion
+            if current_stage == Stage.PREFLIGHT:
+                preflight_skipped = result.get("status") == "skipped"
+                iter_extras["outcome"] = "skipped" if preflight_skipped else "success"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value,
+                             **{**stage_extras, "skipped": preflight_skipped})
+                save_status(status, actual_status_path)
+
             # Milestone gate after PLAN
-            if current_stage == Stage.PLAN:
+            elif current_stage == Stage.PLAN:
                 approved = result.get("approved", True)
                 iter_extras["outcome"] = "success" if approved else "rejected"
                 complete_iteration(status, current_stage.value, **iter_extras)
@@ -1207,8 +1367,10 @@ def run_pipeline(
                          "loop_exhausted", str(e), msize, logs_dir)
         raise
     except PipelineError as e:
-        _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                         "failure", str(e), msize, logs_dir)
+        # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
+        if status.get("stage") != "preflight":
+            _run_learn_stage(status, prompt_builder, settings_path, run_dir,
+                             "failure", str(e), msize, logs_dir)
         raise
     except Exception as e:
         _run_learn_stage(status, prompt_builder, settings_path, run_dir,

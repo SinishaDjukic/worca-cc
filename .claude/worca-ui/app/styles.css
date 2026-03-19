@@ -21,6 +21,7 @@
   --status-in-progress: #f59e0b;
   --status-completed: #22c55e;
   --status-error: #ef4444;
+  --status-blocked: #3b82f6;
 
   /* Log viewer */
   --log-bg: #0f172a;
@@ -2216,9 +2217,14 @@ sl-details.live-output-panel::part(content) {
   color: var(--muted);
 }
 
-.beads-dep-chip--blocked {
-  border-color: var(--status-error);
-  color: var(--status-error);
+.beads-dep-chip--blocking {
+  border-color: var(--status-blocked);
+  color: var(--status-blocked);
+}
+
+.beads-dep-chip--satisfied {
+  border-color: var(--border);
+  color: var(--muted);
 }
 
 .beads-issue-actions {
@@ -2289,7 +2295,7 @@ sl-details.live-output-panel::part(content) {
 }
 
 .beads-kanban-card--blocked {
-  border-color: var(--status-error);
+  border-color: var(--status-blocked);
   border-style: dashed;
 }
 
@@ -2324,7 +2330,7 @@ sl-details.live-output-panel::part(content) {
   gap: 4px;
   margin-top: 8px;
   font-size: 11px;
-  color: var(--status-error);
+  color: var(--status-blocked);
 }
 
 /* --- Dependency graph --- */
@@ -2361,7 +2367,7 @@ sl-details.live-output-panel::part(content) {
   stroke-width: 1.5;
 }
 
-.beads-graph-node--ready rect {
+.beads-graph-node--open rect {
   stroke: var(--status-completed);
 }
 
@@ -2369,8 +2375,13 @@ sl-details.live-output-panel::part(content) {
   stroke: var(--status-in-progress);
 }
 
+.beads-graph-node--closed rect {
+  stroke: var(--muted);
+  opacity: 0.6;
+}
+
 .beads-graph-node--blocked rect {
-  stroke: var(--status-error);
+  stroke: var(--status-blocked);
   stroke-dasharray: 4 2;
 }
 
@@ -2391,8 +2402,12 @@ sl-details.live-output-panel::part(content) {
   stroke-width: 1.5;
 }
 
-.beads-graph-edge--blocked {
-  stroke: var(--status-error);
+.beads-graph-edge--satisfied {
+  stroke: var(--border);
+}
+
+.beads-graph-edge--blocking {
+  stroke: var(--status-blocked);
   stroke-dasharray: 4 2;
 }
 
@@ -2937,4 +2952,90 @@ sl-details.learnings-panel::part(content) {
 
 .cost-muted {
   color: var(--muted);
+}
+
+/* Preflight checks view */
+
+.preflight-checks-view {
+  margin-top: 10px;
+}
+
+.preflight-summary {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.preflight-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.preflight-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.preflight-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.preflight-check-name {
+  font-family: var(--sl-font-mono);
+  font-size: 0.78rem;
+}
+
+.preflight-check-message {
+  color: var(--muted);
+}
+
+.circuit-breaker-banner {
+  margin: 8px 0 4px;
+}
+
+.classification-strip {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+
+.classification-strip-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.classification-strip-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.classification-strip-value {
+  color: var(--fg);
+  font-size: 0.8rem;
+}
+
+.classification-remediation {
+  width: 100%;
+}
+
+.classification-remediation .classification-strip-value {
+  color: var(--muted);
+  font-style: italic;
 }
