@@ -2,11 +2,19 @@
 
 Thin wrappers around `gh` CLI for updating GitHub issues during pipeline runs.
 All calls are error-suppressed — GitHub being unreachable must never crash the pipeline.
+
+Set WORCA_NO_GITHUB=1 to suppress all GitHub write-back (useful for dev/testing).
 """
 
+import os
 import subprocess
 import sys
 from datetime import datetime
+
+
+def _github_disabled() -> bool:
+    """Check if GitHub write-back is disabled via environment variable."""
+    return os.environ.get("WORCA_NO_GITHUB", "") == "1"
 
 
 def gh_issue_number(status: dict) -> str | None:
@@ -45,8 +53,11 @@ def gh_issue_start(status: dict) -> None:
     """Add in-progress label and post start comment on the GitHub issue.
 
     No-op if the run is not sourced from a GitHub issue.
+    No-op if WORCA_NO_GITHUB=1.
     Never raises — all errors are suppressed.
     """
+    if _github_disabled():
+        return
     issue = gh_issue_number(status)
     if issue is None:
         return
@@ -123,13 +134,21 @@ def gh_issue_complete(status: dict) -> None:
     """Post summary comment, remove in-progress label, and close the issue.
 
     No-op if the run is not sourced from a GitHub issue.
+    No-op if WORCA_NO_GITHUB=1.
+    No-op if the run produced no meaningful work (0 turns and $0 cost).
     Never raises — all errors are suppressed.
     """
+    if _github_disabled():
+        return
     issue = gh_issue_number(status)
     if issue is None:
         return
 
     token_usage = status.get("token_usage", {})
+
+    # Skip posting if the run did nothing meaningful
+    if token_usage.get("num_turns", 0) == 0 and token_usage.get("total_cost_usd", 0) == 0:
+        return
     duration = _format_duration(
         status.get("started_at"), status.get("completed_at"),
     )
@@ -161,8 +180,11 @@ def gh_issue_fail(status: dict, error: str) -> None:
 
     Does NOT close the issue — leaves it open for retry.
     No-op if the run is not sourced from a GitHub issue.
+    No-op if WORCA_NO_GITHUB=1.
     Never raises — all errors are suppressed.
     """
+    if _github_disabled():
+        return
     issue = gh_issue_number(status)
     if issue is None:
         return

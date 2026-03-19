@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock, call
 
 import subprocess
 
-from worca.utils.gh_issues import gh_issue_number, _run_gh, gh_issue_start, gh_issue_complete, gh_issue_fail
+from worca.utils.gh_issues import gh_issue_number, _run_gh, _github_disabled, gh_issue_start, gh_issue_complete, gh_issue_fail
 
 
 # --- gh_issue_number ---
@@ -119,6 +119,95 @@ def test_run_gh_prints_warning_on_failure(capsys):
     captured = capsys.readouterr()
     assert "Warning" in captured.err
     assert "GitHub" in captured.err
+
+
+# --- _github_disabled ---
+
+def test_github_disabled_returns_false_by_default():
+    with patch.dict("os.environ", {}, clear=True):
+        assert _github_disabled() is False
+
+
+def test_github_disabled_returns_true_when_set():
+    with patch.dict("os.environ", {"WORCA_NO_GITHUB": "1"}):
+        assert _github_disabled() is True
+
+
+def test_github_disabled_returns_false_for_other_values():
+    with patch.dict("os.environ", {"WORCA_NO_GITHUB": "0"}):
+        assert _github_disabled() is False
+
+
+def test_gh_issue_start_noop_when_github_disabled():
+    status = {
+        "work_request": {"source_type": "github_issue", "source_ref": "gh:42"},
+        "run_id": "test", "branch": "test",
+    }
+    with patch.dict("os.environ", {"WORCA_NO_GITHUB": "1"}):
+        with patch("worca.utils.gh_issues._run_gh") as mock:
+            gh_issue_start(status)
+        mock.assert_not_called()
+
+
+def test_gh_issue_complete_noop_when_github_disabled():
+    status = _make_complete_status()
+    with patch.dict("os.environ", {"WORCA_NO_GITHUB": "1"}):
+        with patch("worca.utils.gh_issues._run_gh") as mock:
+            gh_issue_complete(status)
+        mock.assert_not_called()
+
+
+def test_gh_issue_fail_noop_when_github_disabled():
+    status = {
+        "work_request": {"source_type": "github_issue", "source_ref": "gh:42"},
+        "run_id": "test", "branch": "test",
+        "token_usage": {"total_cost_usd": 5.0, "num_turns": 100},
+    }
+    with patch.dict("os.environ", {"WORCA_NO_GITHUB": "1"}):
+        with patch("worca.utils.gh_issues._run_gh") as mock:
+            gh_issue_fail(status, error="test")
+        mock.assert_not_called()
+
+
+# --- empty-run guard ---
+
+def test_gh_issue_complete_noop_for_empty_run():
+    """Runs with 0 turns and $0 cost should not post to GitHub."""
+    status = {
+        "work_request": {"source_type": "github_issue", "source_ref": "gh:42"},
+        "run_id": "20260319-092300", "branch": "worca/fix-the-bug-9b7",
+        "token_usage": {"total_cost_usd": 0, "num_turns": 0, "iteration_count": 1},
+    }
+    with patch("worca.utils.gh_issues._run_gh") as mock:
+        gh_issue_complete(status)
+    mock.assert_not_called()
+
+
+def test_gh_issue_complete_noop_for_missing_token_usage():
+    """Runs with no token_usage at all should not post to GitHub."""
+    status = {
+        "work_request": {"source_type": "github_issue", "source_ref": "gh:42"},
+        "run_id": "20260319-092300", "branch": "worca/fix-the-bug",
+    }
+    with patch("worca.utils.gh_issues._run_gh") as mock:
+        gh_issue_complete(status)
+    mock.assert_not_called()
+
+
+def test_gh_issue_complete_posts_when_turns_nonzero():
+    """Runs with actual turns should still post normally."""
+    status = _make_complete_status(num_turns=10, total_cost_usd=0.50)
+    with patch("worca.utils.gh_issues._run_gh", return_value=True) as mock:
+        gh_issue_complete(status)
+    assert mock.call_count == 3
+
+
+def test_gh_issue_complete_posts_when_cost_nonzero_but_turns_zero():
+    """Edge case: cost tracked but 0 turns — still post."""
+    status = _make_complete_status(num_turns=0, total_cost_usd=1.50)
+    with patch("worca.utils.gh_issues._run_gh", return_value=True) as mock:
+        gh_issue_complete(status)
+    assert mock.call_count == 3
 
 
 # --- gh_issue_start ---
@@ -320,7 +409,7 @@ def test_gh_issue_complete_uses_correct_issue_number():
 
 
 def test_gh_issue_complete_handles_missing_token_usage():
-    """Should still work when token_usage is missing or empty."""
+    """Missing token_usage means 0 turns/0 cost — empty-run guard triggers."""
     status = {
         "work_request": {
             "source_type": "github_issue",
@@ -333,7 +422,7 @@ def test_gh_issue_complete_handles_missing_token_usage():
     }
     with patch("worca.utils.gh_issues._run_gh", return_value=True) as mock:
         gh_issue_complete(status)
-    assert mock.call_count == 3
+    mock.assert_not_called()
 
 
 def test_gh_issue_complete_handles_missing_timestamps():
