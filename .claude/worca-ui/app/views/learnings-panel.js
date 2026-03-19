@@ -83,7 +83,16 @@ function summaryStripView(summary) {
   `;
 }
 
+const IMPORTANCE_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function sortByImportance(observations) {
+  return [...observations].sort((a, b) =>
+    (IMPORTANCE_ORDER[a.importance] ?? 4) - (IMPORTANCE_ORDER[b.importance] ?? 4)
+  );
+}
+
 function observationsTableView(observations) {
+  const sorted = sortByImportance(observations);
   return html`
     <h4 class="learnings-table-title">Observations</h4>
     <div class="learnings-table">
@@ -95,7 +104,7 @@ function observationsTableView(observations) {
         <span class="col-center">Count</span>
         <span class="col-center">${unsafeHTML(iconSvg(Zap, 12))}</span>
       </div>
-      ${observations.map(obs => html`
+      ${sorted.map(obs => html`
         <div class="learnings-table-row">
           <span class="col-center">
             <sl-badge variant="${importanceBadge(obs.importance)}" pill>
