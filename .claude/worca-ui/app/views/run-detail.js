@@ -369,7 +369,7 @@ export function runBeadsSectionView(beads) {
         <div slot="summary" class="run-beads-header">
           <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
           <span class="run-beads-title">Beads</span>
-          <span class="run-beads-count">${beads.length}</span>
+          <span class="run-beads-count">${beads.filter(b => b.status === 'closed').length}/${beads.length}</span>
         </div>
         <div class="run-beads-list">
           ${beads.map(issue => html`
