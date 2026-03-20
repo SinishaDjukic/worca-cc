@@ -331,9 +331,26 @@ This prevents inconsistent payloads across call sites and makes it easy to add n
 
 The emitter writes from the main orchestrator thread for all runner events. Agent telemetry events are written from the `process_stream()` reader thread (one at a time per stage). Since only one stage runs at a time, there's no concurrent-write risk for the JSONL file, but use `open(..., "a")` with explicit `flush()` after each line for safety.
 
-### 3.8 Failure Isolation
+### 3.8 Failure Isolation & Pipeline Impact Guarantees
 
-Event emission must never crash the pipeline. All emitter code wraps in a top-level try/except that logs warnings to `_orchestrator_log` but does not propagate exceptions.
+**Critical design invariant: webhook failures never affect the pipeline.**
+
+This is enforced at three levels:
+
+1. **Async delivery (observer webhooks):** All observer webhook deliveries run in `threading.Thread(daemon=True)`. The `emit_event()` call returns immediately after writing to the JSONL file — it does not wait for HTTP responses. A webhook endpoint that is slow (10s response), down (connection refused), or returning errors (500) has zero impact on pipeline timing or outcome. The daemon threads are fire-and-forget; they die when the pipeline process exits.
+
+2. **Exception isolation:** Both `emit_event()` and `deliver_webhook()` wrap all code in top-level try/except blocks. Network errors, JSON serialization failures, file I/O errors — all are caught, logged to `_orchestrator_log` as warnings, and silently swallowed. The pipeline never sees the exception.
+
+3. **Timeout enforcement:** Each webhook has a configurable `timeout_ms` (default 5000, max 30000). `urllib.request.urlopen` is called with this timeout. Hung servers are abandoned after the timeout, the delivery thread logs the failure and exits.
+
+**The one exception: control webhooks.** Webhooks with `"control": true` are delivered **synchronously** at specific pause points (milestone gates, stage completions) because the pipeline must read the response to act on it. However, even control webhooks are protected by timeout + try/except — a failing control webhook is treated as `{"control": {"action": "continue"}}` (no action). The pipeline never blocks indefinitely on any webhook.
+
+**Summary:**
+
+| Webhook Type | Delivery | Failure Impact | Blocks Pipeline? |
+|---|---|---|---|
+| Observer (`control: false`) | Async (daemon thread) | None — logged and ignored | No |
+| Control (`control: true`) | Sync at pause points only | Treated as "continue" | Briefly (up to `timeout_ms`), at natural pause points only |
 
 ### 3.9 High-Volume Event Throttling
 
@@ -919,7 +936,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Handle `"approve"` / `"reject"` by overriding milestone values.
 - Validate at startup: control webhooks must have `secret` set.
 
-### Phase 5: UI and Archive Integration (Tasks 13-14)
+### Phase 5: UI and Archive Integration (Tasks 13-16)
 
 #### Task 13: Expose events to worca-ui via WebSocket
 
@@ -952,9 +969,94 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - No additional code needed — verify this works by running a test pipeline.
 - Add a check: if `events.jsonl` does not exist in the run dir (e.g., events were disabled), skip gracefully.
 
-### Phase 6: Validation and Configuration (Tasks 15-16)
+#### Task 15: Add Webhooks tab to the Settings UI
 
-#### Task 15: Add webhook configuration validation
+The worca-ui settings page (`settings.js`, 718 lines) has 5 existing tabs: Agents, Pipeline, Governance, Preferences, Notifications. Webhook configuration needs a 6th tab so users can manage webhooks visually instead of editing `settings.json` by hand.
+
+**Files to modify:**
+- `.claude/worca-ui/app/views/settings.js` — add `webhooksTab()` function and register it in the tab list.
+- `.claude/worca-ui/server/settings-validator.js` — add webhook validation rules.
+
+**Guidance (settings.js — Webhooks tab):**
+
+The tab should follow the established patterns in the existing tabs (form inputs, save buttons, validation feedback via toast notifications, REST API `POST /api/settings`).
+
+**UI layout:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Agents │ Pipeline │ Governance │ Webhooks │ Prefs │ Notif  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Events System                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ ☑ Enabled    ☑ Agent telemetry    ☑ Hook events     │   │
+│  │ Rate limit: [1000] ms                                │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Budget                                                     │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ Max cost: [$___] per run    Warning at: [80] %       │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Webhooks                           [+ Add Webhook]         │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ ☑  https://example.com/hook                          │   │
+│  │    Events: pipeline.run.*, pipeline.stage.completed   │   │
+│  │    Timeout: 5000ms │ Retries: 3 │ Control: No        │   │
+│  │    [Edit] [Test] [Delete]                             │   │
+│  ├──────────────────────────────────────────────────────┤   │
+│  │ ☑  https://slack-relay.internal/worca                │   │
+│  │    Events: pipeline.run.completed, pipeline.run.fail  │   │
+│  │    Timeout: 5000ms │ Retries: 3 │ Control: No        │   │
+│  │    [Edit] [Test] [Delete]                             │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│                                              [Save]         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Webhook list view:**
+- Each webhook shown as a card with: enabled toggle, URL, event patterns (comma-separated), timeout, retries, control flag.
+- Action buttons: Edit (expand inline form), Test (send a `pipeline.test.ping` event), Delete (with confirmation).
+- "Add Webhook" button opens an inline form at the top.
+
+**Add/Edit webhook form:**
+- URL input (required, validated: must start with `https://` or `http://localhost`).
+- Secret input (password field, optional, required if control is enabled).
+- Event patterns input (comma-separated, with examples dropdown: `*`, `pipeline.run.*`, `pipeline.stage.completed`). Show a multi-select checklist of event categories (Pipeline, Stage, Agent, Bead, Git, Test, Review, Circuit Breaker, Cost, Milestone, Hook, Preflight, Learn) that auto-generates the glob patterns.
+- Timeout slider (1000-30000ms, default 5000).
+- Max retries slider (0-10, default 3).
+- Rate limit input (0-10000ms, default 1000).
+- Control toggle (checkbox, shows warning: "Control webhooks can pause/abort the pipeline").
+- Save / Cancel buttons.
+
+**Test webhook button:**
+- Sends a synthetic `pipeline.test.ping` event to the webhook URL via `POST /api/webhooks/test`.
+- Shows success (green check + response status) or failure (red X + error message) inline.
+
+**Guidance (settings-validator.js):**
+- Add `validateWebhooks(webhooks)` function. Existing validator has `VALID_AGENTS`, `VALID_STAGES`, `VALID_MODELS`, `VALID_GUARDS` — follow the same pattern.
+- Validation rules match Section 7 of this plan:
+  - `url` must start with `https://` or `http://localhost`.
+  - `timeout_ms` must be 1000-30000.
+  - `max_retries` must be 0-10.
+  - `events` patterns must match `/^[a-zA-Z0-9.*]+$/`.
+  - Control webhooks must have non-empty `secret`.
+- Return validation errors array (same pattern as existing `validateAgents()`, `validateStages()`).
+
+**Guidance (server — test endpoint):**
+
+**Files to modify:**
+- `.claude/worca-ui/server/app.js` — add `POST /api/webhooks/test` endpoint.
+
+The endpoint:
+1. Reads the webhook config from the request body.
+2. Constructs a `pipeline.test.ping` event with `payload: {"message": "Test from worca-ui"}`.
+3. Sends it via `urllib`-equivalent (`node-fetch` or `https` module) with the same headers/signature logic as the Python delivery module.
+4. Returns `{success: true, status_code: N, response_time_ms: N}` or `{success: false, error: "..."}`.
+
+#### Task 16: Add webhook configuration validation (Python side)
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py` — at pipeline start.
@@ -971,7 +1073,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Log warnings for invalid configurations; exclude invalid webhooks from delivery list.
 - Separate `ctx._webhooks` (observer) and `ctx._control_webhooks` (control) lists.
 
-#### Task 16: Add defaults to settings.json
+#### Task 17: Add defaults to settings.json
 
 **Files to modify:**
 - `.claude/settings.json`
@@ -1267,7 +1369,50 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Feed 10 tool_use events in quick succession.
 - Verify all are written to JSONL but only a subset are delivered to webhooks.
 
-### 9.10 Test Matrix Summary
+### 9.10 Settings UI Tests
+
+**File to create:** `.claude/worca-ui/test/settings-webhooks.test.js`
+
+**Scope:** Test the Webhooks tab rendering, form validation, and API integration.
+
+**Tests:**
+- `webhooksTab()` renders empty state ("No webhooks configured") when `worca.webhooks` is empty.
+- `webhooksTab()` renders webhook cards for each configured webhook.
+- Webhook card shows URL, event patterns, timeout, retries, control badge, enabled toggle.
+- "Add Webhook" button opens inline form.
+- Form validates URL: rejects `ftp://`, accepts `https://`, accepts `http://localhost`.
+- Form validates timeout: rejects 500, accepts 5000, rejects 50000.
+- Form validates event patterns: rejects `pipeline.run.{bad}`, accepts `pipeline.run.*`.
+- Form shows warning when control is enabled without secret.
+- Save button calls `POST /api/settings` with updated `worca.webhooks` array.
+- Delete button removes webhook from array and saves.
+- Enable/disable toggle updates `enabled` field and saves.
+- Event category checklist generates correct glob patterns (e.g., checking "Pipeline" produces `pipeline.run.*`).
+
+**File to create:** `.claude/worca-ui/test/settings-validator-webhooks.test.js`
+
+**Scope:** Test the validator extensions for webhook configuration.
+
+**Tests:**
+- `validateWebhooks([])` returns no errors.
+- `validateWebhooks([{url: "https://ok.com"}])` returns no errors (other fields have defaults).
+- `validateWebhooks([{url: "ftp://bad.com"}])` returns URL validation error.
+- `validateWebhooks([{url: "https://ok.com", timeout_ms: 0}])` returns timeout error.
+- `validateWebhooks([{url: "https://ok.com", control: true, secret: ""}])` returns "control requires secret" error.
+- `validateWebhooks([{url: "https://ok.com", control: true, secret: "s3cr3t"}])` returns no errors.
+
+**File to create:** `.claude/worca-ui/test/webhooks-test-endpoint.test.js`
+
+**Scope:** Test the `POST /api/webhooks/test` endpoint.
+
+**Tests:**
+- Endpoint sends a `pipeline.test.ping` event to the provided URL.
+- Returns `{success: true, status_code: 200}` when target responds 200.
+- Returns `{success: false, error: "..."}` when target is unreachable.
+- Includes correct `X-Worca-Event`, `X-Worca-Signature` headers when secret is provided.
+- Times out after `timeout_ms` and returns error.
+
+### 9.11 Test Matrix Summary
 
 | Test File | Type | Event Categories Covered | Expected Count |
 |---|---|---|---|
@@ -1280,9 +1425,12 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 | `test_webhook_integration.py` | Integration | Real HTTP delivery | ~6 tests |
 | `test_agent_telemetry.py` | Unit | Agent telemetry | ~10 tests |
 | `events.test.js` | Unit/Integration | worca-ui event streaming | ~9 tests |
-| **Total** | | | **~91 tests** |
+| `settings-webhooks.test.js` | Unit | Settings UI Webhooks tab | ~12 tests |
+| `settings-validator-webhooks.test.js` | Unit | Webhook config validation (JS) | ~6 tests |
+| `webhooks-test-endpoint.test.js` | Integration | Webhook test ping endpoint | ~5 tests |
+| **Total** | | | **~114 tests** |
 
-### 9.11 Testing Per Implementation Phase
+### 9.12 Testing Per Implementation Phase
 
 Each phase has a **test gate** — all tests for that phase must pass before proceeding.
 
@@ -1292,8 +1440,8 @@ Each phase has a **test gate** — all tests for that phase must pass before pro
 | Phase 2 (Runner) | 5-10 | `test_event_integration.py`, `test_agent_telemetry.py` | Integration tests pass, all event types emitted |
 | Phase 3 (Hooks) | 11 | Updated `test_hook_emitter.py` + manual verification | Hook events appear in JSONL during test pipeline run |
 | Phase 4 (Control) | 12 | `test_control_webhook.py`, `test_webhook_integration.py` | Control actions work end-to-end |
-| Phase 5 (UI) | 13-14 | `events.test.js` | UI receives and displays events |
-| Phase 6 (Validation) | 15-16 | Updated `test_event_emitter.py` (validation tests) | Invalid configs rejected gracefully |
+| Phase 5 (UI) | 13-15 | `events.test.js`, `settings-webhooks.test.js`, `settings-validator-webhooks.test.js`, `webhooks-test-endpoint.test.js` | UI receives events, settings tab CRUD works, test ping works |
+| Phase 6 (Validation) | 16-17 | Updated `test_event_emitter.py` (validation tests) | Invalid configs rejected gracefully |
 
 ---
 
@@ -1320,20 +1468,21 @@ Phase 3: Hook Integration (depends on Task 4)
 Phase 4: Control Webhooks (depends on Phase 1 + Task 5)
   Task 12: Control responses ─── after Phase 2
 
-Phase 5: UI Integration (depends on Phase 1)
-  Task 13: worca-ui WebSocket ─── can be parallel with Phase 2
+Phase 5: UI and Archive Integration (depends on Phase 1)
+  Task 13: worca-ui WebSocket events ─── can be parallel with Phase 2
   Task 14: Archive verification ─── after Phase 2
+  Task 15: Settings UI Webhooks tab ─── depends on Task 13 (shares ws.js)
 
-Phase 6: Validation (depends on all above)
-  Task 15: Config validation ─── after Phase 4
-  Task 16: Settings defaults ─── any time
+Phase 6: Validation and Defaults (depends on all above)
+  Task 16: Config validation (Python) ─── after Phase 4
+  Task 17: Settings defaults ─── any time
 ```
 
 **Suggested implementation sessions:**
 1. **Session 1:** Tasks 1-4 (core modules, fully testable in isolation)
 2. **Session 2:** Tasks 5-10 (runner integration, all events wired)
 3. **Session 3:** Tasks 11-12 (hooks + control webhooks)
-4. **Session 4:** Tasks 13-16 (UI, validation, polish)
+4. **Session 4:** Tasks 13-17 (UI, settings tab, validation, polish)
 
 ---
 
