@@ -12,6 +12,7 @@ from worca.orchestrator.error_classifier import (
     CATEGORY_ENV_MISSING,
     CATEGORY_UNKNOWN,
     classify_error,
+    clear_cache,
     init_circuit_breaker_state,
     get_circuit_breaker_state,
     record_failure,
@@ -43,6 +44,9 @@ class TestConstants:
 # --- classify_error ---
 
 class TestClassifyError:
+    def setup_method(self):
+        clear_cache()
+
     def _make_claude_output(self, category, retriable=True, remediation="retry", similar=False):
         return json.dumps({
             "category": category,
@@ -91,18 +95,20 @@ class TestClassifyError:
         assert result["category"] == CATEGORY_UNKNOWN
         assert result["retriable"] is False
         assert result.get("classifier_error") is True
+        assert result["classifier_error_detail"] == "subprocess failed"
 
     def test_returns_fallback_on_nonzero_exit(self, tmp_path):
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps({"worca": {}}))
 
-        mock_result = MagicMock(returncode=1, stdout="", stderr="error")
+        mock_result = MagicMock(returncode=1, stdout="", stderr="claude init error")
         with patch("subprocess.run", return_value=mock_result):
             result = classify_error("Some error", "test", [], str(settings_file))
 
         assert result["category"] == CATEGORY_UNKNOWN
         assert result["retriable"] is False
         assert result.get("classifier_error") is True
+        assert result["classifier_error_detail"] == "claude init error"
 
     def test_returns_fallback_on_invalid_json(self, tmp_path):
         settings_file = tmp_path / "settings.json"
@@ -114,6 +120,7 @@ class TestClassifyError:
 
         assert result["category"] == CATEGORY_UNKNOWN
         assert result.get("classifier_error") is True
+        assert "classifier_error_detail" in result
 
     def test_returns_fallback_on_timeout(self, tmp_path):
         settings_file = tmp_path / "settings.json"
@@ -124,6 +131,7 @@ class TestClassifyError:
 
         assert result["category"] == CATEGORY_UNKNOWN
         assert result.get("classifier_error") is True
+        assert "classifier_error_detail" in result
 
     def test_uses_haiku_model_by_default(self, tmp_path):
         settings_file = tmp_path / "settings.json"
@@ -446,3 +454,83 @@ class TestGetRetryDelay:
         assert get_retry_delay(0, settings) == 5
         assert get_retry_delay(1, settings) == 15
         assert get_retry_delay(2, settings) is None
+
+
+# --- classify_error caching ---
+
+class TestClassifyErrorCache:
+    def _make_claude_output(self, category, retriable=True):
+        return json.dumps({
+            "category": category,
+            "retriable": retriable,
+            "remediation": "retry",
+            "similar_to_previous": False,
+        })
+
+    def setup_method(self):
+        clear_cache()
+
+    def test_second_call_returns_cached_result(self, tmp_path):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({"worca": {}}))
+
+        output = self._make_claude_output(CATEGORY_TRANSIENT)
+        mock_result = MagicMock(returncode=0, stdout=output, stderr="")
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result1 = classify_error("Connection timeout", "implement", [], str(settings_file))
+            result2 = classify_error("Connection timeout", "implement", [], str(settings_file))
+
+        assert mock_run.call_count == 1
+        assert result1["category"] == CATEGORY_TRANSIENT
+        assert result2["category"] == CATEGORY_TRANSIENT
+        assert result2.get("from_cache") is True
+        assert result1.get("from_cache") is None
+
+    def test_cache_expires_after_ttl(self, tmp_path):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({"worca": {}}))
+
+        output = self._make_claude_output(CATEGORY_TRANSIENT)
+        mock_result = MagicMock(returncode=0, stdout=output, stderr="")
+
+        # Call 1: cache miss → time.time() for store = 0
+        # Call 2: time.time() for cache check = 400 (>300 TTL) → expired → subprocess called → time.time() for store = 400
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            with patch("worca.orchestrator.error_classifier.time.time", side_effect=[0, 400, 400]):
+                result1 = classify_error("timeout", "implement", [], str(settings_file))
+                result2 = classify_error("timeout", "implement", [], str(settings_file))
+
+        assert mock_run.call_count == 2
+        assert result2.get("from_cache") is None
+
+    def test_different_errors_get_different_cache_entries(self, tmp_path):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({"worca": {}}))
+
+        output_transient = self._make_claude_output(CATEGORY_TRANSIENT)
+        output_permanent = self._make_claude_output(CATEGORY_PERMANENT, retriable=False)
+        mock_result_1 = MagicMock(returncode=0, stdout=output_transient, stderr="")
+        mock_result_2 = MagicMock(returncode=0, stdout=output_permanent, stderr="")
+
+        with patch("subprocess.run", side_effect=[mock_result_1, mock_result_2]) as mock_run:
+            result1 = classify_error("Connection timeout", "implement", [], str(settings_file))
+            result2 = classify_error("Auth failed", "implement", [], str(settings_file))
+
+        assert mock_run.call_count == 2
+        assert result1["category"] == CATEGORY_TRANSIENT
+        assert result2["category"] == CATEGORY_PERMANENT
+
+    def test_clear_cache_resets(self, tmp_path):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({"worca": {}}))
+
+        output = self._make_claude_output(CATEGORY_TRANSIENT)
+        mock_result = MagicMock(returncode=0, stdout=output, stderr="")
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            classify_error("timeout", "implement", [], str(settings_file))
+            clear_cache()
+            classify_error("timeout", "implement", [], str(settings_file))
+
+        assert mock_run.call_count == 2

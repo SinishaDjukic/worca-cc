@@ -1,6 +1,10 @@
 """Error classification and circuit breaker state management."""
+import hashlib
 import json
 import subprocess
+import sys
+import time
+import traceback
 from typing import Optional
 
 CATEGORY_TRANSIENT = "infra_transient"
@@ -20,6 +24,9 @@ _DEFAULT_MODEL_IDS = {
 _DEFAULT_MAX_CONSECUTIVE = 3
 _DEFAULT_BACKOFF = [10, 30, 90]
 _HISTORY_CAP = 20
+_CACHE_TTL = 300  # 5 minutes
+
+_cache = {}  # key -> (result_dict, timestamp)
 
 _SCHEMA = {
     "type": "object",
@@ -59,6 +66,16 @@ def _resolve_model(shorthand: str) -> str:
     return _DEFAULT_MODEL_IDS.get(shorthand, shorthand)
 
 
+def _cache_key(error_message: str, stage_name: str) -> str:
+    h = hashlib.sha256(f"{stage_name}:{error_message}".encode()).hexdigest()[:16]
+    return h
+
+
+def clear_cache() -> None:
+    """Clear the classification cache. Useful for testing."""
+    _cache.clear()
+
+
 def classify_error(
     error_message: str,
     stage_name: str,
@@ -69,7 +86,17 @@ def classify_error(
 
     Returns a classification dict. On any failure, returns a fallback dict
     with category=unknown and classifier_error=True.
+    Results are cached by (stage_name, error_message) for _CACHE_TTL seconds.
     """
+    key = _cache_key(error_message, stage_name)
+    if key in _cache:
+        cached_result, cached_at = _cache[key]
+        if time.time() - cached_at < _CACHE_TTL:
+            result = dict(cached_result)
+            result["from_cache"] = True
+            return result
+        del _cache[key]
+
     cb = _get_cb_settings(settings_path)
     model_shorthand = cb.get("classifier_model", _DEFAULT_MODEL)
     model_id = _resolve_model(model_shorthand)
@@ -108,10 +135,19 @@ def classify_error(
             timeout=30,
         )
         if result.returncode != 0:
-            return dict(_FALLBACK)
-        return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, Exception):
-        return dict(_FALLBACK)
+            print(f"[circuit-breaker] claude exited {result.returncode}: {result.stderr[:200]}", file=sys.stderr)
+            fallback = dict(_FALLBACK)
+            fallback["classifier_error_detail"] = result.stderr[:500]
+            return fallback
+        classified = json.loads(result.stdout)
+        _cache[key] = (dict(classified), time.time())
+        return classified
+    except (subprocess.TimeoutExpired, Exception) as exc:
+        print(f"[circuit-breaker] classify_error failed: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        fallback = dict(_FALLBACK)
+        fallback["classifier_error_detail"] = str(exc)
+        return fallback
 
 
 def init_circuit_breaker_state() -> dict:

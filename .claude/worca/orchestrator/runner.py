@@ -1032,6 +1032,11 @@ def run_pipeline(
                         raise CircuitBreakerTripped(reason)
 
                     if _retriable and _cat == CATEGORY_TRANSIENT:
+                        # NOTE: consecutive_failures is pipeline-global, not per-stage.
+                        # It resets on any stage success (record_success), so backoff
+                        # escalates across consecutive failures regardless of which stage
+                        # failed. This is intentional — repeated failures anywhere in the
+                        # pipeline should escalate severity, not reset per stage.
                         _retry_attempt = get_circuit_breaker_state(status)["consecutive_failures"] - 1
                         _delay = get_retry_delay(_retry_attempt, settings_path)
                         if _delay is not None:
