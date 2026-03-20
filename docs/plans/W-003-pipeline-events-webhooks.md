@@ -752,9 +752,180 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 
 ## 8. Implementation Tasks
 
-### Phase 1: Core Infrastructure (Tasks 1-4)
+### Phase 1: Specification & Core Infrastructure (Tasks 1-6)
 
-#### Task 1: Create event types and payload helpers
+#### Task 1: Write webhook specification document
+
+**Files to create:**
+- `docs/spec/webhooks/README.md` — consumer-facing webhook specification
+
+**Guidance:**
+
+This is the **external contract** that webhook consumers depend on. It must be complete, self-contained, and readable without any knowledge of the pipeline internals. Write it as if you are handing it to a third-party developer building a Slack integration.
+
+**Document structure:**
+
+```
+docs/spec/webhooks/README.md
+├── 1. Overview
+│   ├── What are worca pipeline events
+│   ├── How webhook delivery works (push model)
+│   └── Quick start (configure a webhook, receive events)
+├── 2. HTTP Protocol
+│   ├── Request format (POST, headers, body)
+│   ├── Authentication (HMAC-SHA256 signature verification)
+│   ├── Response expectations (2xx = success, 5xx = retry)
+│   ├── Retry behavior (exponential backoff, max retries)
+│   └── Rate limiting
+├── 3. Event Envelope
+│   ├── Common fields (schema_version, event_id, event_type, timestamp, run_id, pipeline)
+│   ├── Versioning policy
+│   └── Idempotency (event_id guarantees)
+├── 4. Event Catalog
+│   ├── 4.1 Pipeline Lifecycle (5 events)
+│   ├── 4.2 Stage Lifecycle (4 events)
+│   ├── 4.3 Agent Telemetry (5 events)
+│   ├── 4.4 Bead Lifecycle (6 events)
+│   ├── 4.5 Git Operations (4 events)
+│   ├── 4.6 Test Detail (4 events)
+│   ├── 4.7 Review Detail (3 events)
+│   ├── 4.8 Circuit Breaker (4 events)
+│   ├── 4.9 Cost & Tokens (3 events)
+│   ├── 4.10 Milestones & Loops (3 events)
+│   ├── 4.11 Hook & Governance (3 events)
+│   ├── 4.12 Preflight (2 events)
+│   ├── 4.13 Learn Stage (2 events)
+│   └── 4.14 Control Events (4 types)
+│   (Each subsection: event type, description, when emitted, full payload table with field/type/required/description)
+├── 5. Control Webhooks
+│   ├── Enabling control mode
+│   ├── Response protocol (action: approve|reject|pause|resume|abort|continue)
+│   ├── Which events support control responses
+│   ├── Pause/resume behavior
+│   └── Security requirements (secret mandatory)
+├── 6. Configuration Reference
+│   ├── settings.json schema for worca.events and worca.webhooks
+│   ├── Event filtering patterns (glob syntax)
+│   └── Validation rules
+├── 7. Examples
+│   ├── Minimal observer webhook (receive all events)
+│   ├── Filtered webhook (only failures)
+│   ├── Control webhook (auto-approve plans)
+│   ├── Example receiver in Python (Flask, ~20 lines)
+│   └── Example receiver in Node.js (Express, ~20 lines)
+└── 8. JSON Schema Reference
+    └── Links to all schema files in docs/spec/webhooks/schemas/
+```
+
+**Content guidance:**
+- Each event in the catalog must have a full payload field table: `| Field | Type | Required | Description |`.
+- Include at least one full JSON example per event category.
+- The Examples section should have copy-pasteable receiver code.
+- Cross-reference JSON schema files (Task 2) for each event type.
+- Do NOT reference internal implementation details (no line numbers, no file paths to runner.py).
+
+#### Task 2: Create JSON Schema definitions
+
+**Files to create:**
+- `docs/spec/webhooks/schemas/envelope.schema.json` — the common event envelope
+- `docs/spec/webhooks/schemas/events/` — one schema file per event category:
+  - `pipeline.run.schema.json` (covers started, completed, failed, interrupted, resumed)
+  - `pipeline.stage.schema.json` (covers started, completed, failed, interrupted)
+  - `pipeline.agent.schema.json` (covers spawned, tool_use, tool_result, text, completed)
+  - `pipeline.bead.schema.json` (covers created, assigned, completed, failed, labeled, next)
+  - `pipeline.git.schema.json` (covers branch_created, commit, pr_created, pr_merged)
+  - `pipeline.test.schema.json` (covers suite_started, suite_passed, suite_failed, fix_attempt)
+  - `pipeline.review.schema.json` (covers started, verdict, fix_attempt)
+  - `pipeline.circuit_breaker.schema.json` (covers failure_recorded, retry, tripped, reset)
+  - `pipeline.cost.schema.json` (covers stage_total, running_total, budget_warning)
+  - `pipeline.milestone.schema.json` (covers set)
+  - `pipeline.loop.schema.json` (covers triggered, exhausted)
+  - `pipeline.hook.schema.json` (covers blocked, test_gate, dispatch_blocked)
+  - `pipeline.preflight.schema.json` (covers completed, skipped)
+  - `pipeline.learn.schema.json` (covers completed, failed)
+- `docs/spec/webhooks/schemas/control-response.schema.json` — the control webhook response format
+
+**Guidance:**
+
+Use JSON Schema Draft 2020-12. Each event category schema uses `oneOf` with a discriminator on `event_type` to define the payload variants.
+
+**Envelope schema example:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worca.dev/schemas/webhook/envelope.schema.json",
+  "title": "Worca Pipeline Event Envelope",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "timestamp", "run_id", "pipeline", "payload"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "event_type": { "type": "string", "pattern": "^pipeline\\.[a-z_]+\\.[a-z_]+$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "run_id": { "type": "string", "pattern": "^\\d{8}-\\d{6}$" },
+    "pipeline": {
+      "type": "object",
+      "required": ["branch", "work_request"],
+      "properties": {
+        "branch": { "type": "string" },
+        "work_request": {
+          "type": "object",
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string" },
+            "source_ref": { "type": "string" },
+            "priority": { "type": "string" }
+          }
+        }
+      }
+    },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}
+```
+
+**Per-event payload schema example (pipeline.run.started):**
+```json
+{
+  "title": "pipeline.run.started payload",
+  "type": "object",
+  "required": ["resume", "started_at"],
+  "properties": {
+    "resume": { "type": "boolean" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "plan_file": { "type": "string" },
+    "settings_snapshot": { "type": "object" }
+  },
+  "additionalProperties": true
+}
+```
+
+**Control response schema:**
+```json
+{
+  "title": "Worca Control Webhook Response",
+  "type": "object",
+  "properties": {
+    "control": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["approve", "reject", "pause", "resume", "abort", "continue"] },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}
+```
+
+**Schema design rules:**
+- Every schema uses `"additionalProperties": true` on payloads (consumers must ignore unknown fields per versioning policy).
+- Required fields are the minimum needed for the event to be meaningful.
+- Use `"format"` annotations where applicable (`uuid`, `date-time`, `uri`).
+- The emitter in `types.py` (Task 3) should validate payloads against these schemas in debug/test mode.
+
+#### Task 3: Create event types and payload helpers
 
 **Files to create:**
 - `.claude/worca/events/__init__.py`
@@ -764,12 +935,14 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Define all 52 event type constants as module-level strings.
 - Group constants by category with comments.
 - Create one payload builder function per event type that accepts typed parameters and returns a dict. This prevents missing fields and enables validation.
-- No external dependencies.
+- In test/debug mode, validate built payloads against the JSON schemas from `docs/spec/webhooks/schemas/` using `jsonschema` (test dependency only — not required at runtime).
+- No external runtime dependencies.
 
-#### Task 2: Create event emitter module
+#### Task 4: Create event emitter module
 
 **Files to create:**
 - `.claude/worca/events/emitter.py`
+
 
 **Guidance:**
 - Implement the `EventContext` dataclass and `emit_event()` function per Section 3.
@@ -779,7 +952,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Wrap all I/O in try/except — log to stderr, never propagate.
 - After writing to JSONL, iterate `worca.webhooks` and call `deliver_webhook()` for each matching webhook.
 
-#### Task 3: Create webhook delivery module
+#### Task 5: Create webhook delivery module
 
 **Files to create:**
 - `.claude/worca/events/webhook.py`
@@ -794,7 +967,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Rate limiting: maintain a `dict[str, float]` mapping `event_type → last_delivery_timestamp`. Skip delivery if within `rate_limit_ms`.
 - For `control: true` webhooks, implement `deliver_webhook_sync()` that blocks and returns the response body as dict.
 
-#### Task 4: Create hook emitter for subprocess events
+#### Task 6: Create hook emitter for subprocess events
 
 **Files to create:**
 - `.claude/worca/events/hook_emitter.py`
@@ -807,9 +980,9 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Uses `open(..., "a")` + `flush()` per write.
 - The `pipeline` field in the envelope is omitted (hooks don't have full context). The worca-ui watcher fills it in from the associated status.json.
 
-### Phase 2: Runner Integration (Tasks 5-10)
+### Phase 2: Runner Integration (Tasks 7-12)
 
-#### Task 5: Initialize EventContext in run_pipeline()
+#### Task 7: Initialize EventContext in run_pipeline()
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py`
@@ -821,7 +994,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Emit `pipeline.run.started` or `pipeline.run.resumed`.
 - Add `ctx.close()` to the `finally` block alongside `_close_orchestrator_log()`.
 
-#### Task 6: Wire stage lifecycle events
+#### Task 8: Wire stage lifecycle events
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py`
@@ -833,7 +1006,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - In `except InterruptedError` (~line 977) and shutdown check (~line 900): emit `pipeline.stage.interrupted`.
 - Pattern: every `save_status()` call that changes stage status is immediately followed by the corresponding emit.
 
-#### Task 7: Wire agent telemetry via on_event callback
+#### Task 9: Wire agent telemetry via on_event callback
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py` (in `run_stage()`)
@@ -845,7 +1018,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Use `_summarize_tool_input()` — reuse/share logic with the existing `_format_log_line()` in `claude_cli.py`.
 - `run_stage()` needs to accept `event_ctx` as a parameter. Thread it from `run_pipeline()`.
 
-#### Task 8: Wire bead lifecycle events
+#### Task 10: Wire bead lifecycle events
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py`
@@ -862,7 +1035,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - In `_link_bd_create_to_run()`, after parsing the issue ID (~line 39), call `emit_from_hook(BEAD_CREATED, ...)`.
 - Import `emit_from_hook` from `worca.events.hook_emitter`.
 
-#### Task 9: Wire test, review, and loop events
+#### Task 11: Wire test, review, and loop events
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py`
@@ -877,7 +1050,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Milestone events: after each `set_milestone()` call: emit `pipeline.milestone.set`.
 - Loop events: before each loop-back `continue` and before each `raise LoopExhaustedError`: emit `pipeline.loop.triggered` / `pipeline.loop.exhausted`.
 
-#### Task 10: Wire circuit breaker, cost, and remaining events
+#### Task 12: Wire circuit breaker, cost, and remaining events
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py`
@@ -898,9 +1071,9 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Preflight events: emit from the preflight handling at ~lines 950 and 1106.
 - Learn events: emit from `_run_learn_stage()` at ~lines 438 and 440.
 
-### Phase 3: Hook Integration (Task 11)
+### Phase 3: Hook Integration (Task 13)
 
-#### Task 11: Wire hook governance events
+#### Task 13: Wire hook governance events
 
 **Files to modify:**
 - `.claude/hooks/pre_tool_use.py`
@@ -915,9 +1088,9 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - In `subagent_start.py`, when dispatch is denied: emit `pipeline.hook.dispatch_blocked`.
 - Set `WORCA_EVENTS_PATH` in `run_pipeline()` env setup alongside existing `WORCA_PLAN_FILE` and `WORCA_RUN_ID`.
 
-### Phase 4: Control Webhooks (Task 12)
+### Phase 4: Control Webhooks (Task 14)
 
-#### Task 12: Implement control webhook response handling
+#### Task 14: Implement control webhook response handling
 
 **Files to modify:**
 - `.claude/worca/events/webhook.py` (add `deliver_webhook_sync()`)
@@ -936,9 +1109,9 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - Handle `"approve"` / `"reject"` by overriding milestone values.
 - Validate at startup: control webhooks must have `secret` set.
 
-### Phase 5: UI and Archive Integration (Tasks 13-16)
+### Phase 5: UI and Archive Integration (Tasks 15-17)
 
-#### Task 13: Expose events to worca-ui via WebSocket
+#### Task 15: Expose events to worca-ui via WebSocket
 
 **Files to modify:**
 - `.claude/worca-ui/server/ws.js`
@@ -959,7 +1132,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
   - `limit`: max events to return (default 100)
 - Add `subscribe-events` / `unsubscribe-events` handlers for real-time event streaming.
 
-#### Task 14: Archive events alongside run results
+#### Task 16: Archive events alongside run results
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py` — in `_archive_run()`.
@@ -969,7 +1142,7 @@ Additions to `.claude/settings.json` under the `worca` namespace:
 - No additional code needed — verify this works by running a test pipeline.
 - Add a check: if `events.jsonl` does not exist in the run dir (e.g., events were disabled), skip gracefully.
 
-#### Task 15: Add Webhooks tab to the Settings UI
+#### Task 17: Add Webhooks tab to the Settings UI
 
 The worca-ui settings page (`settings.js`, 718 lines) has 5 existing tabs: Agents, Pipeline, Governance, Preferences, Notifications. Webhook configuration needs a 6th tab so users can manage webhooks visually instead of editing `settings.json` by hand.
 
@@ -1056,7 +1229,9 @@ The endpoint:
 3. Sends it via `urllib`-equivalent (`node-fetch` or `https` module) with the same headers/signature logic as the Python delivery module.
 4. Returns `{success: true, status_code: N, response_time_ms: N}` or `{success: false, error: "..."}`.
 
-#### Task 16: Add webhook configuration validation (Python side)
+### Phase 6: Validation and Defaults (Tasks 18-19)
+
+#### Task 18: Add webhook configuration validation (Python side)
 
 **Files to modify:**
 - `.claude/worca/orchestrator/runner.py` — at pipeline start.
@@ -1073,7 +1248,7 @@ The endpoint:
 - Log warnings for invalid configurations; exclude invalid webhooks from delivery list.
 - Separate `ctx._webhooks` (observer) and `ctx._control_webhooks` (control) lists.
 
-#### Task 17: Add defaults to settings.json
+#### Task 19: Add defaults to settings.json
 
 **Files to modify:**
 - `.claude/settings.json`
@@ -1412,10 +1587,37 @@ The endpoint:
 - Includes correct `X-Worca-Event`, `X-Worca-Signature` headers when secret is provided.
 - Times out after `timeout_ms` and returns error.
 
-### 9.11 Test Matrix Summary
+### 9.11 Specification & Schema Tests
+
+**File to create:** `tests/test_webhook_schemas.py`
+
+**Scope:** Validate that all JSON schema files in `docs/spec/webhooks/schemas/` are well-formed and that the payload builders in `types.py` produce schema-compliant payloads.
+
+**Tests:**
+- All `.schema.json` files parse as valid JSON.
+- All schemas are valid JSON Schema Draft 2020-12 (validate with `jsonschema.validators.Draft202012Validator`).
+- `envelope.schema.json` validates the example events from Appendix B.
+- Each event category schema validates against its corresponding payload builder output.
+- `control-response.schema.json` validates the control response examples from Section 5.
+- Every event type constant in `types.py` has a corresponding payload definition in a schema file.
+- Schema `$id` fields use consistent naming convention.
+
+**File to create:** `tests/test_webhook_spec.py`
+
+**Scope:** Validate that the spec document `docs/spec/webhooks/README.md` is internally consistent.
+
+**Tests:**
+- Every event type listed in Section 2.2 of the plan appears in the spec's Event Catalog.
+- Every event type in `types.py` is documented in the spec.
+- All JSON schema files referenced in the spec exist on disk.
+- The spec's example JSON payloads validate against their corresponding schemas.
+
+### 9.12 Test Matrix Summary
 
 | Test File | Type | Event Categories Covered | Expected Count |
 |---|---|---|---|
+| `test_webhook_schemas.py` | Unit | Schema validation, all 52 types | ~8 tests |
+| `test_webhook_spec.py` | Unit | Spec consistency | ~5 tests |
 | `test_event_types.py` | Unit | All 52 types | ~10 tests |
 | `test_event_emitter.py` | Unit | Emitter mechanics | ~12 tests |
 | `test_webhook.py` | Unit | Delivery, filtering, signing, retries, rate limit | ~15 tests |
@@ -1428,61 +1630,63 @@ The endpoint:
 | `settings-webhooks.test.js` | Unit | Settings UI Webhooks tab | ~12 tests |
 | `settings-validator-webhooks.test.js` | Unit | Webhook config validation (JS) | ~6 tests |
 | `webhooks-test-endpoint.test.js` | Integration | Webhook test ping endpoint | ~5 tests |
-| **Total** | | | **~114 tests** |
+| **Total** | | | **~127 tests** |
 
-### 9.12 Testing Per Implementation Phase
+### 9.13 Testing Per Implementation Phase
 
 Each phase has a **test gate** — all tests for that phase must pass before proceeding.
 
 | Phase | Tasks | Test Files | Gate |
 |---|---|---|---|
-| Phase 1 (Core) | 1-4 | `test_event_types.py`, `test_event_emitter.py`, `test_webhook.py`, `test_hook_emitter.py` | All unit tests pass |
-| Phase 2 (Runner) | 5-10 | `test_event_integration.py`, `test_agent_telemetry.py` | Integration tests pass, all event types emitted |
-| Phase 3 (Hooks) | 11 | Updated `test_hook_emitter.py` + manual verification | Hook events appear in JSONL during test pipeline run |
-| Phase 4 (Control) | 12 | `test_control_webhook.py`, `test_webhook_integration.py` | Control actions work end-to-end |
-| Phase 5 (UI) | 13-15 | `events.test.js`, `settings-webhooks.test.js`, `settings-validator-webhooks.test.js`, `webhooks-test-endpoint.test.js` | UI receives events, settings tab CRUD works, test ping works |
-| Phase 6 (Validation) | 16-17 | Updated `test_event_emitter.py` (validation tests) | Invalid configs rejected gracefully |
+| Phase 1 (Spec+Core) | 1-6 | `test_webhook_schemas.py`, `test_webhook_spec.py`, `test_event_types.py`, `test_event_emitter.py`, `test_webhook.py`, `test_hook_emitter.py` | All schemas valid, spec consistent, unit tests pass |
+| Phase 2 (Runner) | 7-12 | `test_event_integration.py`, `test_agent_telemetry.py` | Integration tests pass, all event types emitted |
+| Phase 3 (Hooks) | 13 | Updated `test_hook_emitter.py` + manual verification | Hook events appear in JSONL during test pipeline run |
+| Phase 4 (Control) | 14 | `test_control_webhook.py`, `test_webhook_integration.py` | Control actions work end-to-end |
+| Phase 5 (UI) | 15-17 | `events.test.js`, `settings-webhooks.test.js`, `settings-validator-webhooks.test.js`, `webhooks-test-endpoint.test.js` | UI receives events, settings tab CRUD works, test ping works |
+| Phase 6 (Validation) | 18-19 | Updated `test_event_emitter.py` (validation tests) | Invalid configs rejected gracefully |
 
 ---
 
 ## 10. Implementation Order and Dependencies
 
 ```
-Phase 1: Core Infrastructure (no runner changes, independently testable)
-  Task 1: types.py ─────────┐
-  Task 2: emitter.py ───────┤── all independent, can be parallel
-  Task 3: webhook.py ───────┤
-  Task 4: hook_emitter.py ──┘
+Phase 1: Specification & Core Infrastructure (independently testable)
+  Task 1: Webhook spec doc ──┐
+  Task 2: JSON schemas ──────┤── write-first (contract before code)
+  Task 3: types.py ──────────┤── depends on Task 2 (validates against schemas)
+  Task 4: emitter.py ────────┤── independent
+  Task 5: webhook.py ────────┤── independent
+  Task 6: hook_emitter.py ───┘── independent
 
 Phase 2: Runner Integration (depends on Phase 1)
-  Task 5: EventContext init ─── first (others depend on ctx)
-  Task 6: Stage lifecycle ──┐
-  Task 7: Agent telemetry ──┤── can be parallel after Task 5
-  Task 8: Bead lifecycle ───┤
-  Task 9: Test/review/loop ─┤
-  Task 10: CB/cost/git/etc ─┘
+  Task 7: EventContext init ─── first (others depend on ctx)
+  Task 8: Stage lifecycle ──┐
+  Task 9: Agent telemetry ──┤── can be parallel after Task 7
+  Task 10: Bead lifecycle ──┤
+  Task 11: Test/review/loop ┤
+  Task 12: CB/cost/git/etc ─┘
 
-Phase 3: Hook Integration (depends on Task 4)
-  Task 11: Hook events ─── can be parallel with Phase 2
+Phase 3: Hook Integration (depends on Task 6)
+  Task 13: Hook events ─── can be parallel with Phase 2
 
-Phase 4: Control Webhooks (depends on Phase 1 + Task 5)
-  Task 12: Control responses ─── after Phase 2
+Phase 4: Control Webhooks (depends on Phase 1 + Task 7)
+  Task 14: Control responses ─── after Phase 2
 
 Phase 5: UI and Archive Integration (depends on Phase 1)
-  Task 13: worca-ui WebSocket events ─── can be parallel with Phase 2
-  Task 14: Archive verification ─── after Phase 2
-  Task 15: Settings UI Webhooks tab ─── depends on Task 13 (shares ws.js)
+  Task 15: worca-ui WebSocket events ─── can be parallel with Phase 2
+  Task 16: Archive verification ─── after Phase 2
+  Task 17: Settings UI Webhooks tab ─── depends on Task 15 (shares ws.js)
 
 Phase 6: Validation and Defaults (depends on all above)
-  Task 16: Config validation (Python) ─── after Phase 4
-  Task 17: Settings defaults ─── any time
+  Task 18: Config validation (Python) ─── after Phase 4
+  Task 19: Settings defaults ─── any time
 ```
 
 **Suggested implementation sessions:**
-1. **Session 1:** Tasks 1-4 (core modules, fully testable in isolation)
-2. **Session 2:** Tasks 5-10 (runner integration, all events wired)
-3. **Session 3:** Tasks 11-12 (hooks + control webhooks)
-4. **Session 4:** Tasks 13-17 (UI, settings tab, validation, polish)
+1. **Session 1:** Tasks 1-6 (spec, schemas, core modules — contract-first, fully testable in isolation)
+2. **Session 2:** Tasks 7-12 (runner integration, all events wired)
+3. **Session 3:** Tasks 13-14 (hooks + control webhooks)
+4. **Session 4:** Tasks 15-19 (UI, settings tab, validation, polish)
 
 ---
 
