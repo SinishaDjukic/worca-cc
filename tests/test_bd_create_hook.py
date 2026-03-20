@@ -1,7 +1,8 @@
 """Tests for bd create run-label linking in post_tool_use hook."""
+import json
 import os
 import sys
-from unittest.mock import patch, call
+from unittest.mock import patch, call, MagicMock
 
 import pytest
 
@@ -101,3 +102,75 @@ class TestLinkBdCreateToRun:
                 {"stdout": "Some other output", "exit_code": 0},
             )
             mock_run.assert_not_called()
+
+
+class TestBeadCreatedEvent:
+    """Test bead.created event emission via hook_emitter in _link_bd_create_to_run."""
+
+    def setup_method(self):
+        os.environ.pop("WORCA_RUN_ID", None)
+        os.environ.pop("WORCA_EVENTS_PATH", None)
+
+    def teardown_method(self):
+        os.environ.pop("WORCA_RUN_ID", None)
+        os.environ.pop("WORCA_EVENTS_PATH", None)
+
+    def test_bead_created_event_emitted_on_successful_bd_create(self, tmp_path):
+        """bead.created event is emitted via hook_emitter after parsing bd create output."""
+        events_file = str(tmp_path / "events.jsonl")
+        os.environ["WORCA_RUN_ID"] = "20260320-120000"
+        os.environ["WORCA_EVENTS_PATH"] = events_file
+        with patch("hooks.post_tool_use.subprocess.run"):
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="Add auth"'},
+                {"stdout": "✓ Created issue: bd-xyz", "exit_code": 0},
+            )
+        assert os.path.exists(events_file)
+        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        types = [e["event_type"] for e in events]
+        assert "pipeline.bead.created" in types
+        created = next(e for e in events if e["event_type"] == "pipeline.bead.created")
+        assert created["payload"]["bead_id"] == "bd-xyz"
+
+    def test_bead_created_not_emitted_on_failed_create(self, tmp_path):
+        """bead.created is not emitted when bd create fails."""
+        events_file = str(tmp_path / "events.jsonl")
+        os.environ["WORCA_RUN_ID"] = "20260320-120000"
+        os.environ["WORCA_EVENTS_PATH"] = events_file
+        _link_bd_create_to_run(
+            "Bash",
+            {"command": 'bd create --title="Add auth"'},
+            {"stdout": "Error: failed", "exit_code": 1},
+        )
+        # No events should be written
+        assert not os.path.exists(events_file)
+
+    def test_bead_created_emitted_for_each_bead_in_chain(self, tmp_path):
+        """bead.created is emitted once per bead when multiple are created."""
+        events_file = str(tmp_path / "events.jsonl")
+        os.environ["WORCA_RUN_ID"] = "run-multi"
+        os.environ["WORCA_EVENTS_PATH"] = events_file
+        with patch("hooks.post_tool_use.subprocess.run"):
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="A" && bd create --title="B"'},
+                {"stdout": "✓ Created issue: bd-aaa\n✓ Created issue: bd-bbb", "exit_code": 0},
+            )
+        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        created_events = [e for e in events if e["event_type"] == "pipeline.bead.created"]
+        assert len(created_events) == 2
+        ids = {e["payload"]["bead_id"] for e in created_events}
+        assert ids == {"bd-aaa", "bd-bbb"}
+
+    def test_bead_created_noop_when_events_path_not_set(self, tmp_path):
+        """bead.created is silently skipped when WORCA_EVENTS_PATH is not set."""
+        os.environ["WORCA_RUN_ID"] = "run-001"
+        # WORCA_EVENTS_PATH not set
+        with patch("hooks.post_tool_use.subprocess.run"):
+            # Should not raise
+            _link_bd_create_to_run(
+                "Bash",
+                {"command": 'bd create --title="test"'},
+                {"stdout": "✓ Created issue: bd-zzz", "exit_code": 0},
+            )

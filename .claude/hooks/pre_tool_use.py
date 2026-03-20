@@ -15,6 +15,11 @@ except ImportError:
     # Worca package not available — allow all operations
     sys.exit(0)
 
+try:
+    from worca.events.hook_emitter import emit_from_hook
+except ImportError:
+    emit_from_hook = None
+
 
 def _needs_cwd_fix(tool_name, tool_input):
     """Check if this Bash command needs a project root cd prefix.
@@ -55,6 +60,12 @@ def main():
     # Guard check first
     code, reason = check_guard(tool_name, tool_input)
     if code != 0:
+        if emit_from_hook:
+            emit_from_hook("pipeline.hook.blocked", {
+                "agent": os.environ.get("WORCA_AGENT", ""),
+                "tool": tool_name,
+                "reason": reason,
+            })
         print(reason, file=sys.stderr)
         sys.exit(code)
 

@@ -10,6 +10,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from worca.hooks.tracking import check_dispatch
 
+try:
+    from worca.events.hook_emitter import emit_from_hook
+except ImportError:
+    emit_from_hook = None
+
 
 def main():
     data = json.load(sys.stdin)
@@ -18,6 +23,12 @@ def main():
 
     code, reason = check_dispatch(parent, child)
     if code != 0:
+        if emit_from_hook:
+            emit_from_hook("pipeline.hook.dispatch_blocked", {
+                "agent": parent,
+                "subagent_type": child,
+                "reason": reason,
+            })
         print(reason, file=sys.stderr)
     sys.exit(code)
 

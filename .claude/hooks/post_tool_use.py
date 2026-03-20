@@ -11,9 +11,14 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 try:
-    from worca.hooks.test_gate import check_test_gate
+    from worca.hooks.test_gate import check_test_gate, _state as _test_gate_state
 except ImportError:
     sys.exit(0)
+
+try:
+    from worca.events.hook_emitter import emit_from_hook
+except ImportError:
+    emit_from_hook = None
 
 
 def _link_bd_create_to_run(tool_name, tool_input, tool_response):
@@ -22,6 +27,7 @@ def _link_bd_create_to_run(tool_name, tool_input, tool_response):
     When WORCA_RUN_ID is set (pipeline is running), any successful `bd create`
     output is parsed for the issue ID, then `bd label add` tags it with
     ``run:<run_id>`` so multiple beads can share the same run reference.
+    Also emits a bead.created event via hook_emitter for each created bead.
     """
     if tool_name != "Bash":
         return
@@ -42,6 +48,11 @@ def _link_bd_create_to_run(tool_name, tool_input, tool_response):
             ["bd", "label", "add", issue_id, f"run:{run_id}"],
             capture_output=True, text=True
         )
+        try:
+            from worca.events.hook_emitter import emit_from_hook
+            emit_from_hook("pipeline.bead.created", {"bead_id": issue_id, "run_label": f"run:{run_id}"})
+        except Exception:
+            pass
 
 
 def main():
@@ -57,6 +68,12 @@ def main():
     exit_code = tool_response.get("exit_code", data.get("exit_code", 0))
     code, reason = check_test_gate(tool_name, tool_input, exit_code)
     if code != 0:
+        if emit_from_hook:
+            emit_from_hook("pipeline.hook.test_gate", {
+                "agent": os.environ.get("WORCA_AGENT", ""),
+                "strike": _test_gate_state["strikes"],
+                "action": "block",
+            })
         print(reason, file=sys.stderr)
     elif reason:
         print(reason, file=sys.stderr)
