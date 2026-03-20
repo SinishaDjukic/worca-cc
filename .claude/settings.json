@@ -102,7 +102,7 @@
       },
       "learner": {
         "model": "sonnet",
-        "max_turns": 100
+        "max_turns": 50
       }
     },
     "models": {
@@ -145,6 +145,17 @@
       "transient_retry_count": 3,
       "transient_retry_backoff_seconds": [10, 30, 90],
       "classifier_model": "haiku"
+    },
+    "events": {
+      "enabled": true,
+      "agent_telemetry": true,
+      "hook_events": true,
+      "rate_limit_ms": 1000
+    },
+    "webhooks": [],
+    "budget": {
+      "max_cost_usd": null,
+      "warning_pct": 80
     },
     "governance": {
       "guards": {
