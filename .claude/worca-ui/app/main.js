@@ -9,7 +9,7 @@ import { runListView } from './views/run-list.js';
 import { dashboardView } from './views/dashboard.js';
 import { settingsView, loadSettings } from './views/settings.js';
 import { newRunView, submitNewRun, getNewRunSubmitState } from './views/new-run.js';
-import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
+import { logViewerView, writeLogLine, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
 import { liveOutputView, writeLiveLogLine, writeLiveIterationSeparator, clearLiveTerminal, mountLiveTerminal, disposeLiveTerminal, updateActiveStage, getActiveStage } from './views/live-output.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle, Database } from './utils/icons.js';
@@ -167,12 +167,8 @@ ws.on('log-line', (payload) => {
     store.appendLog(payload);
     // Show iteration separator when iteration changes
     if (payload.iteration && payload.iteration > 1 && payload._iterStart) {
-      // Log History: only write separators when a specific stage is selected
-      if (logFilter !== '*') writeIterationSeparator(payload.iteration);
       writeLiveIterationSeparator(payload.iteration);
     }
-    // Log History: only write to the history terminal when a specific stage is selected
-    if (logFilter !== '*') writeLogLine(payload);
     writeLiveLogLine(payload);
   }
 });
@@ -180,7 +176,7 @@ ws.on('log-line', (payload) => {
 ws.on('log-bulk', (payload) => {
   if (payload && Array.isArray(payload.lines)) {
     for (const line of payload.lines) {
-      const entry = { stage: payload.stage, line };
+      const entry = { stage: payload.stage, iteration: payload.iteration, line, timestamp: new Date().toISOString() };
       store.appendLog(entry);
       // Log History: only write to the history terminal when a specific stage is selected
       if (logFilter !== '*') writeLogLine(entry);
