@@ -226,7 +226,7 @@ class TestRunLearnStageStandalone:
         status = {"stages": {}, "plan_file": None}
         pb = MagicMock()
 
-        with patch("worca.orchestrator.runner._run_learn_stage"):
+        with patch.object(mod, "_run_learn_stage"):
             mod._run_learn_stage_standalone(
                 status=status,
                 prompt_builder=pb,

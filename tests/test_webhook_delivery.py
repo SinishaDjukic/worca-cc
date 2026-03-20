@@ -515,7 +515,8 @@ class TestDeliverWebhookSync:
         from urllib.error import URLError
 
         wh = _wh(events=["*"])
-        with patch("urllib.request.urlopen", side_effect=URLError("timeout")):
+        with patch("urllib.request.urlopen", side_effect=URLError("timeout")), \
+             patch("worca.events.webhook.time.sleep"):
             result = deliver_webhook_sync(SAMPLE_EVENT, wh)
 
         assert result is None
@@ -529,7 +530,8 @@ class TestDeliverWebhookSync:
         resp.read.return_value = b"Service Unavailable"
 
         wh = _wh(events=["*"])
-        with patch("urllib.request.urlopen", return_value=resp):
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch("worca.events.webhook.time.sleep"):
             result = deliver_webhook_sync(SAMPLE_EVENT, wh)
 
         assert result is None
