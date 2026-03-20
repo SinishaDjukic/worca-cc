@@ -398,7 +398,7 @@ export function runDetailView(run, settings = {}, options = {}) {
 
   const branch = run.branch || run.work_request?.branch || '';
   const pr = run.pr_url || null;
-  const endTime = run.completed_at || _lastStageEnd(run.stages);
+  const endTime = run.completed_at || _lastStageEnd(run.stages) || (run.active ? new Date().toISOString() : null);
   const rawStages = run.stages || {};
   // Ensure preflight and learn exist (may be absent in old runs)
   let stages = rawStages;
