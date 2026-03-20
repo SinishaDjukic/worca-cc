@@ -162,6 +162,9 @@ ws.on('run-update', (payload) => {
   }
 });
 
+// Wiring contract: log-line → Live Output only (not Log History).
+// Log History is populated exclusively by log-bulk backfill on subscribe.
+// See main-log-line-handler.test.js — changes here may break contract tests.
 ws.on('log-line', (payload) => {
   if (payload) {
     store.appendLog(payload);
@@ -176,6 +179,7 @@ ws.on('log-line', (payload) => {
 ws.on('log-bulk', (payload) => {
   if (payload && Array.isArray(payload.lines)) {
     for (const line of payload.lines) {
+      // NB: timestamp is receive-time, not original write-time (log files lack per-line timestamps)
       const entry = { stage: payload.stage, iteration: payload.iteration, line, timestamp: new Date().toISOString() };
       store.appendLog(entry);
       // Log History: only write to the history terminal when a specific stage is selected
