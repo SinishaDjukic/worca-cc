@@ -321,6 +321,7 @@ export function attachWsServer(httpServer, config) {
                   stage: stage || 'orchestrator',
                   iteration: iteration ?? undefined,
                   line,
+                  timestamp: new Date().toISOString(),
                 });
               }
             }

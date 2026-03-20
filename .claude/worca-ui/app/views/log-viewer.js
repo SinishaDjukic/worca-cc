@@ -20,6 +20,20 @@ const DIM = '\x1b[2m';
 const stageColorCache = new Map();
 let colorIdx = 0;
 
+/**
+ * Convert an ISO timestamp to local HH:MM:SS.
+ * @param {string|null|undefined} iso
+ * @returns {string}
+ */
+export function formatTimestamp(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 function stageColor(stage) {
   if (!stageColorCache.has(stage)) {
     stageColorCache.set(stage, STAGE_COLORS[colorIdx % STAGE_COLORS.length]);
@@ -90,7 +104,7 @@ async function ensureTerminal(container) {
 
 export function writeLogLine(entry) {
   if (!terminal) return;
-  const ts = entry.timestamp ? `${DIM}${entry.timestamp}${RESET} ` : '';
+  const ts = entry.timestamp ? `${DIM}${formatTimestamp(entry.timestamp)}${RESET} ` : '';
   const stage = entry.stage ? `${stageColor(entry.stage)}[${entry.stage.toUpperCase()}]${RESET} ` : '';
   const msg = entry.line || entry;
   terminal.writeln(`${ts}${stage}${msg}`);
