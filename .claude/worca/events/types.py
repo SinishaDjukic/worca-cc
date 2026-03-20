@@ -1,9 +1,12 @@
 """
 worca.events.types — event type constants and payload builder helpers.
 
-All 52 event type strings are defined as module-level constants grouped by
+All 50 event type strings are defined as module-level constants grouped by
 category. One typed payload builder function exists per event type, ensuring
 consistent dict structure at every call site.
+
+Note: The learn stage uses the generic STAGE_STARTED/COMPLETED/FAILED events
+with stage="learn" in the payload, so no learn-specific event types are needed.
 
 No external runtime dependencies (stdlib only).
 """
@@ -115,12 +118,6 @@ PREFLIGHT_COMPLETED = "pipeline.preflight.completed"
 PREFLIGHT_SKIPPED   = "pipeline.preflight.skipped"
 
 # ---------------------------------------------------------------------------
-# Learn stage events (2 events)
-# ---------------------------------------------------------------------------
-
-LEARN_COMPLETED = "pipeline.learn.completed"
-LEARN_FAILED    = "pipeline.learn.failed"
-
 # ---------------------------------------------------------------------------
 # Control events — inbound responses (4 events)
 # ---------------------------------------------------------------------------
@@ -717,14 +714,6 @@ def preflight_skipped_payload(reason: str) -> dict:
 # ---------------------------------------------------------------------------
 # Learn stage payload builders
 # ---------------------------------------------------------------------------
-
-def learn_completed_payload(termination_type: str, learnings_path: str) -> dict:
-    return {"termination_type": termination_type, "learnings_path": learnings_path}
-
-
-def learn_failed_payload(error: str) -> dict:
-    return {"error": error}
-
 
 # ---------------------------------------------------------------------------
 # Control (inbound) payload builders

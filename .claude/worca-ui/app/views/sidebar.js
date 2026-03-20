@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Activity, Archive, Settings, Plus, List, Coins } from '../utils/icons.js';
+import { iconSvg, Activity, Archive, Settings, Plus, List, Coins, Zap } from '../utils/icons.js';
 
 export function sidebarView(state, route, connectionState, { onNavigate }) {
   const { runs, preferences, projectName } = state;
@@ -73,6 +73,14 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
             ${unsafeHTML(iconSvg(Coins, 16))}
             <span>Costs</span>
           </span>
+        </div>
+        <div class="sidebar-item ${route.section === 'webhooks' ? 'active' : ''}"
+             @click=${() => onNavigate('webhooks')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Zap, 16))}
+            <span>Webhooks</span>
+          </span>
+          ${(state.webhookInbox?.events?.length || 0) > 0 ? html`<sl-badge variant="warning" pill>${state.webhookInbox.events.length}</sl-badge>` : ''}
         </div>
       </div>
 

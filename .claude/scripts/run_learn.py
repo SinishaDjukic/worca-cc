@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.runner import _run_learn_stage
 from worca.state.status import load_status
+from worca.events.emitter import EventContext
 
 
 def create_parser():
@@ -35,22 +36,43 @@ def create_parser():
 
 
 def _run_learn_stage_standalone(status, prompt_builder, settings_path,
-                                run_dir, termination_type, termination_reason,
-                                msize):
+                                run_dir, run_id, termination_type,
+                                termination_reason, msize):
     """Wrapper that calls runner._run_learn_stage with a logs_dir.
 
-    Creates the logs directory if it doesn't exist, then delegates
-    to the same _run_learn_stage function used by the pipeline.
+    Creates the logs directory if it doesn't exist, creates an
+    EventContext for webhook emission, then delegates to the same
+    _run_learn_stage function used by the pipeline.
     """
     logs_dir = os.path.join(run_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
+
+    wr = status.get("work_request", {})
+    events_path = os.path.join(run_dir, "events.jsonl")
+    ctx = EventContext(
+        run_id=run_id,
+        branch=wr.get("branch", ""),
+        work_request=wr,
+        events_path=events_path,
+        settings_path=settings_path,
+    )
+
     _run_learn_stage(
         status, prompt_builder,
         settings_path, run_dir,
         termination_type, termination_reason,
         msize, logs_dir,
         force=True,
+        ctx=ctx,
     )
+
+    # Flush event log and wait for webhook daemon threads to complete
+    # before the process exits (daemon threads are killed on exit).
+    ctx.close()
+    import threading
+    for t in threading.enumerate():
+        if t.daemon and t is not threading.current_thread():
+            t.join(timeout=5)
 
 
 def run_learn(run_id, status_dir, settings_path, msize):
@@ -95,6 +117,7 @@ def run_learn(run_id, status_dir, settings_path, msize):
         prompt_builder=prompt_builder,
         settings_path=settings_path,
         run_dir=run_dir,
+        run_id=run_id,
         termination_type=termination_type,
         termination_reason=termination_reason,
         msize=msize,

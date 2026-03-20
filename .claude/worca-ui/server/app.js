@@ -9,6 +9,7 @@ import { validateSettingsPayload } from './settings-validator.js';
 import { startPipeline, stopPipeline, restartStage, getRunningPid } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
 import { listIssues, getIssue, dbExists } from './beads-reader.js';
+import { createInbox } from './webhook-inbox.js';
 
 function readFullSettings(settingsPath) {
   try {
@@ -24,6 +25,10 @@ export function createApp(options = {}) {
   const { settingsPath, worcaDir, projectRoot } = options;
 
   app.use(express.json());
+
+  // Webhook inbox — shared in-memory store (also exposed for WS server)
+  const webhookInbox = options.webhookInbox || createInbox();
+  app.locals.webhookInbox = webhookInbox;
 
   // GET /api/settings
   app.get('/api/settings', (_req, res) => {
@@ -487,6 +492,54 @@ export function createApp(options = {}) {
     } catch (err) {
       res.json({ ok: false, error: err.message, response_ms: Date.now() - startMs });
     }
+  });
+
+  // POST /api/webhooks/inbox — receive webhook events
+  app.post('/api/webhooks/inbox', (req, res) => {
+    const headers = {
+      'x-worca-event': req.headers['x-worca-event'] || '',
+      'x-worca-delivery': req.headers['x-worca-delivery'] || '',
+      'x-worca-signature': req.headers['x-worca-signature'] || '',
+      'content-type': req.headers['content-type'] || '',
+    };
+    const stored = webhookInbox.push({ headers, envelope: req.body || {} });
+    if (app.locals.broadcast) {
+      app.locals.broadcast('webhook-inbox-event', stored);
+    }
+    res.json({ control: { action: webhookInbox.getControlAction() } });
+  });
+
+  // GET /api/webhooks/inbox — list stored events
+  app.get('/api/webhooks/inbox', (req, res) => {
+    const since = req.query.since != null ? parseInt(req.query.since, 10) : undefined;
+    res.json({ ok: true, events: webhookInbox.list(since), controlAction: webhookInbox.getControlAction() });
+  });
+
+  // DELETE /api/webhooks/inbox — clear all events
+  app.delete('/api/webhooks/inbox', (_req, res) => {
+    webhookInbox.clear();
+    if (app.locals.broadcast) {
+      app.locals.broadcast('webhook-inbox-cleared', {});
+    }
+    res.json({ ok: true });
+  });
+
+  // GET /api/webhooks/inbox/control — get current control action
+  app.get('/api/webhooks/inbox/control', (_req, res) => {
+    res.json({ ok: true, action: webhookInbox.getControlAction() });
+  });
+
+  // PUT /api/webhooks/inbox/control — set control action
+  app.put('/api/webhooks/inbox/control', (req, res) => {
+    const { action } = req.body || {};
+    if (!['continue', 'pause', 'abort'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'action must be "continue", "pause", or "abort"' });
+    }
+    webhookInbox.setControlAction(action);
+    if (app.locals.broadcast) {
+      app.locals.broadcast('webhook-control-changed', { action });
+    }
+    res.json({ ok: true, action });
   });
 
   // GET /api/project-info

@@ -124,14 +124,14 @@
     "pricing": {
       "models": {
         "opus": {
-          "input_per_mtok": 15.0,
-          "output_per_mtok": 75.0,
+          "input_per_mtok": 15,
+          "output_per_mtok": 75,
           "cache_write_per_mtok": 18.75,
           "cache_read_per_mtok": 1.5
         },
         "sonnet": {
-          "input_per_mtok": 3.0,
-          "output_per_mtok": 15.0,
+          "input_per_mtok": 3,
+          "output_per_mtok": 15,
           "cache_write_per_mtok": 3.75,
           "cache_read_per_mtok": 0.3
         }
@@ -143,7 +143,11 @@
       "enabled": true,
       "max_consecutive_failures": 3,
       "transient_retry_count": 3,
-      "transient_retry_backoff_seconds": [10, 30, 90],
+      "transient_retry_backoff_seconds": [
+        10,
+        30,
+        90
+      ],
       "classifier_model": "haiku"
     },
     "events": {
@@ -152,9 +156,18 @@
       "hook_events": true,
       "rate_limit_ms": 1000
     },
-    "webhooks": [],
+    "webhooks": [
+      {
+        "url": "http://localhost:3400/api/webhooks/inbox",
+        "secret": "",
+        "events": [],
+        "timeout_ms": 10000,
+        "max_retries": 3,
+        "rate_limit_ms": 1000,
+        "control": false
+      }
+    ],
     "budget": {
-      "max_cost_usd": null,
       "warning_pct": 80
     },
     "governance": {
@@ -174,6 +187,10 @@
         "tester": [],
         "guardian": []
       }
+    },
+    "defaults": {
+      "msize": 1,
+      "mloops": 1
     }
   }
 }

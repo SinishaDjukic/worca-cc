@@ -26,16 +26,20 @@ function findProjectRoot(startDir) {
   return startDir; // fallback
 }
 
+import { createInbox } from './webhook-inbox.js';
+
 const projectRoot = findProjectRoot(process.cwd());
 const worcaDir = join(projectRoot, '.worca');
 const settingsPath = join(projectRoot, '.claude', 'settings.json');
-const app = createApp({ settingsPath, worcaDir, projectRoot });
+const webhookInbox = createInbox();
+const app = createApp({ settingsPath, worcaDir, projectRoot, webhookInbox });
 const server = createServer(app);
 
 const { broadcast, scheduleRefresh } = attachWsServer(server, {
   worcaDir,
   settingsPath,
-  prefsPath: join(homedir(), '.worca', 'preferences.json')
+  prefsPath: join(homedir(), '.worca', 'preferences.json'),
+  webhookInbox,
 });
 
 // Expose broadcast and scheduleRefresh to REST route handlers

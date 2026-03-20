@@ -90,9 +90,7 @@ PIPELINE_CONSTANTS = [
     # Preflight (2)
     ("PREFLIGHT_COMPLETED", "pipeline.preflight.completed"),
     ("PREFLIGHT_SKIPPED",   "pipeline.preflight.skipped"),
-    # Learn stage (2)
-    ("LEARN_COMPLETED", "pipeline.learn.completed"),
-    ("LEARN_FAILED",    "pipeline.learn.failed"),
+    # Learn stage uses generic STAGE_STARTED/COMPLETED/FAILED with stage="learn"
 ]
 
 CONTROL_CONSTANTS = [
@@ -134,16 +132,15 @@ def test_pipeline_constant_values_unique():
 def test_total_pipeline_constants():
     """There must be exactly 50 pipeline.* outbound constants.
 
-    Original 48 + 2 pause/resume state events added in T14:
-      pipeline.run.paused, pipeline.run.resumed_from_pause
+    Original 48 - 2 learn events (now use generic stage events) + 2 pause/resume = 48.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 50, (
-        f"Expected 50 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 48, (
+        f"Expected 48 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -222,9 +219,7 @@ EXPECTED_BUILDERS = [
     # pipeline.preflight.*
     "preflight_completed_payload",
     "preflight_skipped_payload",
-    # pipeline.learn.*
-    "learn_completed_payload",
-    "learn_failed_payload",
+    # pipeline.learn.* — removed; learn uses generic stage events
     # control.*
     "control_milestone_approve_payload",
     "control_pipeline_pause_payload",
@@ -677,22 +672,6 @@ def test_preflight_skipped_payload_required_fields():
     assert p["reason"] == "--skip-preflight flag"
 
 
-def test_learn_completed_payload_required_fields():
-    from worca.events.types import learn_completed_payload
-    p = learn_completed_payload(
-        termination_type="success",
-        learnings_path=".worca/runs/20260309-143200/learnings.md",
-    )
-    assert p["termination_type"] == "success"
-    assert p["learnings_path"] == ".worca/runs/20260309-143200/learnings.md"
-
-
-def test_learn_failed_payload_required_fields():
-    from worca.events.types import learn_failed_payload
-    p = learn_failed_payload(error="LEARN agent timed out")
-    assert p["error"] == "LEARN agent timed out"
-
-
 def test_control_milestone_approve_payload_required_fields():
     from worca.events.types import control_milestone_approve_payload
     p = control_milestone_approve_payload(milestone="plan_approved", approved=True)
@@ -817,8 +796,6 @@ def test_all_builders_return_dicts():
         "hook_dispatch_blocked_payload": dict(agent="implementer", subagent_type="Explore"),
         "preflight_completed_payload": dict(checks=[], all_passed=True),
         "preflight_skipped_payload": dict(reason="r"),
-        "learn_completed_payload": dict(termination_type="success", learnings_path="p"),
-        "learn_failed_payload": dict(error="e"),
         "control_milestone_approve_payload": dict(milestone="m", approved=True),
         "control_pipeline_pause_payload": dict(reason="r"),
         "control_pipeline_resume_payload": dict(reason="r"),

@@ -63,8 +63,6 @@ from worca.events.types import (
     git_branch_created_payload, git_pr_created_payload,
     PREFLIGHT_COMPLETED, PREFLIGHT_SKIPPED,
     preflight_completed_payload, preflight_skipped_payload,
-    LEARN_COMPLETED, LEARN_FAILED,
-    learn_completed_payload, learn_failed_payload,
 )
 
 
@@ -466,6 +464,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         return
     _log("Running learn stage...", "info")
     actual_status_path = os.path.join(run_dir, "status.json") if run_dir else ".worca/status.json"
+    learn_start = time.monotonic()
     try:
         # Feed context
         prompt_builder.update_context("full_status", status)
@@ -480,6 +479,12 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         status["stages"]["learn"] = {"status": "pending"}
         start_iteration(status, "learn", agent="learner",
                         model="sonnet", trigger="initial")
+
+        if ctx:
+            emit_event(ctx, STAGE_STARTED, stage_started_payload(
+                stage="learn", iteration=1, agent="learner",
+                model="sonnet", trigger="initial", max_turns=0,
+            ))
 
         rendered = prompt_builder.build("learn", 0)
         result, raw = run_stage(Stage.LEARN, {}, settings_path, msize=msize,
@@ -500,15 +505,20 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         save_status(status, actual_status_path)
         _log("Learnings saved", "ok")
         if ctx:
-            emit_event(ctx, LEARN_COMPLETED, learn_completed_payload(
-                termination_type=termination_type,
-                learnings_path=learnings_path or "",
+            duration_ms = int((time.monotonic() - learn_start) * 1000)
+            emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
+                stage="learn", iteration=1, duration_ms=duration_ms,
+                cost_usd=0.0, turns=0, outcome="success",
             ))
     except Exception as e:
         _log(f"Learn stage failed (non-fatal): {e}", "warn")
         if ctx:
             try:
-                emit_event(ctx, LEARN_FAILED, learn_failed_payload(error=str(e)))
+                elapsed_ms = int((time.monotonic() - learn_start) * 1000)
+                emit_event(ctx, STAGE_FAILED, stage_failed_payload(
+                    stage="learn", iteration=1, error=str(e),
+                    error_type=type(e).__name__, elapsed_ms=elapsed_ms,
+                ))
             except Exception:
                 pass
         try:

@@ -12,12 +12,13 @@ import { newRunView, submitNewRun, getNewRunSubmitState } from './views/new-run.
 import { logViewerView, writeLogLine, writeIterationSeparator, clearTerminal, mountTerminal, disposeTerminal, searchTerminal } from './views/log-viewer.js';
 import { liveOutputView, writeLiveLogLine, writeLiveIterationSeparator, clearLiveTerminal, mountLiveTerminal, disposeLiveTerminal, updateActiveStage, getActiveStage } from './views/live-output.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle, Database } from './utils/icons.js';
+import { iconSvg, ArrowLeft, Square, Play, Loader, AlertTriangle, Database, Zap, Trash2 } from './utils/icons.js';
 import { statusIcon } from './utils/status-badge.js';
 import { createNotificationManager } from './notifications.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { tokenCostsView } from './views/token-costs.js';
 import { learningsSectionView } from './views/learnings-panel.js';
+import { webhookInboxView } from './views/webhook-inbox.js';
 import { formatTitle } from './utils/title.js';
 
 // Register Shoelace components (tree-shaken — only imports what we use)
@@ -68,6 +69,10 @@ let costsTokenData = {}; // { runId: { stage: [ { inputTokens, outputTokens, ...
 let costsExpanded = null; // runId or null
 let costsFetched = false;
 let learnConfirmOpen = false;
+let webhookSelectedId = null;
+let webhookCategoryFilter = 'all';
+let webhookRunFilter = null;
+let webhookSearchTerm = '';
 
 function handleStageTabChange(stageKey, iterationNumber) {
   stageIterationTab.set(stageKey, iterationNumber);
@@ -243,6 +248,28 @@ ws.on('learn-started', (payload) => {
   }
 });
 
+// --- Webhook inbox events ---
+
+ws.on('webhook-inbox-event', (payload) => {
+  if (payload) {
+    const inbox = store.getState().webhookInbox;
+    store.setState({ webhookInbox: { ...inbox, events: [...inbox.events, payload] } });
+  }
+});
+
+ws.on('webhook-control-changed', (payload) => {
+  if (payload) {
+    const inbox = store.getState().webhookInbox;
+    store.setState({ webhookInbox: { ...inbox, controlAction: payload.action } });
+  }
+});
+
+ws.on('webhook-inbox-cleared', () => {
+  const inbox = store.getState().webhookInbox;
+  store.setState({ webhookInbox: { ...inbox, events: [] } });
+  webhookSelectedId = null;
+});
+
 // --- Connection handling ---
 
 ws.onConnection((state) => {
@@ -264,6 +291,10 @@ ws.onConnection((state) => {
 
     ws.send('list-beads-issues').then(payload => {
       store.setState({ beads: { issues: payload.issues || [], dbExists: payload.dbExists ?? false, dbPath: payload.dbPath || null, loading: false } });
+    }).catch(() => {});
+
+    ws.send('get-webhook-inbox').then(payload => {
+      store.setState({ webhookInbox: { events: payload.events || [], controlAction: payload.controlAction || 'continue' } });
     }).catch(() => {});
 
     fetchBeadsCounts();
@@ -593,6 +624,48 @@ function handleToggleCostRun(runId) {
   rerender();
 }
 
+// --- Webhook inbox actions ---
+
+function handleWebhookSelectEvent(id) {
+  webhookSelectedId = webhookSelectedId === id ? null : id;
+  rerender();
+}
+
+function handleWebhookCategoryFilter(cat) {
+  webhookCategoryFilter = cat;
+  rerender();
+}
+
+function handleWebhookRunFilter(runId) {
+  webhookRunFilter = runId;
+  rerender();
+}
+
+function handleWebhookSearch(term) {
+  webhookSearchTerm = term;
+  rerender();
+}
+
+function handleWebhookSetControl(action) {
+  ws.send('set-webhook-control', { action }).catch(() => {});
+}
+
+function handleWebhookClear() {
+  ws.send('clear-webhook-inbox').catch(() => {});
+  webhookSelectedId = null;
+}
+
+function handleWebhookCopyJson(event) {
+  try {
+    navigator.clipboard.writeText(JSON.stringify(event.envelope, null, 2));
+  } catch { /* ignore */ }
+}
+
+function handleWebhookDismissDetail() {
+  webhookSelectedId = null;
+  rerender();
+}
+
 // --- Learn actions ---
 
 function handleRunLearn() {
@@ -726,6 +799,17 @@ function contentHeaderView() {
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
       </button>`;
+  } else if (route.section === 'webhooks') {
+    title = 'Webhook Inbox';
+    showBack = true;
+    const inboxEvents = state.webhookInbox?.events || [];
+    if (inboxEvents.length > 0) {
+      actionButton = html`
+        <button class="action-btn action-btn--danger" @click=${handleWebhookClear}>
+          ${unsafeHTML(iconSvg(Trash2, 14))}
+          Clear
+        </button>`;
+    }
   } else if (route.section === 'costs') {
     title = 'Token & Cost Dashboard';
     showBack = true;
@@ -819,6 +903,23 @@ function mainContentView() {
         </div>
       </div>
     `;
+  }
+
+  if (route.section === 'webhooks') {
+    return webhookInboxView(state, {
+      selectedId: webhookSelectedId,
+      categoryFilter: webhookCategoryFilter,
+      runFilter: webhookRunFilter,
+      searchTerm: webhookSearchTerm,
+      onSelectEvent: handleWebhookSelectEvent,
+      onCategoryFilter: handleWebhookCategoryFilter,
+      onRunFilter: handleWebhookRunFilter,
+      onSearch: handleWebhookSearch,
+      onSetControl: handleWebhookSetControl,
+      onClear: handleWebhookClear,
+      onCopyJson: handleWebhookCopyJson,
+      onDismissDetail: handleWebhookDismissDetail,
+    });
   }
 
   if (route.section === 'costs') {

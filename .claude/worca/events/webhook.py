@@ -44,10 +44,9 @@ _rate_lock = threading.Lock()
 def _matches_filter(event_type: str, patterns: Optional[list]) -> bool:
     """Return True if event_type matches any of the fnmatch patterns.
 
-    None means no filter configured — all events match.
-    Empty list matches nothing.
+    None or empty list means no filter configured — all events match.
     """
-    if patterns is None:
+    if not patterns:
         return True
     return any(fnmatch(event_type, p) for p in patterns)
 

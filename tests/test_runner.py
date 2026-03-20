@@ -2838,7 +2838,7 @@ def _make_learn_settings(tmp_path):
 
 
 def test_learn_completed_event_emitted(tmp_path):
-    """pipeline.learn.completed emitted after learn stage runs successfully."""
+    """pipeline.stage.completed emitted for learn stage after success."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -2869,12 +2869,14 @@ def test_learn_completed_event_emitted(tmp_path):
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
     events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
-    types = [e["event_type"] for e in events]
-    assert "pipeline.learn.completed" in types
+    learn_events = [e for e in events
+                    if e["event_type"] == "pipeline.stage.completed"
+                    and e["payload"].get("stage") == "learn"]
+    assert len(learn_events) == 1
 
 
 def test_learn_completed_payload_fields(tmp_path):
-    """pipeline.learn.completed payload has termination_type and learnings_path."""
+    """pipeline.stage.completed for learn has standard stage payload fields."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -2903,15 +2905,57 @@ def test_learn_completed_payload_fields(tmp_path):
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
     events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
-    evt = next(e for e in events if e["event_type"] == "pipeline.learn.completed")
+    evt = next(e for e in events
+               if e["event_type"] == "pipeline.stage.completed"
+               and e["payload"].get("stage") == "learn")
     p = evt["payload"]
-    assert "termination_type" in p
-    assert "learnings_path" in p
-    assert p["termination_type"] == "success"
+    assert p["stage"] == "learn"
+    assert p["iteration"] == 1
+    assert p["outcome"] == "success"
+    assert "duration_ms" in p
+
+
+def test_learn_started_event_emitted(tmp_path):
+    """pipeline.stage.started emitted for learn stage."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings_path = _make_learn_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Learn started test")
+
+    def mock_run_stage(stage, context, sp, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"summary": "ok"}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner.create_branch"):
+            with patch("worca.orchestrator.runner._write_pid"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    with patch("worca.orchestrator.runner.is_learn_enabled",
+                               return_value=True):
+                        result = run_pipeline(
+                            wr, plan_file=str(plan),
+                            settings_path=settings_path,
+                            status_path=status_path,
+                        )
+
+    events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
+    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    learn_started = [e for e in events
+                     if e["event_type"] == "pipeline.stage.started"
+                     and e["payload"].get("stage") == "learn"]
+    assert len(learn_started) == 1
+    p = learn_started[0]["payload"]
+    assert p["agent"] == "learner"
+    assert p["model"] == "sonnet"
 
 
 def test_learn_failed_event_emitted(tmp_path):
-    """pipeline.learn.failed emitted when learn stage raises an exception."""
+    """pipeline.stage.failed emitted when learn stage raises an exception."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -2921,8 +2965,6 @@ def test_learn_failed_event_emitted(tmp_path):
     worca_dir.mkdir(exist_ok=True)
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Learn failed test")
-
-    call_count = [0]
 
     def mock_run_stage(stage, context, sp, msize=1, iteration=1,
                        prompt_override=None, **kwargs):
@@ -2944,12 +2986,14 @@ def test_learn_failed_event_emitted(tmp_path):
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
     events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
-    types = [e["event_type"] for e in events]
-    assert "pipeline.learn.failed" in types
+    learn_failed = [e for e in events
+                    if e["event_type"] == "pipeline.stage.failed"
+                    and e["payload"].get("stage") == "learn"]
+    assert len(learn_failed) == 1
 
 
 def test_learn_failed_payload_has_error(tmp_path):
-    """pipeline.learn.failed payload has error field."""
+    """pipeline.stage.failed for learn has error and error_type fields."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -2980,7 +3024,10 @@ def test_learn_failed_payload_has_error(tmp_path):
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
     events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
-    evt = next(e for e in events if e["event_type"] == "pipeline.learn.failed")
+    evt = next(e for e in events
+               if e["event_type"] == "pipeline.stage.failed"
+               and e["payload"].get("stage") == "learn")
     p = evt["payload"]
     assert "error" in p
     assert "learn error details" in p["error"]
+    assert p["error_type"] == "RuntimeError"

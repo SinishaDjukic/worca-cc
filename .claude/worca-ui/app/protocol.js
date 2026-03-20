@@ -14,12 +14,15 @@ export const MESSAGE_TYPES = [
   'stop-run', 'resume-run',
   'list-beads-issues', 'start-beads-issue', 'list-beads-by-run',
   'list-beads-counts', 'list-beads-refs', 'list-beads-unlinked',
+  // Webhook inbox
+  'get-webhook-inbox', 'set-webhook-control', 'clear-webhook-inbox',
   // Server → Client events
   'run-snapshot', 'run-update', 'runs-list',
   'log-line', 'log-bulk',
   'preferences',
   'run-started', 'run-stopped', 'stage-restarted',
-  'beads-update'
+  'beads-update',
+  'webhook-inbox-event', 'webhook-control-changed', 'webhook-inbox-cleared'
 ];
 
 export function nextId() {

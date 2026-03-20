@@ -82,8 +82,9 @@ class TestMatchesFilter:
     def test_multiple_patterns_first_matches(self):
         assert _matches_filter("pipeline.bead.created", ["pipeline.run.*", "pipeline.bead.*"]) is True
 
-    def test_empty_filter_list_matches_nothing(self):
-        assert _matches_filter("pipeline.run.started", []) is False
+    def test_empty_filter_list_matches_everything(self):
+        """Empty list means no filter configured — deliver all events."""
+        assert _matches_filter("pipeline.run.started", []) is True
 
     def test_none_filter_matches_everything(self):
         """None means no filter configured — deliver all events."""

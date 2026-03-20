@@ -23,7 +23,7 @@
 
 ### 1.1 What Are Worca Pipeline Events?
 
-Worca emits **52 structured events** as it runs your AI-powered software development pipeline. These events cover every meaningful moment — from when a pipeline run starts to when individual test cases fail, code is committed, and beads (work items) complete. Events are emitted in real time, ordered by timestamp, and written to an append-only JSONL file at `.worca/runs/{run_id}/events.jsonl`.
+Worca emits **50 structured events** as it runs your AI-powered software development pipeline. These events cover every meaningful moment — from when a pipeline run starts to when individual test cases fail, code is committed, and beads (work items) complete. Events are emitted in real time, ordered by timestamp, and written to an append-only JSONL file at `.worca/runs/{run_id}/events.jsonl`.
 
 Event categories:
 
@@ -41,8 +41,7 @@ Event categories:
 | Milestones & loops | 3 |
 | Hook & governance | 3 |
 | Preflight | 2 |
-| Learn stage | 2 |
-| **Total** | **52** |
+| **Total** | **50** |
 
 ### 1.2 How Webhook Delivery Works
 
@@ -855,18 +854,15 @@ Emitted when a subagent dispatch is denied by governance rules.
 
 ### 4.13 Learn Stage
 
-#### `pipeline.learn.completed`
+The learn stage uses the same generic stage lifecycle events as all other stages (see [Section 4.2](#42-stage-lifecycle)), with `stage="learn"` in every payload.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `termination_type` | string | Yes | How the run ended before learning (e.g. `success`, `failure`, `interrupted`). |
-| `learnings_path` | string | Yes | Path to the saved learnings file. |
+| Event | Meaning |
+|---|---|
+| `pipeline.stage.started` with `stage="learn"` | Learn stage has begun post-run analysis. |
+| `pipeline.stage.completed` with `stage="learn"` | Learnings were saved to `learnings.json`. |
+| `pipeline.stage.failed` with `stage="learn"` | Learn stage encountered an error (non-fatal). |
 
-#### `pipeline.learn.failed`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `error` | string | Yes | Error message explaining why the learn stage failed. |
+To subscribe to learn stage events specifically, use `"pipeline.stage.*"` and filter client-side on `payload.stage == "learn"`.
 
 ---
 
@@ -1043,15 +1039,17 @@ The `events` array uses glob-style pattern matching (`fnmatch`):
 
 | Pattern | Matches |
 |---|---|
-| `"*"` | All 52 event types |
+| `"*"` | All 50 event types |
 | `"pipeline.run.*"` | All 5 pipeline lifecycle events |
 | `"pipeline.stage.*"` | All 4 stage lifecycle events |
 | `"pipeline.agent.*"` | All 5 agent telemetry events |
 | `"pipeline.run.failed"` | Only `pipeline.run.failed` |
-| `"pipeline.*.failed"` | `pipeline.run.failed`, `pipeline.stage.failed`, `pipeline.bead.failed`, `pipeline.learn.failed` |
+| `"pipeline.*.failed"` | `pipeline.run.failed`, `pipeline.stage.failed`, `pipeline.bead.failed` |
 | `"pipeline.cost.*"` | All 3 cost events |
 
 Multiple patterns are OR-combined — the event is delivered if it matches **any** pattern.
+
+**Note:** If `events` is omitted or set to an empty array (`[]`), all events are delivered — equivalent to `["*"]`. To suppress all deliveries, set `"enabled": false` instead.
 
 ### 6.4 Validation Rules
 
@@ -1295,7 +1293,6 @@ Formal JSON Schema (Draft 2020-12) definitions are provided for machine-readable
 | [`schemas/events/pipeline.loop.schema.json`](schemas/events/pipeline.loop.schema.json) | Loop events (triggered, exhausted) |
 | [`schemas/events/pipeline.hook.schema.json`](schemas/events/pipeline.hook.schema.json) | Hook governance events (blocked, test_gate, dispatch_blocked) |
 | [`schemas/events/pipeline.preflight.schema.json`](schemas/events/pipeline.preflight.schema.json) | Preflight events (completed, skipped) |
-| [`schemas/events/pipeline.learn.schema.json`](schemas/events/pipeline.learn.schema.json) | Learn stage events (completed, failed) |
 | [`schemas/control-response.schema.json`](schemas/control-response.schema.json) | Control webhook response format |
 
 ### Usage Example (Python, jsonschema library)

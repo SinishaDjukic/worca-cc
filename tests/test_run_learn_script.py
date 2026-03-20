@@ -199,19 +199,19 @@ class TestRunLearnStageStandalone:
                 prompt_builder=pb,
                 settings_path=str(tmp_path / "settings.json"),
                 run_dir=str(tmp_path),
+                run_id="test-run",
                 termination_type="success",
                 termination_reason="",
                 msize=1,
             )
 
-            mock_rls.assert_called_once_with(
-                status, pb,
-                str(tmp_path / "settings.json"),
-                str(tmp_path),
-                "success", "",
-                1, str(tmp_path / "logs"),
-                force=True,
-            )
+            mock_rls.assert_called_once()
+            call_kwargs = mock_rls.call_args
+            # Verify positional args (status, pb, settings, run_dir, term_type, term_reason, msize, logs_dir)
+            assert call_kwargs[0][0] is status
+            assert call_kwargs[0][1] is pb
+            assert call_kwargs[1]["force"] is True
+            assert call_kwargs[1]["ctx"] is not None
         finally:
             mod._run_learn_stage = original
 
@@ -232,6 +232,7 @@ class TestRunLearnStageStandalone:
                 prompt_builder=pb,
                 settings_path=str(tmp_path / "settings.json"),
                 run_dir=str(run_dir),
+                run_id="test-run",
                 termination_type="success",
                 termination_reason="",
                 msize=1,

@@ -65,7 +65,7 @@ function matchesGlob(pattern, str) {
  * @param {{ worcaDir: string, settingsPath: string, prefsPath: string }} config
  */
 export function attachWsServer(httpServer, config) {
-  const { worcaDir, settingsPath, prefsPath } = config;
+  const { worcaDir, settingsPath, prefsPath, webhookInbox } = config;
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
   /** @type {WeakMap<import('ws').WebSocket, { runId: string | null, logStage: string | null, eventsRunId: string | null }>} */
@@ -973,6 +973,37 @@ export function attachWsServer(httpServer, config) {
       s.eventsRunId = null;
       if (prevRunId) maybeCloseEventWatcher(prevRunId);
       ws.send(JSON.stringify(makeOk(req, { unsubscribed: true })));
+      return;
+    }
+
+    // get-webhook-inbox
+    if (req.type === 'get-webhook-inbox') {
+      if (!webhookInbox) {
+        ws.send(JSON.stringify(makeOk(req, { events: [], controlAction: 'continue' })));
+        return;
+      }
+      ws.send(JSON.stringify(makeOk(req, { events: webhookInbox.list(), controlAction: webhookInbox.getControlAction() })));
+      return;
+    }
+
+    // set-webhook-control
+    if (req.type === 'set-webhook-control') {
+      const { action } = req.payload || {};
+      if (!webhookInbox || !['continue', 'pause', 'abort'].includes(action)) {
+        ws.send(JSON.stringify(makeError(req, 'bad_request', 'action must be "continue", "pause", or "abort"')));
+        return;
+      }
+      webhookInbox.setControlAction(action);
+      broadcast('webhook-control-changed', { action });
+      ws.send(JSON.stringify(makeOk(req, { action })));
+      return;
+    }
+
+    // clear-webhook-inbox
+    if (req.type === 'clear-webhook-inbox') {
+      if (webhookInbox) webhookInbox.clear();
+      broadcast('webhook-inbox-cleared', {});
+      ws.send(JSON.stringify(makeOk(req, { cleared: true })));
       return;
     }
 

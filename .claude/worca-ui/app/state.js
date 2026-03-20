@@ -15,7 +15,8 @@ export function createStore(initial = {}) {
       sidebarCollapsed: initial.preferences?.sidebarCollapsed ?? false,
       notifications: initial.preferences?.notifications ?? null
     },
-    beads: initial.beads ?? { issues: [], dbExists: false, loading: false }
+    beads: initial.beads ?? { issues: [], dbExists: false, loading: false },
+    webhookInbox: initial.webhookInbox ?? { events: [], controlAction: 'continue' }
   };
 
   const subs = new Set();
@@ -43,7 +44,8 @@ export function createStore(initial = {}) {
         next.preferences.theme === state.preferences.theme &&
         next.preferences.sidebarCollapsed === state.preferences.sidebarCollapsed &&
         next.preferences.notifications === state.preferences.notifications &&
-        next.beads === state.beads
+        next.beads === state.beads &&
+        next.webhookInbox === state.webhookInbox
       ) return;
       state = next;
       emit();
