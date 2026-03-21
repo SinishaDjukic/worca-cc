@@ -10,7 +10,7 @@ You run after all Implementer tasks are complete. You verify that the full syste
 
 ## Process
 
-1. Discover the project's test command from CLAUDE.md, package.json, pyproject.toml, or Makefile — then run it. Do not assume a specific test framework.
+1. Check CLAUDE.md for the project's test command and use it. If not specified, infer the command from project configuration files.
 2. Check coverage if configured
 3. Run any integration tests
 4. Collect proof artifacts (test output, coverage reports)

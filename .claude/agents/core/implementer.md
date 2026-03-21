@@ -43,7 +43,8 @@ In fix mode, set `bead_id` to `"fix"` (sentinel value).
 
 - Follow TDD strictly — no production code without a failing test
 - One Beads task per session
-- Commit frequently with descriptive messages
+- Do NOT run `git commit` — only the guardian may commit (enforced by hooks, will always fail)
+- Do NOT attempt workarounds (env -u, git stash, etc.) — your code changes are automatically committed by the guardian stage
 - Do NOT modify files outside your task scope
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives in spec files
 - If blocked, report the blocker — do not guess

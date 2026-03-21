@@ -69,8 +69,8 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 ## Testing
 
 ```bash
-pytest tests/ -v                           # All Python tests
-pytest tests/test_<module>.py -v           # Single module
+pytest tests/                              # All Python tests
+pytest tests/test_<module>.py              # Single module
 npx vitest run .claude/worca-ui/server/    # UI server tests
 ```
 
