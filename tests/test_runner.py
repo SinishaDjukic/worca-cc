@@ -3031,3 +3031,142 @@ def test_learn_failed_payload_has_error(tmp_path):
     assert "error" in p
     assert "learn error details" in p["error"]
     assert p["error_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# T3: OverlayResolver integration in _render_agent_templates
+# ---------------------------------------------------------------------------
+
+def test_render_agent_templates_accepts_overrides_dir(tmp_path, monkeypatch):
+    """_render_agent_templates accepts overrides_dir parameter."""
+    src_dir = tmp_path / "core"
+    src_dir.mkdir()
+    (src_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
+    dst_dir = tmp_path / "run"
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".claude" / "agents" / "core").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "core" / "implementer.md").write_text(
+        "## Rules\n\n- Core rule.\n"
+    )
+
+    custom_overrides = tmp_path / "custom_overrides"
+    custom_overrides.mkdir()
+
+    # Should not raise — overrides_dir parameter accepted
+    _render_agent_templates(str(dst_dir), {"plan_file": "p.md", "run_id": "r1", "branch": "b", "title": "T"},
+                            overrides_dir=str(custom_overrides))
+
+
+def test_render_agent_templates_applies_overlay(tmp_path, monkeypatch):
+    """_render_agent_templates applies overlay when overlay file exists."""
+    monkeypatch.chdir(tmp_path)
+
+    core_dir = tmp_path / ".claude" / "agents" / "core"
+    core_dir.mkdir(parents=True)
+    (core_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
+
+    overrides_dir = tmp_path / "overrides"
+    overrides_dir.mkdir()
+    (overrides_dir / "implementer.md").write_text("## Override: Rules\n\n- Extra rule.\n")
+
+    run_dir = tmp_path / "run"
+    _render_agent_templates(
+        str(run_dir),
+        {"plan_file": "p.md", "run_id": "r1", "branch": "b", "title": "T"},
+        overrides_dir=str(overrides_dir),
+    )
+
+    rendered = (run_dir / "agents" / "implementer.md").read_text()
+    assert "Core rule" in rendered
+    assert "Extra rule" in rendered
+
+
+def test_render_agent_templates_no_overlay_unchanged(tmp_path, monkeypatch):
+    """_render_agent_templates leaves output unchanged when no overlay exists."""
+    monkeypatch.chdir(tmp_path)
+
+    core_dir = tmp_path / ".claude" / "agents" / "core"
+    core_dir.mkdir(parents=True)
+    (core_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
+
+    # Empty overrides dir (no overlay file for implementer)
+    overrides_dir = tmp_path / "overrides"
+    overrides_dir.mkdir()
+
+    run_dir = tmp_path / "run"
+    _render_agent_templates(
+        str(run_dir),
+        {"plan_file": "p.md", "run_id": "r1", "branch": "b", "title": "T"},
+        overrides_dir=str(overrides_dir),
+    )
+
+    rendered = (run_dir / "agents" / "implementer.md").read_text()
+    assert rendered == "## Rules\n\n- Core rule.\n"
+
+
+def test_settings_json_has_agent_overrides_dir():
+    """settings.json worca namespace must declare agent_overrides_dir adjacent to plan_path_template."""
+    import pathlib
+    settings_path = pathlib.Path(__file__).parent.parent / ".claude" / "settings.json"
+    with settings_path.open() as f:
+        settings = json.load(f)
+    worca = settings.get("worca", {})
+    assert "agent_overrides_dir" in worca, (
+        "settings.json missing 'agent_overrides_dir' key under 'worca'"
+    )
+    assert worca["agent_overrides_dir"] == ".claude/agents/overrides", (
+        f"Expected '.claude/agents/overrides', got {worca['agent_overrides_dir']!r}"
+    )
+
+
+def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypatch):
+    """run_pipeline passes agent_overrides_dir from settings to _render_agent_templates."""
+    from worca.orchestrator.work_request import WorkRequest as _WR
+
+    custom_overrides = str(tmp_path / "my_overrides")
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "worca": {
+            "agent_overrides_dir": custom_overrides,
+            "stages": {
+                "plan": {"agent": "planner", "enabled": True},
+                "coordinate": {"agent": "coordinator", "enabled": False},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"planner": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }))
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+
+    monkeypatch.chdir(tmp_path)
+
+    captured_calls = []
+
+    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents/overrides"):
+        captured_calls.append(overrides_dir)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"approved": True}, {"type": "result"}
+
+    wr = _WR(source_type="prompt", title="Add user auth")
+
+    with patch("worca.orchestrator.runner._render_agent_templates", side_effect=fake_render), \
+         patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        run_pipeline(wr, settings_path=str(settings_path), status_path=status_path)
+
+    assert any(c == custom_overrides for c in captured_calls), (
+        f"Expected agent_overrides_dir={custom_overrides!r} to be passed; got calls: {captured_calls}"
+    )

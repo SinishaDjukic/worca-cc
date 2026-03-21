@@ -121,6 +121,7 @@
       "deploy_approval": true
     },
     "plan_path_template": "docs/plans/{timestamp}-{title_slug}.md",
+    "agent_overrides_dir": ".claude/agents/overrides",
     "pricing": {
       "models": {
         "opus": {
@@ -156,7 +157,17 @@
       "hook_events": true,
       "rate_limit_ms": 1000
     },
-    "webhooks": [],
+    "webhooks": [
+      {
+        "url": "http://localhost:3400/api/webhooks/inbox",
+        "secret": "",
+        "events": [],
+        "timeout_ms": 10000,
+        "max_retries": 3,
+        "rate_limit_ms": 1000,
+        "control": false
+      }
+    ],
     "budget": {
       "warning_pct": 80
     },

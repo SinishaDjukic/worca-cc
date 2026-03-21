@@ -18,6 +18,7 @@ from worca.orchestrator.error_classifier import (
     should_halt, get_retry_delay, get_circuit_breaker_state,
     CATEGORY_TRANSIENT,
 )
+from worca.orchestrator.overlay import OverlayResolver
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
     Stage, can_transition, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
@@ -156,14 +157,18 @@ def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
     return template.format(timestamp=timestamp, title_slug=_slugify(title))
 
 
-def _render_agent_templates(run_dir: str, template_vars: dict) -> None:
+def _render_agent_templates(run_dir: str, template_vars: dict,
+                            overrides_dir: str = ".claude/agents/overrides") -> None:
     """Read agent .md templates from .claude/agents/core/, replace placeholders,
-    write rendered versions to {run_dir}/agents/."""
+    apply project overlays from overrides_dir, write results to {run_dir}/agents/."""
     src_dir = ".claude/agents/core"
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
     if not os.path.isdir(src_dir):
         return
+
+    resolver = OverlayResolver(overrides_dir=overrides_dir)
+
     for filename in os.listdir(src_dir):
         if not filename.endswith(".md"):
             continue
@@ -171,6 +176,8 @@ def _render_agent_templates(run_dir: str, template_vars: dict) -> None:
             content = f.read()
         for key, value in template_vars.items():
             content = content.replace(f"{{{key}}}", str(value))
+        agent_name = filename[:-3]  # strip .md
+        content = resolver.resolve(agent_name, content)
         with open(os.path.join(dst_dir, filename), "w") as f:
             f.write(content)
 
@@ -1087,12 +1094,20 @@ def run_pipeline(
 
             # Render agent templates with plan_file and other vars
             if run_dir:
+                try:
+                    with open(settings_path) as f:
+                        _render_settings = json.load(f)
+                    overrides_dir = _render_settings.get("worca", {}).get(
+                        "agent_overrides_dir", ".claude/agents/overrides"
+                    )
+                except (FileNotFoundError, json.JSONDecodeError):
+                    overrides_dir = ".claude/agents/overrides"
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
                     "branch": branch_name,
                     "title": work_request.title,
-                })
+                }, overrides_dir=overrides_dir)
 
             save_status(status, actual_status_path)
 

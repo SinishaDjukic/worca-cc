@@ -40,6 +40,7 @@ In fix mode, set `bead_id` to `"fix"` (sentinel value).
 
 ## Rules
 
+<!-- governance -->
 - Follow the project's testing approach as documented in CLAUDE.md (TDD by default if not specified)
 - One Beads task per session
 - Do NOT run `git commit` — only the guardian may commit (enforced by hooks, will always fail)

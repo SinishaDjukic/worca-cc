@@ -25,6 +25,7 @@ Produce a structured result following the `coordinate.json` schema.
 
 ## Rules
 
+<!-- governance -->
 - Do NOT write implementation code
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives in spec files
 - Each task must be completable by a single Implementer in one session

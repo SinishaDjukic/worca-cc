@@ -28,6 +28,7 @@ Produce a structured plan following the `plan.json` schema.
 
 ## Rules
 
+<!-- governance -->
 - Do NOT write implementation code — guard hooks WILL BLOCK any Write/Edit to source files
 - Do NOT run tests — test commands are blocked by guard hooks
 - Do NOT create branches or worktrees
