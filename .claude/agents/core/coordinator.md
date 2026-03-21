@@ -34,3 +34,4 @@ Produce a structured result following the `coordinate.json` schema.
 - You MUST create Beads tasks with `bd create` — this is your primary job. Do not skip this step.
 - ALWAYS pass `--labels "run:{run_id}"` when creating tasks so they are linked to this pipeline run.
 - Verify tasks were created by running `bd list` before producing output
+- Create tasks one at a time (one `bd create` per tool call). Do NOT batch multiple bd commands in parallel.
