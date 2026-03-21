@@ -3,6 +3,8 @@ import json
 from enum import Enum
 from typing import Optional
 
+from worca.utils.settings import load_settings
+
 
 class Stage(Enum):
     """Pipeline stages in order."""
@@ -59,12 +61,8 @@ STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, S
 
 
 def _read_settings(settings_path: str) -> dict:
-    """Read and parse settings.json, returning empty dict on failure."""
-    try:
-        with open(settings_path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    """Read and parse settings, with .local.json merge support."""
+    return load_settings(settings_path)
 
 
 _DEFAULT_MODEL_MAP = {

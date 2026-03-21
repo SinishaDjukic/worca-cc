@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings, Bell, Plus, X, Zap } from '../utils/icons.js';
+import { iconSvg, Users, Shield, GitBranch, ChevronRight, Save, Settings, Bell, Plus, X, Zap, RefreshCw } from '../utils/icons.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 const STAGE_AGENT_MAP = {
@@ -168,6 +168,35 @@ async function saveSettings(data, rerender) {
   }
 }
 
+async function resetSection(section, rerender) {
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(`/api/settings/${section}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    settingsData = { worca: result.worca, permissions: result.permissions };
+    // Re-apply defaults after reset
+    await loadSettings();
+    saveStatus = 'success';
+    saveMessage = `${section.charAt(0).toUpperCase() + section.slice(1)} reset to defaults`;
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = 'Failed to reset: ' + err.message;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
 // --- Read form values from DOM ---
 
 function readAgentsFromDom() {
@@ -305,10 +334,14 @@ function agentsTab(worca, rerender) {
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const agents = readAgentsFromDom();
-          saveSettings({ worca: { ...settingsData.worca, agents }, permissions: settingsData.permissions }, rerender);
+          saveSettings({ worca: { agents } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Agents
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => resetSection('agents', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset to Default
         </sl-button>
       </div>
     </div>
@@ -421,10 +454,14 @@ function pipelineTab(worca, rerender) {
           const { loops, plan_path_template, defaults } = readPipelineFromDom();
           const stages = readStagesFromDom();
           stages.preflight = readPreflightFromDom();
-          saveSettings({ worca: { ...settingsData.worca, loops, stages, plan_path_template, defaults }, permissions: settingsData.permissions }, rerender);
+          saveSettings({ worca: { loops, stages, plan_path_template, defaults } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Pipeline
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => resetSection('pipeline', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset to Default
         </sl-button>
       </div>
     </div>
@@ -496,10 +533,14 @@ function governanceTab(worca, permissions, rerender) {
         <sl-button variant="primary" size="small" @click=${() => {
           const governance = readGovernanceFromDom();
           const allow = readPermissionsFromDom();
-          saveSettings({ worca: { ...settingsData.worca, governance }, permissions: { allow } }, rerender);
+          saveSettings({ worca: { governance }, permissions: { allow } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Governance
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => resetSection('governance', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset to Default
         </sl-button>
       </div>
     </div>
@@ -562,10 +603,14 @@ function preferencesTab(preferences, worca, { onThemeToggle, rerender }) {
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const pricingData = readPricingFromDom();
-          saveSettings({ worca: { ...settingsData.worca, pricing: pricingData }, permissions: settingsData.permissions }, rerender);
+          saveSettings({ worca: { pricing: pricingData } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Pricing
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => resetSection('pricing', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset to Default
         </sl-button>
       </div>
     </div>
@@ -836,12 +881,15 @@ function webhooksTab(worca, rerender) {
           const budgetConfig = readBudgetFromDom();
           const webhooksConfig = readWebhooksFromDom();
           saveSettings({
-            worca: { ...settingsData.worca, events: eventsConfig, budget: budgetConfig, webhooks: webhooksConfig },
-            permissions: settingsData.permissions
+            worca: { events: eventsConfig, budget: budgetConfig, webhooks: webhooksConfig }
           }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save Webhooks
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => resetSection('webhooks', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset to Default
         </sl-button>
       </div>
     </div>

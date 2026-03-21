@@ -157,19 +157,10 @@
       "hook_events": true,
       "rate_limit_ms": 1000
     },
-    "webhooks": [
-      {
-        "url": "http://localhost:3400/api/webhooks/inbox",
-        "secret": "",
-        "events": [],
-        "timeout_ms": 10000,
-        "max_retries": 3,
-        "rate_limit_ms": 1000,
-        "control": false
-      }
-    ],
+    "webhooks": [],
     "budget": {
-      "warning_pct": 80
+      "warning_pct": 80,
+      "max_cost_usd": null
     },
     "governance": {
       "guards": {

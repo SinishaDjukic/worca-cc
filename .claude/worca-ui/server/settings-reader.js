@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readMergedSettings } from './settings-merge.js';
 
 export function readSettings(path) {
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const raw = readMergedSettings(path);
     const worca = raw.worca || {};
     return {
       agents: worca.agents || {},

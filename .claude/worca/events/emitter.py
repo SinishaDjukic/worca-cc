@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import IO, Optional
 
+from worca.utils.settings import load_settings as _load_settings_merged
+
 # Valid event pattern: alphanumerics, dots, underscores, and * only
 _VALID_PATTERN_RE = re.compile(r'^[a-zA-Z0-9._*]+$')
 
@@ -25,12 +27,11 @@ _VALID_PATTERN_RE = re.compile(r'^[a-zA-Z0-9._*]+$')
 
 
 def _load_settings(settings_path: str) -> dict:
-    """Load settings JSON; return empty dict on any error."""
+    """Load settings JSON with .local.json merge support; return empty dict on any error."""
     if not settings_path:
         return {}
     try:
-        with open(settings_path, "r") as f:
-            return json.load(f)
+        return _load_settings_merged(settings_path)
     except Exception:
         return {}
 

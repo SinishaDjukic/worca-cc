@@ -33,6 +33,7 @@ from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_a
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current
 from worca.utils.git import create_branch
+from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
 from worca.events.emitter import EventContext, emit_event, _check_control_response
@@ -557,8 +558,7 @@ def _summarize_tool_input(block: dict) -> str:
 def _is_agent_telemetry_enabled(settings_path: str) -> bool:
     """Check worca.events.agent_telemetry setting (defaults to True)."""
     try:
-        with open(settings_path) as f:
-            settings = json.load(f)
+        settings = load_settings(settings_path)
         return settings.get("worca", {}).get("events", {}).get("agent_telemetry", True)
     except Exception:
         return True
@@ -723,11 +723,7 @@ def run_preflight(
         PipelineError: When the script exits with non-zero code or output
             is not valid JSON.
     """
-    try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        settings = {}
+    settings = load_settings(settings_path)
 
     default_script = ".claude/scripts/preflight_checks.py"
     script_path = (
@@ -798,11 +794,7 @@ def check_loop_limit(
         mloops: Multiplier for the loop limit (1-10). E.g. mloops=2 doubles max loops.
     """
     default_limit = 5
-    try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        settings = {}
+    settings = load_settings(settings_path)
 
     loops = settings.get("worca", {}).get("loops", {})
     limit = loops.get(loop_name, default_limit) * mloops
@@ -811,11 +803,7 @@ def check_loop_limit(
 
 def _get_loop_limit(loop_name: str, settings_path: str, mloops: int = 1, default: int = 5) -> int:
     """Return the configured loop limit for event payloads."""
-    try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        settings = {}
+    settings = load_settings(settings_path)
     return settings.get("worca", {}).get("loops", {}).get(loop_name, default) * mloops
 
 
@@ -1016,8 +1004,7 @@ def run_pipeline(
             # Validate control webhooks: warn and skip those without a secret.
             # (control_webhooks property already enforces this, this is just logging.)
             try:
-                with open(settings_path) as _sf:
-                    _all_wh = json.load(_sf).get("worca", {}).get("webhooks", [])
+                _all_wh = load_settings(settings_path).get("worca", {}).get("webhooks", [])
                 for _wh in _all_wh:
                     if _wh.get("control") and not _wh.get("secret"):
                         _log(
@@ -1073,14 +1060,10 @@ def run_pipeline(
                 _log(f"Pre-made plan: {plan_file}", "ok")
             else:
                 # Resolve plan path from template
-                try:
-                    with open(settings_path) as f:
-                        _settings = json.load(f)
-                    template = _settings.get("worca", {}).get(
-                        "plan_path_template", "docs/plans/{timestamp}-{title_slug}.md"
-                    )
-                except (FileNotFoundError, json.JSONDecodeError):
-                    template = "docs/plans/{timestamp}-{title_slug}.md"
+                _settings = load_settings(settings_path)
+                template = _settings.get("worca", {}).get(
+                    "plan_path_template", "docs/plans/{timestamp}-{title_slug}.md"
+                )
                 status["plan_file"] = _resolve_plan_path(
                     template,
                     timestamp=status["run_id"] or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
@@ -1094,14 +1077,10 @@ def run_pipeline(
 
             # Render agent templates with plan_file and other vars
             if run_dir:
-                try:
-                    with open(settings_path) as f:
-                        _render_settings = json.load(f)
-                    overrides_dir = _render_settings.get("worca", {}).get(
-                        "agent_overrides_dir", ".claude/agents/overrides"
-                    )
-                except (FileNotFoundError, json.JSONDecodeError):
-                    overrides_dir = ".claude/agents/overrides"
+                _render_settings = load_settings(settings_path)
+                overrides_dir = _render_settings.get("worca", {}).get(
+                    "agent_overrides_dir", ".claude/agents/overrides"
+                )
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
@@ -1368,8 +1347,7 @@ def run_pipeline(
 
                 # Circuit breaker integration
                 try:
-                    with open(settings_path) as _sf:
-                        _cb_config = json.load(_sf).get("worca", {}).get("circuit_breaker", {})
+                    _cb_config = load_settings(settings_path).get("worca", {}).get("circuit_breaker", {})
                 except Exception:
                     _cb_config = {}
 
@@ -1486,8 +1464,7 @@ def run_pipeline(
                 ))
                 # Budget warning check
                 try:
-                    with open(settings_path) as _bf:
-                        _budget_settings = json.load(_bf).get("worca", {}).get("budget", {})
+                    _budget_settings = load_settings(settings_path).get("worca", {}).get("budget", {})
                 except Exception:
                     _budget_settings = {}
                 _max_cost = _budget_settings.get("max_cost_usd")

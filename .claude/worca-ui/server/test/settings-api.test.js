@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer } from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from '../app.js';
+import { localPathFor } from '../settings-merge.js';
 
 function startServer(settingsPath) {
   const app = createApp({ settingsPath });
@@ -77,19 +78,22 @@ describe('GET /api/settings', () => {
     expect(data.hooks).toBeUndefined();
   });
 
-  it('returns 500 when the settings file does not exist', async () => {
+  it('returns 200 with empty data when the settings file does not exist', async () => {
     ({ server, base } = await startServer(join(tmpDir, 'nonexistent.json')));
     const res = await fetch(`${base}/api/settings`);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.error.code).toBe('read_error');
+    expect(data.worca).toEqual({});
+    expect(data.permissions).toEqual({});
   });
 
-  it('returns 500 when the settings file contains invalid JSON', async () => {
+  it('returns 200 with empty data when the settings file contains invalid JSON', async () => {
     writeFileSync(settingsPath, 'not json{{{');
     ({ server, base } = await startServer(settingsPath));
     const res = await fetch(`${base}/api/settings`);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca).toEqual({});
   });
 });
 
@@ -116,14 +120,22 @@ describe('POST /api/settings', () => {
     });
   }
 
-  it('merges worca.agents correctly -- replaces the agents sub-object', async () => {
+  it('merges worca.agents correctly -- writes to local, returns merged view', async () => {
     const res = await post({ worca: { agents: { planner: { model: 'haiku', max_turns: 50 } } } });
     expect(res.status).toBe(200);
     const data = await res.json();
-    // Agents replaced wholesale — implementer should be gone
-    expect(data.worca.agents).toEqual({ planner: { model: 'haiku', max_turns: 50 } });
-    // Other worca keys preserved
+    // Merged view: local override for planner + base's implementer
+    expect(data.worca.agents.planner).toEqual({ model: 'haiku', max_turns: 50 });
+    expect(data.worca.agents.implementer).toEqual(SAMPLE_SETTINGS.worca.agents.implementer);
+    // Other worca keys preserved from base
     expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+    // Local file has only the override
+    const localPath = localPathFor(settingsPath);
+    const local = JSON.parse(readFileSync(localPath, 'utf8'));
+    expect(local.worca.agents).toEqual({ planner: { model: 'haiku', max_turns: 50 } });
+    // Base file is unchanged
+    const base_ = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(base_.worca.agents).toEqual(SAMPLE_SETTINGS.worca.agents);
   });
 
   it('merges worca.loops correctly', async () => {
@@ -132,26 +144,36 @@ describe('POST /api/settings', () => {
     expect(data.worca.loops).toEqual({ implement_test: 5, pr_changes: 1, restart_planning: 1 });
   });
 
-  it('merges worca.stages correctly', async () => {
+  it('merges worca.stages correctly -- returns merged view', async () => {
     const newStages = { plan: { agent: 'planner', enabled: false } };
     const res = await post({ worca: { stages: newStages } });
     const data = await res.json();
-    expect(data.worca.stages).toEqual(newStages);
+    // Merged: local override + base's implement stage
+    expect(data.worca.stages.plan).toEqual({ agent: 'planner', enabled: false });
+    expect(data.worca.stages.implement).toEqual(SAMPLE_SETTINGS.worca.stages.implement);
   });
 
-  it('merges worca.governance correctly', async () => {
+  it('merges worca.governance correctly -- returns merged view', async () => {
     const newGov = { guards: { block_rm_rf: false }, test_gate_strikes: 5, dispatch: { planner: ['implementer'] } };
     const res = await post({ worca: { governance: newGov } });
     const data = await res.json();
-    expect(data.worca.governance).toEqual(newGov);
+    // Merged: local governance override deep-merged with base governance
+    expect(data.worca.governance.test_gate_strikes).toBe(5);
+    expect(data.worca.governance.guards.block_rm_rf).toBe(false);
+    // Base governance keys that weren't overridden are still present
+    expect(data.worca.governance.guards.block_env_write).toBe(true);
   });
 
   it('preserves hooks even if the client sends a hooks key', async () => {
     const res = await post({ hooks: { evil: true }, worca: { loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 } } });
     expect(res.status).toBe(200);
+    // Base file still has original hooks, untouched
     const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(raw.hooks).toEqual(SAMPLE_SETTINGS.hooks);
-    expect(raw.hooks.evil).toBeUndefined();
+    // Local file should not have hooks
+    const localPath = localPathFor(settingsPath);
+    const local = JSON.parse(readFileSync(localPath, 'utf8'));
+    expect(local.hooks).toBeUndefined();
   });
 
   it('preserves unrelated worca sub-keys not mentioned in the request', async () => {
@@ -210,13 +232,18 @@ describe('POST /api/settings', () => {
     expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
   });
 
-  it('written file is valid JSON with 2-space indent and trailing newline', async () => {
+  it('written local file is valid JSON with 2-space indent and trailing newline', async () => {
     await post({ worca: { loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 } } });
-    const content = readFileSync(settingsPath, 'utf8');
+    const localPath = localPathFor(settingsPath);
+    const content = readFileSync(localPath, 'utf8');
     expect(content.endsWith('\n')).toBe(true);
     // Verify 2-space indent
     const parsed = JSON.parse(content);
     expect(JSON.stringify(parsed, null, 2) + '\n').toBe(content);
+    // Base file should be unchanged
+    const baseContent = readFileSync(settingsPath, 'utf8');
+    const baseParsed = JSON.parse(baseContent);
+    expect(baseParsed.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
   });
 });
 

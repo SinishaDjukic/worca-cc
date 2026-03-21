@@ -7,6 +7,8 @@ import time
 import traceback
 from typing import Optional
 
+from worca.utils.settings import load_settings
+
 CATEGORY_TRANSIENT = "infra_transient"
 CATEGORY_PERMANENT = "infra_permanent"
 CATEGORY_LOGIC_STUCK = "logic_stuck"
@@ -51,11 +53,7 @@ _SCHEMA = {
 
 
 def _read_settings(settings_path: str) -> dict:
-    try:
-        with open(settings_path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    return load_settings(settings_path)
 
 
 def _get_cb_settings(settings_path: str) -> dict:

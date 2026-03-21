@@ -2,21 +2,18 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { join, dirname, basename } from 'node:path';
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { validateSettingsPayload } from './settings-validator.js';
+import { readMergedSettings, readLocalSettings, localPathFor, deepMerge } from './settings-merge.js';
 import { startPipeline, stopPipeline, restartStage, getRunningPid } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
 import { listIssues, getIssue, dbExists } from './beads-reader.js';
 import { createInbox } from './webhook-inbox.js';
 
 function readFullSettings(settingsPath) {
-  try {
-    return JSON.parse(readFileSync(settingsPath, 'utf8'));
-  } catch {
-    return {};
-  }
+  return readMergedSettings(settingsPath);
 }
 
 export function createApp(options = {}) {
@@ -30,18 +27,18 @@ export function createApp(options = {}) {
   const webhookInbox = options.webhookInbox || createInbox();
   app.locals.webhookInbox = webhookInbox;
 
-  // GET /api/settings
+  // GET /api/settings — returns merged base + local config
   app.get('/api/settings', (_req, res) => {
     if (!settingsPath) return res.status(501).json({ error: { code: 'not_configured', message: 'settingsPath not configured' } });
     try {
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      res.json({ worca: raw.worca || {}, permissions: raw.permissions || {} });
+      const merged = readMergedSettings(settingsPath);
+      res.json({ worca: merged.worca || {}, permissions: merged.permissions || {} });
     } catch (err) {
       res.status(500).json({ error: { code: 'read_error', message: err.message } });
     }
   });
 
-  // POST /api/settings
+  // POST /api/settings — writes to settings.local.json (never modifies base)
   app.post('/api/settings', (req, res) => {
     if (!settingsPath) return res.status(501).json({ error: { code: 'not_configured', message: 'settingsPath not configured' } });
 
@@ -56,24 +53,80 @@ export function createApp(options = {}) {
     }
 
     try {
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      const localPath = localPathFor(settingsPath);
+      const local = readLocalSettings(settingsPath);
 
-      // Merge worca sub-keys (replace each top-level sub-key wholesale)
+      // Merge worca sub-keys into local (replace each top-level sub-key wholesale)
       if (body.worca && typeof body.worca === 'object') {
-        if (!raw.worca) raw.worca = {};
+        if (!local.worca) local.worca = {};
         for (const key of Object.keys(body.worca)) {
-          raw.worca[key] = body.worca[key];
+          local.worca[key] = body.worca[key];
         }
       }
 
-      // Replace permissions wholesale
+      // Replace permissions wholesale in local
       if (body.permissions !== undefined) {
-        raw.permissions = body.permissions;
+        local.permissions = body.permissions;
       }
 
-      // Never touch hooks
-      writeFileSync(settingsPath, JSON.stringify(raw, null, 2) + '\n', 'utf8');
-      res.json({ worca: raw.worca || {}, permissions: raw.permissions || {} });
+      writeFileSync(localPath, JSON.stringify(local, null, 2) + '\n', 'utf8');
+
+      // Return merged view so UI shows effective config
+      const merged = readMergedSettings(settingsPath);
+      res.json({ worca: merged.worca || {}, permissions: merged.permissions || {} });
+    } catch (err) {
+      res.status(500).json({ error: { code: 'write_error', message: err.message } });
+    }
+  });
+
+  // DELETE /api/settings/:section — reset a section to base defaults
+  const SECTION_KEYS = {
+    agents: { worca: ['agents'] },
+    pipeline: { worca: ['stages', 'loops', 'plan_path_template', 'defaults'] },
+    governance: { worca: ['governance'], top: ['permissions'] },
+    pricing: { worca: ['pricing'] },
+    webhooks: { worca: ['events', 'budget', 'webhooks'] },
+  };
+
+  app.delete('/api/settings/:section', (req, res) => {
+    if (!settingsPath) return res.status(501).json({ error: { code: 'not_configured', message: 'settingsPath not configured' } });
+
+    const section = req.params.section;
+    const mapping = SECTION_KEYS[section];
+    if (!mapping) {
+      return res.status(400).json({ error: { code: 'invalid_section', message: `Unknown section: ${section}. Valid: ${Object.keys(SECTION_KEYS).join(', ')}` } });
+    }
+
+    try {
+      const localPath = localPathFor(settingsPath);
+      const local = readLocalSettings(settingsPath);
+
+      // Remove worca sub-keys for this section
+      if (mapping.worca && local.worca) {
+        for (const key of mapping.worca) {
+          delete local.worca[key];
+        }
+        // Clean up empty worca object
+        if (Object.keys(local.worca).length === 0) delete local.worca;
+      }
+
+      // Remove top-level keys for this section
+      if (mapping.top) {
+        for (const key of mapping.top) {
+          delete local[key];
+        }
+      }
+
+      // If local is now empty, delete the file
+      if (Object.keys(local).length === 0) {
+        try { unlinkSync(localPath); } catch { /* file may not exist */ }
+      } else {
+        writeFileSync(localPath, JSON.stringify(local, null, 2) + '\n', 'utf8');
+      }
+
+      // Return merged view (now base-only for this section)
+      const merged = readMergedSettings(settingsPath);
+      res.json({ worca: merged.worca || {}, permissions: merged.permissions || {} });
     } catch (err) {
       res.status(500).json({ error: { code: 'write_error', message: err.message } });
     }

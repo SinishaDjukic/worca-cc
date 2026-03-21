@@ -7,6 +7,8 @@ aggregate usage across iterations/stages, and estimate costs from pricing tables
 import json
 from typing import Optional
 
+from worca.utils.settings import load_settings
+
 
 def extract_token_usage(raw_envelope: dict) -> dict:
     """Extract a normalized token_usage dict from a Claude CLI result event.
@@ -151,16 +153,15 @@ def estimate_cost(token_usage: dict, pricing: dict) -> float:
 
 
 def load_pricing(settings_path: str = ".claude/settings.json") -> dict:
-    """Load pricing config from settings.json.
+    """Load pricing config from settings (with .local.json merge support).
 
     Returns:
         Dict with model-specific pricing. Returns empty dict on error.
     """
     try:
-        with open(settings_path) as f:
-            settings = json.load(f)
+        settings = load_settings(settings_path)
         return settings.get("worca", {}).get("pricing", {}).get("models", {})
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+    except Exception:
         return {}
 
 
