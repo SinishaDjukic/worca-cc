@@ -13,7 +13,9 @@
     "start": "node server/index.js --debug",
     "build": "node scripts/build-frontend.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui"
   },
   "dependencies": {
     "@shoelace-style/shoelace": "^2.20.1",
@@ -28,6 +30,7 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "esbuild": "^0.27.1",
     "vitest": "^4.0.15"
   }

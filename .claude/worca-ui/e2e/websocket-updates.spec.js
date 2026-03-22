@@ -1,0 +1,306 @@
+// TDD: written to verify WebSocket real-time UI updates without page reload.
+// Covers: status badge / control buttons on pipeline state changes,
+// stage timeline live updates, and dashboard group reordering.
+import { test, expect } from '@playwright/test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { startServer, seedRun } from './fixtures.js';
+
+const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
+
+/**
+ * Update a run's status.json and trigger a WebSocket broadcast by writing
+ * worcaDir/active_run. The activeRunWatcher (in ws.js) fires on any write to
+ * that file, which calls scheduleRefresh() → reads the updated status.json →
+ * broadcasts run-snapshot (to subscribers) + runs-list (to all clients).
+ */
+function triggerStatusUpdate(worcaDir, runId, statusOverrides) {
+  seedRun(worcaDir, runId, statusOverrides);
+  // activeRunWatcher watches worcaDir; any write here fires scheduleRefresh
+  writeFileSync(join(worcaDir, 'active_run'), runId + '\n', 'utf8');
+}
+
+/**
+ * Navigate to a run's detail page and wait for stage-panels to render.
+ * For statuses that show controls, also waits for .run-controls.
+ */
+async function openRunDetail(page, baseUrl, runId, pipelineStatus) {
+  await page.goto(`${baseUrl}/#/history?run=${runId}`, GOTO_OPTS);
+  await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
+  if (['running', 'paused', 'failed'].includes(pipelineStatus)) {
+    await expect(page.locator('.run-controls')).toBeVisible({ timeout: 5000 });
+  }
+}
+
+// ─── Status badge / control buttons without reload ───────────────────────────
+
+test.describe('WebSocket live updates — control button transitions', () => {
+  test('pipeline-paused: pause button disappears, resume appears', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-running-to-paused';
+      seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      await expect(page.locator('.btn-pause')).toBeVisible();
+      await expect(page.locator('.btn-resume')).not.toBeAttached();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'paused' });
+
+      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('pipeline-resumed: resume button disappears, pause appears', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-paused-to-running';
+      seedRun(ctx.worcaDir, runId, { pipeline_status: 'paused' });
+      await openRunDetail(page, ctx.url, runId, 'paused');
+
+      await expect(page.locator('.btn-resume')).toBeVisible();
+      await expect(page.locator('.btn-pause')).not.toBeAttached();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'running' });
+
+      await expect(page.locator('.btn-resume')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.btn-pause')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('pipeline-completed: run-controls section removed', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-running-to-completed';
+      seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      await expect(page.locator('.run-controls')).toBeVisible();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'completed' });
+
+      await expect(page.locator('.run-controls')).not.toBeAttached({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('pipeline-failed: pause+stop disappear, resume appears', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-running-to-failed';
+      seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      await expect(page.locator('.btn-pause')).toBeVisible();
+      await expect(page.locator('.btn-stop')).toBeVisible();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'failed' });
+
+      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.btn-stop')).not.toBeAttached({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
+// ─── Stage timeline live updates ──────────────────────────────────────────────
+
+test.describe('WebSocket live updates — stage timeline', () => {
+  test('stage node transitions from pending to completed without reload', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-timeline-pending';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        stages: { plan: { status: 'pending' }, coordinate: { status: 'pending' } },
+      });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      // Initial: at least one stage is pending
+      await expect(page.locator('.stage-node.status-pending').first()).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.stage-node.status-completed')).not.toBeAttached();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        stages: { plan: { status: 'completed' }, coordinate: { status: 'pending' } },
+      });
+
+      // Plan node transitions to completed without reload
+      await expect(page.locator('.stage-node.status-completed')).toBeVisible({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('multiple stage updates propagate in sequence', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-timeline-seq';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        stages: { plan: { status: 'pending' }, coordinate: { status: 'pending' } },
+      });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      // First transition: plan completes
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        stages: { plan: { status: 'completed' }, coordinate: { status: 'pending' } },
+      });
+      await expect(page.locator('.stage-node.status-completed')).toBeVisible({ timeout: 8000 });
+
+      // Second transition: coordinate completes too
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        stages: { plan: { status: 'completed' }, coordinate: { status: 'completed' } },
+      });
+      // Both plan and coordinate should now be status-completed
+      await expect(page.locator('.stage-node.status-completed')).toHaveCount(2, { timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('paused pipeline shows paused stage icon on active stage', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-timeline-pause-icon';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        stages: { plan: { status: 'completed' }, coordinate: { status: 'pending' } },
+      });
+      await openRunDetail(page, ctx.url, runId, 'running');
+
+      // Transition to paused while coordinate is in a non-running state
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'paused',
+        stages: { plan: { status: 'completed' }, coordinate: { status: 'paused' } },
+      });
+
+      // A paused stage node should appear
+      await expect(page.locator('.stage-node.status-paused')).toBeVisible({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
+// ─── Dashboard group reordering ───────────────────────────────────────────────
+
+test.describe('WebSocket live updates — dashboard reordering', () => {
+  test('run moves from running group to paused group on pipeline-paused', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-dash-run-to-pause';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        work_request: { title: 'Reorder: running to paused' },
+      });
+
+      await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
+
+      // Wait for the run card in the running group
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused')).not.toBeAttached();
+
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'paused',
+        work_request: { title: 'Reorder: running to paused' },
+      });
+
+      // Run card moves to paused group; running group disappears (no remaining running runs)
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 5000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('run moves from paused group to running group on pipeline-resumed', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-dash-pause-to-run';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'paused',
+        work_request: { title: 'Reorder: paused to running' },
+      });
+
+      await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible({ timeout: 8000 });
+
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        work_request: { title: 'Reorder: paused to running' },
+      });
+
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused')).not.toBeAttached({ timeout: 5000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('run moves from running group to failed group on pipeline-failed', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-dash-run-to-fail';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        work_request: { title: 'Reorder: running to failed' },
+      });
+
+      await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'failed',
+        work_request: { title: 'Reorder: running to failed' },
+      });
+
+      await expect(page.locator('.active-group-failed .run-card.status-failed')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 5000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('dashboard stats update when run state changes', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-ws-dash-stats';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'running',
+        work_request: { title: 'Stats update test' },
+      });
+
+      await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
+
+      // Dashboard renders (stats are present)
+      await expect(page.locator('.dashboard-stats')).toBeVisible({ timeout: 8000 });
+      // Running card is visible in the running group
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 5000 });
+
+      // Pipeline completes
+      triggerStatusUpdate(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        work_request: { title: 'Stats update test' },
+      });
+
+      // All active groups disappear (no running/paused/failed runs)
+      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.empty-state')).toBeVisible({ timeout: 5000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+});

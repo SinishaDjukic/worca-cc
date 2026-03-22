@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { stageTimelineView } from './stage-timeline.js';
 import { statusClass, statusIcon, resolveStatus } from '../utils/status-badge.js';
 import { formatDuration, elapsed, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins, RotateCcw, List } from '../utils/icons.js';
+import { iconSvg, Clock, Timer, Cpu, GitBranch, RefreshCw, FileText, ClipboardCopy, Coins, RotateCcw, List, Pause, Play, Square } from '../utils/icons.js';
 import { beadsDependencyGraph, priorityVariant, statusVariant } from './beads-panel.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { scrollOnExpand } from '../utils/scroll.js';
@@ -348,6 +348,63 @@ function _agentPromptSection(_stageKey, promptData) {
   `;
 }
 
+function _controlButtonsView(run, options = {}) {
+  const status = run.pipeline_status;
+  const runId = run.id;
+  const pending = options.controlPending || null;
+  const anyPending = pending !== null;
+
+  const showPause = status === 'running';
+  const showResume = status === 'paused' || status === 'failed';
+  const showStop = status === 'running' || status === 'paused';
+
+  if (!showPause && !showResume && !showStop) return nothing;
+
+  return html`
+    <div class="run-controls">
+      ${showPause ? html`
+        <sl-button class="btn-pause ${pending === 'pause' ? 'control-pending-pause' : ''}" variant="warning" outline size="small"
+          ?disabled=${anyPending}
+          ?loading=${pending === 'pause'}
+          @click=${() => options.onPause?.(runId)}>
+          ${unsafeHTML(iconSvg(Pause, 14))} Pause
+        </sl-button>
+      ` : nothing}
+      ${showResume ? html`
+        <sl-button class="btn-resume ${pending === 'resume' ? 'control-pending-resume' : ''}" variant="success" size="small"
+          ?disabled=${anyPending}
+          ?loading=${pending === 'resume'}
+          @click=${() => options.onResume?.(runId)}>
+          ${unsafeHTML(iconSvg(Play, 14))} Resume
+        </sl-button>
+      ` : nothing}
+      ${showStop ? html`
+        <sl-button class="btn-stop ${pending === 'stop' ? 'control-pending-stop' : ''}" variant="danger" outline size="small"
+          ?disabled=${anyPending}
+          ?loading=${pending === 'stop'}
+          @click=${(e) => {
+            const dialog = e.target.closest('.run-controls')?.querySelector('.run-controls-stop-dialog');
+            dialog?.show();
+          }}>
+          ${unsafeHTML(iconSvg(Square, 14))} Stop
+        </sl-button>
+        <sl-dialog class="run-controls-stop-dialog" label="Stop run?">
+          Are you sure you want to stop this run?
+          <sl-button slot="footer" variant="danger" @click=${(e) => {
+            const dialog = e.target.closest('sl-dialog');
+            dialog?.hide();
+            options.onStop?.(runId);
+          }}>Stop</sl-button>
+          <sl-button slot="footer" variant="neutral" @click=${(e) => {
+            const dialog = e.target.closest('sl-dialog');
+            dialog?.hide();
+          }}>Cancel</sl-button>
+        </sl-dialog>
+      ` : nothing}
+    </div>
+  `;
+}
+
 export function runBeadsSectionView(beads) {
   if (!beads) return nothing;
   if (beads.length === 0) {
@@ -410,6 +467,7 @@ export function runDetailView(run, settings = {}, options = {}) {
   return html`
     <div class="run-detail">
       ${stageTimelineView(stages, stageUi, run.active)}
+      ${_controlButtonsView(run, options)}
       ${_circuitBreakerBannerView(run, settings)}
 
       <div class="run-info-section">

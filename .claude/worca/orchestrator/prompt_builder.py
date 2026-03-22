@@ -5,6 +5,10 @@ accumulated inter-stage context (plan output, bead IDs, test results, etc.).
 """
 import json
 import os
+import tempfile
+from pathlib import Path
+
+_MAX_CONTEXT_BYTES = 100_000  # 100KB cap for prompt_context.json
 
 
 class PromptBuilder:
@@ -14,10 +18,11 @@ class PromptBuilder:
     """
 
     def __init__(self, work_request_title: str, work_request_description: str = "",
-                 claude_md_path: str = "CLAUDE.md"):
+                 claude_md_path: str = "CLAUDE.md", context_path: str = None):
         self._title = work_request_title
         self._description = work_request_description or work_request_title
         self._context: dict = {}
+        self._context_path = context_path
         self._claude_md_content = self._read_claude_md(claude_md_path)
 
     @staticmethod
@@ -38,6 +43,59 @@ class PromptBuilder:
     def get_context(self, key: str, default=None):
         """Retrieve stored inter-stage context."""
         return self._context.get(key, default)
+
+    def save_context(self, context_path: str = None) -> None:
+        """Persist current context to prompt_context.json using atomic write.
+
+        Caps output at 100KB by dropping the oldest-inserted keys first.
+        No-op if no path is configured.
+        """
+        path = context_path or self._context_path
+        if not path:
+            return
+
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build a copy of the context and truncate if over the size cap
+        context_copy = dict(self._context)
+        serialized = json.dumps(context_copy, indent=2, default=str)
+        if len(serialized.encode()) > _MAX_CONTEXT_BYTES:
+            keys = list(context_copy.keys())
+            while keys and len(serialized.encode()) > _MAX_CONTEXT_BYTES:
+                del context_copy[keys.pop(0)]
+                serialized = json.dumps(context_copy, indent=2, default=str)
+
+        fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=".tmp_", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(serialized)
+                f.write("\n")
+            os.rename(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def load_context(self, context_path: str = None) -> None:
+        """Load context from prompt_context.json and merge into current context.
+
+        Merges loaded keys into self._context (loaded values override existing).
+        No-op if the file doesn't exist or no path is configured.
+        """
+        path = context_path or self._context_path
+        if not path:
+            return
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            self._context.update(data)
+        except (OSError, json.JSONDecodeError):
+            pass
 
     def build(self, stage: str, iteration: int = 0) -> str:
         """Render the user prompt for the given stage.

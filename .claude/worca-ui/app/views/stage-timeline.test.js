@@ -34,4 +34,54 @@ describe('stage-timeline STAGE_ICON', () => {
     expect(html).not.toContain('pulse');
     expect(html).not.toContain('icon-spin');
   });
+
+  it('renders completed stage with status-completed class', () => {
+    const stages = { build: { status: 'completed' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-completed');
+  });
+
+  it('renders running stage with status-running class and pulse', () => {
+    const stages = { build: { status: 'running' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-running');
+    expect(html).toContain('pulse');
+  });
+
+  it('renders in_progress stage with status-in-progress class and pulse', () => {
+    const stages = { build: { status: 'in_progress' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-in-progress');
+    expect(html).toContain('pulse');
+  });
+
+  it('renders failed stage with status-failed class', () => {
+    const stages = { build: { status: 'failed' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-failed');
+  });
+
+  it('does not pulse for failed status', () => {
+    const stages = { build: { status: 'failed' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).not.toContain('pulse');
+  });
+
+  it('renders paused stage with status-paused class', () => {
+    const stages = { build: { status: 'paused' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-paused');
+  });
+
+  it('does not pulse for paused status', () => {
+    const stages = { build: { status: 'paused' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).not.toContain('pulse');
+  });
+
+  it('renders pending stage with status-pending class', () => {
+    const stages = { build: { status: 'pending' } };
+    const html = renderToString(stageTimelineView(stages, {}, true));
+    expect(html).toContain('status-pending');
+  });
 });

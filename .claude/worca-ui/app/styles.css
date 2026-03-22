@@ -18,8 +18,14 @@
 
   /* Status colors */
   --status-pending: #94a3b8;
-  --status-in-progress: #f59e0b;
+  --status-running: #3b82f6;
+  --status-paused: #f59e0b;
   --status-completed: #22c55e;
+  --status-failed: #ef4444;
+  --status-resuming: #3b82f6;
+  --status-skipped: #94a3b8;
+  /* legacy */
+  --status-in-progress: #f59e0b;
   --status-error: #ef4444;
   --status-blocked: #3b82f6;
 
@@ -1102,6 +1108,53 @@ sl-details.log-history-panel::part(content) {
   opacity: 0.6;
 }
 
+.status-running {
+  color: var(--status-running);
+}
+
+.status-paused {
+  color: var(--status-paused);
+}
+
+.status-failed {
+  color: var(--status-failed);
+}
+
+.status-resuming {
+  color: var(--status-resuming);
+}
+
+/* --- 18b. Control Buttons --- */
+.action-btn--amber {
+  border-color: var(--status-paused);
+  color: var(--status-paused);
+}
+
+.action-btn--amber:hover {
+  background: var(--status-paused);
+  color: #ffffff;
+}
+
+.action-btn--green {
+  border-color: var(--status-completed);
+  color: var(--status-completed);
+}
+
+.action-btn--green:hover {
+  background: var(--status-completed);
+  color: #ffffff;
+}
+
+.action-btn--red {
+  border-color: var(--status-failed);
+  color: var(--status-failed);
+}
+
+.action-btn--red:hover {
+  background: var(--status-failed);
+  color: #ffffff;
+}
+
 /* --- 19. Connection Indicator --- */
 .connection-indicator {
   display: flex;
@@ -1211,6 +1264,14 @@ sl-details.log-history-panel::part(content) {
   padding: 2px 8px;
   letter-spacing: 0.03em;
 }
+
+/* Status-colored left border accent on run cards */
+.run-card.status-running  { border-left: 3px solid var(--status-running); }
+.run-card.status-resuming { border-left: 3px solid var(--status-resuming); }
+.run-card.status-paused   { border-left: 3px solid var(--status-paused); }
+.run-card.status-completed { border-left: 3px solid var(--status-completed); }
+.run-card.status-failed   { border-left: 3px solid var(--status-failed); }
+.run-card.status-pending  { border-left: 3px solid var(--status-pending); }
 
 /* --- 21. Dashboard --- */
 .dashboard {
@@ -3495,4 +3556,58 @@ sl-details.learnings-panel::part(content) {
   font-size: 0.85rem;
   color: var(--accent);
   margin: 8px 0;
+}
+
+/* --- Run Controls (run-detail.js) --- */
+.run-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* --- Dashboard Active Groups --- */
+.active-group {
+  margin-bottom: 16px;
+}
+.active-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.active-group-count {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.active-group-running .active-group-count { color: var(--status-running); }
+.active-group-paused .active-group-count { color: var(--status-paused); }
+.active-group-failed .active-group-count { color: var(--status-failed); }
+
+/* --- Run Card Quick-Action Buttons --- */
+.run-card-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.btn-quick-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--status-completed);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--status-completed);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.btn-quick-resume:hover {
+  background: var(--status-completed);
+  color: #ffffff;
 }

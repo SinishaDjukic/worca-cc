@@ -21,15 +21,29 @@ def load_status(path: str = ".worca/status.json") -> dict:
 
 
 def save_status(status: dict, path: str = ".worca/status.json") -> None:
-    """Write status dict as formatted JSON.
+    """Write status dict as formatted JSON using atomic temp+rename.
 
-    Creates parent directory if needed.
+    Writes to a temp file in the same directory, then os.rename to
+    atomically replace the target. Prevents corruption if the pipeline
+    crashes mid-write. Creates parent directory if needed.
     """
-    parent = Path(path).parent
-    parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(status, f, indent=2)
-        f.write("\n")
+    import tempfile
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(status, f, indent=2)
+            f.write("\n")
+        os.rename(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def update_stage(pipeline_status: dict, stage: str, **kwargs) -> dict:
@@ -177,18 +191,38 @@ def get_run_token_usage(status: dict) -> dict:
     return result
 
 
-def init_status(work_request: dict, branch: str) -> dict:
+_LEGACY_STATUS_MAP = {
+    "in_progress": "running",
+    "error": "failed",
+    "interrupted": "paused",
+}
+
+
+def resolve_status(status: str) -> str:
+    """Normalize legacy status values to canonical pipeline_status values.
+
+    Mappings: in_progress→running, error→failed, interrupted→paused.
+    All other values pass through unchanged.
+    """
+    return _LEGACY_STATUS_MAP.get(status, status)
+
+
+def init_status(work_request: dict, branch: str, git_head: str = None) -> dict:
     """Create a fresh status dict with all stages set to 'pending'.
 
     Populates work_request and branch per the design doc schema.
+    Includes pipeline_status, loop_counters, and git_head fields.
     """
     status = {
         "work_request": work_request,
+        "pipeline_status": "pending",
         "stage": "plan",
         "run_id": None,
         "branch": branch,
         "worktree": None,
         "plan_file": None,
+        "git_head": git_head,
+        "loop_counters": {},
         "started_at": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
         "stages": {stage: {"status": "pending"} for stage in PIPELINE_STAGES},

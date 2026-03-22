@@ -50,6 +50,18 @@ def current_branch() -> str:
     return result.stdout.strip()
 
 
+def get_current_git_head() -> str:
+    """Get the current git HEAD commit SHA.
+
+    Runs: git rev-parse HEAD
+    Returns the full SHA string, or empty string on failure.
+    """
+    result = _run_git("rev-parse", "HEAD")
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
 def diff_stat(base: str = "main") -> str:
     """Get diff stat between base branch and HEAD.
 

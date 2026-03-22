@@ -1,4 +1,4 @@
-import { html } from 'lit-html';
+import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, Activity, CircleCheck, CircleAlert, Zap, Plus, Coins } from '../utils/icons.js';
 import { runCardView } from './run-card.js';
@@ -21,7 +21,11 @@ function _formatCost(usd) {
   return `$${usd.toFixed(2)}`;
 }
 
-export function dashboardView(state, { onSelectRun, onNavigate } = {}) {
+function _activeGroup(runs, statuses) {
+  return runs.filter(r => statuses.includes(r.pipeline_status));
+}
+
+export function dashboardView(state, { onSelectRun, onNavigate, onPause, onResume } = {}) {
   const runs = Object.values(state.runs);
   const active = runs.filter(r => r.active);
   const completed = runs.filter(r => !r.active);
@@ -31,6 +35,10 @@ export function dashboardView(state, { onSelectRun, onNavigate } = {}) {
   });
   const total = runs.length;
   const totalCost = _computeTotalCost(runs);
+
+  const runningGroup = _activeGroup(runs, ['running', 'resuming']);
+  const pausedGroup = _activeGroup(runs, ['paused']);
+  const failedGroup = _activeGroup(runs, ['failed']);
 
   return html`
     <div class="dashboard">
@@ -80,11 +88,39 @@ export function dashboardView(state, { onSelectRun, onNavigate } = {}) {
       </div>
 
       <h3 class="dashboard-section-title">Active Runs</h3>
-      ${active.length > 0 ? html`
-        <div class="run-list">
-          ${active.map(run => runCardView(run, { onClick: onSelectRun }))}
+      ${runningGroup.length > 0 ? html`
+        <div class="active-group active-group-running">
+          <div class="active-group-header">
+            <span class="active-group-count">${runningGroup.length} running</span>
+          </div>
+          <div class="run-list">
+            ${runningGroup.map(run => runCardView(run, { onClick: onSelectRun, onPause }))}
+          </div>
         </div>
-      ` : html`<div class="empty-state">No running pipelines</div>`}
+      ` : nothing}
+      ${pausedGroup.length > 0 ? html`
+        <div class="active-group active-group-paused">
+          <div class="active-group-header">
+            <span class="active-group-count">${pausedGroup.length} paused</span>
+          </div>
+          <div class="run-list">
+            ${pausedGroup.map(run => runCardView(run, { onClick: onSelectRun, onResume }))}
+          </div>
+        </div>
+      ` : nothing}
+      ${failedGroup.length > 0 ? html`
+        <div class="active-group active-group-failed">
+          <div class="active-group-header">
+            <span class="active-group-count">${failedGroup.length} failed</span>
+          </div>
+          <div class="run-list">
+            ${failedGroup.map(run => runCardView(run, { onClick: onSelectRun, onResume }))}
+          </div>
+        </div>
+      ` : nothing}
+      ${runningGroup.length === 0 && pausedGroup.length === 0 && failedGroup.length === 0 ? html`
+        <div class="empty-state">No running pipelines</div>
+      ` : nothing}
     </div>
   `;
 }

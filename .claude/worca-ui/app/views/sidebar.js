@@ -1,7 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, Activity, Archive, Settings, Plus, List, Coins, Zap } from '../utils/icons.js';
-
 export function sidebarView(state, route, connectionState, { onNavigate }) {
   const { runs, preferences, projectName } = state;
   const runList = Object.values(runs);

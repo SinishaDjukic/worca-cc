@@ -250,4 +250,30 @@ describe('startPipeline arg building', () => {
     expect(args).not.toContain('--source');
     expect(args).not.toContain('--prompt');
   });
+
+  it('includes --status-dir when resume=true and runId provided', async () => {
+    startPipeline(worcaDir, {
+      resume: true,
+      runId: 'run-20260101-abc',
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).toContain('--resume');
+    expect(args).toContain('--status-dir');
+    expect(args[args.indexOf('--status-dir') + 1]).toContain('run-20260101-abc');
+  });
+
+  it('omits --status-dir when resume=true but no runId', async () => {
+    startPipeline(worcaDir, {
+      resume: true,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).toContain('--resume');
+    expect(args).not.toContain('--status-dir');
+  });
 });

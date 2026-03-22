@@ -3,7 +3,15 @@
 import json
 import os
 
-from worca.orchestrator.resume import find_resume_point, reconstruct_context, can_resume
+from worca.orchestrator.resume import (
+    find_resume_point,
+    reconstruct_context,
+    can_resume,
+    find_last_completed_iteration,
+    get_resume_iteration,
+    restore_loop_counters,
+    check_git_divergence,
+)
 from worca.orchestrator.stages import Stage
 
 
@@ -255,3 +263,193 @@ def test_reconstruct_context_uses_run_id(tmp_path, monkeypatch):
     }
     ctx = reconstruct_context(status)  # No explicit logs_dir
     assert ctx["plan"] == {"approach": "per-run"}
+
+
+# ---------------------------------------------------------------------------
+# find_last_completed_iteration
+# ---------------------------------------------------------------------------
+
+def test_find_last_completed_iteration_no_iterations():
+    assert find_last_completed_iteration({}) is None
+
+
+def test_find_last_completed_iteration_empty_list():
+    assert find_last_completed_iteration({"iterations": []}) is None
+
+
+def test_find_last_completed_iteration_all_completed():
+    stage_data = {
+        "iterations": [
+            {"number": 1, "status": "completed"},
+            {"number": 2, "status": "completed"},
+        ]
+    }
+    assert find_last_completed_iteration(stage_data) == 2
+
+
+def test_find_last_completed_iteration_discards_in_progress():
+    stage_data = {
+        "iterations": [
+            {"number": 1, "status": "completed"},
+            {"number": 2, "status": "completed"},
+            {"number": 3, "status": "in_progress"},
+        ]
+    }
+    assert find_last_completed_iteration(stage_data) == 2
+
+
+def test_find_last_completed_iteration_only_in_progress():
+    stage_data = {
+        "iterations": [
+            {"number": 1, "status": "in_progress"},
+        ]
+    }
+    assert find_last_completed_iteration(stage_data) is None
+
+
+# ---------------------------------------------------------------------------
+# get_resume_iteration
+# ---------------------------------------------------------------------------
+
+def test_get_resume_iteration_no_completed():
+    assert get_resume_iteration({}) == 1
+
+
+def test_get_resume_iteration_after_two_completed_one_in_progress():
+    stage_data = {
+        "iterations": [
+            {"number": 1, "status": "completed"},
+            {"number": 2, "status": "completed"},
+            {"number": 3, "status": "in_progress"},
+        ]
+    }
+    assert get_resume_iteration(stage_data) == 3
+
+
+def test_get_resume_iteration_after_all_completed():
+    stage_data = {
+        "iterations": [
+            {"number": 1, "status": "completed"},
+            {"number": 2, "status": "completed"},
+        ]
+    }
+    assert get_resume_iteration(stage_data) == 3
+
+
+# ---------------------------------------------------------------------------
+# restore_loop_counters
+# ---------------------------------------------------------------------------
+
+def test_restore_loop_counters_returns_from_status():
+    status = {"loop_counters": {"implement_test": 3, "pr_changes": 0}}
+    assert restore_loop_counters(status) == {"implement_test": 3, "pr_changes": 0}
+
+
+def test_restore_loop_counters_empty_when_missing():
+    assert restore_loop_counters({}) == {}
+
+
+def test_restore_loop_counters_none_value():
+    assert restore_loop_counters({"loop_counters": None}) == {}
+
+
+# ---------------------------------------------------------------------------
+# reconstruct_context — in_progress stage with completed iterations
+# ---------------------------------------------------------------------------
+
+def test_reconstruct_context_in_progress_stage_uses_last_completed_iter(tmp_path):
+    """in_progress stage with completed iterations yields context from last completed iter."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "implement"))
+
+    with open(os.path.join(logs_dir, "implement", "iter-1.json"), "w") as f:
+        json.dump({"files_changed": ["a.py"]}, f)
+    with open(os.path.join(logs_dir, "implement", "iter-2.json"), "w") as f:
+        json.dump({"files_changed": ["a.py", "b.py"]}, f)
+    # iter-3 is in_progress (no log file yet)
+
+    status = {
+        "stages": {
+            "implement": {
+                "status": "in_progress",
+                "iterations": [
+                    {"number": 1, "status": "completed"},
+                    {"number": 2, "status": "completed"},
+                    {"number": 3, "status": "in_progress"},
+                ],
+            }
+        }
+    }
+    ctx = reconstruct_context(status, logs_dir)
+    assert ctx["implement"] == {"files_changed": ["a.py", "b.py"]}
+
+
+def test_reconstruct_context_in_progress_no_completed_iters_excluded(tmp_path):
+    """in_progress stage with no completed iterations is excluded from context."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "implement"))
+
+    status = {
+        "stages": {
+            "implement": {
+                "status": "in_progress",
+                "iterations": [
+                    {"number": 1, "status": "in_progress"},
+                ],
+            }
+        }
+    }
+    ctx = reconstruct_context(status, logs_dir)
+    assert "implement" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# check_git_divergence
+# ---------------------------------------------------------------------------
+
+def test_check_git_divergence_no_divergence():
+    """Same SHA in status and current HEAD → not diverged."""
+    sha = "abc123def456abc123def456abc123def456abc1"
+    status = {"git_head": sha}
+    result = check_git_divergence(status, current_head=sha)
+    assert result["diverged"] is False
+    assert result["stored"] == sha
+    assert result["current"] == sha
+
+
+def test_check_git_divergence_diverged():
+    """Different SHA in status vs current HEAD → diverged."""
+    stored = "aaa0000000000000000000000000000000000001"
+    current = "bbb0000000000000000000000000000000000002"
+    status = {"git_head": stored}
+    result = check_git_divergence(status, current_head=current)
+    assert result["diverged"] is True
+    assert result["stored"] == stored
+    assert result["current"] == current
+
+
+def test_check_git_divergence_no_stored_head():
+    """No git_head in status → not diverged (can't compare)."""
+    status = {"stages": {}}
+    result = check_git_divergence(status, current_head="abc123")
+    assert result["diverged"] is False
+    assert result["stored"] is None
+
+
+def test_check_git_divergence_empty_stored_head():
+    """Empty git_head in status → not diverged (treated as no stored head)."""
+    status = {"git_head": ""}
+    result = check_git_divergence(status, current_head="abc123")
+    assert result["diverged"] is False
+    assert result["stored"] is None
+
+
+def test_check_git_divergence_calls_get_current_git_head_when_not_injected():
+    """When current_head not provided, calls get_current_git_head()."""
+    from unittest.mock import patch
+    sha = "deadbeef" * 5
+    status = {"git_head": sha}
+    with patch("worca.orchestrator.resume.get_current_git_head", return_value=sha) as mock_head:
+        result = check_git_divergence(status)
+    mock_head.assert_called_once()
+    assert result["diverged"] is False

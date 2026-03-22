@@ -33,4 +33,36 @@ describe('status-badge', () => {
   it('statusIcon adds icon-spin class for in_progress', () => {
     expect(statusIcon('in_progress')).toContain('class="icon-spin"');
   });
+
+  // New lifecycle states
+  it('maps running to status-running', () => {
+    expect(statusClass('running')).toBe('status-running');
+  });
+  it('maps paused to status-paused', () => {
+    expect(statusClass('paused')).toBe('status-paused');
+  });
+  it('maps failed to status-failed', () => {
+    expect(statusClass('failed')).toBe('status-failed');
+  });
+  it('maps resuming to status-resuming', () => {
+    expect(statusClass('resuming')).toBe('status-resuming');
+  });
+  it('statusIcon returns SVG for running', () => {
+    expect(statusIcon('running')).toContain('<svg');
+  });
+  it('statusIcon adds icon-spin class for running', () => {
+    expect(statusIcon('running')).toContain('class="icon-spin"');
+  });
+  it('statusIcon returns SVG for paused', () => {
+    expect(statusIcon('paused')).toContain('<svg');
+  });
+  it('statusIcon returns SVG for failed', () => {
+    expect(statusIcon('failed')).toContain('<svg');
+  });
+  it('statusIcon returns SVG for resuming', () => {
+    expect(statusIcon('resuming')).toContain('<svg');
+  });
+  it('statusIcon adds icon-spin class for resuming', () => {
+    expect(statusIcon('resuming')).toContain('class="icon-spin"');
+  });
 });

@@ -18,6 +18,7 @@ from worca.orchestrator.error_classifier import (
     should_halt, get_retry_delay, get_circuit_breaker_state,
     CATEGORY_TRANSIENT,
 )
+from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
@@ -32,7 +33,7 @@ from worca.state.status import (
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current
-from worca.utils.git import create_branch
+from worca.utils.git import create_branch, get_current_git_head
 from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
@@ -90,6 +91,50 @@ class PipelineInterrupted(Exception):
 
 # Shutdown flag set by signal handlers
 _shutdown_requested = False
+
+
+def _check_control_file(
+    run_id: Optional[str],
+    worca_dir: str,
+    status: dict,
+    status_path: str,
+    ctx,
+) -> None:
+    """Poll the control file for pause/stop actions.
+
+    Reads .worca/runs/{run_id}/control.json at the top of each iteration.
+    Deletes the file after reading.
+
+    On pause: sets pipeline_status=paused, saves status, exits 0.
+    On stop: SIGTERMs the Claude subprocess, sets pipeline_status=failed
+             with stop_reason=stopped, saves status, raises PipelineInterrupted.
+    """
+    if not run_id:
+        return
+
+    ctrl = read_control(run_id, base=worca_dir)
+    if ctrl is None:
+        return
+
+    delete_control(run_id, base=worca_dir)
+
+    action = ctrl["action"]
+
+    if action == "pause":
+        status["pipeline_status"] = "paused"
+        save_status(status, status_path)
+        if ctx is not None:
+            emit_event(ctx, RUN_PAUSED, run_paused_payload(reason="control_file"))
+        _log("Pipeline paused by control file", "warn")
+        sys.exit(0)
+
+    elif action == "stop":
+        terminate_current()
+        status["pipeline_status"] = "failed"
+        status["stop_reason"] = "stopped"
+        save_status(status, status_path)
+        _log("Pipeline stopped by control file", "warn")
+        raise PipelineInterrupted("Pipeline stopped via control file")
 
 
 def _handle_pause(ctx: EventContext, reason: str) -> None:
@@ -873,6 +918,7 @@ def run_pipeline(
     mloops: int = 1,
     branch: Optional[str] = None,
     skip_preflight: bool = False,
+    on_git_divergence=None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -926,9 +972,22 @@ def run_pipeline(
     _branch_just_created = False
     if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
         # Explicit resume requested and same work request found
-        from worca.orchestrator.resume import find_resume_point
+        from worca.orchestrator.resume import find_resume_point, check_git_divergence
         resume_stage = find_resume_point(existing)
         if resume_stage is not None:
+            # Git divergence guard: warn if HEAD changed since pipeline start
+            divergence = check_git_divergence(existing)
+            if divergence["diverged"]:
+                _log(
+                    f"WARNING: git HEAD has changed since pipeline start "
+                    f"(was {divergence['stored'][:8]}, now {divergence['current'][:8]}). "
+                    "Code changes made since then are not part of this run.",
+                    "warn",
+                )
+                if on_git_divergence is not None:
+                    proceed = on_git_divergence(divergence["stored"], divergence["current"])
+                    if not proceed:
+                        return existing
             _log(f"Resuming from {resume_stage.value.upper()}")
             status = existing
             branch_name = status.get("branch", "")
@@ -960,7 +1019,7 @@ def run_pipeline(
             "source_ref": work_request.source_ref,
             "priority": work_request.priority,
         }
-        status = init_status(wr_dict, branch_name)
+        status = init_status(wr_dict, branch_name, git_head=get_current_git_head())
 
         # Create per-run directory
         run_id = _generate_run_id(status["started_at"])
@@ -1091,7 +1150,7 @@ def run_pipeline(
             save_status(status, actual_status_path)
 
         # Ensure hook env vars are set for both new and resumed runs
-        os.environ["WORCA_PLAN_FILE"] = status.get("plan_file", "")
+        os.environ["WORCA_PLAN_FILE"] = status.get("plan_file") or ""
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
@@ -1126,6 +1185,9 @@ def run_pipeline(
 
         while stage_idx < len(stage_order):
             current_stage = stage_order[stage_idx]
+
+            # --- Control file polling ---
+            _check_control_file(status.get("run_id"), worca_dir, status, actual_status_path, ctx)
 
             # Skip stages pre-marked as skipped (e.g. PLAN when plan_file provided)
             existing_stage = status.get("stages", {}).get(current_stage.value, {})

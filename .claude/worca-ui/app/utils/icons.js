@@ -38,6 +38,8 @@ import Coins from 'lucide/dist/esm/icons/coins';
 import Bell from 'lucide/dist/esm/icons/bell';
 import Plus from 'lucide/dist/esm/icons/plus';
 import RotateCcw from 'lucide/dist/esm/icons/rotate-ccw';
+import RotateCw from 'lucide/dist/esm/icons/rotate-cw';
+import CircleSlash from 'lucide/dist/esm/icons/circle-slash';
 import List from 'lucide/dist/esm/icons/list';
 import Lock from 'lucide/dist/esm/icons/lock';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
@@ -75,5 +77,7 @@ export {
   List, Lock, ArrowRight, Database,
   X,
   Lightbulb,
-  Trash2
+  Trash2,
+  RotateCw,
+  CircleSlash
 };

@@ -5,7 +5,7 @@
 import { WebSocketServer } from 'ws';
 import { watch, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline } from './process-manager.js';
+import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline, pausePipeline as pmPausePipeline } from './process-manager.js';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns, watchEvents } from './watcher.js';
 import { listIssues, listIssuesByLabel, listUnlinkedIssues, listDistinctRunLabels, countIssuesByRunLabel, getIssue, dbExists as beadsDbExists } from './beads-reader.js';
@@ -35,8 +35,6 @@ export function resolveActiveRunDir(worcaDir) {
 // Internal alias used by the closure inside attachWsServer
 const _resolveActiveRunDir = resolveActiveRunDir;
 
-/** @type {ReturnType<typeof setTimeout> | null} */
-let REFRESH_TIMER = null;
 const REFRESH_DEBOUNCE_MS = 75;
 
 /**
@@ -70,6 +68,12 @@ export function attachWsServer(httpServer, config) {
 
   /** @type {WeakMap<import('ws').WebSocket, { runId: string | null, logStage: string | null, eventsRunId: string | null }>} */
   const subs = new WeakMap();
+
+  /** Per-instance debounce timer — not module-level so multiple attachWsServer calls don't interfere */
+  let REFRESH_TIMER = null;
+
+  /** Track last known pipeline_status per run ID to detect changes */
+  const lastPipelineStatus = new Map();
 
   /** @type {Map<string, import('node:fs').FSWatcher>} */
   const logWatchers = new Map();
@@ -220,6 +224,19 @@ export function attachWsServer(httpServer, config) {
         for (const run of runs) {
           if (subscribedIds.has(run.id)) {
             broadcastToSubscribers(run.id, 'run-snapshot', run);
+          }
+          // Detect pipeline_status changes and broadcast lifecycle events
+          const currStatus = run.pipeline_status;
+          if (currStatus !== undefined) {
+            const prevStatus = lastPipelineStatus.get(run.id);
+            if (prevStatus !== undefined && prevStatus !== currStatus) {
+              if (currStatus === 'paused') {
+                broadcastToSubscribers(run.id, 'pipeline-paused', { runId: run.id, pipeline_status: currStatus });
+              } else if (currStatus === 'running' && (prevStatus === 'paused' || prevStatus === 'resuming')) {
+                broadcastToSubscribers(run.id, 'pipeline-resumed', { runId: run.id, pipeline_status: currStatus });
+              }
+            }
+            lastPipelineStatus.set(run.id, currStatus);
           }
         }
         // Broadcast updated runs list so list views auto-update
@@ -691,10 +708,13 @@ export function attachWsServer(httpServer, config) {
       }
       const s = ensureSubs(ws);
       s.runId = runId;
-      // Send current snapshot
+      // Send current snapshot and seed lastPipelineStatus for change detection
       const runs = discoverRuns(worcaDir);
       const run = runs.find(r => r.id === runId);
       if (run) {
+        if (run.pipeline_status !== undefined && !lastPipelineStatus.has(runId)) {
+          lastPipelineStatus.set(runId, run.pipeline_status);
+        }
         ws.send(JSON.stringify(makeOk(req, run)));
       } else {
         ws.send(JSON.stringify(makeError(req, 'NOT_FOUND', `Run ${runId} not found`)));
@@ -810,6 +830,22 @@ export function attachWsServer(httpServer, config) {
       return;
     }
 
+    // pause-run: write control.json to pause the pipeline at next iteration boundary
+    if (req.type === 'pause-run') {
+      const { runId } = req.payload || {};
+      if (typeof runId !== 'string') {
+        ws.send(JSON.stringify(makeError(req, 'bad_request', 'payload.runId required')));
+        return;
+      }
+      try {
+        const result = pmPausePipeline(worcaDir, runId);
+        ws.send(JSON.stringify(makeOk(req, result)));
+      } catch (e) {
+        ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));
+      }
+      return;
+    }
+
     // stop-run: send SIGTERM to the running pipeline, then confirm death
     if (req.type === 'stop-run') {
       try {
@@ -837,8 +873,9 @@ export function attachWsServer(httpServer, config) {
 
     // resume-run: spawn a new pipeline process with --resume
     if (req.type === 'resume-run') {
+      const { runId } = req.payload || {};
       try {
-        const result = pmStartPipeline(worcaDir, { resume: true });
+        const result = pmStartPipeline(worcaDir, { resume: true, runId });
         ws.send(JSON.stringify(makeOk(req, { resumed: true, pid: result.pid })));
       } catch (e) {
         ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));

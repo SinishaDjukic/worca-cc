@@ -1,7 +1,8 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { statusIcon, resolveStatus } from '../utils/status-badge.js';
+import { statusIcon, statusClass, resolveStatus } from '../utils/status-badge.js';
 import { formatDuration, elapsed, formatTimestamp } from '../utils/duration.js';
+import { iconSvg, Pause } from '../utils/icons.js';
 
 const BADGE_VARIANT = {
   completed: 'success',
@@ -10,6 +11,18 @@ const BADGE_VARIANT = {
   interrupted: 'warning',
   pending: 'neutral'
 };
+
+function _statusTooltip(run, status) {
+  const ref = run.status_changed_at ||
+    ((status === 'completed' || status === 'failed') ? run.completed_at : null) ||
+    run.started_at;
+  if (!ref) return null;
+  const ms = elapsed(ref, null);
+  const dur = formatDuration(ms);
+  if (status === 'running' || status === 'resuming') return `Running for ${dur}`;
+  const label = status.charAt(0).toUpperCase() + status.slice(1);
+  return `${label} ${dur} ago`;
+}
 
 function _lastStageEnd(stages) {
   if (!stages) return null;
@@ -24,10 +37,12 @@ function _lastStageEnd(stages) {
  * Shared run card component used in both run-list and dashboard active list.
  * Shows title, overall status icon, duration, and stage badges.
  */
-export function runCardView(run, { onClick, beadsCount } = {}) {
+export function runCardView(run, { onClick, beadsCount, onPause, onResume } = {}) {
   const title = run.work_request?.title || 'Untitled';
   const isActive = run.active;
-  const overallStatus = isActive ? 'in_progress' : (run.stage === 'error' ? 'error' : 'completed');
+  const overallStatus = run.pipeline_status ||
+    (isActive ? 'running' : (run.stage === 'error' ? 'failed' : 'completed'));
+  const tooltip = _statusTooltip(run, overallStatus);
   const endTime = run.completed_at || _lastStageEnd(run.stages);
   const duration = run.started_at && endTime
     ? formatDuration(elapsed(run.started_at, endTime))
@@ -37,10 +52,30 @@ export function runCardView(run, { onClick, beadsCount } = {}) {
   const branch = run.branch || run.work_request?.branch || '';
   const stages = run.stages ? Object.entries(run.stages) : [];
 
+  const pauseBtn = onPause && (overallStatus === 'running' || overallStatus === 'resuming')
+    ? html`
+        <div class="run-card-actions">
+          <sl-button size="small" variant="warning" outline class="btn-quick-pause" @click=${(e) => { e.stopPropagation(); onPause(run.id); }}>
+            ${unsafeHTML(iconSvg(Pause, 12))} Pause
+          </sl-button>
+        </div>
+      `
+    : nothing;
+
+  const resumeBtn = onResume
+    ? html`
+        <div class="run-card-actions">
+          <button class="btn-quick-resume" @click=${(e) => { e.stopPropagation(); onResume(run.id); }}>
+            Resume
+          </button>
+        </div>
+      `
+    : nothing;
+
   return html`
-    <div class="run-card" @click=${onClick ? () => onClick(run.id) : null}>
+    <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
-        <span class="run-card-status">${unsafeHTML(statusIcon(overallStatus, 16))}</span>
+        <span class="run-card-status" title=${tooltip || nothing}>${unsafeHTML(statusIcon(overallStatus, 16))}</span>
         <span class="run-card-title">${title}</span>
       </div>
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> ${branch}</span></div>` : nothing}
@@ -64,6 +99,8 @@ export function runCardView(run, { onClick, beadsCount } = {}) {
           <sl-badge variant="primary" pill class="run-card-stage-badge">${beadsCount} bead${beadsCount !== 1 ? 's' : ''}</sl-badge>
         </div>
       ` : nothing}
+      ${pauseBtn}
+      ${resumeBtn}
     </div>
   `;
 }

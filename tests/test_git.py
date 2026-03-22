@@ -2,7 +2,7 @@
 
 from unittest.mock import patch, MagicMock
 
-from worca.utils.git import create_branch, create_worktree, remove_worktree, current_branch, diff_stat
+from worca.utils.git import create_branch, create_worktree, remove_worktree, current_branch, diff_stat, get_current_git_head
 
 
 # --- create_branch ---
@@ -115,4 +115,35 @@ def test_diff_stat_empty():
     mock_result.stdout = ""
     with patch("worca.utils.git.subprocess.run", return_value=mock_result):
         result = diff_stat()
+    assert result == ""
+
+
+# --- get_current_git_head ---
+
+def test_get_current_git_head_returns_sha():
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "abc1234def5678901234567890123456789012345\n"
+    with patch("worca.utils.git.subprocess.run", return_value=mock_result) as mock_run:
+        result = get_current_git_head()
+    assert result == "abc1234def5678901234567890123456789012345"
+    args = mock_run.call_args[0][0]
+    assert args == ["git", "rev-parse", "HEAD"]
+
+
+def test_get_current_git_head_strips_whitespace():
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "  deadbeefcafe1234  \n"
+    with patch("worca.utils.git.subprocess.run", return_value=mock_result):
+        result = get_current_git_head()
+    assert result == "deadbeefcafe1234"
+
+
+def test_get_current_git_head_returns_empty_on_failure():
+    mock_result = MagicMock()
+    mock_result.returncode = 128
+    mock_result.stdout = ""
+    with patch("worca.utils.git.subprocess.run", return_value=mock_result):
+        result = get_current_git_head()
     assert result == ""

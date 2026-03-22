@@ -2,7 +2,7 @@
  * Pipeline process lifecycle management.
  * Handles starting, stopping, and restarting pipeline processes.
  */
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 
@@ -55,6 +55,9 @@ export async function startPipeline(worcaDir, opts = {}) {
 
   if (opts.resume) {
     args.push('--resume');
+    if (opts.runId) {
+      args.push('--status-dir', join(worcaDir, 'runs', opts.runId));
+    }
   } else if (opts.sourceType !== undefined) {
     // New format: separate source and prompt args
     if (opts.sourceType === 'source') args.push('--source', opts.sourceValue);
@@ -164,6 +167,23 @@ export function stopPipeline(worcaDir) {
     throw err;
   }
 
+  // Belt-and-suspenders: write control.json so the orchestrator gets a clean signal
+  const activeRunPath = join(worcaDir, 'active_run');
+  if (existsSync(activeRunPath)) {
+    try {
+      const runId = readFileSync(activeRunPath, 'utf8').trim();
+      if (runId) {
+        const controlDir = join(worcaDir, 'runs', runId);
+        mkdirSync(controlDir, { recursive: true });
+        writeFileSync(
+          join(controlDir, 'control.json'),
+          JSON.stringify({ action: 'stop', requested_at: new Date().toISOString(), source: 'ui' }, null, 2) + '\n',
+          'utf8'
+        );
+      }
+    } catch { /* non-fatal */ }
+  }
+
   try {
     process.kill(pid, 'SIGTERM');
   } catch (e) {
@@ -186,6 +206,23 @@ export function stopPipeline(worcaDir) {
   try { unlinkSync(pidPath); } catch { /* ignore */ }
 
   return { pid, stopped: true };
+}
+
+/**
+ * Pause a running pipeline by writing a control file.
+ * @param {string} worcaDir - Path to .worca directory
+ * @param {string} runId - Pipeline run identifier
+ * @returns {{ runId: string, paused: boolean }}
+ */
+export function pausePipeline(worcaDir, runId) {
+  const controlDir = join(worcaDir, 'runs', runId);
+  mkdirSync(controlDir, { recursive: true });
+  writeFileSync(
+    join(controlDir, 'control.json'),
+    JSON.stringify({ action: 'pause', requested_at: new Date().toISOString(), source: 'ui' }, null, 2) + '\n',
+    'utf8'
+  );
+  return { runId, paused: true };
 }
 
 /**

@@ -1,15 +1,19 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { statusClass, resolveStatus } from '../utils/status-badge.js';
-import { iconSvg, Circle, Loader, CircleCheck, CircleAlert, Pause, RefreshCw } from '../utils/icons.js';
+import { iconSvg, Circle, Loader, CircleCheck, CircleAlert, Pause, RefreshCw, CircleSlash, RotateCw } from '../utils/icons.js';
 
 const STAGE_ICON = {
   pending: Circle,
+  running: Loader,
   in_progress: Loader,
   completed: CircleCheck,
+  failed: CircleAlert,
   error: CircleAlert,
+  paused: Pause,
   interrupted: Pause,
-  skipped: Circle
+  resuming: RotateCw,
+  skipped: CircleSlash
 };
 
 function stageLabel(key, stageUi) {
@@ -29,9 +33,9 @@ export function stageTimelineView(stages, stageUi = {}, isActive = true) {
         const status = resolveStatus(stage.status || 'pending', isActive);
         const iconData = STAGE_ICON[status] || Circle;
         const label = stageLabel(key, stageUi);
-        const isPulse = status === 'in_progress';
+        const isPulse = status === 'in_progress' || status === 'running' || status === 'resuming';
         const iteration = stage.iteration;
-        const iconClass = status === 'in_progress' ? 'icon-spin' : '';
+        const iconClass = isPulse ? 'icon-spin' : '';
 
         return html`
           ${i > 0 ? html`<div class="stage-connector ${entries[i - 1]?.[1]?.status === 'completed' ? 'completed' : ''}"></div>` : ''}

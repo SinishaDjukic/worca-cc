@@ -52,3 +52,13 @@ class TestSettingsEventWebhookBudgetDefaults:
 
     def test_budget_warning_pct_is_80(self):
         assert self.worca["budget"]["warning_pct"] == 80
+
+    # ------------------------------------------------------------------
+    # worca.hooks
+    # ------------------------------------------------------------------
+
+    def test_hooks_key_exists(self):
+        assert "hooks" in self.worca
+
+    def test_hooks_is_dict(self):
+        assert isinstance(self.worca["hooks"], dict)

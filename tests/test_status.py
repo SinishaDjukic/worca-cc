@@ -1,8 +1,10 @@
 """Tests for worca.state.status - Pipeline status tracking."""
 
 import json
+import os
+from unittest.mock import patch
 
-from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status, start_iteration, complete_iteration, PIPELINE_STAGES
+from worca.state.status import load_status, save_status, update_stage, set_milestone, init_status, start_iteration, complete_iteration, resolve_status, PIPELINE_STAGES
 
 
 # --- PIPELINE_STAGES ---
@@ -65,6 +67,46 @@ def test_save_writes_formatted_json(tmp_path):
     content = path.read_text()
     # Formatted JSON should have newlines (not a single line)
     assert "\n" in content
+
+
+def test_save_is_atomic_original_preserved_on_failure(tmp_path):
+    """If a write fails mid-way, the original file must not be corrupted."""
+    path = tmp_path / "status.json"
+    original = {"stage": "plan", "data": "safe"}
+    path.write_text(json.dumps(original))
+
+    # Simulate a crash during json.dump by patching it to raise
+    with patch("json.dump", side_effect=OSError("disk full")):
+        try:
+            save_status({"stage": "broken"}, str(path))
+        except OSError:
+            pass
+
+    # Original file must be intact
+    assert json.loads(path.read_text()) == original
+
+
+def test_save_no_temp_file_left_on_failure(tmp_path):
+    """Temp file must be cleaned up if write fails."""
+    path = tmp_path / "status.json"
+
+    with patch("json.dump", side_effect=OSError("disk full")):
+        try:
+            save_status({"stage": "broken"}, str(path))
+        except OSError:
+            pass
+
+    # Only the target file (if it existed) should be in the directory — no .tmp_ files
+    tmp_files = [f for f in os.listdir(tmp_path) if f.startswith(".tmp_")]
+    assert tmp_files == []
+
+
+def test_save_uses_os_rename_for_atomicity(tmp_path):
+    """save_status must call os.rename to atomically replace the target."""
+    path = tmp_path / "status.json"
+    with patch("os.rename", wraps=os.rename) as mock_rename:
+        save_status({"stage": "plan"}, str(path))
+        assert mock_rename.called
 
 
 # --- update_stage ---
@@ -268,3 +310,53 @@ def test_complete_iteration_on_empty_raises():
         assert False, "Expected ValueError"
     except ValueError as exc:
         assert "No iterations to complete" in str(exc)
+
+
+# --- init_status extended schema ---
+
+def test_init_status_has_pipeline_status():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["pipeline_status"] == "pending"
+
+
+def test_init_status_has_loop_counters():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["loop_counters"] == {}
+
+
+def test_init_status_has_git_head_none_by_default():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "git_head" in result
+    assert result["git_head"] is None
+
+
+def test_init_status_accepts_git_head():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task", git_head="abc1234")
+    assert result["git_head"] == "abc1234"
+
+
+# --- resolve_status ---
+
+def test_resolve_status_maps_in_progress_to_running():
+    assert resolve_status("in_progress") == "running"
+
+
+def test_resolve_status_maps_error_to_failed():
+    assert resolve_status("error") == "failed"
+
+
+def test_resolve_status_maps_interrupted_to_paused():
+    assert resolve_status("interrupted") == "paused"
+
+
+def test_resolve_status_passthrough_known_values():
+    for status in ("pending", "running", "paused", "completed", "failed", "resuming"):
+        assert resolve_status(status) == status
+
+
+def test_resolve_status_passthrough_unknown():
+    assert resolve_status("unknown_val") == "unknown_val"

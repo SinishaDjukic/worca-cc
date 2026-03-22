@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { X, Lightbulb, iconSvg } from './icons.js';
+import { X, Lightbulb, iconSvg, RotateCw, CircleSlash } from './icons.js';
 
 describe('icons', () => {
   it('exports X icon data as an array', () => {
@@ -16,5 +16,15 @@ describe('icons', () => {
     const svg = iconSvg(X, 16);
     expect(svg).toContain('<svg');
     expect(svg).toContain('width="16"');
+  });
+
+  it('exports RotateCw icon data as an array', () => {
+    expect(Array.isArray(RotateCw)).toBe(true);
+    expect(RotateCw.length).toBeGreaterThan(0);
+  });
+
+  it('exports CircleSlash icon data as an array', () => {
+    expect(Array.isArray(CircleSlash)).toBe(true);
+    expect(CircleSlash.length).toBeGreaterThan(0);
   });
 });

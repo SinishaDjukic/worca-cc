@@ -83,23 +83,30 @@ class EventContext:
     enabled: bool = True      # may be overridden from settings at init
     _webhooks: list = field(default=None, repr=False)
     _control_webhooks: list = field(default=None, repr=False)
+    _shell_hooks: dict = field(default=None, repr=False)
     _log_file: Optional[IO] = field(default=None, repr=False)
 
     def __post_init__(self):
+        # Load settings once for all config reads.
+        settings = _load_settings(self.settings_path)
+        worca_cfg = settings.get("worca", {})
+
         # If `enabled` was not explicitly set to False by the caller,
         # check the settings file for worca.events.enabled.
         # Explicit False from caller is preserved (disabled_ctx fixture).
         # We re-check only when the caller left the default True.
         if self.enabled:
-            settings = _load_settings(self.settings_path)
-            events_cfg = settings.get("worca", {}).get("events", {})
+            events_cfg = worca_cfg.get("events", {})
             # Default is True; only set False if explicitly configured.
             self.enabled = events_cfg.get("enabled", True)
 
         raw_webhooks = self._webhooks
         if raw_webhooks is None:
-            settings = _load_settings(self.settings_path)
-            raw_webhooks = settings.get("worca", {}).get("webhooks", [])
+            raw_webhooks = worca_cfg.get("webhooks", [])
+
+        # Load shell hooks config (worca.hooks) if not explicitly provided.
+        if self._shell_hooks is None:
+            self._shell_hooks = worca_cfg.get("hooks") or {}
 
         self._webhooks = []
         self._control_webhooks = []
@@ -206,6 +213,14 @@ def emit_event(
                 deliver_webhook(event, wh)
         except Exception as exc:
             print(f"[worca.events] Webhook dispatch error: {exc}", file=sys.stderr)
+
+    # Shell hook dispatch (worca.hooks config): fire-and-forget, never raises.
+    if ctx._shell_hooks:
+        try:
+            from worca.orchestrator.events import dispatch_shell_hooks
+            dispatch_shell_hooks(event, ctx._shell_hooks)
+        except Exception as exc:
+            print(f"[worca.events] Shell hook dispatch error: {exc}", file=sys.stderr)
 
     return event
 

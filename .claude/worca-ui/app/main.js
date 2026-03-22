@@ -50,6 +50,7 @@ let logSearch = '';
 let settings = {};
 let logIterationFilter = null; // null = all iterations, number = specific
 let pipelineAction = null; // null | 'stopping' | 'resuming'
+let controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
 let stopConfirmOpen = false;
 let restartStageConfirmOpen = false;
@@ -490,6 +491,51 @@ function handleResumePipeline() {
   });
 }
 
+async function handlePauseRun(runId) {
+  controlPending = { action: 'pause', runId };
+  rerender();
+  try {
+    const res = await fetch(`/api/runs/${runId}/pause`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) showActionError(data.error || 'Failed to pause run');
+  } catch (err) {
+    showActionError(err?.message || 'Failed to pause run');
+  } finally {
+    controlPending = null;
+    rerender();
+  }
+}
+
+async function handleResumeRun(runId) {
+  controlPending = { action: 'resume', runId };
+  rerender();
+  try {
+    const res = await fetch(`/api/runs/${runId}/resume`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) showActionError(data.error || 'Failed to resume run');
+  } catch (err) {
+    showActionError(err?.message || 'Failed to resume run');
+  } finally {
+    controlPending = null;
+    rerender();
+  }
+}
+
+async function handleStopRun(runId) {
+  controlPending = { action: 'stop', runId };
+  rerender();
+  try {
+    const res = await fetch(`/api/runs/${runId}/stop`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) showActionError(data.error || 'Failed to stop run');
+  } catch (err) {
+    showActionError(err?.message || 'Failed to stop run');
+  } finally {
+    controlPending = null;
+    rerender();
+  }
+}
+
 function handleRestartStage(stageKey) {
   restartStageKey = stageKey;
   restartStageConfirmOpen = true;
@@ -882,7 +928,7 @@ function mainContentView() {
     return html`
       <div class="run-detail-layout">
         <div class="run-detail-layout__stages">
-          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, stageIterationTab, onStageTabChange: handleStageTabChange })}
+          ${runDetailView(run, settings, { promptCache: promptCache[route.runId] || {}, onRestartStage: handleRestartStage, stageIterationTab, onStageTabChange: handleStageTabChange, onPause: handlePauseRun, onResume: handleResumeRun, onStop: handleStopRun, controlPending: controlPending?.runId === route.runId ? controlPending.action : null })}
         </div>
         <div class="run-detail-layout__logs">
           ${liveOutputView(getActiveStage(), isRunning)}
@@ -952,7 +998,7 @@ function mainContentView() {
     return runListView(runs, 'active', { onSelectRun: handleSelectRun });
   }
 
-  return dashboardView(state, { onSelectRun: (runId) => navigate('active', runId), onNavigate: handleNavigate });
+  return dashboardView(state, { onSelectRun: (runId) => navigate('active', runId), onNavigate: handleNavigate, onPause: handlePauseRun, onResume: handleResumeRun });
 }
 
 function filteredLogState(state) {
@@ -975,7 +1021,8 @@ function rerender() {
   render(html`
     <div class="app-shell">
       ${sidebarView(state, route, connectionState, {
-        onNavigate: handleNavigate
+        onNavigate: handleNavigate,
+        onSelectRun: handleSelectRun
       })}
       <main class="main-content">
         ${notificationManager.renderBanner()}

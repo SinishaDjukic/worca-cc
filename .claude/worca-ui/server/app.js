@@ -2,12 +2,12 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { join, dirname, basename } from 'node:path';
-import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { validateSettingsPayload } from './settings-validator.js';
 import { readMergedSettings, readLocalSettings, localPathFor, deepMerge } from './settings-merge.js';
-import { startPipeline, stopPipeline, restartStage, getRunningPid } from './process-manager.js';
+import { startPipeline, stopPipeline, pausePipeline, restartStage, getRunningPid } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
 import { listIssues, getIssue, dbExists } from './beads-reader.js';
 import { createInbox } from './webhook-inbox.js';
@@ -284,6 +284,88 @@ export function createApp(options = {}) {
         return res.status(404).json({ ok: false, error: err.message });
       }
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/runs/:id/pause — pause a running pipeline via control file
+  app.post('/api/runs/:id/pause', (req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const runId = req.params.id;
+    try {
+      const result = pausePipeline(worcaDir, runId);
+      if (app.locals.broadcast) {
+        app.locals.broadcast('run-paused', { runId });
+      }
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/runs/:id/resume — resume a paused/failed pipeline
+  app.post('/api/runs/:id/resume', async (req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const runId = req.params.id;
+    try {
+      const result = await startPipeline(worcaDir, { resume: true, runId, projectRoot });
+      if (app.locals.broadcast) {
+        app.locals.broadcast('run-resumed', { runId, pid: result.pid });
+      }
+      res.json({ ok: true, pid: result.pid, runId });
+    } catch (err) {
+      if (err.code === 'already_running') {
+        return res.status(409).json({ ok: false, error: err.message });
+      }
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/runs/:id/stop — write control.json + SIGTERM for a specific run
+  app.post('/api/runs/:id/stop', (req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const runId = req.params.id;
+    // Write control.json to signal the orchestrator gracefully before SIGTERM
+    try {
+      const controlDir = join(worcaDir, 'runs', runId);
+      mkdirSync(controlDir, { recursive: true });
+      writeFileSync(
+        join(controlDir, 'control.json'),
+        JSON.stringify({ action: 'stop', requested_at: new Date().toISOString(), source: 'ui' }, null, 2) + '\n',
+        'utf8',
+      );
+    } catch { /* non-fatal — SIGTERM follows */ }
+    try {
+      const result = stopPipeline(worcaDir);
+      if (app.locals.broadcast) {
+        app.locals.broadcast('run-stopped', { runId, pid: result.pid });
+      }
+      res.json({ ok: true, stopped: true, runId, pid: result.pid });
+    } catch (err) {
+      if (err.code === 'not_running') {
+        return res.status(404).json({ ok: false, error: err.message });
+      }
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/runs/:id/status — return pipeline_status, stage, iteration from status.json
+  app.get('/api/runs/:id/status', (req, res) => {
+    if (!worcaDir) return res.status(501).json({ ok: false, error: 'worcaDir not configured' });
+    const runId = req.params.id;
+    let statusPath = join(worcaDir, 'runs', runId, 'status.json');
+    if (!existsSync(statusPath)) {
+      statusPath = join(worcaDir, 'results', runId, 'status.json');
+    }
+    if (!existsSync(statusPath)) {
+      return res.status(404).json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      const stage = status.stage ?? null;
+      const iteration = stage != null ? (status.stages?.[stage]?.iteration ?? null) : null;
+      res.json({ ok: true, pipeline_status: status.pipeline_status ?? null, stage, iteration });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: `Failed to read status: ${err.message}` });
     }
   });
 
