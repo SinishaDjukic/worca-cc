@@ -875,7 +875,7 @@ export function attachWsServer(httpServer, config) {
     if (req.type === 'resume-run') {
       const { runId } = req.payload || {};
       try {
-        const result = pmStartPipeline(worcaDir, { resume: true, runId });
+        const result = await pmStartPipeline(worcaDir, { resume: true, runId });
         ws.send(JSON.stringify(makeOk(req, { resumed: true, pid: result.pid })));
       } catch (e) {
         ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));

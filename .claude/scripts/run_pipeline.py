@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from worca.orchestrator.work_request import normalize
+from worca.orchestrator.work_request import normalize, WorkRequest
 from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError
 from worca.state.status import load_status
 from worca.utils.gh_issues import gh_issue_fail
@@ -93,11 +93,14 @@ def main():
         if os.path.exists(status_file):
             existing = load_status(status_file)
             wr = existing.get("work_request", {})
-            work_request = normalize(
-                wr.get("source_type", "prompt"),
-                wr.get("description", "") or wr.get("title", "Resumed pipeline"),
+            work_request = WorkRequest(
+                source_type=wr.get("source_type", "prompt"),
+                title=wr.get("title", "Resumed pipeline"),
+                description=wr.get("description", ""),
+                source_ref=wr.get("source_ref"),
+                priority=wr.get("priority", 2),
+                plan_path=wr.get("plan_path"),
             )
-            work_request.title = wr.get("title", "Resumed pipeline")
         else:
             print(f"error: cannot resume — status file not found: {status_file}", file=sys.stderr)
             raise SystemExit(2)

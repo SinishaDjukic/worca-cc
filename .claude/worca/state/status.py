@@ -90,6 +90,13 @@ def start_iteration(pipeline_status: dict, stage: str, **kwargs) -> dict:
     if "iterations" not in stage_data:
         stage_data["iterations"] = []
 
+    # Mark any stale in_progress iterations as interrupted (crash/stop residue)
+    for it in stage_data["iterations"]:
+        if it.get("status") == "in_progress":
+            it["status"] = "interrupted"
+            if "completed_at" not in it:
+                it["completed_at"] = datetime.now(timezone.utc).isoformat()
+
     iteration_num = len(stage_data["iterations"]) + 1
     iteration = {
         "number": iteration_num,

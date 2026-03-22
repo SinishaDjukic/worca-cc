@@ -2218,12 +2218,17 @@ def run_pipeline(
     finally:
         if ctx is not None:
             ctx.close()
-        # Persist PromptBuilder context and loop counters as safety net
+        # Safety net: ensure pipeline_status is never left as "running" on exit
         try:
+            if status and status.get("pipeline_status") == "running":
+                status["pipeline_status"] = "failed"
+                if not status.get("stop_reason"):
+                    status["stop_reason"] = "unexpected_exit"
             if prompt_context_path and prompt_builder:
                 prompt_builder.save_context(prompt_context_path)
-            if status and loop_counters:
-                status["loop_counters"] = dict(loop_counters)
+            if status:
+                if loop_counters:
+                    status["loop_counters"] = dict(loop_counters)
                 save_status(status, actual_status_path)
         except Exception:
             pass  # Don't mask the real error
