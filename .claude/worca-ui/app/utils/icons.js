@@ -47,6 +47,7 @@ import Database from 'lucide/dist/esm/icons/database';
 import X from 'lucide/dist/esm/icons/x';
 import Lightbulb from 'lucide/dist/esm/icons/lightbulb';
 import Trash2 from 'lucide/dist/esm/icons/trash-2';
+import Hash from 'lucide/dist/esm/icons/hash';
 
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -79,5 +80,6 @@ export {
   Lightbulb,
   Trash2,
   RotateCw,
-  CircleSlash
+  CircleSlash,
+  Hash
 };
