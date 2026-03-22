@@ -1,6 +1,6 @@
-import { html } from 'lit-html';
+import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Lock, Loader, Circle, CircleCheck, CircleAlert } from '../utils/icons.js';
+import { iconSvg, Lock, Loader, Circle, CircleCheck, CircleAlert, GitBranch, Hash } from '../utils/icons.js';
 import { runCardView } from './run-card.js';
 
 export function priorityVariant(priority) {
@@ -274,7 +274,7 @@ function beadsKanbanView(issues, { starting, onStartIssue }) {
 export function beadsPanelView(issues, {
   statusFilter, priorityFilter, starting, startError,
   onStatusFilter, onPriorityFilter, onStartIssue, onDismissError,
-  loading = false,
+  loading = false, run, runId,
 }) {
   if (loading) {
     return html`<div class="empty-state">Loading issues...</div>`;
@@ -286,6 +286,28 @@ export function beadsPanelView(issues, {
   let filtered = displayIssues;
   if (statusFilter !== 'all') filtered = filtered.filter(i => i.status === statusFilter);
   if (priorityFilter !== 'all') filtered = filtered.filter(i => String(i.priority) === priorityFilter);
+
+  const branch = run?.branch || run?.work_request?.branch || '';
+  const displayRunId = runId || run?.run_id || '';
+  const pr = run?.pr_url || null;
+
+  const metaStripView = (branch || displayRunId) ? html`
+    <div class="run-info-section">
+      ${displayRunId ? html`
+        <div class="run-branch">
+          <span class="stage-meta-icon">${unsafeHTML(iconSvg(Hash, 14))}</span>
+          <span>Run ${displayRunId}</span>
+        </div>
+      ` : nothing}
+      ${branch ? html`
+        <div class="run-branch">
+          <span class="stage-meta-icon">${unsafeHTML(iconSvg(GitBranch, 14))}</span>
+          <span>${branch}</span>
+          ${pr ? html`<a class="run-pr-link" href="${pr}" target="_blank">View PR</a>` : nothing}
+        </div>
+      ` : nothing}
+    </div>
+  ` : nothing;
 
   const filtersView = html`
     <div class="beads-filters">
@@ -310,6 +332,7 @@ export function beadsPanelView(issues, {
   if (filtered.length === 0) {
     return html`
       <div class="beads-panel">
+        ${metaStripView}
         ${filtersView}
         <div class="empty-state">${displayIssues.length === 0 ? 'No issues found for this run.' : 'No issues match the current filters.'}</div>
       </div>
@@ -318,6 +341,7 @@ export function beadsPanelView(issues, {
 
   return html`
     <div class="beads-panel">
+      ${metaStripView}
       ${filtersView}
       ${beadsKanbanView(filtered, { starting, onStartIssue })}
       ${startError ? html`

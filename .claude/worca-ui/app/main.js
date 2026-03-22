@@ -916,6 +916,8 @@ function mainContentView() {
         onStartIssue: handleStartBeadsIssue,
         onDismissError: handleDismissBeadsError,
         loading: beadsRunLoading,
+        run: state.runs[route.runId],
+        runId: route.runId,
       });
     }
     return beadsRunListView(runs, {
