@@ -30,6 +30,49 @@ export function getRunningPid(worcaDir) {
 }
 
 /**
+ * Reconcile stale "running" status when the pipeline process is dead.
+ * Checks the active run's status.json — if pipeline_status is "running"
+ * but no process is alive, transitions to "failed" with stop_reason="stale".
+ * Preserves any existing stop_reason (e.g. "signal" set by Layer 1).
+ *
+ * @param {string} worcaDir - Path to .worca directory
+ * @returns {boolean} true if status was fixed
+ */
+export function reconcileStatus(worcaDir) {
+  const running = getRunningPid(worcaDir);
+  if (running) return false; // process is alive, nothing to fix
+
+  const activeRunPath = join(worcaDir, 'active_run');
+  if (!existsSync(activeRunPath)) return false;
+
+  let runId;
+  try {
+    runId = readFileSync(activeRunPath, 'utf8').trim();
+  } catch { return false; }
+  if (!runId) return false;
+
+  const statusPath = join(worcaDir, 'runs', runId, 'status.json');
+  if (!existsSync(statusPath)) return false;
+
+  let status;
+  try {
+    status = JSON.parse(readFileSync(statusPath, 'utf8'));
+  } catch { return false; }
+
+  if (status.pipeline_status !== 'running') return false;
+
+  status.pipeline_status = 'failed';
+  if (!status.stop_reason) {
+    status.stop_reason = 'stale';
+  }
+  try {
+    writeFileSync(statusPath, JSON.stringify(status, null, 2) + '\n', 'utf8');
+  } catch { return false; }
+
+  return true;
+}
+
+/**
  * Start a new pipeline run.
  * @param {string} worcaDir - Path to .worca directory
  * @param {{ inputType?: string, inputValue?: string, msize?: number, mloops?: number, planFile?: string, resume?: boolean, projectRoot?: string }} opts
@@ -193,12 +236,17 @@ export function stopPipeline(worcaDir) {
     throw err;
   }
 
-  // Watchdog: SIGKILL after 10s if still alive
+  // Watchdog: SIGKILL after 10s if still alive, then reconcile status
   const watchdog = setTimeout(() => {
     try {
       process.kill(pid, 0); // check alive
       process.kill(pid, 'SIGKILL');
-    } catch { /* already dead */ }
+      // Give the OS a moment to reap the process, then fix stale status
+      setTimeout(() => reconcileStatus(worcaDir), 500);
+    } catch {
+      // Already dead — reconcile in case signal handler didn't save
+      reconcileStatus(worcaDir);
+    }
   }, 10000);
   watchdog.unref();
 

@@ -7,7 +7,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { validateSettingsPayload } from './settings-validator.js';
 import { readMergedSettings, readLocalSettings, localPathFor, deepMerge } from './settings-merge.js';
-import { startPipeline, stopPipeline, pausePipeline, restartStage, getRunningPid } from './process-manager.js';
+import { startPipeline, stopPipeline, pausePipeline, restartStage, getRunningPid, reconcileStatus } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
 import { listIssues, getIssue, dbExists } from './beads-reader.js';
 import { createInbox } from './webhook-inbox.js';
@@ -376,7 +376,14 @@ export function createApp(options = {}) {
       return res.status(404).json({ ok: false, error: `Run "${runId}" not found` });
     }
     try {
-      const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      let status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      // Layer 3: reconcile stale "running" status on read
+      if (status.pipeline_status === 'running' && !getRunningPid(worcaDir)) {
+        try {
+          reconcileStatus(worcaDir);
+          status = JSON.parse(readFileSync(statusPath, 'utf8'));
+        } catch { /* reconciliation is best-effort */ }
+      }
       const stage = status.stage ?? null;
       const iteration = stage != null ? (status.stages?.[stage]?.iteration ?? null) : null;
       res.json({ ok: true, pipeline_status: status.pipeline_status ?? null, stage, iteration });

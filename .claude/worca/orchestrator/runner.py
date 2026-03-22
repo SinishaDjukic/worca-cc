@@ -3,6 +3,7 @@
 Orchestrates the full pipeline from plan through PR.
 """
 
+import atexit
 import json
 import os
 import re
@@ -93,6 +94,10 @@ class PipelineInterrupted(Exception):
 
 # Shutdown flag set by signal handlers
 _shutdown_requested = False
+
+# Signal/atexit status refs for crash safety (Layers 1 & 4)
+_signal_status = None
+_signal_status_path = None
 
 
 def _check_control_file(
@@ -345,6 +350,15 @@ def _install_signal_handlers():
         global _shutdown_requested
         _shutdown_requested = True
         terminate_current()
+        # Layer 1: immediately persist failed status on signal
+        if _signal_status is not None and _signal_status_path is not None:
+            try:
+                _signal_status["pipeline_status"] = "failed"
+                if not _signal_status.get("stop_reason"):
+                    _signal_status["stop_reason"] = "signal"
+                save_status(_signal_status, _signal_status_path)
+            except Exception:
+                pass
 
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
@@ -354,6 +368,23 @@ def _restore_signal_handlers():
     """Restore default signal handlers."""
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
+def _atexit_cleanup():
+    """Layer 4: fix stale 'running' status on normal Python exit.
+
+    Covers cases where the finally block doesn't run (e.g. os._exit).
+    Does NOT run on SIGKILL — that's covered by Node Layers 2-3.
+    """
+    if _signal_status is not None and _signal_status_path is not None:
+        try:
+            if _signal_status.get("pipeline_status") == "running":
+                _signal_status["pipeline_status"] = "failed"
+                if not _signal_status.get("stop_reason"):
+                    _signal_status["stop_reason"] = "unexpected_exit"
+                save_status(_signal_status, _signal_status_path)
+        except Exception:
+            pass
 
 
 _orchestrator_log = None
@@ -954,7 +985,7 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested
+    global _shutdown_requested, _signal_status, _signal_status_path
     _shutdown_requested = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
@@ -1053,6 +1084,11 @@ def run_pipeline(
 
     logs_dir = os.path.join(run_dir, "logs") if run_dir else os.path.join(worca_dir, "logs")
     _init_orchestrator_log(logs_dir)
+
+    # Wire up signal/atexit status refs for crash safety (Layers 1 & 4)
+    _signal_status = status
+    _signal_status_path = actual_status_path
+    atexit.register(_atexit_cleanup)
 
     ctx = None
     try:
@@ -2233,6 +2269,13 @@ def run_pipeline(
         except Exception:
             pass  # Don't mask the real error
         _restore_signal_handlers()
+        # Clear signal/atexit refs — finally block already handled cleanup
+        _signal_status = None
+        _signal_status_path = None
+        try:
+            atexit.unregister(_atexit_cleanup)
+        except Exception:
+            pass
         _remove_pid(status_path)
         _close_orchestrator_log()
         os.environ.pop("WORCA_PLAN_FILE", None)
