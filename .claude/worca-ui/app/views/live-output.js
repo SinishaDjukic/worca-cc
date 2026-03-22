@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Activity } from '../utils/icons.js';
+import { iconSvg, Activity, ClipboardCopy } from '../utils/icons.js';
+import { copyTerminalToClipboard } from '../utils/terminal-clipboard.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 
 // ANSI color palette (matches log-viewer.js)
@@ -192,6 +193,11 @@ export function getActiveStage() {
   return activeStage;
 }
 
+/** Get the live terminal instance (for clipboard access) */
+export function getLiveTerminalInstance() {
+  return terminal;
+}
+
 /**
  * Mount the live output terminal into its container after lit-html renders.
  * @param {string} runId
@@ -225,6 +231,12 @@ export function liveOutputView(stageName, isRunning) {
           <span class="live-output-icon">${unsafeHTML(iconSvg(Activity, 16))}</span>
           <span class="live-output-title">Live Output</span>
           ${stageName ? html`<sl-badge variant="warning" pill>${label}</sl-badge>` : nothing}
+        </div>
+        <div class="live-output-controls">
+          <button class="terminal-copy-btn" @click=${(e) => copyTerminalToClipboard(terminal, e.currentTarget)}>
+            ${unsafeHTML(iconSvg(ClipboardCopy, 14))}
+            Copy
+          </button>
         </div>
         <div class="live-output-terminal-wrapper">
           <div id="live-output-terminal" class="live-output-terminal"></div>

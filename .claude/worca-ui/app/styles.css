@@ -1028,6 +1028,10 @@ sl-details.log-history-panel::part(content) {
   min-width: 160px;
 }
 
+.log-controls .terminal-copy-btn {
+  margin-left: auto;
+}
+
 .log-controls sl-input {
   flex: 1;
   min-width: 140px;
@@ -1946,10 +1950,43 @@ sl-details.live-output-panel::part(content) {
   letter-spacing: 0.04em;
 }
 
+.live-output-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .live-output-terminal-wrapper {
   border-top: 1px solid var(--border-subtle);
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   overflow: hidden;
+}
+
+/* Shared terminal copy button */
+.terminal-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.terminal-copy-btn:hover {
+  color: var(--fg);
+  border-color: var(--border-default);
+}
+
+.terminal-copy-btn.copy-success {
+  color: var(--status-success);
+  border-color: var(--status-success);
 }
 
 .live-output-terminal {

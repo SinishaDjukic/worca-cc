@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, ArrowDown, Pause, Search, Star, Clock } from '../utils/icons.js';
+import { iconSvg, ArrowDown, Pause, Search, Star, Clock, ClipboardCopy } from '../utils/icons.js';
+import { copyTerminalToClipboard } from '../utils/terminal-clipboard.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 
 // ANSI color palette for stage tags
@@ -223,6 +224,12 @@ export function logViewerView(state, { onStageFilter, onIterationFilter, onSearc
               ${unsafeHTML(iconSvg(autoScroll ? ArrowDown : Pause, 14))}
               ${autoScroll ? 'Auto' : 'Paused'}
             </sl-button>
+            ${hasStageSelected ? html`
+              <button class="terminal-copy-btn" @click=${(e) => copyTerminalToClipboard(terminal, e.currentTarget)}>
+                ${unsafeHTML(iconSvg(ClipboardCopy, 14))}
+                Copy
+              </button>
+            ` : nothing}
           </div>
           ${hasStageSelected ? html`
             <div class="log-terminal-wrapper">

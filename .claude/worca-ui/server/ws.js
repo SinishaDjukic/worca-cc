@@ -5,7 +5,7 @@
 import { WebSocketServer } from 'ws';
 import { watch, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline, pausePipeline as pmPausePipeline } from './process-manager.js';
+import { stopPipeline as pmStopPipeline, startPipeline as pmStartPipeline, pausePipeline as pmPausePipeline, reconcileStatus } from './process-manager.js';
 import { isRequest, makeOk, makeError } from '../app/protocol.js';
 import { discoverRuns, watchEvents } from './watcher.js';
 import { listIssues, listIssuesByLabel, listUnlinkedIssues, listDistinctRunLabels, countIssuesByRunLabel, getIssue, dbExists as beadsDbExists } from './beads-reader.js';
@@ -860,6 +860,7 @@ export function attachWsServer(httpServer, config) {
           try { process.kill(result.pid, 0); alive = true; } catch { /* dead */ }
           if (!alive || checks >= maxChecks) {
             clearInterval(pollInterval);
+            reconcileStatus(worcaDir);
             scheduleRefresh();
           }
         }, 500);
