@@ -86,3 +86,30 @@ describe('runListView - onPause/onResume passthrough', () => {
     expect(output).not.toContain('btn-quick-resume');
   });
 });
+
+describe('runListView - sort order (descending start time)', () => {
+  it('renders history runs newest-first', () => {
+    const runs = [
+      { id: '1', pipeline_status: 'completed', active: false, started_at: '2026-01-01T00:00:00Z', work_request: { title: 'Run-Old' } },
+      { id: '2', pipeline_status: 'completed', active: false, started_at: '2026-03-01T00:00:00Z', work_request: { title: 'Run-New' } },
+      { id: '3', pipeline_status: 'completed', active: false, started_at: '2026-02-01T00:00:00Z', work_request: { title: 'Run-Mid' } },
+    ];
+    const output = renderToString(runListView(runs, 'history', {}));
+    const newIdx = output.indexOf('Run-New');
+    const midIdx = output.indexOf('Run-Mid');
+    const oldIdx = output.indexOf('Run-Old');
+    expect(newIdx).toBeLessThan(midIdx);
+    expect(midIdx).toBeLessThan(oldIdx);
+  });
+
+  it('renders active runs newest-first', () => {
+    const runs = [
+      { id: '1', pipeline_status: 'running', active: true, started_at: '2026-01-01T00:00:00Z', work_request: { title: 'Run-Old' } },
+      { id: '2', pipeline_status: 'running', active: true, started_at: '2026-03-01T00:00:00Z', work_request: { title: 'Run-New' } },
+    ];
+    const output = renderToString(runListView(runs, 'active', {}));
+    const newIdx = output.indexOf('Run-New');
+    const oldIdx = output.indexOf('Run-Old');
+    expect(newIdx).toBeLessThan(oldIdx);
+  });
+});

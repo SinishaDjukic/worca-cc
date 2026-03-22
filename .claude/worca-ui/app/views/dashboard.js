@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, Activity, CircleCheck, CircleAlert, Zap, Plus, Coins } from '../utils/icons.js';
 import { runCardView } from './run-card.js';
+import { sortByStartDesc } from '../utils/sort-runs.js';
 
 function _computeTotalCost(runs) {
   let total = 0;
@@ -36,9 +37,9 @@ export function dashboardView(state, { onSelectRun, onNavigate, onPause, onResum
   const total = runs.length;
   const totalCost = _computeTotalCost(runs);
 
-  const runningGroup = _activeGroup(runs, ['running', 'resuming']);
-  const pausedGroup = _activeGroup(runs, ['paused']);
-  const failedGroup = _activeGroup(runs, ['failed']);
+  const runningGroup = sortByStartDesc(_activeGroup(runs, ['running', 'resuming']));
+  const pausedGroup = sortByStartDesc(_activeGroup(runs, ['paused']));
+  const failedGroup = sortByStartDesc(_activeGroup(runs, ['failed']));
 
   return html`
     <div class="dashboard">

@@ -111,6 +111,34 @@ describe('dashboardView - count badges', () => {
   });
 });
 
+// ─── Sort order within groups ─────────────────────────────────────────────────
+
+describe('dashboardView - sort order within groups', () => {
+  it('renders newer running run before older running run', () => {
+    const older = { id: 'rA', pipeline_status: 'running', active: true, started_at: '2026-01-01T00:00:00Z', work_request: { title: 'Older Running' } };
+    const newer = { id: 'rB', pipeline_status: 'running', active: true, started_at: '2026-03-01T00:00:00Z', work_request: { title: 'Newer Running' } };
+    const state = { runs: { rA: older, rB: newer } };
+    const output = renderToString(dashboardView(state));
+    expect(output.indexOf('Newer Running')).toBeLessThan(output.indexOf('Older Running'));
+  });
+
+  it('renders newer paused run before older paused run', () => {
+    const older = { id: 'pA', pipeline_status: 'paused', active: false, started_at: '2026-01-01T00:00:00Z', work_request: { title: 'Older Paused' } };
+    const newer = { id: 'pB', pipeline_status: 'paused', active: false, started_at: '2026-03-01T00:00:00Z', work_request: { title: 'Newer Paused' } };
+    const state = { runs: { pA: older, pB: newer } };
+    const output = renderToString(dashboardView(state));
+    expect(output.indexOf('Newer Paused')).toBeLessThan(output.indexOf('Older Paused'));
+  });
+
+  it('renders newer failed run before older failed run', () => {
+    const older = { id: 'fA', pipeline_status: 'failed', active: false, started_at: '2026-01-01T00:00:00Z', work_request: { title: 'Older Failed' } };
+    const newer = { id: 'fB', pipeline_status: 'failed', active: false, started_at: '2026-03-01T00:00:00Z', work_request: { title: 'Newer Failed' } };
+    const state = { runs: { fA: older, fB: newer } };
+    const output = renderToString(dashboardView(state));
+    expect(output.indexOf('Newer Failed')).toBeLessThan(output.indexOf('Older Failed'));
+  });
+});
+
 // ─── Quick-action buttons ─────────────────────────────────────────────────────
 
 describe('dashboardView - quick-action buttons', () => {

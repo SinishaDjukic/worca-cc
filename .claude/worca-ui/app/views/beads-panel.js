@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { iconSvg, Lock, Loader, Circle, CircleCheck, CircleAlert, GitBranch, Hash } from '../utils/icons.js';
 import { runCardView } from './run-card.js';
+import { sortByStartDesc } from '../utils/sort-runs.js';
 
 export function priorityVariant(priority) {
   if (priority === 0 || priority === 1) return 'danger';
@@ -187,13 +188,10 @@ function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
 // --- Run list landing view ---
 
 export function beadsRunListView(runs, { onSelectRun, beadsCounts = {} }) {
-  const sorted = [...(runs || [])].sort((a, b) => {
-    if (a.active && !b.active) return -1;
-    if (!a.active && b.active) return 1;
-    const aTime = a.started_at || '';
-    const bTime = b.started_at || '';
-    return bTime.localeCompare(aTime);
-  });
+  const all = runs || [];
+  const active = sortByStartDesc(all.filter(r => r.active));
+  const inactive = sortByStartDesc(all.filter(r => !r.active));
+  const sorted = [...active, ...inactive];
 
   if (sorted.length === 0) {
     return html`<div class="empty-state">No pipeline runs yet.</div>`;

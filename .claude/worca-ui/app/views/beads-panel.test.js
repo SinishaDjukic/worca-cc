@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { beadsPanelView } from './beads-panel.js';
+import { beadsPanelView, beadsRunListView } from './beads-panel.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -30,6 +30,62 @@ const baseOptions = {
   onStartIssue: () => {},
   onDismissError: () => {},
 };
+
+describe('beadsRunListView - active-first + newest-first ordering', () => {
+  const options = { onSelectRun: () => {}, beadsCounts: {} };
+
+  it('shows empty state when no runs', () => {
+    const out = renderToString(beadsRunListView([], options));
+    expect(out).toContain('No pipeline runs yet');
+  });
+
+  it('renders active runs before inactive runs', () => {
+    const runs = [
+      { id: 'r1', active: false, started_at: '2026-03-22T12:00:00Z', work_request: { title: 'Inactive Older' } },
+      { id: 'r2', active: true,  started_at: '2026-03-22T10:00:00Z', work_request: { title: 'Active' } },
+    ];
+    const out = renderToString(beadsRunListView(runs, options));
+    expect(out.indexOf('Active')).toBeLessThan(out.indexOf('Inactive Older'));
+  });
+
+  it('sorts active runs newest-first within the active group', () => {
+    const runs = [
+      { id: 'r1', active: true, started_at: '2026-03-22T09:00:00Z', work_request: { title: 'Active Old' } },
+      { id: 'r2', active: true, started_at: '2026-03-22T11:00:00Z', work_request: { title: 'Active New' } },
+    ];
+    const out = renderToString(beadsRunListView(runs, options));
+    expect(out.indexOf('Active New')).toBeLessThan(out.indexOf('Active Old'));
+  });
+
+  it('sorts inactive runs newest-first within the inactive group', () => {
+    const runs = [
+      { id: 'r1', active: false, started_at: '2026-03-22T08:00:00Z', work_request: { title: 'Inactive Old' } },
+      { id: 'r2', active: false, started_at: '2026-03-22T10:00:00Z', work_request: { title: 'Inactive New' } },
+    ];
+    const out = renderToString(beadsRunListView(runs, options));
+    expect(out.indexOf('Inactive New')).toBeLessThan(out.indexOf('Inactive Old'));
+  });
+
+  it('active group before inactive, each sorted newest-first', () => {
+    const runs = [
+      { id: 'r1', active: false, started_at: '2026-03-22T14:00:00Z', work_request: { title: 'Inactive Newest' } },
+      { id: 'r2', active: false, started_at: '2026-03-22T08:00:00Z', work_request: { title: 'Inactive Oldest' } },
+      { id: 'r3', active: true,  started_at: '2026-03-22T10:00:00Z', work_request: { title: 'Active Old' } },
+      { id: 'r4', active: true,  started_at: '2026-03-22T12:00:00Z', work_request: { title: 'Active New' } },
+    ];
+    const out = renderToString(beadsRunListView(runs, options));
+    const posActiveNew    = out.indexOf('Active New');
+    const posActiveOld    = out.indexOf('Active Old');
+    const posInactiveNew  = out.indexOf('Inactive Newest');
+    const posInactiveOld  = out.indexOf('Inactive Oldest');
+    // Active group first, newest active before older active
+    expect(posActiveNew).toBeLessThan(posActiveOld);
+    // Entire active group before inactive group
+    expect(posActiveOld).toBeLessThan(posInactiveNew);
+    // Newest inactive before oldest inactive
+    expect(posInactiveNew).toBeLessThan(posInactiveOld);
+  });
+});
 
 describe('beadsPanelView - run/branch metadata strip', () => {
   it('shows run ID when runId is provided', () => {
