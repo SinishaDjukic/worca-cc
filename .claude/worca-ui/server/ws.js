@@ -84,7 +84,7 @@ export function attachWsServer(httpServer, config) {
   function ensureSubs(ws) {
     let s = subs.get(ws);
     if (!s) {
-      s = { runId: null, logStage: null, eventsRunId: null };
+      s = { runId: null, logStage: null, logRunId: null, eventsRunId: null };
       subs.set(ws, s);
     }
     return s;
@@ -190,7 +190,7 @@ export function attachWsServer(httpServer, config) {
     }
   }
 
-  function broadcastToLogSubscribers(stage, type, payload) {
+  function broadcastToLogSubscribers(stage, type, payload, runId) {
     const msg = JSON.stringify({
       id: `evt-${Date.now()}`,
       ok: true,
@@ -201,9 +201,15 @@ export function attachWsServer(httpServer, config) {
       if (ws.readyState !== ws.OPEN) continue;
       const s = subs.get(ws);
       if (s && (s.logStage === stage || s.logStage === '*')) {
+        if (runId && s.logRunId && s.logRunId !== runId) continue;
         ws.send(msg);
       }
     }
+  }
+
+  function currentActiveRunId() {
+    if (!watchedRunDir) return null;
+    return watchedRunDir.split('/').pop() || null;
   }
 
   // Watch status.json for changes (both per-run and legacy)
@@ -326,6 +332,7 @@ export function attachWsServer(httpServer, config) {
     try {
       if (!existsSync(filePath)) return;
       logLineCounts.set(key, countLines(filePath));
+      const watcherRunId = currentActiveRunId();
       const watcher = watch(filePath, (eventType) => {
         if (eventType === 'change') {
           try {
@@ -339,7 +346,7 @@ export function attachWsServer(httpServer, config) {
                   iteration: iteration ?? undefined,
                   line,
                   timestamp: new Date().toISOString(),
-                });
+                }, watcherRunId);
               }
             }
           } catch { /* ignore */ }
@@ -735,6 +742,7 @@ export function attachWsServer(httpServer, config) {
       const { stage, runId, iteration } = req.payload || {};
       const s = ensureSubs(ws);
       s.logStage = stage || '*';
+      s.logRunId = runId || null;
       // Acknowledge the subscription
       ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
 
@@ -807,6 +815,7 @@ export function attachWsServer(httpServer, config) {
     if (req.type === 'unsubscribe-log') {
       const s = ensureSubs(ws);
       s.logStage = null;
+      s.logRunId = null;
       ws.send(JSON.stringify(makeOk(req, { unsubscribed: true })));
       return;
     }
