@@ -62,7 +62,7 @@ export function runCardView(run, { onClick, beadsCount, onPause, onResume } = {}
       `
     : nothing;
 
-  const resumeBtn = onResume
+  const resumeBtn = onResume && (overallStatus === 'paused' || overallStatus === 'failed')
     ? html`
         <div class="run-card-actions">
           <button class="btn-quick-resume" @click=${(e) => { e.stopPropagation(); onResume(run.id); }}>
@@ -75,7 +75,9 @@ export function runCardView(run, { onClick, beadsCount, onPause, onResume } = {}
   return html`
     <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
-        <span class="run-card-status" title=${tooltip || nothing}>${unsafeHTML(statusIcon(overallStatus, 16))}</span>
+        ${tooltip
+          ? html`<span class="run-card-status" title=${tooltip}>${unsafeHTML(statusIcon(overallStatus, 16))}</span>`
+          : html`<span class="run-card-status">${unsafeHTML(statusIcon(overallStatus, 16))}</span>`}
         <span class="run-card-title">${title}</span>
       </div>
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> ${branch}</span></div>` : nothing}
