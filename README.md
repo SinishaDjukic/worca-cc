@@ -30,16 +30,16 @@ worca-cc is a 5-agent pipeline that plans, coordinates, implements, tests, and r
 
 ## Installation
 
-### Using the `/install-worca` skill (recommended)
+### Using the `/worca:install` skill (recommended)
 
 If you already have Claude Code, run inside the worca-cc repo:
 
 ```bash
 cd worca-cc && claude
-# Then type: /install-worca /path/to/your-project
+# Then type: /worca:install /path/to/your-project
 ```
 
-This copies all pipeline files, installs dependencies, initializes beads, and stores the worca-cc source path in the target's `settings.json` for future `/sync-worca` updates.
+This copies all pipeline files, installs dependencies, initializes beads, and stores the worca-cc source path in the target's `settings.json` for future `/worca:sync` updates.
 
 ### Manual installation
 
@@ -64,17 +64,17 @@ cd your-project/.claude/worca-ui && npm install
 
 ### Updating an existing installation
 
-Use the `/sync-worca` skill to pull the latest pipeline files from worca-cc:
+Use the `/worca:sync` skill to pull the latest pipeline files from worca-cc:
 
 ```bash
 cd your-project && claude
-# Then type: /sync-worca
+# Then type: /worca:sync
 ```
 
-The source repo path is resolved automatically: first from `worca.source_repo` in your project's `settings.json` (set by `/install-worca`), then by auto-detection. You can also pass an explicit path:
+The source repo path is resolved automatically: first from `worca.source_repo` in your project's `settings.json` (set by `/worca:install`), then by auto-detection. You can also pass an explicit path:
 
 ```bash
-/sync-worca /path/to/worca-cc
+/worca:sync /path/to/worca-cc
 ```
 
 Sync uses `rsync --delete` for core directories (worca, worca-ui, agents, hooks, scripts) to remove stale files, and additive sync for skills to preserve project-specific skills. Settings are merged — project-specific permissions, MCP config, and model preferences are never overwritten.

@@ -1,13 +1,13 @@
 ---
-name: install-worca
-description: Install worca pipeline into a new project. Requires a target path argument (e.g. /install-worca /path/to/project). Copies .claude/ files, stores the source repo path for future syncs, installs dependencies, and initializes beads. Use when the user says "install worca", "setup worca", or "add worca to project".
+name: install
+description: Install worca pipeline into a new project. Requires a target path argument (e.g. /worca:install /path/to/project). Copies .claude/ files, stores the source repo path for future syncs, installs dependencies, and initializes beads. Use when the user says "install worca", "setup worca", or "add worca to project".
 ---
 
 # Install Worca into a New Project
 
-First-time installation of the worca pipeline into a target project. This copies all pipeline files, stores the source repo path for future `/sync-worca` updates, installs dependencies, and initializes beads.
+First-time installation of the worca pipeline into a target project. This copies all pipeline files, stores the source repo path for future `/worca:sync` updates, installs dependencies, and initializes beads.
 
-**Usage:** `/install-worca <target-project-path>` — the target path is **mandatory**.
+**Usage:** `/worca:install <target-project-path>` — the target path is **mandatory**.
 
 ## Source Repository
 
@@ -36,7 +36,7 @@ DEST=<target-project-path>
 Validate:
 - `$WORCA_ROOT/.claude/worca/` exists (confirms it's actually worca-cc)
 - `$DEST` exists and is a git repository
-- `$DEST/.claude/worca/` does NOT exist (this is install, not sync — if it exists, suggest `/sync-worca` instead)
+- `$DEST/.claude/worca/` does NOT exist (this is install, not sync — if it exists, suggest `/worca:sync` instead)
 
 ### Step 2: Copy .claude/ directory
 
@@ -53,8 +53,8 @@ rsync -av "$SRC/agents/" "$DEST/.claude/agents/"
 rsync -av --exclude='__pycache__' "$SRC/hooks/" "$DEST/.claude/hooks/"
 rsync -av --exclude='__pycache__' "$SRC/scripts/" "$DEST/.claude/scripts/"
 
-# Skills — exclude install-worca (only needed in the worca-cc source repo, not target projects)
-rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='install-worca/' "$SRC/skills/" "$DEST/.claude/skills/"
+# Skills — exclude worca/install (only needed in the worca-cc source repo, not target projects)
+rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='worca/install/' "$SRC/skills/" "$DEST/.claude/skills/"
 ```
 
 ### Step 3: Copy and patch settings.json
@@ -75,7 +75,7 @@ Then use a JSON tool (python/jq) to set:
 }
 ```
 
-This stores the source path so that `/sync-worca` can find it automatically in the future.
+This stores the source path so that `/worca:sync` can find it automatically in the future.
 
 **Do NOT copy** `settings.local.json` — it is machine-specific.
 
@@ -133,7 +133,7 @@ Worca installed successfully!
     .claude/agents/        done
     .claude/hooks/         done
     .claude/scripts/       done
-    .claude/skills/        done  (install-worca excluded)
+    .claude/skills/        done  (worca/install excluded)
     .claude/settings.json  done  (source_repo saved)
 
   Beads:     initialized / skipped (bd not found)
@@ -142,5 +142,5 @@ Worca installed successfully!
   Next steps:
     cd <target-project> && claude          # Interactive mode
     python .claude/scripts/run_pipeline.py --prompt "..."  # Autonomous mode
-    /sync-worca                            # Update worca files later
+    /worca:sync                            # Update worca files later
 ```
