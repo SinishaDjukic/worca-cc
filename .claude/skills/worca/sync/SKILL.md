@@ -24,7 +24,7 @@ After resolving, validate that `$WORCA_ROOT/.claude/worca/` exists to confirm it
 |-----------|------|----------|
 | `.claude/worca/` | `--delete` | Python orchestrator, hooks, schemas, state, utils |
 | `.claude/worca-ui/` | `--delete` | Node.js dashboard UI (app, server, bin, scripts, tests) |
-| `.claude/agents/` | `--delete` | Core agent definitions (coordinator, guardian, implementer, planner, tester) |
+| `.claude/agents/` | `--delete` (excludes `overrides/`) | Core agent definitions (coordinator, guardian, implementer, planner, tester) |
 | `.claude/hooks/` | `--delete` | Claude Code hook scripts (pre/post tool use, session, prompt, etc.) |
 | `.claude/scripts/` | `--delete` | Runner scripts (batch, parallel, pipeline) |
 | `.claude/skills/` | **additive** | Worca-provided skills (no `--delete` — preserves project-specific skills) |
@@ -60,7 +60,7 @@ DEST=<target-project>/.claude
 # Core worca directories (--delete removes stale files)
 rsync -av --delete --exclude='node_modules' --exclude='__pycache__' "$SRC/worca/" "$DEST/worca/"
 rsync -av --delete --exclude='node_modules' --exclude='__pycache__' "$SRC/worca-ui/" "$DEST/worca-ui/"
-rsync -av --delete "$SRC/agents/" "$DEST/agents/"
+rsync -av --delete --exclude='overrides/' "$SRC/agents/" "$DEST/agents/"
 rsync -av --delete --exclude='__pycache__' "$SRC/hooks/" "$DEST/hooks/"
 rsync -av --delete --exclude='__pycache__' "$SRC/scripts/" "$DEST/scripts/"
 

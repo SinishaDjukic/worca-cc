@@ -49,7 +49,7 @@ mkdir -p "$DEST/.claude"
 # Core worca directories
 rsync -av --exclude='node_modules' --exclude='__pycache__' "$SRC/worca/" "$DEST/.claude/worca/"
 rsync -av --exclude='node_modules' --exclude='__pycache__' "$SRC/worca-ui/" "$DEST/.claude/worca-ui/"
-rsync -av "$SRC/agents/" "$DEST/.claude/agents/"
+rsync -av --exclude='overrides/' "$SRC/agents/" "$DEST/.claude/agents/"
 rsync -av --exclude='__pycache__' "$SRC/hooks/" "$DEST/.claude/hooks/"
 rsync -av --exclude='__pycache__' "$SRC/scripts/" "$DEST/.claude/scripts/"
 
