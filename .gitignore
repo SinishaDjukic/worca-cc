@@ -22,7 +22,6 @@ test-results/
 
 # Pipeline runtime artifacts
 MASTER_PLAN.md
-docs/plans/20??????-*
 
 # Runtime / tooling
 .claude/worktrees/
