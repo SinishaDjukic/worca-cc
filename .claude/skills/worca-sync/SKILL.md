@@ -9,8 +9,8 @@ Sync the worca pipeline files from the worca-cc source repository to a target pr
 
 ## Source Repository Resolution (priority order)
 
-1. **Explicit argument** — if the user passes a path (e.g. `/worca:sync /path/to/worca-cc`), use that
-2. **Stored path** — read `worca.source_repo` from the target's `.claude/settings.json` (set during `/worca:install`)
+1. **Explicit argument** — if the user passes a path (e.g. `/worca-sync /path/to/worca-cc`), use that
+2. **Stored path** — read `worca.source_repo` from the target's `.claude/settings.json` (set during `/worca-install`)
 3. **Auto-detect** — if CWD is inside worca-cc, use `git rev-parse --show-toplevel`
 4. **Ask the user** — if none of the above work
 
@@ -65,8 +65,8 @@ rsync -av --delete --exclude='__pycache__' "$SRC/hooks/" "$DEST/hooks/"
 rsync -av --delete --exclude='__pycache__' "$SRC/scripts/" "$DEST/scripts/"
 
 # Skills (additive — do NOT --delete, target may have project-specific skills)
-# Exclude worca/install — it's only needed in the worca-cc source repo
-rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='worca/install/' "$SRC/skills/" "$DEST/skills/"
+# Exclude worca-install — it's only needed in the worca-cc source repo
+rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='worca-install/' "$SRC/skills/" "$DEST/skills/"
 ```
 
 ### Step 4: Deep-merge settings.json (never overwrite existing values)

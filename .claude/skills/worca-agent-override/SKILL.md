@@ -7,12 +7,12 @@ description: Create or update agent prompt overrides for worca pipeline agents. 
 
 Create or update per-project agent prompt overlays in `.claude/agents/overrides/`. These overlay files customize the core agent prompts without modifying the originals.
 
-**Usage:** `/worca:agent-override [agent-name] [instruction]`
+**Usage:** `/worca-agent-override [agent-name] [instruction]`
 
 Examples:
-- `/worca:agent-override` — interactive mode, asks what to change
-- `/worca:agent-override implementer Use Java + Maven instead of Python` — direct
-- `/worca:agent-override guardian Add a lint check before committing`
+- `/worca-agent-override` — interactive mode, asks what to change
+- `/worca-agent-override implementer Use Java + Maven instead of Python` — direct
+- `/worca-agent-override guardian Add a lint check before committing`
 
 ## Background
 

@@ -58,16 +58,16 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ## Installation
 
-### Using the `/worca:install` skill (recommended)
+### Using the `/worca-install` skill (recommended)
 
 If you already have Claude Code, run inside the worca-cc repo:
 
 ```bash
 cd worca-cc && claude
-# Then type: /worca:install /path/to/your-project
+# Then type: /worca-install /path/to/your-project
 ```
 
-This copies all pipeline files, installs dependencies, initializes beads, and stores the worca-cc source path in the target's `settings.json` for future `/worca:sync` updates.
+This copies all pipeline files, installs dependencies, initializes beads, and stores the worca-cc source path in the target's `settings.json` for future `/worca-sync` updates.
 
 ### Manual installation
 
@@ -92,14 +92,14 @@ cd your-project/.claude/worca-ui && npm install && npm run build
 
 ### Updating an existing installation
 
-Use the `/worca:sync` skill to pull the latest pipeline files from worca-cc:
+Use the `/worca-sync` skill to pull the latest pipeline files from worca-cc:
 
 ```bash
 cd your-project && claude
-# Then type: /worca:sync
+# Then type: /worca-sync
 ```
 
-The source repo path is resolved automatically from `worca.source_repo` in your project's `settings.json` (set by `/worca:install`). You can also pass an explicit path: `/worca:sync /path/to/worca-cc`.
+The source repo path is resolved automatically from `worca.source_repo` in your project's `settings.json` (set by `/worca-install`). You can also pass an explicit path: `/worca-sync /path/to/worca-cc`.
 
 Sync uses `rsync --delete` for core directories (worca, worca-ui, agents, hooks, scripts) to remove stale files, and additive sync for skills to preserve project-specific skills. Settings are merged — project-specific permissions, MCP config, and model preferences are never overwritten.
 
@@ -260,10 +260,9 @@ Governance hooks run at every tool call — `pre_tool_use` enforces guards and p
 │   ├── run_parallel.py # Parallel batch execution
 │   └── run_batch.py    # Batch runner
 ├── skills/
-│   └── worca/
-│       ├── install/    # /worca:install skill
-│       ├── sync/       # /worca:sync skill
-│       └── agent-override/  # /worca:agent-override skill
+│   ├── worca-install/        # /worca-install skill
+│   ├── worca-sync/           # /worca-sync skill
+│   └── worca-agent-override/ # /worca-agent-override skill
 ├── worca/
 │   ├── orchestrator/   # Pipeline runner, stages, resume, prompt builder, error classifier, overlays, events, control
 │   ├── events/         # Event emitter, webhook dispatch, event types
