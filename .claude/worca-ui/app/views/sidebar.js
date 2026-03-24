@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { iconSvg, Activity, Archive, Settings, Plus, List, Coins } from '../utils/icons.js';
+import { iconSvg, Activity, Archive, Settings, Plus, List, Coins, Layers } from '../utils/icons.js';
 
 export function sidebarView(state, route, connectionState, { onNavigate }) {
   const { runs, preferences } = state;
@@ -27,6 +27,10 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
         <button class="sidebar-new-run-btn" @click=${() => onNavigate('new-run')}>
           ${unsafeHTML(iconSvg(Plus, 16))}
           <span>New Pipeline</span>
+        </button>
+        <button class="sidebar-new-run-btn sidebar-new-run-btn--multi" @click=${() => onNavigate('multi-project')}>
+          ${unsafeHTML(iconSvg(Layers, 16))}
+          <span>Multi-Project</span>
         </button>
       </div>
 

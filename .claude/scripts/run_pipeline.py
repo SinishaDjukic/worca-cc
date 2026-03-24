@@ -33,8 +33,30 @@ def main():
     parser.add_argument("--resume", action="store_true",
                         help="Resume a previous run from status.json instead of starting fresh")
     parser.add_argument("--branch", help="Use an existing branch instead of creating a new one")
+    parser.add_argument("--project-dir",
+                        help="Run pipeline in this project directory instead of cwd")
+    parser.add_argument("--guide",
+                        help="Path to guide/spec markdown file (prepended to prompt)")
 
     args = parser.parse_args()
+
+    # Change to project directory if specified
+    if args.project_dir:
+        project_dir = os.path.abspath(args.project_dir)
+        if not os.path.isdir(project_dir):
+            print(f"Error: not a directory: {args.project_dir}", file=sys.stderr)
+            sys.exit(1)
+        os.chdir(project_dir)
+
+    # Read and prepend guide file if specified
+    guide_content = None
+    if args.guide:
+        guide_path = os.path.abspath(args.guide) if not os.path.isabs(args.guide) else args.guide
+        if not os.path.isfile(guide_path):
+            print(f"Error: guide file not found: {args.guide}", file=sys.stderr)
+            sys.exit(1)
+        with open(guide_path) as f:
+            guide_content = f.read()
 
     # Normalize input to WorkRequest
     if args.prompt:
@@ -47,6 +69,19 @@ def main():
         work_request = normalize("spec", args.spec)
     elif args.source:
         work_request = normalize("source", args.source)
+
+    # Prepend guide content to work request description
+    if guide_content:
+        if work_request.description:
+            work_request.description = (
+                "## Reference Guide\n\n" + guide_content
+                + "\n\n---\n\n## Task\n\n" + work_request.description
+            )
+        else:
+            work_request.description = (
+                "## Reference Guide\n\n" + guide_content
+                + "\n\n---\n\n## Task\n\n" + work_request.title
+            )
 
     # Resolve plan: explicit --plan wins, then auto-detected from issue body
     plan_file = args.plan or work_request.plan_path

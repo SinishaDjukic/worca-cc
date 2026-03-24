@@ -2599,3 +2599,292 @@ sl-details.run-beads-panel::part(content) {
 .cost-muted {
   color: var(--muted);
 }
+
+/* ============================================================
+   Multi-Project Styles
+   ============================================================ */
+
+.sidebar-new-run-btn--multi {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.sidebar-new-run-btn--multi:hover {
+  background: var(--border);
+}
+
+/* Project list in new run form */
+.mp-project-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mp-project-add sl-input {
+  flex: 1;
+}
+
+.mp-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mp-project-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.mp-project-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.mp-project-path {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.85em;
+  font-family: monospace;
+}
+
+.mp-project-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.mp-project-remove:hover {
+  color: var(--status-error);
+  background: var(--bg-tertiary);
+}
+
+.mp-hint {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 8px 0;
+}
+
+.mp-guide-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-guide-info {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+/* Multi-project detail view */
+.mp-detail {
+  padding: 0;
+}
+
+.mp-summary {
+  margin-bottom: 24px;
+}
+
+.mp-summary-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.mp-stat {
+  font-size: 0.9em;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.mp-stat--ok { color: var(--status-completed); border-color: var(--status-completed); }
+.mp-stat--running { color: var(--status-in-progress); border-color: var(--status-in-progress); }
+.mp-stat--pending { color: var(--muted); }
+.mp-stat--error { color: var(--status-error); border-color: var(--status-error); }
+
+.mp-prompt-preview {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  max-height: 60px;
+  overflow: hidden;
+}
+
+.mp-guide-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 0.8em;
+  color: var(--muted);
+  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* Projects grid */
+.mp-projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.mp-project-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  transition: border-color 0.2s;
+}
+
+.mp-project-card--running {
+  border-color: var(--status-in-progress);
+  border-width: 2px;
+}
+
+.mp-project-card--completed {
+  border-color: var(--status-completed);
+}
+
+.mp-project-card--error {
+  border-color: var(--status-error);
+}
+
+.mp-project-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mp-project-card-name {
+  font-weight: 600;
+  font-size: 1em;
+}
+
+.mp-project-pid {
+  margin-left: auto;
+  font-size: 0.75em;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+.mp-project-card-path {
+  font-size: 0.8em;
+  color: var(--muted);
+  font-family: monospace;
+  margin-bottom: 8px;
+}
+
+.mp-project-card-error {
+  font-size: 0.85em;
+  color: var(--status-error);
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px;
+}
+
+/* Stage badges inside project cards */
+.mp-project-stages {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.mp-stage-badge {
+  font-size: 0.7em;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--muted);
+}
+
+.mp-stage-badge--completed { background: rgba(34, 197, 94, 0.15); color: var(--status-completed); }
+.mp-stage-badge--in_progress { background: rgba(245, 158, 11, 0.15); color: var(--status-in-progress); }
+.mp-stage-badge--error { background: rgba(239, 68, 68, 0.15); color: var(--status-error); }
+.mp-stage-badge--pending { background: var(--bg-tertiary); color: var(--muted); }
+
+/* Status icons */
+.mp-status { display: inline-flex; align-items: center; }
+.mp-status--ok { color: var(--status-completed); }
+.mp-status--running { color: var(--status-in-progress); }
+.mp-status--error { color: var(--status-error); }
+.mp-status--pending { color: var(--muted); }
+
+/* Run list cards */
+.mp-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.mp-run-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.mp-run-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.mp-run-card--active {
+  border-color: var(--status-in-progress);
+}
+
+.mp-run-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.mp-run-card-time {
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+.mp-run-card-prompt {
+  font-size: 0.9em;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.mp-run-card-stats {
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+.mp-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px;
+}
+
+.mp-loading {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px;
+}

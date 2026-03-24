@@ -8,6 +8,10 @@ import { validateSettingsPayload } from './settings-validator.js';
 import { startPipeline, stopPipeline, restartStage } from './process-manager.js';
 import { discoverRuns } from './watcher.js';
 import { listIssues, getIssue, dbExists } from './beads-reader.js';
+import {
+  startMultiProjectRun, getMultiProjectRun, listMultiProjectRuns,
+  refreshMultiProjectRun, stopProjectPipeline, stopMultiProjectRun,
+} from './multi-project.js';
 
 function readFullSettings(settingsPath) {
   try {
@@ -15,6 +19,16 @@ function readFullSettings(settingsPath) {
   } catch {
     return {};
   }
+}
+
+function _sanitizeRun(run) {
+  // Strip large guideContent from API responses
+  const { guideContent, ...rest } = run;
+  return {
+    ...rest,
+    hasGuide: !!guideContent,
+    guideLength: guideContent ? guideContent.length : 0,
+  };
 }
 
 export function createApp(options = {}) {
@@ -304,6 +318,91 @@ export function createApp(options = {}) {
     }
 
     res.json({ ok: true, tokenData });
+  });
+
+  // --- Multi-project endpoints ---
+
+  // POST /api/multi-runs — start a multi-project pipeline run
+  app.post('/api/multi-runs', async (req, res) => {
+    const { projects, prompt, guideFile, guideContent, msize, mloops, maxParallel, planFile, branch } = req.body || {};
+
+    if (!Array.isArray(projects) || projects.length === 0) {
+      return res.status(400).json({ ok: false, error: 'projects must be a non-empty array of directory paths' });
+    }
+    if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({ ok: false, error: 'prompt must be a non-empty string' });
+    }
+
+    try {
+      const run = startMultiProjectRun({
+        projects,
+        prompt: prompt.trim(),
+        guideFile: guideFile || undefined,
+        guideContent: guideContent || undefined,
+        msize: msize != null ? Math.max(1, Math.min(10, Math.round(Number(msize)))) : 1,
+        mloops: mloops != null ? Math.max(1, Math.min(10, Math.round(Number(mloops)))) : 1,
+        maxParallel: maxParallel != null ? Math.max(1, Math.min(20, Math.round(Number(maxParallel)))) : 5,
+        settingsPath: settingsPath || '.claude/settings.json',
+        planFile: planFile || undefined,
+        branch: branch || undefined,
+        worcaCcRoot: projectRoot,
+        onUpdate: (updatedRun) => {
+          if (app.locals.broadcast) {
+            app.locals.broadcast('multi-run-update', _sanitizeRun(updatedRun));
+          }
+        },
+      });
+
+      if (app.locals.broadcast) {
+        app.locals.broadcast('multi-run-started', _sanitizeRun(run));
+      }
+      res.json({ ok: true, run: _sanitizeRun(run) });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/multi-runs — list all multi-project runs
+  app.get('/api/multi-runs', (_req, res) => {
+    const runs = listMultiProjectRuns().map(_sanitizeRun);
+    res.json({ ok: true, runs });
+  });
+
+  // GET /api/multi-runs/:id — get a specific multi-project run with live status
+  app.get('/api/multi-runs/:id', (req, res) => {
+    const run = refreshMultiProjectRun(req.params.id);
+    if (!run) {
+      return res.status(404).json({ ok: false, error: 'Multi-project run not found' });
+    }
+    res.json({ ok: true, run: _sanitizeRun(run) });
+  });
+
+  // DELETE /api/multi-runs/:id — stop all pipelines in a multi-project run
+  app.delete('/api/multi-runs/:id', (req, res) => {
+    const stopped = stopMultiProjectRun(req.params.id);
+    if (stopped === 0) {
+      const run = getMultiProjectRun(req.params.id);
+      if (!run) return res.status(404).json({ ok: false, error: 'Run not found' });
+      return res.json({ ok: true, stopped: 0, message: 'No running pipelines to stop' });
+    }
+    if (app.locals.broadcast) {
+      const run = refreshMultiProjectRun(req.params.id);
+      if (run) app.locals.broadcast('multi-run-update', _sanitizeRun(run));
+    }
+    res.json({ ok: true, stopped });
+  });
+
+  // DELETE /api/multi-runs/:id/projects/:name — stop a single project's pipeline
+  app.delete('/api/multi-runs/:id/projects/:name', (req, res) => {
+    const ok = stopProjectPipeline(req.params.id, req.params.name);
+    if (!ok) {
+      return res.status(404).json({ ok: false, error: 'Project pipeline not found or not running' });
+    }
+    if (app.locals.broadcast) {
+      const run = refreshMultiProjectRun(req.params.id);
+      if (run) app.locals.broadcast('multi-run-update', _sanitizeRun(run));
+    }
+    res.json({ ok: true, stopped: true });
   });
 
   app.use(express.static(appDir));

@@ -42,6 +42,10 @@ import List from 'lucide/dist/esm/icons/list';
 import Lock from 'lucide/dist/esm/icons/lock';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 import Database from 'lucide/dist/esm/icons/database';
+import FolderOpen from 'lucide/dist/esm/icons/folder-open';
+import Check from 'lucide/dist/esm/icons/check';
+import X from 'lucide/dist/esm/icons/x';
+import Layers from 'lucide/dist/esm/icons/layers';
 
 function renderChildren(nodes) {
   return nodes.map(([tag, attrs]) => {
@@ -69,5 +73,6 @@ export {
   Zap, Clock, AlertTriangle,
   Activity, Archive, Search, ArrowLeft,
   Square, Play, Users, Shield, GitBranch, ChevronRight, Save, Settings, Timer, Cpu, Star, FileText, ClipboardCopy, Coins, Bell, Plus, RotateCcw,
-  List, Lock, ArrowRight, Database
+  List, Lock, ArrowRight, Database,
+  FolderOpen, Check, X, Layers,
 };

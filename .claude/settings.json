@@ -59,15 +59,15 @@
       },
       "test": {
         "agent": "tester",
-        "enabled": true
+        "enabled": false
       },
       "review": {
         "agent": "guardian",
-        "enabled": true
+        "enabled": false
       },
       "pr": {
         "agent": "guardian",
-        "enabled": true
+        "enabled": false
       }
     },
     "agents": {

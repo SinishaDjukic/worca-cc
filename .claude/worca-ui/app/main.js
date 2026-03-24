@@ -17,6 +17,11 @@ import { statusIcon } from './utils/status-badge.js';
 import { createNotificationManager } from './notifications.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { tokenCostsView } from './views/token-costs.js';
+import {
+  newMultiRunView, multiRunDetailView, multiRunListView,
+  submitMultiRun, getMultiRunSubmitState, fetchMultiRuns,
+  fetchMultiRunDetail, startPolling, stopPolling, stopMultiRun, multiRuns,
+} from './views/multi-project.js';
 
 // Register Shoelace components (tree-shaken — only imports what we use)
 import '@shoelace-style/shoelace/dist/components/details/details.js';
@@ -284,6 +289,7 @@ onHashChange((newRoute) => {
     store.clearLog();
     clearTerminal();
     clearLiveTerminal();
+    stopPolling(); // Stop multi-project polling if active
   }
 
   if (route.runId && route.runId !== prevRunId) {
@@ -653,6 +659,28 @@ function contentHeaderView() {
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
       </button>`;
+  } else if (route.section === 'multi-project' && !route.runId) {
+    title = 'Multi-Project Pipeline';
+    showBack = true;
+    const mrs = getMultiRunSubmitState();
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${mrs.isSubmitting}
+        @click=${() => submitMultiRun({ rerender, onStarted: (id) => navigate('multi-project', id) })}>
+        ${unsafeHTML(iconSvg(Play, 14))}
+        ${mrs.isSubmitting ? 'Starting\u2026' : 'Start All'}
+      </button>`;
+  } else if (route.section === 'multi-project' && route.runId) {
+    title = 'Multi-Project Run';
+    showBack = true;
+    const mr = multiRuns.find(r => r.id === route.runId);
+    if (mr && !mr.completedAt) {
+      actionButton = html`
+        <button class="action-btn action-btn--danger"
+          @click=${() => stopMultiRun(route.runId, rerender)}>
+          ${unsafeHTML(iconSvg(Square, 14))}
+          Stop All
+        </button>`;
+    }
   } else if (route.section === 'costs') {
     title = 'Token & Cost Dashboard';
     showBack = true;
@@ -680,6 +708,23 @@ function contentHeaderView() {
 function mainContentView() {
   const state = store.getState();
   const runs = Object.values(state.runs);
+
+  // Multi-project section: must be checked before generic runId
+  if (route.section === 'multi-project') {
+    if (route.runId) {
+      startPolling(route.runId, rerender);
+      return multiRunDetailView(route.runId, { rerender });
+    }
+    fetchMultiRuns().then(() => rerender());
+    return html`
+      ${newMultiRunView(state, { rerender })}
+      <sl-divider></sl-divider>
+      ${multiRunListView({
+        onSelectRun: (id) => navigate('multi-project', id),
+        rerender,
+      })}
+    `;
+  }
 
   // Beads section: two-level routing (must be checked before generic runId)
   if (route.section === 'beads') {
