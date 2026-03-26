@@ -565,6 +565,8 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         status["stages"]["learn"] = {"status": "pending"}
         start_iteration(status, "learn", agent="learner",
                         model="sonnet", trigger="initial")
+        # Persist to disk so the UI sees learn as in_progress (not skipped)
+        save_status(status, actual_status_path)
 
         if ctx:
             emit_event(ctx, STAGE_STARTED, stage_started_payload(
