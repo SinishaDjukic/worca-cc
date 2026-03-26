@@ -59,7 +59,7 @@ DEST=<target-project>/.claude
 
 # Core worca directories (--delete removes stale files)
 rsync -av --delete --exclude='node_modules' --exclude='__pycache__' "$SRC/worca/" "$DEST/worca/"
-rsync -av --delete --exclude='node_modules' --exclude='__pycache__' "$SRC/worca-ui/" "$DEST/worca-ui/"
+rsync -av --delete --exclude='node_modules' --exclude='__pycache__' --exclude='test-results/' "$SRC/worca-ui/" "$DEST/worca-ui/"
 rsync -av --delete --exclude='overrides/' "$SRC/agents/" "$DEST/agents/"
 rsync -av --delete --exclude='__pycache__' "$SRC/hooks/" "$DEST/hooks/"
 rsync -av --delete --exclude='__pycache__' "$SRC/scripts/" "$DEST/scripts/"
