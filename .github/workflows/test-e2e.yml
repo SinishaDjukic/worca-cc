@@ -1,0 +1,38 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.claude/worca-ui/**'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.claude/worca-ui/**'
+
+jobs:
+  ui-e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: .claude/worca-ui
+        run: npm ci
+
+      - name: Build frontend bundle
+        working-directory: .claude/worca-ui
+        run: npm run build
+
+      - name: Install Playwright browsers
+        working-directory: .claude/worca-ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: .claude/worca-ui
+        run: npx playwright test --workers=1
