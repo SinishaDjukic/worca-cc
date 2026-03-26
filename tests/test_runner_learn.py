@@ -4,6 +4,8 @@ import json
 import os
 from unittest.mock import patch, MagicMock, call
 
+import pytest
+
 from worca.orchestrator.runner import (
     _run_learn_stage,
     _STAGE_PROMPT_PREFIX,
@@ -12,6 +14,13 @@ from worca.orchestrator.runner import (
     PipelineInterrupted,
 )
 from worca.orchestrator.stages import Stage
+
+
+@pytest.fixture(autouse=True)
+def _mock_beads_init():
+    """Prevent run_pipeline from invoking the real bd binary in tests."""
+    with patch("worca.orchestrator.runner._ensure_beads_initialized"):
+        yield
 
 
 # ---------------------------------------------------------------------------

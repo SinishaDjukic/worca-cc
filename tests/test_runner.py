@@ -26,6 +26,13 @@ from worca.orchestrator.runner import (
 from worca.orchestrator.stages import Stage
 
 
+@pytest.fixture(autouse=True)
+def _mock_beads_init():
+    """Prevent run_pipeline from invoking the real bd binary in tests."""
+    with patch("worca.orchestrator.runner._ensure_beads_initialized"):
+        yield
+
+
 def _import_run_pipeline():
     """Import .claude/scripts/run_pipeline.py as a module."""
     script_path = os.path.join(
