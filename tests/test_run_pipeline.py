@@ -2,7 +2,7 @@
 import sys
 import os
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Add scripts dir so we can import run_pipeline
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
@@ -120,7 +120,7 @@ class TestBuildWorkRequest:
         )
         parser = create_parser()
         args = parser.parse_args(["--spec", "spec.md"])
-        wr = build_work_request(args)
+        _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("spec", "spec.md")
 
     @patch("run_pipeline.normalize")
@@ -132,7 +132,7 @@ class TestBuildWorkRequest:
         )
         parser = create_parser()
         args = parser.parse_args(["--plan", "plan.md"])
-        wr = build_work_request(args)
+        _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("plan", "plan.md")
 
     @patch("run_pipeline.normalize")
@@ -202,7 +202,7 @@ class TestBuildWorkRequest:
         )
         parser = create_parser()
         args = parser.parse_args(["--source", "gh:issue:42", "--plan", "plan.md"])
-        wr = build_work_request(args)
+        _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("source", "gh:issue:42")
 
 
@@ -245,5 +245,5 @@ class TestPromptFile:
         with open(args.prompt_file) as f:
             args.prompt = f.read()
         os.unlink(args.prompt_file)
-        wr = build_work_request(args)
+        _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("prompt", "Build a feature")

@@ -1,6 +1,5 @@
 """Tests for PromptBuilder._build_learn — learn stage prompt generation."""
 
-import json
 
 from worca.orchestrator.prompt_builder import PromptBuilder
 

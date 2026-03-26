@@ -1,7 +1,5 @@
 """Tests for prompt.py - Milestone approval gates for UserPromptSubmit."""
 import json
-import os
-import pytest
 from worca.hooks.prompt import check_milestone
 
 

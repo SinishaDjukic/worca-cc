@@ -4,9 +4,6 @@ import io
 import json
 import os
 import signal
-import subprocess
-import textwrap
-import threading
 from unittest import mock
 
 import pytest

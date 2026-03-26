@@ -1,7 +1,5 @@
 """Pipeline stage definitions and transition validation."""
-import json
 from enum import Enum
-from typing import Optional
 
 from worca.utils.settings import load_settings
 

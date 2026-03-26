@@ -7,17 +7,11 @@ raises. Supports '*' catch-all.
 """
 
 import json
-import os
-import subprocess
-import sys
-import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
-import pytest
 
 from worca.orchestrator.events import dispatch_shell_hooks
 

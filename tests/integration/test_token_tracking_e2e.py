@@ -1,14 +1,12 @@
 """Integration tests for end-to-end token tracking through the pipeline."""
 
 import json
-import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from worca.orchestrator.runner import run_stage, _save_stage_output
+from worca.orchestrator.runner import run_stage
 from worca.orchestrator.stages import Stage
 from worca.state.status import (
-    init_status, start_iteration, complete_iteration, update_stage, save_status, load_status,
-    get_stage_token_usage, get_run_token_usage,
+    init_status, start_iteration, complete_iteration, update_stage, get_stage_token_usage, get_run_token_usage,
 )
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage
 

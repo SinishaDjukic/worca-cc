@@ -3,8 +3,7 @@
 Tests the _make_agent_event_handler() factory and _summarize_tool_input() helper.
 """
 import json
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from worca.orchestrator.runner import _summarize_tool_input, _make_agent_event_handler
 from worca.orchestrator.stages import Stage

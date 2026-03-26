@@ -4,7 +4,6 @@ Provides functions to extract token usage from Claude CLI result events,
 aggregate usage across iterations/stages, and estimate costs from pricing tables.
 """
 
-import json
 from typing import Optional
 
 from worca.utils.settings import load_settings

@@ -23,7 +23,7 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
-    Stage, can_transition, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
+    Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled,
 )
 from worca.orchestrator.work_request import WorkRequest

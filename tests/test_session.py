@@ -1,6 +1,6 @@
 """Tests for session lifecycle hooks: SessionStart, PreCompact, SessionEnd."""
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from worca.hooks.session import handle_session_start, handle_pre_compact, handle_session_end
 
 

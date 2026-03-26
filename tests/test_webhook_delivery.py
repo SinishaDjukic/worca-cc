@@ -10,8 +10,7 @@ import json
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -313,7 +312,6 @@ class TestDeliverWebhook:
         """Retries use 1s, 2s, 4s exponential backoff."""
         from urllib.error import URLError
         sleep_calls = []
-        done = threading.Event()
 
         call_count = [0]
 

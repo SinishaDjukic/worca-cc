@@ -13,9 +13,7 @@ Scenarios:
 """
 
 import json
-import sys
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -283,7 +281,7 @@ class TestResumeRerunsPreflight:
 
     def test_circuit_breaker_state_preserved_on_resume(self):
         """CB state in status dict persists across resume (not cleared)."""
-        from worca.orchestrator.error_classifier import get_circuit_breaker_state, record_failure
+        from worca.orchestrator.error_classifier import get_circuit_breaker_state
 
         status = {
             "stages": {"plan": {"status": "in_progress"}},
@@ -314,7 +312,7 @@ class TestCircuitBreakerStateIntegration:
         from worca.orchestrator.error_classifier import (
             record_failure, get_circuit_breaker_state
         )
-        settings_path = _make_settings(tmp_path, max_consecutive=3)
+        _settings_path = _make_settings(tmp_path, max_consecutive=3)
         status = {}
         classification = {"category": "infra_transient", "retriable": True,
                           "remediation": "wait", "similar_to_previous": False}

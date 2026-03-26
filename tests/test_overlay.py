@@ -1,6 +1,5 @@
 """Tests for OverlayResolver — TDD: written before implementation."""
 
-import sys
 import pytest
 
 from worca.orchestrator.overlay import (
@@ -8,7 +7,6 @@ from worca.orchestrator.overlay import (
     _parse_sections,
     _parse_overrides,
     _heading_matches,
-    _reassemble,
 )
 
 
@@ -202,8 +200,8 @@ def test_resolve_case_insensitive_match(tmp_path):
 # Governance tag presence in core agent prompt files (Task 2)
 # ---------------------------------------------------------------------------
 
-import pathlib
-import re
+import pathlib  # noqa: E402
+import re  # noqa: E402
 
 _CORE_AGENTS_DIR = pathlib.Path(__file__).parent.parent / ".claude" / "agents" / "core"
 

@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import os
-import sys
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -1279,7 +1278,7 @@ def test_run_pipeline_emits_run_started_event(tmp_path):
     worca_dir = tmp_path / ".worca"
     events_path = worca_dir / "runs" / run_id / "events.jsonl"
     lines = events_path.read_text().strip().split("\n")
-    event_types = [json.loads(l)["event_type"] for l in lines if l.strip()]
+    event_types = [json.loads(line)["event_type"] for line in lines if line.strip()]
     assert "pipeline.run.started" in event_types
 
 
@@ -1289,7 +1288,7 @@ def test_run_pipeline_run_started_payload_resume_false(tmp_path):
     run_id = result["run_id"]
     worca_dir = tmp_path / ".worca"
     events_path = worca_dir / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     started = next(e for e in events if e["event_type"] == "pipeline.run.started")
     assert started["payload"]["resume"] is False
 
@@ -1420,7 +1419,7 @@ def test_run_pipeline_emits_stage_started_event(tmp_path):
     result = _run_pipeline_with_plan(tmp_path)
     run_id = result["run_id"]
     events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.stage.started" in types
 
@@ -1430,7 +1429,7 @@ def test_run_pipeline_emits_stage_completed_event(tmp_path):
     result = _run_pipeline_with_plan(tmp_path)
     run_id = result["run_id"]
     events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.stage.completed" in types
 
@@ -1440,7 +1439,7 @@ def test_run_pipeline_stage_started_payload_fields(tmp_path):
     result = _run_pipeline_with_plan(tmp_path)
     run_id = result["run_id"]
     events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     started = next(e for e in events if e["event_type"] == "pipeline.stage.started")
     p = started["payload"]
     assert "stage" in p
@@ -1459,7 +1458,7 @@ def test_run_pipeline_stage_completed_payload_fields(tmp_path):
     result = _run_pipeline_with_plan(tmp_path)
     run_id = result["run_id"]
     events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     completed = next(e for e in events if e["event_type"] == "pipeline.stage.completed")
     p = completed["payload"]
     assert "stage" in p
@@ -1524,7 +1523,7 @@ def test_run_pipeline_emits_stage_failed_on_exception(tmp_path):
                                      status_path=status_path)
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.stage.failed" in types
     failed = next(e for e in events if e["event_type"] == "pipeline.stage.failed")
@@ -1574,7 +1573,7 @@ def test_run_pipeline_emits_stage_interrupted_on_shutdown(tmp_path):
                                      status_path=status_path)
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.stage.interrupted" in types
     interrupted = next(e for e in events if e["event_type"] == "pipeline.stage.interrupted")
@@ -1661,7 +1660,7 @@ def test_bead_assigned_event_emitted_after_claim(tmp_path):
     bead_ids = ["beads-aaa"]
     worca_dir = _run_bead_pipeline(tmp_path, bead_ids)
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.bead.assigned" in types
     assigned = next(e for e in events if e["event_type"] == "pipeline.bead.assigned")
@@ -1676,7 +1675,7 @@ def test_bead_completed_event_emitted_after_bd_close(tmp_path):
     bead_ids = ["beads-bbb"]
     worca_dir = _run_bead_pipeline(tmp_path, bead_ids, bd_close_return=True)
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.bead.completed" in types
     completed = next(e for e in events if e["event_type"] == "pipeline.bead.completed")
@@ -1690,7 +1689,7 @@ def test_bead_labeled_event_emitted_after_bd_label_add(tmp_path):
     bead_ids = ["beads-ccc", "beads-ddd"]
     worca_dir = _run_bead_pipeline(tmp_path, bead_ids)
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.bead.labeled" in types
     labeled = next(e for e in events if e["event_type"] == "pipeline.bead.labeled")
@@ -1705,7 +1704,7 @@ def test_bead_next_event_emitted_before_loop_continue(tmp_path):
     bead_ids = ["beads-eee", "beads-fff"]
     worca_dir = _run_bead_pipeline(tmp_path, bead_ids)
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.bead.next" in types
     bead_next = next(e for e in events if e["event_type"] == "pipeline.bead.next")
@@ -1828,7 +1827,7 @@ def test_test_suite_passed_event_emitted(tmp_path):
     """pipeline.test.suite_passed is emitted when TEST stage passes."""
     worca_dir = _run_implement_test_pipeline(tmp_path, [{"passed": True}])
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.test.suite_passed" in [e["event_type"] for e in events]
 
 
@@ -1836,7 +1835,7 @@ def test_test_suite_passed_payload_fields(tmp_path):
     """pipeline.test.suite_passed payload has required iteration field."""
     worca_dir = _run_implement_test_pipeline(tmp_path, [{"passed": True}])
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.test.suite_passed")
     assert "iteration" in evt["payload"]
 
@@ -1849,7 +1848,7 @@ def test_test_suite_failed_event_emitted(tmp_path):
          {"passed": True}],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.test.suite_failed" in [e["event_type"] for e in events]
 
 
@@ -1861,7 +1860,7 @@ def test_test_suite_failed_payload_fields(tmp_path):
         [{"passed": False, "failures": failures}, {"passed": True}],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.test.suite_failed")
     p = evt["payload"]
     assert "iteration" in p
@@ -1877,7 +1876,7 @@ def test_test_fix_attempt_event_emitted_before_loop(tmp_path):
         [{"passed": False, "failures": [{"test": "t", "error": "err"}]}, {"passed": True}],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.test.fix_attempt" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.test.fix_attempt")
     p = evt["payload"]
@@ -1893,7 +1892,7 @@ def test_loop_triggered_emitted_on_test_failure_loop(tmp_path):
         [{"passed": False, "failures": [{"test": "t"}]}, {"passed": True}],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     loop_evts = [e for e in events if e["event_type"] == "pipeline.loop.triggered"]
     assert len(loop_evts) >= 1
     p = loop_evts[0]["payload"]
@@ -1908,7 +1907,7 @@ def test_review_verdict_event_emitted(tmp_path):
     """pipeline.review.verdict is emitted after handle_pr_review()."""
     worca_dir = _run_review_pipeline(tmp_path, [{"outcome": "approve"}])
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.review.verdict" in [e["event_type"] for e in events]
 
 
@@ -1916,7 +1915,7 @@ def test_review_verdict_payload_fields(tmp_path):
     """pipeline.review.verdict payload has required fields."""
     worca_dir = _run_review_pipeline(tmp_path, [{"outcome": "approve", "issues": []}])
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.review.verdict")
     p = evt["payload"]
     assert p["outcome"] == "approve"
@@ -1934,7 +1933,7 @@ def test_review_fix_attempt_event_emitted_before_loop(tmp_path):
         ],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.review.fix_attempt" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.review.fix_attempt")
     p = evt["payload"]
@@ -1952,7 +1951,7 @@ def test_loop_triggered_emitted_on_review_changes_loop(tmp_path):
         ],
     )
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     loop_evts = [e for e in events if e["event_type"] == "pipeline.loop.triggered"]
     assert len(loop_evts) >= 1
     p = loop_evts[0]["payload"]
@@ -2008,7 +2007,7 @@ def test_loop_exhausted_emitted_before_raise(tmp_path):
                                          status_path=status_path)
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.loop.exhausted" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.loop.exhausted")
     p = evt["payload"]
@@ -2022,7 +2021,7 @@ def test_milestone_set_event_emitted_on_plan_file(tmp_path):
     result = _run_pipeline_with_plan(tmp_path)
     run_id = result["run_id"]
     events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     assert "pipeline.milestone.set" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.milestone.set")
     p = evt["payload"]
@@ -2130,14 +2129,13 @@ def test_cb_failure_recorded_event_emitted(tmp_path):
 
     assert isinstance(exc, (PipelineError, CircuitBreakerTripped, RuntimeError))
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.circuit_breaker.failure_recorded" in types
 
 
 def test_cb_failure_recorded_payload_fields(tmp_path):
     """CB_FAILURE_RECORDED payload has required fields."""
-    from worca.orchestrator.runner import CircuitBreakerTripped
 
     with patch("worca.orchestrator.runner.classify_error",
                return_value=_classification("infra_permanent", False)):
@@ -2149,7 +2147,7 @@ def test_cb_failure_recorded_payload_fields(tmp_path):
             )
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     evt = next(e for e in events
                if e["event_type"] == "pipeline.circuit_breaker.failure_recorded")
     p = evt["payload"]
@@ -2175,13 +2173,12 @@ def test_cb_tripped_event_emitted(tmp_path):
 
     assert isinstance(exc, CircuitBreakerTripped)
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.circuit_breaker.tripped" in [e["event_type"] for e in events]
 
 
 def test_cb_tripped_payload_fields(tmp_path):
     """CB_TRIPPED payload has reason, consecutive_failures, category."""
-    from worca.orchestrator.runner import CircuitBreakerTripped
 
     with patch("worca.orchestrator.runner.classify_error",
                return_value=_classification("infra_permanent", False)):
@@ -2193,7 +2190,7 @@ def test_cb_tripped_payload_fields(tmp_path):
             )
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.circuit_breaker.tripped")
     p = evt["payload"]
     assert "reason" in p
@@ -2241,7 +2238,7 @@ def test_cb_retry_event_emitted_on_transient(tmp_path):
                                          status_path=status_path)
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.circuit_breaker.retry" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.circuit_breaker.retry")
     p = evt["payload"]
@@ -2290,7 +2287,7 @@ def test_cb_reset_event_emitted_after_success(tmp_path):
                                          status_path=status_path)
 
     events_path = _find_events_path(worca_dir)
-    events = [json.loads(l) for l in open(events_path).read().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in open(events_path).read().strip().split("\n") if line.strip()]
     assert "pipeline.circuit_breaker.reset" in [e["event_type"] for e in events]
     evt = next(e for e in events if e["event_type"] == "pipeline.circuit_breaker.reset")
     p = evt["payload"]
@@ -2357,7 +2354,7 @@ def _run_pipeline_with_cost(tmp_path, cost_usd=1.5, input_tokens=1000,
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     return events
 
 
@@ -2459,7 +2456,7 @@ def test_git_branch_created_event_emitted(tmp_path):
         return {}, {"type": "result"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
-        with patch("worca.orchestrator.runner.create_branch") as mock_branch:
+        with patch("worca.orchestrator.runner.create_branch") as _mock_branch:
             with patch("worca.orchestrator.runner._write_pid"):
                 with patch("worca.orchestrator.runner._remove_pid"):
                     result = run_pipeline(
@@ -2469,7 +2466,7 @@ def test_git_branch_created_event_emitted(tmp_path):
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.git.branch_created" in types
 
@@ -2501,7 +2498,7 @@ def test_git_branch_created_payload_fields(tmp_path):
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.git.branch_created")
     p = evt["payload"]
     assert "branch" in p
@@ -2539,7 +2536,7 @@ def test_git_branch_created_not_emitted_on_resume(tmp_path):
         mock_branch.assert_not_called()
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.git.branch_created" not in types
 
@@ -2584,7 +2581,7 @@ def test_git_pr_created_event_emitted(tmp_path):
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.git.pr_created" in types
 
@@ -2629,7 +2626,7 @@ def test_git_pr_created_payload_fields(tmp_path):
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.git.pr_created")
     p = evt["payload"]
     assert p["pr_url"] == "https://github.com/org/repo/pull/99"
@@ -2676,7 +2673,7 @@ def test_git_pr_created_not_emitted_without_pr_url(tmp_path):
                     )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.git.pr_created" not in types
 
@@ -2733,7 +2730,7 @@ def test_preflight_completed_event_emitted(tmp_path):
                                       status_path=status_path)
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.preflight.completed" in types
 
@@ -2761,7 +2758,7 @@ def test_preflight_completed_payload_fields(tmp_path):
                                       status_path=status_path)
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     evt = next(e for e in events if e["event_type"] == "pipeline.preflight.completed")
     p = evt["payload"]
     assert "checks" in p
@@ -2786,7 +2783,7 @@ def test_preflight_skipped_event_emitted_explicit(tmp_path):
                                       skip_preflight=True)
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.preflight.skipped" in types
 
@@ -2810,7 +2807,7 @@ def test_preflight_skipped_event_emitted_script_not_found(tmp_path):
                                       status_path=status_path)
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     types = [e["event_type"] for e in events]
     assert "pipeline.preflight.skipped" in types
 
@@ -2875,7 +2872,7 @@ def test_learn_completed_event_emitted(tmp_path):
                         )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     learn_events = [e for e in events
                     if e["event_type"] == "pipeline.stage.completed"
                     and e["payload"].get("stage") == "learn"]
@@ -2911,7 +2908,7 @@ def test_learn_completed_payload_fields(tmp_path):
                         )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     evt = next(e for e in events
                if e["event_type"] == "pipeline.stage.completed"
                and e["payload"].get("stage") == "learn")
@@ -2951,7 +2948,7 @@ def test_learn_started_event_emitted(tmp_path):
                         )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     learn_started = [e for e in events
                      if e["event_type"] == "pipeline.stage.started"
                      and e["payload"].get("stage") == "learn"]
@@ -2992,7 +2989,7 @@ def test_learn_failed_event_emitted(tmp_path):
                         )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     learn_failed = [e for e in events
                     if e["event_type"] == "pipeline.stage.failed"
                     and e["payload"].get("stage") == "learn"]
@@ -3030,7 +3027,7 @@ def test_learn_failed_payload_has_error(tmp_path):
                         )
 
     events_path = worca_dir / "runs" / result["run_id"] / "events.jsonl"
-    events = [json.loads(l) for l in events_path.read_text().strip().split("\n") if l.strip()]
+    events = [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
     evt = next(e for e in events
                if e["event_type"] == "pipeline.stage.failed"
                and e["payload"].get("stage") == "learn")

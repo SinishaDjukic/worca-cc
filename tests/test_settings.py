@@ -4,9 +4,7 @@
 import json
 import os
 import sys
-import tempfile
 
-import pytest
 
 # Add the .claude directory to sys.path so we can import worca modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.claude'))

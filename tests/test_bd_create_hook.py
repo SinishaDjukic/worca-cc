@@ -2,9 +2,8 @@
 import json
 import os
 import sys
-from unittest.mock import patch, call, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
 
@@ -127,7 +126,7 @@ class TestBeadCreatedEvent:
                 {"stdout": "✓ Created issue: bd-xyz", "exit_code": 0},
             )
         assert os.path.exists(events_file)
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         types = [e["event_type"] for e in events]
         assert "pipeline.bead.created" in types
         created = next(e for e in events if e["event_type"] == "pipeline.bead.created")
@@ -157,7 +156,7 @@ class TestBeadCreatedEvent:
                 {"command": 'bd create --title="A" && bd create --title="B"'},
                 {"stdout": "✓ Created issue: bd-aaa\n✓ Created issue: bd-bbb", "exit_code": 0},
             )
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         created_events = [e for e in events if e["event_type"] == "pipeline.bead.created"]
         assert len(created_events) == 2
         ids = {e["payload"]["bead_id"] for e in created_events}

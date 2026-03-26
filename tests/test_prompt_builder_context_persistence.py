@@ -2,9 +2,7 @@
 
 import json
 import os
-from pathlib import Path
 
-import pytest
 
 from worca.orchestrator.prompt_builder import PromptBuilder
 

@@ -12,9 +12,8 @@ import json
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 # Make .claude/scripts importable for CLI tests
 sys.path.insert(0, str(Path(__file__).parent.parent / ".claude" / "scripts"))
@@ -88,7 +87,6 @@ class TestRunPipelineSkipPreflightParam:
     def test_run_pipeline_accepts_skip_preflight_param(self, tmp_path):
         """run_pipeline() must accept a skip_preflight keyword argument."""
         from worca.orchestrator.runner import run_pipeline
-        from worca.orchestrator.work_request import WorkRequest
         import inspect
         sig = inspect.signature(run_pipeline)
         assert "skip_preflight" in sig.parameters
@@ -110,7 +108,7 @@ class TestSkipPreflightInStageLoop:
 
     def test_run_preflight_not_called_when_skip_preflight_true(self, tmp_path):
         """When skip_preflight=True, run_preflight() must not be called."""
-        from worca.orchestrator.runner import run_pipeline, PipelineError
+        from worca.orchestrator.runner import run_pipeline
         from worca.orchestrator.work_request import WorkRequest
 
         settings_path = _make_settings(tmp_path, preflight_enabled=True)

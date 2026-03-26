@@ -15,7 +15,8 @@ import sys
 try:
     from worca.utils.env import get_env
 except ImportError:
-    get_env = lambda **kw: None
+    def get_env(**kw):
+        return None
 
 
 def handle_session_start() -> str:

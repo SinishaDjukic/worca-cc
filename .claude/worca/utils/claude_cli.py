@@ -331,7 +331,6 @@ def run_agent(
     if proc.returncode < 0:
         raise InterruptedError(f"claude agent killed by signal {-proc.returncode}")
     if proc.returncode != 0:
-        is_error = result_event.get("is_error", False) if result_event else True
         error_msg = result_event.get("result", "") if result_event else ""
         raise RuntimeError(
             f"claude agent failed (exit code {proc.returncode})"

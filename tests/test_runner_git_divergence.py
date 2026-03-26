@@ -1,10 +1,8 @@
 """Tests for git divergence guard on pipeline resume."""
 
 import json
-import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 from worca.orchestrator.runner import run_pipeline
 from worca.orchestrator.work_request import WorkRequest
@@ -120,7 +118,7 @@ def test_runner_calls_divergence_handler_when_head_changed(tmp_path, monkeypatch
     with patch("worca.orchestrator.runner._write_pid"):
         with patch("worca.orchestrator.runner._remove_pid"):
             with patch("worca.orchestrator.resume.get_current_git_head", return_value=SHA_NEW):
-                result = run_pipeline(
+                _result = run_pipeline(
                     wr,
                     resume=True,
                     settings_path=settings,

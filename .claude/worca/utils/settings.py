@@ -9,7 +9,6 @@ out of version control.
 import json
 import os
 import sys
-from typing import Any
 
 
 def deep_merge(base: dict, override: dict) -> dict:

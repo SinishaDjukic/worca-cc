@@ -1,7 +1,7 @@
 """Tests for worca.utils.claude_cli - Claude CLI wrapper."""
 
 import json
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import run_agent, build_command
 

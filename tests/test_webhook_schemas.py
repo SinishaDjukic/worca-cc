@@ -3,7 +3,6 @@ Tests for docs/spec/webhooks/schemas/ — validates JSON Schema (Draft 2020-12)
 files that define the webhook event envelope and all event payloads.
 """
 import json
-import re
 from pathlib import Path
 
 SCHEMAS_DIR = Path(__file__).parent.parent / "docs/spec/webhooks/schemas"

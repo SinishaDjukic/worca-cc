@@ -21,7 +21,7 @@ _slugify = run_parallel._slugify
 _run_pipeline_in_worktree = run_parallel._run_pipeline_in_worktree
 
 # _ARG_INLINE_LIMIT is now imported from claude_cli by run_parallel
-from worca.utils.claude_cli import _ARG_INLINE_LIMIT
+from worca.utils.claude_cli import _ARG_INLINE_LIMIT  # noqa: E402
 
 
 # --- _slugify ---

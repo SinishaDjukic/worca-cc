@@ -5,7 +5,6 @@ Usage:
 """
 
 import argparse
-import sys
 
 from worca.utils.stats import rebuild_from_results
 

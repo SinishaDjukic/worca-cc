@@ -16,10 +16,7 @@ Covers:
 
 import json
 import sys
-from io import StringIO
-from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, ".claude")
 

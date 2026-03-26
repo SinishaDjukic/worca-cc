@@ -150,7 +150,7 @@ def main():
     if args.branch:
         print(f"  Using existing branch: {args.branch}")
     if args.skip_preflight:
-        print(f"  Skipping preflight checks")
+        print("  Skipping preflight checks")
 
     try:
         # For resume, always use default .worca/status.json so runner derives

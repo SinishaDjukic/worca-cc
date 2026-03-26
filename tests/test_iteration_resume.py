@@ -5,11 +5,9 @@ These tests exercise the runner's state management without spawning real Claude
 subprocess calls — all agent calls are mocked.
 """
 
-import json
 import os
-import tempfile
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 

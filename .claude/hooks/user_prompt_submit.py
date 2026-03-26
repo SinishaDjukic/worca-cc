@@ -2,7 +2,6 @@
 # requires-python = ">=3.8"
 # ///
 """UserPromptSubmit hook: runs milestone approval gates."""
-import json
 import sys
 import os
 

@@ -7,7 +7,6 @@ from worca.orchestrator.stages import (
     STAGE_AGENT_MAP,
     STAGE_SCHEMA_MAP,
     STAGE_ORDER,
-    _DEFAULT_MODEL_MAP,
     _resolve_model,
     can_transition,
     get_stage_config,

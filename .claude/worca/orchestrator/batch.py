@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import time
-from typing import List
 
 from worca.orchestrator.runner import run_pipeline
 from worca.orchestrator.work_request import WorkRequest

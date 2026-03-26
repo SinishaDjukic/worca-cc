@@ -1,8 +1,7 @@
 """Tests for control file polling in the runner iteration loop."""
 
 import json
-import sys
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -12,7 +11,6 @@ from worca.orchestrator.runner import (
     PipelineInterrupted,
 )
 from worca.events.types import RUN_PAUSED
-from worca.state.status import save_status
 
 
 # --- no control file ---

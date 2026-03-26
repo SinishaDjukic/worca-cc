@@ -1,6 +1,6 @@
 """Tests for worca.utils.gh_issues - GitHub issue lifecycle helpers."""
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import subprocess
 

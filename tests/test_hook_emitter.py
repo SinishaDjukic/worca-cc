@@ -4,10 +4,8 @@ Tests for worca.events.hook_emitter — lightweight emitter for subprocess hooks
 
 import json
 import os
-import uuid
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +144,6 @@ def test_emit_from_hook_appends_multiple_events(tmp_path):
 
     lines = open(events_file).readlines()
     assert len(lines) == 2
-    events = [json.loads(l) for l in lines]
+    events = [json.loads(line) for line in lines]
     assert events[0]["event_type"] == "pipeline.hook.blocked"
     assert events[1]["event_type"] == "pipeline.hook.test_gate"

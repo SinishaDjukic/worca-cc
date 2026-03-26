@@ -3,13 +3,10 @@ Tests for worca.events.emitter — EventContext and emit_event().
 """
 
 import json
-import os
-import tempfile
 import uuid
 from datetime import datetime
-from io import StringIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -186,7 +183,7 @@ def test_emit_event_unique_event_ids(ctx, tmp_events_file):
     emit_event(ctx, "pipeline.run.completed", {"duration_ms": 1000, "total_cost_usd": 0.0, "total_turns": 1, "total_tokens": 100, "stages_completed": []})
     ctx.close()
     lines = Path(tmp_events_file).read_text().strip().split("\n")
-    ids = [json.loads(l)["event_id"] for l in lines]
+    ids = [json.loads(line)["event_id"] for line in lines]
     assert len(set(ids)) == 2
 
 

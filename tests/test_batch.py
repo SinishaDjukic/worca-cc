@@ -2,13 +2,12 @@
 
 import json
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from worca.orchestrator.batch import (
     run_batch,
     should_skip,
     CircuitBreakerError,
-    RateLimitError,
     _request_id,
 )
 from worca.orchestrator.work_request import WorkRequest

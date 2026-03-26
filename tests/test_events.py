@@ -12,7 +12,6 @@ Covers:
 import json
 import time
 import uuid
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -127,7 +126,7 @@ def test_multiple_events_each_on_own_line(ctx, tmp_path):
 
     lines = (tmp_path / "events.jsonl").read_text().strip().split("\n")
     assert len(lines) == 3
-    types = [json.loads(l)["event_type"] for l in lines]
+    types = [json.loads(line)["event_type"] for line in lines]
     assert types == [
         "pipeline.run.started",
         "pipeline.stage.started",

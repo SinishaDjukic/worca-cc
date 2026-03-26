@@ -1,11 +1,9 @@
 """Tests for pipeline lifecycle state management (signal handler, atexit, finally, resume, beads)."""
 
-import json
 import os
 import signal
 from unittest.mock import patch
 
-import pytest
 
 import worca.orchestrator.runner as runner
 from worca.orchestrator.control import write_control, control_path

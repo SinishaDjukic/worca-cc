@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 from fnmatch import fnmatch
-from typing import Any, Optional
+from typing import Optional
 from urllib import request
 from urllib.error import URLError
 

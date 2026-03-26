@@ -4,7 +4,6 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from worca.orchestrator.error_classifier import (
     CATEGORY_TRANSIENT,
@@ -550,7 +549,7 @@ class TestClassifyErrorCache:
         # Call 2: time.time() for cache check = 400 (>300 TTL) → expired → subprocess called → time.time() for store = 400
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             with patch("worca.orchestrator.error_classifier.time.time", side_effect=[0, 400, 400]):
-                result1 = classify_error("timeout", "implement", [], str(settings_file))
+                _result1 = classify_error("timeout", "implement", [], str(settings_file))
                 result2 = classify_error("timeout", "implement", [], str(settings_file))
 
         assert mock_run.call_count == 2

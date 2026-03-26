@@ -1,11 +1,7 @@
 """Tests for .claude/scripts/worca.py CLI entry point."""
 
 import json
-import os
 import signal
-import subprocess
-import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

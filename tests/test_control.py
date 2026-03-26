@@ -1,8 +1,7 @@
 """Tests for worca.orchestrator.control — control file protocol utilities."""
 
 import json
-import os
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 

@@ -1,7 +1,5 @@
 """Tests for worca.orchestrator.prompt_builder — stage-specific prompt generation."""
 
-import os
-from unittest.mock import patch
 
 from worca.orchestrator.prompt_builder import PromptBuilder
 

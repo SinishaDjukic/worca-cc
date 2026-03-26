@@ -10,7 +10,6 @@ When run_id is omitted, the active run is read from .worca/active_run.
 """
 
 import argparse
-import json
 import os
 import signal
 import subprocess
@@ -22,8 +21,8 @@ _SCRIPTS_DIR = Path(__file__).parent
 _CLAUDE_DIR = _SCRIPTS_DIR.parent
 sys.path.insert(0, str(_CLAUDE_DIR))
 
-from worca.orchestrator.control import write_control
-from worca.state.status import load_status
+from worca.orchestrator.control import write_control  # noqa: E402
+from worca.state.status import load_status  # noqa: E402
 
 
 _DEFAULT_BASE = ".worca"

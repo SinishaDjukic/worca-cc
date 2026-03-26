@@ -94,7 +94,7 @@ class TestRunLearn:
             "run_id": "test-run",
             "result": "success",
         }
-        run_dir = self._setup_run_dir(tmp_path, status)
+        _run_dir = self._setup_run_dir(tmp_path, status)
 
         with patch.object(mod, "_run_learn_stage_standalone") as mock_learn:
             mock_learn.return_value = None
@@ -136,7 +136,7 @@ class TestRunLearn:
             "result": "failure",
             "error": "tests failed",
         }
-        run_dir = self._setup_run_dir(tmp_path, status)
+        _run_dir = self._setup_run_dir(tmp_path, status)
 
         with patch.object(mod, "_run_learn_stage_standalone") as mock_learn:
             mock_learn.return_value = None
@@ -162,7 +162,7 @@ class TestRunLearn:
             "run_id": "test-run",
             "result": "success",
         }
-        run_dir = self._setup_run_dir(tmp_path, status)
+        _run_dir = self._setup_run_dir(tmp_path, status)
 
         with patch.object(mod, "_run_learn_stage_standalone") as mock_learn:
             mock_learn.return_value = None

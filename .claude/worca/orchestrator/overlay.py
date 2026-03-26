@@ -3,7 +3,6 @@
 import os
 import re
 import sys
-from pathlib import Path
 
 
 def _parse_sections(content: str) -> list:

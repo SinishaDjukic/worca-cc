@@ -1,15 +1,13 @@
 """Tests for LEARN stage integration in runner.py."""
 
 import json
-import os
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from worca.orchestrator.runner import (
     _run_learn_stage,
     _STAGE_PROMPT_PREFIX,
-    LoopExhaustedError,
     PipelineError,
     PipelineInterrupted,
 )
@@ -307,9 +305,9 @@ def test_run_learn_stage_calls_run_stage_with_learn(tmp_path):
 # run_pipeline wiring — learn runs on success
 # ---------------------------------------------------------------------------
 
-import pytest
-from worca.orchestrator.runner import run_pipeline
-from worca.orchestrator.work_request import WorkRequest
+import pytest  # noqa: E402
+from worca.orchestrator.runner import run_pipeline  # noqa: E402
+from worca.orchestrator.work_request import WorkRequest  # noqa: E402
 
 
 def _make_work_request():

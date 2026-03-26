@@ -7,9 +7,8 @@ preflight skips CB, CB disabled path.
 """
 
 import json
-import time
 from contextlib import ExitStack
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

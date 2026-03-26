@@ -52,7 +52,7 @@ class TestPreToolUseBlockedEvent:
 
         assert code == 2
         assert os.path.exists(events_file)
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         assert len(events) == 1
         e = events[0]
         assert e["event_type"] == "pipeline.hook.blocked"
@@ -110,7 +110,7 @@ class TestPreToolUseBlockedEvent:
         code = self._call_main(data)
 
         assert code == 2
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
         assert "coordinator" in e["payload"]["reason"].lower() or "read-only" in e["payload"]["reason"].lower()
 
@@ -162,7 +162,7 @@ class TestPostToolUseTestGateEvent:
 
         assert code == 2
         assert os.path.exists(events_file)
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         test_gate_events = [e for e in events if e["event_type"] == "pipeline.hook.test_gate"]
         assert len(test_gate_events) == 1
         e = test_gate_events[0]
@@ -290,7 +290,7 @@ class TestSubagentStartDispatchBlockedEvent:
 
         assert code == 2
         assert os.path.exists(events_file)
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         assert len(events) == 1
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_blocked"
@@ -343,7 +343,7 @@ class TestSubagentStartDispatchBlockedEvent:
         data = json.dumps({"agent_type": "general-purpose"})
         self._call_main(data, agent="coordinator")
 
-        events = [json.loads(l) for l in open(events_file).readlines() if l.strip()]
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
         assert "coordinator" in e["payload"]["reason"]
         assert "general-purpose" in e["payload"]["reason"]

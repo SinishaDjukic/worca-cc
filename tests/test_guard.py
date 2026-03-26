@@ -1,6 +1,5 @@
 """Tests for guard.py - PreToolUse safety gates."""
 import os
-import pytest
 from worca.hooks.guard import check_guard
 
 

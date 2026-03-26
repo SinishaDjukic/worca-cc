@@ -1,1 +1,1 @@
-from worca.orchestrator.overlay import OverlayResolver
+from worca.orchestrator.overlay import OverlayResolver as OverlayResolver
