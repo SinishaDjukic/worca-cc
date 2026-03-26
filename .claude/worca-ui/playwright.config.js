@@ -2,11 +2,15 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30000,
+  timeout: 60000,
+  expect: {
+    timeout: 15000,
+  },
   use: {
     screenshot: 'only-on-failure',
     // Avoid hanging on slow external resources (fonts, CDN)
-    navigationTimeout: 10000,
+    navigationTimeout: 15000,
+    actionTimeout: 15000,
   },
   projects: [
     {

@@ -59,16 +59,15 @@ describe('getTerminalText', () => {
 
 describe('copyTerminalToClipboard', () => {
   let writeText;
-  const origNavigator = globalThis.navigator;
 
   beforeEach(() => {
     writeText = vi.fn().mockResolvedValue(undefined);
-    globalThis.navigator = { clipboard: { writeText } };
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    globalThis.navigator = origNavigator;
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -101,7 +100,7 @@ describe('copyTerminalToClipboard', () => {
   });
 
   it('handles missing clipboard API gracefully', async () => {
-    globalThis.navigator = {};
+    vi.stubGlobal('navigator', {});
     const t = makeMockTerminal(['text']);
     const btn = makeBtn();
     await expect(copyTerminalToClipboard(t, btn)).resolves.toBeUndefined();
