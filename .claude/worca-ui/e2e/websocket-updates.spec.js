@@ -26,9 +26,9 @@ function triggerStatusUpdate(worcaDir, runId, statusOverrides) {
  */
 async function openRunDetail(page, baseUrl, runId, pipelineStatus) {
   await page.goto(`${baseUrl}/#/history?run=${runId}`, GOTO_OPTS);
-  await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.run-detail .stage-panels')).toBeVisible();
   if (['running', 'paused', 'failed'].includes(pipelineStatus)) {
-    await expect(page.locator('.run-controls')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.run-controls')).toBeVisible();
   }
 }
 
@@ -47,9 +47,9 @@ test.describe('WebSocket live updates — control button transitions', () => {
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'paused' });
 
-      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 8000 });
-      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.btn-pause')).not.toBeAttached();
+      await expect(page.locator('.btn-resume')).toBeVisible();
+      await expect(page.locator('.btn-stop')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -67,9 +67,9 @@ test.describe('WebSocket live updates — control button transitions', () => {
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'running' });
 
-      await expect(page.locator('.btn-resume')).not.toBeAttached({ timeout: 8000 });
-      await expect(page.locator('.btn-pause')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.btn-resume')).not.toBeAttached();
+      await expect(page.locator('.btn-pause')).toBeVisible();
+      await expect(page.locator('.btn-stop')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -86,7 +86,7 @@ test.describe('WebSocket live updates — control button transitions', () => {
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'completed' });
 
-      await expect(page.locator('.run-controls')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.run-controls')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -104,9 +104,9 @@ test.describe('WebSocket live updates — control button transitions', () => {
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'failed' });
 
-      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 8000 });
-      await expect(page.locator('.btn-stop')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.btn-resume')).toBeVisible();
+      await expect(page.locator('.btn-pause')).not.toBeAttached();
+      await expect(page.locator('.btn-stop')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -127,7 +127,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
       await openRunDetail(page, ctx.url, runId, 'running');
 
       // Initial: at least one stage is pending
-      await expect(page.locator('.stage-node.status-pending').first()).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.stage-node.status-pending').first()).toBeVisible();
       await expect(page.locator('.stage-node.status-completed')).not.toBeAttached();
 
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -136,7 +136,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
       });
 
       // Plan node transitions to completed without reload
-      await expect(page.locator('.stage-node.status-completed')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.stage-node.status-completed')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -157,7 +157,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
         pipeline_status: 'running',
         stages: { plan: { status: 'completed' }, coordinate: { status: 'pending' } },
       });
-      await expect(page.locator('.stage-node.status-completed')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.stage-node.status-completed')).toBeVisible();
 
       // Second transition: coordinate completes too
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -165,7 +165,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
         stages: { plan: { status: 'completed' }, coordinate: { status: 'completed' } },
       });
       // Both plan and coordinate should now be status-completed
-      await expect(page.locator('.stage-node.status-completed')).toHaveCount(2, { timeout: 8000 });
+      await expect(page.locator('.stage-node.status-completed')).toHaveCount(2);
     } finally {
       await ctx.close();
     }
@@ -188,7 +188,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
       });
 
       // A paused stage node should appear
-      await expect(page.locator('.stage-node.status-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.stage-node.status-paused')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -210,7 +210,7 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
 
       // Wait for the run card in the running group
-      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
       await expect(page.locator('.active-group-paused')).not.toBeAttached();
 
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -219,8 +219,8 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       });
 
       // Run card moves to paused group; running group disappears (no remaining running runs)
-      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
+      await expect(page.locator('.active-group-running')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -236,15 +236,15 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
 
       triggerStatusUpdate(ctx.worcaDir, runId, {
         pipeline_status: 'running',
         work_request: { title: 'Reorder: paused to running' },
       });
 
-      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.active-group-paused')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
+      await expect(page.locator('.active-group-paused')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -260,15 +260,15 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
 
       triggerStatusUpdate(ctx.worcaDir, runId, {
         pipeline_status: 'failed',
         work_request: { title: 'Reorder: running to failed' },
       });
 
-      await expect(page.locator('.active-group-failed .run-card.status-failed')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.active-group-failed .run-card.status-failed')).toBeVisible();
+      await expect(page.locator('.active-group-running')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -286,9 +286,9 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
 
       // Dashboard renders (stats are present)
-      await expect(page.locator('.dashboard-stats')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.dashboard-stats')).toBeVisible();
       // Running card is visible in the running group
-      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
 
       // Pipeline completes
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -297,8 +297,8 @@ test.describe('WebSocket live updates — dashboard reordering', () => {
       });
 
       // All active groups disappear (no running/paused/failed runs)
-      await expect(page.locator('.active-group-running')).not.toBeAttached({ timeout: 8000 });
-      await expect(page.locator('.empty-state')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.active-group-running')).not.toBeAttached();
+      await expect(page.locator('.empty-state')).toBeVisible();
     } finally {
       await ctx.close();
     }

@@ -11,10 +11,10 @@ const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 async function openRunDetail(page, baseUrl, runId, pipelineStatus) {
   await page.goto(`${baseUrl}/#/history?run=${runId}`, GOTO_OPTS);
   // Wait until the run detail has rendered its stage panels (not empty-state)
-  await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.run-detail .stage-panels')).toBeVisible();
   // For statuses that should have controls, wait for them
   if (['running', 'paused', 'failed'].includes(pipelineStatus)) {
-    await expect(page.locator('.run-controls')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.run-controls')).toBeVisible();
   }
 }
 
@@ -102,7 +102,7 @@ test.describe('control buttons — interactions', () => {
       await openRunDetail(page, ctx.url, runId, 'running');
       await page.locator('.btn-pause').click();
 
-      await expect.poll(() => pauseRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect.poll(() => pauseRequests.length, {}).toBeGreaterThan(0);
       expect(pauseRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
@@ -128,7 +128,7 @@ test.describe('control buttons — interactions', () => {
       await openRunDetail(page, ctx.url, runId, 'paused');
       await page.locator('.btn-resume').click();
 
-      await expect.poll(() => resumeRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect.poll(() => resumeRequests.length, {}).toBeGreaterThan(0);
       expect(resumeRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
@@ -145,7 +145,7 @@ test.describe('control buttons — interactions', () => {
       await page.locator('.btn-stop').click();
 
       // Shoelace sl-dialog opens (has open attribute when visible)
-      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -169,12 +169,12 @@ test.describe('control buttons — interactions', () => {
 
       await openRunDetail(page, ctx.url, runId, 'running');
       await page.locator('.btn-stop').click();
-      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible();
 
       // Click the danger (Stop) button in the dialog footer
       await page.locator('.run-controls-stop-dialog sl-button[variant="danger"]').click();
 
-      await expect.poll(() => stopRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect.poll(() => stopRequests.length, {}).toBeGreaterThan(0);
       expect(stopRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
@@ -199,7 +199,7 @@ test.describe('control buttons — interactions', () => {
 
       await openRunDetail(page, ctx.url, runId, 'running');
       await page.locator('.btn-stop').click();
-      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.run-controls-stop-dialog')).toBeVisible();
 
       // Click Cancel
       await page.locator('.run-controls-stop-dialog sl-button[variant="neutral"]').click();
@@ -233,7 +233,7 @@ test.describe('control buttons — interactions', () => {
       await page.locator('.btn-pause').click();
 
       // While request is in-flight: pending class is applied and other buttons are disabled
-      await expect(page.locator('.control-pending-pause')).toBeVisible({ timeout: 3000 });
+      await expect(page.locator('.control-pending-pause')).toBeVisible();
 
       // Resolve the route to clean up
       resolveRoute?.();

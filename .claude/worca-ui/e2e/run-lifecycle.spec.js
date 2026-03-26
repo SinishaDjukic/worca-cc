@@ -21,9 +21,9 @@ function triggerStatusUpdate(worcaDir, runId, statusOverrides) {
  */
 async function openRunDetail(page, baseUrl, runId, pipelineStatus) {
   await page.goto(`${baseUrl}/#/history?run=${runId}`, GOTO_OPTS);
-  await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.run-detail .stage-panels')).toBeVisible();
   if (['running', 'paused', 'failed'].includes(pipelineStatus)) {
-    await expect(page.locator('.run-controls')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.run-controls')).toBeVisible();
   }
 }
 
@@ -51,8 +51,8 @@ test.describe('run lifecycle — pause then resume', () => {
       });
 
       // Verify paused state: resume button visible, pause absent
-      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.btn-resume')).toBeVisible();
+      await expect(page.locator('.btn-pause')).not.toBeAttached();
 
       // Transition back to running
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -61,8 +61,8 @@ test.describe('run lifecycle — pause then resume', () => {
       });
 
       // Verify running state restored
-      await expect(page.locator('.btn-pause')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-resume')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.btn-pause')).toBeVisible();
+      await expect(page.locator('.btn-resume')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -93,9 +93,9 @@ test.describe('run lifecycle — stop then resume', () => {
       });
 
       // Verify failed state: resume visible, pause/stop absent
-      await expect(page.locator('.btn-resume')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-pause')).not.toBeAttached({ timeout: 5000 });
-      await expect(page.locator('.btn-stop')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.btn-resume')).toBeVisible();
+      await expect(page.locator('.btn-pause')).not.toBeAttached();
+      await expect(page.locator('.btn-stop')).not.toBeAttached();
 
       // Transition back to running (resume)
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -104,9 +104,9 @@ test.describe('run lifecycle — stop then resume', () => {
       });
 
       // Verify running state restored
-      await expect(page.locator('.btn-pause')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.btn-resume')).not.toBeAttached({ timeout: 5000 });
+      await expect(page.locator('.btn-pause')).toBeVisible();
+      await expect(page.locator('.btn-stop')).toBeVisible();
+      await expect(page.locator('.btn-resume')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -141,7 +141,7 @@ test.describe('run lifecycle — full pipeline progression', () => {
           coordinate: { status: 'in_progress' },
         },
       });
-      await expect(page.locator('.stage-node.status-completed')).toHaveCount(1, { timeout: 8000 });
+      await expect(page.locator('.stage-node.status-completed')).toHaveCount(1);
 
       // Stage 2: COORDINATE completes → IMPLEMENT starts
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -154,7 +154,7 @@ test.describe('run lifecycle — full pipeline progression', () => {
           implement: { status: 'in_progress' },
         },
       });
-      await expect(page.locator('.stage-node.status-completed')).toHaveCount(2, { timeout: 8000 });
+      await expect(page.locator('.stage-node.status-completed')).toHaveCount(2);
 
       // Pipeline completes
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -168,9 +168,9 @@ test.describe('run lifecycle — full pipeline progression', () => {
       });
 
       // Controls section removed for completed runs
-      await expect(page.locator('.run-controls')).not.toBeAttached({ timeout: 8000 });
+      await expect(page.locator('.run-controls')).not.toBeAttached();
       // All stages completed
-      await expect(page.locator('.stage-node.status-completed')).toHaveCount(3, { timeout: 5000 });
+      await expect(page.locator('.stage-node.status-completed')).toHaveCount(3);
     } finally {
       await ctx.close();
     }
@@ -200,10 +200,10 @@ test.describe('run lifecycle — multiple runs on dashboard', () => {
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
 
       // Running group has the running card
-      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
 
       // Paused group has the paused card
-      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
 
       // Completed runs should not appear in active groups
       await expect(page.locator('.active-group-running .run-card.status-completed')).not.toBeAttached();

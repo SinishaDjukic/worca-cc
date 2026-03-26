@@ -17,8 +17,8 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Completed run' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.dashboard')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.empty-state')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.dashboard')).toBeVisible();
+      await expect(page.locator('.empty-state')).toBeVisible();
       await expect(page.locator('.active-group-running')).not.toBeAttached();
       await expect(page.locator('.active-group-paused')).not.toBeAttached();
       await expect(page.locator('.active-group-failed')).not.toBeAttached();
@@ -35,7 +35,7 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Running test' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running')).toBeVisible();
       await expect(page.locator('.active-group-running .run-card.status-running')).toBeVisible();
       await expect(page.locator('.empty-state')).not.toBeAttached();
     } finally {
@@ -51,7 +51,7 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Paused test' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused')).toBeVisible();
       await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
       await expect(page.locator('.empty-state')).not.toBeAttached();
     } finally {
@@ -67,7 +67,7 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Failed test' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-failed')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-failed')).toBeVisible();
       await expect(page.locator('.active-group-failed .run-card.status-failed')).toBeVisible();
       await expect(page.locator('.empty-state')).not.toBeAttached();
     } finally {
@@ -87,8 +87,8 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Multi: paused' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running')).toBeVisible({ timeout: 8000 });
-      await expect(page.locator('.active-group-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running')).toBeVisible();
+      await expect(page.locator('.active-group-paused')).toBeVisible();
       await expect(page.locator('.empty-state')).not.toBeAttached();
     } finally {
       await ctx.close();
@@ -111,7 +111,7 @@ test.describe('dashboard — count badges', () => {
         work_request: { title: 'Running count 2' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running')).toBeVisible();
       const countText = await page.locator('.active-group-running .active-group-count').textContent();
       expect(countText).toContain('2 running');
     } finally {
@@ -127,7 +127,7 @@ test.describe('dashboard — count badges', () => {
         work_request: { title: 'Paused count single' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-paused')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused')).toBeVisible();
       const countText = await page.locator('.active-group-paused .active-group-count').textContent();
       expect(countText).toContain('1 paused');
     } finally {
@@ -143,7 +143,7 @@ test.describe('dashboard — count badges', () => {
         work_request: { title: 'Failed count single' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-failed')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-failed')).toBeVisible();
       const countText = await page.locator('.active-group-failed .active-group-count').textContent();
       expect(countText).toContain('1 failed');
     } finally {
@@ -163,7 +163,7 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'Quick pause visible' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running .run-card')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .run-card')).toBeVisible();
       await expect(page.locator('.active-group-running .btn-quick-pause')).toBeVisible();
     } finally {
       await ctx.close();
@@ -178,7 +178,7 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'Quick resume paused' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-paused .run-card')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused .run-card')).toBeVisible();
       await expect(page.locator('.active-group-paused .btn-quick-resume')).toBeVisible();
     } finally {
       await ctx.close();
@@ -193,7 +193,7 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'Quick resume failed' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-failed .run-card')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-failed .run-card')).toBeVisible();
       await expect(page.locator('.active-group-failed .btn-quick-resume')).toBeVisible();
     } finally {
       await ctx.close();
@@ -208,7 +208,7 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'No resume on running' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running .run-card')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .run-card')).toBeVisible();
       await expect(page.locator('.active-group-running .btn-quick-resume')).not.toBeAttached();
     } finally {
       await ctx.close();
@@ -235,10 +235,10 @@ test.describe('dashboard — quick-action buttons', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-running .btn-quick-pause')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-running .btn-quick-pause')).toBeVisible();
       await page.locator('.active-group-running .btn-quick-pause').click();
 
-      await expect.poll(() => pauseRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect.poll(() => pauseRequests.length, {}).toBeGreaterThan(0);
       expect(pauseRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
@@ -265,10 +265,10 @@ test.describe('dashboard — quick-action buttons', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group-paused .btn-quick-resume')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.active-group-paused .btn-quick-resume')).toBeVisible();
       await page.locator('.active-group-paused .btn-quick-resume').click();
 
-      await expect.poll(() => resumeRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await expect.poll(() => resumeRequests.length, {}).toBeGreaterThan(0);
       expect(resumeRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
