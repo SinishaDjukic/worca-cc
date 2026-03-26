@@ -126,7 +126,7 @@ subprocess.run(["bd", "init"], cwd=worktree_path, check=True)
 **Problem:** These module-level singletons would be clobbered if `run_pipeline()` were called concurrently within the same Python process.
 **Resolution:** The worktree strategy uses **subprocess isolation** — each pipeline is a separate `python run_pipeline.py` OS process. Each process has its own Python interpreter, its own module namespace, and its own copy of these globals. No code change needed.
 
-**Future-proofing note:** If in-process parallelism is ever desired (e.g., for a library API), these globals must be refactored into a `PipelineContext` class. This is explicitly out of scope for W-008.
+**Future-proofing note:** If in-process parallelism is ever desired (e.g., for a library API), these globals must be refactored into a `PipelineContext` class. This is explicitly out of scope for W-030.
 
 ### BLOCKER 7: `os.environ` Mutations (In-Process Parallelism)
 
@@ -136,31 +136,58 @@ subprocess.run(["bd", "init"], cwd=worktree_path, check=True)
 
 **Additionally:** The `get_env()` function in `env.py` already constructs a fresh env dict for each `run_agent()` call by copying `os.environ` and adding agent-specific variables. This pattern is correct and works with subprocess isolation.
 
-### FRICTION 8: Cumulative Stats Race Condition
+### BLOCKER 8: Plan Files Live Outside Run Directory and Use a Fixed Name
 
-**Location:** `.claude/worca/utils/stats.py:30` — read-modify-write on `cumulative.json` with no file lock
-**Problem:** Two pipelines completing simultaneously: last writer wins, one run's stats are silently lost.
-**Resolution:** Add file-locking around the read-modify-write cycle using `fcntl.flock()`:
+**Location:** `.claude/worca/orchestrator/runner.py:1196-1203`, `.claude/worca/orchestrator/prompt_builder.py:124`
+**Problem:** The planner agent writes `MASTER_PLAN.md` to the project root (or a path derived from `plan_path_template`). This has two issues:
+1. In a worktree, the `cwd`-relative path means each worktree gets its own copy — but this is accidental rather than intentional isolation. The file is working state for a single pipeline run and should live with the rest of the run's state.
+2. The fixed filename `MASTER_PLAN.md` will collide when feedback loops (Test/Review → Coordinator) produce rework plans within the same run. Each plan phase needs a distinct filename.
 
+**Resolution:** Move generated plan files into the run directory with sequenced filenames: `{run_dir}/plan-{NNN}.md` (e.g. `.worca/runs/{run_id}/plan-001.md`). The initial plan is `plan-001.md`, and any rework plans produced by feedback loops are `plan-002.md`, `plan-003.md`, etc. This provides:
+- Intentional isolation — no reliance on worktree `cwd` semantics
+- No collisions — each plan phase gets a unique, ordered filename
+- Natural archival — plans move with the run when archived to `.worca/results/`
+- Clean project root — one less gitignored file
+- Audit trail — the sequence of plans tells the full story of the run
+
+Three code changes required:
+
+1. **`runner.py`** — When no pre-made plan is provided, set `status["plan_file"]` using a sequenced filename in the run directory:
 ```python
-import fcntl
-
-def update_cumulative_stats(status: dict, stats_path: str) -> None:
-    os.makedirs(os.path.dirname(stats_path), exist_ok=True)
-    lock_path = stats_path + ".lock"
-    with open(lock_path, "w") as lock_fd:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        try:
-            stats = _load_cumulative(stats_path)
-            # ... mutate stats ...
-            _save_cumulative(stats, stats_path)
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+if plan_file:
+    # Pre-made plan: reference directly (read-only input, no isolation concern)
+    status["plan_file"] = plan_file
+else:
+    # Generated plan: place in run directory with sequence number
+    plan_seq = status.get("plan_sequence", 0) + 1
+    status["plan_sequence"] = plan_seq
+    status["plan_file"] = os.path.join(run_dir, f"plan-{plan_seq:03d}.md")
 ```
 
-The stats file lives at `{project_root}/stats/cumulative.json` (shared across worktrees since they share the repo root). File locking is the correct solution here.
+2. **`prompt_builder.py:124`** — Replace hardcoded `"Write the plan to MASTER_PLAN.md."` with `"Write the plan to {plan_file}."` using the actual resolved path from status.
 
-### FRICTION 9: Run ID Collision Window
+3. **`guard.py:200-202`** — The fallback that checks `basename != "MASTER_PLAN.md"` when `WORCA_PLAN_FILE` is unset remains as backward compatibility for manual `claude` invocations outside the pipeline. No change needed.
+
+The `WORCA_PLAN_FILE` env var (`runner.py:1206`) already propagates the resolved path to all hooks (`plan_check.py:36`, `guard.py:193-198`), so they follow automatically.
+
+**Pre-made plans (`--spec`, `--plan`):** These remain at their original location (e.g. `docs/plans/W-030.md`). They are read-only input — no isolation concern. Each worktree gets a copy via the git branch.
+
+### FRICTION 9: Cumulative Stats — Shared vs Isolated
+
+**Location:** `.claude/worca/utils/stats.py:16,158`
+**Problem:** `cumulative.json` lives at `.worca/stats/cumulative.json`. With worktree isolation, each pipeline writes to its own worktree's `.worca/stats/`, fragmenting the cumulative view. But the stats are meant to aggregate across all runs.
+**Resolution:** Each worktree pipeline writes per-run stats to its own `.worca/stats/run_stats.json` (isolated, no contention). After each worker subprocess exits, `run_multi.py` merges the per-run stats into the main tree's `.worca/stats/cumulative.json` (single-writer in the orchestrator, no file locking needed). This avoids both the fragmentation problem and the concurrent-write race condition.
+
+```python
+# In run_multi.py — after each worker completes
+run_stats_path = os.path.join(worktree_path, ".worca", "stats", "run_stats.json")
+if os.path.exists(run_stats_path):
+    merge_into_cumulative(run_stats_path, main_cumulative_path)
+```
+
+This replaces the `fcntl.flock()` approach from FRICTION 10 — file locking is no longer needed because the orchestrator is the single writer.
+
+### FRICTION 10: Run ID Collision Window
 
 **Location:** `.claude/worca/orchestrator/runner.py:197` — `_generate_run_id()` uses `YYYYMMDD-HHMMSS` format
 **Problem:** Two pipelines started within the same second get identical run IDs. Their per-run directories collide.
@@ -177,7 +204,7 @@ def _generate_run_id(started_at: str) -> str:
 
 This produces IDs like `20260323-143052-847-a1b2`, eliminating collision risk even for automated batch triggering with sub-second intervals.
 
-### FRICTION 10: No Real-Time Monitoring of Parallel Runs
+### FRICTION 11: No Real-Time Monitoring of Parallel Runs
 
 **Location:** `.claude/worktrees/agent-*/scripts/run_parallel.py:80-86` — `ProcessPoolExecutor` with `capture_output=True`, truncated output
 **Problem:** During parallel execution, only `[OK]` or `[FAILED]` feedback per pipeline. No live progress, no per-pipeline stage tracking.
@@ -189,7 +216,7 @@ This produces IDs like `20260323-143052-847-a1b2`, eliminating collision risk ev
 
 The CLI `worca.py multi-status` command reads the registry and each worktree's `status.json` to produce a live table.
 
-### FRICTION 11: Test Gate State Reset
+### FRICTION 12: Test Gate State Reset
 
 **Location:** `.claude/worca/hooks/test_gate.py:9` — `_state = {"strikes": 0}` resets per hook subprocess
 **Problem:** The 2-strike test gate never accumulates across consecutive pytest failures because each hook invocation is a fresh Python process. Not a parallel-specific issue, but compounds in parallel where test failures are harder to track.
@@ -214,6 +241,27 @@ def check_test_gate(run_dir: str, test_passed: bool) -> dict:
 ```
 
 Since each worktree has its own run directory, the strike file is naturally isolated per pipeline.
+
+### Isolation Contract
+
+Every artifact the pipeline touches falls into one of three categories. This table is the authoritative reference for what is shared vs isolated:
+
+| Artifact | Scope | Mechanism | Notes |
+|---|---|---|---|
+| `.worca/runs/{run_id}/` | **Isolated** | Worktree `cwd` | Pipeline execution state, logs, events |
+| `.worca/runs/{run_id}/plan-{NNN}.md` | **Isolated** | Worktree `cwd` | Generated plans live in run dir with sequenced filenames (BLOCKER 8) |
+| `.worca/active_run` | **Isolated** | Worktree `cwd` | Per-worktree pointer |
+| `.worca/pipeline.pid` | **Isolated** | Worktree `cwd` | Per-process lock |
+| `.beads/` | **Isolated** | `bd init` per worktree | In-flight task coordination within one pipeline |
+| `test-results/` | **Isolated** | Worktree `cwd` | Test runner output |
+| `docs/plans/*.md` (pre-made) | **Shared (read-only)** | Git branch copy | Input specs; each worktree inherits via branch |
+| `.claude/settings.json` | **Shared (read-only)** | Git branch copy | Configuration; not mutated at runtime |
+| `CLAUDE.md` | **Shared (read-only)** | Git branch copy | Project context; not mutated at runtime |
+| `.worca/multi/registry.json` | **Shared (read-write)** | File locking + atomic writes in main tree | Cross-pipeline coordination |
+| `.worca/stats/cumulative.json` | **Shared (single-writer)** | `run_multi.py` merges after worker exit | No concurrent writes; orchestrator is sole writer |
+| Git object store | **Shared** | Git worktree design | Shared by all worktrees; this is a feature |
+
+**Key principle:** Shared writes are deferred to the orchestrator (`run_multi.py`), never performed by worker subprocesses. This eliminates the need for file locking on `cumulative.json` — the orchestrator merges per-run stats sequentially after each worker exits.
 
 ---
 
@@ -317,41 +365,50 @@ UI server:
 - On completion, do not archive to main tree's `.worca/results/` — leave in worktree's `.worca/`
 - Register completion in the multi-pipeline registry if registry exists
 
+**Task 7: Move generated plan files to run directory with sequenced filenames** — When no pre-made plan is provided, generate sequenced plan filenames (`plan-001.md`, `plan-002.md`, etc.) in the run directory instead of using `MASTER_PLAN.md` at the project root. This prevents collisions when feedback loops produce rework plans within the same run. Changes:
+- `runner.py:1193-1203` — Replace template-based path resolution with sequenced `os.path.join(run_dir, f"plan-{plan_seq:03d}.md")`. Track `plan_sequence` counter in status. Pre-made plans (`--plan`, `--spec`) remain at their original location (read-only input).
+- `prompt_builder.py:124` — Replace hardcoded `"Write the plan to MASTER_PLAN.md."` with `f"Write the plan to {plan_file}."` where `plan_file` is the resolved path from status.
+- `guard.py:200-202` — No change needed; the `WORCA_PLAN_FILE` env var path is already used when set, and the `MASTER_PLAN.md` basename fallback remains for backward compatibility with manual invocations.
+- Update tests: `test_plan_check.py`, `test_guard.py`, `test_prompt_builder.py`, `test_runner.py`.
+
 ### Phase 2: State Safety
 
-**Task 7: Cumulative stats file locking** — Add `fcntl.flock()` around the read-modify-write cycle in `stats.py`. The lock file is `{stats_path}.lock`. Both the main tree and worktree pipelines write to the same `stats/cumulative.json` (at the repo root), so locking is essential.
+**Task 8: Cumulative stats — per-run write + orchestrator merge** — Replace the shared-file-with-locking approach:
+- Each pipeline writes its per-run stats to `{worktree}/.worca/stats/run_stats.json` on completion (existing behavior, naturally isolated per worktree).
+- `run_multi.py` merges each worker's `run_stats.json` into the main tree's `.worca/stats/cumulative.json` after the worker subprocess exits. Since `run_multi.py` is the single writer, no file locking is needed.
+- For single-pipeline runs (direct `run_pipeline.py` invocation), the existing `update_cumulative_stats()` in `stats.py` continues to write directly — no contention in the single-pipeline case.
 
-**Task 8: Test gate persistence** — Move strike state from in-memory `_state` dict to `{run_dir}/test_gate_strikes.json`. The `post_tool_use.py` hook reads `WORCA_RUN_ID` to locate the correct run directory. Each pipeline (each worktree) has its own strike file.
+**Task 9: Test gate persistence** — Move strike state from in-memory `_state` dict to `{run_dir}/test_gate_strikes.json`. The `post_tool_use.py` hook reads `WORCA_RUN_ID` to locate the correct run directory. Each pipeline (each worktree) has its own strike file.
 
 ### Phase 3: Monitoring
 
-**Task 9: CLI multi-status command** — Add `multi-status` subcommand to `worca.py`:
+**Task 10: CLI multi-status command** — Add `multi-status` subcommand to `worca.py`:
 - Reads `.worca/multi/registry.json`
 - For each active pipeline, reads `{worktree}/.worca/runs/{run_id}/status.json`
 - Prints a table: `run_id | request (truncated) | stage | iteration | duration | status`
 - Auto-refreshes every 2s when `--watch` is passed
 
-**Task 10: CLI per-pipeline control** — Extend `worca.py pause/stop/resume` to accept `--run-id` for targeting a specific pipeline in the registry. Locates the worktree path from the registry and writes the control file to the correct `.worca/runs/{run_id}/control.json`.
+**Task 11: CLI per-pipeline control** — Extend `worca.py pause/stop/resume` to accept `--run-id` for targeting a specific pipeline in the registry. Locates the worktree path from the registry and writes the control file to the correct `.worca/runs/{run_id}/control.json`.
 
-**Task 11: UI registry watcher** — New `multi-watcher.js` module:
+**Task 12: UI registry watcher** — New `multi-watcher.js` module:
 - Watches `.worca/multi/registry.json` with `fs.watch()`
 - On change, diffs the pipeline list and creates/destroys per-worktree watchers
 - Each per-worktree watcher is an instance of the existing watcher logic, scoped to `{worktree}/.worca/`
 - Emits `pipeline-registered` and `pipeline-deregistered` events
 
-**Task 12: UI WebSocket protocol extension** — Extend `ws.js`:
+**Task 13: UI WebSocket protocol extension** — Extend `ws.js`:
 - `list-pipelines` request → returns full registry
 - `subscribe-pipeline {runId}` → creates a per-worktree subscription using existing status/log/event watching
 - `pipeline-status-changed {runId, status, stage}` → broadcast on any pipeline state change
 
-**Task 13: UI multi-pipeline dashboard view** — New `multi-dashboard.js` view:
+**Task 14: UI multi-pipeline dashboard view** — New `multi-dashboard.js` view:
 - Card grid showing all registered pipelines
 - Each card: title (truncated request), base branch badge, status badge, stage progress bar, elapsed time, quick actions
 - Click navigates to `run-detail.js` (existing view, already works with any `status.json` path)
 - Auto-updates via WebSocket events
 - Build with `npm run build` after changes
 
-**Task 13b: UI launch panel for parallel pipelines** — Extend the existing UI to support launching parallel pipelines:
+**Task 14b: UI launch panel for parallel pipelines** — Extend the existing UI to support launching parallel pipelines:
 - "Launch Parallel" button on the dashboard opens a panel/dialog
 - Panel allows adding multiple work requests (prompt text, issue ref, or spec file path)
 - **Base branch selector**: dropdown populated from `git branch --list` via a new REST endpoint (`GET /api/branches`), defaulting to `main`. User can select any local branch as the base for all pipelines in the batch.
@@ -362,20 +419,20 @@ UI server:
 
 ### Phase 4: Cleanup and Polish
 
-**Task 14: Worktree cleanup policy** — Implement configurable cleanup in `run_multi.py`:
+**Task 15: Worktree cleanup policy** — Implement configurable cleanup in `run_multi.py`:
 - `--cleanup on-success` (default): remove worktree when pipeline completes successfully; keep on failure
 - `--cleanup always`: remove worktree after pipeline finishes regardless of outcome
 - `--cleanup never`: keep all worktrees for debugging
 - Cleanup runs `git worktree remove --force` followed by `git branch -d` for the worktree branch
 - Registry entries for cleaned-up pipelines move to a `"completed_pipelines"` array with `cleaned_up: true`
 
-**Task 15: Stale registry reconciliation** — On `run_multi.py` startup:
+**Task 16: Stale registry reconciliation** — On `run_multi.py` startup:
 - Check all "running" entries in the registry
 - For each, verify PID is alive (`os.kill(pid, 0)`)
 - If dead: update status to "failed (stale)", optionally clean up worktree
 - Prevent stale entries from accumulating across crashes
 
-**Task 16: API rate limit documentation and configuration** — Add `worca.parallel.max_concurrent_pipelines` to `settings.json` schema (default 3). Document in `CLAUDE.md` that parallel pipelines multiply API usage proportionally and that Anthropic rate limits are per-account.
+**Task 17: API rate limit documentation and configuration** — Add `worca.parallel.max_concurrent_pipelines` to `settings.json` schema (default 3). Document in `CLAUDE.md` that parallel pipelines multiply API usage proportionally and that Anthropic rate limits are per-account.
 
 ---
 
@@ -417,9 +474,10 @@ New keys under `worca.parallel` in `.claude/settings.json`:
 
 | File | Change |
 |---|---|
-| `.claude/worca/orchestrator/runner.py` | Run ID format change (`_generate_run_id`); `--worktree` flag handling (skip `create_branch`); registry integration on completion |
+| `.claude/worca/orchestrator/runner.py` | Run ID format change (`_generate_run_id`); `--worktree` flag handling (skip `create_branch`); registry integration on completion; sequenced plan files in run directory |
 | `.claude/worca/utils/git.py` | New `create_pipeline_worktree()`, `remove_pipeline_worktree()`, `list_pipeline_worktrees()` |
-| `.claude/worca/utils/stats.py` | Add `fcntl.flock()` around read-modify-write |
+| `.claude/worca/orchestrator/prompt_builder.py` | Replace hardcoded `"MASTER_PLAN.md"` with sequenced `{plan_file}` from status |
+| `.claude/worca/utils/stats.py` | Per-run stats write; `run_multi.py` handles merge into cumulative |
 | `.claude/worca/hooks/test_gate.py` | Move strikes to file-backed state in run directory |
 | `.claude/worca/hooks/post_tool_use.py` | Pass run directory to `check_test_gate()` |
 | `.claude/scripts/run_pipeline.py` | Add `--worktree` CLI flag, pass to `run_pipeline()` |
@@ -441,7 +499,8 @@ New keys under `worca.parallel` in `.claude/settings.json`:
 | `tests/test_registry.py` | Registry CRUD, file locking under concurrent access, stale entry reconciliation |
 | `tests/test_run_id.py` | New run ID format, uniqueness across rapid sequential generation |
 | `tests/test_git_worktree.py` | Worktree create/remove/list helpers |
-| `tests/test_stats_locking.py` | Concurrent stats updates don't lose data |
+| `tests/test_plan_file_location.py` | Sequenced plan files placed in run dir; pre-made plan stays at original path; prompt builder uses resolved path |
+| `tests/test_stats_merge.py` | Per-run stats written to worktree; orchestrator merge produces correct cumulative |
 | `tests/test_test_gate_persistence.py` | Strike state survives across subprocess invocations |
 
 ### Integration tests
@@ -456,6 +515,8 @@ New keys under `worca.parallel` in `.claude/settings.json`:
 - [ ] Launch 2 pipelines in parallel via `run_multi.py` with `--base-branch main`; verify both branch from main
 - [ ] Launch 2 pipelines with `--base-branch HEAD`; verify both branch from current HEAD
 - [ ] Launch pipelines from UI launch panel; verify branch selector works and selected base is used
+- [ ] Verify generated plan file lands in `.worca/runs/{run_id}/plan-001.md`, not project root
+- [ ] Verify pre-made plan (`--plan docs/plans/foo.md`) is read from worktree's copy, not main tree
 - [ ] Verify each worktree has its own `.beads/beads.db`
 - [ ] Verify `git log --all --oneline` shows both pipeline branches
 - [ ] Verify `worca.py multi-status` shows both pipelines with correct stages
