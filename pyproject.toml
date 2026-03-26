@@ -9,6 +9,7 @@ dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.0",
     "ruff>=0.1.0",
+    "jsonschema>=4.0",
 ]
 
 [tool.pytest.ini_options]
