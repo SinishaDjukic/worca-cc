@@ -282,7 +282,7 @@ elif current_stage == Stage.PLAN_REVIEW:
     "stages": {
       "plan_review": {
         "agent": "plan_reviewer",
-        "enabled": true
+        "enabled": false
       }
     },
     "agents": {
@@ -298,8 +298,12 @@ elif current_stage == Stage.PLAN_REVIEW:
 }
 ```
 
+**Default: disabled.** The stage is off for new installations. Users opt-in by setting `"stages.plan_review.enabled": true`.
+
+**Code-level default:** `get_enabled_stages()` must treat `PLAN_REVIEW` the same as `LEARN` — default to `False` when the stage entry is missing from settings.json. This prevents older installations (whose settings.json lacks a `plan_review` entry) from getting the stage enabled unexpectedly. Implementation: add `PLAN_REVIEW` to a `_STAGES_DEFAULT_DISABLED` set checked by `get_enabled_stages()`.
+
 Users can:
-- Disable entirely: `"stages.plan_review.enabled": false`
+- Enable: `"stages.plan_review.enabled": true`
 - Change model: `"agents.plan_reviewer.model": "sonnet"`
 - Adjust turns: `"agents.plan_reviewer.max_turns": 75`
 - Adjust loop count: `"loops.plan_review": 5` (for complex plans)
@@ -309,7 +313,7 @@ Users can:
 
 | File | Change |
 |------|--------|
-| `.claude/worca/orchestrator/stages.py` | Add `PLAN_REVIEW` to enum, `STAGE_ORDER`, `TRANSITIONS`, `STAGE_AGENT_MAP`, `STAGE_SCHEMA_MAP` |
+| `.claude/worca/orchestrator/stages.py` | Add `PLAN_REVIEW` to enum, `STAGE_ORDER`, `TRANSITIONS`, `STAGE_AGENT_MAP`, `STAGE_SCHEMA_MAP`; add `_STAGES_DEFAULT_DISABLED` set containing `Stage.PLAN_REVIEW` and `Stage.LEARN`; update `get_enabled_stages()` to check this set (default `False` for these stages instead of `True`) |
 | `.claude/worca/orchestrator/runner.py` | Add PLAN_REVIEW handler block in stage loop, thread context to prompt builder, add `Stage.PLAN_REVIEW` to `_STAGE_PROMPT_PREFIX` dict |
 | `.claude/worca/orchestrator/prompt_builder.py` | Add `_build_plan_review()`, amend `_build_plan()` for revision mode, add `pop_context(key)` method (delegates to `self._context.pop(key, None)`) |
 | `.claude/settings.json` | Add `stages.plan_review`, `agents.plan_reviewer`, `loops.plan_review: 2` |
@@ -369,8 +373,10 @@ Users can:
 - `_build_plan` with `plan_revision_mode=True` context: switches to revision prompt, includes `plan_review_issues` and `plan_review_history`
 - `_build_plan` without `plan_revision_mode`: produces normal initial prompt (no regression)
 
-*Disabled stage:*
-- `stages.plan_review.enabled: false` → PLAN transitions directly to COORDINATE, PLAN_REVIEW is skipped in `get_enabled_stages()`
+*Disabled stage (default):*
+- Default (no config entry or `enabled: false`) → PLAN transitions directly to COORDINATE, PLAN_REVIEW is skipped in `get_enabled_stages()`
+- `_STAGES_DEFAULT_DISABLED` set contains `Stage.PLAN_REVIEW` and `Stage.LEARN` — both default to disabled when not in settings.json
+- `stages.plan_review.enabled: true` → PLAN_REVIEW appears in `get_enabled_stages()` at correct position
 
 *Resume:*
 - Crash during PLAN_REVIEW → resumes from PREFLIGHT, skips completed stages, re-enters PLAN_REVIEW
