@@ -8,6 +8,28 @@ import {
   statusIcon,
 } from '../utils/status-badge.js';
 
+/** Canonical pipeline stage order — stages not listed sort to the end. */
+const STAGE_ORDER = [
+  'preflight',
+  'plan',
+  'plan_review',
+  'coordinate',
+  'implement',
+  'test',
+  'review',
+  'pr',
+  'learn',
+];
+
+function _sortedEntries(stages) {
+  const entries = Object.entries(stages);
+  return entries.sort(([a], [b]) => {
+    const ai = STAGE_ORDER.indexOf(a);
+    const bi = STAGE_ORDER.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+}
+
 const BADGE_VARIANT = {
   completed: 'success',
   in_progress: 'warning',
@@ -62,7 +84,7 @@ export function runCardView(
         ? formatDuration(elapsed(run.started_at, null))
         : 'N/A';
   const branch = run.branch || run.work_request?.branch || '';
-  const stages = run.stages ? Object.entries(run.stages) : [];
+  const stages = run.stages ? _sortedEntries(run.stages) : [];
 
   const pauseBtn =
     onPause && (overallStatus === 'running' || overallStatus === 'resuming')
