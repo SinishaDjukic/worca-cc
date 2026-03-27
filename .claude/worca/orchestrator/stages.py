@@ -8,6 +8,7 @@ class Stage(Enum):
     """Pipeline stages in order."""
     PREFLIGHT = "preflight"
     PLAN = "plan"
+    PLAN_REVIEW = "plan_review"
     COORDINATE = "coordinate"
     IMPLEMENT = "implement"
     TEST = "test"
@@ -18,7 +19,8 @@ class Stage(Enum):
 
 TRANSITIONS = {
     Stage.PREFLIGHT: {Stage.PLAN},
-    Stage.PLAN: {Stage.COORDINATE},
+    Stage.PLAN: {Stage.PLAN_REVIEW},
+    Stage.PLAN_REVIEW: {Stage.COORDINATE, Stage.PLAN},
     Stage.COORDINATE: {Stage.IMPLEMENT},
     Stage.IMPLEMENT: {Stage.TEST},
     Stage.TEST: {Stage.REVIEW, Stage.IMPLEMENT},
@@ -29,6 +31,7 @@ TRANSITIONS = {
 STAGE_AGENT_MAP = {
     Stage.PREFLIGHT: None,
     Stage.PLAN: "planner",
+    Stage.PLAN_REVIEW: "plan_reviewer",
     Stage.COORDINATE: "coordinator",
     Stage.IMPLEMENT: "implementer",
     Stage.TEST: "tester",
@@ -40,6 +43,7 @@ STAGE_AGENT_MAP = {
 STAGE_SCHEMA_MAP = {
     Stage.PREFLIGHT: None,
     Stage.PLAN: "plan.json",
+    Stage.PLAN_REVIEW: "plan_review.json",
     Stage.COORDINATE: "coordinate.json",
     Stage.IMPLEMENT: "implement.json",
     Stage.TEST: "test_result.json",
@@ -55,7 +59,10 @@ def can_transition(from_stage: Stage, to_stage: Stage) -> bool:
 
 
 # Canonical stage order (not configurable — use enabled flag to skip)
-STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
+STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.PLAN_REVIEW, Stage.COORDINATE, Stage.IMPLEMENT, Stage.TEST, Stage.REVIEW, Stage.PR]
+
+# Stages that default to disabled when not configured in settings.json
+_STAGES_DEFAULT_DISABLED = {Stage.PLAN_REVIEW, Stage.LEARN}
 
 
 def _read_settings(settings_path: str) -> dict:
@@ -117,7 +124,8 @@ def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:
     """Return list of enabled stages in pipeline order.
 
     Reads worca.stages.<stage>.enabled from settings.json.
-    Stages default to enabled if not configured.
+    Stages in _STAGES_DEFAULT_DISABLED default to disabled if not configured.
+    All other stages default to enabled if not configured.
     """
     settings = _read_settings(settings_path)
     stages_config = settings.get("worca", {}).get("stages", {})
@@ -125,7 +133,8 @@ def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:
     enabled = []
     for stage in STAGE_ORDER:
         stage_entry = stages_config.get(stage.value, {})
-        if stage_entry.get("enabled", True):
+        default_enabled = stage not in _STAGES_DEFAULT_DISABLED
+        if stage_entry.get("enabled", default_enabled):
             enabled.append(stage)
     return enabled
 

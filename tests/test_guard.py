@@ -513,6 +513,129 @@ class TestSafeCommandBypass:
             del os.environ["WORCA_AGENT"]
 
 
+# --- Block PlanReviewer writes ---
+
+class TestBlockPlanReviewerWrites:
+    """plan_reviewer is read-only: Write/Edit and file writes via Bash must be blocked."""
+
+    def test_blocks_plan_reviewer_write(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/app.py"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_plan_reviewer_edit(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_plan_reviewer_bash_file_write(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "cat > /project/out.txt << 'EOF'\ndata\nEOF"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_plan_reviewer_read(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Read", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_plan_reviewer_safe_bash(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "ls -la /project/"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
+# --- Block PlanReviewer test execution ---
+
+class TestBlockPlanReviewerTests:
+    """plan_reviewer may not run tests — blocked independently of read_only_agents tuple."""
+
+    def test_blocks_plan_reviewer_pytest(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "pytest tests/ -v"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_plan_reviewer_python_m_pytest(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "python -m pytest"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_plan_reviewer_npm_test(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "npm test"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_plan_reviewer_grep(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "grep -r 'pattern' /project/"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
+# --- MCP tools permitted for plan_reviewer ---
+
+class TestPlanReviewerMcpToolsPermitted:
+    """MCP tools (context7, WebSearch, WebFetch) must not be blocked for plan_reviewer.
+
+    The PreToolUse hook matcher is 'Bash|Write|Edit', so MCP tool names never
+    reach check_guard at runtime. This test confirms that if guard.py ever
+    receives an MCP tool call, it still allows it — no inadvertent blocking.
+    """
+
+    def test_context7_allowed_for_plan_reviewer(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("mcp__context7__resolve-library-id", {"query": "requests"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_websearch_allowed_for_plan_reviewer(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("WebSearch", {"query": "python requests docs"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_webfetch_allowed_for_plan_reviewer(self):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        try:
+            code, reason = check_guard("WebFetch", {"url": "https://docs.python.org"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
 # --- cd prefix handling ---
 
 class TestCdPrefixHandling:

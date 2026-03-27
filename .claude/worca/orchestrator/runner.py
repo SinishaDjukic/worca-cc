@@ -517,6 +517,11 @@ _STAGE_PROMPT_PREFIX = {
         "Summarize the changes and ensure the commit history is clean.\n\n"
         "Work request: {prompt}"
     ),
+    Stage.PLAN_REVIEW: (
+        "Review the implementation plan for the following work request. "
+        "Validate completeness, feasibility, and quality. Do NOT modify the plan.\n\n"
+        "Work request: {prompt}"
+    ),
     Stage.LEARN: (
         "Analyze the completed pipeline run and produce a retrospective report. "
         "Identify patterns, recurring issues, and improvement suggestions.\n\n"
@@ -1745,6 +1750,107 @@ def run_pipeline(
                 # Thread plan outputs into PromptBuilder for downstream stages
                 prompt_builder.update_context("plan_approach", result.get("approach", ""))
                 prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
+
+            # Handle plan review results
+            elif current_stage == Stage.PLAN_REVIEW:
+                outcome = result.get("outcome", "revise")  # fail-closed default
+                issues = result.get("issues", [])
+                critical_issues = [i for i in issues if i.get("severity") in ("critical", "major")]
+
+                iter_extras["outcome"] = outcome
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, actual_status_path)
+                if ctx:
+                    _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
+                        stage=current_stage.value, iteration=iter_num,
+                        duration_ms=iter_extras.get("duration_ms", 0),
+                        cost_usd=iter_extras.get("cost_usd", 0.0),
+                        turns=iter_extras.get("turns", 0),
+                        outcome=iter_extras["outcome"],
+                        token_usage=iter_extras.get("token_usage"),
+                    ))
+                    if _sc_event:
+                        _action = _check_control_response(ctx, _sc_event)
+                        if _action == "pause":
+                            _handle_pause(ctx, f"{current_stage.value} stage.completed")
+                        elif _action == "abort":
+                            raise PipelineInterrupted("Aborted via control webhook")
+
+                # Revise gate: outcome == "revise" AND (critical issues present OR issues list empty)
+                # Minor/suggestion-only issues are treated as approve.
+                # Empty issues list with revise outcome is fail-closed — still revise.
+                should_revise = (outcome == "revise") and bool(critical_issues or not issues)
+
+                if should_revise:
+                    # Thread review feedback — only critical/major issues to limit context growth
+                    prev_history = prompt_builder.get_context("plan_review_history") or []
+                    prev_history.append({"attempt": len(prev_history) + 1, "issues": critical_issues})
+                    prompt_builder.update_context("plan_review_history", prev_history)
+                    prompt_builder.update_context("plan_review_issues", critical_issues)
+                    prompt_builder.update_context("plan_revision_mode", True)
+
+                    # Update ALL counters before saving — single save to avoid inconsistent state
+                    loop_counters["plan_review"] = loop_counters.get("plan_review", 0) + 1
+                    loop_counters[f"{Stage.PLAN_REVIEW.value}_iteration"] = (
+                        loop_counters.get(f"{Stage.PLAN_REVIEW.value}_iteration", 0) + 1
+                    )
+                    status["loop_counters"] = dict(loop_counters)
+
+                    if check_loop_limit("plan_review", loop_counters["plan_review"],
+                                        settings_path, mloops=mloops):
+                        if ctx:
+                            _lt_event = emit_event(ctx, LOOP_TRIGGERED, loop_triggered_payload(
+                                loop_key="plan_review",
+                                iteration=loop_counters["plan_review"],
+                                from_stage=Stage.PLAN_REVIEW.value,
+                                to_stage=Stage.PLAN.value,
+                                trigger="plan_review_revise",
+                            ))
+                            if _lt_event:
+                                _action = _check_control_response(ctx, _lt_event)
+                                if _action == "pause":
+                                    _handle_pause(ctx, "plan_review loop.triggered")
+                                elif _action == "abort":
+                                    raise PipelineInterrupted("Aborted via control webhook")
+
+                        # --- Atomic loop-back sequence ---
+                        # 1. Reset PLAN stage status and clear plan_approved milestone
+                        update_stage(status, Stage.PLAN.value, status="pending", skipped=False)
+                        status.get("milestones", {}).pop("plan_approved", None)
+                        # 2. Persist context + status before any in-memory transitions
+                        if prompt_context_path:
+                            prompt_builder.save_context(prompt_context_path)
+                        save_status(status, actual_status_path)
+                        # 3. In-memory transitions (context keys drive behavior on crash/resume)
+                        _next_trigger[Stage.PLAN.value] = "plan_review_revise"
+                        stage_idx = stage_order.index(Stage.PLAN)
+                        continue  # Loop back to PLAN
+                    else:
+                        if prompt_context_path:
+                            prompt_builder.save_context(prompt_context_path)
+                        save_status(status, actual_status_path)
+                        if ctx:
+                            emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
+                                loop_key="plan_review",
+                                iteration=loop_counters["plan_review"],
+                                limit=_get_loop_limit("plan_review", settings_path, mloops),
+                            ))
+                        _log("Plan review loop exhausted -- proceeding to COORDINATE", "warn")
+                else:
+                    # Approve path — pop cross-context keys to prevent leaking
+                    prompt_builder.pop_context("plan_review_issues")
+                    prompt_builder.pop_context("plan_revision_mode")
+                    prompt_builder.pop_context("plan_review_history")
+                    if prompt_context_path:
+                        prompt_builder.save_context(prompt_context_path)
+
+                    if outcome == "revise" and not critical_issues and issues:
+                        _log(f"Plan approved with {len(issues)} minor issues (logged)", "ok")
+                    elif issues:
+                        _log(f"Plan approved with {len(issues)} minor issues (logged)", "ok")
+                    else:
+                        _log("Plan approved by reviewer", "ok")
 
             # Handle coordinate results
             elif current_stage == Stage.COORDINATE:

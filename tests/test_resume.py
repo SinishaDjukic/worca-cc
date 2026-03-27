@@ -19,6 +19,7 @@ def test_finds_in_progress_stage():
     status = {
         "stages": {
             "plan": {"status": "completed"},
+            "plan_review": {"status": "completed"},
             "coordinate": {"status": "completed"},
             "implement": {"status": "in_progress"},
             "test": {"status": "pending"},
@@ -34,6 +35,7 @@ def test_finds_pending_after_completed():
     status = {
         "stages": {
             "plan": {"status": "completed"},
+            "plan_review": {"status": "completed"},
             "coordinate": {"status": "completed"},
             "implement": {"status": "pending"},
             "test": {"status": "pending"},
@@ -57,6 +59,7 @@ def test_finds_review_milestone_gate():
     status = {
         "stages": {
             "plan": {"status": "completed"},
+            "plan_review": {"status": "completed"},
             "coordinate": {"status": "completed"},
             "implement": {"status": "completed"},
             "test": {"status": "completed"},
@@ -74,6 +77,7 @@ def test_always_returns_preflight_when_preflight_already_completed():
         "stages": {
             "preflight": {"status": "completed"},
             "plan": {"status": "completed"},
+            "plan_review": {"status": "completed"},
             "coordinate": {"status": "completed"},
             "implement": {"status": "in_progress"},
             "test": {"status": "pending"},
@@ -453,3 +457,101 @@ def test_check_git_divergence_calls_get_current_git_head_when_not_injected():
         result = check_git_divergence(status)
     mock_head.assert_called_once()
     assert result["diverged"] is False
+
+
+# ---------------------------------------------------------------------------
+# PLAN_REVIEW crash and resume scenarios
+# ---------------------------------------------------------------------------
+
+def test_crash_during_plan_review_resumes_from_preflight():
+    """Crash while PLAN_REVIEW is in_progress → resume starts from PREFLIGHT."""
+    status = {
+        "stages": {
+            "plan": {"status": "completed"},
+            "plan_review": {"status": "in_progress"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {"plan_approved": True},
+    }
+    assert find_resume_point(status) == Stage.PREFLIGHT
+
+
+def test_crash_after_plan_review_loop_back_plan_is_pending():
+    """After PLAN_REVIEW loop-back atomic persist, PLAN is reset to pending.
+
+    The runner writes context keys and resets PLAN status (skipped=False) before
+    any in-memory transitions.  On crash, PLAN is pending and find_resume_point
+    returns PREFLIGHT so the stage re-runs in revision mode (driven by the
+    persisted plan_revision_mode context key).
+    """
+    status = {
+        "stages": {
+            "plan": {"status": "pending", "skipped": False},
+            "plan_review": {"status": "completed"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {"plan_review": 1},
+    }
+    assert find_resume_point(status) == Stage.PREFLIGHT
+
+
+def test_plan_review_loop_counter_persists_across_crash():
+    """Loop counter incremented before save_status survives crash and resume.
+
+    The runner increments loop_counters['plan_review'] and calls save_status()
+    before any in-memory transitions, so the counter is durable.
+    restore_loop_counters() recovers it on the next run.
+    """
+    status = {
+        "stages": {
+            "plan": {"status": "pending"},
+            "plan_review": {"status": "completed"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "loop_counters": {"plan_review": 1},
+    }
+    counters = restore_loop_counters(status)
+    assert counters["plan_review"] == 1
+
+
+def test_reconstruct_context_plan_review_completed_plan_pending(tmp_path):
+    """After loop-back, PLAN_REVIEW is completed and PLAN is pending.
+
+    reconstruct_context includes the plan_review output (completed) and
+    excludes plan (pending), so the revision prompt builder can read
+    prior review issues from the runner-persisted context keys instead.
+    """
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "plan_review"))
+
+    review_output = {
+        "outcome": "revise",
+        "issues": [{"category": "completeness", "severity": "major", "description": "missing edge case"}],
+        "summary": "Plan is incomplete",
+    }
+    with open(os.path.join(logs_dir, "plan_review", "iter-1.json"), "w") as f:
+        json.dump(review_output, f)
+
+    status = {
+        "stages": {
+            "plan": {"status": "pending", "skipped": False},
+            "plan_review": {"status": "completed"},
+        },
+    }
+    ctx = reconstruct_context(status, logs_dir)
+    assert "plan" not in ctx
+    assert ctx["plan_review"]["outcome"] == "revise"
+    assert ctx["plan_review"]["summary"] == "Plan is incomplete"

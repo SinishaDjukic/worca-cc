@@ -285,3 +285,157 @@ def test_review_prompt_contains_implementer_capabilities():
     prompt = pb.build("review")
     assert "CANNOT make git commits" in prompt
     assert "Do NOT flag uncommitted files" in prompt
+
+
+# --- pop_context ---
+
+def test_pop_context_removes_key_and_returns_value():
+    pb = PromptBuilder("title", "desc")
+    pb.update_context("k", "v")
+    result = pb.pop_context("k")
+    assert result == "v"
+    assert pb.get_context("k") is None
+
+
+def test_pop_context_missing_key_returns_none():
+    pb = PromptBuilder("title", "desc")
+    assert pb.pop_context("nonexistent") is None
+
+
+def test_pop_context_does_not_persist_key():
+    pb = PromptBuilder("title", "desc")
+    pb.update_context("x", 123)
+    pb.pop_context("x")
+    assert "x" not in pb._context
+
+
+# --- _build_plan_review ---
+
+def test_build_plan_review_includes_work_request(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup")
+    pb = PromptBuilder("Add auth", "Implement user authentication", master_plan_path=str(plan_file))
+    prompt = pb.build("plan_review")
+    assert "Add auth" in prompt
+    assert "Implement user authentication" in prompt
+
+
+def test_build_plan_review_reads_plan_from_disk(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup\nPhase 2: Implement JWT")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    prompt = pb.build("plan_review")
+    assert "Phase 1: Setup" in prompt
+    assert "Phase 2: Implement JWT" in prompt
+
+
+def test_build_plan_review_includes_mcp_instructions(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    prompt = pb.build("plan_review")
+    assert "context7" in prompt.lower()
+    assert "WebSearch" in prompt or "websearch" in prompt.lower()
+    assert "WebFetch" in prompt or "webfetch" in prompt.lower()
+
+
+def test_build_plan_review_no_history_on_first_iteration(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "secret"}]}
+    ])
+    prompt = pb.build("plan_review", iteration=0)
+    assert "secret" not in prompt
+    assert "Previous Review" not in prompt
+
+
+def test_build_plan_review_includes_history_on_subsequent_iteration(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"category": "completeness", "severity": "major", "description": "Missing auth edge cases"}]}
+    ])
+    prompt = pb.build("plan_review", iteration=1)
+    assert "Missing auth edge cases" in prompt
+    assert "Previous Review" in prompt
+
+
+def test_build_plan_review_handles_missing_master_plan():
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path="/nonexistent/MASTER_PLAN.md")
+    prompt = pb.build("plan_review")
+    assert "Add auth" in prompt
+    assert "not found" in prompt.lower() or "empty" in prompt.lower() or "critical" in prompt.lower()
+
+
+# --- _build_plan revision mode ---
+
+def test_build_plan_revision_mode_uses_revision_header(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Current Plan\n\nDo this and that")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [
+        {"category": "completeness", "severity": "critical", "description": "Missing edge cases"},
+    ])
+    prompt = pb.build("plan")
+    assert "revise" in prompt.lower() or "revision" in prompt.lower()
+    assert "Create a detailed implementation plan" not in prompt
+
+
+def test_build_plan_revision_mode_includes_issues(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Current Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [
+        {"category": "feasibility", "severity": "major", "description": "Unrealistic timeline"},
+        {"category": "completeness", "severity": "critical", "description": "Missing error handling"},
+    ])
+    prompt = pb.build("plan")
+    assert "Unrealistic timeline" in prompt
+    assert "Missing error handling" in prompt
+
+
+def test_build_plan_revision_mode_includes_history(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Current Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [])
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "No rollback"}]}
+    ])
+    prompt = pb.build("plan")
+    assert "No rollback" in prompt
+
+
+def test_build_plan_revision_mode_reads_current_plan(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Existing Plan Content\n\nDo step A, then B")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [])
+    prompt = pb.build("plan")
+    assert "Existing Plan Content" in prompt
+    assert "Do step A, then B" in prompt
+
+
+def test_build_plan_no_revision_mode_unchanged():
+    pb = PromptBuilder("Add auth", "Implement user authentication")
+    prompt = pb.build("plan")
+    assert "Create a detailed implementation plan" in prompt
+    assert "MASTER_PLAN.md" in prompt
+
+
+def test_build_plan_revision_mode_instructs_approved_true(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Current Plan")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [])
+    prompt = pb.build("plan")
+    assert "approved" in prompt.lower()
+    assert "true" in prompt.lower()

@@ -201,16 +201,16 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
                 if basename != "MASTER_PLAN.md":
                     return (2, "Blocked: planner agent may only write MASTER_PLAN.md, not {}.".format(basename))
 
-        # Read-only agents: coordinator and tester may not write files
-        read_only_agents = ("coordinator", "tester")
+        # Read-only agents: coordinator, tester, and plan_reviewer may not write files
+        read_only_agents = ("coordinator", "tester", "plan_reviewer")
         if agent in read_only_agents:
             if tool_name in ("Write", "Edit"):
                 return (2, "Blocked: {} agent is read-only — may not write files.".format(agent))
             if tool_name == "Bash" and _is_file_write_via_bash(command):
                 return (2, "Blocked: {} agent is read-only — file writes via Bash are not allowed.".format(agent))
 
-        # Planner and Coordinator may not run tests
-        if tool_name == "Bash" and agent in ("planner", "coordinator"):
+        # Planner, Coordinator, and PlanReviewer may not run tests
+        if tool_name == "Bash" and agent in ("planner", "coordinator", "plan_reviewer"):
             if _is_test_command(command):
                 return (2, "Blocked: {} agent may not run tests.".format(agent))
 
