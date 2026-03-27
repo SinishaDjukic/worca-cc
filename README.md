@@ -8,8 +8,8 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ### Pipeline
 
-- **8-stage pipeline** — Preflight → Plan → Coordinate → Implement → Test → Review → PR → Learn
-- **6 specialized agents** — Planner and Coordinator on Opus, Implementer and Tester on Sonnet, Guardian on Opus, Learner on Sonnet (model and max turns fully configurable per agent)
+- **9-stage pipeline** — Preflight → Plan → Plan Review → Coordinate → Implement → Test → Review → PR → Learn
+- **7 specialized agents** — Planner, Plan Reviewer, Coordinator, and Guardian on Opus; Implementer, Tester, and Learner on Sonnet (model and max turns fully configurable per agent)
 - **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions
 
 ![Lifecycle controls — Failed status badge with Resume and Stop buttons](docs/screenshots/lifecycle-controls.png)
@@ -240,12 +240,15 @@ Add `.claude/agents/overrides/<agent>.md` files to customize agent prompts per-p
 ## Architecture
 
 ```
-Preflight → Planner (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus) → Learner (Sonnet)
+Preflight → Planner (Opus) → Plan Reviewer (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus) → Learner (Sonnet)
 ```
+
+Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
 | Agent | Model | Role |
 |-------|-------|------|
 | **Planner** | Opus | Reads work request, explores codebase, creates detailed implementation plan |
+| **Plan Reviewer** | Opus | Validates plan for completeness, feasibility, and architecture fit; loops back to Planner on critical issues |
 | **Coordinator** | Opus | Decomposes plan into beads tasks with dependencies and parallel groups |
 | **Implementer** | Sonnet | Claims task, implements with TDD, commits code, closes task |
 | **Tester** | Sonnet | Runs test suite, verifies coverage, collects proof artifacts |
