@@ -115,7 +115,13 @@ def main():
 
     if args.resume:
         # Resume: load work_request from existing status.json instead of building from args
-        status_file = os.path.join(args.status_dir, "status.json")
+        # Check active_run pointer first, then fall back to flat status.json
+        active_run_path = os.path.join(args.status_dir, "active_run")
+        if os.path.exists(active_run_path):
+            active_id = open(active_run_path).read().strip()
+            status_file = os.path.join(args.status_dir, "runs", active_id, "status.json")
+        else:
+            status_file = os.path.join(args.status_dir, "status.json")
         if os.path.exists(status_file):
             existing = load_status(status_file)
             wr = existing.get("work_request", {})
