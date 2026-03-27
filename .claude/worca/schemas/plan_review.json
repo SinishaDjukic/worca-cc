@@ -18,7 +18,7 @@
         "properties": {
           "category": {
             "type": "string",
-            "enum": ["completeness", "feasibility", "test_strategy", "architecture", "decomposition", "risk", "api_assumption"]
+            "enum": ["completeness", "feasibility", "test_strategy", "architecture", "decomposition", "risk", "security", "performance", "api_assumption"]
           },
           "severity": {
             "type": "string",

@@ -167,7 +167,7 @@ class TestAllCategoriesAccepted:
 
     VALID_CATEGORIES = [
         "completeness", "feasibility", "test_strategy", "architecture",
-        "decomposition", "risk", "api_assumption",
+        "decomposition", "risk", "security", "performance", "api_assumption",
     ]
 
     @pytest.mark.parametrize("category", VALID_CATEGORIES)
