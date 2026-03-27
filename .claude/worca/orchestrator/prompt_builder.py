@@ -18,12 +18,14 @@ class PromptBuilder:
     """
 
     def __init__(self, work_request_title: str, work_request_description: str = "",
-                 claude_md_path: str = "CLAUDE.md", context_path: str = None):
+                 claude_md_path: str = "CLAUDE.md", context_path: str = None,
+                 master_plan_path: str = "MASTER_PLAN.md"):
         self._title = work_request_title
         self._description = work_request_description or work_request_title
         self._context: dict = {}
         self._context_path = context_path
         self._claude_md_content = self._read_claude_md(claude_md_path)
+        self._master_plan_path = master_plan_path
 
     @staticmethod
     def _read_claude_md(path: str) -> str:
@@ -43,6 +45,20 @@ class PromptBuilder:
     def get_context(self, key: str, default=None):
         """Retrieve stored inter-stage context."""
         return self._context.get(key, default)
+
+    def pop_context(self, key: str):
+        """Remove and return a context key value. Returns None if key not present."""
+        return self._context.pop(key, None)
+
+    def _read_master_plan(self) -> str:
+        """Read MASTER_PLAN.md content from disk. Returns empty string if not found."""
+        try:
+            if os.path.exists(self._master_plan_path):
+                with open(self._master_plan_path) as f:
+                    return f.read().strip()
+        except OSError:
+            pass
+        return ""
 
     def save_context(self, context_path: str = None) -> None:
         """Persist current context to prompt_context.json using atomic write.
@@ -117,6 +133,8 @@ class PromptBuilder:
         return f"## Work Request\n\n**{self._title}**\n\n{self._description}"
 
     def _build_plan(self, iteration: int) -> str:
+        if self._context.get("plan_revision_mode"):
+            return self._build_plan_revision()
         parts = [
             "Create a detailed implementation plan for the following work request.",
             "Start by reading CLAUDE.md for project context (tech stack, build/test commands, conventions).",
@@ -127,6 +145,113 @@ class PromptBuilder:
         ]
         if self._claude_md_content:
             parts.append(f"## Project Context (from CLAUDE.md)\n\n{self._claude_md_content}")
+        return "\n\n".join(parts)
+
+
+    def _build_plan_revision(self) -> str:
+        """Build prompt for plan revision mode (triggered by PLAN_REVIEW revise outcome)."""
+        parts = [
+            "The plan reviewer has identified issues that must be addressed. "
+            "Revise the existing plan -- do NOT start from scratch.",
+            "",
+            self._work_request_section(),
+        ]
+
+        plan_content = self._read_master_plan()
+        if plan_content:
+            parts.append(f"## Current Plan (MASTER_PLAN.md)\n\n{plan_content}")
+
+        issues = self._context.get("plan_review_issues") or []
+        if issues:
+            issue_lines = ["## Issues to Address"]
+            for i, issue in enumerate(issues, 1):
+                category = issue.get("category", "?")
+                severity = issue.get("severity", "?")
+                description = issue.get("description", "")
+                suggestion = issue.get("suggestion", "")
+                evidence = issue.get("evidence", "")
+                line = f"{i}. [{severity}] ({category}) {description}"
+                if suggestion:
+                    line += f"\n   Suggestion: {suggestion}"
+                if evidence:
+                    line += f"\n   Evidence: {evidence}"
+                issue_lines.append(line)
+            parts.append("\n\n".join(issue_lines))
+
+        history = self._context.get("plan_review_history") or []
+        if history:
+            history_lines = ["## Review History"]
+            for entry in history:
+                attempt = entry.get("attempt", "?")
+                attempt_issues = entry.get("issues", [])
+                summary = "; ".join(
+                    f"[{iss.get('severity','?')}] {iss.get('category','?')}: {iss.get('description','')}"
+                    for iss in attempt_issues
+                )
+                history_lines.append(f"- Attempt {attempt}: {summary}")
+            parts.append("\n".join(history_lines))
+
+        parts.append(
+            "Address each issue above. Preserve all parts of the plan that were not flagged. "
+            "Write the updated plan to MASTER_PLAN.md. "
+            "In your JSON output, set `approved: true` to signal that the revised plan is ready for review."
+        )
+        return "\n\n".join(parts)
+
+    def _build_plan_review(self, iteration: int) -> str:
+        """Build prompt for the PLAN_REVIEW stage."""
+        parts = [
+            "Review the implementation plan below for completeness, feasibility, and quality. "
+            "You are a read-only analyst -- do NOT modify files, run tests, or execute commands.",
+        ]
+
+        parts.append(self._work_request_section())
+
+        plan_content = self._read_master_plan()
+        if plan_content:
+            parts.append(f"## Implementation Plan (MASTER_PLAN.md)\n\n{plan_content}")
+        else:
+            parts.append(
+                "## Implementation Plan (MASTER_PLAN.md)\n\n"
+                "*Plan file not found or empty -- this is itself a critical issue to report.*"
+            )
+
+        parts.append(
+            "## Validation Instructions\n\n"
+            "Use available MCP tools for external API/library validation:\n"
+            "- **context7** -- resolve library IDs and fetch current docs for any libraries referenced in the plan\n"
+            "- **WebSearch** -- search for up-to-date API references, breaking changes, deprecations\n"
+            "- **WebFetch** -- fetch specific documentation URLs mentioned in the plan\n\n"
+            "Limit external MCP lookups to **10 turns maximum**. If MCP tools are unavailable or fail, "
+            "proceed with codebase-only validation and note which external checks were skipped in the "
+            "`evidence` field.\n\n"
+            "Also read CLAUDE.md and explore the codebase to validate plan assumptions against actual code."
+        )
+
+        if iteration > 0:
+            history = self._context.get("plan_review_history") or []
+            if history:
+                history_lines = ["## Previous Review Attempts"]
+                for entry in history:
+                    attempt = entry.get("attempt", "?")
+                    attempt_issues = entry.get("issues", [])
+                    summary = "; ".join(
+                        f"[{iss.get('severity','?')}] {iss.get('category','?')}: {iss.get('description','')}"
+                        for iss in attempt_issues
+                    )
+                    history_lines.append(f"- Attempt {attempt}: {summary or 'no issues recorded'}")
+                parts.append("\n".join(history_lines))
+                parts.append(
+                    "Check whether the issues from previous review attempts have been addressed "
+                    "in the revised plan above."
+                )
+
+        parts.append(
+            "## Output\n\n"
+            "Produce `plan_review.json` with your structured findings. "
+            "Set `outcome` to `approve` if the plan is ready for coordination, "
+            "or `revise` if critical/major issues require another planning pass."
+        )
         return "\n\n".join(parts)
 
     def _build_coordinate(self, iteration: int) -> str:

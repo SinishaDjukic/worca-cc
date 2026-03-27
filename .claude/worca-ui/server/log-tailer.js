@@ -2,9 +2,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Pipeline stage order for log display (orchestrator first, then stages in execution order). */
-const STAGE_ORDER = [
+export const STAGE_ORDER = [
   'orchestrator',
   'plan',
+  'plan_review',
   'coordinate',
   'implement',
   'test',

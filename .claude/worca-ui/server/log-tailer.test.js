@@ -8,6 +8,7 @@ import {
   readLastLines,
   resolveIterationLogPath,
   resolveLogPath,
+  STAGE_ORDER,
 } from './log-tailer.js';
 
 describe('log-tailer', () => {
@@ -86,5 +87,29 @@ describe('log-tailer', () => {
     expect(impls.length).toBe(2);
     expect(impls[0].iteration).toBe(1);
     expect(impls[1].iteration).toBe(2);
+  });
+
+  it('STAGE_ORDER contains plan_review between plan and coordinate', () => {
+    expect(STAGE_ORDER).toContain('plan_review');
+    const planIdx = STAGE_ORDER.indexOf('plan');
+    const reviewIdx = STAGE_ORDER.indexOf('plan_review');
+    const coordinateIdx = STAGE_ORDER.indexOf('coordinate');
+    expect(reviewIdx).toBeGreaterThan(planIdx);
+    expect(reviewIdx).toBeLessThan(coordinateIdx);
+  });
+
+  it('plan_review stage sorts before coordinate in listLogFiles', () => {
+    const prDir = join(dir, 'logs', 'plan_review');
+    const coordDir = join(dir, 'logs', 'coordinate');
+    mkdirSync(prDir, { recursive: true });
+    mkdirSync(coordDir, { recursive: true });
+    writeFileSync(join(prDir, 'iter-1.log'), 'pr\n');
+    writeFileSync(join(coordDir, 'iter-1.log'), 'coord\n');
+    const files = listLogFiles(dir);
+    const prIdx = files.findIndex((f) => f.stage === 'plan_review');
+    const coordIdx = files.findIndex((f) => f.stage === 'coordinate');
+    expect(prIdx).toBeGreaterThanOrEqual(0);
+    expect(coordIdx).toBeGreaterThanOrEqual(0);
+    expect(prIdx).toBeLessThan(coordIdx);
   });
 });
