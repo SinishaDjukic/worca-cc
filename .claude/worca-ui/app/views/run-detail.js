@@ -28,6 +28,28 @@ import {
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
 
+/** Canonical pipeline stage order — stages not listed sort to the end. */
+const STAGE_ORDER = [
+  'preflight',
+  'plan',
+  'plan_review',
+  'coordinate',
+  'implement',
+  'test',
+  'review',
+  'pr',
+  'learn',
+];
+
+function _sortedEntries(stages) {
+  const entries = Object.entries(stages);
+  return entries.sort(([a], [b]) => {
+    const ai = STAGE_ORDER.indexOf(a);
+    const bi = STAGE_ORDER.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+}
+
 /**
  * Render a stacked horizontal timing bar at the pipeline level.
  * Segments: Thinking (Agent) | Tools (Agent) | Rest of Pipeline
@@ -558,7 +580,7 @@ export function runDetailView(run, settings = {}, options = {}) {
       </div>
 
       <div class="stage-panels">
-        ${Object.entries(stages).map(([key, stage]) => {
+        ${_sortedEntries(stages).map(([key, stage]) => {
           const label =
             stageUi[key]?.label || key.replace(/_/g, ' ').toUpperCase();
           const stageStatus = resolveStatus(
