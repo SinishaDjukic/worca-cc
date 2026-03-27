@@ -425,6 +425,68 @@ class TestPlanReviewRevisePath:
         assert len(first_entry["issues"]) == 1
         assert first_entry["issues"][0]["severity"] == "critical"
 
+    def test_revise_history_accumulates_across_rounds(self, tmp_path):
+        """plan_review_history grows with each revise round, preserving all entries."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=3)
+        issue_round1 = {"category": "risk", "severity": "critical",
+                        "description": "Round 1 issue"}
+        issue_round2 = {"category": "feasibility", "severity": "major",
+                        "description": "Round 2 issue"}
+        call_count = {"plan_review": 0}
+        history_snapshots = []
+
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        original_update = PromptBuilder.update_context
+
+        def capturing_update(self, key, value):
+            if key == "plan_review_history":
+                # Deep copy to capture the snapshot at this point in time
+                import copy
+                history_snapshots.append(copy.deepcopy(value))
+            return original_update(self, key, value)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [issue_round1],
+                        "summary": "Round 1",
+                    })
+                if call_count["plan_review"] == 2:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [issue_round2],
+                        "summary": "Round 2",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch.object(PromptBuilder, "update_context", capturing_update):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        # Should have captured 2 history snapshots (one per revise round)
+        assert len(history_snapshots) >= 2
+        # First snapshot: 1 entry from round 1
+        assert len(history_snapshots[0]) == 1
+        assert history_snapshots[0][0]["attempt"] == 1
+        assert history_snapshots[0][0]["issues"][0]["description"] == "Round 1 issue"
+        # Second snapshot: 2 entries (accumulated)
+        assert len(history_snapshots[1]) == 2
+        assert history_snapshots[1][0]["attempt"] == 1
+        assert history_snapshots[1][1]["attempt"] == 2
+        assert history_snapshots[1][1]["issues"][0]["description"] == "Round 2 issue"
+
 
 # ---------------------------------------------------------------------------
 # Revise with minor-only issues → approve
@@ -674,6 +736,73 @@ class TestPlanReviewLoopExhaustion:
         # Counter should be 1 (one revise iteration)
         assert final_status["loop_counters"].get("plan_review", 0) == 1
 
+    def test_persist_calls_happen_before_plan_reruns(self, tmp_path):
+        """save_status and save_context are called before PLAN re-runs on loop-back."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        critical_issue = {"category": "risk", "severity": "critical", "description": "gap"}
+        call_count = {"plan_review": 0}
+        call_order = []  # tracks ordering of persist vs run_stage(PLAN)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            call_order.append(("run_stage", stage.value))
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [critical_issue],
+                        "summary": "Issues",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        from worca.state import status as status_mod
+        original_save = status_mod.save_status
+
+        def tracking_save(status, path):
+            call_order.append(("save_status", None))
+            return original_save(status, path)
+
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        original_save_ctx = PromptBuilder.save_context
+
+        def tracking_save_ctx(self, path=None):
+            call_order.append(("save_context", None))
+            return original_save_ctx(self, path)
+
+        with patch("worca.orchestrator.runner.save_status", side_effect=tracking_save):
+            with patch.object(PromptBuilder, "save_context", tracking_save_ctx):
+                with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                    with patch("worca.orchestrator.runner.create_branch"):
+                        with patch("worca.orchestrator.runner._write_pid"):
+                            with patch("worca.orchestrator.runner._remove_pid"):
+                                run_pipeline(wr, settings_path=settings_path,
+                                             status_path=status_path)
+
+        # Find the second run_stage("plan") call — it's the loop-back re-run
+        plan_indices = [i for i, (fn, s) in enumerate(call_order) if fn == "run_stage" and s == "plan"]
+        assert len(plan_indices) >= 2, f"Expected PLAN to run twice, got {plan_indices}"
+        second_plan_idx = plan_indices[1]
+
+        # Find persist calls between the first plan_review and the second plan
+        first_review_idx = next(
+            i for i, (fn, s) in enumerate(call_order)
+            if fn == "run_stage" and s == "plan_review"
+        )
+        between = call_order[first_review_idx:second_plan_idx]
+        persist_fns = [fn for fn, _ in between if fn in ("save_status", "save_context")]
+        assert "save_status" in persist_fns, (
+            f"save_status must be called before PLAN re-runs; sequence: {between}"
+        )
+        assert "save_context" in persist_fns, (
+            f"save_context must be called before PLAN re-runs; sequence: {between}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Event emissions
@@ -785,4 +914,105 @@ class TestPlanReviewDisabled:
 
         assert "plan_review" not in stages_run
         assert "plan" in stages_run
+        assert "coordinate" in stages_run
+
+
+# ---------------------------------------------------------------------------
+# Schema validation / malformed output
+# ---------------------------------------------------------------------------
+
+class TestPlanReviewMalformedOutput:
+
+    def test_completely_empty_result_treated_as_revise(self, tmp_path):
+        """Empty dict result (no outcome, no issues) → fail-closed to revise."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        stages_run = []
+        call_count = {"plan_review": 0}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            stages_run.append(stage.value)
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    # Completely empty/malformed result
+                    return _mock_stage(stage, {})
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        # Empty result → fail-closed revise → PLAN runs twice
+        assert stages_run.count("plan") == 2
+
+    def test_run_stage_exception_triggers_error_handler(self, tmp_path):
+        """Exception from run_stage during PLAN_REVIEW → error handler path."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        call_count = {"plan_review": 0}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    raise RuntimeError("Schema validation failed: missing required field")
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        # Pipeline should handle the error (via error handler / retry) or propagate.
+        # With circuit breaker disabled (default), the error is recorded and re-raised.
+        from worca.orchestrator.runner import PipelineError
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        with pytest.raises((PipelineError, RuntimeError)):
+                            run_pipeline(wr, settings_path=settings_path,
+                                         status_path=status_path)
+
+    def test_unrecognized_outcome_treated_as_approve(self, tmp_path):
+        """Unrecognized outcome value falls to approve path (not revise).
+
+        The fail-closed default only applies to *missing* outcome field
+        (via .get("outcome", "revise")). A present but unrecognized value
+        is not "revise", so it takes the else/approve path.
+        """
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        stages_run = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            stages_run.append(stage.value)
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "maybe",
+                    "issues": [],
+                    "summary": "Unsure",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        # Unrecognized outcome → not "revise" → approve path → PLAN runs once
+        assert stages_run.count("plan") == 1
         assert "coordinate" in stages_run

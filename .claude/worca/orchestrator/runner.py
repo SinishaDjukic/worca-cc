@@ -1196,6 +1196,9 @@ def run_pipeline(
             if plan_file:
                 # Pre-made plan: reference directly (no copy to MASTER_PLAN.md)
                 status["plan_file"] = plan_file
+                # Store path in prompt context so _read_master_plan() can find
+                # the plan even though MASTER_PLAN.md was not created.
+                prompt_builder.update_context("plan_file_path", plan_file)
                 _log(f"Pre-made plan: {plan_file}", "ok")
             else:
                 # Resolve plan path from template
@@ -1784,10 +1787,13 @@ def run_pipeline(
 
                 if should_revise:
                     # Thread review feedback — only critical/major issues to limit context growth
-                    prev_history = prompt_builder.get_context("plan_review_history") or []
-                    prev_history.append({"attempt": len(prev_history) + 1, "issues": critical_issues})
+                    prev_history = list(prompt_builder.get_context("plan_review_history") or [])
+                    prev_history.append({"attempt": len(prev_history) + 1, "issues": list(critical_issues)})
+                    # Cap history to most recent 50 entries to bound context growth
+                    if len(prev_history) > 50:
+                        prev_history = prev_history[-50:]
                     prompt_builder.update_context("plan_review_history", prev_history)
-                    prompt_builder.update_context("plan_review_issues", critical_issues)
+                    prompt_builder.update_context("plan_review_issues", list(critical_issues))
                     prompt_builder.update_context("plan_revision_mode", True)
 
                     # Update ALL counters before saving — single save to avoid inconsistent state
@@ -1827,6 +1833,11 @@ def run_pipeline(
                         stage_idx = stage_order.index(Stage.PLAN)
                         continue  # Loop back to PLAN
                     else:
+                        # Loop exhausted — clean up revision context keys so they
+                        # don't leak into COORDINATE or later PLAN re-runs.
+                        prompt_builder.pop_context("plan_review_issues")
+                        prompt_builder.pop_context("plan_revision_mode")
+                        prompt_builder.pop_context("plan_review_history")
                         if prompt_context_path:
                             prompt_builder.save_context(prompt_context_path)
                         save_status(status, actual_status_path)

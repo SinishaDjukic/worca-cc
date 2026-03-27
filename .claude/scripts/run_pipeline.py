@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import os
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -118,7 +119,10 @@ def main():
         # Check active_run pointer first, then fall back to flat status.json
         active_run_path = os.path.join(args.status_dir, "active_run")
         if os.path.exists(active_run_path):
-            active_id = open(active_run_path).read().strip()
+            active_id = Path(active_run_path).read_text().strip()
+            if os.sep in active_id or '/' in active_id or '..' in active_id:
+                print(f"error: invalid active_run ID: {active_id}", file=sys.stderr)
+                raise SystemExit(2)
             status_file = os.path.join(args.status_dir, "runs", active_id, "status.json")
         else:
             status_file = os.path.join(args.status_dir, "status.json")

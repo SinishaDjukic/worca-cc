@@ -51,13 +51,21 @@ class PromptBuilder:
         return self._context.pop(key, None)
 
     def _read_master_plan(self) -> str:
-        """Read MASTER_PLAN.md content from disk. Returns empty string if not found."""
-        try:
-            if os.path.exists(self._master_plan_path):
-                with open(self._master_plan_path) as f:
-                    return f.read().strip()
-        except OSError:
-            pass
+        """Read plan content from disk. Checks MASTER_PLAN.md first, then falls
+        back to the ``plan_file_path`` context key (set when a pre-made plan is
+        provided via CLI and MASTER_PLAN.md is not created).
+        Returns empty string if neither is found."""
+        for path in (self._master_plan_path, self._context.get("plan_file_path")):
+            if not path:
+                continue
+            try:
+                if os.path.exists(path):
+                    with open(path) as f:
+                        content = f.read().strip()
+                    if content:
+                        return content
+            except OSError:
+                pass
         return ""
 
     def save_context(self, context_path: str = None) -> None:
@@ -176,7 +184,7 @@ class PromptBuilder:
                 if evidence:
                     line += f"\n   Evidence: {evidence}"
                 issue_lines.append(line)
-            parts.append("\n\n".join(issue_lines))
+            parts.append("\n".join(issue_lines))
 
         history = self._context.get("plan_review_history") or []
         if history:

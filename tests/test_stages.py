@@ -54,8 +54,8 @@ class TestStageEnum:
 # --- TRANSITIONS dict ---
 
 class TestTransitions:
-    def test_plan_transitions_to_plan_review_only(self):
-        assert TRANSITIONS[Stage.PLAN] == {Stage.PLAN_REVIEW}
+    def test_plan_transitions_to_plan_review_and_coordinate(self):
+        assert TRANSITIONS[Stage.PLAN] == {Stage.PLAN_REVIEW, Stage.COORDINATE}
 
     def test_plan_review_transitions_to_coordinate_and_plan(self):
         assert TRANSITIONS[Stage.PLAN_REVIEW] == {Stage.COORDINATE, Stage.PLAN}
@@ -105,8 +105,9 @@ class TestCanTransition:
     def test_plan_can_go_to_plan_review(self):
         assert can_transition(Stage.PLAN, Stage.PLAN_REVIEW) is True
 
-    def test_plan_cannot_go_directly_to_coordinate(self):
-        assert can_transition(Stage.PLAN, Stage.COORDINATE) is False
+    def test_plan_can_go_directly_to_coordinate(self):
+        """PLAN can go to COORDINATE (when PLAN_REVIEW is disabled)."""
+        assert can_transition(Stage.PLAN, Stage.COORDINATE) is True
 
     def test_plan_review_can_go_to_coordinate(self):
         assert can_transition(Stage.PLAN_REVIEW, Stage.COORDINATE) is True

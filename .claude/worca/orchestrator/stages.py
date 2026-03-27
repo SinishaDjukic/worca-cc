@@ -19,7 +19,7 @@ class Stage(Enum):
 
 TRANSITIONS = {
     Stage.PREFLIGHT: {Stage.PLAN},
-    Stage.PLAN: {Stage.PLAN_REVIEW},
+    Stage.PLAN: {Stage.PLAN_REVIEW, Stage.COORDINATE},
     Stage.PLAN_REVIEW: {Stage.COORDINATE, Stage.PLAN},
     Stage.COORDINATE: {Stage.IMPLEMENT},
     Stage.IMPLEMENT: {Stage.TEST},
