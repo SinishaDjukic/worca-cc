@@ -1,5 +1,5 @@
 ---
-name: install
+name: worca-install
 description: Install worca pipeline into a new project. Requires a target path argument (e.g. /worca-install /path/to/project). Copies .claude/ files, stores the source repo path for future syncs, installs dependencies, and initializes beads. Use when the user says "install worca", "setup worca", or "add worca to project".
 ---
 

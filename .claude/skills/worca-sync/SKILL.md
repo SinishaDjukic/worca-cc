@@ -1,5 +1,5 @@
 ---
-name: sync
+name: worca-sync
 description: Sync worca files (worca/, worca-ui/, agents/, hooks/, scripts/, skills/) from the worca-cc source repo to a target project's .claude/ directory. Use when updating a project with the latest worca pipeline files, or when the user says "sync worca", "update worca", or "copy worca files". Accepts an optional path argument to specify the worca-cc repo location.
 ---
 

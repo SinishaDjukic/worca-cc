@@ -1,5 +1,5 @@
 ---
-name: agent-override
+name: worca-agent-override
 description: Create or update agent prompt overrides for worca pipeline agents. Use when the user wants to customize agent behavior per-project, add project-specific rules, replace agent sections, or modify how planner/coordinator/implementer/tester/guardian agents work. Triggers on "override agent", "customize agent", "agent override", "change implementer rules", etc.
 ---
 

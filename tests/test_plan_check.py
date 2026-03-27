@@ -6,11 +6,31 @@ from worca.hooks.plan_check import check_plan
 
 @pytest.fixture
 def in_tmp(tmp_path, monkeypatch):
-    """Change to a temp directory for plan file detection."""
+    """Change to a temp directory for plan file detection (inside worca pipeline)."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORCA_AGENT", "implementer")
     monkeypatch.delenv("WORCA_PLAN_FILE", raising=False)
     monkeypatch.delenv("WORCA_PROJECT_ROOT", raising=False)
     return tmp_path
+
+
+# --- Skip check outside worca pipeline ---
+
+class TestSkipOutsidePipeline:
+    def test_allows_write_without_worca_agent(self, tmp_path, monkeypatch):
+        """Plain Claude Code (no WORCA_AGENT) should never be blocked."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("WORCA_AGENT", raising=False)
+        monkeypatch.delenv("WORCA_PLAN_FILE", raising=False)
+        monkeypatch.delenv("WORCA_PROJECT_ROOT", raising=False)
+        code, reason = check_plan("Write", {"file_path": "/project/app.py"})
+        assert code == 0
+
+    def test_allows_edit_without_worca_agent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("WORCA_AGENT", raising=False)
+        code, reason = check_plan("Edit", {"file_path": "/project/index.js"})
+        assert code == 0
 
 
 # --- Block writes without plan ---
@@ -151,29 +171,22 @@ class TestAllowNonWriteTools:
 # --- Custom plan file via WORCA_PLAN_FILE ---
 
 class TestCustomPlanFileEnv:
-    def test_allows_write_with_custom_plan_file_env(self, in_tmp):
+    def test_allows_write_with_custom_plan_file_env(self, in_tmp, monkeypatch):
         plan = in_tmp / "docs" / "plans" / "my-plan.md"
         plan.parent.mkdir(parents=True)
         plan.write_text("# Plan")
-        os.environ["WORCA_PLAN_FILE"] = str(plan)
-        try:
-            code, reason = check_plan("Write", {"file_path": "/project/app.py"})
-            assert code == 0
-        finally:
-            del os.environ["WORCA_PLAN_FILE"]
+        monkeypatch.setenv("WORCA_PLAN_FILE", str(plan))
+        code, reason = check_plan("Write", {"file_path": "/project/app.py"})
+        assert code == 0
 
-    def test_blocks_without_custom_plan_file_env(self, in_tmp):
-        os.environ["WORCA_PLAN_FILE"] = str(in_tmp / "missing-plan.md")
-        try:
-            code, reason = check_plan("Write", {"file_path": "/project/app.py"})
-            assert code == 2
-            assert "plan file" in reason.lower() or "plan" in reason.lower()
-        finally:
-            del os.environ["WORCA_PLAN_FILE"]
+    def test_blocks_without_custom_plan_file_env(self, in_tmp, monkeypatch):
+        monkeypatch.setenv("WORCA_PLAN_FILE", str(in_tmp / "missing-plan.md"))
+        code, reason = check_plan("Write", {"file_path": "/project/app.py"})
+        assert code == 2
+        assert "plan file" in reason.lower() or "plan" in reason.lower()
 
     def test_falls_back_to_master_plan_without_env(self, in_tmp):
         """Without WORCA_PLAN_FILE, falls back to MASTER_PLAN.md."""
-        os.environ.pop("WORCA_PLAN_FILE", None)
         code, reason = check_plan("Write", {"file_path": "/project/app.py"})
         assert code == 2
         # Create MASTER_PLAN.md and try again

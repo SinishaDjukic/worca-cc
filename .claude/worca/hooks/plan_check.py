@@ -23,6 +23,10 @@ def check_plan(tool_name: str, tool_input: dict) -> tuple:
     if tool_name not in ("Write", "Edit"):
         return (0, "")
 
+    # Only enforce plan requirement inside the worca pipeline
+    if not os.environ.get("WORCA_AGENT"):
+        return (0, "")
+
     file_path = tool_input.get("file_path", "")
     _, ext = os.path.splitext(file_path)
 
