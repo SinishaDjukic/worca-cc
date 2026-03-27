@@ -673,8 +673,8 @@ h1, h2, h3, h4, h5, h6 {
 .stage-timeline {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 28px 0;
+  justify-content: safe center;
+  padding: 28px 16px;
   gap: 0;
   overflow-x: auto;
 }
