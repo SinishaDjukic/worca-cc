@@ -279,15 +279,18 @@ ws.on('beads-update', (payload) => {
   }
 });
 
+/** Fetch runs list from server and update store. Returns a promise. */
+function fetchAndUpdateRuns() {
+  return ws.send('list-runs').then((payload) => {
+    const runs = {};
+    for (const run of payload.runs || []) runs[run.id] = run;
+    store.setState({ runs });
+    if (payload.settings) settings = payload.settings;
+  });
+}
+
 ws.on('run-started', () => {
-  ws.send('list-runs')
-    .then((payload) => {
-      const runs = {};
-      for (const run of payload.runs || []) runs[run.id] = run;
-      store.setState({ runs });
-      if (payload.settings) settings = payload.settings;
-    })
-    .catch(() => {});
+  fetchAndUpdateRuns().catch(() => {});
 });
 
 ws.on('run-stopped', () => {
@@ -991,7 +994,7 @@ function contentHeaderView() {
     const isRunning = runs.some((r) => r.active);
     actionButton = html`
       <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || isRunning}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active') })}>
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active'), refreshRuns: fetchAndUpdateRuns })}>
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
       </button>`;
