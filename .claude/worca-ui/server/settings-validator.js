@@ -1,6 +1,7 @@
 // server/settings-validator.js
 const VALID_AGENTS = [
   'planner',
+  'plan_reviewer',
   'coordinator',
   'implementer',
   'tester',
@@ -10,6 +11,7 @@ const VALID_AGENTS = [
 const VALID_STAGES = [
   'preflight',
   'plan',
+  'plan_review',
   'coordinate',
   'implement',
   'test',
@@ -18,7 +20,12 @@ const VALID_STAGES = [
   'learn',
 ];
 const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
-const VALID_LOOPS = ['implement_test', 'pr_changes', 'restart_planning'];
+const VALID_LOOPS = [
+  'implement_test',
+  'pr_changes',
+  'restart_planning',
+  'plan_review',
+];
 const VALID_MILESTONES = ['plan_approval', 'pr_approval', 'deploy_approval'];
 const VALID_GUARDS = [
   'block_rm_rf',

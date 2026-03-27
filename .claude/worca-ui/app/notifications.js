@@ -159,6 +159,7 @@ export function detectLoopLimitWarning(
     implement_test: ['implement', 'test'],
     pr_changes: ['pr'],
     restart_planning: ['plan'],
+    plan_review: ['plan_review'],
   };
 
   for (const [loopKey, limit] of Object.entries(loops)) {

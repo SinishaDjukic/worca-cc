@@ -88,7 +88,15 @@ function timingStripView(startedAt, completedAt) {
 }
 
 function _stageOrder(stages) {
-  const order = ['plan', 'coordinate', 'implement', 'test', 'review', 'pr'];
+  const order = [
+    'plan',
+    'plan_review',
+    'coordinate',
+    'implement',
+    'test',
+    'review',
+    'pr',
+  ];
   const keys = Object.keys(stages || {});
   return order
     .filter((k) => keys.includes(k))
