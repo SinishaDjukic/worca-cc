@@ -81,8 +81,8 @@ export function attachWsServer(httpServer, config) {
       projectRoot,
       webhookInbox,
     });
-    ws.setTier(TIER_FULL);
     ws.create();
+    ws.setTier(TIER_FULL);
     watcherSets.set(synth.name, ws);
   }
 

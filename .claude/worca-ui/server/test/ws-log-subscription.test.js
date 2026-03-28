@@ -74,7 +74,36 @@ function sendReq(ws, type, payload = {}) {
   return id;
 }
 
-function collectMessages(ws, timeoutMs = 800) {
+/**
+ * Wait for a log-line WS message. Resolves immediately on first match.
+ */
+function waitForLogLine(ws, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.removeListener('message', handler);
+      reject(new Error('Timed out waiting for log-line'));
+    }, timeoutMs);
+    function handler(data) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'log-line') {
+          clearTimeout(timer);
+          ws.removeListener('message', handler);
+          resolve(msg);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    ws.on('message', handler);
+  });
+}
+
+/**
+ * Collect all messages over a fixed window. Used for negative tests
+ * (asserting that no log-line messages arrive).
+ */
+function collectMessages(ws, timeoutMs = 2000) {
   return new Promise((resolve) => {
     const msgs = [];
     const handler = (data) => {
@@ -109,97 +138,124 @@ describe('log subscription runId filtering', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('sends log-line to client subscribed to same run', async () => {
-    const ws = await connectWs(port);
+  it(
+    'sends log-line to client subscribed to same run',
+    async () => {
+      const ws = await connectWs(port);
 
-    // Create log file first so watcher can be set up
-    const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
-    mkdirSync(logDir, { recursive: true });
-    writeFileSync(join(logDir, 'iter-1.log'), 'initial line\n', 'utf8');
+      // Create log file first so watcher can be set up
+      const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, 'iter-1.log'), 'initial line\n', 'utf8');
 
-    sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
-    await new Promise((r) => setTimeout(r, 300));
+      sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
+      await new Promise((r) => setTimeout(r, 500));
 
-    const collecting = collectMessages(ws, 800);
-    appendFileSync(join(logDir, 'iter-1.log'), 'new line from run-A\n', 'utf8');
-    const msgs = await collecting;
+      // Start listening BEFORE writing so we don't miss the event
+      const logLinePromise = waitForLogLine(ws, 10000);
+      appendFileSync(
+        join(logDir, 'iter-1.log'),
+        'new line from run-A\n',
+        'utf8',
+      );
 
-    const logLines = msgs.filter((m) => m.type === 'log-line');
-    expect(logLines.length).toBeGreaterThanOrEqual(1);
-    expect(logLines[0].payload.line).toContain('new line from run-A');
-    ws.close();
-  });
+      const msg = await logLinePromise;
+      expect(msg.payload.line).toContain('new line from run-A');
+      ws.close();
+    },
+    15000,
+  );
 
-  it('skips log-line for client subscribed to different run', async () => {
-    const ws = await connectWs(port);
+  it(
+    'skips log-line for client subscribed to different run',
+    async () => {
+      const ws = await connectWs(port);
 
-    // Create log file
-    const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
-    mkdirSync(logDir, { recursive: true });
-    writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
+      // Create log file
+      const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
 
-    // ws2 subscribes to run-A (creates file watchers)
-    const ws2 = await connectWs(port);
-    sendReq(ws2, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
-    await new Promise((r) => setTimeout(r, 300));
+      // ws2 subscribes to run-A (creates file watchers)
+      const ws2 = await connectWs(port);
+      sendReq(ws2, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
+      await new Promise((r) => setTimeout(r, 500));
 
-    // ws subscribes to run-B (different run)
-    sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-B' });
-    await new Promise((r) => setTimeout(r, 100));
+      // ws subscribes to run-B (different run)
+      sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-B' });
+      await new Promise((r) => setTimeout(r, 200));
 
-    const collecting = collectMessages(ws, 800);
-    appendFileSync(join(logDir, 'iter-1.log'), 'line for run-A only\n', 'utf8');
-    const msgs = await collecting;
+      const collecting = collectMessages(ws, 2000);
+      appendFileSync(
+        join(logDir, 'iter-1.log'),
+        'line for run-A only\n',
+        'utf8',
+      );
+      const msgs = await collecting;
 
-    const logLines = msgs.filter((m) => m.type === 'log-line');
-    expect(logLines.length).toBe(0);
-    ws.close();
-    ws2.close();
-  });
+      const logLines = msgs.filter((m) => m.type === 'log-line');
+      expect(logLines.length).toBe(0);
+      ws.close();
+      ws2.close();
+    },
+    10000,
+  );
 
-  it('sends log-line when logRunId is null (no run filter)', async () => {
-    const ws = await connectWs(port);
+  it(
+    'sends log-line when logRunId is null (no run filter)',
+    async () => {
+      const ws = await connectWs(port);
 
-    const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
-    mkdirSync(logDir, { recursive: true });
-    writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
+      const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
 
-    // Subscribe without runId — should receive all log-lines
-    sendReq(ws, 'subscribe-log', { stage: 'plan' });
-    await new Promise((r) => setTimeout(r, 300));
+      // Subscribe without runId — should receive all log-lines
+      sendReq(ws, 'subscribe-log', { stage: 'plan' });
+      await new Promise((r) => setTimeout(r, 500));
 
-    const collecting = collectMessages(ws, 800);
-    appendFileSync(
-      join(logDir, 'iter-1.log'),
-      'line for any subscriber\n',
-      'utf8',
-    );
-    const msgs = await collecting;
+      // Start listening BEFORE writing so we don't miss the event
+      const logLinePromise = waitForLogLine(ws, 10000);
+      appendFileSync(
+        join(logDir, 'iter-1.log'),
+        'line for any subscriber\n',
+        'utf8',
+      );
 
-    const logLines = msgs.filter((m) => m.type === 'log-line');
-    expect(logLines.length).toBeGreaterThanOrEqual(1);
-    ws.close();
-  });
+      const msg = await logLinePromise;
+      expect(msg.payload.line).toContain('line for any subscriber');
+      ws.close();
+    },
+    15000,
+  );
 
-  it('unsubscribe clears logRunId — no log-lines received', async () => {
-    const ws = await connectWs(port);
+  it(
+    'unsubscribe clears logRunId — no log-lines received',
+    async () => {
+      const ws = await connectWs(port);
 
-    const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
-    mkdirSync(logDir, { recursive: true });
-    writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
+      const logDir = join(tmpDir, 'runs', 'run-A', 'logs', 'plan');
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, 'iter-1.log'), 'initial\n', 'utf8');
 
-    sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
-    await new Promise((r) => setTimeout(r, 200));
+      sendReq(ws, 'subscribe-log', { stage: 'plan', runId: 'run-A' });
+      await new Promise((r) => setTimeout(r, 300));
 
-    sendReq(ws, 'unsubscribe-log');
-    await new Promise((r) => setTimeout(r, 100));
+      sendReq(ws, 'unsubscribe-log');
+      await new Promise((r) => setTimeout(r, 200));
 
-    const collecting = collectMessages(ws, 800);
-    appendFileSync(join(logDir, 'iter-1.log'), 'should not receive\n', 'utf8');
-    const msgs = await collecting;
+      const collecting = collectMessages(ws, 2000);
+      appendFileSync(
+        join(logDir, 'iter-1.log'),
+        'should not receive\n',
+        'utf8',
+      );
+      const msgs = await collecting;
 
-    const logLines = msgs.filter((m) => m.type === 'log-line');
-    expect(logLines.length).toBe(0);
-    ws.close();
-  });
+      const logLines = msgs.filter((m) => m.type === 'log-line');
+      expect(logLines.length).toBe(0);
+      ws.close();
+    },
+    10000,
+  );
 });
