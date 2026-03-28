@@ -394,10 +394,37 @@ function handleProjectSwitch(newProjectId) {
     activeRunId: null,
   });
 
-  // Reset transient UI state that is project-scoped
+  // Reset all project-scoped module-level state
   pipelineAction = null;
+  _controlPending = null;
   actionError = null;
   restartStageKey = null;
+  settings = {};
+  // Prompt cache
+  for (const key of Object.keys(promptCache)) delete promptCache[key];
+  promptCachePending.clear();
+  // Stage iteration tabs
+  stageIterationTab.clear();
+  // Beads state
+  beadsStarting = null;
+  beadsStartError = null;
+  runBeads.clear();
+  beadsCounts = {};
+  beadsRunIssues = [];
+  beadsRunLoading = false;
+  // Costs state
+  costsTokenData = {};
+  costsExpanded = null;
+  costsFetched = false;
+  // Webhook UI state
+  webhookSelectedId = null;
+  webhookCategoryFilter = 'all';
+  webhookRunFilter = null;
+  webhookSearchTerm = '';
+  // Log viewer state
+  logFilter = '*';
+  logSearch = '';
+  logIterationFilter = null;
 
   // Send updated hello-ack
   ws.sendRaw({
