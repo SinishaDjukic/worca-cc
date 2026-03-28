@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Bell,
   ChevronRight,
+  FolderOpen,
   GitBranch,
   iconSvg,
   Plus,
@@ -125,10 +126,17 @@ const DEFAULT_GOVERNANCE = {
 let settingsData = null;
 let saveStatus = null; // null | 'saving' | 'success' | 'error'
 let saveMessage = '';
+let _settingsProjectId = null; // track which project settings are loaded for
 
-export async function loadSettings() {
+function settingsUrl(projectId, suffix = '') {
+  if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
+  return `/api/settings${suffix}`;
+}
+
+export async function loadSettings(projectId) {
+  _settingsProjectId = projectId || null;
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetch(settingsUrl(projectId));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     settingsData = await res.json();
     // Ensure worca and governance defaults exist
@@ -215,12 +223,12 @@ export async function loadSettings() {
   }
 }
 
-async function saveSettings(data, rerender) {
+async function saveSettings(data, rerender, projectId) {
   saveStatus = 'saving';
   saveMessage = '';
   rerender();
   try {
-    const res = await fetch('/api/settings', {
+    const res = await fetch(settingsUrl(projectId || _settingsProjectId), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -247,17 +255,20 @@ async function saveSettings(data, rerender) {
   }
 }
 
-async function resetSection(section, rerender) {
+async function resetSection(section, rerender, projectId) {
   saveStatus = 'saving';
   saveMessage = '';
   rerender();
   try {
-    const res = await fetch(`/api/settings/${section}`, { method: 'DELETE' });
+    const res = await fetch(
+      settingsUrl(projectId || _settingsProjectId, `/${section}`),
+      { method: 'DELETE' },
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     settingsData = { worca: result.worca, permissions: result.permissions };
     // Re-apply defaults after reset
-    await loadSettings();
+    await loadSettings(projectId || _settingsProjectId);
     saveStatus = 'success';
     saveMessage = `${section.charAt(0).toUpperCase() + section.slice(1)} reset to defaults`;
   } catch (err) {
@@ -1122,12 +1133,79 @@ function feedbackAlert(rerender) {
   `;
 }
 
+// --- Projects tab ---
+
+function projectsTab(
+  projects,
+  { onProjectAdd, onProjectRemove, rerender: _rerender },
+) {
+  const list = projects || [];
+
+  function handleRemove(projectName) {
+    fetch(`/api/projects/${projectName}`, { method: 'DELETE' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) onProjectRemove?.(projectName);
+      })
+      .catch(() => {});
+  }
+
+  function handleOpenAddDialog() {
+    onProjectAdd?.({ openDialog: true });
+  }
+
+  return html`
+    <div class="settings-card">
+      <h3>Projects</h3>
+      <div class="projects-list">
+        ${list.map(
+          (p) => html`
+          <div class="projects-list-item">
+            <div>
+              <div class="project-name">${p.name}</div>
+              <div class="project-path">${p.path}</div>
+            </div>
+            <sl-icon-button
+              name="trash"
+              label="Remove ${p.name}"
+              class="projects-remove-btn"
+              @click=${() => handleRemove(p.name)}
+            ></sl-icon-button>
+          </div>
+        `,
+        )}
+        ${list.length === 0 ? html`<div class="empty-state">No projects registered</div>` : nothing}
+      </div>
+      <div style="margin-top: 12px;">
+        <sl-button size="small" @click=${handleOpenAddDialog}>
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          Add Project
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
 // --- Main export ---
 
 export function settingsView(
   preferences,
-  { rerender, onThemeToggle, onSaveNotifications },
+  {
+    rerender,
+    onThemeToggle,
+    onSaveNotifications,
+    projects,
+    onProjectAdd,
+    onProjectRemove,
+    currentProjectId,
+  } = {},
 ) {
+  // Reload settings when the active project changes
+  if (currentProjectId !== _settingsProjectId) {
+    loadSettings(currentProjectId).then(() => rerender());
+    return html`<div class="empty-state">Loading settings\u2026</div>`;
+  }
+
   if (!settingsData) {
     return html`<div class="empty-state">Loading settings\u2026</div>`;
   }
@@ -1163,6 +1241,10 @@ export function settingsView(
           ${unsafeHTML(iconSvg(Zap, 14))}
           Webhooks
         </sl-tab>
+        <sl-tab slot="nav" panel="projects">
+          ${unsafeHTML(iconSvg(FolderOpen, 14))}
+          Projects
+        </sl-tab>
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
@@ -1170,10 +1252,12 @@ export function settingsView(
         <sl-tab-panel name="preferences">${preferencesTab(preferences, worca, { onThemeToggle, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
         <sl-tab-panel name="webhooks">${webhooksTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, rerender })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;
 }
 
-// Test-only export
+// Test-only exports
 export { preferencesTab as _preferencesTab };
+export { projectsTab as _projectsTab };

@@ -3648,3 +3648,19 @@ sl-details.learnings-panel::part(content) {
   background: var(--status-completed);
   color: #ffffff;
 }
+
+/* --- Sidebar Project Selector --- */
+.sidebar-project-selector { padding: 0 12px; margin-bottom: 8px; }
+.sidebar-project-selector sl-select::part(combobox) { font-size: 0.85rem; }
+
+/* --- Dashboard Project Cards --- */
+.project-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.project-card { background: var(--surface); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: var(--transition-fast); border: 1px solid var(--border); }
+.project-card:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.project-card-name { font-weight: 600; margin-bottom: 4px; }
+.project-card-stats { font-size: 0.85rem; color: var(--text-secondary); }
+
+/* --- Settings Projects List --- */
+.projects-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.projects-list-item:last-child { border-bottom: none; }
+.project-path { font-size: 0.85rem; color: var(--text-secondary); font-family: var(--sl-font-mono); }

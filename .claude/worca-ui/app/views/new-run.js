@@ -32,9 +32,16 @@ function sourceLabel(type) {
   return '';
 }
 
-function fetchBranches() {
-  if (branches !== null) return Promise.resolve(branches);
-  return fetch('/api/branches')
+let _lastProjectId = null; // track project switches to invalidate cache
+
+function fetchBranches(projectId) {
+  if (branches !== null && _lastProjectId === projectId)
+    return Promise.resolve(branches);
+  _lastProjectId = projectId;
+  const url = projectId
+    ? `/api/projects/${projectId}/branches`
+    : '/api/branches';
+  return fetch(url)
     .then((r) => r.json())
     .then((data) => {
       branches = (data.ok && data.branches) || [];
@@ -46,9 +53,13 @@ function fetchBranches() {
     });
 }
 
-function fetchPlanFiles() {
-  if (planFiles) return Promise.resolve(planFiles);
-  return fetch('/api/plan-files')
+function fetchPlanFiles(projectId) {
+  if (planFiles && _lastProjectId === projectId)
+    return Promise.resolve(planFiles);
+  const url = projectId
+    ? `/api/projects/${projectId}/plan-files`
+    : '/api/plan-files';
+  return fetch(url)
     .then((r) => r.json())
     .then((data) => {
       if (data.ok) planFiles = data.files;
@@ -81,7 +92,7 @@ export function getNewRunSubmitState() {
   return { submitStatus, isSubmitting: submitStatus === 'submitting' };
 }
 
-export async function submitNewRun({ rerender, onStarted }) {
+export async function submitNewRun({ rerender, onStarted, projectId }) {
   const sourceValueEl = document.getElementById('new-run-source-value');
   const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
@@ -129,7 +140,8 @@ export async function submitNewRun({ rerender, onStarted }) {
     if (hasPlan) body.planFile = selectedPlan;
     if (selectedBranch) body.branch = selectedBranch;
 
-    const res = await fetch('/api/runs', {
+    const url = projectId ? `/api/projects/${projectId}/runs` : '/api/runs';
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -152,14 +164,16 @@ export async function submitNewRun({ rerender, onStarted }) {
 }
 
 export function newRunView(_state, { rerender }) {
+  const projectId = _state.currentProjectId || null;
+
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
     rerender();
   }
 
-  // Fetch branches once (null = not yet fetched)
-  if (branches === null) {
-    fetchBranches().then(() => rerender());
+  // Fetch branches once (null = not yet fetched, or project changed)
+  if (branches === null || _lastProjectId !== projectId) {
+    fetchBranches(projectId).then(() => rerender());
   }
 
   function handleBranchChange(e) {
@@ -168,7 +182,7 @@ export function newRunView(_state, { rerender }) {
   }
 
   function handlePlanFocus() {
-    fetchPlanFiles().then(() => {
+    fetchPlanFiles(projectId).then(() => {
       planDropdownOpen = true;
       rerender();
     });

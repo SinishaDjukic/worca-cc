@@ -22,6 +22,7 @@ import Cpu from 'lucide/dist/esm/icons/cpu';
 import Database from 'lucide/dist/esm/icons/database';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import Flag from 'lucide/dist/esm/icons/flag';
+import FolderOpen from 'lucide/dist/esm/icons/folder-open';
 import GitBranch from 'lucide/dist/esm/icons/git-branch';
 import Hash from 'lucide/dist/esm/icons/hash';
 import Lightbulb from 'lucide/dist/esm/icons/lightbulb';
@@ -118,4 +119,5 @@ export {
   RotateCw,
   CircleSlash,
   Hash,
+  FolderOpen,
 };

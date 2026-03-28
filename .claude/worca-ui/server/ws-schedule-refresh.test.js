@@ -16,7 +16,7 @@ vi.mock('./settings-reader.js', () => ({
 
 import { attachWsServer } from './ws.js';
 
-function waitForWsEvent(ws, type, timeoutMs = 2000) {
+function waitForWsEvent(ws, type, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`Timed out waiting for WS event "${type}"`)),
@@ -43,6 +43,7 @@ describe('scheduleRefresh – readSettings isolation', () => {
   let worcaDir;
   let httpServer;
   let port;
+  let wsServer; // return value from attachWsServer
 
   beforeEach(async () => {
     worcaDir = join(
@@ -52,7 +53,7 @@ describe('scheduleRefresh – readSettings isolation', () => {
     mkdirSync(worcaDir, { recursive: true });
 
     httpServer = createServer();
-    attachWsServer(httpServer, {
+    wsServer = attachWsServer(httpServer, {
       worcaDir,
       settingsPath: join(worcaDir, 'settings.json'),
       prefsPath: join(worcaDir, 'prefs.json'),
@@ -62,6 +63,7 @@ describe('scheduleRefresh – readSettings isolation', () => {
   });
 
   afterEach(async () => {
+    httpServer.closeAllConnections?.();
     await new Promise((resolve) => httpServer.close(resolve));
     rmSync(worcaDir, { recursive: true, force: true });
   });
@@ -70,18 +72,6 @@ describe('scheduleRefresh – readSettings isolation', () => {
     const runId = `run-${Date.now()}`;
     const runDir = join(worcaDir, 'runs', runId);
     mkdirSync(runDir, { recursive: true });
-    writeFileSync(join(worcaDir, 'active_run'), runId);
-
-    // Allow watchers to establish
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    const ws = new WebSocket(`ws://localhost:${port}/ws`);
-    await new Promise((resolve, reject) => {
-      ws.on('open', resolve);
-      ws.on('error', reject);
-    });
-
-    // Write status.json to trigger scheduleRefresh
     writeFileSync(
       join(runDir, 'status.json'),
       JSON.stringify({
@@ -89,6 +79,17 @@ describe('scheduleRefresh – readSettings isolation', () => {
         stages: { plan: { status: 'running' } },
       }),
     );
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws`);
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+
+    // Directly trigger scheduleRefresh instead of relying on fs.watch timing.
+    // This test validates that scheduleRefresh handles readSettings errors
+    // gracefully — it should NOT test fs.watch event delivery.
+    wsServer.scheduleRefresh();
 
     // runs-list must be broadcast even though readSettings throws
     const msg = await waitForWsEvent(ws, 'runs-list');

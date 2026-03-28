@@ -34,6 +34,43 @@ function _activeGroup(runs, statuses) {
   return runs.filter((r) => statuses.includes(r.pipeline_status));
 }
 
+function _projectCards(projects, runs, onNavigate) {
+  // Count active runs per project (best-effort by projectId on run)
+  const activeByProject = {};
+  const latestByProject = {};
+  for (const proj of projects) {
+    activeByProject[proj.name] = 0;
+    latestByProject[proj.name] = null;
+  }
+  for (const run of runs) {
+    const pid = run.projectId || projects[0]?.name;
+    if (pid && activeByProject[pid] !== undefined) {
+      if (run.active) activeByProject[pid]++;
+      if (!latestByProject[pid] || (run.started_at || '') > (latestByProject[pid].started_at || '')) {
+        latestByProject[pid] = run;
+      }
+    }
+  }
+
+  return html`
+    <div class="project-cards">
+      ${projects.map((p) => {
+        const activeCount = activeByProject[p.name] || 0;
+        const latest = latestByProject[p.name];
+        const statusText = latest ? latest.pipeline_status || 'unknown' : 'no runs';
+        return html`
+          <div class="project-card" @click=${() => onNavigate?.('active', null, p.name)}>
+            <div class="project-card-name">${p.name}</div>
+            <div class="project-card-stats">
+              ${activeCount} active &middot; ${statusText}
+            </div>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
 export function dashboardView(
   state,
   { onSelectRun, onNavigate, onPause, onResume } = {},
@@ -54,8 +91,13 @@ export function dashboardView(
   const pausedGroup = sortByStartDesc(_activeGroup(runs, ['paused']));
   const failedGroup = sortByStartDesc(_activeGroup(runs, ['failed']));
 
+  const projects = state.projects || [];
+  const currentProjectId = state.currentProjectId;
+  const showProjectCards = projects.length > 1 && !currentProjectId;
+
   return html`
     <div class="dashboard">
+      ${showProjectCards ? _projectCards(projects, runs, onNavigate) : nothing}
       <div class="dashboard-stats">
         <div class="stat-card stat-total">
           <div class="stat-icon-ring">${unsafeHTML(iconSvg(Zap, 20))}</div>

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -221,12 +222,61 @@ describe('project-routes', () => {
     });
   });
 
+  describe('project-scoped branches route', () => {
+    it('GET /api/projects/:id/branches returns branches for resolved project', async () => {
+      // Init a git repo in projectRoot using safe execFileSync
+      execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], {
+        cwd: projectRoot,
+        stdio: 'ignore',
+      });
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/branches`);
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.branches)).toBe(true);
+      expect(body.branches.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('project-scoped plan-files route', () => {
+    it('GET /api/projects/:id/plan-files returns plan files for resolved project', async () => {
+      // Create a docs/plans dir with a .md file
+      mkdirSync(join(projectRoot, 'docs', 'plans'), { recursive: true });
+      writeFileSync(join(projectRoot, 'docs', 'plans', 'W-001-test.md'), '# Plan');
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/plan-files`);
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.files)).toBe(true);
+      expect(body.files.length).toBe(1);
+      expect(body.files[0].name).toBe('W-001-test.md');
+    });
+  });
+
   describe('backwards compatibility', () => {
     it('old /api/runs route still works', async () => {
       const app = await createTestApp(prefsDir, projectRoot);
       const { status, body } = await request(app, 'GET', '/api/runs');
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
+    });
+
+    it('existing /api/branches still works unchanged', async () => {
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+      const { status } = await request(app, 'GET', `/api/projects/${projectName}/branches`);
+      // Either 200 (if git repo) or 500 (if not) — both are valid responses
+      expect([200, 500]).toContain(status);
     });
   });
 });

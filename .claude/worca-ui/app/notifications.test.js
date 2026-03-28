@@ -154,6 +154,70 @@ describe('detectTestFailures', () => {
   });
 });
 
+describe('detectRunCompleted with projectName', () => {
+  it('includes project name in body when provided', () => {
+    const prev = makeRun({ active: true });
+    const next = makeRun({
+      active: false,
+      stages: { plan: { status: 'completed' } },
+    });
+    const result = detectRunCompleted('run-1', next, prev, 'my-project');
+    expect(result).not.toBeNull();
+    expect(result.body).toContain('[my-project]');
+    expect(result.body).toContain('Test Pipeline');
+  });
+
+  it('omits project name when null', () => {
+    const prev = makeRun({ active: true });
+    const next = makeRun({
+      active: false,
+      stages: { plan: { status: 'completed' } },
+    });
+    const result = detectRunCompleted('run-1', next, prev, null);
+    expect(result).not.toBeNull();
+    expect(result.body).not.toContain('[');
+  });
+});
+
+describe('detectRunFailed with projectName', () => {
+  it('includes project name in body', () => {
+    const prev = makeRun({ active: true });
+    const next = makeRun({
+      active: false,
+      stages: { test: { status: 'error' } },
+    });
+    const result = detectRunFailed('run-1', next, prev, 'backend');
+    expect(result).not.toBeNull();
+    expect(result.body).toContain('[backend]');
+  });
+});
+
+describe('detectApprovalNeeded with projectName', () => {
+  it('includes project name in body', () => {
+    const prev = makeRun({ stages: { plan: { status: 'in_progress' } } });
+    const next = makeRun({ stages: { plan: { status: 'waiting_approval' } } });
+    const result = detectApprovalNeeded('run-1', next, prev, 'frontend');
+    expect(result).not.toBeNull();
+    expect(result.body).toContain('[frontend]');
+  });
+});
+
+describe('detectTestFailures with projectName', () => {
+  it('includes project name in body', () => {
+    const prev = makeRun({
+      stages: { test: { status: 'in_progress', iterations: [] } },
+    });
+    const next = makeRun({
+      stages: {
+        test: { status: 'in_progress', iterations: [{ result: 'failed' }] },
+      },
+    });
+    const result = detectTestFailures('run-1', next, prev, 'api-svc');
+    expect(result).not.toBeNull();
+    expect(result.body).toContain('[api-svc]');
+  });
+});
+
 describe('detectLoopLimitWarning', () => {
   it('detects loop limit warning at limit-1', () => {
     const warnedLoops = new Set();

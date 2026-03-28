@@ -132,12 +132,29 @@ export function createStatusWatcher({
     function tryWatch() {
       if (statusWatcher) return;
       try {
-        if (existsSync(runDir)) {
+        const statusFile = join(runDir, 'status.json');
+        if (existsSync(statusFile)) {
+          // Watch the file directly — on macOS, kqueue directory watchers
+          // don't fire for in-place content modifications of existing files.
+          // Watching the file itself ensures we detect status.json writes.
+          statusWatcher = watch(statusFile, (_eventType) => {
+            scheduleRefresh();
+          });
+        } else if (existsSync(runDir)) {
+          // status.json doesn't exist yet — watch the directory for its creation,
+          // then switch to watching the file once it appears.
           statusWatcher = watch(
             runDir,
             { recursive: false },
             (_eventType, filename) => {
               if (!filename || filename === 'status.json') {
+                const statusPath = join(runDir, 'status.json');
+                if (existsSync(statusPath)) {
+                  // status.json appeared — switch to file-level watch
+                  statusWatcher.close();
+                  statusWatcher = null;
+                  tryWatch();
+                }
                 scheduleRefresh();
               }
             },

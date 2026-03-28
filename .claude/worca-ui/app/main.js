@@ -17,6 +17,7 @@ import {
 import { statusIcon } from './utils/status-badge.js';
 import { applyTheme } from './utils/theme.js';
 import { formatTitle } from './utils/title.js';
+import { addProjectDialogView } from './views/add-project-dialog.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
 import { learningsSectionView } from './views/learnings-panel.js';
@@ -70,6 +71,12 @@ import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 import '@shoelace-style/shoelace/dist/components/textarea/textarea.js';
 
 const store = createStore();
+
+function projectUrl(path) {
+  const pid = store.getState().currentProjectId;
+  return pid ? `/api/projects/${pid}${path}` : `/api${path}`;
+}
+
 const ws = createWsClient();
 const notificationManager = createNotificationManager({
   store,
@@ -347,7 +354,7 @@ ws.on('webhook-inbox-cleared', () => {
 
 // --- Protocol negotiation ---
 
-function handleHello(payload) {
+function handleHello(_payload) {
   // Server says it supports protocol 2 — fetch projects and send hello-ack
   fetch('/api/projects')
     .then((r) => r.json())
@@ -517,7 +524,9 @@ onHashChange((newRoute) => {
   }
 
   if (route.section === 'settings') {
-    loadSettings().then(() => rerender());
+    loadSettings(store.getState().currentProjectId || null).then(() =>
+      rerender(),
+    );
   }
 
   if (route.section === 'costs') {
@@ -645,7 +654,7 @@ async function handleConfirmStop() {
       (r) => r.active,
     );
     const runId = activeRun?.id || 'current';
-    const res = await fetch(`/api/runs/${runId}`, { method: 'DELETE' });
+    const res = await fetch(projectUrl(`/runs/${runId}`), { method: 'DELETE' });
     const data = await res.json();
     if (!data.ok) {
       pipelineAction = null;
@@ -679,7 +688,9 @@ async function handlePausePipeline() {
   actionError = null;
   rerender();
   try {
-    const res = await fetch(`/api/runs/${runId}/pause`, { method: 'POST' });
+    const res = await fetch(projectUrl(`/runs/${runId}/pause`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) {
       pipelineAction = null;
@@ -696,7 +707,9 @@ async function handlePauseRun(runId) {
   _controlPending = { action: 'pause', runId };
   rerender();
   try {
-    const res = await fetch(`/api/runs/${runId}/pause`, { method: 'POST' });
+    const res = await fetch(projectUrl(`/runs/${runId}/pause`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) showActionError(data.error || 'Failed to pause run');
   } catch (err) {
@@ -711,7 +724,9 @@ async function handleResumeRun(runId) {
   _controlPending = { action: 'resume', runId };
   rerender();
   try {
-    const res = await fetch(`/api/runs/${runId}/resume`, { method: 'POST' });
+    const res = await fetch(projectUrl(`/runs/${runId}/resume`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) showActionError(data.error || 'Failed to resume run');
   } catch (err) {
@@ -749,9 +764,12 @@ async function handleConfirmRestartStage() {
       (r) => !r.active,
     );
     const runId = activeRun?.id || 'current';
-    const res = await fetch(`/api/runs/${runId}/stages/${stage}/restart`, {
-      method: 'POST',
-    });
+    const res = await fetch(
+      projectUrl(`/runs/${runId}/stages/${stage}/restart`),
+      {
+        method: 'POST',
+      },
+    );
     const data = await res.json();
     if (data.ok) {
       navigate('active', null, route.projectId);
@@ -838,7 +856,7 @@ function fetchBeadsRunIssues(runId) {
 // --- Costs actions ---
 
 function fetchCostsData() {
-  fetch('/api/costs')
+  fetch(projectUrl('/costs'))
     .then((r) => r.json())
     .then((data) => {
       if (data.ok) {
@@ -942,7 +960,9 @@ async function doRunLearn() {
   rerender();
   try {
     const runId = route.runId;
-    const res = await fetch(`/api/runs/${runId}/learn`, { method: 'POST' });
+    const res = await fetch(projectUrl(`/runs/${runId}/learn`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) {
       showActionError(data.error || 'Failed to run learning analysis');
@@ -1074,7 +1094,7 @@ function contentHeaderView() {
     const isRunning = runs.some((r) => r.active);
     actionButton = html`
       <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || isRunning}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId) })}>
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
       </button>`;
@@ -1228,6 +1248,32 @@ function mainContentView() {
       rerender,
       onThemeToggle: handleThemeToggle,
       onSaveNotifications: handleSaveNotifications,
+      currentProjectId: state.currentProjectId || null,
+      projects: state.projects || [],
+      onProjectAdd: (result) => {
+        if (result?.openDialog) {
+          store.setState({ addProjectDialogOpen: true });
+          rerender();
+        } else if (result?.name) {
+          // New project added — re-fetch projects
+          fetch('/api/projects')
+            .then((r) => r.json())
+            .then((data) => {
+              store.setState({ projects: data.projects || [] });
+              rerender();
+            })
+            .catch(() => {});
+        }
+      },
+      onProjectRemove: () => {
+        fetch('/api/projects')
+          .then((r) => r.json())
+          .then((data) => {
+            store.setState({ projects: data.projects || [] });
+            rerender();
+          })
+          .catch(() => {});
+      },
     });
   }
 
@@ -1252,7 +1298,9 @@ function mainContentView() {
 
   return dashboardView(state, {
     onSelectRun: (runId) => navigate('active', runId, route.projectId),
-    onNavigate: handleNavigate,
+    onNavigate: (section, runId, projectId) => {
+      navigate(section, runId || null, projectId || route.projectId);
+    },
     onPause: handlePauseRun,
     onResume: handleResumeRun,
   });
@@ -1352,6 +1400,22 @@ function rerender() {
     `
         : ''
     }
+    ${addProjectDialogView(state, {
+      onProjectAdd: (_project) => {
+        store.setState({ addProjectDialogOpen: false });
+        fetch('/api/projects')
+          .then((r) => r.json())
+          .then((data) => {
+            store.setState({ projects: data.projects || [] });
+            rerender();
+          })
+          .catch(() => {});
+      },
+      onClose: (opts) => {
+        store.setState({ addProjectDialogOpen: false });
+        if (opts?.rerender) rerender();
+      },
+    })}
   `,
     appEl,
   );
@@ -1394,7 +1458,9 @@ store.subscribe(() => rerender());
 applyTheme(store.getState().preferences.theme);
 fetchProjectInfo();
 if (route.section === 'settings') {
-  loadSettings().then(() => rerender());
+  loadSettings(store.getState().currentProjectId || null).then(() =>
+    rerender(),
+  );
 }
 rerender();
 attachStickyHeaderListener();
