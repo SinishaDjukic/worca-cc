@@ -7,10 +7,10 @@ from typing import Optional
 from worca.utils.env import get_env
 
 
-def _run_bd(*args: str, beads_dir: Optional[str] = None) -> subprocess.CompletedProcess:
+def _run_bd(*args: str, beads_dir: Optional[str] = None, cwd: Optional[str] = None) -> subprocess.CompletedProcess:
     """Run a bd CLI command and return the CompletedProcess."""
     overrides = {"BEADS_DIR": beads_dir} if beads_dir else {}
-    return subprocess.run(["bd", *args], capture_output=True, text=True, env=get_env(**overrides))
+    return subprocess.run(["bd", *args], capture_output=True, text=True, env=get_env(**overrides), cwd=cwd)
 
 
 def bd_create(title: str, task_type: str = "task", priority: int = 2) -> str:
@@ -144,3 +144,17 @@ def bd_dep_add(issue_id: str, depends_on: str) -> bool:
     """
     result = _run_bd("dep", "add", issue_id, depends_on)
     return result.returncode == 0
+
+
+def bd_init(cwd: Optional[str] = None) -> bool:
+    """Initialize beads in a directory via bd init.
+
+    Runs `bd init` in the specified working directory (or current dir if None).
+    Returns True on success, False on failure.
+    Catches subprocess errors gracefully (e.g. bd not on PATH, invalid cwd).
+    """
+    try:
+        result = _run_bd("init", cwd=cwd)
+        return result.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False

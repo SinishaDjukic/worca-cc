@@ -40,6 +40,8 @@ def create_parser():
     parser.add_argument("--prompt-file",
                         help="Read prompt from file instead of --prompt (for large prompts "
                              "that would exceed ARG_MAX). The file is deleted after reading.")
+    parser.add_argument("--worktree", action="store_true",
+                        help="Worktree mode: skip branch creation and register in multi-pipeline registry")
     return parser
 
 
@@ -155,6 +157,8 @@ def main():
         print(f"  Loop multiplier: {args.mloops}x loops")
     if args.branch:
         print(f"  Using existing branch: {args.branch}")
+    if args.worktree:
+        print("  Worktree mode: skipping branch creation, registering in multi-pipeline registry")
     if args.skip_preflight:
         print("  Skipping preflight checks")
 
@@ -175,6 +179,7 @@ def main():
             mloops=args.mloops,
             branch=args.branch,
             skip_preflight=args.skip_preflight,
+            worktree=args.worktree,
         )
         print(json.dumps(status, indent=2))
     except LoopExhaustedError as e:

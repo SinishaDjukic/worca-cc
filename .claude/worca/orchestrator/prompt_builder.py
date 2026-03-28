@@ -117,11 +117,12 @@ class PromptBuilder:
         return f"## Work Request\n\n**{self._title}**\n\n{self._description}"
 
     def _build_plan(self, iteration: int) -> str:
+        plan_file = self._context.get("plan_file") or "MASTER_PLAN.md"
         parts = [
             "Create a detailed implementation plan for the following work request.",
             "Start by reading CLAUDE.md for project context (tech stack, build/test commands, conventions).",
             "Then explore the codebase to understand existing architecture.",
-            "Write the plan to MASTER_PLAN.md.",
+            f"Write the plan to {plan_file}.",
             "",
             self._work_request_section(),
         ]
