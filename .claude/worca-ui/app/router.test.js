@@ -3,14 +3,26 @@ import { buildHash, parseHash } from './router.js';
 
 describe('router', () => {
   it('parseHash extracts section and runId', () => {
-    expect(parseHash('#/active')).toEqual({ section: 'active', runId: null, projectId: null });
+    expect(parseHash('#/active')).toEqual({
+      section: 'active',
+      runId: null,
+      projectId: null,
+    });
     expect(parseHash('#/active?run=abc')).toEqual({
       section: 'active',
       runId: 'abc',
       projectId: null,
     });
-    expect(parseHash('#/history')).toEqual({ section: 'history', runId: null, projectId: null });
-    expect(parseHash('')).toEqual({ section: 'active', runId: null, projectId: null });
+    expect(parseHash('#/history')).toEqual({
+      section: 'history',
+      runId: null,
+      projectId: null,
+    });
+    expect(parseHash('')).toEqual({
+      section: 'active',
+      runId: null,
+      projectId: null,
+    });
   });
 
   it('buildHash creates hash string', () => {
@@ -38,9 +50,7 @@ describe('router', () => {
     expect(buildHash('active', 'run-1', 'proj-a')).toBe(
       '#/active?run=run-1&project=proj-a',
     );
-    expect(buildHash('active', null, 'proj-a')).toBe(
-      '#/active?project=proj-a',
-    );
+    expect(buildHash('active', null, 'proj-a')).toBe('#/active?project=proj-a');
   });
 
   it('buildHash omits project param when null', () => {

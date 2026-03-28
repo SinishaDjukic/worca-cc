@@ -46,7 +46,10 @@ function _projectCards(projects, runs, onNavigate) {
     const pid = run.projectId || projects[0]?.name;
     if (pid && activeByProject[pid] !== undefined) {
       if (run.active) activeByProject[pid]++;
-      if (!latestByProject[pid] || (run.started_at || '') > (latestByProject[pid].started_at || '')) {
+      if (
+        !latestByProject[pid] ||
+        (run.started_at || '') > (latestByProject[pid].started_at || '')
+      ) {
         latestByProject[pid] = run;
       }
     }
@@ -57,7 +60,9 @@ function _projectCards(projects, runs, onNavigate) {
       ${projects.map((p) => {
         const activeCount = activeByProject[p.name] || 0;
         const latest = latestByProject[p.name];
-        const statusText = latest ? latest.pipeline_status || 'unknown' : 'no runs';
+        const statusText = latest
+          ? latest.pipeline_status || 'unknown'
+          : 'no runs';
         return html`
           <div class="project-card" @click=${() => onNavigate?.('active', null, p.name)}>
             <div class="project-card-name">${p.name}</div>

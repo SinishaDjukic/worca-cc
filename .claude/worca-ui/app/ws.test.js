@@ -15,7 +15,9 @@ class MockWebSocket {
     if (!this._listeners[type]) this._listeners[type] = [];
     this._listeners[type].push(fn);
   }
-  send(data) { this._sent.push(data); }
+  send(data) {
+    this._sent.push(data);
+  }
   close() {}
   _emit(type, data) {
     for (const fn of this._listeners[type] || []) fn(data);

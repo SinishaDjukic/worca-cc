@@ -3,12 +3,7 @@
  * Owns logWatchers map and logLineCounts tracking.
  */
 
-import {
-  existsSync,
-  readdirSync,
-  statSync,
-  watch,
-} from 'node:fs';
+import { existsSync, readdirSync, statSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import {
   countLines,
@@ -234,10 +229,7 @@ export function createLogWatcher({
         for (const entry of entries) {
           if (entry.isFile() && entry.name.endsWith('.log')) {
             const s2 = entry.name.replace('.log', '');
-            const lines = readLastLines(
-              join(archivedLogDir, entry.name),
-              200,
-            );
+            const lines = readLastLines(join(archivedLogDir, entry.name), 200);
             if (lines.length > 0) {
               ws.send(
                 JSON.stringify({

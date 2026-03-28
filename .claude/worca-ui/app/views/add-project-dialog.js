@@ -75,11 +75,15 @@ export function addProjectDialogView(state, { onProjectAdd, onClose }) {
             required
           ></sl-input>
         </div>
-        ${dialogError ? html`
+        ${
+          dialogError
+            ? html`
           <div style="color: var(--status-failed); font-size: 0.85rem; margin-bottom: 12px;">
             ${dialogError}
           </div>
-        ` : nothing}
+        `
+            : nothing
+        }
         <sl-button slot="footer" @click=${handleDialogHide}>Cancel</sl-button>
         <sl-button slot="footer" variant="primary" type="submit" @click=${handleSubmit}>
           Add Project

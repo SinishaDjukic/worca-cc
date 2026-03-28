@@ -16,7 +16,10 @@ describe('project-registry', () => {
   let prefsDir;
 
   beforeEach(() => {
-    prefsDir = join(tmpdir(), `worca-prefs-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    prefsDir = join(
+      tmpdir(),
+      `worca-prefs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     mkdirSync(prefsDir, { recursive: true });
   });
 
@@ -59,7 +62,10 @@ describe('project-registry', () => {
 
   describe('validateProjectEntry', () => {
     it('accepts valid entry', () => {
-      const result = validateProjectEntry({ name: 'my-project', path: '/home/user/project' });
+      const result = validateProjectEntry({
+        name: 'my-project',
+        path: '/home/user/project',
+      });
       expect(result.valid).toBe(true);
     });
 
@@ -70,12 +76,18 @@ describe('project-registry', () => {
     });
 
     it('rejects invalid name characters', () => {
-      const result = validateProjectEntry({ name: 'my project!', path: '/home/user/project' });
+      const result = validateProjectEntry({
+        name: 'my project!',
+        path: '/home/user/project',
+      });
       expect(result.valid).toBe(false);
     });
 
     it('rejects name longer than 64 chars', () => {
-      const result = validateProjectEntry({ name: 'a'.repeat(65), path: '/abs' });
+      const result = validateProjectEntry({
+        name: 'a'.repeat(65),
+        path: '/abs',
+      });
       expect(result.valid).toBe(false);
     });
 
@@ -86,7 +98,10 @@ describe('project-registry', () => {
     });
 
     it('rejects relative path', () => {
-      const result = validateProjectEntry({ name: 'my-project', path: 'relative/path' });
+      const result = validateProjectEntry({
+        name: 'my-project',
+        path: 'relative/path',
+      });
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/absolute/i);
     });
@@ -109,8 +124,14 @@ describe('project-registry', () => {
     it('reads valid project files', () => {
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'alpha.json'), JSON.stringify({ name: 'alpha', path: '/a' }));
-      writeFileSync(join(projDir, 'beta.json'), JSON.stringify({ name: 'beta', path: '/b' }));
+      writeFileSync(
+        join(projDir, 'alpha.json'),
+        JSON.stringify({ name: 'alpha', path: '/a' }),
+      );
+      writeFileSync(
+        join(projDir, 'beta.json'),
+        JSON.stringify({ name: 'beta', path: '/b' }),
+      );
 
       const projects = readProjects(prefsDir);
       expect(projects).toHaveLength(2);
@@ -121,7 +142,10 @@ describe('project-registry', () => {
     it('skips malformed JSON files', () => {
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'good.json'), JSON.stringify({ name: 'good', path: '/g' }));
+      writeFileSync(
+        join(projDir, 'good.json'),
+        JSON.stringify({ name: 'good', path: '/g' }),
+      );
       writeFileSync(join(projDir, 'bad.json'), '{not valid json');
 
       const projects = readProjects(prefsDir);
@@ -132,7 +156,10 @@ describe('project-registry', () => {
     it('skips non-json files', () => {
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'good.json'), JSON.stringify({ name: 'good', path: '/g' }));
+      writeFileSync(
+        join(projDir, 'good.json'),
+        JSON.stringify({ name: 'good', path: '/g' }),
+      );
       writeFileSync(join(projDir, 'readme.txt'), 'hello');
 
       const projects = readProjects(prefsDir);
@@ -142,8 +169,14 @@ describe('project-registry', () => {
     it('sorts projects by name', () => {
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'zebra.json'), JSON.stringify({ name: 'zebra', path: '/z' }));
-      writeFileSync(join(projDir, 'alpha.json'), JSON.stringify({ name: 'alpha', path: '/a' }));
+      writeFileSync(
+        join(projDir, 'zebra.json'),
+        JSON.stringify({ name: 'zebra', path: '/z' }),
+      );
+      writeFileSync(
+        join(projDir, 'alpha.json'),
+        JSON.stringify({ name: 'alpha', path: '/a' }),
+      );
 
       const projects = readProjects(prefsDir);
       expect(projects[0].name).toBe('alpha');
@@ -156,31 +189,49 @@ describe('project-registry', () => {
   describe('writeProject', () => {
     it('creates projects.d/ if needed and writes project file', () => {
       writeProject(prefsDir, { name: 'test-proj', path: '/test' });
-      const raw = readFileSync(join(prefsDir, 'projects.d', 'test-proj.json'), 'utf8');
+      const raw = readFileSync(
+        join(prefsDir, 'projects.d', 'test-proj.json'),
+        'utf8',
+      );
       const data = JSON.parse(raw);
       expect(data.name).toBe('test-proj');
       expect(data.path).toBe('/test');
     });
 
     it('throws on invalid entry', () => {
-      expect(() => writeProject(prefsDir, { name: '', path: '/test' })).toThrow();
+      expect(() =>
+        writeProject(prefsDir, { name: '', path: '/test' }),
+      ).toThrow();
     });
 
     it('enforces max projects limit', () => {
       // Set max to 2
-      writeFileSync(join(prefsDir, 'config.json'), JSON.stringify({ maxProjects: 2 }));
+      writeFileSync(
+        join(prefsDir, 'config.json'),
+        JSON.stringify({ maxProjects: 2 }),
+      );
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'a.json'), JSON.stringify({ name: 'a', path: '/a' }));
-      writeFileSync(join(projDir, 'b.json'), JSON.stringify({ name: 'b', path: '/b' }));
+      writeFileSync(
+        join(projDir, 'a.json'),
+        JSON.stringify({ name: 'a', path: '/a' }),
+      );
+      writeFileSync(
+        join(projDir, 'b.json'),
+        JSON.stringify({ name: 'b', path: '/b' }),
+      );
 
-      expect(() => writeProject(prefsDir, { name: 'c', path: '/c' })).toThrow(/max/i);
+      expect(() => writeProject(prefsDir, { name: 'c', path: '/c' })).toThrow(
+        /max/i,
+      );
     });
 
     it('allows overwriting existing project', () => {
       writeProject(prefsDir, { name: 'proj', path: '/old' });
       writeProject(prefsDir, { name: 'proj', path: '/new' });
-      const data = JSON.parse(readFileSync(join(prefsDir, 'projects.d', 'proj.json'), 'utf8'));
+      const data = JSON.parse(
+        readFileSync(join(prefsDir, 'projects.d', 'proj.json'), 'utf8'),
+      );
       expect(data.path).toBe('/new');
     });
   });
@@ -191,7 +242,10 @@ describe('project-registry', () => {
     it('removes existing project file', () => {
       const projDir = join(prefsDir, 'projects.d');
       mkdirSync(projDir);
-      writeFileSync(join(projDir, 'proj.json'), JSON.stringify({ name: 'proj', path: '/p' }));
+      writeFileSync(
+        join(projDir, 'proj.json'),
+        JSON.stringify({ name: 'proj', path: '/p' }),
+      );
 
       removeProject(prefsDir, 'proj');
       const projects = readProjects(prefsDir);
@@ -212,7 +266,9 @@ describe('project-registry', () => {
       expect(result.name).toBe('my-project');
       expect(result.path).toBe('/home/user/my-project');
       expect(result.worcaDir).toBe('/home/user/my-project/.worca');
-      expect(result.settingsPath).toBe('/home/user/my-project/.claude/settings.json');
+      expect(result.settingsPath).toBe(
+        '/home/user/my-project/.claude/settings.json',
+      );
     });
   });
 
@@ -224,7 +280,10 @@ describe('project-registry', () => {
     });
 
     it('reads maxProjects from config.json', () => {
-      writeFileSync(join(prefsDir, 'config.json'), JSON.stringify({ maxProjects: 5 }));
+      writeFileSync(
+        join(prefsDir, 'config.json'),
+        JSON.stringify({ maxProjects: 5 }),
+      );
       expect(getMaxProjects(prefsDir)).toBe(5);
     });
   });

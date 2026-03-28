@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { buildHash, parseHash } from './router.js';
 import { createStore } from './state.js';
-import { parseHash, buildHash } from './router.js';
 
 describe('main.js project switching logic', () => {
   it('handleHello fetches projects and sends hello-ack', async () => {
@@ -15,7 +15,9 @@ describe('main.js project switching logic', () => {
     const sentMessages = [];
     const ws = {
       sendRaw: vi.fn((msg) => sentMessages.push(msg)),
-      send: vi.fn(() => Promise.resolve({ projects: [{ name: 'proj-a' }, { name: 'proj-b' }] })),
+      send: vi.fn(() =>
+        Promise.resolve({ projects: [{ name: 'proj-a' }, { name: 'proj-b' }] }),
+      ),
     };
 
     // Simulate handleHello logic

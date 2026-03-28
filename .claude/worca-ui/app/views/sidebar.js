@@ -10,7 +10,59 @@ import {
   Settings,
   Zap,
 } from '../utils/icons.js';
-export function sidebarView(state, route, connectionState, { onNavigate, onProjectChange }) {
+
+/**
+ * Derive aggregate status for a project from its runs.
+ * @param {string} projectId
+ * @param {object} runs - { [runId]: run }
+ * @returns {'idle'|'running'|'error'|'paused'}
+ */
+export function projectStatus(projectId, runs) {
+  const runList = Object.values(runs);
+  // Check project-scoped runs (if run has a project field matching, or all runs for single-project)
+  const projectRuns = projectId
+    ? runList.filter((r) => r.project === projectId || !r.project)
+    : runList;
+
+  let hasRunning = false;
+  let hasError = false;
+  let hasPaused = false;
+
+  for (const r of projectRuns) {
+    const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+    if (ps === 'running') hasRunning = true;
+    else if (ps === 'failed' || ps === 'error') hasError = true;
+    else if (ps === 'paused' || ps === 'approval_needed') hasPaused = true;
+  }
+
+  if (hasRunning) return 'running';
+  if (hasError) return 'error';
+  if (hasPaused) return 'paused';
+  return 'idle';
+}
+
+/**
+ * Map project status to a CSS color class for the status dot.
+ */
+function statusDotClass(status) {
+  switch (status) {
+    case 'running':
+      return 'project-status-running';
+    case 'error':
+      return 'project-status-error';
+    case 'paused':
+      return 'project-status-paused';
+    default:
+      return 'project-status-idle';
+  }
+}
+
+export function sidebarView(
+  state,
+  route,
+  connectionState,
+  { onNavigate, onProjectChange },
+) {
   const { runs, preferences, projectName, projects, currentProjectId } = state;
   const runList = Object.values(runs);
   const activeCount = runList.filter((r) => r.active).length;
@@ -42,19 +94,32 @@ export function sidebarView(state, route, connectionState, { onNavigate, onProje
         ${projectName ? html`<span class="project-name">${projectName}</span>` : ''}
       </div>
 
-      ${projects && projects.length > 1 ? html`
+      ${
+        projects && projects.length > 1
+          ? html`
         <div class="sidebar-project-selector">
           <sl-select
             size="small"
             value=${currentProjectId || ''}
             @sl-change=${(e) => onProjectChange?.(e.target.value)}
           >
-            ${projects.map((p) => html`
-              <sl-option value=${p.name}>${p.name}</sl-option>
-            `)}
+            ${projects.map((p) => {
+              const pStatus = projectStatus(p.name, runs);
+              const dotClass = statusDotClass(pStatus);
+              return html`
+                <sl-option value=${p.name}>
+                  <span class="project-option-label">
+                    <span class="project-status-dot ${dotClass}"></span>
+                    ${p.name}
+                  </span>
+                </sl-option>
+              `;
+            })}
           </sl-select>
         </div>
-      ` : ''}
+      `
+          : ''
+      }
 
       <div class="sidebar-new-run">
         <button class="sidebar-new-run-btn" @click=${() => onNavigate('new-run')}>

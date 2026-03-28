@@ -98,14 +98,10 @@ export function createStatusWatcher({
                 currStatus === 'running' &&
                 (prevStatus === 'paused' || prevStatus === 'resuming')
               ) {
-                broadcaster.broadcastToSubscribers(
-                  run.id,
-                  'pipeline-resumed',
-                  {
-                    runId: run.id,
-                    pipeline_status: currStatus,
-                  },
-                );
+                broadcaster.broadcastToSubscribers(run.id, 'pipeline-resumed', {
+                  runId: run.id,
+                  pipeline_status: currStatus,
+                });
               }
             }
             lastPipelineStatus.set(run.id, currStatus);

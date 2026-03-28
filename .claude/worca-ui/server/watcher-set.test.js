@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WatcherSet } from './watcher-set.js';
+import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 
 /** Minimal mock watcher factory returning an object with destroy(). */
 function mockWatcherFactory(name) {
@@ -30,7 +30,10 @@ describe('WatcherSet', () => {
   let worcaDir;
 
   beforeEach(() => {
-    worcaDir = join(tmpdir(), `worca-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    worcaDir = join(
+      tmpdir(),
+      `worca-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     mkdirSync(worcaDir, { recursive: true });
   });
 
@@ -38,7 +41,12 @@ describe('WatcherSet', () => {
 
   function makeDeps(overrides = {}) {
     return {
-      broadcaster: { broadcast: vi.fn(), broadcastToSubscribers: vi.fn(), broadcastToLogSubscribers: vi.fn(), broadcastPipelineEvent: vi.fn() },
+      broadcaster: {
+        broadcast: vi.fn(),
+        broadcastToSubscribers: vi.fn(),
+        broadcastToLogSubscribers: vi.fn(),
+        broadcastPipelineEvent: vi.fn(),
+      },
       getSubs: vi.fn(),
       wss: { clients: new Set() },
       settingsPath: '/mock/settings.json',
@@ -52,6 +60,7 @@ describe('WatcherSet', () => {
     const deps = makeDeps();
     const ws = new WatcherSet('test-project', worcaDir, deps);
     ws.create();
+    ws.setTier(TIER_FULL);
 
     expect(ws.statusWatcher).toBeTruthy();
     expect(ws.logWatcher).toBeTruthy();
@@ -66,6 +75,7 @@ describe('WatcherSet', () => {
     const deps = makeDeps();
     const ws = new WatcherSet('test-project', worcaDir, deps);
     ws.create();
+    ws.setTier(TIER_FULL);
 
     const statusDestroy = vi.spyOn(ws.statusWatcher, 'destroy');
     const logDestroy = vi.spyOn(ws.logWatcher, 'destroy');
@@ -118,8 +128,9 @@ describe('WatcherSet', () => {
     const deps = makeDeps();
     const ws = new WatcherSet('test-project', worcaDir, deps);
     ws.create();
+    ws.setTier(TIER_FULL);
 
-    // Should have 4 watcher modules
+    // Should have 4 watcher modules when in full tier
     expect(ws.getWatcherCount()).toBe(4);
 
     ws.destroy();
@@ -140,9 +151,12 @@ describe('WatcherSet', () => {
   it('create() isolates errors - one factory failure does not prevent others', () => {
     const deps = makeDeps();
     const ws = new WatcherSet('test-project', worcaDir, deps, {
-      createStatusWatcher: () => { throw new Error('boom'); },
+      createStatusWatcher: () => {
+        throw new Error('boom');
+      },
     });
     ws.create();
+    ws.setTier(TIER_FULL);
 
     // Status watcher failed, but others should still be created
     expect(ws.statusWatcher).toBe(null);
@@ -178,6 +192,132 @@ describe('WatcherSet', () => {
     const deps = makeDeps({ projectRoot: '/custom/project' });
     const ws = new WatcherSet('test-project', worcaDir, deps);
     expect(ws.projectRoot).toBe('/custom/project');
+    ws.destroy();
+  });
+
+  // --- Tiering tests ---
+
+  it('default tier is polling', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    expect(ws.getTier()).toBe(TIER_POLLING);
+    ws.destroy();
+  });
+
+  it('create() in polling tier creates only statusWatcher', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+
+    expect(ws.statusWatcher).toBeTruthy();
+    expect(ws.logWatcher).toBe(null);
+    expect(ws.beadsWatcher).toBe(null);
+    expect(ws.eventWatcher).toBe(null);
+
+    ws.destroy();
+  });
+
+  it('setTier("full") creates log, beads, and event watchers', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+
+    expect(ws.logWatcher).toBe(null);
+    expect(ws.beadsWatcher).toBe(null);
+    expect(ws.eventWatcher).toBe(null);
+
+    ws.setTier(TIER_FULL);
+
+    expect(ws.getTier()).toBe(TIER_FULL);
+    expect(ws.statusWatcher).toBeTruthy();
+    expect(ws.logWatcher).toBeTruthy();
+    expect(ws.beadsWatcher).toBeTruthy();
+    expect(ws.eventWatcher).toBeTruthy();
+
+    ws.destroy();
+  });
+
+  it('setTier("polling") from full destroys log, beads, event but keeps status', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+    ws.setTier(TIER_FULL);
+
+    // Capture destroy spies before demotion
+    const logDestroy = vi.spyOn(ws.logWatcher, 'destroy');
+    const beadsDestroy = vi.spyOn(ws.beadsWatcher, 'destroy');
+    const eventDestroy = vi.spyOn(ws.eventWatcher, 'destroy');
+    const statusRef = ws.statusWatcher;
+
+    ws.setTier(TIER_POLLING);
+
+    expect(ws.getTier()).toBe(TIER_POLLING);
+    expect(logDestroy).toHaveBeenCalled();
+    expect(beadsDestroy).toHaveBeenCalled();
+    expect(eventDestroy).toHaveBeenCalled();
+    expect(ws.logWatcher).toBe(null);
+    expect(ws.beadsWatcher).toBe(null);
+    expect(ws.eventWatcher).toBe(null);
+    // Status watcher must survive demotion
+    expect(ws.statusWatcher).toBe(statusRef);
+
+    ws.destroy();
+  });
+
+  it('setTier with same tier is a no-op', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+
+    // Polling -> polling should not change anything
+    const statusRef = ws.statusWatcher;
+    ws.setTier(TIER_POLLING);
+    expect(ws.statusWatcher).toBe(statusRef);
+    expect(ws.logWatcher).toBe(null);
+
+    // Promote, then full -> full should not recreate
+    ws.setTier(TIER_FULL);
+    const logRef = ws.logWatcher;
+    const beadsRef = ws.beadsWatcher;
+    const eventRef = ws.eventWatcher;
+    ws.setTier(TIER_FULL);
+    expect(ws.logWatcher).toBe(logRef);
+    expect(ws.beadsWatcher).toBe(beadsRef);
+    expect(ws.eventWatcher).toBe(eventRef);
+
+    ws.destroy();
+  });
+
+  it('setTier after destroy is a no-op', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+    ws.destroy();
+
+    // Should not throw or create watchers
+    expect(() => ws.setTier(TIER_FULL)).not.toThrow();
+    expect(ws.getTier()).toBe(TIER_POLLING); // tier unchanged
+    expect(ws.logWatcher).toBe(null);
+    expect(ws.beadsWatcher).toBe(null);
+    expect(ws.eventWatcher).toBe(null);
+  });
+
+  it('getWatcherCount() reflects tier changes', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+
+    // Polling tier: only status watcher
+    expect(ws.getWatcherCount()).toBe(1);
+
+    // Promote to full: all 4 watchers
+    ws.setTier(TIER_FULL);
+    expect(ws.getWatcherCount()).toBe(4);
+
+    // Demote back to polling: only status watcher
+    ws.setTier(TIER_POLLING);
+    expect(ws.getWatcherCount()).toBe(1);
+
     ws.destroy();
   });
 });

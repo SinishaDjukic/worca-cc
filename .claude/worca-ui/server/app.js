@@ -23,12 +23,16 @@ import {
   stopPipeline,
 } from './process-manager.js';
 import {
+  createProjectRoutes,
+  createProjectScopedRoutes,
+  projectResolver,
+} from './project-routes.js';
+import {
   localPathFor,
   readLocalSettings,
   readMergedSettings,
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
-import { createProjectRoutes, createProjectScopedRoutes, projectResolver } from './project-routes.js';
 import { discoverRuns } from './watcher.js';
 import { createInbox } from './webhook-inbox.js';
 

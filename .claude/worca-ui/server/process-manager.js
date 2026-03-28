@@ -135,11 +135,7 @@ export class ProcessManager {
       status.stop_reason = 'stale';
     }
     try {
-      writeFileSync(
-        statusPath,
-        `${JSON.stringify(status, null, 2)}\n`,
-        'utf8',
-      );
+      writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
     } catch {
       return false;
     }
@@ -178,8 +174,7 @@ export class ProcessManager {
       }
     } else if (opts.sourceType !== undefined) {
       // New format: separate source and prompt args
-      if (opts.sourceType === 'source')
-        args.push('--source', opts.sourceValue);
+      if (opts.sourceType === 'source') args.push('--source', opts.sourceValue);
       else if (opts.sourceType === 'spec')
         args.push('--spec', opts.sourceValue);
       if (opts.prompt) {
@@ -248,9 +243,7 @@ export class ProcessManager {
       child.on('error', (spawnErr) => {
         cleanup();
         cleanupPromptFile(promptFilePath);
-        const err = new Error(
-          `Failed to start pipeline: ${spawnErr.message}`,
-        );
+        const err = new Error(`Failed to start pipeline: ${spawnErr.message}`);
         err.code = 'spawn_error';
         reject(err);
       });
@@ -493,9 +486,7 @@ export class ProcessManager {
 
       child.on('error', (spawnErr) => {
         cleanup();
-        const err = new Error(
-          `Failed to restart stage: ${spawnErr.message}`,
-        );
+        const err = new Error(`Failed to restart stage: ${spawnErr.message}`);
         err.code = 'spawn_error';
         reject(err);
       });
@@ -536,7 +527,10 @@ export function reconcileStatus(worcaDir) {
 
 /** @param {string} worcaDir @param {object} opts */
 export async function startPipeline(worcaDir, opts = {}) {
-  return new ProcessManager({ worcaDir, projectRoot: opts.projectRoot }).startPipeline(opts);
+  return new ProcessManager({
+    worcaDir,
+    projectRoot: opts.projectRoot,
+  }).startPipeline(opts);
 }
 
 /** @param {string} worcaDir */
@@ -551,5 +545,8 @@ export function pausePipeline(worcaDir, runId) {
 
 /** @param {string} worcaDir @param {string} stageKey @param {object} opts */
 export async function restartStage(worcaDir, stageKey, opts = {}) {
-  return new ProcessManager({ worcaDir, projectRoot: opts.projectRoot }).restartStage(stageKey, opts);
+  return new ProcessManager({
+    worcaDir,
+    projectRoot: opts.projectRoot,
+  }).restartStage(stageKey, opts);
 }

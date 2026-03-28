@@ -2,14 +2,21 @@
  * WatcherSet — groups all file watchers for a single project.
  * Wraps createStatusWatcher, createLogWatcher, createBeadsWatcher, createEventWatcher
  * into a single lifecycle-managed unit.
+ *
+ * Supports activity-based tiering:
+ * - Full:    all 4 watchers active (75ms debounce)
+ * - Polling: status watcher only (5s debounce)
  */
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createStatusWatcher } from './ws-status-watcher.js';
-import { createLogWatcher } from './ws-log-watcher.js';
 import { createBeadsWatcher } from './ws-beads-watcher.js';
 import { createEventWatcher } from './ws-event-watcher.js';
+import { createLogWatcher } from './ws-log-watcher.js';
+import { createStatusWatcher } from './ws-status-watcher.js';
+
+export const TIER_FULL = 'full';
+export const TIER_POLLING = 'polling';
 
 export class WatcherSet {
   /**
@@ -23,6 +30,7 @@ export class WatcherSet {
     this._worcaDir = worcaDir;
     this._deps = deps;
     this._closed = false;
+    this._tier = TIER_POLLING;
     this._factories = {
       createStatusWatcher,
       createLogWatcher,
@@ -41,28 +49,52 @@ export class WatcherSet {
     this.eventWatcher = null;
   }
 
-  get worcaDir() { return this._worcaDir; }
-  get settingsPath() { return this._deps.settingsPath; }
-  get projectRoot() { return this._deps.projectRoot; }
+  get worcaDir() {
+    return this._worcaDir;
+  }
+  get settingsPath() {
+    return this._deps.settingsPath;
+  }
+  get projectRoot() {
+    return this._deps.projectRoot;
+  }
 
-  /** Create all watchers. Each factory is try/catch isolated. */
+  /** Get current tier. */
+  getTier() {
+    return this._tier;
+  }
+
+  /**
+   * Set tier. Promote to Full creates missing watchers, demote to Polling
+   * destroys log/beads/event watchers.
+   */
+  setTier(tier) {
+    if (tier === this._tier || this._closed) return;
+    const oldTier = this._tier;
+    this._tier = tier;
+
+    if (tier === TIER_FULL && oldTier === TIER_POLLING) {
+      // Promote: create log, beads, event watchers
+      this._createSecondaryWatchers();
+    } else if (tier === TIER_POLLING && oldTier === TIER_FULL) {
+      // Demote: destroy log, beads, event watchers
+      this._destroySecondaryWatchers();
+    }
+  }
+
+  /** Create all watchers. Starts in current tier (creates status always, others only if Full). */
   create() {
-    const { broadcaster, getSubs, wss, settingsPath, projectRoot } = this._deps;
+    this._createStatusWatcher();
+    if (this._tier === TIER_FULL) {
+      this._createSecondaryWatchers();
+    }
+  }
+
+  /** Create status watcher (always needed). */
+  _createStatusWatcher() {
+    const { broadcaster, getSubs, wss, settingsPath } = this._deps;
     const worcaDir = this._worcaDir;
 
-    // Shared helper: resolve filesystem dir for a run ID
-    const resolveRunDirById = (runId) => {
-      const candidates = [
-        join(worcaDir, 'runs', runId),
-        join(worcaDir, 'results', runId),
-      ];
-      for (const c of candidates) {
-        if (existsSync(c)) return c;
-      }
-      return join(worcaDir, 'runs', runId);
-    };
-
-    // 1. Status watcher
     try {
       this.statusWatcher = this._factories.createStatusWatcher({
         worcaDir,
@@ -75,47 +107,99 @@ export class WatcherSet {
         },
       });
     } catch (err) {
-      console.error(`[WatcherSet:${this.projectId}] statusWatcher failed:`, err.message);
+      console.error(
+        `[WatcherSet:${this.projectId}] statusWatcher failed:`,
+        err.message,
+      );
       this.statusWatcher = null;
     }
+  }
 
-    // 2. Log watcher
-    try {
-      this.logWatcher = this._factories.createLogWatcher({
-        broadcaster,
-        resolveActiveRunDir: this.statusWatcher
-          ? this.statusWatcher.resolveActiveRunDir
-          : () => worcaDir,
-        worcaDir,
-        currentActiveRunId: this.statusWatcher
-          ? this.statusWatcher.currentActiveRunId
-          : () => null,
-      });
-    } catch (err) {
-      console.error(`[WatcherSet:${this.projectId}] logWatcher failed:`, err.message);
-      this.logWatcher = null;
+  /** Create secondary watchers (log, beads, event). */
+  _createSecondaryWatchers() {
+    const { broadcaster, getSubs, wss } = this._deps;
+    const worcaDir = this._worcaDir;
+
+    // Log watcher
+    if (!this.logWatcher) {
+      try {
+        this.logWatcher = this._factories.createLogWatcher({
+          broadcaster,
+          resolveActiveRunDir: this.statusWatcher
+            ? this.statusWatcher.resolveActiveRunDir
+            : () => worcaDir,
+          worcaDir,
+          currentActiveRunId: this.statusWatcher
+            ? this.statusWatcher.currentActiveRunId
+            : () => null,
+        });
+      } catch (err) {
+        console.error(
+          `[WatcherSet:${this.projectId}] logWatcher failed:`,
+          err.message,
+        );
+        this.logWatcher = null;
+      }
     }
 
-    // 3. Beads watcher
-    try {
-      this.beadsWatcher = this._factories.createBeadsWatcher({ worcaDir, broadcaster });
-    } catch (err) {
-      console.error(`[WatcherSet:${this.projectId}] beadsWatcher failed:`, err.message);
-      this.beadsWatcher = null;
+    // Beads watcher
+    if (!this.beadsWatcher) {
+      try {
+        this.beadsWatcher = this._factories.createBeadsWatcher({
+          worcaDir,
+          broadcaster,
+        });
+      } catch (err) {
+        console.error(
+          `[WatcherSet:${this.projectId}] beadsWatcher failed:`,
+          err.message,
+        );
+        this.beadsWatcher = null;
+      }
     }
 
-    // 4. Event watcher
-    try {
-      this.eventWatcher = this._factories.createEventWatcher({
-        broadcaster,
-        getSubs,
-        wss,
-        resolveRunDirById,
-      });
-    } catch (err) {
-      console.error(`[WatcherSet:${this.projectId}] eventWatcher failed:`, err.message);
-      this.eventWatcher = null;
+    // Event watcher
+    if (!this.eventWatcher) {
+      try {
+        const resolveRunDirById = (runId) => {
+          const candidates = [
+            join(worcaDir, 'runs', runId),
+            join(worcaDir, 'results', runId),
+          ];
+          for (const c of candidates) {
+            if (existsSync(c)) return c;
+          }
+          return join(worcaDir, 'runs', runId);
+        };
+
+        this.eventWatcher = this._factories.createEventWatcher({
+          broadcaster,
+          getSubs,
+          wss,
+          resolveRunDirById,
+        });
+      } catch (err) {
+        console.error(
+          `[WatcherSet:${this.projectId}] eventWatcher failed:`,
+          err.message,
+        );
+        this.eventWatcher = null;
+      }
     }
+  }
+
+  /** Destroy secondary watchers (keep status). */
+  _destroySecondaryWatchers() {
+    for (const w of [this.logWatcher, this.beadsWatcher, this.eventWatcher]) {
+      try {
+        w?.destroy();
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    this.logWatcher = null;
+    this.beadsWatcher = null;
+    this.eventWatcher = null;
   }
 
   /** Destroy all child watchers. Idempotent. */
@@ -123,7 +207,12 @@ export class WatcherSet {
     if (this._closed) return;
     this._closed = true;
 
-    for (const w of [this.statusWatcher, this.logWatcher, this.beadsWatcher, this.eventWatcher]) {
+    for (const w of [
+      this.statusWatcher,
+      this.logWatcher,
+      this.beadsWatcher,
+      this.eventWatcher,
+    ]) {
       try {
         w?.destroy();
       } catch {

@@ -377,6 +377,12 @@ function handleHello(_payload) {
 
 ws.on('hello', handleHello);
 
+ws.on('projects-updated', (payload) => {
+  if (payload?.projects) {
+    store.setState({ projects: payload.projects });
+  }
+});
+
 // --- Project switching ---
 
 function handleProjectSwitch(newProjectId) {

@@ -1002,6 +1002,14 @@ def run_pipeline(
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
 
+    # Auto-register project for global worca-ui discovery (non-fatal)
+    try:
+        from worca.utils.project_registry import auto_register_project
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(settings_path)))
+        auto_register_project(project_root)
+    except Exception:
+        pass
+
     # PID file and signal handlers
     _write_pid(status_path)
     _install_signal_handlers()

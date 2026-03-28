@@ -7,9 +7,15 @@ import { createMessageRouter } from './ws-message-router.js';
 function mockWatcherSet(projectId, worcaDir = `/mock/${projectId}/.worca`) {
   return {
     projectId,
-    get worcaDir() { return worcaDir; },
-    get settingsPath() { return `/mock/${projectId}/.claude/settings.json`; },
-    get projectRoot() { return `/mock/${projectId}`; },
+    get worcaDir() {
+      return worcaDir;
+    },
+    get settingsPath() {
+      return `/mock/${projectId}/.claude/settings.json`;
+    },
+    get projectRoot() {
+      return `/mock/${projectId}`;
+    },
     statusWatcher: {
       scheduleRefresh: vi.fn(),
       lastPipelineStatus: new Map(),
@@ -93,9 +99,14 @@ describe('ws-message-router resolveProject', () => {
     const ws = makeWs();
 
     // Send list-runs with no projectId — should use defaultWs (mock worcaDir)
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-1', type: 'list-runs', payload: {},
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-1',
+        type: 'list-runs',
+        payload: {},
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -112,9 +123,14 @@ describe('ws-message-router resolveProject', () => {
     subs.projectId = 'proj-a';
 
     // Send subscribe-run — should use proj-a's statusWatcher
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-2', type: 'subscribe-run', payload: { runId: 'run-123' },
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-2',
+        type: 'subscribe-run',
+        payload: { runId: 'run-123' },
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -128,9 +144,14 @@ describe('ws-message-router resolveProject', () => {
     const ws = makeWs();
 
     // Send list-runs with explicit projectId in payload
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-3', type: 'list-runs', payload: { projectId: 'proj-b' },
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-3',
+        type: 'list-runs',
+        payload: { projectId: 'proj-b' },
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -141,9 +162,14 @@ describe('ws-message-router resolveProject', () => {
     const { router, defaultWs } = setup();
     const ws = makeWs();
 
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-4', type: 'list-runs', payload: { projectId: 'nonexistent' },
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-4',
+        type: 'list-runs',
+        payload: { projectId: 'nonexistent' },
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -159,9 +185,14 @@ describe('ws-message-router resolveProject', () => {
     subs.projectId = 'proj-a';
 
     // But payload says proj-b — payload should win
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-5', type: 'list-runs', payload: { projectId: 'proj-b' },
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-5',
+        type: 'list-runs',
+        payload: { projectId: 'proj-b' },
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -175,9 +206,14 @@ describe('ws-message-router resolveProject', () => {
     const subs = clientManager.ensureSubs(ws);
     subs.projectId = 'proj-a';
 
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-6', type: 'list-runs', payload: {},
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-6',
+        type: 'list-runs',
+        payload: {},
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);
@@ -192,9 +228,14 @@ describe('ws-message-router resolveProject', () => {
     const subs = clientManager.ensureSubs(ws);
     subs.projectId = 'proj-a';
 
-    await router.handleMessage(ws, JSON.stringify({
-      id: 'req-7', type: 'subscribe-run', payload: { runId: 'run-abc' },
-    }));
+    await router.handleMessage(
+      ws,
+      JSON.stringify({
+        id: 'req-7',
+        type: 'subscribe-run',
+        payload: { runId: 'run-abc' },
+      }),
+    );
 
     expect(ws.send).toHaveBeenCalled();
     const response = JSON.parse(ws.send.mock.calls[0][0]);

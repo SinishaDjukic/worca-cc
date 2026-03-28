@@ -2,7 +2,14 @@
  * Project registry — manages multi-project entries in ~/.worca/projects.d/
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 
 const SLUG_RE = /^[a-z0-9_-]{1,64}$/i;
@@ -29,7 +36,10 @@ export function validateProjectEntry(entry) {
     return { valid: false, error: 'name is required' };
   }
   if (!SLUG_RE.test(entry.name)) {
-    return { valid: false, error: `name must match ${SLUG_RE} (got "${entry.name}")` };
+    return {
+      valid: false,
+      error: `name must match ${SLUG_RE} (got "${entry.name}")`,
+    };
   }
   if (!entry.path || typeof entry.path !== 'string') {
     return { valid: false, error: 'path is required' };
@@ -54,7 +64,11 @@ export function readProjects(prefsDir) {
     try {
       const raw = readFileSync(join(dir, file), 'utf8');
       const data = JSON.parse(raw);
-      if (data && typeof data.name === 'string' && typeof data.path === 'string') {
+      if (
+        data &&
+        typeof data.name === 'string' &&
+        typeof data.path === 'string'
+      ) {
         entries.push(data);
       }
     } catch {

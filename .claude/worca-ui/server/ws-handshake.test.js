@@ -33,7 +33,10 @@ function createTestServer() {
 
 function waitForMessage(ws, predicate, timeoutMs = 2000) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for message')), timeoutMs);
+    const timer = setTimeout(
+      () => reject(new Error('Timed out waiting for message')),
+      timeoutMs,
+    );
     const handler = (data) => {
       const msg = JSON.parse(data.toString());
       if (predicate(msg)) {
@@ -107,12 +110,14 @@ describe('WS handshake protocol', () => {
       // Set up server to send hello on connection (mimicking ws-modular behavior)
       wss.on('connection', (ws) => {
         clientManager.ensureSubs(ws);
-        ws.send(JSON.stringify({
-          id: `evt-${Date.now()}`,
-          ok: true,
-          type: 'hello',
-          payload: { protocol: 2, capabilities: ['multi-project'] },
-        }));
+        ws.send(
+          JSON.stringify({
+            id: `evt-${Date.now()}`,
+            ok: true,
+            type: 'hello',
+            payload: { protocol: 2, capabilities: ['multi-project'] },
+          }),
+        );
       });
 
       const client = new WebSocket(testServer.url);
@@ -153,11 +158,13 @@ describe('WS handshake protocol', () => {
       await new Promise((r) => client.on('open', r));
 
       // Client sends hello-ack
-      client.send(JSON.stringify({
-        id: '1',
-        type: 'hello-ack',
-        payload: { protocol: 2, projectId: 'test-proj' },
-      }));
+      client.send(
+        JSON.stringify({
+          id: '1',
+          type: 'hello-ack',
+          payload: { protocol: 2, projectId: 'test-proj' },
+        }),
+      );
 
       const subs = await protocolSet;
       expect(subs.protocolVersion).toBe(2);

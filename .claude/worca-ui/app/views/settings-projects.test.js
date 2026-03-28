@@ -2,10 +2,11 @@
  * Tests for the Projects tab in Settings and Add-Project dialog.
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi } from 'vitest';
+
 import { html, render } from 'lit-html';
-import { _projectsTab as projectsTab } from './settings.js';
+import { describe, expect, it, vi } from 'vitest';
 import { addProjectDialogView } from './add-project-dialog.js';
+import { _projectsTab as projectsTab } from './settings.js';
 
 function renderToString(template) {
   const container = document.createElement('div');
@@ -26,7 +27,11 @@ describe('Projects tab in settings', () => {
       { name: 'beta', path: '/beta' },
     ];
     const output = renderToString(
-      projectsTab(projects, { onProjectAdd: vi.fn(), onProjectRemove: vi.fn(), rerender: vi.fn() }),
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
     );
     expect(output).toContain('Projects');
     expect(output).toContain('alpha');
@@ -39,7 +44,11 @@ describe('Projects tab in settings', () => {
       { name: 'proj-b', path: '/home/proj-b' },
     ];
     const container = renderToContainer(
-      projectsTab(projects, { onProjectAdd: vi.fn(), onProjectRemove: vi.fn(), rerender: vi.fn() }),
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
     );
     const items = container.querySelectorAll('.projects-list-item');
     expect(items.length).toBe(2);
@@ -54,7 +63,11 @@ describe('Projects tab in settings', () => {
       { name: 'beta', path: '/beta' },
     ];
     const container = renderToContainer(
-      projectsTab(projects, { onProjectAdd: vi.fn(), onProjectRemove: vi.fn(), rerender: vi.fn() }),
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
     );
     const removeButtons = container.querySelectorAll('sl-icon-button');
     expect(removeButtons.length).toBe(2);

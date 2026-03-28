@@ -8,7 +8,11 @@ describe('sidebar project selector', () => {
   function makeState(overrides = {}) {
     return {
       runs: {},
-      preferences: { theme: 'light', sidebarCollapsed: false, notifications: null },
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: false,
+        notifications: null,
+      },
       projectName: 'test-project',
       currentProjectId: null,
       projects: [],

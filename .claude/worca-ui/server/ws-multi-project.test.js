@@ -28,7 +28,14 @@ describe('multi-project WS', () => {
 
     it('broadcast adds project field for protocol 2 clients', () => {
       const { clients, getSubs } = mockWss([
-        { runId: null, logStage: null, logRunId: null, eventsRunId: null, protocolVersion: 2, projectId: 'proj-a' },
+        {
+          runId: null,
+          logStage: null,
+          logRunId: null,
+          eventsRunId: null,
+          protocolVersion: 2,
+          projectId: 'proj-a',
+        },
       ]);
       const wss = { clients };
       const broadcaster = createBroadcaster({ wss, getSubs });
@@ -43,7 +50,14 @@ describe('multi-project WS', () => {
 
     it('broadcast omits project field for protocol 1 clients', () => {
       const { clients, getSubs } = mockWss([
-        { runId: null, logStage: null, logRunId: null, eventsRunId: null, protocolVersion: 1, projectId: null },
+        {
+          runId: null,
+          logStage: null,
+          logRunId: null,
+          eventsRunId: null,
+          protocolVersion: 1,
+          projectId: null,
+        },
       ]);
       const wss = { clients };
       const broadcaster = createBroadcaster({ wss, getSubs });
@@ -58,12 +72,21 @@ describe('multi-project WS', () => {
 
     it('broadcastToSubscribers adds project for protocol 2', () => {
       const { clients, getSubs } = mockWss([
-        { runId: 'run-1', logStage: null, logRunId: null, eventsRunId: null, protocolVersion: 2, projectId: 'proj-b' },
+        {
+          runId: 'run-1',
+          logStage: null,
+          logRunId: null,
+          eventsRunId: null,
+          protocolVersion: 2,
+          projectId: 'proj-b',
+        },
       ]);
       const wss = { clients };
       const broadcaster = createBroadcaster({ wss, getSubs });
 
-      broadcaster.broadcastToSubscribers('run-1', 'run-update', { status: 'ok' });
+      broadcaster.broadcastToSubscribers('run-1', 'run-update', {
+        status: 'ok',
+      });
 
       const ws = [...clients][0];
       const msg = JSON.parse(ws.send.mock.calls[0][0]);
@@ -72,8 +95,22 @@ describe('multi-project WS', () => {
 
     it('mixed protocol clients get different messages', () => {
       const { clients, getSubs } = mockWss([
-        { runId: null, logStage: null, logRunId: null, eventsRunId: null, protocolVersion: 1, projectId: null },
-        { runId: null, logStage: null, logRunId: null, eventsRunId: null, protocolVersion: 2, projectId: 'proj-c' },
+        {
+          runId: null,
+          logStage: null,
+          logRunId: null,
+          eventsRunId: null,
+          protocolVersion: 1,
+          projectId: null,
+        },
+        {
+          runId: null,
+          logStage: null,
+          logRunId: null,
+          eventsRunId: null,
+          protocolVersion: 2,
+          projectId: 'proj-c',
+        },
       ]);
       const wss = { clients };
       const broadcaster = createBroadcaster({ wss, getSubs });
@@ -90,12 +127,21 @@ describe('multi-project WS', () => {
 
     it('broadcastPipelineEvent adds project for protocol 2', () => {
       const { clients, getSubs } = mockWss([
-        { runId: null, logStage: null, logRunId: null, eventsRunId: 'run-x', protocolVersion: 2, projectId: 'proj-d' },
+        {
+          runId: null,
+          logStage: null,
+          logRunId: null,
+          eventsRunId: 'run-x',
+          protocolVersion: 2,
+          projectId: 'proj-d',
+        },
       ]);
       const wss = { clients };
       const broadcaster = createBroadcaster({ wss, getSubs });
 
-      broadcaster.broadcastPipelineEvent('run-x', { event_type: 'stage.complete' });
+      broadcaster.broadcastPipelineEvent('run-x', {
+        event_type: 'stage.complete',
+      });
 
       const ws = [...clients][0];
       const msg = JSON.parse(ws.send.mock.calls[0][0]);

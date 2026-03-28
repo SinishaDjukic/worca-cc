@@ -2,8 +2,9 @@
  * Tests for multi-project dashboard features.
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi } from 'vitest';
+
 import { render } from 'lit-html';
+import { describe, expect, it, vi } from 'vitest';
 import { dashboardView } from './dashboard.js';
 
 function renderToContainer(template) {
@@ -27,7 +28,12 @@ describe('single-project dashboard', () => {
       projects: [{ name: 'default', path: '/app' }],
       currentProjectId: 'default',
       runs: {
-        'run-1': { id: 'run-1', active: true, pipeline_status: 'running', stages: {} },
+        'run-1': {
+          id: 'run-1',
+          active: true,
+          pipeline_status: 'running',
+          stages: {},
+        },
       },
     });
     const container = renderToContainer(
@@ -65,9 +71,27 @@ describe('multi-project dashboard', () => {
       projects,
       currentProjectId: null,
       runs: {
-        'run-1': { id: 'run-1', active: true, projectId: 'alpha', pipeline_status: 'running', stages: {} },
-        'run-2': { id: 'run-2', active: true, projectId: 'alpha', pipeline_status: 'running', stages: {} },
-        'run-3': { id: 'run-3', active: false, projectId: 'beta', pipeline_status: 'completed', stages: {} },
+        'run-1': {
+          id: 'run-1',
+          active: true,
+          projectId: 'alpha',
+          pipeline_status: 'running',
+          stages: {},
+        },
+        'run-2': {
+          id: 'run-2',
+          active: true,
+          projectId: 'alpha',
+          pipeline_status: 'running',
+          stages: {},
+        },
+        'run-3': {
+          id: 'run-3',
+          active: false,
+          projectId: 'beta',
+          pipeline_status: 'completed',
+          stages: {},
+        },
       },
     });
     const container = renderToContainer(
@@ -75,9 +99,13 @@ describe('multi-project dashboard', () => {
     );
     const cards = container.querySelectorAll('.project-card');
     // Alpha card should show 2 active
-    expect(cards[0].querySelector('.project-card-stats').textContent).toContain('2 active');
+    expect(cards[0].querySelector('.project-card-stats').textContent).toContain(
+      '2 active',
+    );
     // Beta card should show 0 active
-    expect(cards[1].querySelector('.project-card-stats').textContent).toContain('0 active');
+    expect(cards[1].querySelector('.project-card-stats').textContent).toContain(
+      '0 active',
+    );
   });
 
   it('clicking project card navigates to that project', () => {

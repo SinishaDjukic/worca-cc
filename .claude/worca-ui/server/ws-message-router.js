@@ -76,9 +76,8 @@ export function createMessageRouter({
    * Priority: payload.projectId > subs.projectId > defaultWs
    */
   function resolveProject(ws, payload) {
-    const projectId = payload?.projectId
-      || clientManager.getSubs(ws)?.projectId
-      || null;
+    const projectId =
+      payload?.projectId || clientManager.getSubs(ws)?.projectId || null;
     if (projectId && watcherSets.has(projectId)) {
       const wset = watcherSets.get(projectId);
       return {
@@ -168,9 +167,7 @@ export function createMessageRouter({
       const run = runs.find((r) => r.id === runId);
       if (!run) {
         ws.send(
-          JSON.stringify(
-            makeError(req, 'NOT_FOUND', `Run ${runId} not found`),
-          ),
+          JSON.stringify(makeError(req, 'NOT_FOUND', `Run ${runId} not found`)),
         );
         return;
       }
@@ -266,14 +263,15 @@ export function createMessageRouter({
           run.pipeline_status !== undefined &&
           !proj.wset.statusWatcher.lastPipelineStatus.has(runId)
         ) {
-          proj.wset.statusWatcher.lastPipelineStatus.set(runId, run.pipeline_status);
+          proj.wset.statusWatcher.lastPipelineStatus.set(
+            runId,
+            run.pipeline_status,
+          );
         }
         ws.send(JSON.stringify(makeOk(req, run)));
       } else {
         ws.send(
-          JSON.stringify(
-            makeError(req, 'NOT_FOUND', `Run ${runId} not found`),
-          ),
+          JSON.stringify(makeError(req, 'NOT_FOUND', `Run ${runId} not found`)),
         );
       }
       return;
@@ -296,22 +294,25 @@ export function createMessageRouter({
       s.logRunId = runId || null;
       ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
 
+      if (!proj.wset.logWatcher) return;
+
       const archivedLogDir = runId
         ? join(proj.worcaDir, 'results', runId)
         : null;
       const isArchived = archivedLogDir && existsSync(archivedLogDir);
 
       if (isArchived) {
-        proj.wset.logWatcher.sendArchivedLogs(ws, archivedLogDir, stage, iteration);
+        proj.wset.logWatcher.sendArchivedLogs(
+          ws,
+          archivedLogDir,
+          stage,
+          iteration,
+        );
       } else {
         const logsBase = proj.wset.logWatcher.resolveLogsBaseDir();
         if (stage) {
           if (iteration != null) {
-            const logPath = resolveIterationLogPath(
-              logsBase,
-              stage,
-              iteration,
-            );
+            const logPath = resolveIterationLogPath(logsBase, stage, iteration);
             const lines = readLastLines(logPath, 200);
             if (lines.length > 0) {
               ws.send(
@@ -325,10 +326,7 @@ export function createMessageRouter({
             }
           } else {
             const stageDir = resolveLogPath(logsBase, stage);
-            if (
-              existsSync(stageDir) &&
-              statSync(stageDir).isDirectory()
-            ) {
+            if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
               const iters = listIterationFiles(logsBase, stage);
               for (const { iteration: iterNum, path } of iters) {
                 const lines = readLastLines(path, 200);
@@ -427,9 +425,7 @@ export function createMessageRouter({
         const result = pmPausePipeline(proj.worcaDir, runId);
         ws.send(JSON.stringify(makeOk(req, result)));
       } catch (e) {
-        ws.send(
-          JSON.stringify(makeError(req, e.code || 'error', e.message)),
-        );
+        ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));
       }
       return;
     }
@@ -461,9 +457,7 @@ export function createMessageRouter({
       } catch (e) {
         proj.wset.statusWatcher.scheduleRefresh();
         ws.send(
-          JSON.stringify(
-            makeError(req, e.code || 'not_running', e.message),
-          ),
+          JSON.stringify(makeError(req, e.code || 'not_running', e.message)),
         );
       }
       return;
@@ -483,9 +477,7 @@ export function createMessageRouter({
           JSON.stringify(makeOk(req, { resumed: true, pid: result.pid })),
         );
       } catch (e) {
-        ws.send(
-          JSON.stringify(makeError(req, e.code || 'error', e.message)),
-        );
+        ws.send(JSON.stringify(makeError(req, e.code || 'error', e.message)));
       }
       return;
     }
@@ -493,6 +485,14 @@ export function createMessageRouter({
     // list-beads-issues
     if (req.type === 'list-beads-issues') {
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(
+          JSON.stringify(
+            makeOk(req, { issues: [], dbExists: false, dbPath: null }),
+          ),
+        );
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(
@@ -518,11 +518,13 @@ export function createMessageRouter({
     // list-beads-unlinked
     if (req.type === 'list-beads-unlinked') {
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false })));
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
-        ws.send(
-          JSON.stringify(makeOk(req, { issues: [], dbExists: false })),
-        );
+        ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false })));
         return;
       }
       const issues = listUnlinkedIssues(beadsDbPath);
@@ -533,6 +535,10 @@ export function createMessageRouter({
     // list-beads-refs
     if (req.type === 'list-beads-refs') {
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(JSON.stringify(makeOk(req, { refs: [] })));
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { refs: [] })));
@@ -546,6 +552,10 @@ export function createMessageRouter({
     // list-beads-counts
     if (req.type === 'list-beads-counts') {
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(JSON.stringify(makeOk(req, { counts: {} })));
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { counts: {} })));
@@ -568,6 +578,10 @@ export function createMessageRouter({
         return;
       }
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
@@ -594,6 +608,18 @@ export function createMessageRouter({
         return;
       }
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.beadsWatcher) {
+        ws.send(
+          JSON.stringify(
+            makeError(
+              req,
+              'not_available',
+              'Beads not available in polling mode',
+            ),
+          ),
+        );
+        return;
+      }
       const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       const issue = getIssue(beadsDbPath, issueId);
       if (!issue) {
@@ -639,21 +665,16 @@ export function createMessageRouter({
           projectRoot: proj.projectRoot,
         });
         broadcaster.broadcast('run-started', { pid: result.pid });
-        ws.send(
-          JSON.stringify(makeOk(req, { pid: result.pid, issueId })),
-        );
+        ws.send(JSON.stringify(makeOk(req, { pid: result.pid, issueId })));
       } catch (e) {
-        ws.send(
-          JSON.stringify(makeError(req, 'start_failed', e.message)),
-        );
+        ws.send(JSON.stringify(makeError(req, 'start_failed', e.message)));
       }
       return;
     }
 
     // get-events
     if (req.type === 'get-events') {
-      const { runId, since_event_id, event_types, limit } =
-        req.payload || {};
+      const { runId, since_event_id, event_types, limit } = req.payload || {};
       if (typeof runId !== 'string') {
         ws.send(
           JSON.stringify(
@@ -663,6 +684,10 @@ export function createMessageRouter({
         return;
       }
       const proj = resolveProject(ws, req.payload);
+      if (!proj.wset.eventWatcher) {
+        ws.send(JSON.stringify(makeOk(req, { events: [] })));
+        return;
+      }
       const events = proj.wset.eventWatcher.readEventsFromFile(runId, {
         since_event_id,
         event_types,
@@ -686,7 +711,9 @@ export function createMessageRouter({
       const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       s.eventsRunId = runId;
-      proj.wset.eventWatcher.subscribeEvents(runId);
+      if (proj.wset.eventWatcher) {
+        proj.wset.eventWatcher.subscribeEvents(runId);
+      }
       ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
       return;
     }
@@ -697,7 +724,9 @@ export function createMessageRouter({
       const s = clientManager.ensureSubs(ws);
       const prevRunId = s.eventsRunId;
       s.eventsRunId = null;
-      if (prevRunId) proj.wset.eventWatcher.maybeCloseEventWatcher(prevRunId);
+      if (prevRunId && proj.wset.eventWatcher) {
+        proj.wset.eventWatcher.maybeCloseEventWatcher(prevRunId);
+      }
       ws.send(JSON.stringify(makeOk(req, { unsubscribed: true })));
       return;
     }
@@ -726,10 +755,7 @@ export function createMessageRouter({
     // set-webhook-control
     if (req.type === 'set-webhook-control') {
       const { action } = req.payload || {};
-      if (
-        !webhookInbox ||
-        !['continue', 'pause', 'abort'].includes(action)
-      ) {
+      if (!webhookInbox || !['continue', 'pause', 'abort'].includes(action)) {
         ws.send(
           JSON.stringify(
             makeError(

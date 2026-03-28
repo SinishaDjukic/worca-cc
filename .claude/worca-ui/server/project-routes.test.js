@@ -2,10 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
-import { createProjectRoutes, createProjectScopedRoutes, projectResolver } from './project-routes.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeProject } from './project-registry.js';
+import {
+  createProjectRoutes,
+  createProjectScopedRoutes,
+  projectResolver,
+} from './project-routes.js';
 
 /** Build a minimal test app with project routes mounted. */
 function buildApp(prefsDir, projectRoot) {
@@ -14,14 +18,21 @@ function buildApp(prefsDir, projectRoot) {
 
   const getRegistry = () => {
     // Lazy import to avoid stale reads
-    const { readProjects, synthesizeDefaultProject } = require('./project-registry.js');
+    const {
+      readProjects,
+      synthesizeDefaultProject,
+    } = require('./project-registry.js');
     const projects = readProjects(prefsDir);
     if (projects.length === 0) return [synthesizeDefaultProject(projectRoot)];
     return projects;
   };
 
   app.use('/api/projects', createProjectRoutes({ prefsDir, projectRoot }));
-  app.use('/api/projects/:projectId', projectResolver({ prefsDir, projectRoot }), createProjectScopedRoutes());
+  app.use(
+    '/api/projects/:projectId',
+    projectResolver({ prefsDir, projectRoot }),
+    createProjectScopedRoutes(),
+  );
 
   return app;
 }
@@ -32,7 +43,11 @@ async function createTestApp(prefsDir, projectRoot) {
   app.use(express.json());
 
   app.use('/api/projects', createProjectRoutes({ prefsDir, projectRoot }));
-  app.use('/api/projects/:projectId', projectResolver({ prefsDir, projectRoot }), createProjectScopedRoutes());
+  app.use(
+    '/api/projects/:projectId',
+    projectResolver({ prefsDir, projectRoot }),
+    createProjectScopedRoutes(),
+  );
 
   // Also mount an old-style route to verify backwards compat
   app.get('/api/runs', (_req, res) => res.json({ ok: true, runs: [] }));
@@ -75,8 +90,14 @@ describe('project-routes', () => {
   let projectRoot;
 
   beforeEach(() => {
-    prefsDir = join(tmpdir(), `worca-prefs-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    projectRoot = join(tmpdir(), `worca-proj-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    prefsDir = join(
+      tmpdir(),
+      `worca-prefs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    projectRoot = join(
+      tmpdir(),
+      `worca-proj-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     mkdirSync(prefsDir, { recursive: true });
     mkdirSync(join(projectRoot, '.worca'), { recursive: true });
     mkdirSync(join(projectRoot, '.claude'), { recursive: true });
@@ -146,7 +167,11 @@ describe('project-routes', () => {
       writeProject(prefsDir, { name: 'to-delete', path: '/del' });
 
       const app = await createTestApp(prefsDir, projectRoot);
-      const { status, body } = await request(app, 'DELETE', '/api/projects/to-delete');
+      const { status, body } = await request(
+        app,
+        'DELETE',
+        '/api/projects/to-delete',
+      );
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
 
@@ -158,7 +183,11 @@ describe('project-routes', () => {
 
     it('returns 200 even for nonexistent project (no-op)', async () => {
       const app = await createTestApp(prefsDir, projectRoot);
-      const { status } = await request(app, 'DELETE', '/api/projects/nonexistent');
+      const { status } = await request(
+        app,
+        'DELETE',
+        '/api/projects/nonexistent',
+      );
       expect(status).toBe(200);
     });
   });
@@ -168,14 +197,22 @@ describe('project-routes', () => {
       writeProject(prefsDir, { name: 'my-proj', path: '/my/proj' });
 
       const app = await createTestApp(prefsDir, projectRoot);
-      const { status, body } = await request(app, 'GET', '/api/projects/my-proj/info');
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/my-proj/info',
+      );
       expect(status).toBe(200);
       expect(body.project.name).toBe('my-proj');
     });
 
     it('returns 404 for unknown project', async () => {
       const app = await createTestApp(prefsDir, projectRoot);
-      const { status, body } = await request(app, 'GET', '/api/projects/unknown/info');
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/unknown/info',
+      );
       expect(status).toBe(404);
       expect(body.error).toMatch(/not found/i);
     });
@@ -188,7 +225,11 @@ describe('project-routes', () => {
       const { body: projectsBody } = await request(app, 'GET', '/api/projects');
       const projectName = projectsBody.projects[0].name;
 
-      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/runs`);
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/runs`,
+      );
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(Array.isArray(body.runs)).toBe(true);
@@ -196,7 +237,11 @@ describe('project-routes', () => {
 
     it('GET /api/projects/:id/runs returns 404 for unknown project', async () => {
       const app = await createTestApp(prefsDir, projectRoot);
-      const { status, body } = await request(app, 'GET', '/api/projects/nonexistent/runs');
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/nonexistent/runs',
+      );
       expect(status).toBe(404);
       expect(body.ok).toBe(false);
     });
@@ -206,16 +251,23 @@ describe('project-routes', () => {
       const runId = 'test-run-001';
       const runDir = join(projectRoot, '.worca', 'runs', runId);
       mkdirSync(runDir, { recursive: true });
-      writeFileSync(join(runDir, 'status.json'), JSON.stringify({
-        pipeline_status: 'completed',
-        stage: 'test',
-      }));
+      writeFileSync(
+        join(runDir, 'status.json'),
+        JSON.stringify({
+          pipeline_status: 'completed',
+          stage: 'test',
+        }),
+      );
 
       const app = await createTestApp(prefsDir, projectRoot);
       const { body: projectsBody } = await request(app, 'GET', '/api/projects');
       const projectName = projectsBody.projects[0].name;
 
-      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/runs/${runId}/status`);
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/runs/${runId}/status`,
+      );
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(body.pipeline_status).toBe('completed');
@@ -235,7 +287,11 @@ describe('project-routes', () => {
       const { body: projectsBody } = await request(app, 'GET', '/api/projects');
       const projectName = projectsBody.projects[0].name;
 
-      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/branches`);
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/branches`,
+      );
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(Array.isArray(body.branches)).toBe(true);
@@ -247,13 +303,20 @@ describe('project-routes', () => {
     it('GET /api/projects/:id/plan-files returns plan files for resolved project', async () => {
       // Create a docs/plans dir with a .md file
       mkdirSync(join(projectRoot, 'docs', 'plans'), { recursive: true });
-      writeFileSync(join(projectRoot, 'docs', 'plans', 'W-001-test.md'), '# Plan');
+      writeFileSync(
+        join(projectRoot, 'docs', 'plans', 'W-001-test.md'),
+        '# Plan',
+      );
 
       const app = await createTestApp(prefsDir, projectRoot);
       const { body: projectsBody } = await request(app, 'GET', '/api/projects');
       const projectName = projectsBody.projects[0].name;
 
-      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/plan-files`);
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/plan-files`,
+      );
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(Array.isArray(body.files)).toBe(true);
@@ -274,7 +337,11 @@ describe('project-routes', () => {
       const app = await createTestApp(prefsDir, projectRoot);
       const { body: projectsBody } = await request(app, 'GET', '/api/projects');
       const projectName = projectsBody.projects[0].name;
-      const { status } = await request(app, 'GET', `/api/projects/${projectName}/branches`);
+      const { status } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/branches`,
+      );
       // Either 200 (if git repo) or 500 (if not) — both are valid responses
       expect([200, 500]).toContain(status);
     });
