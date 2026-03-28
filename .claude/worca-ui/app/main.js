@@ -394,6 +394,11 @@ function handleProjectSwitch(newProjectId) {
     activeRunId: null,
   });
 
+  // Reset transient UI state that is project-scoped
+  pipelineAction = null;
+  actionError = null;
+  restartStageKey = null;
+
   // Send updated hello-ack
   ws.sendRaw({
     type: 'hello-ack',
