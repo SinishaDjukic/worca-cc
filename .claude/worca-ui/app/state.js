@@ -8,6 +8,8 @@ export function createStore(initial = {}) {
   let state = {
     activeRunId: initial.activeRunId ?? null,
     projectName: initial.projectName ?? '',
+    currentProjectId: initial.currentProjectId ?? null,
+    projects: initial.projects ?? [],
     runs: initial.runs ?? {},
     logLines: initial.logLines ?? [],
     preferences: {
@@ -48,6 +50,8 @@ export function createStore(initial = {}) {
       if (
         next.activeRunId === state.activeRunId &&
         next.projectName === state.projectName &&
+        next.currentProjectId === state.currentProjectId &&
+        next.projects === state.projects &&
         next.runs === state.runs &&
         next.logLines === state.logLines &&
         next.preferences.theme === state.preferences.theme &&

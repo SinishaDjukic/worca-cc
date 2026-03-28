@@ -164,6 +164,10 @@ export function createWsClient(options = {}) {
   connect();
 
   return {
+    sendRaw(msg) {
+      sendRaw(msg);
+    },
+
     send(type, payload) {
       if (!MESSAGE_TYPES.includes(type)) {
         return Promise.reject(new Error(`unknown message type: ${type}`));

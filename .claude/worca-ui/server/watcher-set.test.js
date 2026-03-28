@@ -159,4 +159,25 @@ describe('WatcherSet', () => {
     expect(ws.projectId).toBe('my-proj');
     ws.destroy();
   });
+
+  it('worcaDir getter returns construction-time value', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    expect(ws.worcaDir).toBe(worcaDir);
+    ws.destroy();
+  });
+
+  it('settingsPath getter returns deps.settingsPath', () => {
+    const deps = makeDeps({ settingsPath: '/custom/settings.json' });
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    expect(ws.settingsPath).toBe('/custom/settings.json');
+    ws.destroy();
+  });
+
+  it('projectRoot getter returns deps.projectRoot', () => {
+    const deps = makeDeps({ projectRoot: '/custom/project' });
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    expect(ws.projectRoot).toBe('/custom/project');
+    ws.destroy();
+  });
 });

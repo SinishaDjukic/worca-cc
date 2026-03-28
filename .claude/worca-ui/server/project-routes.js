@@ -7,6 +7,7 @@
  */
 
 import { Router } from 'express';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   readProjects,
@@ -15,6 +16,7 @@ import {
   validateProjectEntry,
   writeProject,
 } from './project-registry.js';
+import { discoverRuns } from './watcher.js';
 
 /**
  * Middleware that resolves :projectId to a project entry and attaches it to req.project.
@@ -102,6 +104,35 @@ export function createProjectScopedRoutes() {
   // GET /api/projects/:projectId/info — project metadata
   router.get('/info', (req, res) => {
     res.json({ ok: true, project: req.project });
+  });
+
+  // GET /api/projects/:projectId/runs — list runs for this project
+  router.get('/runs', (req, res) => {
+    try {
+      const runs = discoverRuns(req.project.worcaDir);
+      res.json({ ok: true, runs });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/projects/:projectId/runs/:runId/status — run status
+  router.get('/runs/:runId/status', (req, res) => {
+    const { runId } = req.params;
+    const { worcaDir } = req.project;
+    let statusPath = join(worcaDir, 'runs', runId, 'status.json');
+    if (!existsSync(statusPath)) {
+      statusPath = join(worcaDir, 'results', runId, 'status.json');
+    }
+    if (!existsSync(statusPath)) {
+      return res.status(404).json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      res.json({ ok: true, ...status });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   return router;

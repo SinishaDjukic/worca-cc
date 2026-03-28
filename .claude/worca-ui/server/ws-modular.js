@@ -74,19 +74,14 @@ export function attachWsServer(httpServer, config) {
   // Default WatcherSet — used by message router (Phase 1a: UI is single-project)
   const defaultWs = watcherSets.values().next().value;
 
-  // 4. Message router — delegates to default project's watchers
+  // 4. Message router — resolves project per-request via watcherSets
   const messageRouter = createMessageRouter({
-    worcaDir,
-    settingsPath,
+    watcherSets,
+    defaultWs,
     prefsPath,
-    projectRoot,
     webhookInbox,
     clientManager,
     broadcaster,
-    statusWatcher: defaultWs.statusWatcher,
-    logWatcher: defaultWs.logWatcher,
-    beadsWatcher: defaultWs.beadsWatcher,
-    eventWatcher: defaultWs.eventWatcher,
   });
 
   /**

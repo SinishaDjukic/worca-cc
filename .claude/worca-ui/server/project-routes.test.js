@@ -180,6 +180,47 @@ describe('project-routes', () => {
     });
   });
 
+  describe('project-scoped runs routes', () => {
+    it('GET /api/projects/:id/runs returns runs for resolved project', async () => {
+      // The synthesized default project has a worcaDir — discoverRuns will return []
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/runs`);
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.runs)).toBe(true);
+    });
+
+    it('GET /api/projects/:id/runs returns 404 for unknown project', async () => {
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { status, body } = await request(app, 'GET', '/api/projects/nonexistent/runs');
+      expect(status).toBe(404);
+      expect(body.ok).toBe(false);
+    });
+
+    it('GET /api/projects/:id/runs/:runId/status returns status', async () => {
+      // Create a fake run with status.json
+      const runId = 'test-run-001';
+      const runDir = join(projectRoot, '.worca', 'runs', runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, 'status.json'), JSON.stringify({
+        pipeline_status: 'completed',
+        stage: 'test',
+      }));
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(app, 'GET', `/api/projects/${projectName}/runs/${runId}/status`);
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.pipeline_status).toBe('completed');
+    });
+  });
+
   describe('backwards compatibility', () => {
     it('old /api/runs route still works', async () => {
       const app = await createTestApp(prefsDir, projectRoot);

@@ -26,6 +26,9 @@ export const MESSAGE_TYPES = [
   'get-webhook-inbox',
   'set-webhook-control',
   'clear-webhook-inbox',
+  // Protocol handshake
+  'hello',
+  'hello-ack',
   // Server → Client events
   'run-snapshot',
   'run-update',

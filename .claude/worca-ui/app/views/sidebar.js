@@ -10,8 +10,8 @@ import {
   Settings,
   Zap,
 } from '../utils/icons.js';
-export function sidebarView(state, route, connectionState, { onNavigate }) {
-  const { runs, preferences, projectName } = state;
+export function sidebarView(state, route, connectionState, { onNavigate, onProjectChange }) {
+  const { runs, preferences, projectName, projects, currentProjectId } = state;
   const runList = Object.values(runs);
   const activeCount = runList.filter((r) => r.active).length;
   const historyCount = runList.filter((r) => !r.active).length;
@@ -41,6 +41,20 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
         <span class="logo-text">WORCA</span>
         ${projectName ? html`<span class="project-name">${projectName}</span>` : ''}
       </div>
+
+      ${projects && projects.length > 1 ? html`
+        <div class="sidebar-project-selector">
+          <sl-select
+            size="small"
+            value=${currentProjectId || ''}
+            @sl-change=${(e) => onProjectChange?.(e.target.value)}
+          >
+            ${projects.map((p) => html`
+              <sl-option value=${p.name}>${p.name}</sl-option>
+            `)}
+          </sl-select>
+        </div>
+      ` : ''}
 
       <div class="sidebar-new-run">
         <button class="sidebar-new-run-btn" @click=${() => onNavigate('new-run')}>

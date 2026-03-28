@@ -1,6 +1,9 @@
 /**
  * WebSocket message router — handles all 24 request types.
  * Delegates to other modules for state and side effects.
+ *
+ * Supports multi-project mode: each handler resolves the target project
+ * via resolveProject() before accessing watchers or filesystem paths.
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -52,33 +55,46 @@ function _buildStagePrompt(stage, rawPrompt) {
 
 /**
  * @param {{
- *   worcaDir: string,
- *   settingsPath: string,
+ *   watcherSets: Map<string, import('./watcher-set.js').WatcherSet>,
+ *   defaultWs: import('./watcher-set.js').WatcherSet,
  *   prefsPath: string,
- *   projectRoot: string,
  *   webhookInbox: object,
  *   clientManager: { ensureSubs: Function, getSubs: Function, setProtocol: Function },
  *   broadcaster: { broadcast: Function, broadcastToSubscribers: Function },
- *   statusWatcher: { scheduleRefresh: Function, lastPipelineStatus: Map, resolveActiveRunDir: Function },
- *   logWatcher: { watchLogFile: Function, watchAllLogFiles: Function, sendArchivedLogs: Function, resolveLogsBaseDir: Function },
- *   beadsWatcher: { getBeadsDbPath: Function },
- *   eventWatcher: { readEventsFromFile: Function, subscribeEvents: Function, maybeCloseEventWatcher: Function }
  * }} deps
  */
 export function createMessageRouter({
-  worcaDir,
-  settingsPath,
+  watcherSets,
+  defaultWs,
   prefsPath,
-  projectRoot,
   webhookInbox,
   clientManager,
   broadcaster,
-  statusWatcher,
-  logWatcher,
-  beadsWatcher,
-  eventWatcher,
 }) {
-  const beadsDbPath = beadsWatcher.getBeadsDbPath();
+  /**
+   * Resolve the target project's WatcherSet for a given client + payload.
+   * Priority: payload.projectId > subs.projectId > defaultWs
+   */
+  function resolveProject(ws, payload) {
+    const projectId = payload?.projectId
+      || clientManager.getSubs(ws)?.projectId
+      || null;
+    if (projectId && watcherSets.has(projectId)) {
+      const wset = watcherSets.get(projectId);
+      return {
+        wset,
+        worcaDir: wset.worcaDir,
+        settingsPath: wset.settingsPath,
+        projectRoot: wset.projectRoot,
+      };
+    }
+    return {
+      wset: defaultWs,
+      worcaDir: defaultWs.worcaDir,
+      settingsPath: defaultWs.settingsPath,
+      projectRoot: defaultWs.projectRoot,
+    };
+  }
 
   async function handleMessage(ws, data) {
     let json;
@@ -125,8 +141,9 @@ export function createMessageRouter({
 
     // list-runs
     if (req.type === 'list-runs') {
-      const runs = discoverRuns(worcaDir);
-      const settings = readSettings(settingsPath);
+      const proj = resolveProject(ws, req.payload);
+      const runs = discoverRuns(proj.worcaDir);
+      const settings = readSettings(proj.settingsPath);
       ws.send(JSON.stringify(makeOk(req, { runs, settings })));
       return;
     }
@@ -146,7 +163,8 @@ export function createMessageRouter({
         );
         return;
       }
-      const runs = discoverRuns(worcaDir);
+      const proj = resolveProject(ws, req.payload);
+      const runs = discoverRuns(proj.worcaDir);
       const run = runs.find((r) => r.id === runId);
       if (!run) {
         ws.send(
@@ -189,14 +207,14 @@ export function createMessageRouter({
       let agentInstructions = null;
       const candidates = [
         join(
-          worcaDir,
+          proj.worcaDir,
           'runs',
           run.run_id || runId,
           'agents',
           `${agentName}.md`,
         ),
         join(
-          worcaDir,
+          proj.worcaDir,
           'results',
           run.run_id || runId,
           'agents',
@@ -238,16 +256,17 @@ export function createMessageRouter({
         );
         return;
       }
+      const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       s.runId = runId;
-      const runs = discoverRuns(worcaDir);
+      const runs = discoverRuns(proj.worcaDir);
       const run = runs.find((r) => r.id === runId);
       if (run) {
         if (
           run.pipeline_status !== undefined &&
-          !statusWatcher.lastPipelineStatus.has(runId)
+          !proj.wset.statusWatcher.lastPipelineStatus.has(runId)
         ) {
-          statusWatcher.lastPipelineStatus.set(runId, run.pipeline_status);
+          proj.wset.statusWatcher.lastPipelineStatus.set(runId, run.pipeline_status);
         }
         ws.send(JSON.stringify(makeOk(req, run)));
       } else {
@@ -271,20 +290,21 @@ export function createMessageRouter({
     // subscribe-log
     if (req.type === 'subscribe-log') {
       const { stage, runId, iteration } = req.payload || {};
+      const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       s.logStage = stage || '*';
       s.logRunId = runId || null;
       ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
 
       const archivedLogDir = runId
-        ? join(worcaDir, 'results', runId)
+        ? join(proj.worcaDir, 'results', runId)
         : null;
       const isArchived = archivedLogDir && existsSync(archivedLogDir);
 
       if (isArchived) {
-        logWatcher.sendArchivedLogs(ws, archivedLogDir, stage, iteration);
+        proj.wset.logWatcher.sendArchivedLogs(ws, archivedLogDir, stage, iteration);
       } else {
-        const logsBase = logWatcher.resolveLogsBaseDir();
+        const logsBase = proj.wset.logWatcher.resolveLogsBaseDir();
         if (stage) {
           if (iteration != null) {
             const logPath = resolveIterationLogPath(
@@ -338,7 +358,7 @@ export function createMessageRouter({
               }
             }
           }
-          logWatcher.watchLogFile(stage);
+          proj.wset.logWatcher.watchLogFile(stage);
         } else {
           const logFiles = listLogFiles(logsBase);
           for (const { stage: s2, iteration: iterNum, path } of logFiles) {
@@ -358,7 +378,7 @@ export function createMessageRouter({
               );
             }
           }
-          logWatcher.watchAllLogFiles();
+          proj.wset.logWatcher.watchAllLogFiles();
         }
       }
       return;
@@ -373,14 +393,14 @@ export function createMessageRouter({
       return;
     }
 
-    // get-preferences
+    // get-preferences (user-scoped, not project-scoped)
     if (req.type === 'get-preferences') {
       const prefs = readPreferences(prefsPath);
       ws.send(JSON.stringify(makeOk(req, prefs)));
       return;
     }
 
-    // set-preferences
+    // set-preferences (user-scoped, not project-scoped)
     if (req.type === 'set-preferences') {
       const prefs = req.payload || {};
       const current = readPreferences(prefsPath);
@@ -402,8 +422,9 @@ export function createMessageRouter({
         );
         return;
       }
+      const proj = resolveProject(ws, req.payload);
       try {
-        const result = pmPausePipeline(worcaDir, runId);
+        const result = pmPausePipeline(proj.worcaDir, runId);
         ws.send(JSON.stringify(makeOk(req, result)));
       } catch (e) {
         ws.send(
@@ -415,8 +436,9 @@ export function createMessageRouter({
 
     // stop-run
     if (req.type === 'stop-run') {
+      const proj = resolveProject(ws, req.payload);
       try {
-        const result = pmStopPipeline(worcaDir);
+        const result = pmStopPipeline(proj.worcaDir);
         ws.send(JSON.stringify(makeOk(req, result)));
         let checks = 0;
         const maxChecks = 20;
@@ -431,13 +453,13 @@ export function createMessageRouter({
           }
           if (!alive || checks >= maxChecks) {
             clearInterval(pollInterval);
-            reconcileStatus(worcaDir);
-            statusWatcher.scheduleRefresh();
+            reconcileStatus(proj.worcaDir);
+            proj.wset.statusWatcher.scheduleRefresh();
           }
         }, 500);
         pollInterval.unref?.();
       } catch (e) {
-        statusWatcher.scheduleRefresh();
+        proj.wset.statusWatcher.scheduleRefresh();
         ws.send(
           JSON.stringify(
             makeError(req, e.code || 'not_running', e.message),
@@ -450,11 +472,12 @@ export function createMessageRouter({
     // resume-run
     if (req.type === 'resume-run') {
       const { runId } = req.payload || {};
+      const proj = resolveProject(ws, req.payload);
       try {
-        const result = await pmStartPipeline(worcaDir, {
+        const result = await pmStartPipeline(proj.worcaDir, {
           resume: true,
           runId,
-          projectRoot,
+          projectRoot: proj.projectRoot,
         });
         ws.send(
           JSON.stringify(makeOk(req, { resumed: true, pid: result.pid })),
@@ -469,6 +492,8 @@ export function createMessageRouter({
 
     // list-beads-issues
     if (req.type === 'list-beads-issues') {
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(
           JSON.stringify(
@@ -492,6 +517,8 @@ export function createMessageRouter({
 
     // list-beads-unlinked
     if (req.type === 'list-beads-unlinked') {
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(
           JSON.stringify(makeOk(req, { issues: [], dbExists: false })),
@@ -505,6 +532,8 @@ export function createMessageRouter({
 
     // list-beads-refs
     if (req.type === 'list-beads-refs') {
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { refs: [] })));
         return;
@@ -516,6 +545,8 @@ export function createMessageRouter({
 
     // list-beads-counts
     if (req.type === 'list-beads-counts') {
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { counts: {} })));
         return;
@@ -536,6 +567,8 @@ export function createMessageRouter({
         );
         return;
       }
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       if (!beadsDbExists(beadsDbPath)) {
         ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
         return;
@@ -560,6 +593,8 @@ export function createMessageRouter({
         );
         return;
       }
+      const proj = resolveProject(ws, req.payload);
+      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
       const issue = getIssue(beadsDbPath, issueId);
       if (!issue) {
         ws.send(
@@ -596,12 +631,12 @@ export function createMessageRouter({
       try {
         const prompt =
           `[Beads #${issue.id}] ${issue.title}\n\n${(issue.body || '').trim()}`.trim();
-        const result = await pmStartPipeline(worcaDir, {
+        const result = await pmStartPipeline(proj.worcaDir, {
           inputType: 'prompt',
           inputValue: prompt,
           msize: 1,
           mloops: 1,
-          projectRoot,
+          projectRoot: proj.projectRoot,
         });
         broadcaster.broadcast('run-started', { pid: result.pid });
         ws.send(
@@ -627,7 +662,8 @@ export function createMessageRouter({
         );
         return;
       }
-      const events = eventWatcher.readEventsFromFile(runId, {
+      const proj = resolveProject(ws, req.payload);
+      const events = proj.wset.eventWatcher.readEventsFromFile(runId, {
         since_event_id,
         event_types,
         limit,
@@ -647,19 +683,21 @@ export function createMessageRouter({
         );
         return;
       }
+      const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       s.eventsRunId = runId;
-      eventWatcher.subscribeEvents(runId);
+      proj.wset.eventWatcher.subscribeEvents(runId);
       ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
       return;
     }
 
     // unsubscribe-events
     if (req.type === 'unsubscribe-events') {
+      const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       const prevRunId = s.eventsRunId;
       s.eventsRunId = null;
-      if (prevRunId) eventWatcher.maybeCloseEventWatcher(prevRunId);
+      if (prevRunId) proj.wset.eventWatcher.maybeCloseEventWatcher(prevRunId);
       ws.send(JSON.stringify(makeOk(req, { unsubscribed: true })));
       return;
     }

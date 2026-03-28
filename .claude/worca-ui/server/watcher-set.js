@@ -41,6 +41,10 @@ export class WatcherSet {
     this.eventWatcher = null;
   }
 
+  get worcaDir() { return this._worcaDir; }
+  get settingsPath() { return this._deps.settingsPath; }
+  get projectRoot() { return this._deps.projectRoot; }
+
   /** Create all watchers. Each factory is try/catch isolated. */
   create() {
     const { broadcaster, getSubs, wss, settingsPath, projectRoot } = this._deps;

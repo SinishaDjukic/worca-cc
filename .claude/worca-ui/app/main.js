@@ -345,6 +345,74 @@ ws.on('webhook-inbox-cleared', () => {
   webhookSelectedId = null;
 });
 
+// --- Protocol negotiation ---
+
+function handleHello(payload) {
+  // Server says it supports protocol 2 — fetch projects and send hello-ack
+  fetch('/api/projects')
+    .then((r) => r.json())
+    .then((data) => {
+      const projects = data.projects || [];
+      store.setState({ projects });
+
+      // Determine currentProjectId from URL or first project
+      const currentProjectId = route.projectId || projects[0]?.name || null;
+      store.setState({ currentProjectId });
+
+      // Send hello-ack
+      ws.sendRaw({
+        type: 'hello-ack',
+        payload: { protocol: 2, projectId: currentProjectId },
+      });
+    })
+    .catch(() => {});
+}
+
+ws.on('hello', handleHello);
+
+// --- Project switching ---
+
+function handleProjectSwitch(newProjectId) {
+  store.setState({
+    currentProjectId: newProjectId,
+    runs: {},
+    logLines: [],
+    activeRunId: null,
+  });
+
+  // Send updated hello-ack
+  ws.sendRaw({
+    type: 'hello-ack',
+    payload: { protocol: 2, projectId: newProjectId },
+  });
+
+  // Re-fetch data for new project
+  ws.send('list-runs')
+    .then((payload) => {
+      const runs = {};
+      for (const run of payload.runs || []) runs[run.id] = run;
+      store.setState({ runs });
+      if (payload.settings) settings = payload.settings;
+    })
+    .catch(() => {});
+
+  ws.send('list-beads-issues')
+    .then((payload) => {
+      store.setState({
+        beads: {
+          issues: payload.issues || [],
+          dbExists: payload.dbExists ?? false,
+          dbPath: payload.dbPath || null,
+          loading: false,
+        },
+      });
+    })
+    .catch(() => {});
+
+  fetchBeadsCounts();
+  fetchProjectInfo();
+}
+
 // --- Connection handling ---
 
 ws.onConnection((state) => {
@@ -416,7 +484,13 @@ ws.onConnection((state) => {
 
 onHashChange((newRoute) => {
   const prevRunId = route.runId;
+  const prevProjectId = route.projectId;
   route = newRoute;
+
+  // Detect project switch via URL
+  if (newRoute.projectId && newRoute.projectId !== prevProjectId) {
+    handleProjectSwitch(newRoute.projectId);
+  }
 
   if (prevRunId && prevRunId !== route.runId) {
     stageIterationTab.clear();
@@ -462,11 +536,15 @@ onHashChange((newRoute) => {
 // --- Actions ---
 
 function handleNavigate(section) {
-  navigate(section, null);
+  navigate(section, null, route.projectId);
 }
 
 function handleSelectRun(runId) {
-  navigate(route.section, runId);
+  navigate(route.section, runId, route.projectId);
+}
+
+function handleProjectChange(projectId) {
+  navigate(route.section, null, projectId);
 }
 
 function handleThemeToggle() {
@@ -676,7 +754,7 @@ async function handleConfirmRestartStage() {
     });
     const data = await res.json();
     if (data.ok) {
-      navigate('active', null);
+      navigate('active', null, route.projectId);
     } else {
       showActionError(data.error || 'Failed to restart stage');
     }
@@ -692,12 +770,12 @@ function handleBack() {
     const runs = Object.values(store.getState().runs);
     const activeRuns = runs.filter((r) => r.active);
     if (route.section === 'active' && activeRuns.length <= 1) {
-      navigate('dashboard', null);
+      navigate('dashboard', null, route.projectId);
     } else {
-      navigate(route.section, null);
+      navigate(route.section, null, route.projectId);
     }
   } else if (route.section && route.section !== 'dashboard') {
-    navigate('dashboard', null);
+    navigate('dashboard', null, route.projectId);
   }
 }
 
@@ -720,7 +798,7 @@ async function handleStartBeadsIssue(issueId) {
   try {
     await ws.send('start-beads-issue', { issueId });
     beadsStarting = null;
-    navigate('active', null);
+    navigate('active', null, route.projectId);
   } catch (err) {
     beadsStarting = null;
     beadsStartError = err?.message || 'Failed to start pipeline';
@@ -773,12 +851,17 @@ function fetchCostsData() {
 }
 
 function fetchProjectInfo() {
-  fetch('/api/project-info')
+  const currentProjectId = store.getState().currentProjectId;
+  const url = currentProjectId
+    ? `/api/projects/${currentProjectId}/info`
+    : '/api/project-info';
+  fetch(url)
     .then((r) => r.json())
     .then((data) => {
-      if (data.name !== undefined) {
-        store.setState({ projectName: data.name });
-        document.title = formatTitle(data.name);
+      const name = data.project?.name ?? data.name;
+      if (name !== undefined) {
+        store.setState({ projectName: name });
+        document.title = formatTitle(name);
       }
     })
     .catch(() => {});
@@ -991,7 +1074,7 @@ function contentHeaderView() {
     const isRunning = runs.some((r) => r.active);
     actionButton = html`
       <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || isRunning}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active') })}>
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId) })}>
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
       </button>`;
@@ -1158,7 +1241,7 @@ function mainContentView() {
   if (route.section === 'active') {
     const activeRuns = runs.filter((r) => r.active);
     if (activeRuns.length === 1) {
-      navigate('active', activeRuns[0].id);
+      navigate('active', activeRuns[0].id, route.projectId);
       return html``;
     }
     return runListView(runs, 'active', {
@@ -1168,7 +1251,7 @@ function mainContentView() {
   }
 
   return dashboardView(state, {
-    onSelectRun: (runId) => navigate('active', runId),
+    onSelectRun: (runId) => navigate('active', runId, route.projectId),
     onNavigate: handleNavigate,
     onPause: handlePauseRun,
     onResume: handleResumeRun,
@@ -1198,6 +1281,7 @@ function rerender() {
       ${sidebarView(state, route, connectionState, {
         onNavigate: handleNavigate,
         onSelectRun: handleSelectRun,
+        onProjectChange: handleProjectChange,
       })}
       <main class="main-content">
         ${notificationManager.renderBanner()}
