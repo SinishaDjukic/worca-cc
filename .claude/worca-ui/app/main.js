@@ -1417,9 +1417,9 @@ function rerender() {
           })
           .catch(() => {});
       },
-      onClose: (opts) => {
+      onClose: () => {
         store.setState({ addProjectDialogOpen: false });
-        if (opts?.rerender) rerender();
+        rerender();
       },
     })}
   `,

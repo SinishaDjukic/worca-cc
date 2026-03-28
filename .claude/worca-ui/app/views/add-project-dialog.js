@@ -2,6 +2,15 @@ import { html, nothing } from 'lit-html';
 
 let dialogError = '';
 
+function showError(msg) {
+  dialogError = msg;
+  const el = document.getElementById('add-project-error');
+  if (el) {
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }
+}
+
 export function addProjectDialogView(state, { onProjectAdd, onClose }) {
   const { addProjectDialogOpen } = state;
   if (!addProjectDialogOpen) return nothing;
@@ -14,17 +23,25 @@ export function addProjectDialogView(state, { onProjectAdd, onClose }) {
     const path = pathEl?.value?.trim() || '';
 
     if (!name) {
-      dialogError = 'Name is required';
-      onClose?.({ rerender: true });
+      showError('Name is required');
       return;
     }
     if (!path || !path.startsWith('/')) {
-      dialogError = 'Path must be an absolute path';
-      onClose?.({ rerender: true });
+      showError('Path must be an absolute path');
       return;
     }
 
-    dialogError = '';
+    const normalizedPath = path.replace(/\/+$/, '');
+    const existingProjects = state.projects || [];
+    const duplicate = existingProjects.find(
+      (p) => (p.path || '').replace(/\/+$/, '') === normalizedPath,
+    );
+    if (duplicate) {
+      showError(`A project with this path already exists: "${duplicate.name}"`);
+      return;
+    }
+
+    showError('');
     fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -33,20 +50,20 @@ export function addProjectDialogView(state, { onProjectAdd, onClose }) {
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {
-          dialogError = '';
+          showError('');
           onProjectAdd?.(data.project);
         } else {
-          dialogError = data.error || 'Failed to add project';
-          onClose?.({ rerender: true });
+          showError(data.error || 'Failed to add project');
         }
       })
       .catch((err) => {
-        dialogError = err.message || 'Network error';
-        onClose?.({ rerender: true });
+        showError(err.message || 'Network error');
       });
   }
 
-  function handleDialogHide() {
+  function handleDialogHide(e) {
+    // Ignore hide events from elements disconnected during rerender
+    if (!e.target.isConnected) return;
     dialogError = '';
     onClose?.();
   }
@@ -75,17 +92,12 @@ export function addProjectDialogView(state, { onProjectAdd, onClose }) {
             required
           ></sl-input>
         </div>
-        ${
-          dialogError
-            ? html`
-          <div style="color: var(--status-failed); font-size: 0.85rem; margin-bottom: 12px;">
-            ${dialogError}
-          </div>
-        `
-            : nothing
-        }
+        <div
+          id="add-project-error"
+          style="color: var(--status-failed); font-size: 0.85rem; margin-bottom: 12px; display: ${dialogError ? 'block' : 'none'};"
+        >${dialogError}</div>
         <sl-button slot="footer" @click=${handleDialogHide}>Cancel</sl-button>
-        <sl-button slot="footer" variant="primary" type="submit" @click=${handleSubmit}>
+        <sl-button slot="footer" variant="primary" @click=${handleSubmit}>
           Add Project
         </sl-button>
       </form>

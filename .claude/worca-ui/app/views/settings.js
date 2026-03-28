@@ -128,6 +128,7 @@ let settingsData = null;
 let saveStatus = null; // null | 'saving' | 'success' | 'error'
 let saveMessage = '';
 let _settingsProjectId = null; // track which project settings are loaded for
+let _pendingRemoveProject = null; // project name awaiting removal confirmation
 
 function settingsUrl(projectId, suffix = '') {
   if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
@@ -1142,11 +1143,23 @@ function projectsTab(
 ) {
   const list = projects || [];
 
-  function handleRemove(projectName) {
-    fetch(`/api/projects/${projectName}`, { method: 'DELETE' })
+  function confirmRemove(projectName) {
+    _pendingRemoveProject = projectName;
+    _rerender();
+    requestAnimationFrame(() => {
+      const dlg = document.querySelector('#confirm-remove-dialog');
+      if (dlg) dlg.show();
+    });
+  }
+
+  function executeRemove() {
+    if (!_pendingRemoveProject) return;
+    const name = _pendingRemoveProject;
+    _pendingRemoveProject = null;
+    fetch(`/api/projects/${name}`, { method: 'DELETE' })
       .then((r) => r.json())
       .then((data) => {
-        if (data.ok) onProjectRemove?.(projectName);
+        if (data.ok) onProjectRemove?.(name);
       })
       .catch(() => {});
   }
@@ -1170,7 +1183,7 @@ function projectsTab(
               size="small"
               variant="danger"
               outline
-              @click=${() => handleRemove(p.name)}
+              @click=${() => confirmRemove(p.name)}
             >
               ${unsafeHTML(iconSvg(Trash2, 14))}
               Remove
@@ -1187,6 +1200,18 @@ function projectsTab(
         </sl-button>
       </div>
     </div>
+    <sl-dialog id="confirm-remove-dialog" label="Remove Project">
+      Are you sure you want to remove <strong>${_pendingRemoveProject}</strong>? This only unregisters the project — no files are deleted.
+      <sl-button slot="footer" variant="default" @click=${() => {
+        const dlg = document.querySelector('#confirm-remove-dialog');
+        if (dlg) dlg.hide();
+      }}>Cancel</sl-button>
+      <sl-button slot="footer" variant="danger" @click=${() => {
+        const dlg = document.querySelector('#confirm-remove-dialog');
+        if (dlg) dlg.hide();
+        executeRemove();
+      }}>Remove</sl-button>
+    </sl-dialog>
   `;
 }
 
