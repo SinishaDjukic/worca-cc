@@ -57,6 +57,37 @@ const app = createApp({
 });
 const server = createServer(app);
 
+// Register error handler BEFORE attachWsServer — the WSS constructor adds its
+// own error forwarder on the HTTP server, so our handler must be first in line.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `\n  Error: Port ${port} is already in use (${host}:${port})\n`,
+    );
+    console.error('  To fix this, either:\n');
+    console.error(
+      `    1. Start on a different port:  worca-ui start --port ${port + 1}`,
+    );
+    console.error(
+      `       Or directly:                PORT=${port + 1} npm start\n`,
+    );
+    console.error(
+      '    2. Stop the existing server:   worca-ui stop',
+    );
+    if (!isGlobal) {
+      console.error(
+        '       Or the global server:       worca-ui stop --global',
+      );
+    }
+    console.error(
+      `\n    3. Find what's using the port: lsof -i :${port}\n`,
+    );
+  } else {
+    console.error(`\n  Error: Failed to start server — ${err.message}\n`);
+  }
+  process.exit(1);
+});
+
 const { broadcast, scheduleRefresh } = attachWsServer(server, {
   worcaDir,
   settingsPath,
