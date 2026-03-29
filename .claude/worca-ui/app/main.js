@@ -176,9 +176,16 @@ function autoResetLogFilterOnStageChange(prevRun, newRun) {
 // --- Wire WS events to state ---
 
 ws.on('runs-list', (payload, msg) => {
-  // In multi-project mode, ignore runs-list from other projects
   const currentProject = store.getState().currentProjectId;
+  // In multi-project mode, ignore runs-list from other projects
   if (msg?.project && currentProject && msg.project !== currentProject) return;
+  // In All Projects mode, merge rather than replace
+  if (!currentProject && (store.getState().projects || []).length > 1) {
+    const existing = { ...store.getState().runs };
+    for (const run of payload.runs || []) existing[run.id] = run;
+    store.setState({ runs: existing });
+    return;
+  }
   const runs = {};
   for (const run of payload.runs || []) {
     runs[run.id] = run;
@@ -410,16 +417,43 @@ function handleHello(_payload) {
     .catch(() => {});
 }
 
+/** Fetch runs from all projects via REST and merge into state. */
+function fetchAllProjectRuns() {
+  const projects = store.getState().projects || [];
+  Promise.all(
+    projects.map((p) =>
+      fetch(`/api/projects/${p.name}/runs`)
+        .then((r) => r.json())
+        .then((data) => (data.runs || []).map((run) => ({ ...run, project: run.project || p.name })))
+        .catch(() => []),
+    ),
+  ).then((results) => {
+    const runs = {};
+    for (const projectRuns of results) {
+      for (const run of projectRuns) runs[run.id] = run;
+    }
+    store.setState({ runs });
+    rerender();
+  });
+}
+
 /** Fetch all project-scoped data after hello-ack sets the project context. */
 function fetchProjectScopedData() {
-  ws.send('list-runs')
-    .then((payload) => {
-      const runs = {};
-      for (const run of payload.runs || []) runs[run.id] = run;
-      store.setState({ runs });
-      if (payload.settings) settings = payload.settings;
-    })
-    .catch(() => {});
+  const currentProjectId = store.getState().currentProjectId;
+
+  // All Projects mode: fetch runs from every project via REST
+  if (!currentProjectId && (store.getState().projects || []).length > 1) {
+    fetchAllProjectRuns();
+  } else {
+    ws.send('list-runs')
+      .then((payload) => {
+        const runs = {};
+        for (const run of payload.runs || []) runs[run.id] = run;
+        store.setState({ runs });
+        if (payload.settings) settings = payload.settings;
+      })
+      .catch(() => {});
+  }
 
   ws.send('list-beads-issues')
     .then((payload) => {
@@ -527,14 +561,18 @@ function handleProjectSwitch(newProjectId) {
   });
 
   // Re-fetch data for new project
-  ws.send('list-runs')
-    .then((payload) => {
-      const runs = {};
-      for (const run of payload.runs || []) runs[run.id] = run;
-      store.setState({ runs });
-      if (payload.settings) settings = payload.settings;
-    })
-    .catch(() => {});
+  if (!newProjectId && (store.getState().projects || []).length > 1) {
+    fetchAllProjectRuns();
+  } else {
+    ws.send('list-runs')
+      .then((payload) => {
+        const runs = {};
+        for (const run of payload.runs || []) runs[run.id] = run;
+        store.setState({ runs });
+        if (payload.settings) settings = payload.settings;
+      })
+      .catch(() => {});
+  }
 
   ws.send('list-beads-issues')
     .then((payload) => {
