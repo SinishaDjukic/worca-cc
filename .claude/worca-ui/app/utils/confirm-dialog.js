@@ -28,7 +28,7 @@ export function confirmDialogTemplate() {
     <sl-dialog id="global-confirm-dialog" label=${label} @sl-after-hide=${() => dismiss(onCancel)}>
       ${typeof message === 'string' ? html`<p>${message}</p>` : message}
       <div slot="footer" style="display:flex; justify-content:center; gap:0.75rem; width:100%">
-        <sl-button variant="default" @click=${() => dismiss(onCancel)}>Cancel</sl-button>
+        <sl-button variant="default" autofocus @click=${() => dismiss(onCancel)}>Cancel</sl-button>
         <sl-button variant=${confirmVariant} @click=${() => dismiss(onConfirm)}>${confirmLabel}</sl-button>
       </div>
     </sl-dialog>

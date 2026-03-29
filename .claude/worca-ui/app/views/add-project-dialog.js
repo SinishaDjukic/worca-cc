@@ -96,10 +96,10 @@ export function addProjectDialogView(state, { onProjectAdd, onClose }) {
           id="add-project-error"
           style="color: var(--status-failed); font-size: 0.85rem; margin-bottom: 12px; display: ${dialogError ? 'block' : 'none'};"
         >${dialogError}</div>
-        <sl-button slot="footer" @click=${handleDialogHide}>Cancel</sl-button>
-        <sl-button slot="footer" variant="primary" @click=${handleSubmit}>
-          Add Project
-        </sl-button>
+        <div slot="footer" style="display:flex; justify-content:center; gap:0.75rem; width:100%">
+          <sl-button autofocus @click=${handleDialogHide}>Cancel</sl-button>
+          <sl-button variant="primary" @click=${handleSubmit}>Add Project</sl-button>
+        </div>
       </form>
     </sl-dialog>
   `;

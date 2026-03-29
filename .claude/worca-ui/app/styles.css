@@ -99,6 +99,17 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Global Shoelace button icon alignment */
+sl-button::part(label) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+sl-button svg {
+  flex-shrink: 0;
+}
+
 h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -1521,16 +1532,9 @@ sl-details.log-history-panel::part(content) {
   gap: 10px;
 }
 
-.settings-tab-actions sl-button::part(label) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .settings-tab-actions sl-button svg {
   width: 14px;
   height: 14px;
-  flex-shrink: 0;
 }
 
 /* Pipeline flow visualization */
@@ -2306,7 +2310,6 @@ sl-details.live-output-panel::part(content) {
 .stage-restart-btn sl-button svg {
   width: 14px;
   height: 14px;
-  margin-right: 4px;
 }
 
 /* Confirmation dialog text */
