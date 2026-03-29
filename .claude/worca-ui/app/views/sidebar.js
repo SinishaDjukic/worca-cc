@@ -70,8 +70,11 @@ export function sidebarView(
 ) {
   const { runs, preferences, projects, currentProjectId } = state;
   const runList = Object.values(runs);
-  const activeCount = runList.filter((r) => r.active).length;
-  const historyCount = runList.filter((r) => !r.active).length;
+  const activeCount = runList.filter((r) => {
+    const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+    return ps === 'running' || ps === 'resuming';
+  }).length;
+  const historyCount = runList.length;
 
   const beadsIssues = state.beads?.issues || [];
   const beadsReady = beadsIssues.filter(

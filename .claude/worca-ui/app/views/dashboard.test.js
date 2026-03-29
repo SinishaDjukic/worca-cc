@@ -44,62 +44,32 @@ const failed1 = {
   started_at: '2026-01-01T00:00:00Z',
 };
 
-// ─── Grouping ────────────────────────────────────────────────────────────────
+// ─── Active runs ─────────────────────────────────────────────────────────────
 
-describe('dashboardView - active run grouping', () => {
-  it('renders active-group-running section for running runs', () => {
+describe('dashboardView - active runs', () => {
+  it('shows active running run in Active Runs section', () => {
     const state = { runs: { r1: running1 } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('active-group-running');
+    expect(output).toContain('Active Runs');
+    expect(output).toContain('run-card');
   });
 
-  it('renders active-group-paused section for paused runs', () => {
+  it('shows active paused run in Active Runs section', () => {
     const state = { runs: { p1: paused1 } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('active-group-paused');
+    expect(output).toContain('Active Runs');
+    expect(output).toContain('run-card');
   });
 
-  it('renders active-group-failed section for failed runs', () => {
-    const state = { runs: { f1: failed1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('active-group-failed');
-  });
-
-  it('running group appears before paused group in output', () => {
+  it('shows all active runs regardless of status', () => {
     const state = { runs: { r1: running1, p1: paused1 } };
     const output = renderToString(dashboardView(state));
-    expect(output.indexOf('active-group-running')).toBeLessThan(
-      output.indexOf('active-group-paused'),
-    );
+    // Both are active:true, so both appear under Active Runs
+    const count = (output.match(/run-card /g) || []).length;
+    expect(count).toBe(2);
   });
 
-  it('paused group appears before failed group in output', () => {
-    const state = { runs: { p1: paused1, f1: failed1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output.indexOf('active-group-paused')).toBeLessThan(
-      output.indexOf('active-group-failed'),
-    );
-  });
-
-  it('does not render active-group-running when no running runs', () => {
-    const state = { runs: { p1: paused1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).not.toContain('active-group-running');
-  });
-
-  it('does not render active-group-paused when no paused runs', () => {
-    const state = { runs: { r1: running1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).not.toContain('active-group-paused');
-  });
-
-  it('does not render active-group-failed when no failed runs', () => {
-    const state = { runs: { r1: running1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).not.toContain('active-group-failed');
-  });
-
-  it('treats resuming status as part of running group', () => {
+  it('shows resuming run in Active Runs section', () => {
     const resuming = {
       id: 'res1',
       pipeline_status: 'resuming',
@@ -108,35 +78,36 @@ describe('dashboardView - active run grouping', () => {
     };
     const state = { runs: { res1: resuming } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('active-group-running');
+    expect(output).toContain('Active Runs');
+    expect(output).toContain('run-card');
+  });
+
+  it('shows empty state when no active runs', () => {
+    const completed = { id: 'c1', pipeline_status: 'completed', active: false, started_at: '2026-01-01T00:00:00Z' };
+    const state = { runs: { c1: completed } };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('No active pipelines');
+  });
+
+  it('renders failed runs in Recent Failures not Active Runs', () => {
+    // failed1 has active:true so it shows in active section
+    // An inactive failed run should only show in Recent Failures
+    const inactiveFailed = { id: 'if1', pipeline_status: 'failed', active: false, started_at: '2026-01-01T00:00:00Z' };
+    const state = { runs: { if1: inactiveFailed } };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('Recent Failures');
+    expect(output).toContain('No active pipelines');
   });
 });
 
-// ─── Count badges ─────────────────────────────────────────────────────────────
+// ─── Recent sections ─────────────────────────────────────────────────────────
 
-describe('dashboardView - count badges', () => {
-  it('shows "1 running" for one running run', () => {
-    const state = { runs: { r1: running1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('1 running');
-  });
-
-  it('shows "2 running" for two running runs', () => {
-    const state = { runs: { r1: running1, r2: running2 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('2 running');
-  });
-
-  it('shows "1 paused" for one paused run', () => {
-    const state = { runs: { p1: paused1 } };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('1 paused');
-  });
-
-  it('shows "1 failed" for one failed run', () => {
+describe('dashboardView - recent sections', () => {
+  it('shows failed run in Recent Failures section', () => {
     const state = { runs: { f1: failed1 } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('1 failed');
+    expect(output).toContain('Recent Failures');
+    expect(output).toContain('active-group-failed');
   });
 });
 
@@ -247,7 +218,7 @@ describe('dashboardView - quick-action buttons', () => {
 // ─── Inactive failed/paused runs ─────────────────────────────────────────────
 
 describe('dashboardView - inactive failed/paused runs', () => {
-  it('shows failed run in failed group even when active is false', () => {
+  it('shows inactive failed run in Recent Failures section', () => {
     const inactiveFailed = {
       id: 'if1',
       pipeline_status: 'failed',
@@ -257,7 +228,7 @@ describe('dashboardView - inactive failed/paused runs', () => {
     const state = { runs: { if1: inactiveFailed } };
     const output = renderToString(dashboardView(state));
     expect(output).toContain('active-group-failed');
-    expect(output).toContain('1 failed');
+    expect(output).toContain('Recent Failures');
   });
 
   it('shows resume button on inactive failed run when onResume provided', () => {
@@ -272,7 +243,7 @@ describe('dashboardView - inactive failed/paused runs', () => {
     expect(output).toContain('btn-quick-resume');
   });
 
-  it('shows paused run in paused group even when active is false', () => {
+  it('does not show inactive paused run in active paused group', () => {
     const inactivePaused = {
       id: 'ip1',
       pipeline_status: 'paused',
@@ -281,11 +252,10 @@ describe('dashboardView - inactive failed/paused runs', () => {
     };
     const state = { runs: { ip1: inactivePaused } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('active-group-paused');
-    expect(output).toContain('1 paused');
+    expect(output).not.toContain('active-group-paused');
   });
 
-  it('does not show inactive completed run in any active group', () => {
+  it('shows inactive completed run in Recent Completed section', () => {
     const inactiveCompleted = {
       id: 'ic1',
       pipeline_status: 'completed',
@@ -297,5 +267,76 @@ describe('dashboardView - inactive failed/paused runs', () => {
     expect(output).not.toContain('active-group-running');
     expect(output).not.toContain('active-group-paused');
     expect(output).not.toContain('active-group-failed');
+    expect(output).toContain('Recent Completed');
+    expect(output).toContain('active-group-completed');
+  });
+});
+
+// ─── Recent sections capping ────────────────────────────────────────────────
+
+describe('dashboardView - recent sections capping', () => {
+  function makeFailed(id, date) {
+    return { id, pipeline_status: 'failed', active: false, started_at: date, work_request: { title: `Run ${id}` } };
+  }
+  function makeCompleted(id, date) {
+    return { id, pipeline_status: 'completed', active: false, started_at: date, work_request: { title: `Run ${id}` } };
+  }
+
+  it('shows at most 3 failed runs in Recent Failures', () => {
+    const runs = {};
+    for (let i = 1; i <= 5; i++) {
+      runs[`f${i}`] = makeFailed(`f${i}`, `2026-01-0${i}T00:00:00Z`);
+    }
+    const state = { runs };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('Recent Failures');
+    // Most recent 3 should be present (f5, f4, f3), oldest 2 (f1, f2) should not
+    expect(output).toContain('Run f5');
+    expect(output).toContain('Run f4');
+    expect(output).toContain('Run f3');
+  });
+
+  it('shows "View all N" link when more than 3 failed runs', () => {
+    const runs = {};
+    for (let i = 1; i <= 5; i++) {
+      runs[`f${i}`] = makeFailed(`f${i}`, `2026-01-0${i}T00:00:00Z`);
+    }
+    const state = { runs };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('View all 5');
+  });
+
+  it('does not show "View all" link when 3 or fewer failed runs', () => {
+    const runs = {};
+    for (let i = 1; i <= 3; i++) {
+      runs[`f${i}`] = makeFailed(`f${i}`, `2026-01-0${i}T00:00:00Z`);
+    }
+    const state = { runs };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('Recent Failures');
+    expect(output).not.toContain('View all');
+  });
+
+  it('shows at most 3 completed runs in Recent Completed', () => {
+    const runs = {};
+    for (let i = 1; i <= 5; i++) {
+      runs[`c${i}`] = makeCompleted(`c${i}`, `2026-01-0${i}T00:00:00Z`);
+    }
+    const state = { runs };
+    const output = renderToString(dashboardView(state));
+    expect(output).toContain('Recent Completed');
+    expect(output).toContain('View all 5');
+  });
+
+  it('does not show Recent Completed when no completed runs', () => {
+    const state = { runs: { r1: running1 } };
+    const output = renderToString(dashboardView(state));
+    expect(output).not.toContain('Recent Completed');
+  });
+
+  it('does not show Recent Failures when no failed runs', () => {
+    const state = { runs: { r1: running1 } };
+    const output = renderToString(dashboardView(state));
+    expect(output).not.toContain('Recent Failures');
   });
 });

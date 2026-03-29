@@ -1277,12 +1277,26 @@ sl-details.log-history-panel::part(content) {
 }
 
 .dashboard-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-size: 14px;
   font-weight: 600;
   margin: 28px 0 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
+}
+.dashboard-view-all {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--accent);
+  cursor: pointer;
+}
+.dashboard-view-all:hover {
+  text-decoration: underline;
 }
 
 .dashboard-stats {
@@ -3629,6 +3643,47 @@ sl-details.learnings-panel::part(content) {
 .active-group-running .active-group-count { color: var(--status-running); }
 .active-group-paused .active-group-count { color: var(--status-paused); }
 .active-group-failed .active-group-count { color: var(--status-failed); }
+
+/* --- Filter Chips (history, etc.) --- */
+.filter-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.15s;
+  text-transform: capitalize;
+}
+.filter-chip:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.filter-chip-running.active { background: var(--status-running); border-color: var(--status-running); }
+.filter-chip-completed.active { background: var(--status-completed); border-color: var(--status-completed); }
+.filter-chip-failed.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip-paused.active { background: var(--status-paused); border-color: var(--status-paused); }
+.filter-chip-error.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip .chip-count {
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
 
 /* --- Run Card Quick-Action Buttons --- */
 .run-card-actions {

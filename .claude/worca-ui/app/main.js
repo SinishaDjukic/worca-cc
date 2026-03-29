@@ -115,6 +115,7 @@ let webhookSelectedId = null;
 let webhookCategoryFilter = 'all';
 let webhookRunFilter = null;
 let webhookSearchTerm = '';
+let historyStatusFilter = 'all';
 
 function handleStageTabChange(stageKey, iterationNumber) {
   stageIterationTab.set(stageKey, iterationNumber);
@@ -1467,6 +1468,11 @@ function mainContentView() {
     return runListView(runs, 'history', {
       onSelectRun: handleSelectRun,
       onResume: handleResumeRun,
+      statusFilter: historyStatusFilter,
+      onStatusFilter: (s) => {
+        historyStatusFilter = s;
+        rerender();
+      },
     });
   }
 
@@ -1485,8 +1491,13 @@ function mainContentView() {
   return html`
     ${dashboardView(state, {
       onSelectRun: (runId) => navigate('active', runId, route.projectId),
-      onNavigate: (section, runId, projectId) => {
-        navigate(section, runId || null, projectId || route.projectId);
+      onNavigate: (section, secondArg, thirdArg) => {
+        if (secondArg && typeof secondArg === 'object' && secondArg.statusFilter) {
+          historyStatusFilter = secondArg.statusFilter;
+          navigate(section, null, route.projectId);
+        } else {
+          navigate(section, secondArg || null, thirdArg || route.projectId);
+        }
       },
       onPause: handlePauseRun,
       onResume: handleResumeRun,

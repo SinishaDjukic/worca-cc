@@ -89,11 +89,13 @@ export function dashboardView(
   const total = runs.length;
   const totalCost = _computeTotalCost(runs);
 
-  const runningGroup = sortByStartDesc(
-    _activeGroup(active, ['running', 'resuming']),
-  );
-  const pausedGroup = sortByStartDesc(_activeGroup(runs, ['paused']));
-  const failedGroup = sortByStartDesc(_activeGroup(runs, ['failed']));
+  const activeGroup = sortByStartDesc(active);
+
+  const MAX_RECENT = 3;
+  const allFailed = sortByStartDesc(_activeGroup(runs, ['failed']));
+  const failedPreview = allFailed.slice(0, MAX_RECENT);
+  const allCompleted = sortByStartDesc(_activeGroup(runs, ['completed']));
+  const completedPreview = allCompleted.slice(0, MAX_RECENT);
 
   const projects = state.projects || [];
   const currentProjectId = state.currentProjectId;
@@ -142,53 +144,49 @@ export function dashboardView(
 
       <h3 class="dashboard-section-title">Active Runs</h3>
       ${
-        runningGroup.length > 0
+        activeGroup.length > 0
           ? html`
-        <div class="active-group active-group-running">
-          <div class="active-group-header">
-            <span class="active-group-count">${runningGroup.length} running</span>
-          </div>
+        <div class="active-group">
           <div class="run-list">
-            ${runningGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause }))}
+            ${activeGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume }))}
           </div>
         </div>
       `
-          : nothing
+          : html`<div class="empty-state">No active pipelines</div>`
       }
+
       ${
-        pausedGroup.length > 0
+        failedPreview.length > 0
           ? html`
-        <div class="active-group active-group-paused">
-          <div class="active-group-header">
-            <span class="active-group-count">${pausedGroup.length} paused</span>
-          </div>
-          <div class="run-list">
-            ${pausedGroup.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
-          </div>
-        </div>
-      `
-          : nothing
-      }
-      ${
-        failedGroup.length > 0
-          ? html`
+        <h3 class="dashboard-section-title">
+          Recent Failures
+          ${allFailed.length > MAX_RECENT ? html`
+            <a class="dashboard-view-all" @click=${() => onNavigate?.('history', { statusFilter: 'failed' })}>View all ${allFailed.length}</a>
+          ` : nothing}
+        </h3>
         <div class="active-group active-group-failed">
-          <div class="active-group-header">
-            <span class="active-group-count">${failedGroup.length} failed</span>
-          </div>
           <div class="run-list">
-            ${failedGroup.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
+            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
           </div>
         </div>
       `
           : nothing
       }
+
       ${
-        runningGroup.length === 0 &&
-        pausedGroup.length === 0 &&
-        failedGroup.length === 0
+        completedPreview.length > 0
           ? html`
-        <div class="empty-state">No running pipelines</div>
+        <h3 class="dashboard-section-title">
+          Recent Completed
+          ${allCompleted.length > MAX_RECENT ? html`
+            <a class="dashboard-view-all" @click=${() => onNavigate?.('history', { statusFilter: 'completed' })}>View all ${allCompleted.length}</a>
+          ` : nothing}
+        </h3>
+        <div class="active-group active-group-completed">
+          <div class="run-list">
+            ${completedPreview.map((run) => runCardView(run, { onClick: onSelectRun }))}
+          </div>
+        </div>
       `
           : nothing
       }
