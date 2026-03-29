@@ -393,8 +393,9 @@ function handleHello(_payload) {
       const projects = data.projects || [];
       store.setState({ projects });
 
-      // Determine currentProjectId from URL or first project
-      const currentProjectId = route.projectId || projects[0]?.name || null;
+      // Determine currentProjectId from URL; only auto-select when single project
+      const currentProjectId = route.projectId
+        || (projects.length === 1 ? projects[0].name : null);
       store.setState({ currentProjectId });
 
       // Send hello-ack — sets project context on server before any requests
