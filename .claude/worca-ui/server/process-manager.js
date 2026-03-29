@@ -149,13 +149,6 @@ export class ProcessManager {
    * @returns {Promise<{ pid: number }>}
    */
   async startPipeline(opts = {}) {
-    const running = this.getRunningPid();
-    if (running) {
-      const err = new Error(`Pipeline already running (PID ${running.pid})`);
-      err.code = 'already_running';
-      throw err;
-    }
-
     const cwd = opts.projectRoot || this.projectRoot;
     const scriptPath = join(cwd, '.claude/scripts/run_pipeline.py');
     if (!existsSync(scriptPath)) {

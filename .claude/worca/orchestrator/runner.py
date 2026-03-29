@@ -356,15 +356,8 @@ def _pid_path(status_path: str) -> str:
 
 
 def _write_pid(status_path: str) -> None:
-    """Write our PID to the PID file. Checks for stale PID first."""
+    """Write our PID to the PID file."""
     path = _pid_path(status_path)
-    if os.path.exists(path):
-        try:
-            old_pid = int(open(path).read().strip())
-            os.kill(old_pid, 0)  # Check if alive
-            raise PipelineError(f"Pipeline already running (PID {old_pid})")
-        except (ProcessLookupError, ValueError, OSError):
-            pass  # Stale PID, safe to overwrite
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(str(os.getpid()))

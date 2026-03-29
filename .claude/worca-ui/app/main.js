@@ -1211,10 +1211,8 @@ function contentHeaderView() {
     title = 'New Pipeline';
     showBack = true;
     const nrs = getNewRunSubmitState();
-    const runs = Object.values(state.runs);
-    const isRunning = runs.some((r) => r.active);
     actionButton = html`
-      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || isRunning}
+      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting}
         @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
