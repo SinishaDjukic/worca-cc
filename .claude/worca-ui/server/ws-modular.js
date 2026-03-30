@@ -212,24 +212,22 @@ export function attachWsServer(httpServer, config) {
     ws.isAlive = true;
     clientManager.ensureSubs(ws);
 
-    // Send hello handshake when multi-project is configured.
+    // Send hello handshake to all clients (both single- and multi-project mode).
     // Protocol 2 clients reply with hello-ack; protocol 1 clients ignore it.
-    if (prefsDir) {
-      ws.send(
-        JSON.stringify({
-          id: `evt-${Date.now()}`,
-          ok: true,
-          type: 'hello',
-          payload: { protocol: 2, capabilities: ['multi-project'] },
-        }),
-      );
+    ws.send(
+      JSON.stringify({
+        id: `evt-${Date.now()}`,
+        ok: true,
+        type: 'hello',
+        payload: { protocol: 2, capabilities: prefsDir ? ['multi-project'] : [] },
+      }),
+    );
 
-      // Timeout: if no hello-ack in 2s, client stays at protocol 1 (legacy)
-      const helloTimeout = setTimeout(() => {
-        // No-op: client stays at protocol 1 by default
-      }, 2000);
-      ws._helloTimeout = helloTimeout;
-    }
+    // Timeout: if no hello-ack in 2s, client stays at protocol 1 (legacy)
+    const helloTimeout = setTimeout(() => {
+      // No-op: client stays at protocol 1 by default
+    }, 2000);
+    ws._helloTimeout = helloTimeout;
 
     ws.on('pong', () => {
       ws.isAlive = true;

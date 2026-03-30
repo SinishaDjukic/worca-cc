@@ -71,8 +71,8 @@ describe('main.js project switching logic', () => {
   });
 
   it('onHashChange detects projectId change', () => {
-    const oldRoute = parseHash('#/active?project=proj-a');
-    const newRoute = parseHash('#/active?project=proj-b');
+    const oldRoute = parseHash('#/project/proj-a/active');
+    const newRoute = parseHash('#/project/proj-b/active');
 
     expect(oldRoute.projectId).toBe('proj-a');
     expect(newRoute.projectId).toBe('proj-b');
@@ -87,13 +87,13 @@ describe('main.js project switching logic', () => {
     expect(state.currentProjectId).toBe(null);
     expect(state.projects).toEqual([]);
 
-    // Route without project param
+    // Route without project segment
     const route = parseHash('#/active');
     expect(route.projectId).toBe(null);
 
     // buildHash without project — same as before
     const hash = buildHash('active', 'run-1');
-    expect(hash).toBe('#/active?run=run-1');
-    expect(hash).not.toContain('project=');
+    expect(hash).toBe('#/active/run-1');
+    expect(hash).not.toContain('project');
   });
 });
