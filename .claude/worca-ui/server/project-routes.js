@@ -17,6 +17,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { Router } from 'express';
+import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { ProcessManager } from './process-manager.js';
 import {
   readProjects,
@@ -1031,6 +1032,61 @@ export function createProjectScopedRoutes() {
     }
 
     res.json({ ok: true, tokenData });
+  });
+
+  // ─── Beads (project-scoped) ─────────────────────────────────────────
+  router.get('/beads/issues', requireWorcaDir, (req, res) => {
+    const beadsDbPath = join(req.project.worcaDir, '..', '.beads', 'beads.db');
+    if (!dbExists(beadsDbPath)) {
+      return res.json({ ok: true, issues: [], dbExists: false, dbPath: beadsDbPath });
+    }
+    try {
+      const issues = listIssues(beadsDbPath);
+      res.json({ ok: true, issues, dbExists: true, dbPath: beadsDbPath });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/beads/issues/:id/start', requireWorcaDir, async (req, res) => {
+    const issueId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(issueId) || issueId <= 0) {
+      return res.status(400).json({ ok: false, error: 'Issue ID must be a positive integer' });
+    }
+    const beadsDbPath = join(req.project.worcaDir, '..', '.beads', 'beads.db');
+    const issue = getIssue(beadsDbPath, issueId);
+    if (!issue) {
+      return res.status(404).json({ ok: false, error: `Issue ${issueId} not found` });
+    }
+    if (issue.status !== 'ready') {
+      return res.status(409).json({
+        ok: false,
+        error: `Issue ${issueId} is not in 'ready' state (current: ${issue.status})`,
+      });
+    }
+    if (issue.blocked_by.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: `Issue ${issueId} is blocked by issues: ${issue.blocked_by.join(', ')}`,
+      });
+    }
+    try {
+      const pm = req.project.pm || new ProcessManager({
+        worcaDir: req.project.worcaDir,
+        projectRoot: req.project.projectRoot,
+      });
+      const prompt = `[Beads #${issue.id}] ${issue.title}\n\n${(issue.body || '').trim()}`.trim();
+      const result = await pm.startPipeline({
+        inputType: 'prompt',
+        inputValue: prompt,
+        msize: 1,
+        mloops: 1,
+      });
+      res.json({ ok: true, pid: result.pid, issueId, prompt });
+    } catch (err) {
+      const status = (err.message || '').includes('already running') ? 409 : 500;
+      res.status(status).json({ ok: false, error: err.message });
+    }
   });
 
   return router;
