@@ -126,16 +126,27 @@ function extractSummary(envelope) {
 }
 
 /**
- * Format relative time (e.g. "2s ago", "3m ago")
+ * Format date as YYYYMMDD
  */
-function relativeTime(isoStr) {
+function formatDate(isoStr) {
   if (!isoStr) return '';
-  const diff = Date.now() - new Date(isoStr).getTime();
-  if (diff < 1000) return 'now';
-  if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return `${Math.floor(diff / 86400000)}d ago`;
+  const d = new Date(isoStr);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+
+/**
+ * Format time as HH:MM:SS
+ */
+function formatTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
 }
 
 const CATEGORIES = [
@@ -273,6 +284,7 @@ export function webhookInboxView(
       <div class="webhook-inbox-list">
         <div class="webhook-inbox-list-header">
           <span class="wh-col-id">#</span>
+          <span class="wh-col-date">Date</span>
           <span class="wh-col-time">Time</span>
           <span class="wh-col-type">Event Type</span>
           <span class="wh-col-stage">Stage</span>
@@ -280,19 +292,20 @@ export function webhookInboxView(
           <span class="wh-col-run">Run</span>
         </div>
         <div class="webhook-inbox-list-body">
-          ${filtered.map((evt) => {
+          ${[...filtered].reverse().map((evt) => {
             const cat = getCategory(evt.envelope?.event_type);
             return html`
               <div class="webhook-inbox-row ${selectedId === evt.id ? 'selected' : ''}"
                    @click=${() => onSelectEvent(evt.id)}>
                 <span class="wh-col-id">${evt.id}</span>
-                <span class="wh-col-time" title="${evt.receivedAt}">${relativeTime(evt.receivedAt)}</span>
+                <span class="wh-col-date">${formatDate(evt.receivedAt)}</span>
+                <span class="wh-col-time">${formatTime(evt.receivedAt)}</span>
                 <span class="wh-col-type">
                   <span class="webhook-event-type ${categoryClass(cat)}">${shortEventType(evt.envelope?.event_type)}</span>
                 </span>
                 <span class="wh-col-stage">${evt.envelope?.payload?.stage || ''}</span>
                 <span class="wh-col-summary webhook-inbox-summary">${extractSummary(evt.envelope)}</span>
-                <span class="wh-col-run" title="${evt.envelope?.run_id || ''}">${(evt.envelope?.run_id || '').slice(0, 8)}</span>
+                <span class="wh-col-run" title="${evt.envelope?.run_id || ''}">${evt.envelope?.run_id || ''}</span>
               </div>
             `;
           })}

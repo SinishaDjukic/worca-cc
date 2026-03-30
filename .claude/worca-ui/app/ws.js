@@ -119,12 +119,12 @@ export function createWsClient(options = {}) {
       return;
     }
 
-    // Server-initiated event
+    // Server-initiated event — pass (payload, envelope) so handlers can check msg.project
     const set = handlers.get(msg.type);
     if (set && set.size > 0) {
       for (const fn of Array.from(set)) {
         try {
-          fn(msg.payload);
+          fn(msg.payload, msg);
         } catch {
           /* ignore */
         }
@@ -164,6 +164,10 @@ export function createWsClient(options = {}) {
   connect();
 
   return {
+    sendRaw(msg) {
+      sendRaw(msg);
+    },
+
     send(type, payload) {
       if (!MESSAGE_TYPES.includes(type)) {
         return Promise.reject(new Error(`unknown message type: ${type}`));

@@ -22,6 +22,7 @@ import Cpu from 'lucide/dist/esm/icons/cpu';
 import Database from 'lucide/dist/esm/icons/database';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import Flag from 'lucide/dist/esm/icons/flag';
+import FolderOpen from 'lucide/dist/esm/icons/folder-open';
 import GitBranch from 'lucide/dist/esm/icons/git-branch';
 import Hash from 'lucide/dist/esm/icons/hash';
 import Lightbulb from 'lucide/dist/esm/icons/lightbulb';
@@ -38,6 +39,7 @@ import RotateCw from 'lucide/dist/esm/icons/rotate-cw';
 import Save from 'lucide/dist/esm/icons/save';
 import Search from 'lucide/dist/esm/icons/search';
 import Settings from 'lucide/dist/esm/icons/settings';
+import SlidersHorizontal from 'lucide/dist/esm/icons/sliders-horizontal';
 import Shield from 'lucide/dist/esm/icons/shield';
 import Square from 'lucide/dist/esm/icons/square';
 import Star from 'lucide/dist/esm/icons/star';
@@ -99,6 +101,7 @@ export {
   ChevronRight,
   Save,
   Settings,
+  SlidersHorizontal,
   Timer,
   Cpu,
   Star,
@@ -118,4 +121,5 @@ export {
   RotateCw,
   CircleSlash,
   Hash,
+  FolderOpen,
 };

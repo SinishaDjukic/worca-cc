@@ -16,14 +16,32 @@ const mockPausePipeline = vi
   .mockReturnValue({ runId: 'run-123', paused: true });
 const mockStartPipeline = vi.fn().mockResolvedValue({ pid: 42000 });
 const mockStopPipeline = vi.fn().mockReturnValue({ pid: 42000, stopped: true });
+const mockGetRunningPid = vi.fn().mockReturnValue(null);
+const mockReconcileStatus = vi.fn().mockReturnValue(false);
 
-vi.mock('../process-manager.js', () => ({
-  pausePipeline: (...args) => mockPausePipeline(...args),
-  startPipeline: (...args) => mockStartPipeline(...args),
-  stopPipeline: (...args) => mockStopPipeline(...args),
-  restartStage: vi.fn(),
-  getRunningPid: vi.fn().mockReturnValue(null),
-}));
+vi.mock('../process-manager.js', () => {
+  class ProcessManager {
+    constructor(opts = {}) {
+      this.worcaDir = opts.worcaDir;
+      this.projectRoot = opts.projectRoot;
+    }
+    pausePipeline(runId) { return mockPausePipeline(this.worcaDir, runId); }
+    startPipeline(opts) { return mockStartPipeline(this.worcaDir, opts); }
+    stopPipeline() { return mockStopPipeline(this.worcaDir); }
+    getRunningPid() { return mockGetRunningPid(this.worcaDir); }
+    reconcileStatus() { return mockReconcileStatus(this.worcaDir); }
+    restartStage(stage, opts) { return vi.fn()(this.worcaDir, stage, opts); }
+  }
+  return {
+    ProcessManager,
+    pausePipeline: (...args) => mockPausePipeline(...args),
+    startPipeline: (...args) => mockStartPipeline(...args),
+    stopPipeline: (...args) => mockStopPipeline(...args),
+    restartStage: vi.fn(),
+    getRunningPid: (...args) => mockGetRunningPid(...args),
+    reconcileStatus: (...args) => mockReconcileStatus(...args),
+  };
+});
 
 const { createApp } = await import('../app.js');
 

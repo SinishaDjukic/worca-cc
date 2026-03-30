@@ -59,6 +59,7 @@ describe('setupStatusWatcher – retry when run directory not yet created', () =
   });
 
   afterEach(async () => {
+    httpServer.closeAllConnections?.();
     await new Promise((resolve) => httpServer.close(resolve));
     rmSync(worcaDir, { recursive: true, force: true });
   });

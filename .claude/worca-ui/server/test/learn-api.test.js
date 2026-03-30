@@ -12,12 +12,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetRunningPid = vi.fn().mockReturnValue(null);
 
-vi.mock('../process-manager.js', () => ({
-  startPipeline: vi.fn().mockResolvedValue({ pid: 12345 }),
-  stopPipeline: vi.fn(),
-  restartStage: vi.fn(),
-  getRunningPid: (...args) => mockGetRunningPid(...args),
-}));
+vi.mock('../process-manager.js', () => {
+  class ProcessManager {
+    constructor(opts = {}) {
+      this.worcaDir = opts.worcaDir;
+      this.projectRoot = opts.projectRoot;
+    }
+    startPipeline(opts) { return Promise.resolve({ pid: 12345 }); }
+    stopPipeline() { return vi.fn()(); }
+    pausePipeline(runId) { return vi.fn()(runId); }
+    getRunningPid() { return mockGetRunningPid(this.worcaDir); }
+    reconcileStatus() { return false; }
+    restartStage() { return vi.fn()(); }
+  }
+  return {
+    ProcessManager,
+    startPipeline: vi.fn().mockResolvedValue({ pid: 12345 }),
+    stopPipeline: vi.fn(),
+    restartStage: vi.fn(),
+    getRunningPid: (...args) => mockGetRunningPid(...args),
+  };
+});
 
 const { createApp } = await import('../app.js');
 

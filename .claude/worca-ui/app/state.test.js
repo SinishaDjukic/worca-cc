@@ -96,4 +96,28 @@ describe('state store', () => {
     store.clearLog();
     expect(store.getState().logLines).toEqual([]);
   });
+
+  it('initializes with currentProjectId=null and projects=[]', () => {
+    const store = createStore();
+    const s = store.getState();
+    expect(s.currentProjectId).toBe(null);
+    expect(s.projects).toEqual([]);
+  });
+
+  it('setState updates currentProjectId and notifies', () => {
+    const store = createStore();
+    const fn = vi.fn();
+    store.subscribe(fn);
+    store.setState({ currentProjectId: 'proj-1' });
+    expect(store.getState().currentProjectId).toBe('proj-1');
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('does not notify when currentProjectId unchanged', () => {
+    const store = createStore({ currentProjectId: 'proj-1' });
+    const fn = vi.fn();
+    store.subscribe(fn);
+    store.setState({ currentProjectId: 'proj-1' });
+    expect(fn).not.toHaveBeenCalled();
+  });
 });

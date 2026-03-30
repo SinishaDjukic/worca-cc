@@ -6,7 +6,6 @@ import {
   CircleCheck,
   Coins,
   iconSvg,
-  Plus,
   Zap,
 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
@@ -34,6 +33,48 @@ function _activeGroup(runs, statuses) {
   return runs.filter((r) => statuses.includes(r.pipeline_status));
 }
 
+function _projectCards(projects, runs, onNavigate) {
+  // Count active runs per project (best-effort by projectId on run)
+  const activeByProject = {};
+  const latestByProject = {};
+  for (const proj of projects) {
+    activeByProject[proj.name] = 0;
+    latestByProject[proj.name] = null;
+  }
+  for (const run of runs) {
+    const pid = run.projectId || projects[0]?.name;
+    if (pid && activeByProject[pid] !== undefined) {
+      if (run.active) activeByProject[pid]++;
+      if (
+        !latestByProject[pid] ||
+        (run.started_at || '') > (latestByProject[pid].started_at || '')
+      ) {
+        latestByProject[pid] = run;
+      }
+    }
+  }
+
+  return html`
+    <div class="project-cards">
+      ${projects.map((p) => {
+        const activeCount = activeByProject[p.name] || 0;
+        const latest = latestByProject[p.name];
+        const statusText = latest
+          ? latest.pipeline_status || 'unknown'
+          : 'no runs';
+        return html`
+          <div class="project-card" @click=${() => onNavigate?.('active', null, p.name)}>
+            <div class="project-card-name">${p.name}</div>
+            <div class="project-card-stats">
+              ${activeCount} active &middot; ${statusText}
+            </div>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
 export function dashboardView(
   state,
   { onSelectRun, onNavigate, onPause, onResume } = {},
@@ -48,14 +89,21 @@ export function dashboardView(
   const total = runs.length;
   const totalCost = _computeTotalCost(runs);
 
-  const runningGroup = sortByStartDesc(
-    _activeGroup(active, ['running', 'resuming']),
-  );
-  const pausedGroup = sortByStartDesc(_activeGroup(runs, ['paused']));
-  const failedGroup = sortByStartDesc(_activeGroup(runs, ['failed']));
+  const activeGroup = sortByStartDesc(active);
+
+  const MAX_RECENT = 3;
+  const allFailed = sortByStartDesc(_activeGroup(runs, ['failed']));
+  const failedPreview = allFailed.slice(0, MAX_RECENT);
+  const allCompleted = sortByStartDesc(_activeGroup(runs, ['completed']));
+  const completedPreview = allCompleted.slice(0, MAX_RECENT);
+
+  const projects = state.projects || [];
+  const currentProjectId = state.currentProjectId;
+  const showProjectCards = projects.length > 1 && !currentProjectId;
 
   return html`
     <div class="dashboard">
+      ${showProjectCards ? _projectCards(projects, runs, onNavigate) : nothing}
       <div class="dashboard-stats">
         <div class="stat-card stat-total">
           <div class="stat-icon-ring">${unsafeHTML(iconSvg(Zap, 20))}</div>
@@ -94,62 +142,51 @@ export function dashboardView(
         </div>
       </div>
 
-      <div class="dashboard-actions">
-        <sl-button variant="primary" @click=${() => onNavigate?.('new-run')}>
-          ${unsafeHTML(iconSvg(Plus, 16))}
-          New Pipeline
-        </sl-button>
-      </div>
-
       <h3 class="dashboard-section-title">Active Runs</h3>
       ${
-        runningGroup.length > 0
+        activeGroup.length > 0
           ? html`
-        <div class="active-group active-group-running">
-          <div class="active-group-header">
-            <span class="active-group-count">${runningGroup.length} running</span>
-          </div>
+        <div class="active-group">
           <div class="run-list">
-            ${runningGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause }))}
+            ${activeGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume }))}
           </div>
         </div>
       `
-          : nothing
+          : html`<div class="empty-state">No active pipelines</div>`
       }
+
       ${
-        pausedGroup.length > 0
+        failedPreview.length > 0
           ? html`
-        <div class="active-group active-group-paused">
-          <div class="active-group-header">
-            <span class="active-group-count">${pausedGroup.length} paused</span>
-          </div>
-          <div class="run-list">
-            ${pausedGroup.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
-          </div>
-        </div>
-      `
-          : nothing
-      }
-      ${
-        failedGroup.length > 0
-          ? html`
+        <h3 class="dashboard-section-title">
+          Recent Failures
+          ${allFailed.length > MAX_RECENT ? html`
+            <a class="dashboard-view-all" @click=${() => onNavigate?.('history', { statusFilter: 'failed' })}>View all ${allFailed.length}</a>
+          ` : nothing}
+        </h3>
         <div class="active-group active-group-failed">
-          <div class="active-group-header">
-            <span class="active-group-count">${failedGroup.length} failed</span>
-          </div>
           <div class="run-list">
-            ${failedGroup.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
+            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
           </div>
         </div>
       `
           : nothing
       }
+
       ${
-        runningGroup.length === 0 &&
-        pausedGroup.length === 0 &&
-        failedGroup.length === 0
+        completedPreview.length > 0
           ? html`
-        <div class="empty-state">No running pipelines</div>
+        <h3 class="dashboard-section-title">
+          Recent Completed
+          ${allCompleted.length > MAX_RECENT ? html`
+            <a class="dashboard-view-all" @click=${() => onNavigate?.('history', { statusFilter: 'completed' })}>View all ${allCompleted.length}</a>
+          ` : nothing}
+        </h3>
+        <div class="active-group active-group-completed">
+          <div class="run-list">
+            ${completedPreview.map((run) => runCardView(run, { onClick: onSelectRun }))}
+          </div>
+        </div>
       `
           : nothing
       }

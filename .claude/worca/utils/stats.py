@@ -4,6 +4,7 @@ Maintains a cumulative.json file that aggregates token usage and cost
 data across all completed pipeline runs.
 """
 
+import fcntl
 import json
 import os
 import tempfile
@@ -27,6 +28,24 @@ def update_cumulative_stats(
     Returns:
         The updated cumulative stats dict.
     """
+    # Acquire a file lock to prevent lost-update races when multiple
+    # processes merge stats concurrently.
+    lock_path = stats_path + ".lock"
+    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _update_cumulative_stats_locked(run_status, stats_path)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+def _update_cumulative_stats_locked(
+    run_status: dict,
+    stats_path: str,
+) -> dict:
+    """Inner implementation of update_cumulative_stats, called under file lock."""
     stats = _load_cumulative(stats_path)
     run_id = run_status.get("run_id", "")
 
@@ -151,6 +170,86 @@ def _save_cumulative(stats: dict, stats_path: str) -> None:
         except OSError:
             pass
         raise
+
+
+def merge_run_stats(
+    run_status_path: str,
+    cumulative_path: str = None,
+) -> bool:
+    """Merge a single run's token usage into the cumulative stats file.
+
+    Loads the run's status.json from a worktree and calls
+    update_cumulative_stats to merge it into the cumulative file.
+
+    Args:
+        run_status_path: Path to the run's status.json (in a worktree).
+        cumulative_path: Path to the main tree's cumulative.json.
+                        Defaults to .worca/stats/cumulative.json.
+
+    Returns:
+        True on success, False if the status file doesn't exist,
+        has malformed JSON, or has no token_usage data.
+    """
+    if cumulative_path is None:
+        cumulative_path = ".worca/stats/cumulative.json"
+
+    if not os.path.exists(run_status_path):
+        return False
+
+    try:
+        with open(run_status_path) as f:
+            run_status = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    if not isinstance(run_status, dict):
+        return False
+
+    if not run_status.get("token_usage"):
+        return False
+
+    update_cumulative_stats(run_status, cumulative_path)
+    return True
+
+
+def merge_multi_stats(
+    worktree_paths: list,
+    cumulative_path: str = None,
+) -> int:
+    """Merge stats from multiple worktree runs into cumulative.
+
+    Iterates over worktree root paths, finds their
+    .worca/runs/*/status.json files, and calls merge_run_stats for each.
+
+    Args:
+        worktree_paths: List of worktree root directory paths.
+        cumulative_path: Path to the main tree's cumulative.json.
+                        Defaults to .worca/stats/cumulative.json.
+
+    Returns:
+        Count of successfully merged runs.
+    """
+    if cumulative_path is None:
+        cumulative_path = ".worca/stats/cumulative.json"
+
+    merged = 0
+    for wt_path in worktree_paths:
+        runs_dir = os.path.join(wt_path, ".worca", "runs")
+        if not os.path.isdir(runs_dir):
+            # Also check for a direct status.json in .worca/
+            direct_status = os.path.join(wt_path, ".worca", "status.json")
+            if merge_run_stats(direct_status, cumulative_path):
+                merged += 1
+            continue
+
+        for run_entry in sorted(os.listdir(runs_dir)):
+            run_dir = os.path.join(runs_dir, run_entry)
+            if os.path.isdir(run_dir):
+                status_file = os.path.join(run_dir, "status.json")
+                if merge_run_stats(status_file, cumulative_path):
+                    merged += 1
+
+    return merged
 
 
 def rebuild_from_results(

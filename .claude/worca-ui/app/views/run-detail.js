@@ -7,7 +7,6 @@ import {
   Coins,
   Cpu,
   FileText,
-  GitBranch,
   iconSvg,
   List,
   RefreshCw,
@@ -513,7 +512,8 @@ export function runBeadsSectionView(beads) {
 
 export function runDetailView(run, settings = {}, options = {}) {
   if (!run) {
-    return html`<div class="empty-state">Select a run to view details</div>`;
+    const empty = html`<div class="empty-state">Select a run to view details</div>`;
+    return { overview: empty, stages: empty };
   }
 
   const branch = run.branch || run.work_request?.branch || '';
@@ -531,8 +531,8 @@ export function runDetailView(run, settings = {}, options = {}) {
   const stageUi = settings.stageUi || {};
   const agents = settings.agents || {};
 
-  return html`
-    <div class="run-detail">
+  const overview = html`
+    <div class="run-detail-overview">
       ${stageTimelineView(stages, stageUi, run.active)}
       ${_circuitBreakerBannerView(run, settings)}
 
@@ -541,8 +541,8 @@ export function runDetailView(run, settings = {}, options = {}) {
           branch
             ? html`
           <div class="run-branch">
-            <span class="stage-meta-icon">${unsafeHTML(iconSvg(GitBranch, 14))}</span>
-            <span>${branch}</span>
+            <span class="meta-label">Branch:</span>
+            <span class="meta-value">${branch}</span>
             ${pr ? html`<a class="run-pr-link" href="${pr}" target="_blank">View PR</a>` : nothing}
           </div>
         `
@@ -578,7 +578,10 @@ export function runDetailView(run, settings = {}, options = {}) {
           `;
         })()}
       </div>
+    </div>
+  `;
 
+  const stagePanels = html`
       <div class="stage-panels">
         ${_sortedEntries(stages).map(([key, stage]) => {
           const label =
@@ -784,6 +787,7 @@ export function runDetailView(run, settings = {}, options = {}) {
           `;
         })}
       </div>
-    </div>
   `;
+
+  return { overview, stages: stagePanels };
 }

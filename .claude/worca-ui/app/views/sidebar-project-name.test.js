@@ -7,6 +7,8 @@ function makeState(overrides = {}) {
     preferences: { sidebarCollapsed: false },
     beads: { issues: [], dbExists: false },
     projectName: '',
+    projects: [],
+    currentProjectId: null,
     ...overrides,
   };
 }
@@ -39,15 +41,14 @@ function templateContains(tpl, pattern) {
 }
 
 describe('sidebar project name', () => {
-  it('renders project-name class when projectName is set', () => {
+  it('renders WORCA logo text', () => {
     const state = makeState({ projectName: 'my-project' });
     const tpl = sidebarView(state, route, conn, handlers);
-    expect(templateContains(tpl, 'project-name')).toBe(true);
-    expect(templateContains(tpl, 'my-project')).toBe(true);
+    expect(templateContains(tpl, 'WORCA')).toBe(true);
   });
 
-  it('does not render project-name when projectName is empty', () => {
-    const state = makeState({ projectName: '' });
+  it('does not render project-name label (removed)', () => {
+    const state = makeState({ projectName: 'my-project' });
     const tpl = sidebarView(state, route, conn, handlers);
     expect(templateContains(tpl, 'project-name')).toBe(false);
   });
@@ -59,6 +60,15 @@ describe('sidebar project name', () => {
     });
     const tpl = sidebarView(state, route, conn, handlers);
     expect(templateContains(tpl, 'collapsed')).toBe(true);
-    expect(templateContains(tpl, 'project-name')).toBe(true);
+  });
+
+  it('shows PROJECT section header when multiple projects', () => {
+    const state = makeState({
+      projects: [{ name: 'proj-a' }, { name: 'proj-b' }],
+      currentProjectId: 'proj-a',
+    });
+    const tpl = sidebarView(state, route, conn, handlers);
+    expect(templateContains(tpl, 'Project')).toBe(true);
+    expect(templateContains(tpl, 'sidebar-project-selector')).toBe(true);
   });
 });

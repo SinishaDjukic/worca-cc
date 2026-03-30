@@ -1,8 +1,11 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { confirmDialogTemplate, showConfirm } from '../utils/confirm-dialog.js';
 import {
   Bell,
   ChevronRight,
+  Coins,
+  FolderOpen,
   GitBranch,
   iconSvg,
   Plus,
@@ -10,6 +13,7 @@ import {
   Save,
   Settings,
   Shield,
+  Trash2,
   Users,
   X,
   Zap,
@@ -129,10 +133,17 @@ const DEFAULT_GOVERNANCE = {
 let settingsData = null;
 let saveStatus = null; // null | 'saving' | 'success' | 'error'
 let saveMessage = '';
+let _settingsProjectId = null; // track which project settings are loaded for
 
-export async function loadSettings() {
+function settingsUrl(projectId, suffix = '') {
+  if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
+  return `/api/settings${suffix}`;
+}
+
+export async function loadSettings(projectId) {
+  _settingsProjectId = projectId || null;
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetch(settingsUrl(projectId));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     settingsData = await res.json();
     // Ensure worca and governance defaults exist
@@ -219,12 +230,12 @@ export async function loadSettings() {
   }
 }
 
-async function saveSettings(data, rerender) {
+async function saveSettings(data, rerender, projectId) {
   saveStatus = 'saving';
   saveMessage = '';
   rerender();
   try {
-    const res = await fetch('/api/settings', {
+    const res = await fetch(settingsUrl(projectId || _settingsProjectId), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -251,17 +262,20 @@ async function saveSettings(data, rerender) {
   }
 }
 
-async function resetSection(section, rerender) {
+async function resetSection(section, rerender, projectId) {
   saveStatus = 'saving';
   saveMessage = '';
   rerender();
   try {
-    const res = await fetch(`/api/settings/${section}`, { method: 'DELETE' });
+    const res = await fetch(
+      settingsUrl(projectId || _settingsProjectId, `/${section}`),
+      { method: 'DELETE' },
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     settingsData = { worca: result.worca, permissions: result.permissions };
     // Re-apply defaults after reset
-    await loadSettings();
+    await loadSettings(projectId || _settingsProjectId);
     saveStatus = 'success';
     saveMessage = `${section.charAt(0).toUpperCase() + section.slice(1)} reset to defaults`;
   } catch (err) {
@@ -278,6 +292,17 @@ async function resetSection(section, rerender) {
       }
     }, 3000);
   }
+}
+
+function confirmReset(section, rerender) {
+  const label = section.charAt(0).toUpperCase() + section.slice(1);
+  showConfirm({
+    label: `Reset ${label}`,
+    message: html`Are you sure you want to reset <strong>${label}</strong> settings to their defaults?`,
+    confirmLabel: 'Reset',
+    confirmVariant: 'danger',
+    onConfirm: () => resetSection(section, rerender),
+  }, rerender);
 }
 
 // --- Read form values from DOM ---
@@ -430,11 +455,11 @@ function agentsTab(worca, rerender) {
           saveSettings({ worca: { agents } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Agents
+          Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => resetSection('agents', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('agents', rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
-          Reset to Default
+          Reset
         </sl-button>
       </div>
     </div>
@@ -567,11 +592,11 @@ function pipelineTab(worca, rerender) {
           );
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Pipeline
+          Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => resetSection('pipeline', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('pipeline', rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
-          Reset to Default
+          Reset
         </sl-button>
       </div>
     </div>
@@ -655,21 +680,19 @@ function governanceTab(worca, permissions, rerender) {
           );
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Governance
+          Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => resetSection('governance', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('governance', rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
-          Reset to Default
+          Reset
         </sl-button>
       </div>
     </div>
   `;
 }
 
-function preferencesTab(preferences, worca, { onThemeToggle, rerender }) {
+function preferencesTab(preferences, { onThemeToggle }) {
   const theme = preferences?.theme || 'light';
-  const pricing = worca.pricing || DEFAULT_PRICING;
-  const models = pricing.models || DEFAULT_PRICING.models;
 
   return html`
     <div class="settings-tab-content">
@@ -680,7 +703,16 @@ function preferencesTab(preferences, worca, { onThemeToggle, rerender }) {
           <span class="settings-switch-desc">Toggle between light and dark theme</span>
         </div>
       </div>
+    </div>
+  `;
+}
 
+function pricingTab(worca, rerender) {
+  const pricing = worca.pricing || DEFAULT_PRICING;
+  const models = pricing.models || DEFAULT_PRICING.models;
+
+  return html`
+    <div class="settings-tab-content">
       <h3 class="settings-section-title">Pricing</h3>
       <div class="pricing-table-wrap">
         <table class="pricing-table">
@@ -727,11 +759,11 @@ function preferencesTab(preferences, worca, { onThemeToggle, rerender }) {
           saveSettings({ worca: { pricing: pricingData } }, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Pricing
+          Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => resetSection('pricing', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('pricing', rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
-          Reset to Default
+          Reset
         </sl-button>
       </div>
     </div>
@@ -853,7 +885,7 @@ function notificationsTab(preferences, { rerender, onSaveNotifications }) {
           });
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Notifications
+          Save
         </sl-button>
       </div>
     </div>
@@ -1096,11 +1128,11 @@ function webhooksTab(worca, rerender) {
           );
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
-          Save Webhooks
+          Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => resetSection('webhooks', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('webhooks', rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
-          Reset to Default
+          Reset
         </sl-button>
       </div>
     </div>
@@ -1126,12 +1158,160 @@ function feedbackAlert(rerender) {
   `;
 }
 
-// --- Main export ---
+// --- Projects tab ---
 
+function projectsTab(
+  projects,
+  { onProjectAdd, onProjectRemove, rerender: _rerender },
+) {
+  const list = projects || [];
+
+  function confirmRemove(projectName) {
+    showConfirm({
+      label: 'Remove Project',
+      message: html`Are you sure you want to remove <strong>${projectName}</strong>? This only unregisters the project — no files are deleted.`,
+      confirmLabel: 'Remove',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        fetch(`/api/projects/${projectName}`, { method: 'DELETE' })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.ok) onProjectRemove?.(projectName);
+          })
+          .catch(() => {});
+      },
+    }, _rerender);
+  }
+
+  function confirmWorcaUpdate(projectName) {
+    showConfirm({
+      label: 'Update Worca',
+      message: html`Update worca pipeline files in <strong>${projectName}</strong>?`,
+      confirmLabel: 'Update',
+      confirmVariant: 'primary',
+      onConfirm: () => {
+        fetch(`/api/projects/${projectName}/worca-setup`, { method: 'POST' })
+          .catch(() => {});
+      },
+    }, _rerender);
+  }
+
+  function handleOpenAddDialog() {
+    onProjectAdd?.({ openDialog: true });
+  }
+
+  return html`
+    <div class="settings-card">
+      <h3>Projects</h3>
+      <div class="projects-list">
+        ${list.map(
+          (p) => html`
+          <div class="projects-list-item">
+            <div>
+              <div class="project-name">${p.name}</div>
+              <div class="project-path">${p.path}</div>
+            </div>
+            <div style="display:flex; gap:0.5rem;">
+              <sl-button
+                size="small"
+                variant="primary"
+                outline
+                @click=${() => confirmWorcaUpdate(p.name)}
+              >
+                ${unsafeHTML(iconSvg(RefreshCw, 14))}
+                Update
+              </sl-button>
+              <sl-button
+                size="small"
+                variant="danger"
+                outline
+                @click=${() => confirmRemove(p.name)}
+              >
+                ${unsafeHTML(iconSvg(Trash2, 14))}
+                Remove
+              </sl-button>
+            </div>
+          </div>
+        `,
+        )}
+        ${list.length === 0 ? html`<div class="empty-state">No projects registered</div>` : nothing}
+      </div>
+      <div style="margin-top: 12px;">
+        <sl-button size="small" @click=${handleOpenAddDialog}>
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          Add Project
+        </sl-button>
+      </div>
+    </div>
+    ${confirmDialogTemplate()}
+  `;
+}
+
+// --- Main exports ---
+
+/**
+ * Global settings view — Preferences, Notifications, Projects tabs.
+ * Does not depend on currentProjectId.
+ */
 export function settingsView(
   preferences,
-  { rerender, onThemeToggle, onSaveNotifications },
+  {
+    rerender,
+    onThemeToggle,
+    onSaveNotifications,
+    projects,
+    onProjectAdd,
+    onProjectRemove,
+  } = {},
 ) {
+  // Reload base settings when switching from project-scoped view
+  if (_settingsProjectId !== null) {
+    loadSettings(null).then(() => rerender());
+    return html`<div class="empty-state">Loading settings\u2026</div>`;
+  }
+
+  return html`
+    ${feedbackAlert(rerender)}
+    <div class="settings-page">
+      <sl-tab-group>
+        <sl-tab slot="nav" panel="projects">
+          ${unsafeHTML(iconSvg(FolderOpen, 14))}
+          Projects
+        </sl-tab>
+        <sl-tab slot="nav" panel="notifications">
+          ${unsafeHTML(iconSvg(Bell, 14))}
+          Notifications
+        </sl-tab>
+        <sl-tab slot="nav" panel="preferences">
+          ${unsafeHTML(iconSvg(Settings, 14))}
+          Preferences
+        </sl-tab>
+
+        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, rerender })}</sl-tab-panel>
+        <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
+        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle })}</sl-tab-panel>
+      </sl-tab-group>
+    </div>
+  `;
+}
+
+/**
+ * Project-scoped settings view — Agents, Pipeline, Governance, Webhooks tabs.
+ * Reloads when currentProjectId changes.
+ */
+export function projectSettingsView(
+  preferences,
+  {
+    rerender,
+    currentProjectId,
+  } = {},
+) {
+  // Reload settings when the active project changes
+  if (currentProjectId !== _settingsProjectId) {
+    loadSettings(currentProjectId).then(() => rerender());
+    return html`<div class="empty-state">Loading settings\u2026</div>`;
+  }
+
   if (!settingsData) {
     return html`<div class="empty-state">Loading settings\u2026</div>`;
   }
@@ -1141,6 +1321,7 @@ export function settingsView(
 
   return html`
     ${feedbackAlert(rerender)}
+    ${confirmDialogTemplate()}
     <div class="settings-page">
       <sl-tab-group>
         <sl-tab slot="nav" panel="agents">
@@ -1155,13 +1336,9 @@ export function settingsView(
           ${unsafeHTML(iconSvg(Shield, 14))}
           Governance
         </sl-tab>
-        <sl-tab slot="nav" panel="preferences">
-          ${unsafeHTML(iconSvg(Settings, 14))}
-          Preferences
-        </sl-tab>
-        <sl-tab slot="nav" panel="notifications">
-          ${unsafeHTML(iconSvg(Bell, 14))}
-          Notifications
+        <sl-tab slot="nav" panel="pricing">
+          ${unsafeHTML(iconSvg(Coins, 14))}
+          Pricing
         </sl-tab>
         <sl-tab slot="nav" panel="webhooks">
           ${unsafeHTML(iconSvg(Zap, 14))}
@@ -1171,13 +1348,13 @@ export function settingsView(
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
-        <sl-tab-panel name="preferences">${preferencesTab(preferences, worca, { onThemeToggle, rerender })}</sl-tab-panel>
-        <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
+        <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="webhooks">${webhooksTab(worca, rerender)}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;
 }
 
-// Test-only export
+// Test-only exports
 export { preferencesTab as _preferencesTab };
+export { projectsTab as _projectsTab };

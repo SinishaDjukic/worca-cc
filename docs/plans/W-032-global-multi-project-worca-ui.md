@@ -104,6 +104,8 @@ Each decision documents the choice, rationale, alternatives considered, and impa
 
 `ws.js` becomes an orchestrator (~100 lines) that imports and wires these modules.
 
+**Rollback strategy:** `ws.js` retains a facade with `WORCA_WS_MODULES=0` kill switch to fall back to the original monolithic code path during validation (see §9b). Legacy path deleted once Phase 0 verification passes.
+
 **Impact:** Prerequisite for Phase 1. Pure refactor — no behavior change.
 
 ### D4: State Management — Nested Project-Scoped Structure
@@ -126,9 +128,11 @@ Each decision documents the choice, rationale, alternatives considered, and impa
 
 **Alternative considered (W-017):** Keep flat `runs` map, add `projectRuns` alongside as derived view. Rejected because it creates two competing state representations and every view must decide which to read.
 
-**Tradeoff:** Higher migration cost (~23 files) but cleaner long-term architecture. All views access `state.projects[state.activeProject].runs` consistently.
+**Tradeoff:** Higher migration cost (~23 files) but cleaner long-term architecture. All views access state through accessors consistently.
 
-**Impact:** All view components that call `store.getState()` must be updated. Preferences remain global (one user, one theme).
+**Migration strategy:** Introduce `app/state-accessors.js` with fallback to old flat shape (see §9a). Views migrated one file at a time — each commit independently safe and revertable. Eliminates big-bang risk.
+
+**Impact:** All view components that call `store.getState()` must be updated to use accessors. Preferences remain global (one user, one theme).
 
 ### D5: REST API — Project-Scoped URL Prefix
 
@@ -257,11 +261,11 @@ Each parallel pipeline gets:
 
 ### D11: Pipeline Registry (Parallel Runs)
 
-**Choice:** `.worca/multi/registry.json` in the main working tree tracks all active worktree pipelines.
+**Choice:** `.worca/multi/pipelines.d/` in the main working tree, with one JSON file per active worktree pipeline. Mirrors the directory-based pattern from D2.
 
-```json
-{
-  "pipelines": [{
+```
+.worca/multi/pipelines.d/
+  20260323-143052-847-a1b2.json → {
     "run_id": "20260323-143052-847-a1b2",
     "request": "Add user auth",
     "worktree_path": "/abs/path/.worktrees/pipeline-20260323-143052-847-a1b2",
@@ -272,11 +276,10 @@ Each parallel pipeline gets:
     "started_at": "2026-03-23T14:30:52Z",
     "completed_at": null,
     "pr_url": null
-  }]
-}
+  }
 ```
 
-Uses `fcntl.flock()` for safe concurrent access. Stale entries reconciled on startup (check PID liveness).
+Each pipeline writes its own file atomically via temp+rename. No file locking needed (see §9d). Stale entries reconciled on startup by checking PID liveness. The watcher scans the directory; `run_multi.py` reads all files to build a combined view.
 
 ### D12: Notification System — Phased
 
@@ -318,6 +321,10 @@ Every artifact the pipeline touches falls into one of three categories:
 ## 5. WebSocket Protocol
 
 Single `/ws` connection serves all projects. The server fills `project` on every outbound event.
+
+### Connection Handshake (§9c)
+
+On connect, server sends `hello` with protocol version and capabilities. Client responds with `hello-ack`. Clients that don't respond within 2s are treated as protocol 1 (legacy). See §9c for full negotiation rules.
 
 ### Outbound (server → client)
 
@@ -363,7 +370,7 @@ New messages:
 | `worca-ui start --global` with `projects.d/` | Monitors all registered projects. |
 | Legacy URL `#/active` in global mode | Redirects to `#/dashboard`. |
 | Legacy URL `#/active` in per-project mode | Works as today. |
-| WS messages without `project` field | Default to first/only project. |
+| WS messages without `project` field | Default to first/only project (protocol 1 via §9c handshake). |
 | `run_pipeline.py` unchanged | Writes to local `.worca/`. Global server discovers via watchers. |
 | Old run IDs (`YYYYMMDD-HHMMSS`) | Still parsed correctly. New format adds fields but regex is compatible. |
 
@@ -411,39 +418,73 @@ Each phase is self-contained and shippable. Verification criteria must pass befo
 
 **Goal:** Register multiple projects, monitor each independently, switch between them in the UI. This is the first user-visible feature.
 
+Phase 1 is split into three independently shippable sub-phases to reduce big-bang risk (see §9a, §9b).
+
+#### Phase 1a: Server-Side Multi-Project
+
+Server gains multi-project support. UI remains single-project — the server picks the active project from the first registered entry. WS protocol versioning (§9c) is added here.
+
 **Tasks:**
 
 1.1. **Create `server/project-registry.js`** — read/write `~/.worca/projects.d/`, validate slugs, synthesize default for per-project mode. Exports: `readProjects(prefsDir)`, `writeProjects(prefsDir, projects)`, `validateProjectEntry()`, `slugify()`.
 
-1.2. **Create `WatcherSet` class** (see D9) — encapsulates all file watchers for one project. `create()`, `destroy()`, `isAlive()`. Watcher budget calculation on startup.
+1.2. **Create `WatcherSet` class** (see D9) — encapsulates all file watchers for one project. `create()`, `destroy()`, `isAlive()`. Watcher budget calculation on startup. Wrap all callbacks in try/catch for per-project error isolation.
 
 1.3. **Wire multi-project into ws.js orchestrator** — `Map<projectName, WatcherSet>`. `setupProjectWatchers()` per project. `scheduleRefresh(projectName)` scoped. All outbound messages include `project` field.
 
 1.4. **Update REST API** with project-scoped prefix (see D5) — `projectResolver` middleware. Move all existing endpoints under `/api/projects/:projectId/...`. Add `GET/POST/DELETE /api/projects`.
 
-1.5. **Rewrite `app/state.js`** to nested project-scoped structure (see D4). Add `setProjectRuns()`, `setActiveProject()`, `setProjects()`.
+1.5. **WS protocol handshake** (§9c) — server sends `hello` with `protocol: 2` and `capabilities` on connect. Clients without `hello-ack` within 2s treated as protocol 1. Protocol 1 clients auto-scoped to first project.
 
-1.6. **Update `app/router.js`** — three-argument `parseHash/buildHash/navigate` supporting `#/project/{slug}/...` (see D6).
+**Verification (1a):**
+- All existing vitest + Playwright tests pass (server behavior unchanged for single project)
+- `curl /api/projects` returns list with synthesized single project
+- `curl /api/projects/foo/runs` returns run data
+- WS connection receives `hello` message; old clients still work via timeout fallback
 
-1.7. **Update `app/main.js`** — project switching, project-scoped WS subscriptions, `handleSwitchProject()`, `handleAddProject()`. Fetch `/api/projects` at startup. Include `project` in all WS messages.
+#### Phase 1b: State + Routing Migration
 
-1.8. **Add sidebar project picker** (`app/views/sidebar.js`) — shown when >1 project registered. Per-project active run count badge.
+State management migrated to nested structure via accessor layer. Router gains project support. Views updated incrementally — one commit per file.
 
-1.9. **Add aggregated dashboard** (`app/views/dashboard.js`) — one card per project when `activeProject` is null. Click switches to that project.
+**Tasks:**
 
-1.10. **Add project dialog** (`app/views/add-project-dialog.js`) — name + path fields, validation, calls `POST /api/projects`.
+1.6. **Add `app/state-accessors.js`** (§9a) — thin accessor functions with fallback to old flat shape. `getRuns()`, `getLogLines()`, `getBeads()`, `getPreferences()`.
 
-1.11. **Add Projects tab to Settings** (`app/views/settings.js`) — list projects, remove button, add button.
+1.7. **Rewrite `app/state.js`** to nested project-scoped structure (see D4). Add `setProjectRuns()`, `setActiveProject()`, `setProjects()`. Accessors still fall back to old shape until all views are migrated.
 
-1.12. **Update all remaining views** — ensure every view reads from `state.projects[state.activeProject]`.
+1.8. **Update `app/router.js`** — three-argument `parseHash/buildHash/navigate` supporting `#/project/{slug}/...` (see D6).
 
-1.13. **Add CSS** for project picker, project cards, add-project dialog.
+1.9. **Update `app/main.js`** — project switching, project-scoped WS subscriptions, `handleSwitchProject()`, `handleAddProject()`. Fetch `/api/projects` at startup. Include `project` in all WS messages. Send `hello-ack` on connect.
 
-1.14. **Enhanced notifications** (D12 Phase 1) — project name in notification title.
+1.10. **Update all remaining views** — migrate each view to use `state-accessors.js`. One commit per file, each independently revertable.
 
-1.15. **Rebuild frontend bundle.**
+**Verification (1b):**
+- Navigating to `#/project/foo/active` shows correct data
+- `#/active` still works in single-project mode
+- No visual regressions — each view renders identically to before
+- All vitest + Playwright tests pass (updated for accessor usage)
 
-**Verification:**
+#### Phase 1c: New UI Surfaces
+
+Pure additive UI — sidebar picker, dashboard, dialogs. Nothing breaks if this sub-phase is delayed; project switching still works via URL from 1b.
+
+**Tasks:**
+
+1.11. **Add sidebar project picker** (`app/views/sidebar.js`) — shown when >1 project registered. Per-project active run count badge.
+
+1.12. **Add aggregated dashboard** (`app/views/dashboard.js`) — one card per project when `activeProject` is null. Click switches to that project.
+
+1.13. **Add project dialog** (`app/views/add-project-dialog.js`) — name + path fields, validation, calls `POST /api/projects`.
+
+1.14. **Add Projects tab to Settings** (`app/views/settings.js`) — list projects, remove button, add button.
+
+1.15. **Add CSS** for project picker, project cards, add-project dialog.
+
+1.16. **Enhanced notifications** (D12 Phase 1) — project name in notification title.
+
+1.17. **Rebuild frontend bundle.**
+
+**Verification (1c — full Phase 1):**
 - Start server with no `projects.d/` — behaves exactly as before (single project, no picker)
 - Create `projects.d/` with 2 project files — picker appears, switching works
 - Runs from project A are never visible when viewing project B
@@ -451,14 +492,14 @@ Each phase is self-contained and shippable. Verification criteria must pass befo
 - Two browser tabs — add project in one, both update via `projects-updated`
 - `stop-run` and `resume-run` operate on correct project's worcaDir
 - Legacy URLs redirect to `#/dashboard` in multi-project mode
-- All vitest + Playwright tests pass (updated for new state shape)
+- All vitest + Playwright tests pass
 
-**New test files:**
+**New test files (across all Phase 1 sub-phases):**
 - `server/project-registry.test.js` — registry CRUD, validation, slugify
 - `test/multi-project-fixtures.js` — reusable temp directory fixture factory
 - `test/multi-project-api.test.js` — project-scoped endpoints
 - `test/multi-project-isolation.test.js` — cross-project data isolation
-- `test/multi-project-websocket.test.js` — project-scoped subscriptions
+- `test/multi-project-websocket.test.js` — project-scoped subscriptions, protocol handshake
 - `e2e/multi-project.spec.js` — browser-level project switching
 
 ---
@@ -475,18 +516,24 @@ Each phase is self-contained and shippable. Verification criteria must pass befo
 
 2.3. **`worca-ui projects add/remove/list` CLI** — `projects add /path/to/project` writes to `projects.d/`, `projects remove name` deletes file, `projects list` scans directory.
 
-2.4. **Dynamic project registration** — global server watches `~/.worca/projects.d/` directory. On file add/remove, diff and create/destroy WatcherSets. Broadcast `projects-updated`.
+2.4. **`worca-ui migrate` command** — discovers existing projects and registers them for global mode. `--scan <dirs>` walks directories (depth 2) looking for `.worca/` subdirs, shows summary table, writes to `projects.d/` on confirm. `--add <path>` registers a single project non-interactively. `--dry-run` shows what would be registered. `--status` reports migration health (missing paths, schema mismatches). On first `--global` launch with empty `projects.d/`, auto-detect `.worca/` in cwd and offer to register.
 
-2.5. **Pipeline self-registration** — new `worca/utils/project_registry.py` with `auto_register_project()`. Called from `runner.py` at pipeline start. Writes `{slug}.json` to `~/.worca/projects.d/` atomically.
+2.5. **Dynamic project registration** — global server watches `~/.worca/projects.d/` directory. On file add/remove, diff and create/destroy WatcherSets. Broadcast `projects-updated`.
 
-2.6. **Full pipeline control** — `POST /api/projects/:id/runs` spawns `run_pipeline.py` with `cwd` set to that project. Start/stop/pause/resume via ProcessManager class.
+2.6. **Pipeline self-registration** — new `worca/utils/project_registry.py` with `auto_register_project()`. Called from `runner.py` at pipeline start. Writes `{slug}.json` to `~/.worca/projects.d/` atomically.
 
-2.7. **Sidebar status badges** (D12 Phase 2) — green/orange/red/yellow per project.
+2.7. **Full pipeline control** — `POST /api/projects/:id/runs` spawns `run_pipeline.py` with `cwd` set to that project. Start/stop/pause/resume via ProcessManager class.
 
-2.8. **Activity-based tiering** (see D9) — Polling tier for inactive projects, Full tier when subscribed.
+2.8. **Sidebar status badges** (D12 Phase 2) — green/orange/red/yellow per project.
+
+2.9. **Activity-based tiering** (see D9) — Polling tier for inactive projects, Full tier when subscribed.
 
 **Verification:**
 - `worca-ui start --global` with no `projects.d/` — starts, shows "Add Project"
+- `worca-ui start --global` in a directory with `.worca/` and empty `projects.d/` — offers to register current project
+- `worca-ui migrate --scan ~/dev --dry-run` — lists discovered projects without writing
+- `worca-ui migrate --scan ~/dev` — registers discovered projects, all appear in UI
+- `worca-ui migrate --status` — reports health of registered projects
 - `worca-ui projects add /path/to/project` — project appears in UI without restart
 - `worca-ui projects remove name` — project disappears from UI
 - Start a pipeline from project A via UI — pipeline runs in project A's directory
@@ -509,7 +556,7 @@ Each phase is self-contained and shippable. Verification criteria must pass befo
 
 3.3. **Per-worktree beads init** — after worktree creation, run `bd init` in worktree directory.
 
-3.4. **Pipeline registry module** — new `worca/orchestrator/registry.py` with `register_pipeline()`, `update_pipeline()`, `deregister_pipeline()`, `list_pipelines()`. File locking via `fcntl.flock()`.
+3.4. **Pipeline registry module** — new `worca/orchestrator/registry.py` with `register_pipeline()`, `update_pipeline()`, `deregister_pipeline()`, `list_pipelines()`. Directory-based: one file per pipeline in `.worca/multi/pipelines.d/`, atomic writes via temp+rename, no file locking (see D11, §9d).
 
 3.5. **`run_multi.py` entry point** — accepts multiple `--request` args, `--max-parallel` (default 3), `--base-branch` (default `main`), `--cleanup` (default `on-success`). Creates worktrees, inits beads, registers pipelines, dispatches via `ProcessPoolExecutor`. Merges per-run stats into cumulative after each worker exits.
 
@@ -559,7 +606,7 @@ Each phase is self-contained and shippable. Verification criteria must pass befo
 
 **Tasks:**
 
-4.1. **Registry watcher** (`server/multi-watcher.js`) — watches `.worca/multi/registry.json` per project. On change, diffs pipeline list, creates/destroys per-worktree WatcherSets.
+4.1. **Registry watcher** (`server/multi-watcher.js`) — watches `.worca/multi/pipelines.d/` directory per project. On file add/remove/change, diffs pipeline list, creates/destroys per-worktree WatcherSets.
 
 4.2. **WebSocket protocol extension** — `list-pipelines`, `subscribe-pipeline`, `pipeline-status-changed` messages. Per-worktree watchers emit events with `project` + `runId`.
 
@@ -642,13 +689,110 @@ Maintain `--workers=1` constraint. Multi-project e2e tests are even more sensiti
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| inotify limit on Linux with many projects | Watchers fail to create | Budget calculation at startup, warn at 60%, refuse at 100%, document sysctl fix. 20 projects = 380 watchers (4.6% of limit). |
+| inotify limit on Linux with many projects | Watchers fail to create | Budget calculation at startup, warn at 60%, refuse at 100%, document sysctl fix. Benchmark real watcher counts with active pipelines (estimate of 19/project may be low). |
 | API rate limits with parallel pipelines | Pipelines stall with 429 errors | Circuit breaker handles retries. Document impact. Default `max_concurrent_pipelines` = 3. |
 | Disk space from worktrees | Large repos × N worktrees | Git worktrees share object store. Cleanup policy removes completed. |
 | Registry file corruption on crash | Stale entries block new launches | Reconciliation on startup checks PID liveness. Atomic writes via temp+rename. |
-| State migration breaks views | UI errors on update | Phase 1 includes updating all ~23 files. Test coverage for every view. |
-| ws.js decomposition introduces bugs | Existing features break | Pure refactor in Phase 0. All existing tests must pass before proceeding. |
+| State migration breaks views | UI errors on update | Accessor layer (see §9a) allows incremental migration. Each file migrated in its own commit. |
+| ws.js decomposition introduces bugs | Existing features break | Facade with kill switch (see §9b) preserves old code path during Phase 0. |
 | Multiple pipelines self-registering simultaneously | Race condition on registry | Directory-based registry (D2) — each pipeline writes its own file atomically. |
+| `flock` fragility for pipeline registry | Stale locks after crashes, no NFS support | Use per-pipeline status files (like D2 pattern) instead of single locked registry. See §9d. |
+| PID file as sole truth after pgrep removal | Orphaned PID files from OOM/SIGKILL | ProcessManager checks PID liveness (`kill -0`) before trusting PID file. |
+| No per-project error isolation | One bad `.worca/` crashes global server | WatcherSet wraps all callbacks in try/catch, emits degraded-project event. |
+| No authentication on control API | Any local process can manipulate pipelines | Bind to 127.0.0.1 only (default). Document risk in global mode. |
+
+### §9a: P0 — State Migration via Accessor Layer
+
+Instead of rewriting all ~23 view files simultaneously, introduce a thin accessor module that decouples views from state shape:
+
+```javascript
+// app/state-accessors.js
+export function getActiveProject(state) {
+  return state.activeProject
+    ? state.projects[state.activeProject]
+    : state; // ← fallback: old flat shape still works
+}
+export function getRuns(state)     { return getActiveProject(state).runs; }
+export function getLogLines(state) { return getActiveProject(state).logLines; }
+export function getBeads(state)    { return getActiveProject(state).beads; }
+export function getPreferences(state) { return state.preferences; } // always global
+```
+
+**Migration sequence:**
+1. Add `state-accessors.js` with passthrough fallbacks (returns old shape if `state.projects` doesn't exist)
+2. Migrate views to use accessors one file at a time — each commit is independently safe
+3. Once all files use accessors, flip `state.js` to the nested structure
+4. Remove fallbacks
+
+This turns a flag-day rewrite into ~25 small, independently reviewable and revertable commits.
+
+### §9b: P0 — Phase 0 Rollback via Facade + Kill Switch
+
+Keep `ws.js` as a facade that delegates to the 7 new modules, with a fallback to the original code:
+
+```javascript
+// server/ws.js — becomes orchestrator, not gutted
+const USE_MODULES = process.env.WORCA_WS_MODULES !== '0';
+
+export function setupWebSocket(server, opts) {
+  if (USE_MODULES) return setupModular(server, opts);
+  return setupLegacy(server, opts); // original code, untouched
+}
+```
+
+During Phase 0, ship with both paths. Run tests against both. Once verified, delete the legacy path in a separate commit.
+
+For Phase 1+, add a global mode gate in `~/.worca/config.json`:
+```json
+{ "multiProject": false }
+```
+When `false` (default), the server skips project registry scanning, scoped URLs, and sidebar picker. Single boolean kill switch, not a feature flag system.
+
+**Rollback matrix:**
+
+| Problem | Recovery action |
+|---------|----------------|
+| Phase 0 module extraction breaks watchers | `WORCA_WS_MODULES=0 worca-ui start` |
+| Phase 1a registry causes server crashes | Set `multiProject: false` in config |
+| Phase 1b state migration breaks views | Revert single accessor commit; fallback covers it |
+| Phase 1c UI components broken | Revert; use URL-based project switching from 1b |
+
+### §9c: P1 — WebSocket Protocol Versioning
+
+Add a version handshake on WebSocket connection, backward-compatible with current clients:
+
+**Server side** — on new connection, send hello within 100ms:
+```json
+{ "type": "hello", "protocol": 2, "capabilities": ["multi-project", "pipeline-control"], "serverVersion": "1.2.0" }
+```
+
+**Client side** — respond with hello-ack:
+```json
+{ "type": "hello-ack", "protocol": 2 }
+```
+
+**Negotiation rules:**
+
+| Client sends | Server behavior |
+|-------------|-----------------|
+| `hello-ack` with `protocol: 2` | Full multi-project mode, `project` field required |
+| `hello-ack` with `protocol: 1` | Legacy mode — auto-scope to first project, omit new message types |
+| No `hello-ack` within 2s | Assume protocol 1 (current clients) |
+
+Current clients ignore the unknown `hello` message. Server detects old clients by timeout. The `capabilities` array lets the client adapt UI without hard version checks. ~50 lines total implementation.
+
+### §9d: P1 — Pipeline Registry Lock Fragility
+
+`fcntl.flock()` on `.worca/multi/registry.json` (D11) is advisory-only, doesn't work across NFS, and crash-held locks go stale. Replace with the same pattern used for project registry (D2):
+
+Each pipeline writes its own status file:
+```
+.worca/multi/pipelines.d/
+  20260323-143052-847-a1b2.json → { "run_id": "...", "status": "running", ... }
+  20260323-150100-312-c3d4.json → { "run_id": "...", "status": "completed", ... }
+```
+
+Atomic writes via temp+rename. No locking needed. The watcher scans the directory. `run_multi.py` reads all files to build a combined view. Stale entries detected by PID liveness check, same as D2.
 
 ---
 
@@ -691,8 +835,9 @@ Global config at `~/.worca/config.json`:
 | 0 | `server/ws-beads-watcher.js` | Beads watching |
 | 0 | `server/ws-event-watcher.js` | Events.jsonl |
 | 0 | `server/ws-message-router.js` | Message dispatch |
-| 1 | `server/project-registry.js` | Read/write projects.d/ |
-| 1 | `app/views/add-project-dialog.js` | Add project dialog |
+| 1a | `server/project-registry.js` | Read/write projects.d/ |
+| 1b | `app/state-accessors.js` | Thin accessor layer with flat-shape fallback |
+| 1c | `app/views/add-project-dialog.js` | Add project dialog |
 | 1 | `test/multi-project-fixtures.js` | Fixture factory |
 | 1 | `test/multi-project-*.test.js` | Multi-project tests (4 files) |
 | 1 | `e2e/multi-project.spec.js` | Browser e2e |

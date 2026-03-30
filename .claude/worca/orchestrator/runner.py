@@ -19,6 +19,7 @@ from worca.orchestrator.error_classifier import (
     should_halt, get_retry_delay, get_circuit_breaker_state,
     CATEGORY_TRANSIENT,
 )
+from worca.orchestrator.registry import update_pipeline
 from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver
 from worca.orchestrator.prompt_builder import PromptBuilder
@@ -34,7 +35,7 @@ from worca.state.status import (
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current
-from worca.utils.git import create_branch, get_current_git_head
+from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
@@ -192,9 +193,20 @@ def _sanitize_branch_name(title: str) -> str:
 
 
 def _generate_run_id(started_at_iso: str) -> str:
-    """Generate a run ID in YYYYMMDD-HHMMSS format from an ISO timestamp."""
+    """Generate a unique run ID from an ISO timestamp.
+
+    Format: YYYYMMDD-HHMMSS-mmm-xxxx
+      - mmm  = milliseconds (3 digits, zero-padded)
+      - xxxx = 4 random hex characters
+
+    Example: 20260323-143052-847-a1b2
+    """
+    import secrets
+
     dt = datetime.fromisoformat(started_at_iso)
-    return dt.strftime("%Y%m%d-%H%M%S")
+    millis = dt.microsecond // 1000
+    suffix = secrets.token_hex(2)  # 2 bytes = 4 hex chars
+    return f"{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}-{suffix}"
 
 
 def _slugify(title: str) -> str:
@@ -203,6 +215,31 @@ def _slugify(title: str) -> str:
     slug = re.sub(r'[^a-z0-9\-]', '-', slug)
     slug = re.sub(r'-+', '-', slug)
     return slug.strip('-')[:60]
+
+
+def _next_plan_path(run_dir: str) -> str:
+    """Return the next sequential plan file path inside run_dir.
+
+    Scans for existing ``plan-NNN.md`` files and returns the path for the
+    next number in sequence (e.g. ``plan-001.md`` when none exist).
+    Always uses 3-digit zero-padded format (max plan-999.md).
+    """
+    import glob as _glob
+
+    existing = _glob.glob(os.path.join(run_dir, "plan-[0-9][0-9][0-9].md"))
+    if not existing:
+        return os.path.join(run_dir, "plan-001.md")
+
+    # Extract the numeric parts and find the max
+    nums = []
+    for path in existing:
+        m = re.search(r'plan-(\d{3})\.md$', path)
+        if m:
+            nums.append(int(m.group(1)))
+    next_num = max(nums) + 1 if nums else 1
+    if next_num > 999:
+        next_num = 999  # Cap at plan-999.md to stay within 3-digit format
+    return os.path.join(run_dir, f"plan-{next_num:03d}.md")
 
 
 def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
@@ -319,15 +356,8 @@ def _pid_path(status_path: str) -> str:
 
 
 def _write_pid(status_path: str) -> None:
-    """Write our PID to the PID file. Checks for stale PID first."""
+    """Write our PID to the PID file."""
     path = _pid_path(status_path)
-    if os.path.exists(path):
-        try:
-            old_pid = int(open(path).read().strip())
-            os.kill(old_pid, 0)  # Check if alive
-            raise PipelineError(f"Pipeline already running (PID {old_pid})")
-        except (ProcessLookupError, ValueError, OSError):
-            pass  # Stale PID, safe to overwrite
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(str(os.getpid()))
@@ -977,6 +1007,7 @@ def run_pipeline(
     branch: Optional[str] = None,
     skip_preflight: bool = False,
     on_git_divergence=None,
+    worktree: bool = False,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1006,6 +1037,14 @@ def run_pipeline(
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
+
+    # Auto-register project for global worca-ui discovery (non-fatal)
+    try:
+        from worca.utils.project_registry import auto_register_project
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(settings_path)))
+        auto_register_project(project_root)
+    except Exception:
+        pass
 
     # PID file and signal handlers
     _write_pid(status_path)
@@ -1072,6 +1111,9 @@ def run_pipeline(
 
         if branch:
             branch_name = branch
+        elif worktree:
+            # Worktree mode: branch already created by worktree setup, detect it
+            branch_name = current_branch() or _sanitize_branch_name(work_request.title)
         else:
             branch_name = _sanitize_branch_name(work_request.title)
             create_branch(branch_name)
@@ -1085,6 +1127,9 @@ def run_pipeline(
             "priority": work_request.priority,
         }
         status = init_status(wr_dict, branch_name, git_head=get_current_git_head())
+
+        if worktree:
+            status["worktree"] = True
 
         # Create per-run directory
         run_id = _generate_run_id(status["started_at"])
@@ -1100,6 +1145,12 @@ def run_pipeline(
             f.write(run_id)
 
         save_status(status, actual_status_path)
+
+        # Update multi-pipeline registry with the subprocess PID when in worktree mode.
+        # Registration is done by run_multi.py; here we just update the PID so that
+        # per-pipeline stop commands target the correct process.
+        if worktree:
+            update_pipeline(run_id, stage="starting", base=worca_dir)
 
         # Notify GitHub issue that pipeline has started (no-op for non-GH sources)
         gh_issue_start(status)
@@ -1201,21 +1252,27 @@ def run_pipeline(
                 prompt_builder.update_context("plan_file_path", plan_file)
                 _log(f"Pre-made plan: {plan_file}", "ok")
             else:
-                # Resolve plan path from template
-                _settings = load_settings(settings_path)
-                template = _settings.get("worca", {}).get(
-                    "plan_path_template", "docs/plans/{timestamp}-{title_slug}.md"
-                )
-                status["plan_file"] = _resolve_plan_path(
-                    template,
-                    timestamp=status["run_id"] or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
-                    title=work_request.title,
-                )
+                # Generated plan: write to {run_dir}/plan-NNN.md
+                if run_dir:
+                    status["plan_file"] = _next_plan_path(run_dir)
+                else:
+                    # Fallback when no run_dir (legacy / tests)
+                    _settings = load_settings(settings_path)
+                    template = _settings.get("worca", {}).get(
+                        "plan_path_template", "docs/plans/{timestamp}-{title_slug}.md"
+                    )
+                    status["plan_file"] = _resolve_plan_path(
+                        template,
+                        timestamp=status["run_id"] or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
+                        title=work_request.title,
+                    )
 
             # Set env vars for hooks
             os.environ["WORCA_PLAN_FILE"] = status["plan_file"]
             if status.get("run_id"):
                 os.environ["WORCA_RUN_ID"] = status["run_id"]
+            if run_dir:
+                os.environ["WORCA_RUN_DIR"] = run_dir
 
             # Render agent templates with plan_file and other vars
             if run_dir:
@@ -1234,6 +1291,10 @@ def run_pipeline(
 
         # Ensure hook env vars are set for both new and resumed runs
         os.environ["WORCA_PLAN_FILE"] = status.get("plan_file") or ""
+
+        # Thread plan_file into PromptBuilder so _build_plan can reference it
+        if status.get("plan_file"):
+            prompt_builder.update_context("plan_file", status["plan_file"])
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
@@ -1278,6 +1339,13 @@ def run_pipeline(
                 _log(f"{current_stage.value.upper()} already completed — skipping")
                 stage_idx += 1
                 continue
+
+            # On resume, skip stages already completed (PREFLIGHT always re-runs)
+            if resume_stage and current_stage != Stage.PREFLIGHT:
+                if existing_stage.get("status") == "completed":
+                    _log(f"{current_stage.value.upper()} already completed — skipping on resume")
+                    stage_idx += 1
+                    continue
 
             # Update current stage tracker
             status["stage"] = current_stage.value
@@ -2296,6 +2364,10 @@ def run_pipeline(
         status["completed_at"] = datetime.now(timezone.utc).isoformat()
         save_status(status, actual_status_path)
 
+        # Update multi-pipeline registry on completion (worktree mode)
+        if status.get("worktree") and status.get("run_id"):
+            update_pipeline(status["run_id"], status="completed", base=worca_dir)
+
         # Update GitHub issue (post summary, remove label, close)
         gh_issue_complete(status)
 
@@ -2403,6 +2475,14 @@ def run_pipeline(
                 save_status(status, actual_status_path)
         except Exception:
             pass  # Don't mask the real error
+        # Update multi-pipeline registry on failure (worktree mode)
+        # Success case is handled above before the except blocks.
+        try:
+            if (status and status.get("worktree") and status.get("run_id")
+                    and status.get("pipeline_status") == "failed"):
+                update_pipeline(status["run_id"], status="failed", base=worca_dir)
+        except Exception:
+            pass
         _restore_signal_handlers()
         # Clear signal/atexit refs — finally block already handled cleanup
         _signal_status = None
@@ -2415,4 +2495,5 @@ def run_pipeline(
         _close_orchestrator_log()
         os.environ.pop("WORCA_PLAN_FILE", None)
         os.environ.pop("WORCA_RUN_ID", None)
+        os.environ.pop("WORCA_RUN_DIR", None)
         os.environ.pop("WORCA_EVENTS_PATH", None)

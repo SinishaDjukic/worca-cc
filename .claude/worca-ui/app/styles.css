@@ -99,6 +99,17 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Global Shoelace button icon alignment */
+sl-button::part(label) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+sl-button svg {
+  flex-shrink: 0;
+}
+
 h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -134,8 +145,7 @@ h1, h2, h3, h4, h5, h6 {
 .sidebar.collapsed .sidebar-section-header,
 .sidebar.collapsed .sidebar-item span,
 .sidebar.collapsed .conn-label,
-.sidebar.collapsed .logo-text,
-.sidebar.collapsed .project-name {
+.sidebar.collapsed .logo-text {
   display: none;
 }
 
@@ -150,19 +160,6 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--fg);
-}
-
-.project-name {
-  display: block;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--muted);
-  letter-spacing: 0.02em;
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* --- 6. Sidebar Sections --- */
@@ -225,6 +222,8 @@ h1, h2, h3, h4, h5, h6 {
 .sidebar-item.active sl-badge {
   --sl-color-primary-600: #ffffff;
   --sl-color-neutral-600: #ffffff;
+  --sl-color-success-600: #ffffff;
+  --sl-color-warning-600: #ffffff;
   --sl-color-neutral-0: var(--accent);
 }
 
@@ -328,6 +327,7 @@ h1, h2, h3, h4, h5, h6 {
   margin-left: auto;
   display: flex;
   align-items: center;
+  gap: 10px;
 }
 
 .beads-db-path {
@@ -525,12 +525,6 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--muted);
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-}
-
-.run-branch .stage-meta-icon {
-  opacity: 0.5;
 }
 
 .pipeline-cost-strip {
@@ -961,7 +955,7 @@ sl-details.log-history-panel::part(base) {
 }
 
 sl-details.log-history-panel::part(header) {
-  padding: 10px 16px;
+  padding: 12px 16px;
 }
 
 sl-details.log-history-panel::part(content) {
@@ -1283,12 +1277,26 @@ sl-details.log-history-panel::part(content) {
 }
 
 .dashboard-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-size: 14px;
   font-weight: 600;
   margin: 28px 0 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
+}
+.dashboard-view-all {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--accent);
+  cursor: pointer;
+}
+.dashboard-view-all:hover {
+  text-decoration: underline;
 }
 
 .dashboard-stats {
@@ -2016,24 +2024,43 @@ sl-details.live-output-panel::part(content) {
 .run-detail-layout {
   display: flex;
   flex-direction: column;
+  gap: 16px;
+}
+
+.run-detail-layout__overview {
+  min-width: 0;
 }
 
 .run-detail-layout__stages {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-detail-layout__stages .stage-panels {
+  margin-top: 0;
+}
+
+.run-detail-column-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .run-detail-layout__logs {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-/* Remove top margin from live-output and log-history when inside the layout columns,
-   since the grid gap handles spacing */
-.run-detail-layout__logs .live-output-container {
-  margin-top: 16px;
-}
-
-.run-detail-layout__logs .log-history-container {
-  margin-top: 16px;
+.run-detail-layout__logs > * {
+  margin-top: 0;
 }
 
 @media (min-width: 1800px) {
@@ -2042,6 +2069,10 @@ sl-details.live-output-panel::part(content) {
     grid-template-columns: 1fr 1fr;
     gap: 24px;
     align-items: start;
+  }
+
+  .run-detail-layout__overview {
+    grid-column: 1 / -1;
   }
 
   .run-detail-layout__logs {
@@ -2251,7 +2282,7 @@ sl-details.live-output-panel::part(content) {
 
 /* Sidebar new run button */
 .sidebar-new-run {
-  padding: 12px 8px 4px;
+  padding: 8px 8px 4px;
 }
 
 .sidebar-new-run-btn {
@@ -2285,19 +2316,6 @@ sl-details.live-output-panel::part(content) {
   padding: 8px;
 }
 
-/* Dashboard actions */
-.dashboard-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
-
-.dashboard-actions sl-button svg {
-  width: 16px;
-  height: 16px;
-  margin-right: 4px;
-}
-
 /* Stage restart button */
 .stage-restart-btn {
   padding: 8px 0 4px;
@@ -2308,7 +2326,6 @@ sl-details.live-output-panel::part(content) {
 .stage-restart-btn sl-button svg {
   width: 14px;
   height: 14px;
-  margin-right: 4px;
 }
 
 /* Confirmation dialog text */
@@ -2609,12 +2626,8 @@ sl-details.live-output-panel::part(content) {
 }
 
 /* --- Run-detail linked Beads section --- */
-.run-detail-layout__logs .run-beads-section {
-  margin-top: 16px;
-}
-
 .run-beads-section {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 sl-details.run-beads-panel::part(base) {
@@ -2625,7 +2638,7 @@ sl-details.run-beads-panel::part(base) {
 }
 
 sl-details.run-beads-panel::part(header) {
-  padding: 10px 16px;
+  padding: 12px 16px;
 }
 
 sl-details.run-beads-panel::part(content) {
@@ -2711,7 +2724,7 @@ sl-details.run-beads-panel::part(content) {
 
 /* --- Learnings section --- */
 .learnings-section {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 sl-details.learnings-panel::part(base) {
@@ -2722,7 +2735,7 @@ sl-details.learnings-panel::part(base) {
 }
 
 sl-details.learnings-panel::part(header) {
-  padding: 10px 16px;
+  padding: 12px 16px;
 }
 
 sl-details.learnings-panel::part(content) {
@@ -3399,7 +3412,7 @@ sl-details.learnings-panel::part(content) {
 
 .webhook-inbox-list-header {
   display: grid;
-  grid-template-columns: 40px 60px 180px 80px 1fr 70px;
+  grid-template-columns: 40px 75px 65px 180px 80px 1fr minmax(80px, auto);
   gap: 8px;
   padding: 6px 10px;
   background: var(--bg-tertiary);
@@ -3420,7 +3433,7 @@ sl-details.learnings-panel::part(content) {
 
 .webhook-inbox-row {
   display: grid;
-  grid-template-columns: 40px 60px 180px 80px 1fr 70px;
+  grid-template-columns: 40px 75px 65px 180px 80px 1fr minmax(80px, auto);
   gap: 8px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--border-subtle);
@@ -3444,9 +3457,16 @@ sl-details.learnings-panel::part(content) {
   font-family: var(--sl-font-mono);
 }
 
+.wh-col-date {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-family: var(--sl-font-mono);
+}
+
 .wh-col-time {
   color: var(--muted);
   font-size: 0.72rem;
+  font-family: var(--sl-font-mono);
 }
 
 .wh-col-stage {
@@ -3624,6 +3644,47 @@ sl-details.learnings-panel::part(content) {
 .active-group-paused .active-group-count { color: var(--status-paused); }
 .active-group-failed .active-group-count { color: var(--status-failed); }
 
+/* --- Filter Chips (history, etc.) --- */
+.filter-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.15s;
+  text-transform: capitalize;
+}
+.filter-chip:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.filter-chip-running.active { background: var(--status-running); border-color: var(--status-running); }
+.filter-chip-completed.active { background: var(--status-completed); border-color: var(--status-completed); }
+.filter-chip-failed.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip-paused.active { background: var(--status-paused); border-color: var(--status-paused); }
+.filter-chip-error.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip .chip-count {
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
+
 /* --- Run Card Quick-Action Buttons --- */
 .run-card-actions {
   display: flex;
@@ -3648,3 +3709,170 @@ sl-details.learnings-panel::part(content) {
   background: var(--status-completed);
   color: #ffffff;
 }
+
+/* --- Sidebar Project Selector --- */
+.sidebar-project-section { padding-top: 4px; padding-bottom: 0; }
+.sidebar-project-selector-row { display: flex; align-items: center; gap: 4px; padding: 0 8px; }
+.sidebar-project-selector { flex: 1; min-width: 0; }
+.sidebar-project-selector sl-select::part(combobox) { font-size: 0.85rem; }
+.sidebar-add-project-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+.sidebar-add-project-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Project status dots in project selector */
+.project-option-label { display: inline-flex; align-items: center; gap: 6px; }
+.project-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.project-status-idle { background: var(--status-completed, #22c55e); }
+.project-status-running { background: var(--status-in-progress, #f59e0b); animation: conn-blink 1.2s ease-in-out infinite; }
+.project-status-error { background: var(--status-error, #ef4444); }
+.project-status-paused { background: var(--status-paused, #eab308); }
+
+/* --- Dashboard Project Cards --- */
+.project-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.project-card { background: var(--surface); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: var(--transition-fast); border: 1px solid var(--border); }
+.project-card:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.project-card-name { font-weight: 600; margin-bottom: 4px; }
+.project-card-stats { font-size: 0.85rem; color: var(--text-secondary); }
+
+/* --- Settings Projects List --- */
+.projects-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.projects-list-item:last-child { border-bottom: none; }
+.project-path { font-size: 0.85rem; color: var(--text-secondary); font-family: var(--sl-font-mono); }
+
+/* --- Multi-Pipeline Dashboard --- */
+.multi-pipeline-section {
+  margin-top: 24px;
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.pipeline-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.pipeline-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.pipeline-running { border-left-color: var(--status-running); }
+.pipeline-succeeded { border-left-color: var(--status-completed); }
+.pipeline-failed { border-left-color: var(--status-failed); }
+.pipeline-paused { border-left-color: var(--status-paused); }
+.pipeline-unknown { border-left-color: var(--muted); }
+
+.pipeline-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pipeline-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.pipeline-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.pipeline-badge-running { background: rgba(59, 130, 246, 0.12); color: var(--status-running); }
+.pipeline-badge-succeeded { background: rgba(34, 197, 94, 0.12); color: var(--status-completed); }
+.pipeline-badge-failed { background: rgba(239, 68, 68, 0.12); color: var(--status-failed); }
+.pipeline-badge-paused { background: rgba(245, 158, 11, 0.12); color: var(--status-paused); }
+
+.pipeline-card-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background var(--transition-fast);
+}
+.stage-dot.completed { background: var(--status-completed); }
+.stage-dot.active { background: var(--status-running); animation: conn-blink 1.2s ease-in-out infinite; }
+
+.pipeline-stage-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-left: 4px;
+  text-transform: capitalize;
+}
+
+.pipeline-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pipeline-elapsed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.pipeline-run-id {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--sl-font-mono);
+  font-size: 0.75rem;
+}
+
+.pipeline-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pipeline-action-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  transition: var(--transition-fast);
+}
+.pipeline-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg);
+}
+

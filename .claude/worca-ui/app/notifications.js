@@ -47,7 +47,7 @@ const EVENT_CONFIG = {
 
 // --- Detector functions (exported for testing) ---
 
-export function detectRunCompleted(runId, newRun, prevRun) {
+export function detectRunCompleted(runId, newRun, prevRun, projectName) {
   if (!prevRun || !newRun) return null;
   const wasActive = prevRun.active === true;
   const nowInactive = newRun.active === false;
@@ -58,17 +58,20 @@ export function detectRunCompleted(runId, newRun, prevRun) {
   if (hasError) return null;
 
   const runTitle = getRunTitle(newRun);
+  const body = projectName
+    ? `[${projectName}] "${runTitle}" finished successfully`
+    : `"${runTitle}" finished successfully`;
   return {
     event: 'run_completed',
     title: EVENT_CONFIG.run_completed.title,
-    body: `"${runTitle}" finished successfully`,
+    body,
     tag: `worca-complete-${runId}`,
     requireInteraction: false,
     runId,
   };
 }
 
-export function detectRunFailed(runId, newRun, prevRun) {
+export function detectRunFailed(runId, newRun, prevRun, projectName) {
   if (!prevRun || !newRun) return null;
   const wasActive = prevRun.active === true;
   const nowInactive = newRun.active === false;
@@ -81,17 +84,20 @@ export function detectRunFailed(runId, newRun, prevRun) {
   if (!failedStage) return null;
 
   const runTitle = getRunTitle(newRun);
+  const body = projectName
+    ? `[${projectName}] "${runTitle}" failed at ${failedStage[0]} stage`
+    : `"${runTitle}" failed at ${failedStage[0]} stage`;
   return {
     event: 'run_failed',
     title: EVENT_CONFIG.run_failed.title,
-    body: `"${runTitle}" failed at ${failedStage[0]} stage`,
+    body,
     tag: `worca-failed-${runId}`,
     requireInteraction: false,
     runId,
   };
 }
 
-export function detectApprovalNeeded(runId, newRun, prevRun) {
+export function detectApprovalNeeded(runId, newRun, prevRun, projectName) {
   if (!newRun) return null;
   const newStages = newRun.stages || {};
   const prevStages = prevRun?.stages || {};
@@ -102,10 +108,13 @@ export function detectApprovalNeeded(runId, newRun, prevRun) {
       if (prevStatus !== 'waiting_approval') {
         const runTitle = getRunTitle(newRun);
         const label = key === 'pr' ? 'PR' : key;
+        const body = projectName
+          ? `[${projectName}] "${runTitle}" is waiting for ${label} approval`
+          : `"${runTitle}" is waiting for ${label} approval`;
         return {
           event: 'approval_needed',
           title: EVENT_CONFIG.approval_needed.title,
-          body: `"${runTitle}" is waiting for ${label} approval`,
+          body,
           tag: `worca-approval-${runId}-${key}`,
           requireInteraction: true,
           runId,
@@ -116,7 +125,7 @@ export function detectApprovalNeeded(runId, newRun, prevRun) {
   return null;
 }
 
-export function detectTestFailures(runId, newRun, prevRun) {
+export function detectTestFailures(runId, newRun, prevRun, projectName) {
   if (!newRun) return null;
   const testStage = newRun.stages?.test;
   if (!testStage) return null;
@@ -128,10 +137,13 @@ export function detectTestFailures(runId, newRun, prevRun) {
     const latest = newIters[newIters.length - 1];
     if (latest && latest.result === 'failed') {
       const runTitle = getRunTitle(newRun);
+      const body = projectName
+        ? `[${projectName}] "${runTitle}" test iteration ${newIters.length} failed`
+        : `"${runTitle}" test iteration ${newIters.length} failed`;
       return {
         event: 'test_failures',
         title: EVENT_CONFIG.test_failures.title,
-        body: `"${runTitle}" test iteration ${newIters.length} failed`,
+        body,
         tag: `worca-test-${runId}-iter${newIters.length}`,
         requireInteraction: false,
         runId,
@@ -303,6 +315,8 @@ export function createNotificationManager({ store, ws: _ws, getSettings }) {
     if (!prefs.enabled) return;
 
     const settings = getSettings();
+    const state = store.getState();
+    const projectName = state.projects?.length > 1 ? state.projectName : null;
 
     const detectors = [
       detectRunCompleted,
@@ -312,7 +326,7 @@ export function createNotificationManager({ store, ws: _ws, getSettings }) {
     ];
 
     for (const detect of detectors) {
-      const descriptor = detect(runId, newRun, prevRun);
+      const descriptor = detect(runId, newRun, prevRun, projectName);
       if (descriptor && prefs.events[descriptor.event]) {
         fireNotification(descriptor);
       }

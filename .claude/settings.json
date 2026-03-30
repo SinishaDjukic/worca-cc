@@ -243,6 +243,12 @@
     "defaults": {
       "msize": 1,
       "mloops": 1
+    },
+    "parallel": {
+      "max_concurrent_pipelines": 3,
+      "default_base_branch": "main",
+      "cleanup_policy": "on-success",
+      "worktree_base_dir": ".worktrees"
     }
   }
 }

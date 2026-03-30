@@ -1,7 +1,4 @@
-// TODO: Rewrite e2e tests — fixture tests depend on control-button selectors
-// (.run-controls) that were removed in commit 31f6e58.
 import { test, expect } from '@playwright/test';
-test.skip(true, 'stale selectors after control-buttons-to-header refactor (31f6e58)');
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer, seedRun, writeControlFile, waitForWsMessage } from './fixtures.js';

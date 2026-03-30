@@ -221,6 +221,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None) -> dict:
     Includes pipeline_status, loop_counters, and git_head fields.
     """
     status = {
+        "schema_version": 1,
         "work_request": work_request,
         "pipeline_status": "pending",
         "stage": "plan",

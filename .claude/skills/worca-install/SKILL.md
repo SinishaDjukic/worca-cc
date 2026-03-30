@@ -128,6 +128,31 @@ Also ensure these are gitignored:
 .claude/settings.local.json
 ```
 
+### Step 7.5: Register project in worca-ui
+
+Register the target project so it appears in the worca-ui multi-project selector.
+
+```bash
+PREFS_DIR="$HOME/.worca"
+PROJ_NAME=$(basename "$DEST")
+mkdir -p "$PREFS_DIR/projects.d"
+
+# Slugify: lowercase, replace non-alphanumeric with hyphens, collapse
+SLUG=$(echo "$PROJ_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | sed 's/--*/-/g' | cut -c1-64)
+
+# Only write if not already registered (don't overwrite existing entry)
+if [ ! -f "$PREFS_DIR/projects.d/$SLUG.json" ]; then
+  cat > "$PREFS_DIR/projects.d/$SLUG.json" << EOF
+{
+  "name": "$SLUG",
+  "path": "$(cd "$DEST" && pwd)"
+}
+EOF
+fi
+```
+
+If the project was registered, note it in the summary. If it already existed, note "already registered".
+
 ### Step 8: Report results
 
 Show a summary:
@@ -150,9 +175,11 @@ Worca installed successfully!
 
   Beads:     initialized / skipped (bd not found)
   Gitignore: updated
+  Registered: ~/.worca/projects.d/<slug>.json (new / already existed)
 
   Next steps:
     cd <target-project> && claude          # Interactive mode
     python .claude/scripts/run_pipeline.py --prompt "..."  # Autonomous mode
     /worca-sync                            # Update worca files later
+    pnpm worca:ui                          # UI — project appears in selector
 ```

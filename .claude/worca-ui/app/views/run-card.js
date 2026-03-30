@@ -62,6 +62,22 @@ function _lastStageEnd(stages) {
   return latest;
 }
 
+function _runCost(run) {
+  let total = 0;
+  for (const stage of Object.values(run.stages || {})) {
+    for (const iter of stage.iterations || []) {
+      total += iter.cost_usd || 0;
+    }
+  }
+  return total;
+}
+
+function _formatCost(usd) {
+  if (usd === 0) return null;
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 /**
  * Shared run card component used in both run-list and dashboard active list.
  * Shows title, overall status icon, duration, and stage badges.
@@ -85,6 +101,7 @@ export function runCardView(
         : 'N/A';
   const branch = run.branch || run.work_request?.branch || '';
   const stages = run.stages ? _sortedEntries(run.stages) : [];
+  const cost = _runCost(run);
 
   const pauseBtn =
     onPause && (overallStatus === 'running' || overallStatus === 'resuming')
@@ -126,11 +143,12 @@ export function runCardView(
         }
         <span class="run-card-title">${title}</span>
       </div>
-      ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> ${branch}</span></div>` : nothing}
+      ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
       <div class="run-card-meta">
-        <span class="run-card-meta-item"><span class="meta-label">Started:</span> ${formatTimestamp(run.started_at)}</span>
-        <span class="run-card-meta-item"><span class="meta-label">Finished:</span> ${formatTimestamp(endTime)}</span>
-        <span class="run-card-meta-item"><span class="meta-label">Duration:</span> ${duration}</span>
+        <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>
+        <span class="run-card-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endTime)}</span></span>
+        <span class="run-card-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>
+        ${_formatCost(cost) ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>` : nothing}
       </div>
       ${
         stages.length > 0

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -238,14 +239,16 @@ def test_handle_pr_review_unknown_outcome():
 # --- run_id and helper functions ---
 
 def test_generate_run_id_format():
-    """Run ID should be YYYYMMDD-HHMMSS format."""
+    """Run ID should be YYYYMMDD-HHMMSS-mmm-xxxx format."""
     run_id = _generate_run_id("2026-03-09T17:15:45.583887+00:00")
-    assert run_id == "20260309-171545"
+    assert re.match(r"^\d{8}-\d{6}-\d{3}-[0-9a-f]{4}$", run_id)
+    assert run_id.startswith("20260309-171545-583-")
 
 
 def test_generate_run_id_without_timezone():
     run_id = _generate_run_id("2026-01-15T09:30:00")
-    assert run_id == "20260115-093000"
+    assert re.match(r"^\d{8}-\d{6}-\d{3}-[0-9a-f]{4}$", run_id)
+    assert run_id.startswith("20260115-093000-000-")
 
 
 def test_slugify_basic():
@@ -604,10 +607,10 @@ def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
                         status_path=status_path,
                     )
 
-    # plan_file should be resolved from template
+    # plan_file should be sequenced inside the run directory
     assert result["plan_file"] is not None
-    assert "add-user-auth" in result["plan_file"]
-    assert result["plan_file"].startswith("docs/plans/")
+    assert result["plan_file"].endswith("plan-001.md")
+    assert ".worca/runs/" in result["plan_file"]
 
 
 # --- bead limit from coordinator ---

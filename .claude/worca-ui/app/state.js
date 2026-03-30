@@ -1,5 +1,11 @@
 /**
  * Reactive state store for worca-ui.
+ *
+ * Note: The W-032 plan specified a separate `state-accessors.js` module (Task 1.6)
+ * for safe accessor functions with fallback to the old flat shape. The accessor
+ * logic was folded directly into this module since the store API (getState,
+ * setState, setRun, appendLog, clearLog) already provides a clean boundary and
+ * a separate file added indirection without benefit.
  */
 
 const LOG_CAP = 5000;
@@ -8,7 +14,10 @@ export function createStore(initial = {}) {
   let state = {
     activeRunId: initial.activeRunId ?? null,
     projectName: initial.projectName ?? '',
+    currentProjectId: initial.currentProjectId ?? null,
+    projects: initial.projects ?? [],
     runs: initial.runs ?? {},
+    pipelines: initial.pipelines ?? {},
     logLines: initial.logLines ?? [],
     preferences: {
       theme: initial.preferences?.theme ?? 'light',
@@ -20,6 +29,7 @@ export function createStore(initial = {}) {
       events: [],
       controlAction: 'continue',
     },
+    addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
   };
 
   const subs = new Set();
@@ -48,14 +58,18 @@ export function createStore(initial = {}) {
       if (
         next.activeRunId === state.activeRunId &&
         next.projectName === state.projectName &&
+        next.currentProjectId === state.currentProjectId &&
+        next.projects === state.projects &&
         next.runs === state.runs &&
+        next.pipelines === state.pipelines &&
         next.logLines === state.logLines &&
         next.preferences.theme === state.preferences.theme &&
         next.preferences.sidebarCollapsed ===
           state.preferences.sidebarCollapsed &&
         next.preferences.notifications === state.preferences.notifications &&
         next.beads === state.beads &&
-        next.webhookInbox === state.webhookInbox
+        next.webhookInbox === state.webhookInbox &&
+        next.addProjectDialogOpen === state.addProjectDialogOpen
       )
         return;
       state = next;

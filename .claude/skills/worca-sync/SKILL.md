@@ -164,6 +164,31 @@ If `$DEST/worca-ui/node_modules/` does not exist, run `npm install` first. Then 
 cd "$DEST/worca-ui" && npm install && npm run build
 ```
 
+### Step 7.5: Ensure project is registered
+
+Register the target project in the worca-ui multi-project selector (covers projects installed before multi-project support was added).
+
+```bash
+PREFS_DIR="$HOME/.worca"
+PROJ_NAME=$(basename "<target-project>")
+mkdir -p "$PREFS_DIR/projects.d"
+
+# Slugify: lowercase, replace non-alphanumeric with hyphens, collapse
+SLUG=$(echo "$PROJ_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g' | sed 's/--*/-/g' | cut -c1-64)
+
+# Only write if not already registered (don't overwrite existing entry)
+if [ ! -f "$PREFS_DIR/projects.d/$SLUG.json" ]; then
+  cat > "$PREFS_DIR/projects.d/$SLUG.json" << EOF
+{
+  "name": "$SLUG",
+  "path": "$(cd "<target-project>" && pwd)"
+}
+EOF
+fi
+```
+
+If the project was registered, note it in the summary. If it already existed, note "already registered".
+
 ### Step 8: Report results
 
-Show a summary table of what was synced, the source path used, and whether settings needed merging.
+Show a summary table of what was synced, the source path used, whether settings needed merging, and project registration status (e.g. `Registered: ~/.worca/projects.d/<slug>.json (new / already existed)`).

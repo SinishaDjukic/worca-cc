@@ -15,6 +15,7 @@ export function createInbox(maxSize = 500) {
         receivedAt: new Date().toISOString(),
         headers: event.headers || {},
         envelope: event.envelope || {},
+        projectId: event.projectId || null,
         controlResponse: { action: controlAction },
       };
       events.push(stored);
@@ -24,11 +25,15 @@ export function createInbox(maxSize = 500) {
       return stored;
     },
 
-    list(sinceId) {
+    list(sinceId, projectId) {
+      let result = events;
       if (sinceId != null) {
-        return events.filter((e) => e.id > sinceId);
+        result = result.filter((e) => e.id > sinceId);
       }
-      return [...events];
+      if (projectId) {
+        result = result.filter((e) => !e.projectId || e.projectId === projectId);
+      }
+      return [...result];
     },
 
     clear() {

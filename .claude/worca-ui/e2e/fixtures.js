@@ -113,6 +113,25 @@ export function writeControlFile(worcaDir, runId, action) {
 }
 
 /**
+ * Write pipeline.pid + active_run so that discoverRuns() sets `active: true`
+ * for the specified run. Uses the current test process PID (which is alive).
+ *
+ * discoverRuns() only marks a run as active when:
+ *  1. It's found via the `active_run` pointer (not the directory scan), AND
+ *  2. pipeline.pid contains a live PID, AND
+ *  3. The run is not terminal (no completed_at, stages not all done)
+ *
+ * @param {string} worcaDir
+ * @param {string} [activeRunId] - run ID to write to active_run
+ */
+export function writePipelinePid(worcaDir, activeRunId) {
+  writeFileSync(join(worcaDir, 'pipeline.pid'), String(process.pid), 'utf8');
+  if (activeRunId) {
+    writeFileSync(join(worcaDir, 'active_run'), activeRunId, 'utf8');
+  }
+}
+
+/**
  * Wait for a WebSocket message of the given type to arrive on the page.
  * Must be called before the page action that triggers the message.
  *

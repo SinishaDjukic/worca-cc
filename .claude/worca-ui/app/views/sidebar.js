@@ -8,13 +8,73 @@ import {
   List,
   Plus,
   Settings,
+  SlidersHorizontal,
   Zap,
 } from '../utils/icons.js';
-export function sidebarView(state, route, connectionState, { onNavigate }) {
-  const { runs, preferences, projectName } = state;
+
+/**
+ * Derive aggregate status for a project from its runs.
+ * @param {string} projectId
+ * @param {object} runs - { [runId]: run }
+ * @returns {'idle'|'running'|'error'|'paused'}
+ */
+export function projectStatus(projectId, runs, currentProjectId) {
   const runList = Object.values(runs);
-  const activeCount = runList.filter((r) => r.active).length;
-  const historyCount = runList.filter((r) => !r.active).length;
+  // In multi-project mode, runs in state belong to currentProjectId.
+  // For other projects we have no data — return idle.
+  const projectRuns = projectId
+    ? runList.filter((r) =>
+        r.project === projectId ||
+        (!r.project && (!currentProjectId || currentProjectId === projectId)),
+      )
+    : runList;
+
+  let hasRunning = false;
+  let hasError = false;
+  let hasPaused = false;
+
+  for (const r of projectRuns) {
+    const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+    if (ps === 'running') hasRunning = true;
+    else if (ps === 'failed' || ps === 'error') hasError = true;
+    else if (ps === 'paused' || ps === 'approval_needed') hasPaused = true;
+  }
+
+  if (hasRunning) return 'running';
+  if (hasError) return 'error';
+  if (hasPaused) return 'paused';
+  return 'idle';
+}
+
+/**
+ * Map project status to a CSS color class for the status dot.
+ */
+function statusDotClass(status) {
+  switch (status) {
+    case 'running':
+      return 'project-status-running';
+    case 'error':
+      return 'project-status-error';
+    case 'paused':
+      return 'project-status-paused';
+    default:
+      return 'project-status-idle';
+  }
+}
+
+export function sidebarView(
+  state,
+  route,
+  connectionState,
+  { onNavigate, onProjectChange, onAddProject },
+) {
+  const { runs, preferences, projects, currentProjectId } = state;
+  const runList = Object.values(runs);
+  const activeCount = runList.filter((r) => {
+    const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+    return ps === 'running' || ps === 'resuming';
+  }).length;
+  const historyCount = runList.length;
 
   const beadsIssues = state.beads?.issues || [];
   const beadsReady = beadsIssues.filter(
@@ -39,9 +99,46 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
     <aside class="sidebar ${preferences.sidebarCollapsed ? 'collapsed' : ''}">
       <div class="sidebar-logo" @click=${() => onNavigate('dashboard')} style="cursor:pointer">
         <span class="logo-text">WORCA</span>
-        ${projectName ? html`<span class="project-name">${projectName}</span>` : ''}
       </div>
 
+      ${
+        projects && projects.length > 1
+          ? html`
+        <div class="sidebar-section sidebar-project-section">
+          <div class="sidebar-section-header">Project</div>
+          <div class="sidebar-project-selector-row">
+            <div class="sidebar-project-selector">
+              <sl-select
+                size="small"
+                value=${currentProjectId || ''}
+                @sl-change=${(e) => onProjectChange?.(e.target.value)}
+              >
+                <sl-option value="">All Projects</sl-option>
+                <sl-divider></sl-divider>
+                ${projects.map((p) => {
+                  const pStatus = projectStatus(p.name, runs, currentProjectId);
+                  const dotClass = statusDotClass(pStatus);
+                  return html`
+                    <sl-option value=${p.name}>
+                      <span class="project-option-label">
+                        <span class="project-status-dot ${dotClass}"></span>
+                        ${p.name}
+                      </span>
+                    </sl-option>
+                  `;
+                })}
+              </sl-select>
+            </div>
+            <button class="sidebar-add-project-btn" aria-label="Add project" @click=${() => onAddProject?.()}>
+              ${unsafeHTML(iconSvg(Plus, 16))}
+            </button>
+          </div>
+        </div>
+      `
+          : ''
+      }
+
+      ${(currentProjectId || (projects || []).length <= 1) ? html`
       <div class="sidebar-new-run">
         <button class="sidebar-new-run-btn" @click=${() => onNavigate('new-run')}>
           ${unsafeHTML(iconSvg(Plus, 16))}
@@ -105,6 +202,18 @@ export function sidebarView(state, route, connectionState, { onNavigate }) {
           ${(state.webhookInbox?.events?.length || 0) > 0 ? html`<sl-badge variant="warning" pill>${state.webhookInbox.events.length}</sl-badge>` : ''}
         </div>
       </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">Configuration</div>
+        <div class="sidebar-item ${route.section === 'project-settings' ? 'active' : ''}"
+             @click=${() => onNavigate('project-settings')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
+            <span>Project Settings</span>
+          </span>
+        </div>
+      </div>
+      ` : ''}
 
       <div class="sidebar-footer">
         <div class="connection-indicator ${connClass}">

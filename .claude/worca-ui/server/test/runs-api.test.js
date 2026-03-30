@@ -6,11 +6,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockStartPipeline = vi.fn().mockResolvedValue({ pid: 12345 });
 
-vi.mock('../process-manager.js', () => ({
-  startPipeline: mockStartPipeline,
-  stopPipeline: vi.fn(),
-  restartStage: vi.fn(),
-}));
+vi.mock('../process-manager.js', () => {
+  class ProcessManager {
+    constructor(opts = {}) {
+      this.worcaDir = opts.worcaDir;
+      this.projectRoot = opts.projectRoot;
+    }
+    startPipeline(opts) { return mockStartPipeline(this.worcaDir, opts); }
+    stopPipeline() { return vi.fn()(); }
+    pausePipeline(runId) { return vi.fn()(runId); }
+    getRunningPid() { return null; }
+    reconcileStatus() { return false; }
+    restartStage() { return vi.fn()(); }
+  }
+  return {
+    ProcessManager,
+    startPipeline: mockStartPipeline,
+    stopPipeline: vi.fn(),
+    restartStage: vi.fn(),
+  };
+});
 
 const { createApp } = await import('../app.js');
 

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, watch } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function createRunId(status) {
@@ -60,7 +61,7 @@ export function discoverRuns(worcaDir) {
     }
   }
 
-  // 2. Scan .worca/runs/ for non-active runs
+  // 2. Scan .worca/runs/ for other runs
   const runsDir = join(worcaDir, 'runs');
   if (existsSync(runsDir)) {
     for (const entry of readdirSync(runsDir)) {
@@ -71,7 +72,8 @@ export function discoverRuns(worcaDir) {
         const id = createRunId(status);
         if (seenIds.has(id)) continue;
         seenIds.add(id);
-        runs.push({ id, active: false, ...status });
+        const active = !isTerminal(status) && status.pipeline_status === 'running';
+        runs.push({ id, active, ...status });
       } catch {
         /* ignore */
       }
@@ -128,6 +130,88 @@ export function discoverRuns(worcaDir) {
       }
     }
   }
+
+  return runs;
+}
+
+/**
+ * Async version of discoverRuns — avoids blocking the event loop.
+ * Used by the status watcher's debounced refresh.
+ */
+export async function discoverRunsAsync(worcaDir) {
+  const runs = [];
+  const seenIds = new Set();
+  const pipelineRunning = isPipelineRunning(worcaDir); // cheap check (one stat + one kill)
+
+  // 1. Active run
+  const activeRunPath = join(worcaDir, 'active_run');
+  try {
+    const activeId = (await readFile(activeRunPath, 'utf8')).trim();
+    const candidate = join(worcaDir, 'runs', activeId, 'status.json');
+    const status = JSON.parse(await readFile(candidate, 'utf8'));
+    const active = !isTerminal(status) && pipelineRunning;
+    const id = createRunId(status);
+    runs.push({ id, active, ...status });
+    seenIds.add(id);
+  } catch { /* ignore */ }
+
+  // 2. Scan .worca/runs/
+  const runsDir = join(worcaDir, 'runs');
+  try {
+    const entries = await readdir(runsDir);
+    const readPromises = entries.map(async (entry) => {
+      try {
+        const statusPath = join(runsDir, entry, 'status.json');
+        const status = JSON.parse(await readFile(statusPath, 'utf8'));
+        return status;
+      } catch { return null; }
+    });
+    for (const status of await Promise.all(readPromises)) {
+      if (!status) continue;
+      const id = createRunId(status);
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      const active = !isTerminal(status) && status.pipeline_status === 'running';
+      runs.push({ id, active, ...status });
+    }
+  } catch { /* ignore */ }
+
+  // 3. Legacy flat status.json
+  try {
+    const status = JSON.parse(await readFile(join(worcaDir, 'status.json'), 'utf8'));
+    const id = createRunId(status);
+    if (!seenIds.has(id)) {
+      const active = !isTerminal(status) && pipelineRunning;
+      runs.push({ id, active, ...status });
+      seenIds.add(id);
+    }
+  } catch { /* ignore */ }
+
+  // 4. Results
+  const resultsDir = join(worcaDir, 'results');
+  try {
+    const entries = await readdir(resultsDir, { withFileTypes: true });
+    const readPromises = entries.map(async (entry) => {
+      try {
+        if (entry.isFile() && entry.name.endsWith('.json')) {
+          return JSON.parse(await readFile(join(resultsDir, entry.name), 'utf8'));
+        }
+        if (entry.isDirectory()) {
+          const sp = join(resultsDir, entry.name, 'status.json');
+          return JSON.parse(await readFile(sp, 'utf8'));
+        }
+      } catch { /* ignore */ }
+      return null;
+    });
+    for (const data of await Promise.all(readPromises)) {
+      if (!data || !data.started_at) continue;
+      const id = createRunId(data);
+      if (!seenIds.has(id)) {
+        seenIds.add(id);
+        runs.push({ id, active: false, ...data });
+      }
+    }
+  } catch { /* ignore */ }
 
   return runs;
 }

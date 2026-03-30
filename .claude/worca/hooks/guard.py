@@ -198,8 +198,8 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
                     return (2, "Blocked: planner agent may only write {}, not {}.".format(plan_file, file_path))
             else:
                 basename = os.path.basename(file_path)
-                if basename != "MASTER_PLAN.md":
-                    return (2, "Blocked: planner agent may only write MASTER_PLAN.md, not {}.".format(basename))
+                if basename != "MASTER_PLAN.md" and not re.match(r'^plan-\d{3}\.md$', basename):
+                    return (2, "Blocked: planner agent may only write MASTER_PLAN.md or plan-NNN.md, not {}.".format(basename))
 
         # Read-only agents: coordinator, tester, and plan_reviewer may not write files
         read_only_agents = ("coordinator", "tester", "plan_reviewer")
