@@ -169,6 +169,8 @@ export function createProjectScopedRoutes() {
   }
 
   // GET /api/projects/:projectId/info — project metadata
+  // Note: Plan specified /project-info but /info is preferred since
+  // the route is already scoped under /api/projects/:projectId/.
   router.get('/info', (req, res) => {
     res.json({ ok: true, project: req.project });
   });
