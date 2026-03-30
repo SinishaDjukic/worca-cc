@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, openSync, readSync, readdirSync, readFileSync, statSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Pipeline stage order for log display (orchestrator first, then stages in execution order). */
@@ -74,6 +74,43 @@ export function readLinesFrom(filePath, startLine) {
     return lines.slice(startLine);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Return the byte length of a file (0 if missing/unreadable).
+ * Used as the initial offset when starting to tail a log file.
+ */
+export function fileByteLength(filePath) {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Read new lines from a file starting at `byteOffset`.
+ * Returns `{ lines: string[], newOffset: number }`.
+ * Only the bytes after the offset are read, making this O(delta) instead of O(n).
+ */
+export function readNewLines(filePath, byteOffset) {
+  try {
+    const size = statSync(filePath).size;
+    if (size <= byteOffset) return { lines: [], newOffset: byteOffset };
+    const fd = openSync(filePath, 'r');
+    try {
+      const len = size - byteOffset;
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, byteOffset);
+      const text = buf.toString('utf8');
+      const lines = text.split('\n').filter((l) => l.length > 0);
+      return { lines, newOffset: size };
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return { lines: [], newOffset: byteOffset };
   }
 }
 

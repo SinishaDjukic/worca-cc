@@ -22,6 +22,38 @@ export function createApp(options = {}) {
 
   app.use(express.json());
 
+  // ─── Security headers ──────────────────────────────────────────────────
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    next();
+  });
+
+  // ─── CSRF Origin check ────────────────────────────────────────────────
+  // Block cross-origin state-mutating requests. Webhooks from pipeline
+  // processes use X-Worca-Event header to bypass (they aren't browsers).
+  app.use((req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+      return next();
+    }
+    // Allow non-browser clients (webhook callbacks, curl, etc.)
+    if (req.headers['x-worca-event']) return next();
+
+    const origin = req.headers.origin;
+    if (!origin) return next(); // non-browser request (curl, server-to-server)
+
+    try {
+      const parsed = new URL(origin);
+      const host = parsed.hostname;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+        return next();
+      }
+    } catch {
+      // malformed origin — reject
+    }
+    res.status(403).json({ ok: false, error: 'Forbidden: cross-origin request' });
+  });
+
   // Webhook inbox — shared in-memory store (also exposed for WS server)
   const webhookInbox = options.webhookInbox || createInbox();
   app.locals.webhookInbox = webhookInbox;

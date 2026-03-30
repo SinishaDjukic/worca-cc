@@ -7,7 +7,8 @@
  * creates per-worktree WatcherSets for log/status streaming.
  */
 
-import { existsSync, readdirSync, readFileSync, watch } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 
@@ -51,27 +52,25 @@ export class MultiWatcher {
   }
 
   /** Scan pipelines.d/, diff against current map, broadcast changes. */
-  _syncPipelines() {
+  async _syncPipelines() {
     const pipelinesDir = join(this.worcaDir, 'multi', 'pipelines.d');
     const freshEntries = new Map();
 
-    if (existsSync(pipelinesDir)) {
-      let files;
-      try {
-        files = readdirSync(pipelinesDir);
-      } catch {
-        files = [];
+    try {
+      const files = await readdir(pipelinesDir);
+      const readPromises = files
+        .filter((f) => f.endsWith('.json'))
+        .map(async (fname) => {
+          try {
+            const entry = JSON.parse(await readFile(join(pipelinesDir, fname), 'utf8'));
+            return entry.run_id ? [entry.run_id, entry] : null;
+          } catch { return null; }
+        });
+      for (const result of await Promise.all(readPromises)) {
+        if (result) freshEntries.set(result[0], result[1]);
       }
-      for (const fname of files) {
-        if (!fname.endsWith('.json')) continue;
-        const fpath = join(pipelinesDir, fname);
-        try {
-          const entry = JSON.parse(readFileSync(fpath, 'utf8'));
-          if (entry.run_id) freshEntries.set(entry.run_id, entry);
-        } catch {
-          // skip malformed JSON
-        }
-      }
+    } catch {
+      // directory doesn't exist or unreadable — freshEntries stays empty
     }
 
     // Add new pipelines or update changed ones

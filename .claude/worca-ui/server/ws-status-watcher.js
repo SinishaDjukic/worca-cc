@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { readSettings } from './settings-reader.js';
-import { discoverRuns } from './watcher.js';
+import { discoverRunsAsync } from './watcher.js';
 
 const REFRESH_DEBOUNCE_MS = 75;
 
@@ -69,7 +69,7 @@ export function createStatusWatcher({
 
   function scheduleRefresh() {
     if (REFRESH_TIMER) clearTimeout(REFRESH_TIMER);
-    REFRESH_TIMER = setTimeout(() => {
+    REFRESH_TIMER = setTimeout(async () => {
       REFRESH_TIMER = null;
       let settings = {};
       try {
@@ -78,7 +78,7 @@ export function createStatusWatcher({
         /* ignore */
       }
       try {
-        const runs = discoverRuns(worcaDir);
+        const runs = await discoverRunsAsync(worcaDir);
         const subscribedIds = new Set();
         for (const ws of wss.clients) {
           const s = getSubs(ws);

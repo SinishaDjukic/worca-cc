@@ -1,6 +1,7 @@
 // server/index.js
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { attachWsServer } from './ws.js';
@@ -101,6 +102,25 @@ const { broadcast, scheduleRefresh, resolveRunProject } = attachWsServer(server,
 app.locals.broadcast = broadcast;
 app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
+
+// ─── inotify budget check (Linux only) ─────────────────────────────────
+if (platform() === 'linux') {
+  try {
+    const max = parseInt(readFileSync('/proc/sys/fs/inotify/max_user_watches', 'utf8').trim(), 10);
+    if (Number.isFinite(max)) {
+      if (max < 8192) {
+        console.warn(
+          `[inotify] max_user_watches=${max} is very low. ` +
+          `Run: sudo sysctl fs.inotify.max_user_watches=524288`,
+        );
+      } else {
+        console.log(`[inotify] max_user_watches=${max}`);
+      }
+    }
+  } catch {
+    // /proc not available or not readable — skip
+  }
+}
 
 server.listen(port, host, () => {
   console.log(

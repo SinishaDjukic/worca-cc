@@ -1,5 +1,11 @@
 /**
  * Reactive state store for worca-ui.
+ *
+ * Note: The W-032 plan specified a separate `state-accessors.js` module (Task 1.6)
+ * for safe accessor functions with fallback to the old flat shape. The accessor
+ * logic was folded directly into this module since the store API (getState,
+ * setState, setRun, appendLog, clearLog) already provides a clean boundary and
+ * a separate file added indirection without benefit.
  */
 
 const LOG_CAP = 5000;

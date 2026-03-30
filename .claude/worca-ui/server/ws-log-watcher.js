@@ -6,11 +6,11 @@
 import { existsSync, readdirSync, statSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import {
-  countLines,
+  fileByteLength,
   listIterationFiles,
   listLogFiles,
   readLastLines,
-  readLinesFrom,
+  readNewLines,
   resolveIterationLogPath,
   resolveLogPath,
 } from './log-tailer.js';
@@ -32,8 +32,8 @@ export function createLogWatcher({
   /** @type {Map<string, import('node:fs').FSWatcher>} */
   const logWatchers = new Map();
 
-  /** Track line counts per log file so we only send new lines */
-  const logLineCounts = new Map();
+  /** Track byte offsets per log file so we only read new content */
+  const logByteOffsets = new Map();
 
   function resolveLogsBaseDir() {
     const runDir = resolveActiveRunDir();
@@ -52,7 +52,7 @@ export function createLogWatcher({
       }
     }
     logWatchers.clear();
-    logLineCounts.clear();
+    logByteOffsets.clear();
   }
 
   function watchSingleLogFile(stage, filePath, iteration) {
@@ -63,15 +63,15 @@ export function createLogWatcher({
     if (logWatchers.has(key)) return;
     try {
       if (!existsSync(filePath)) return;
-      logLineCounts.set(key, countLines(filePath));
+      logByteOffsets.set(key, fileByteLength(filePath));
       const watcherRunId = currentActiveRunId();
       const watcher = watch(filePath, (eventType) => {
         if (eventType === 'change') {
           try {
-            const prevCount = logLineCounts.get(key) || 0;
-            const newLines = readLinesFrom(filePath, prevCount);
+            const prevOffset = logByteOffsets.get(key) || 0;
+            const { lines: newLines, newOffset } = readNewLines(filePath, prevOffset);
             if (newLines.length > 0) {
-              logLineCounts.set(key, prevCount + newLines.length);
+              logByteOffsets.set(key, newOffset);
               for (const line of newLines) {
                 broadcaster.broadcastToLogSubscribers(
                   stage,

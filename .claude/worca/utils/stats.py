@@ -4,6 +4,7 @@ Maintains a cumulative.json file that aggregates token usage and cost
 data across all completed pipeline runs.
 """
 
+import fcntl
 import json
 import os
 import tempfile
@@ -27,6 +28,24 @@ def update_cumulative_stats(
     Returns:
         The updated cumulative stats dict.
     """
+    # Acquire a file lock to prevent lost-update races when multiple
+    # processes merge stats concurrently.
+    lock_path = stats_path + ".lock"
+    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _update_cumulative_stats_locked(run_status, stats_path)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+def _update_cumulative_stats_locked(
+    run_status: dict,
+    stats_path: str,
+) -> dict:
+    """Inner implementation of update_cumulative_stats, called under file lock."""
     stats = _load_cumulative(stats_path)
     run_id = run_status.get("run_id", "")
 
