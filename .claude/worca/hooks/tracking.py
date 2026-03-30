@@ -15,6 +15,7 @@ DISPATCH_RULES = {
     "implementer": {"explore"},
     "tester": set(),
     "guardian": {"explore"},
+    "plan_reviewer": set(),
 }
 
 

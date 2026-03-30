@@ -20,7 +20,9 @@ python .claude/scripts/run_pipeline.py --prompt "Add user auth"
 
 ## Architecture
 
-6 stages: Preflight → Planner (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus)
+9 stages: Preflight → Planner (Opus) → Plan Reviewer (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus) → Learner (Sonnet)
+
+Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
 All governance enforced via Python hooks in `.claude/hooks/`.
 
@@ -28,7 +30,7 @@ All governance enforced via Python hooks in `.claude/hooks/`.
 
 ```
 .claude/
-  agents/core/           # Agent .md templates (planner, coordinator, implementer, tester, guardian)
+  agents/core/           # Agent .md templates (planner, plan_reviewer, coordinator, implementer, tester, guardian, learner)
   hooks/                 # Python hook scripts (pre_tool_use, post_tool_use, etc.)
   scripts/               # Pipeline entry points (run_pipeline.py, preflight_checks.py)
   settings.json          # All pipeline config under the "worca" key

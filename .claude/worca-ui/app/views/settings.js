@@ -20,8 +20,9 @@ import {
 } from '../utils/icons.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
-const STAGE_AGENT_MAP = {
+export const STAGE_AGENT_MAP = {
   plan: 'planner',
+  plan_review: 'plan_reviewer',
   coordinate: 'coordinator',
   implement: 'implementer',
   test: 'tester',
@@ -30,8 +31,9 @@ const STAGE_AGENT_MAP = {
   learn: 'learner',
 };
 
-const STAGE_ORDER = [
+export const STAGE_ORDER = [
   'plan',
+  'plan_review',
   'coordinate',
   'implement',
   'test',
@@ -39,8 +41,9 @@ const STAGE_ORDER = [
   'pr',
   'learn',
 ];
-const AGENT_NAMES = [
+export const AGENT_NAMES = [
   'planner',
+  'plan_reviewer',
   'coordinator',
   'implementer',
   'tester',
@@ -51,6 +54,7 @@ const MODEL_OPTIONS = ['opus', 'sonnet', 'haiku'];
 
 const DEFAULT_STAGES = {
   plan: { agent: 'planner', enabled: true },
+  plan_review: { agent: 'plan_reviewer', enabled: false },
   coordinate: { agent: 'coordinator', enabled: true },
   implement: { agent: 'implementer', enabled: true },
   test: { agent: 'tester', enabled: true },

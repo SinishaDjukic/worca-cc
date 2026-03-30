@@ -92,7 +92,7 @@ export function getNewRunSubmitState() {
   return { submitStatus, isSubmitting: submitStatus === 'submitting' };
 }
 
-export async function submitNewRun({ rerender, onStarted, projectId }) {
+export async function submitNewRun({ rerender, onStarted, projectId, refreshRuns }) {
   const sourceValueEl = document.getElementById('new-run-source-value');
   const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
@@ -150,6 +150,13 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
     const data = await res.json();
     if (data.ok) {
       submitStatus = null;
+      if (refreshRuns) {
+        try {
+          await refreshRuns();
+        } catch (_) {
+          /* best-effort */
+        }
+      }
       onStarted();
     } else {
       submitStatus = 'error';

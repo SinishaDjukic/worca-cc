@@ -59,6 +59,30 @@ def test_blocks_unknown_parent_dispatching():
     assert code == 2
 
 
+def test_plan_reviewer_in_dispatch_rules():
+    """plan_reviewer must appear in DISPATCH_RULES (even with empty allowed set)."""
+    from worca.hooks.tracking import DISPATCH_RULES
+    assert "plan_reviewer" in DISPATCH_RULES
+
+
+def test_plan_reviewer_dispatch_rules_is_empty_set():
+    """plan_reviewer must have an empty set — no subagent dispatch allowed."""
+    from worca.hooks.tracking import DISPATCH_RULES
+    assert DISPATCH_RULES["plan_reviewer"] == set()
+
+
+def test_blocks_plan_reviewer_dispatching_anything():
+    """plan_reviewer cannot dispatch any subagent."""
+    code, reason = check_dispatch("plan_reviewer", "explore")
+    assert code == 2
+    assert "Blocked" in reason
+
+
+def test_blocks_plan_reviewer_dispatching_implementer():
+    code, reason = check_dispatch("plan_reviewer", "implementer")
+    assert code == 2
+
+
 # --- handle_agent_stop tests ---
 
 
