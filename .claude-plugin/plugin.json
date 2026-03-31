@@ -1,0 +1,8 @@
+{
+  "name": "worca-cc",
+  "version": "0.5.0",
+  "description": "Autonomous multi-agent software development pipeline with governance enforcement. Plans, coordinates, implements, tests, and reviews code changes. Install into any project with /worca-install.",
+  "author": {
+    "name": "Kristiyan Hadjiev"
+  }
+}
