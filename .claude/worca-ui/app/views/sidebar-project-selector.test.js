@@ -22,16 +22,24 @@ describe('sidebar project selector', () => {
     };
   }
 
-  it('no selector when projects.length <= 1', async () => {
+  it('no selector when projects is empty', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({ projects: [] });
+    const route = { section: 'active' };
+    const result = sidebarView(state, route, 'open', { onNavigate: vi.fn() });
+
+    const templateStr = JSON.stringify(result.values);
+    expect(templateStr).not.toContain('sidebar-project-selector');
+  });
+
+  it('selector rendered when projects.length is 1', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({ projects: [{ name: 'only-one' }] });
     const route = { section: 'active' };
     const result = sidebarView(state, route, 'open', { onNavigate: vi.fn() });
 
-    // lit-html needs a real DOM element; we'll inspect the template values instead
-    // The template should NOT contain sl-select for project switching
     const templateStr = JSON.stringify(result.values);
-    expect(templateStr).not.toContain('sidebar-project-selector');
+    expect(templateStr).toContain('sidebar-project-selector');
   });
 
   it('selector rendered when projects.length >= 2', async () => {
@@ -73,14 +81,10 @@ describe('sidebar project selector', () => {
       onProjectChange,
     });
 
-    // The template is created with onProjectChange in the handler bag
-    // We verify it was passed through by checking the template contains the handler ref
     expect(result).toBeTruthy();
-    // The actual sl-change handler is wired in the template — full DOM testing
-    // would require a browser. We verify the template renders without error.
   });
 
-  it('single project hides dropdown', async () => {
+  it('single project shows selector', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       projects: [{ name: 'my-project' }],
@@ -90,6 +94,20 @@ describe('sidebar project selector', () => {
     const result = sidebarView(state, route, 'open', { onNavigate: vi.fn() });
 
     const templateStr = JSON.stringify(result.values);
-    expect(templateStr).not.toContain('sidebar-project-selector');
+    expect(templateStr).toContain('sidebar-project-selector');
+  });
+
+  it('single project renders selector and add-project button', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      projects: [{ name: 'solo' }],
+      currentProjectId: 'solo',
+    });
+    const route = { section: 'active' };
+    const result = sidebarView(state, route, 'open', { onNavigate: vi.fn() });
+
+    const templateStr = JSON.stringify(result.values);
+    expect(templateStr).toContain('sidebar-project-selector');
+    expect(templateStr).toContain('sidebar-add-project-btn');
   });
 });

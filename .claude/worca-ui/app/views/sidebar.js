@@ -103,7 +103,7 @@ export function sidebarView(
       </div>
 
       ${
-        projects && projects.length > 1
+        projects && projects.length >= 1
           ? html`
         <div class="sidebar-section sidebar-project-section">
           <div class="sidebar-section-header">Project</div>

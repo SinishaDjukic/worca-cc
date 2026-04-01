@@ -62,10 +62,20 @@ describe('sidebar project name', () => {
     expect(templateContains(tpl, 'collapsed')).toBe(true);
   });
 
-  it('shows PROJECT section header when multiple projects', () => {
+  it('shows PROJECT section header when projects exist', () => {
     const state = makeState({
       projects: [{ name: 'proj-a' }, { name: 'proj-b' }],
       currentProjectId: 'proj-a',
+    });
+    const tpl = sidebarView(state, route, conn, handlers);
+    expect(templateContains(tpl, 'Project')).toBe(true);
+    expect(templateContains(tpl, 'sidebar-project-selector')).toBe(true);
+  });
+
+  it('shows PROJECT section header with single project', () => {
+    const state = makeState({
+      projects: [{ name: 'solo-project' }],
+      currentProjectId: 'solo-project',
     });
     const tpl = sidebarView(state, route, conn, handlers);
     expect(templateContains(tpl, 'Project')).toBe(true);
