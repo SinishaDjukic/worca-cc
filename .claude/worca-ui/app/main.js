@@ -248,14 +248,11 @@ function autoResetLogFilterOnStageChange(prevRun, newRun) {
 // --- Wire WS events to state ---
 
 ws.on('runs-list', (payload, msg) => {
-  const currentProject = store.getState().currentProjectId;
-  // In multi-project mode, ignore runs-list from other projects
-  if (msg?.project && currentProject && msg.project !== currentProject) return;
-  // In All Projects mode, merge updates and evict stale entries from this source
-  if (!currentProject && (store.getState().projects || []).length > 1) {
+  const isMultiProject = (store.getState().projects || []).length > 1;
+  // In multi-project mode, always merge so all projects keep their runs
+  if (isMultiProject) {
     const existing = { ...store.getState().runs };
     const freshIds = new Set((payload.runs || []).map((r) => r.id));
-    // Evict runs from the same project that are no longer reported
     const sourceProject = msg?.project || null;
     if (sourceProject) {
       for (const [id, run] of Object.entries(existing)) {
@@ -268,6 +265,7 @@ ws.on('runs-list', (payload, msg) => {
       if (sourceProject) run._project = sourceProject;
       existing[run.id] = run;
     }
+    if (payload.settings) settings = payload.settings;
     store.setState({ runs: existing });
     return;
   }
@@ -551,8 +549,9 @@ function fetchAllProjectRuns() {
 function fetchProjectScopedData() {
   const currentProjectId = store.getState().currentProjectId;
 
-  // All Projects mode: fetch runs from every project via REST
-  if (!currentProjectId && (store.getState().projects || []).length > 1) {
+  // Multi-project mode: always fetch runs from every project so the sidebar
+  // dots reflect the real status of all projects, not just the selected one.
+  if ((store.getState().projects || []).length > 1) {
     fetchAllProjectRuns();
   } else {
     ws.send('list-runs')
@@ -641,8 +640,9 @@ function handleProjectSwitch(newProjectId) {
     payload: { protocol: 2, projectId: newProjectId },
   });
 
-  // Re-fetch data for new project
-  if (!newProjectId && (store.getState().projects || []).length > 1) {
+  // Re-fetch data for new project — always fetch all projects so sidebar
+  // dots stay accurate for unselected projects too.
+  if ((store.getState().projects || []).length > 1) {
     fetchAllProjectRuns();
   } else {
     ws.send('list-runs')

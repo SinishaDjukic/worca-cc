@@ -23,11 +23,13 @@ export function projectStatus(projectId, runs, currentProjectId) {
   // In multi-project mode, runs in state belong to currentProjectId.
   // For other projects we have no data — return idle.
   const projectRuns = projectId
-    ? runList.filter(
-        (r) =>
-          r.project === projectId ||
-          (!r.project && (!currentProjectId || currentProjectId === projectId)),
-      )
+    ? runList.filter((r) => {
+        const tagged = r.project || r._project;
+        if (tagged) return tagged === projectId;
+        // Untagged runs belong to the current project (server only sends
+        // runs for the selected project, so all untagged runs are its).
+        return !currentProjectId || currentProjectId === projectId;
+      })
     : runList;
 
   let hasRunning = false;

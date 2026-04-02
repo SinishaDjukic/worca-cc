@@ -33,6 +33,18 @@ def auto_register_project(project_root: str, prefs_dir: str = "~/.worca") -> Non
         if not name or not _SLUG_RE.match(name):
             return
 
+        # Check if any existing entry already points to this path
+        for fname in os.listdir(projects_dir):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(projects_dir, fname)) as f:
+                    existing = json.load(f)
+                if existing.get("path") == project_root:
+                    return
+            except Exception:
+                continue
+
         entry_path = os.path.join(projects_dir, f"{name}.json")
         if os.path.exists(entry_path):
             return
