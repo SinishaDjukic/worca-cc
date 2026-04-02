@@ -146,7 +146,7 @@ cd "$DEST/worca-ui" && npm install && npm run build
 
 # --- Step 4: ensure .gitignore entries ---
 GITIGNORE="$TARGET_ROOT/.gitignore"
-for pattern in ".worca/" ".claude/worca-ui/node_modules/" ".claude/settings.local.json"; do
+for pattern in "__pycache__/" ".worca/" ".claude/worca-ui/node_modules/" ".claude/settings.local.json"; do
   if [ -f "$GITIGNORE" ]; then
     grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null || echo "$pattern" >> "$GITIGNORE"
   else
