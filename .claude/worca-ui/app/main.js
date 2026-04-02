@@ -547,8 +547,6 @@ function fetchAllProjectRuns() {
 
 /** Fetch all project-scoped data after hello-ack sets the project context. */
 function fetchProjectScopedData() {
-  const currentProjectId = store.getState().currentProjectId;
-
   // Multi-project mode: always fetch runs from every project so the sidebar
   // dots reflect the real status of all projects, not just the selected one.
   if ((store.getState().projects || []).length > 1) {
