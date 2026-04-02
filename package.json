@@ -5,6 +5,7 @@
   },
   "scripts": {
     "prepare": "husky",
-    "worca:ui": "cd .claude/worca-ui && npm run build && npm start --"
+    "worca:ui": "cd .claude/worca-ui && npm run build && npm start --",
+    "worca:ui:stop": "cd .claude/worca-ui && npm run stop --"
   }
 }

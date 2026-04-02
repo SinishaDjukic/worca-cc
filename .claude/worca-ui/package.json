@@ -10,7 +10,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node server/index.js --debug",
+    "start": "node bin/worca-ui.js start",
+    "stop": "node bin/worca-ui.js stop",
     "build": "node scripts/build-frontend.js",
     "test": "vitest run",
     "test:watch": "vitest",

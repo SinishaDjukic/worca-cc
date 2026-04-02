@@ -3711,7 +3711,7 @@ sl-details.learnings-panel::part(content) {
 }
 
 /* --- Sidebar Project Selector --- */
-.sidebar-project-section { padding-top: 4px; padding-bottom: 0; }
+.sidebar-project-section { padding-top: 4px; padding-bottom: 0; margin-bottom: 12px; }
 .sidebar-project-selector-row { display: flex; align-items: center; gap: 4px; padding: 0 8px; }
 .sidebar-project-selector { flex: 1; min-width: 0; }
 .sidebar-project-selector sl-select::part(combobox) { font-size: 0.85rem; }
