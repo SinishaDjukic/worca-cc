@@ -132,8 +132,9 @@ This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes w
 ### Running the UI
 
 ```bash
-pnpm worca:ui                        # Default port 3400 (single-project)
-pnpm worca:ui -- --global            # Global mode (multi-project dashboard)
+pnpm worca:ui                        # Build + start in global mode (port 3400)
+pnpm worca:ui:stop                   # Stop the global server
+pnpm worca:ui:restart                # Rebuild + restart in global mode
 PORT=3401 pnpm worca:ui              # Custom port via env var
 pnpm worca:ui -- --port 3401         # Custom port via flag
 ```

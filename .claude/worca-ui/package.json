@@ -12,6 +12,7 @@
   "scripts": {
     "start": "node bin/worca-ui.js start",
     "stop": "node bin/worca-ui.js stop",
+    "restart": "node bin/worca-ui.js restart",
     "build": "node scripts/build-frontend.js",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -212,8 +212,15 @@ Results are saved to `.worca/multi/results-{timestamp}.json`.
 ## Dashboard (worca-ui)
 
 ```bash
-cd .claude/worca-ui && npm start
-# Opens http://127.0.0.1:3400
+# From the project root (always global mode):
+pnpm worca:ui                             # Build + start
+pnpm worca:ui:restart                     # Build + restart
+pnpm worca:ui:stop                        # Stop
+
+# Or directly (supports --global / per-project modes):
+cd .claude/worca-ui && npm start          # Start (per-project)
+cd .claude/worca-ui && npm run restart    # Stop + start
+cd .claude/worca-ui && npm run stop       # Stop
 ```
 
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
