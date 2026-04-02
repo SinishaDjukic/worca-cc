@@ -3,7 +3,7 @@
  *
  * - getSourceRoot()             → resolve worca-cc repo root from server location
  * - checkWorcaInstalled(path)   → check if .claude/worca/ exists in a project
- * - runWorcaSetup(src, target)  → spawn rsync + npm build in background
+ * - runWorcaSetup(src, target)  → spawn rsync + npm build + settings merge + beads init
  */
 
 import { spawn } from 'node:child_process';
@@ -71,14 +71,21 @@ export function runWorcaSetup(sourcePath, targetPath) {
     'utf8',
   );
 
-  // Build a shell script using printf %q to safely quote paths
+  // Build a shell script that:
+  // 1. rsyncs worca dirs
+  // 2. deep-merges settings.json (hooks + worca sections, never overwrites existing)
+  // 3. installs deps + builds UI
+  // 4. ensures .gitignore entries
+  // 5. initializes beads if bd CLI is available
   const script = `
 set -e
 SRC=$(printf '%s' "$1")
 DEST=$(printf '%s' "$2")
 STATUS=$(printf '%s' "$3")
+SOURCE_ROOT=$(printf '%s' "$4")
+TARGET_ROOT=$(printf '%s' "$5")
 
-# Core worca directories (--delete removes stale files)
+# --- Step 1: rsync worca directories ---
 rsync -a --delete --exclude='node_modules' --exclude='__pycache__' "$SRC/worca/" "$DEST/worca/"
 rsync -a --delete --exclude='node_modules' --exclude='__pycache__' --exclude='test-results/' "$SRC/worca-ui/" "$DEST/worca-ui/"
 rsync -a --delete --exclude='overrides/' "$SRC/agents/" "$DEST/agents/"
@@ -88,15 +95,82 @@ rsync -a --delete --exclude='__pycache__' "$SRC/scripts/" "$DEST/scripts/"
 # Skills (additive — no --delete, target may have project-specific skills)
 rsync -a --exclude='node_modules' --exclude='__pycache__' --exclude='worca-install/' "$SRC/skills/" "$DEST/skills/"
 
-# Install deps and build UI
+# --- Step 2: deep-merge settings.json ---
+python3 - "$SRC/settings.json" "$DEST/settings.json" "$SOURCE_ROOT" << 'PYEOF'
+import sys, json, copy, os
+
+src_path, dest_path, source_root = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def deep_merge_new_only(source, target):
+    added = []
+    for key, value in source.items():
+        if key not in target:
+            target[key] = copy.deepcopy(value)
+            added.append(key)
+        elif isinstance(value, dict) and isinstance(target[key], dict):
+            sub = deep_merge_new_only(value, target[key])
+            added.extend(f"{key}.{k}" for k in sub)
+    return added
+
+src = json.load(open(src_path))
+
+# If target settings.json doesn't exist, seed it with minimal structure
+if not os.path.exists(dest_path):
+    tgt = {}
+else:
+    tgt = json.load(open(dest_path))
+
+# Only merge hooks and worca sections; skip permissions, MCP, model, deny
+added_keys = []
+for section in ("hooks", "worca"):
+    if section in src:
+        tgt.setdefault(section, {})
+        added = deep_merge_new_only(src[section], tgt[section])
+        added_keys.extend(f"{section}.{k}" for k in added)
+
+# Always set source_repo to the current worca-cc path
+tgt.setdefault("worca", {})["source_repo"] = source_root
+
+with open(dest_path, "w") as f:
+    json.dump(tgt, f, indent=2)
+    f.write("\\n")
+
+if added_keys:
+    print(f"settings.json: added {len(added_keys)} new keys")
+else:
+    print("settings.json: already up to date")
+PYEOF
+
+# --- Step 3: install deps and build UI ---
 cd "$DEST/worca-ui" && npm install && npm run build
+
+# --- Step 4: ensure .gitignore entries ---
+GITIGNORE="$TARGET_ROOT/.gitignore"
+for pattern in ".worca/" ".claude/worca-ui/node_modules/" ".claude/settings.local.json"; do
+  if [ -f "$GITIGNORE" ]; then
+    grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null || echo "$pattern" >> "$GITIGNORE"
+  else
+    echo "$pattern" >> "$GITIGNORE"
+  fi
+done
+
+# --- Step 5: initialize beads if bd CLI is available ---
+if command -v bd >/dev/null 2>&1; then
+  if [ ! -d "$TARGET_ROOT/.beads" ]; then
+    cd "$TARGET_ROOT" && bd init 2>&1 || echo "beads init failed (non-fatal)"
+  fi
+fi
 `;
 
-  const child = spawn('bash', ['-c', script, '--', src, dest, statusFile], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env },
-  });
+  const child = spawn(
+    'bash',
+    ['-c', script, '--', src, dest, statusFile, sourcePath, targetPath],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    },
+  );
 
   // On error, write failure status
   child.on('error', () => {
