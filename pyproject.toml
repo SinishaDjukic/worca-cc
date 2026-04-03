@@ -7,7 +7,7 @@ name = "worca-cc"
 version = "0.6.0rc1"
 description = "Autonomous software development pipeline combining orchestration with governance enforcement"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.8"
 authors = [{name = "Sinisha Djukic"}, {name = "Ivan Dachev"}]
 keywords = ["autonomous-coding", "ai-agents", "multi-agent", "pipeline", "governance"]
