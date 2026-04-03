@@ -596,6 +596,23 @@ export function createProjectScopedRoutes() {
       return res.status(400).json({ ok: false, error: 'Invalid runId' });
     }
     try {
+      // Clear archived flag so the resumed run appears on the main dashboard
+      const { worcaDir } = req.project;
+      const statusPath = findRunStatusPath(worcaDir, runId);
+      if (statusPath) {
+        const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+        if (status.archived) {
+          delete status.archived;
+          delete status.archived_at;
+          writeFileSync(
+            statusPath,
+            `${JSON.stringify(status, null, 2)}\n`,
+            'utf8',
+          );
+          const { broadcast } = req.app.locals;
+          if (broadcast) broadcast('run-unarchived', { runId });
+        }
+      }
       const result = await req.project.pm.startPipeline({
         resume: true,
         runId,

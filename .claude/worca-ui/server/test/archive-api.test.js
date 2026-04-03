@@ -350,3 +350,70 @@ describe('POST /api/runs/:id/unarchive', () => {
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
 });
+
+// ─── POST /api/runs/:id/resume clears archived flag ─────────────────────────
+
+describe('POST /api/runs/:id/resume clears archived flag', () => {
+  let tmpDir, server, base, app;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'archive-resume-test-'));
+    ({ server, base, app } = await startServer(tmpDir));
+  });
+
+  afterEach(async () => {
+    if (server) await stopServer(server);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('clears archived and archived_at from status.json before resuming', async () => {
+    writeStatus(tmpDir, 'run-020', {
+      pipeline_status: 'failed',
+      archived: true,
+      archived_at: '2026-01-01T00:00:00.000Z',
+    });
+
+    const broadcastSpy = vi.fn();
+    app.locals.broadcast = broadcastSpy;
+
+    await fetch(`${base}/api/runs/run-020/resume`, { method: 'POST' });
+
+    const status = JSON.parse(
+      readFileSync(join(tmpDir, 'runs', 'run-020', 'status.json'), 'utf8'),
+    );
+    expect(status.archived).toBeUndefined();
+    expect(status.archived_at).toBeUndefined();
+    expect(status.pipeline_status).toBe('failed');
+  });
+
+  it('broadcasts run-unarchived when clearing archived flag on resume', async () => {
+    writeStatus(tmpDir, 'run-021', {
+      pipeline_status: 'failed',
+      archived: true,
+      archived_at: '2026-01-01T00:00:00.000Z',
+    });
+
+    const broadcastSpy = vi.fn();
+    app.locals.broadcast = broadcastSpy;
+
+    await fetch(`${base}/api/runs/run-021/resume`, { method: 'POST' });
+
+    expect(broadcastSpy).toHaveBeenCalledWith('run-unarchived', {
+      runId: 'run-021',
+    });
+  });
+
+  it('does not broadcast run-unarchived when run is not archived', async () => {
+    writeStatus(tmpDir, 'run-022', { pipeline_status: 'failed' });
+
+    const broadcastSpy = vi.fn();
+    app.locals.broadcast = broadcastSpy;
+
+    await fetch(`${base}/api/runs/run-022/resume`, { method: 'POST' });
+
+    const unarchivedCalls = broadcastSpy.mock.calls.filter(
+      ([event]) => event === 'run-unarchived',
+    );
+    expect(unarchivedCalls).toHaveLength(0);
+  });
+});
