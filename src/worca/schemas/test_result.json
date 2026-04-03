@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestResult",
+  "type": "object",
+  "required": ["passed"],
+  "properties": {
+    "passed": { "type": "boolean" },
+    "coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "test_name": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "proof_artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

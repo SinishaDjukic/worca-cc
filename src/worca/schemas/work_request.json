@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkRequest",
+  "type": "object",
+  "required": ["source_type", "title"],
+  "properties": {
+    "source_type": {
+      "type": "string",
+      "enum": ["github_issue", "beads", "prompt", "spec_file"]
+    },
+    "source_ref": { "type": ["string", "null"] },
+    "title": { "type": "string" },
+    "description": { "type": "string", "default": "" },
+    "priority": { "type": "integer", "minimum": 0, "maximum": 4, "default": 2 }
+  }
+}

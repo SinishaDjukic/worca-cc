@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PROutput",
+  "type": "object",
+  "required": ["pr_number", "pr_url"],
+  "properties": {
+    "pr_number": { "type": "integer" },
+    "pr_url": { "type": "string", "format": "uri" },
+    "review_status": {
+      "type": "string",
+      "enum": ["pending", "approved", "changes_requested", "rejected"]
+    }
+  }
+}

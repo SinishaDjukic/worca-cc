@@ -1,8 +1,31 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "worca-cc"
 version = "0.5.0"
 description = "Autonomous software development pipeline combining orchestration with governance enforcement"
+readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.8"
+authors = [{name = "Sinisha Djukic"}, {name = "Ivan Dachev"}]
+keywords = ["autonomous-coding", "ai-agents", "multi-agent", "pipeline", "governance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/SinishaDjukic/worca-cc"
+Repository = "https://github.com/SinishaDjukic/worca-cc.git"
+Issues = "https://github.com/SinishaDjukic/worca-cc/issues"
+
+[project.scripts]
+worca = "worca.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -12,9 +35,21 @@ dev = [
     "jsonschema>=4.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+worca = [
+    "claude_hooks/*.py",
+    "scripts/*.py",
+    "agents/core/*.md",
+    "schemas/*.json",
+    "settings.json",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".claude"]
+pythonpath = ["src"]
 addopts = "-q --tb=short --no-header"
 timeout = 30
 

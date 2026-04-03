@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CoordinateOutput",
+  "type": "object",
+  "required": ["beads_ids", "dependency_graph"],
+  "properties": {
+    "beads_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "dependency_graph": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "parallel_groups": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

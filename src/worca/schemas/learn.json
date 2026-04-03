@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LearnOutput",
+  "type": "object",
+  "required": ["observations", "suggestions", "recurring_patterns", "run_summary"],
+  "properties": {
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "importance", "description", "evidence"],
+        "properties": {
+          "category": { "type": "string", "enum": ["test_loop", "review_loop", "implementation", "planning", "coordination", "configuration"] },
+          "importance": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "description": { "type": "string" },
+          "evidence": { "type": "string" },
+          "occurrences": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "description", "rationale"],
+        "properties": {
+          "target": { "type": "string", "enum": [
+            "prompt:planner", "prompt:coordinator", "prompt:implementer",
+            "prompt:tester", "prompt:guardian",
+            "config:loops", "config:agents", "config:governance",
+            "plan_template", "spec_template"
+          ]},
+          "description": { "type": "string" },
+          "rationale": { "type": "string" },
+          "based_on_observations": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    },
+    "recurring_patterns": {
+      "type": "object",
+      "properties": {
+        "cross_bead": { "type": "array", "items": { "type": "object", "properties": {
+          "pattern": { "type": "string" },
+          "affected_beads": { "type": "array", "items": { "type": "string" } },
+          "frequency": { "type": "integer" }
+        }}},
+        "test_fix_loops": { "type": "array", "items": { "type": "object", "properties": {
+          "pattern": { "type": "string" },
+          "loop_iterations": { "type": "integer" },
+          "resolved": { "type": "boolean" }
+        }}},
+        "review_fix_loops": { "type": "array", "items": { "type": "object", "properties": {
+          "pattern": { "type": "string" },
+          "loop_iterations": { "type": "integer" },
+          "resolved": { "type": "boolean" }
+        }}}
+      }
+    },
+    "run_summary": {
+      "type": "object",
+      "required": ["termination", "total_iterations"],
+      "properties": {
+        "termination": { "type": "string", "enum": ["success", "failure", "loop_exhausted", "rejected"] },
+        "termination_reason": { "type": "string" },
+        "total_iterations": { "type": "integer" },
+        "test_fix_loops": { "type": "integer" },
+        "review_fix_loops": { "type": "integer" },
+        "plan_restarts": { "type": "integer" }
+      }
+    }
+  }
+}

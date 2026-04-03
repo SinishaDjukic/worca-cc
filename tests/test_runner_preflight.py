@@ -78,7 +78,7 @@ class TestRunPreflightScriptMissing:
         assert len(warn_calls) > 0
 
     def test_default_script_path_contains_preflight_checks(self, tmp_path):
-        """When no script in settings, falls back to .claude/scripts/preflight_checks.py."""
+        """When no script in settings, falls back to .claude/worca/scripts/preflight_checks.py."""
         from worca.orchestrator.runner import run_preflight
         # Settings with no preflight section
         settings_path = _settings_file(tmp_path)
@@ -357,7 +357,7 @@ class TestLearnSkippedOnPreflightFailure:
                 "stages": {
                     "preflight": {
                         "enabled": True,
-                        "script": ".claude/scripts/preflight_checks.py",
+                        "script": ".claude/worca/scripts/preflight_checks.py",
                     },
                     "plan": {"enabled": False},
                     "coordinate": {"enabled": False},

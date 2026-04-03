@@ -1,4 +1,9 @@
-"""Tests for OverlayResolver — TDD: written before implementation."""
+"""Tests for OverlayResolver — replace-by-default behavior.
+
+Override resolution:
+- No tag or <!-- replace -->: replace the base prompt entirely
+- <!-- append -->: merge sections into base using section merge
+"""
 
 import pytest
 
@@ -99,31 +104,58 @@ def test_heading_no_match():
 
 
 # ---------------------------------------------------------------------------
-# Merge logic via resolve()
+# Replace-by-default behavior
 # ---------------------------------------------------------------------------
 
 def test_resolve_no_overlay_file(tmp_path):
+    """No overlay file => core returned unchanged."""
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Rule one.\n"
     result = resolver.resolve("implementer", core)
     assert result == core
 
 
-def test_resolve_append(tmp_path):
+def test_resolve_replace_by_default(tmp_path):
+    """Override file with no tag replaces base entirely."""
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: Rules\n\n- Appended rule.\n")
+    overlay.write_text("# Custom Implementer\n\n## Rules\n\n- Custom rule.\n")
+    resolver = OverlayResolver(overrides_dir=str(tmp_path))
+    core = "## Rules\n\n- Original rule.\n"
+    result = resolver.resolve("implementer", core)
+    assert "Custom rule" in result
+    assert "Original rule" not in result
+
+
+def test_resolve_explicit_replace_tag(tmp_path):
+    """<!-- replace --> tag has same effect as default (replace)."""
+    overlay = tmp_path / "implementer.md"
+    overlay.write_text("<!-- replace -->\n# Custom Implementer\n\n## Rules\n\n- Custom rule.\n")
+    resolver = OverlayResolver(overrides_dir=str(tmp_path))
+    core = "## Rules\n\n- Original rule.\n"
+    result = resolver.resolve("implementer", core)
+    assert "Custom rule" in result
+    assert "Original rule" not in result
+    assert "<!-- replace -->" not in result
+
+
+def test_resolve_append_mode(tmp_path):
+    """<!-- append --> triggers section merge into base."""
+    overlay = tmp_path / "implementer.md"
+    overlay.write_text("<!-- append -->\n## Override: Rules\n\n- Appended rule.\n")
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Original rule.\n"
     result = resolver.resolve("implementer", core)
     assert "Original rule" in result
     assert "Appended rule" in result
-    # Appended content comes after original
     assert result.index("Original rule") < result.index("Appended rule")
 
 
-def test_resolve_replace(tmp_path):
+def test_resolve_append_replace_section(tmp_path):
+    """Append mode with <!-- replace --> on a section replaces that section."""
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: Rules\n<!-- replace -->\n\n- Replacement rule.\n")
+    overlay.write_text(
+        "<!-- append -->\n## Override: Rules\n<!-- replace -->\n\n- Replacement rule.\n"
+    )
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Original rule.\n"
     result = resolver.resolve("implementer", core)
@@ -132,23 +164,25 @@ def test_resolve_replace(tmp_path):
     assert "<!-- replace -->" not in result
 
 
-def test_resolve_governance_replace_demoted(tmp_path, capsys):
+def test_resolve_append_governance_protected(tmp_path, capsys):
+    """Append mode: replace on governance-protected section demotes to append."""
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: Rules\n<!-- replace -->\n\n- Attacker rule.\n")
+    overlay.write_text(
+        "<!-- append -->\n## Override: Rules\n<!-- replace -->\n\n- Attacker rule.\n"
+    )
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n<!-- governance -->\n- Original rule.\n"
     result = resolver.resolve("implementer", core)
-    # Should be append, not replace
     assert "Original rule" in result
     assert "Attacker rule" in result
-    # Warning printed to stderr
     captured = capsys.readouterr()
     assert "governance" in captured.err.lower() or "demot" in captured.err.lower()
 
 
-def test_resolve_no_matching_section(tmp_path):
+def test_resolve_append_no_matching_section(tmp_path):
+    """Append mode: unmatched section appended at end."""
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: NonExistent\n\n- New content.\n")
+    overlay.write_text("<!-- append -->\n## Override: NonExistent\n\n- New content.\n")
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Rule one.\n"
     result = resolver.resolve("implementer", core)
@@ -157,9 +191,11 @@ def test_resolve_no_matching_section(tmp_path):
     assert "## NonExistent" in result
 
 
-def test_resolve_multiple_overrides(tmp_path):
+def test_resolve_append_multiple_overrides(tmp_path):
+    """Append mode with multiple Override sections."""
     overlay = tmp_path / "implementer.md"
     overlay.write_text(
+        "<!-- append -->\n"
         "## Override: Alpha\n\n- Alpha extra.\n\n## Override: Beta\n\n- Beta extra.\n"
     )
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
@@ -173,7 +209,7 @@ def test_resolve_multiple_overrides(tmp_path):
 
 def test_resolve_unreadable_overlay(tmp_path, capsys):
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: Rules\n\n- Something.\n")
+    overlay.write_text("Custom content.\n")
     overlay.chmod(0o000)
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Original rule.\n"
@@ -186,9 +222,10 @@ def test_resolve_unreadable_overlay(tmp_path, capsys):
         overlay.chmod(0o644)
 
 
-def test_resolve_case_insensitive_match(tmp_path):
+def test_resolve_append_case_insensitive_match(tmp_path):
+    """Append mode: case-insensitive heading matching."""
     overlay = tmp_path / "implementer.md"
-    overlay.write_text("## Override: rules\n\n- Lowercase override.\n")
+    overlay.write_text("<!-- append -->\n## Override: rules\n\n- Lowercase override.\n")
     resolver = OverlayResolver(overrides_dir=str(tmp_path))
     core = "## Rules\n\n- Original rule.\n"
     result = resolver.resolve("implementer", core)
@@ -196,14 +233,34 @@ def test_resolve_case_insensitive_match(tmp_path):
     assert "Lowercase override" in result
 
 
+def test_resolve_append_no_override_blocks(tmp_path):
+    """Append mode with no ## Override: blocks — raw append."""
+    overlay = tmp_path / "implementer.md"
+    overlay.write_text("<!-- append -->\n\n## Extra Context\n\nSome extra context.\n")
+    resolver = OverlayResolver(overrides_dir=str(tmp_path))
+    core = "## Rules\n\n- Original rule.\n"
+    result = resolver.resolve("implementer", core)
+    assert "Original rule" in result
+    assert "Extra Context" in result
+
+
 # ---------------------------------------------------------------------------
-# Governance tag presence in core agent prompt files (Task 2)
+# Default overrides dir is .claude/agents (not .claude/agents/overrides)
+# ---------------------------------------------------------------------------
+
+def test_default_overrides_dir():
+    resolver = OverlayResolver()
+    assert resolver.overrides_dir == ".claude/agents"
+
+
+# ---------------------------------------------------------------------------
+# Governance tag presence in core agent prompt files
 # ---------------------------------------------------------------------------
 
 import pathlib  # noqa: E402
 import re  # noqa: E402
 
-_CORE_AGENTS_DIR = pathlib.Path(__file__).parent.parent / ".claude" / "agents" / "core"
+_CORE_AGENTS_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca" / "agents" / "core"
 
 GOVERNANCE_AGENTS = [
     "implementer",
@@ -217,7 +274,6 @@ GOVERNANCE_AGENTS = [
 def _rules_section_body(agent_name: str) -> str:
     """Return the body of the ## Rules section from a core agent .md file."""
     content = (_CORE_AGENTS_DIR / f"{agent_name}.md").read_text()
-    # Split on ## headings; find Rules section
     parts = re.split(r"^(## .+)$", content, flags=re.MULTILINE)
     for i, part in enumerate(parts):
         if re.match(r"^## Rules\s*$", part):
@@ -230,7 +286,6 @@ def test_governance_tag_in_rules_section(agent):
     """Each core agent Rules section must start with <!-- governance -->."""
     body = _rules_section_body(agent)
     assert body, f"{agent}.md has no ## Rules section"
-    # First non-blank line of body must be <!-- governance -->
     first_non_blank = next(
         (line for line in body.splitlines() if line.strip()), ""
     )
@@ -241,7 +296,7 @@ def test_governance_tag_in_rules_section(agent):
 
 
 # ---------------------------------------------------------------------------
-# Overlay file parsing (Task 5) — self-contained fixtures
+# Overlay file parsing — self-contained fixtures
 # ---------------------------------------------------------------------------
 
 _SAMPLE_OVERLAY = """\
@@ -256,20 +311,17 @@ _SAMPLE_OVERLAY = """\
 
 
 def test_overlay_file_has_override_block():
-    """An overlay file must contain at least one ## Override: block."""
     assert "## Override:" in _SAMPLE_OVERLAY
 
 
 def test_overlay_file_uses_append_mode():
-    """An overlay Rules section without <!-- replace --> uses append mode."""
     overrides = _parse_overrides(_SAMPLE_OVERLAY)
     rules_override = next((o for o in overrides if o["section_name"].lower() == "rules"), None)
     assert rules_override is not None, "No '## Override: Rules' block found"
-    assert rules_override["replace"] is False, "Rules override should use append mode (no <!-- replace -->)"
+    assert rules_override["replace"] is False
 
 
 def test_overlay_file_content_parsed():
-    """Overlay content is correctly extracted from the body."""
     overrides = _parse_overrides(_SAMPLE_OVERLAY)
     assert len(overrides) == 1
     body = overrides[0]["body"]
@@ -279,10 +331,9 @@ def test_overlay_file_content_parsed():
 
 
 # ---------------------------------------------------------------------------
-# Package export (Task 7)
+# Package export
 # ---------------------------------------------------------------------------
 
 def test_overlay_resolver_exported_from_package():
-    """OverlayResolver must be importable directly from worca.orchestrator package."""
     from worca.orchestrator import OverlayResolver as _OR
     assert _OR is OverlayResolver

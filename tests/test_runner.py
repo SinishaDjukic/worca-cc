@@ -70,7 +70,7 @@ def test_run_stage_passes_correct_args():
             result, raw = run_stage(Stage.TEST, {"prompt": "run tests"})
     call_kwargs = mock_run.call_args
     # Agent path should contain the agent name
-    assert ".claude/agents/core/tester.md" in str(call_kwargs)
+    assert ".claude/worca/agents/core/tester.md" in str(call_kwargs)
     # Schema path should be resolved
     assert ".claude/worca/schemas/test.json" in str(call_kwargs)
 
@@ -327,9 +327,9 @@ def test_agent_path_with_run_dir(tmp_path):
 
 
 def test_agent_path_fallback():
-    """_agent_path falls back to .claude/agents/core/ when no run_dir."""
+    """_agent_path falls back to .claude/worca/agents/core/ when no run_dir."""
     result = _agent_path("coordinator")
-    assert result == ".claude/agents/core/coordinator.md"
+    assert result == ".claude/worca/agents/core/coordinator.md"
 
 
 def test_agent_path_fallback_missing_rendered(tmp_path):
@@ -337,7 +337,7 @@ def test_agent_path_fallback_missing_rendered(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     result = _agent_path("coordinator", run_dir=str(run_dir))
-    assert result == ".claude/agents/core/coordinator.md"
+    assert result == ".claude/worca/agents/core/coordinator.md"
 
 
 # --- plan_file support ---
@@ -2692,7 +2692,7 @@ def _make_preflight_settings(tmp_path, preflight_enabled=True, script=None):
         "worca": {
             "stages": {
                 "preflight": {"enabled": preflight_enabled,
-                              "script": script or ".claude/scripts/preflight_checks.py"},
+                              "script": script or ".claude/worca/scripts/preflight_checks.py"},
                 "plan": {"agent": "planner", "enabled": False},
                 "coordinate": {"agent": "coordinator", "enabled": False},
                 "implement": {"agent": "implementer", "enabled": False},
@@ -3052,8 +3052,8 @@ def test_render_agent_templates_accepts_overrides_dir(tmp_path, monkeypatch):
     dst_dir = tmp_path / "run"
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".claude" / "agents" / "core").mkdir(parents=True)
-    (tmp_path / ".claude" / "agents" / "core" / "implementer.md").write_text(
+    (tmp_path / ".claude" / "worca" / "agents" / "core").mkdir(parents=True)
+    (tmp_path / ".claude" / "worca" / "agents" / "core" / "implementer.md").write_text(
         "## Rules\n\n- Core rule.\n"
     )
 
@@ -3069,13 +3069,16 @@ def test_render_agent_templates_applies_overlay(tmp_path, monkeypatch):
     """_render_agent_templates applies overlay when overlay file exists."""
     monkeypatch.chdir(tmp_path)
 
-    core_dir = tmp_path / ".claude" / "agents" / "core"
+    core_dir = tmp_path / ".claude" / "worca" / "agents" / "core"
     core_dir.mkdir(parents=True)
     (core_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
 
     overrides_dir = tmp_path / "overrides"
     overrides_dir.mkdir()
-    (overrides_dir / "implementer.md").write_text("## Override: Rules\n\n- Extra rule.\n")
+    # Use <!-- append --> for append-mode overlay (replace is now default)
+    (overrides_dir / "implementer.md").write_text(
+        "<!-- append -->\n## Override: Rules\n\n- Extra rule.\n"
+    )
 
     run_dir = tmp_path / "run"
     _render_agent_templates(
@@ -3093,7 +3096,7 @@ def test_render_agent_templates_no_overlay_unchanged(tmp_path, monkeypatch):
     """_render_agent_templates leaves output unchanged when no overlay exists."""
     monkeypatch.chdir(tmp_path)
 
-    core_dir = tmp_path / ".claude" / "agents" / "core"
+    core_dir = tmp_path / ".claude" / "worca" / "agents" / "core"
     core_dir.mkdir(parents=True)
     (core_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
 
@@ -3115,15 +3118,15 @@ def test_render_agent_templates_no_overlay_unchanged(tmp_path, monkeypatch):
 def test_settings_json_has_agent_overrides_dir():
     """settings.json worca namespace must declare agent_overrides_dir adjacent to plan_path_template."""
     import pathlib
-    settings_path = pathlib.Path(__file__).parent.parent / ".claude" / "settings.json"
+    settings_path = pathlib.Path(__file__).parent.parent / "src" / "worca" / "settings.json"
     with settings_path.open() as f:
         settings = json.load(f)
     worca = settings.get("worca", {})
     assert "agent_overrides_dir" in worca, (
         "settings.json missing 'agent_overrides_dir' key under 'worca'"
     )
-    assert worca["agent_overrides_dir"] == ".claude/agents/overrides", (
-        f"Expected '.claude/agents/overrides', got {worca['agent_overrides_dir']!r}"
+    assert worca["agent_overrides_dir"] == ".claude/agents", (
+        f"Expected '.claude/agents', got {worca['agent_overrides_dir']!r}"
     )
 
 
@@ -3158,7 +3161,7 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
 
     captured_calls = []
 
-    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents/overrides"):
+    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents"):
         captured_calls.append(overrides_dir)
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,

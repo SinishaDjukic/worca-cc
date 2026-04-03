@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImplementOutput",
+  "type": "object",
+  "required": ["bead_id", "files_changed"],
+  "properties": {
+    "bead_id": { "type": "string" },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tests_added": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

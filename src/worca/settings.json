@@ -1,0 +1,254 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/pre_tool_use.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/post_tool_use.py\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/user_prompt_submit.py\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(agent-browser:*)",
+      "Bash(bd:*)",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(command cat:*)",
+      "Bash(command cut:*)",
+      "Bash(command diff:*)",
+      "Bash(command du:*)",
+      "Bash(command find:*)",
+      "Bash(command git branch:*)",
+      "Bash(command git diff:*)",
+      "Bash(command git log:*)",
+      "Bash(command git ls-files:*)",
+      "Bash(command git status:*)",
+      "Bash(command grep:*)",
+      "Bash(command head:*)",
+      "Bash(command identify:*)",
+      "Bash(command jq:*)",
+      "Bash(command ls:*)",
+      "Bash(command lsof:*)",
+      "Bash(command netstatL:*)",
+      "Bash(command ps:*)",
+      "Bash(command rg:*)",
+      "Bash(command sed:*)",
+      "Bash(command ss:*)",
+      "Bash(command strings:*)",
+      "Bash(command tail:*)",
+      "Bash(command wc:*)",
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git diff:*)",
+      "Bash(git fetch:*)",
+      "Bash(git find:*)",
+      "Bash(git grep:*)",
+      "Bash(git help:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git show:*)",
+      "Bash(git status:*)",
+      "Bash(git subtree:*)",
+      "Bash(grep:*)",
+      "Bash(jq:*)",
+      "Bash(ls:*)",
+      "Bash(pytest *)",
+      "Bash(rg:*)",
+      "Bash(test:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch",
+      "Read(*)"
+    ]
+  },
+  "worca": {
+    "stages": {
+      "plan": {
+        "agent": "planner",
+        "enabled": true
+      },
+      "coordinate": {
+        "agent": "coordinator",
+        "enabled": true
+      },
+      "implement": {
+        "agent": "implementer",
+        "enabled": true
+      },
+      "test": {
+        "agent": "tester",
+        "enabled": true
+      },
+      "review": {
+        "agent": "guardian",
+        "enabled": true
+      },
+      "pr": {
+        "agent": "guardian",
+        "enabled": true
+      },
+      "learn": {
+        "agent": "learner",
+        "enabled": false
+      },
+      "preflight": {
+        "enabled": true,
+        "script": ".claude/worca/scripts/preflight_checks.py",
+        "require": []
+      },
+      "plan_review": {
+        "agent": "plan_reviewer",
+        "enabled": false
+      }
+    },
+    "agents": {
+      "planner": {
+        "model": "opus",
+        "max_turns": 100
+      },
+      "coordinator": {
+        "model": "opus",
+        "max_turns": 300
+      },
+      "implementer": {
+        "model": "sonnet",
+        "max_turns": 300
+      },
+      "tester": {
+        "model": "sonnet",
+        "max_turns": 100
+      },
+      "guardian": {
+        "model": "opus",
+        "max_turns": 50
+      },
+      "learner": {
+        "model": "sonnet",
+        "max_turns": 50
+      },
+      "plan_reviewer": {
+        "model": "opus",
+        "max_turns": 50
+      }
+    },
+    "models": {
+      "opus": "claude-opus-4-6",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    },
+    "loops": {
+      "implement_test": 5,
+      "pr_changes": 5,
+      "restart_planning": 2,
+      "plan_review": 2
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": true,
+      "deploy_approval": true
+    },
+    "plan_path_template": "docs/plans/{timestamp}-{title_slug}.md",
+    "agent_overrides_dir": ".claude/agents",
+    "pricing": {
+      "models": {
+        "opus": {
+          "input_per_mtok": 15,
+          "output_per_mtok": 75,
+          "cache_write_per_mtok": 18.75,
+          "cache_read_per_mtok": 1.5
+        },
+        "sonnet": {
+          "input_per_mtok": 3,
+          "output_per_mtok": 15,
+          "cache_write_per_mtok": 3.75,
+          "cache_read_per_mtok": 0.3
+        }
+      },
+      "currency": "USD",
+      "last_updated": "2025-05-01"
+    },
+    "circuit_breaker": {
+      "enabled": true,
+      "max_consecutive_failures": 3,
+      "transient_retry_count": 3,
+      "transient_retry_backoff_seconds": [
+        10,
+        30,
+        90
+      ],
+      "classifier_model": "haiku"
+    },
+    "events": {
+      "enabled": true,
+      "agent_telemetry": true,
+      "hook_events": true,
+      "rate_limit_ms": 1000
+    },
+    "webhooks": [],
+    "hooks": {},
+    "budget": {
+      "warning_pct": 80,
+      "max_cost_usd": null
+    },
+    "governance": {
+      "guards": {
+        "block_rm_rf": true,
+        "block_env_write": true,
+        "block_force_push": true,
+        "restrict_git_commit": true
+      },
+      "test_gate_strikes": 2,
+      "dispatch": {
+        "planner": [],
+        "coordinator": [
+          "implementer"
+        ],
+        "implementer": [],
+        "tester": [],
+        "guardian": []
+      }
+    },
+    "defaults": {
+      "msize": 1,
+      "mloops": 1
+    },
+    "parallel": {
+      "max_concurrent_pipelines": 3,
+      "default_base_branch": "main",
+      "cleanup_policy": "on-success",
+      "worktree_base_dir": ".worktrees"
+    }
+  }
+}

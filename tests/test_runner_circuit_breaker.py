@@ -507,7 +507,7 @@ class TestPreflightSkipsCircuitBreaker:
         settings = {
             "worca": {
                 "stages": {
-                    "preflight": {"enabled": True, "script": ".claude/scripts/preflight_checks.py"},
+                    "preflight": {"enabled": True, "script": ".claude/worca/scripts/preflight_checks.py"},
                     "plan": {"enabled": False},
                     "coordinate": {"enabled": False},
                     "implement": {"enabled": False},

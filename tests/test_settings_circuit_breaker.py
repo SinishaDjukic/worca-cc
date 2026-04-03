@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-SETTINGS_PATH = Path(__file__).resolve().parents[1] / ".claude" / "settings.json"
+SETTINGS_PATH = Path(__file__).resolve().parents[1] / "src" / "worca" / "settings.json"
 
 
 class TestSettingsCircuitBreaker:
@@ -43,7 +43,7 @@ class TestSettingsPreflightStage:
         assert self.stages["preflight"]["enabled"] is True
 
     def test_preflight_stage_has_script(self):
-        assert self.stages["preflight"]["script"] == ".claude/scripts/preflight_checks.py"
+        assert self.stages["preflight"]["script"] == ".claude/worca/scripts/preflight_checks.py"
 
     def test_preflight_stage_require_is_list(self):
         assert isinstance(self.stages["preflight"]["require"], list)

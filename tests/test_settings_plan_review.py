@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-SETTINGS_PATH = Path(__file__).resolve().parents[1] / ".claude" / "settings.json"
+SETTINGS_PATH = Path(__file__).resolve().parents[1] / "src" / "worca" / "settings.json"
 
 
 class TestSettingsPlanReviewStage:
