@@ -6,15 +6,11 @@ Covers:
 3. Cross-layer compatibility: process-manager.js arg patterns → Python CLI parser
 """
 import re
-import sys
-import os
 from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
-
-from run_pipeline import create_parser, build_work_request
+from worca.scripts.run_pipeline import create_parser, build_work_request
 from worca.orchestrator.runner import _sanitize_branch_name
 from worca.orchestrator.work_request import WorkRequest
 
@@ -120,7 +116,7 @@ class TestSanitizeBranchName:
 class TestCLIScenarioPromptOnly:
     """Scenario: python run_pipeline.py --prompt 'Add auth' → works as before."""
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_full_flow(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(source_type="prompt", title="Add auth")
 
@@ -133,7 +129,7 @@ class TestCLIScenarioPromptOnly:
         assert branch.startswith("worca/add-auth-")
         mock_normalize.assert_called_once_with("prompt", "Add auth")
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_no_additional_instructions_appended(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(source_type="prompt", title="Add auth")
 
@@ -146,7 +142,7 @@ class TestCLIScenarioPromptOnly:
 class TestCLIScenarioSpecOnly:
     """Scenario: python run_pipeline.py --spec docs/spec.md → LLM-generated title."""
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_full_flow(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(
             source_type="spec_file",
@@ -168,7 +164,7 @@ class TestCLIScenarioSpecOnly:
 class TestCLIScenarioSourceGhIssue:
     """Scenario: python run_pipeline.py --source gh:issue:42 → GH issue title verbatim."""
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_full_flow(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(
             source_type="github_issue",
@@ -191,7 +187,7 @@ class TestCLIScenarioSourceGhIssue:
 class TestCLIScenarioPlanOnly:
     """Scenario: python run_pipeline.py --plan docs/plans/foo.md → plan-only, LLM title."""
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_full_flow(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(
             source_type="plan_file",
@@ -209,7 +205,7 @@ class TestCLIScenarioPlanOnly:
         assert branch.startswith("worca/database-migration-strategy-")
         mock_normalize.assert_called_once_with("plan", "docs/plans/foo.md")
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_plan_path_resolved_from_args(self, mock_normalize):
         """Explicit --plan takes priority over auto-detected plan_path."""
         mock_normalize.return_value = WorkRequest(
@@ -228,7 +224,7 @@ class TestCLIScenarioPlanOnly:
 class TestCLIScenarioSourcePlusPrompt:
     """Scenario: --source gh:issue:42 --prompt 'focus on auth' → combined."""
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_full_flow(self, mock_normalize):
         mock_normalize.return_value = WorkRequest(
             source_type="github_issue",
@@ -251,7 +247,7 @@ class TestCLIScenarioSourcePlusPrompt:
         branch = _sanitize_branch_name(wr.title)
         assert branch.startswith("worca/add-auth-system-")
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_spec_plus_prompt(self, mock_normalize):
         """--spec docs/spec.md --prompt 'extra context' → combined."""
         mock_normalize.return_value = WorkRequest(
@@ -268,7 +264,7 @@ class TestCLIScenarioSourcePlusPrompt:
         assert "## Additional Instructions" in wr.description
         assert "extra context" in wr.description
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_plan_plus_prompt(self, mock_normalize):
         """--plan plan.md --prompt 'additional notes' → combined."""
         mock_normalize.return_value = WorkRequest(

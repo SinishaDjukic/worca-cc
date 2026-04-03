@@ -7,14 +7,11 @@ TDD: these tests are written first and should FAIL until webhook.py is implement
 import hashlib
 import hmac
 import json
-import sys
 import threading
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, ".claude")
 
 from worca.events.webhook import (
     _matches_filter,

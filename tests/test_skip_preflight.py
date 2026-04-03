@@ -9,15 +9,10 @@ Covers:
 """
 
 import json
-import sys
 from contextlib import ExitStack
-from pathlib import Path
 from unittest.mock import patch
 
-
-# Make .claude/scripts importable for CLI tests
-sys.path.insert(0, str(Path(__file__).parent.parent / ".claude" / "scripts"))
-import run_pipeline as _run_pipeline_module
+from worca.scripts import run_pipeline as _run_pipeline_module
 
 
 # ---------------------------------------------------------------------------

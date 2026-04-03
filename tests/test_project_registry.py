@@ -2,12 +2,8 @@
 
 import json
 import os
-import sys
 from unittest.mock import patch
 
-
-# Add the .claude directory to sys.path so we can import worca modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.claude'))
 from worca.utils.project_registry import auto_register_project, slugify
 
 

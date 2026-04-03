@@ -6,10 +6,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
-# Make the scripts directory importable
-sys.path.insert(0, str(Path(__file__).parent.parent / ".claude" / "scripts"))
-import preflight_checks
+from worca.scripts import preflight_checks
 
 
 # --- check_claude_cli ---
@@ -384,7 +381,7 @@ class TestRunChecks:
 # --- Integration: run the script as subprocess ---
 
 class TestScriptIntegration:
-    SCRIPT = str(Path(__file__).parent.parent / ".claude" / "scripts" / "preflight_checks.py")
+    SCRIPT = str(Path(__file__).parent.parent / "src" / "worca" / "scripts" / "preflight_checks.py")
     PROJECT_ROOT = str(Path(__file__).parent.parent)
 
     def _run(self):
