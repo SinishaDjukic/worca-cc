@@ -189,6 +189,7 @@ describe('POST /api/runs/:id/archive', () => {
 
     expect(broadcastSpy).toHaveBeenCalledWith('run-archived', {
       runId: 'run-004',
+      archived_at: expect.any(String),
     });
   });
 

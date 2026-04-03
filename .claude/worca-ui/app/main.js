@@ -2,7 +2,8 @@ import { html, render } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createNotificationManager } from './notifications.js';
 import { navigate, onHashChange, parseHash } from './router.js';
-import { createStore } from './state.js';
+import { createStore, MAX_ARCHIVED_AGE_MS } from './state.js';
+import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
 import {
   AlertTriangle,
@@ -262,12 +263,27 @@ ws.on('runs-list', (payload, msg) => {
       }
     }
     const archivedUpdates = { ...store.getState().archivedRuns };
+    // Prune stale archived runs from source project
+    if (sourceProject) {
+      for (const [id, run] of Object.entries(archivedUpdates)) {
+        if (run._project === sourceProject && !freshIds.has(id)) {
+          delete archivedUpdates[id];
+        }
+      }
+    }
+    const now = Date.now();
     for (const run of payload.runs || []) {
       if (sourceProject) run._project = sourceProject;
       if (run.archived) {
+        if (run.archived_at) {
+          const age = now - new Date(run.archived_at).getTime();
+          if (age > MAX_ARCHIVED_AGE_MS) continue;
+        }
         archivedUpdates[run.id] = run;
+        delete existing[run.id];
       } else {
         existing[run.id] = run;
+        delete archivedUpdates[run.id];
       }
     }
     if (payload.settings) settings = payload.settings;
@@ -280,7 +296,7 @@ ws.on('runs-list', (payload, msg) => {
 
 ws.on('run-snapshot', (payload) => {
   if (payload?.id) {
-    const prevRun = store.getState().runs[payload.id] ?? null;
+    const prevRun = store.getRunById(payload.id) ?? null;
     // Suppress notifications for archived runs
     const isArchived =
       payload.archived === true || !!store.getState().archivedRuns[payload.id];
@@ -311,7 +327,7 @@ ws.on('run-snapshot', (payload) => {
 
 ws.on('run-update', (payload) => {
   if (payload?.id) {
-    const prevRun = store.getState().runs[payload.id] ?? null;
+    const prevRun = store.getRunById(payload.id) ?? null;
     // Suppress notifications for archived runs
     const isArchivedUpdate =
       payload.archived === true || !!store.getState().archivedRuns[payload.id];
@@ -570,9 +586,14 @@ function fetchAllProjectRuns() {
   ).then((results) => {
     const runs = {};
     const archivedRuns = {};
+    const now = Date.now();
     for (const projectRuns of results) {
       for (const run of projectRuns) {
         if (run.archived) {
+          if (run.archived_at) {
+            const age = now - new Date(run.archived_at).getTime();
+            if (age > MAX_ARCHIVED_AGE_MS) continue;
+          }
           archivedRuns[run.id] = run;
         } else {
           runs[run.id] = run;
@@ -1011,47 +1032,13 @@ async function handleResumeRun(runId) {
 
 // --- Archive/Unarchive ---
 
-function archiveRun(runId) {
-  showConfirm(
-    {
-      label: 'Archive Pipeline Run',
-      message:
-        "This run will be hidden from the dashboard and history. You can find it later using the 'archived' filter.",
-      confirmLabel: 'Archive',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        try {
-          const res = await fetch(projectUrl(`/runs/${runId}/archive`), {
-            method: 'POST',
-          });
-          const data = await res.json();
-          if (!data.ok) {
-            showActionError(data.error || 'Failed to archive run');
-          }
-          fetchAndUpdateRuns().catch(() => {});
-        } catch (err) {
-          showActionError(err?.message || 'Failed to archive run');
-        }
-      },
-    },
-    rerender,
-  );
-}
-
-async function unarchiveRun(runId) {
-  try {
-    const res = await fetch(projectUrl(`/runs/${runId}/unarchive`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      showActionError(data.error || 'Failed to unarchive run');
-    }
-    fetchAndUpdateRuns().catch(() => {});
-  } catch (err) {
-    showActionError(err?.message || 'Failed to unarchive run');
-  }
-}
+const { archiveRun, unarchiveRun } = createArchiveActions({
+  showConfirm,
+  showActionError,
+  projectUrl,
+  fetchAndUpdateRuns,
+  rerender,
+});
 
 // --- Parallel pipeline control ---
 
@@ -1319,21 +1306,26 @@ async function doRunLearn() {
       // Optimistic update — show spinner immediately instead of waiting for WS
       const run = store.getRunById(runId);
       if (run) {
-        if (!run.stages) run.stages = {};
-        run.stages.learn = {
-          status: 'in_progress',
-          pid: data.pid,
-          started_at: new Date().toISOString(),
-          iterations: [
-            {
-              number: 1,
+        const now = new Date().toISOString();
+        store.setRun(runId, {
+          ...run,
+          stages: {
+            ...(run.stages || {}),
+            learn: {
               status: 'in_progress',
-              started_at: new Date().toISOString(),
-              trigger: 'manual',
+              pid: data.pid,
+              started_at: now,
+              iterations: [
+                {
+                  number: 1,
+                  status: 'in_progress',
+                  started_at: now,
+                  trigger: 'manual',
+                },
+              ],
             },
-          ],
-        };
-        rerender();
+          },
+        });
       }
     }
   } catch (err) {

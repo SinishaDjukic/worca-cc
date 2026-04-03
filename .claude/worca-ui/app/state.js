@@ -9,7 +9,7 @@
  */
 
 const LOG_CAP = 5000;
-const MAX_ARCHIVED_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+export const MAX_ARCHIVED_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 export function createStore(initial = {}) {
   let state = {
@@ -82,14 +82,22 @@ export function createStore(initial = {}) {
     setRun(runId, data) {
       if (data.archived === true) {
         const archivedRuns = { ...state.archivedRuns, [runId]: data };
-        const runs = { ...state.runs };
-        delete runs[runId];
-        state = { ...state, runs, archivedRuns };
+        if (runId in state.runs) {
+          const runs = { ...state.runs };
+          delete runs[runId];
+          state = { ...state, runs, archivedRuns };
+        } else {
+          state = { ...state, archivedRuns };
+        }
       } else {
         const runs = { ...state.runs, [runId]: data };
-        const archivedRuns = { ...state.archivedRuns };
-        delete archivedRuns[runId];
-        state = { ...state, runs, archivedRuns };
+        if (runId in state.archivedRuns) {
+          const archivedRuns = { ...state.archivedRuns };
+          delete archivedRuns[runId];
+          state = { ...state, runs, archivedRuns };
+        } else {
+          state = { ...state, runs };
+        }
       }
       emit();
     },

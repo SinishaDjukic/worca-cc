@@ -4,6 +4,25 @@ import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { Clock, Coins, Cpu, iconSvg, Timer, Zap } from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 
+let _prevRuns = null;
+let _prevArchivedRuns = null;
+let _cachedMergedRuns = null;
+
+function _getMergedRuns(runs, archivedRuns) {
+  if (runs === _prevRuns && archivedRuns === _prevArchivedRuns) {
+    return _cachedMergedRuns;
+  }
+  _prevRuns = runs;
+  _prevArchivedRuns = archivedRuns;
+  _cachedMergedRuns = [
+    ...Object.values(runs),
+    ...Object.values(archivedRuns || {}),
+  ]
+    .filter((r) => r.stages && Object.keys(r.stages).length > 0)
+    .sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+  return _cachedMergedRuns;
+}
+
 function _sumCosts(runs) {
   let total = 0;
   for (const run of runs) {
@@ -264,12 +283,7 @@ export function tokenCostsView(
   state,
   { expandedRun, tokenData, onToggleRun } = {},
 ) {
-  const runs = [
-    ...Object.values(state.runs),
-    ...Object.values(state.archivedRuns || {}),
-  ]
-    .filter((r) => r.stages && Object.keys(r.stages).length > 0)
-    .sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+  const runs = _getMergedRuns(state.runs, state.archivedRuns);
 
   return html`
     <div class="costs-dashboard">

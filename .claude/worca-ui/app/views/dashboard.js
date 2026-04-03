@@ -77,7 +77,7 @@ function _projectCards(projects, runs, onNavigate) {
 
 export function dashboardView(
   state,
-  { onSelectRun, onNavigate, onPause, onResume } = {},
+  { onSelectRun, onNavigate, onPause, onResume, onArchive } = {},
 ) {
   const runs = Object.values(state.runs);
   const active = runs.filter((r) => r.active);
@@ -170,7 +170,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-failed">
           <div class="run-list">
-            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
+            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onArchive }))}
           </div>
         </div>
       `

@@ -700,7 +700,7 @@ export function createProjectScopedRoutes() {
       status.archived_at = new Date().toISOString();
       const tmpPath = join(
         dirname(statusPath),
-        `.status.json.${Date.now()}.tmp`,
+        `.status.json.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
       );
       writeFileSync(
         tmpPath,
@@ -710,7 +710,8 @@ export function createProjectScopedRoutes() {
       );
       renameSync(tmpPath, statusPath);
       const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-archived', { runId });
+      if (broadcast)
+        broadcast('run-archived', { runId, archived_at: status.archived_at });
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -739,7 +740,7 @@ export function createProjectScopedRoutes() {
       delete status.archived_at;
       const tmpPath = join(
         dirname(statusPath),
-        `.status.json.${Date.now()}.tmp`,
+        `.status.json.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
       );
       writeFileSync(
         tmpPath,

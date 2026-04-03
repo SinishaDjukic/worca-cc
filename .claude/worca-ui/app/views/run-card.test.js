@@ -268,7 +268,7 @@ describe('runCardView - archive/unarchive buttons', () => {
     expect(output).not.toContain('btn-quick-archive');
   });
 
-  it('does not show archive button when run is completed', () => {
+  it('shows archive button when run is completed and not active', () => {
     const run = {
       id: '1',
       pipeline_status: 'completed',
@@ -277,7 +277,7 @@ describe('runCardView - archive/unarchive buttons', () => {
       completed_at: '2026-01-01T01:00:00Z',
     };
     const output = renderToString(runCardView(run, { onArchive: () => {} }));
-    expect(output).not.toContain('btn-quick-archive');
+    expect(output).toContain('btn-quick-archive');
   });
 
   it('does not show archive button when no onArchive callback', () => {

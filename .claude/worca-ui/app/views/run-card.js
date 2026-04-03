@@ -122,9 +122,7 @@ export function runCardView(
       : nothing;
 
   const archiveBtn =
-    onArchive &&
-    !run.archived &&
-    (overallStatus === 'paused' || overallStatus === 'failed')
+    onArchive && !run.archived && !isActive
       ? html`
         <div class="run-card-actions">
           <button class="btn-quick-archive" @click=${(e) => {
