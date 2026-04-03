@@ -67,6 +67,7 @@
   --border: #334155;
   --border-subtle: rgba(51, 65, 85, 0.6);
   --muted: #64748b;
+  --filter-chip-inactive: #94a3b8;
   --accent: #60a5fa;
   --accent-hover: #93bbfd;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.15);
@@ -3662,7 +3663,7 @@ sl-details.learnings-panel::part(content) {
   font-size: 0.72rem;
   font-weight: 500;
   cursor: pointer;
-  color: var(--muted);
+  color: var(--filter-chip-inactive, var(--muted));
   transition: all 0.15s;
   text-transform: capitalize;
 }
