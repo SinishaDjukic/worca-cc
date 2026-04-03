@@ -264,7 +264,10 @@ export function tokenCostsView(
   state,
   { expandedRun, tokenData, onToggleRun } = {},
 ) {
-  const runs = Object.values(state.runs)
+  const runs = [
+    ...Object.values(state.runs),
+    ...Object.values(state.archivedRuns || {}),
+  ]
     .filter((r) => r.stages && Object.keys(r.stages).length > 0)
     .sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
 

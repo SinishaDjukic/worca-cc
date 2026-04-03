@@ -9,6 +9,7 @@
  */
 
 const LOG_CAP = 5000;
+const MAX_ARCHIVED_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 export function createStore(initial = {}) {
   let state = {
@@ -17,6 +18,7 @@ export function createStore(initial = {}) {
     currentProjectId: initial.currentProjectId ?? null,
     projects: initial.projects ?? [],
     runs: initial.runs ?? {},
+    archivedRuns: initial.archivedRuns ?? {},
     pipelines: initial.pipelines ?? {},
     logLines: initial.logLines ?? [],
     preferences: {
@@ -61,6 +63,7 @@ export function createStore(initial = {}) {
         next.currentProjectId === state.currentProjectId &&
         next.projects === state.projects &&
         next.runs === state.runs &&
+        next.archivedRuns === state.archivedRuns &&
         next.pipelines === state.pipelines &&
         next.logLines === state.logLines &&
         next.preferences.theme === state.preferences.theme &&
@@ -77,11 +80,42 @@ export function createStore(initial = {}) {
     },
 
     setRun(runId, data) {
-      const runs = { ...state.runs, [runId]: data };
-      state = { ...state, runs };
+      if (data.archived === true) {
+        const archivedRuns = { ...state.archivedRuns, [runId]: data };
+        const runs = { ...state.runs };
+        delete runs[runId];
+        state = { ...state, runs, archivedRuns };
+      } else {
+        const runs = { ...state.runs, [runId]: data };
+        const archivedRuns = { ...state.archivedRuns };
+        delete archivedRuns[runId];
+        state = { ...state, runs, archivedRuns };
+      }
       emit();
     },
 
+    setRunsBulk(runArray) {
+      const runs = {};
+      const archivedRuns = {};
+      const now = Date.now();
+      for (const run of runArray) {
+        if (run.archived === true) {
+          if (run.archived_at) {
+            const age = now - new Date(run.archived_at).getTime();
+            if (age > MAX_ARCHIVED_AGE_MS) continue;
+          }
+          archivedRuns[run.id] = run;
+        } else {
+          runs[run.id] = run;
+        }
+      }
+      state = { ...state, runs, archivedRuns };
+      emit();
+    },
+
+    getRunById(id) {
+      return state.runs[id] ?? state.archivedRuns[id];
+    },
     appendLog(entry) {
       const logLines = [...state.logLines, entry];
       if (logLines.length > LOG_CAP)

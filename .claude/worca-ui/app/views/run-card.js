@@ -72,7 +72,7 @@ function _formatCost(usd) {
  */
 export function runCardView(
   run,
-  { onClick, beadsCount, onPause, onResume } = {},
+  { onClick, beadsCount, onPause, onResume, onArchive, onUnarchive } = {},
 ) {
   const title = run.work_request?.title || 'Untitled';
   const isActive = run.active;
@@ -121,6 +121,36 @@ export function runCardView(
       `
       : nothing;
 
+  const archiveBtn =
+    onArchive &&
+    !run.archived &&
+    (overallStatus === 'paused' || overallStatus === 'failed')
+      ? html`
+        <div class="run-card-actions">
+          <button class="btn-quick-archive" @click=${(e) => {
+            e.stopPropagation();
+            onArchive(run.id);
+          }}>
+            Archive
+          </button>
+        </div>
+      `
+      : nothing;
+
+  const unarchiveBtn =
+    onUnarchive && run.archived === true
+      ? html`
+        <div class="run-card-actions">
+          <button class="btn-quick-archive" @click=${(e) => {
+            e.stopPropagation();
+            onUnarchive(run.id);
+          }}>
+            Unarchive
+          </button>
+        </div>
+      `
+      : nothing;
+
   return html`
     <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
@@ -161,6 +191,8 @@ export function runCardView(
       }
       ${pauseBtn}
       ${resumeBtn}
+      ${archiveBtn}
+      ${unarchiveBtn}
     </div>
   `;
 }

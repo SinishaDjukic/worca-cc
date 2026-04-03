@@ -12,10 +12,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Router } from 'express';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { ProcessManager } from './process-manager.js';
@@ -49,6 +50,23 @@ function validateRunId(runId) {
     runId.length <= 128 &&
     RUN_ID_RE.test(runId)
   );
+}
+
+/**
+ * Find the status.json path for a given run ID.
+ * Searches: runs/{id}/status.json → results/{id}/status.json → results/{id}.json
+ * Returns the first existing path, or null if none found.
+ */
+export function findRunStatusPath(worcaDir, runId) {
+  const candidates = [
+    join(worcaDir, 'runs', runId, 'status.json'),
+    join(worcaDir, 'results', runId, 'status.json'),
+    join(worcaDir, 'results', `${runId}.json`),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
 }
 
 /** Validate a branch name — alphanumeric, dots, hyphens, underscores, slashes */
@@ -402,11 +420,8 @@ export function createProjectScopedRoutes() {
       return res.status(400).json({ ok: false, error: 'Invalid runId' });
     }
     const { worcaDir, pm } = req.project;
-    let statusPath = join(worcaDir, 'runs', runId, 'status.json');
-    if (!existsSync(statusPath)) {
-      statusPath = join(worcaDir, 'results', runId, 'status.json');
-    }
-    if (!existsSync(statusPath)) {
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
       return res
         .status(404)
         .json({ ok: false, error: `Run "${runId}" not found` });
@@ -663,6 +678,84 @@ export function createProjectScopedRoutes() {
     }
   });
 
+  // POST /api/projects/:projectId/runs/:id/archive
+  router.post('/runs/:id/archive', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (status.archived === true) {
+        return res.json({ ok: true });
+      }
+      status.archived = true;
+      status.archived_at = new Date().toISOString();
+      const tmpPath = join(
+        dirname(statusPath),
+        `.status.json.${Date.now()}.tmp`,
+      );
+      writeFileSync(
+        tmpPath,
+        `${JSON.stringify(status, null, 2)}
+`,
+        'utf8',
+      );
+      renameSync(tmpPath, statusPath);
+      const { broadcast } = req.app.locals;
+      if (broadcast) broadcast('run-archived', { runId });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/projects/:projectId/runs/:id/unarchive
+  router.post('/runs/:id/unarchive', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (status.archived !== true) {
+        return res.json({ ok: true });
+      }
+      delete status.archived;
+      delete status.archived_at;
+      const tmpPath = join(
+        dirname(statusPath),
+        `.status.json.${Date.now()}.tmp`,
+      );
+      writeFileSync(
+        tmpPath,
+        `${JSON.stringify(status, null, 2)}
+`,
+        'utf8',
+      );
+      renameSync(tmpPath, statusPath);
+      const { broadcast } = req.app.locals;
+      if (broadcast) broadcast('run-unarchived', { runId });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // POST /api/projects/:projectId/runs/:id/stages/:stage/restart
   router.post(
     '/runs/:id/stages/:stage/restart',
@@ -694,11 +787,8 @@ export function createProjectScopedRoutes() {
     }
     const { worcaDir, projectRoot } = req.project;
 
-    let statusPath = join(worcaDir, 'runs', runId, 'status.json');
-    if (!existsSync(statusPath)) {
-      statusPath = join(worcaDir, 'results', runId, 'status.json');
-    }
-    if (!existsSync(statusPath)) {
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
       return res
         .status(404)
         .json({ ok: false, error: `Run "${runId}" not found` });

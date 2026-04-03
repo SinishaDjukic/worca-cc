@@ -220,3 +220,110 @@ describe('runCardView - border-left via statusClass on card div', () => {
     expect(output).toMatch(/class="run-card\s+status-paused"/);
   });
 });
+
+describe('runCardView - archive/unarchive buttons', () => {
+  it('shows archive button when onArchive provided and run is paused and not archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onArchive: () => {} }));
+    expect(output).toContain('btn-quick-archive');
+    expect(output).toContain('Archive');
+  });
+
+  it('shows archive button when onArchive provided and run is failed and not archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'failed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onArchive: () => {} }));
+    expect(output).toContain('btn-quick-archive');
+  });
+
+  it('does not show archive button when run is already archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      archived: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onArchive: () => {} }));
+    expect(output).not.toContain('btn-quick-archive');
+  });
+
+  it('does not show archive button when run is running', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onArchive: () => {} }));
+    expect(output).not.toContain('btn-quick-archive');
+  });
+
+  it('does not show archive button when run is completed', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T01:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onArchive: () => {} }));
+    expect(output).not.toContain('btn-quick-archive');
+  });
+
+  it('does not show archive button when no onArchive callback', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('btn-quick-archive');
+  });
+
+  it('shows unarchive button when onUnarchive provided and run is archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      archived: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onUnarchive: () => {} }));
+    expect(output).toContain('btn-quick-archive');
+    expect(output).toContain('Unarchive');
+  });
+
+  it('does not show unarchive button when run is not archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onUnarchive: () => {} }));
+    expect(output).not.toContain('Unarchive');
+  });
+
+  it('does not show unarchive button when no onUnarchive callback', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      archived: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('Unarchive');
+  });
+});

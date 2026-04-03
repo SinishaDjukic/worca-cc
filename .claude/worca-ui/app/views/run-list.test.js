@@ -179,6 +179,193 @@ describe('runListView - onPause/onResume passthrough', () => {
   });
 });
 
+describe('runListView - archived filter chip + archivedRuns', () => {
+  const archivedRuns = [
+    {
+      id: 'a1',
+      pipeline_status: 'failed',
+      active: false,
+      archived: true,
+      archived_at: '2026-04-01T00:00:00Z',
+      started_at: '2026-01-01T00:00:00Z',
+      work_request: { title: 'Archived-Run-1' },
+    },
+    {
+      id: 'a2',
+      pipeline_status: 'paused',
+      active: false,
+      archived: true,
+      archived_at: '2026-04-02T00:00:00Z',
+      started_at: '2026-02-01T00:00:00Z',
+      work_request: { title: 'Archived-Run-2' },
+    },
+  ];
+
+  it('includes archived in HISTORY_STATUSES filter chips', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'all',
+        onStatusFilter: () => {},
+        archivedRuns,
+      }),
+    );
+    expect(output).toContain('archived');
+  });
+
+  it('shows archived chip count from archivedRuns length', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'all',
+        onStatusFilter: () => {},
+        archivedRuns,
+      }),
+    );
+    const archIdx = output.indexOf('archived');
+    const countAfter = output.indexOf('chip-count', archIdx);
+    const snippet = output.slice(countAfter, countAfter + 30);
+    expect(snippet).toContain('2');
+  });
+
+  it('displays archivedRuns when statusFilter=archived', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+        work_request: { title: 'Normal-Run' },
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'archived',
+        onStatusFilter: () => {},
+        archivedRuns,
+      }),
+    );
+    expect(output).toContain('Archived-Run-1');
+    expect(output).toContain('Archived-Run-2');
+    expect(output).not.toContain('Normal-Run');
+  });
+
+  it('passes onUnarchive to runCardView for archived runs', () => {
+    const runs = [];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'archived',
+        onStatusFilter: () => {},
+        archivedRuns,
+        onUnarchive: () => {},
+      }),
+    );
+    expect(output).toContain('Unarchive');
+  });
+
+  it('passes onArchive to runCardView for non-archived paused/failed runs', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'failed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'failed',
+        onStatusFilter: () => {},
+        archivedRuns: [],
+        onArchive: () => {},
+      }),
+    );
+    expect(output).toContain('Archive');
+  });
+
+  it('does not display archivedRuns when statusFilter is not archived', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+        work_request: { title: 'Normal-Run' },
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'completed',
+        onStatusFilter: () => {},
+        archivedRuns,
+      }),
+    );
+    expect(output).toContain('Normal-Run');
+    expect(output).not.toContain('Archived-Run-1');
+  });
+
+  it('shows empty state when statusFilter=archived and no archived runs', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'archived',
+        onStatusFilter: () => {},
+        archivedRuns: [],
+      }),
+    );
+    expect(output).toContain('No archived runs');
+  });
+
+  it('shows archived chip even when no other status has that count', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'completed',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        statusFilter: 'all',
+        onStatusFilter: () => {},
+        archivedRuns,
+      }),
+    );
+    const archIndex = output.indexOf('filter-chip-archived');
+    expect(archIndex).toBeGreaterThan(-1);
+  });
+});
+
 describe('runListView - sort order (descending start time)', () => {
   it('renders history runs newest-first', () => {
     const runs = [

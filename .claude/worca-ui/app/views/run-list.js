@@ -9,12 +9,22 @@ const HISTORY_STATUSES = [
   'failed',
   'paused',
   'error',
+  'archived',
 ];
 
 export function runListView(
   runs,
   filter,
-  { onSelectRun, onPause, onResume, statusFilter, onStatusFilter } = {},
+  {
+    onSelectRun,
+    onPause,
+    onResume,
+    onArchive,
+    onUnarchive,
+    statusFilter,
+    onStatusFilter,
+    archivedRuns = [],
+  } = {},
 ) {
   const baseFiltered =
     filter === 'active' ? runs.filter((r) => r.active) : runs;
@@ -29,22 +39,33 @@ export function runListView(
       const ps = r.pipeline_status || 'completed';
       statusCounts[ps] = (statusCounts[ps] || 0) + 1;
     }
+    statusCounts.archived = archivedRuns.length;
   }
 
-  // Apply status filter
-  let displayed = baseFiltered;
-  if (showStatusChips && statusFilter && statusFilter !== 'all') {
-    displayed = displayed.filter(
-      (r) => (r.pipeline_status || 'completed') === statusFilter,
-    );
+  // Apply status filter — archived uses archivedRuns instead of runs
+  let displayed;
+  if (showStatusChips && statusFilter === 'archived') {
+    displayed = sortByStartDesc([...archivedRuns]);
+  } else {
+    displayed = baseFiltered;
+    if (showStatusChips && statusFilter && statusFilter !== 'all') {
+      displayed = displayed.filter(
+        (r) => (r.pipeline_status || 'completed') === statusFilter,
+      );
+    }
+    displayed = sortByStartDesc(displayed);
   }
-  displayed = sortByStartDesc(displayed);
 
-  if (baseFiltered.length === 0) {
+  if (
+    baseFiltered.length === 0 &&
+    !(statusFilter === 'archived' && archivedRuns.length > 0)
+  ) {
     return html`<div class="empty-state">
       ${filter === 'active' ? 'No running pipelines' : 'No completed runs yet'}
     </div>`;
   }
+
+  const isArchived = statusFilter === 'archived';
 
   return html`
     ${
@@ -73,7 +94,15 @@ export function runListView(
     `
         : html`
       <div class="run-list">
-        ${displayed.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume }))}
+        ${displayed.map((run) =>
+          runCardView(run, {
+            onClick: onSelectRun,
+            onPause,
+            onResume,
+            onArchive: isArchived ? undefined : onArchive,
+            onUnarchive: isArchived ? onUnarchive : undefined,
+          }),
+        )}
       </div>
     `
     }

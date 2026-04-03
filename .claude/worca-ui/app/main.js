@@ -261,26 +261,32 @@ ws.on('runs-list', (payload, msg) => {
         }
       }
     }
+    const archivedUpdates = { ...store.getState().archivedRuns };
     for (const run of payload.runs || []) {
       if (sourceProject) run._project = sourceProject;
-      existing[run.id] = run;
+      if (run.archived) {
+        archivedUpdates[run.id] = run;
+      } else {
+        existing[run.id] = run;
+      }
     }
     if (payload.settings) settings = payload.settings;
-    store.setState({ runs: existing });
+    store.setState({ runs: existing, archivedRuns: archivedUpdates });
     return;
   }
-  const runs = {};
-  for (const run of payload.runs || []) {
-    runs[run.id] = run;
-  }
   if (payload.settings) settings = payload.settings;
-  store.setState({ runs });
+  store.setRunsBulk(payload.runs || []);
 });
 
 ws.on('run-snapshot', (payload) => {
   if (payload?.id) {
     const prevRun = store.getState().runs[payload.id] ?? null;
-    notificationManager.handleRunUpdate(payload.id, payload, prevRun);
+    // Suppress notifications for archived runs
+    const isArchived =
+      payload.archived === true || !!store.getState().archivedRuns[payload.id];
+    if (!isArchived) {
+      notificationManager.handleRunUpdate(payload.id, payload, prevRun);
+    }
     // Invalidate prompt cache for stages whose iteration count changed
     if (prevRun && promptCache[payload.id]) {
       for (const [key, stage] of Object.entries(payload.stages || {})) {
@@ -306,7 +312,12 @@ ws.on('run-snapshot', (payload) => {
 ws.on('run-update', (payload) => {
   if (payload?.id) {
     const prevRun = store.getState().runs[payload.id] ?? null;
-    notificationManager.handleRunUpdate(payload.id, payload, prevRun);
+    // Suppress notifications for archived runs
+    const isArchivedUpdate =
+      payload.archived === true || !!store.getState().archivedRuns[payload.id];
+    if (!isArchivedUpdate) {
+      notificationManager.handleRunUpdate(payload.id, payload, prevRun);
+    }
     store.setRun(payload.id, payload);
     if (route.runId === payload.id) {
       autoResetLogFilterOnStageChange(prevRun, payload);
@@ -384,10 +395,8 @@ ws.on('beads-update', (payload, msg) => {
 /** Fetch runs list from server and update store. Returns a promise. */
 function fetchAndUpdateRuns() {
   return ws.send('list-runs').then((payload) => {
-    const runs = {};
-    for (const run of payload.runs || []) runs[run.id] = run;
-    store.setState({ runs });
     if (payload.settings) settings = payload.settings;
+    store.setRunsBulk(payload.runs || []);
   });
 }
 
@@ -395,14 +404,39 @@ ws.on('run-started', () => {
   fetchAndUpdateRuns().catch(() => {});
 });
 
+ws.on('run-archived', (payload) => {
+  if (payload?.runId) {
+    const existingRun =
+      store.getState().runs[payload.runId] ??
+      store.getState().archivedRuns[payload.runId];
+    if (existingRun) {
+      store.setRun(payload.runId, {
+        ...existingRun,
+        archived: true,
+        archived_at: payload.archived_at || new Date().toISOString(),
+      });
+    }
+  }
+});
+
+ws.on('run-unarchived', (payload) => {
+  if (payload?.runId) {
+    const existingRun =
+      store.getState().runs[payload.runId] ??
+      store.getState().archivedRuns[payload.runId];
+    if (existingRun) {
+      const { archived: _a, archived_at: _b, ...rest } = existingRun;
+      store.setRun(payload.runId, rest);
+    }
+  }
+});
+
 ws.on('run-stopped', () => {
   pipelineAction = null;
   ws.send('list-runs')
     .then((payload) => {
-      const runs = {};
-      for (const run of payload.runs || []) runs[run.id] = run;
-      store.setState({ runs });
       if (payload.settings) settings = payload.settings;
+      store.setRunsBulk(payload.runs || []);
     })
     .catch(() => {});
 });
@@ -410,10 +444,8 @@ ws.on('run-stopped', () => {
 ws.on('stage-restarted', () => {
   ws.send('list-runs')
     .then((payload) => {
-      const runs = {};
-      for (const run of payload.runs || []) runs[run.id] = run;
-      store.setState({ runs });
       if (payload.settings) settings = payload.settings;
+      store.setRunsBulk(payload.runs || []);
     })
     .catch(() => {});
 });
@@ -537,10 +569,17 @@ function fetchAllProjectRuns() {
     ),
   ).then((results) => {
     const runs = {};
+    const archivedRuns = {};
     for (const projectRuns of results) {
-      for (const run of projectRuns) runs[run.id] = run;
+      for (const run of projectRuns) {
+        if (run.archived) {
+          archivedRuns[run.id] = run;
+        } else {
+          runs[run.id] = run;
+        }
+      }
     }
-    store.setState({ runs });
+    store.setState({ runs, archivedRuns });
     rerender();
   });
 }
@@ -554,10 +593,8 @@ function fetchProjectScopedData() {
   } else {
     ws.send('list-runs')
       .then((payload) => {
-        const runs = {};
-        for (const run of payload.runs || []) runs[run.id] = run;
-        store.setState({ runs });
         if (payload.settings) settings = payload.settings;
+        store.setRunsBulk(payload.runs || []);
       })
       .catch(() => {});
   }
@@ -634,6 +671,7 @@ function handleProjectSwitch(newProjectId) {
   store.setState({
     currentProjectId: newProjectId,
     runs: {},
+    archivedRuns: {},
     logLines: [],
     activeRunId: null,
     pipelines: {},
@@ -654,10 +692,8 @@ function handleProjectSwitch(newProjectId) {
   } else {
     ws.send('list-runs')
       .then((payload) => {
-        const runs = {};
-        for (const run of payload.runs || []) runs[run.id] = run;
-        store.setState({ runs });
         if (payload.settings) settings = payload.settings;
+        store.setRunsBulk(payload.runs || []);
       })
       .catch(() => {});
   }
@@ -809,7 +845,7 @@ function handleStageFilter(stage) {
   logFilter = stage;
   // Auto-select last iteration when a stage is chosen
   if (stage !== '*') {
-    const run = store.getState().runs[route.runId];
+    const run = store.getRunById(route.runId);
     const stageData = run?.stages?.[stage];
     const iterCount = stageData?.iterations?.length || 0;
     logIterationFilter = iterCount > 0 ? iterCount : null;
@@ -970,6 +1006,50 @@ async function handleResumeRun(runId) {
   } finally {
     _controlPending = null;
     rerender();
+  }
+}
+
+// --- Archive/Unarchive ---
+
+function archiveRun(runId) {
+  showConfirm(
+    {
+      label: 'Archive Pipeline Run',
+      message:
+        "This run will be hidden from the dashboard and history. You can find it later using the 'archived' filter.",
+      confirmLabel: 'Archive',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(projectUrl(`/runs/${runId}/archive`), {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to archive run');
+          }
+          fetchAndUpdateRuns().catch(() => {});
+        } catch (err) {
+          showActionError(err?.message || 'Failed to archive run');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function unarchiveRun(runId) {
+  try {
+    const res = await fetch(projectUrl(`/runs/${runId}/unarchive`), {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to unarchive run');
+    }
+    fetchAndUpdateRuns().catch(() => {});
+  } catch (err) {
+    showActionError(err?.message || 'Failed to unarchive run');
   }
 }
 
@@ -1207,7 +1287,7 @@ function handleWebhookDismissDetail() {
 // --- Learn actions ---
 
 function handleRunLearn() {
-  const run = store.getState().runs[route.runId];
+  const run = store.getRunById(route.runId);
   const learnStatus = run?.stages?.learn?.status;
   if (learnStatus === 'completed' || learnStatus === 'error') {
     showConfirm(
@@ -1237,7 +1317,7 @@ async function doRunLearn() {
       showActionError(data.error || 'Failed to run learning analysis');
     } else {
       // Optimistic update — show spinner immediately instead of waiting for WS
-      const run = store.getState().runs[runId];
+      const run = store.getRunById(runId);
       if (run) {
         if (!run.stages) run.stages = {};
         run.stages.learn = {
@@ -1273,7 +1353,7 @@ function contentHeaderView() {
 
   if (route.section === 'beads' && route.runId) {
     // Beads kanban for a specific run
-    const run = state.runs[route.runId];
+    const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || route.runId;
     const firstLine = raw.split('\n')[0];
     title =
@@ -1287,7 +1367,7 @@ function contentHeaderView() {
       actionButton = html`<span class="beads-db-path">${unsafeHTML(iconSvg(Database, 12))} Beads DB<br><code>${dbPath}</code></span>`;
     }
   } else if (route.runId) {
-    const run = state.runs[route.runId];
+    const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
     const firstLine = raw.split('\n')[0];
     title =
@@ -1440,6 +1520,16 @@ function mainContentView() {
   for (const r of runs) filteredRunsMap[r.id] = r;
   const viewState = { ...state, runs: filteredRunsMap };
 
+  // Archived runs — same project filter as active runs
+  const allArchivedRuns = Object.values(state.archivedRuns);
+  const archivedRuns =
+    currentProjectId && (state.projects || []).length > 1
+      ? allArchivedRuns.filter((r) => {
+          const rp = r.project || r._project;
+          return rp === currentProjectId;
+        })
+      : allArchivedRuns;
+
   // Beads section: two-level routing (must be checked before generic runId)
   if (route.section === 'beads') {
     if (route.runId) {
@@ -1453,7 +1543,7 @@ function mainContentView() {
         onStartIssue: handleStartBeadsIssue,
         onDismissError: handleDismissBeadsError,
         loading: beadsRunLoading,
-        run: viewState.runs[route.runId],
+        run: store.getRunById(route.runId),
         runId: route.runId,
       });
     }
@@ -1464,7 +1554,7 @@ function mainContentView() {
   }
 
   if (route.runId) {
-    const run = viewState.runs[route.runId];
+    const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
     if (!run && currentProjectId && (state.projects || []).length > 1) {
@@ -1599,6 +1689,9 @@ function mainContentView() {
     return runListView(runs, 'history', {
       onSelectRun: handleSelectRun,
       onResume: handleResumeRun,
+      onArchive: archiveRun,
+      onUnarchive: unarchiveRun,
+      archivedRuns,
       statusFilter: historyStatusFilter,
       onStatusFilter: (s) => {
         historyStatusFilter = s;
@@ -1626,6 +1719,7 @@ function mainContentView() {
                 onClick: handleSelectRun,
                 onPause: handlePauseRun,
                 onResume: handleResumeRun,
+                onArchive: archiveRun,
               }),
             )}
           </div>
@@ -1639,6 +1733,7 @@ function mainContentView() {
   return html`
     ${dashboardView(viewState, {
       onSelectRun: (runId) => navigate('active', runId, route.projectId),
+      onArchive: archiveRun,
       onNavigate: (section, secondArg, thirdArg) => {
         if (
           secondArg &&

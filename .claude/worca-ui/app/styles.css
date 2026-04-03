@@ -3709,6 +3709,24 @@ sl-details.learnings-panel::part(content) {
   background: var(--status-completed);
   color: #ffffff;
 }
+.btn-quick-archive {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.btn-quick-archive:hover {
+  background: var(--muted);
+  color: #ffffff;
+}
 
 /* --- Sidebar Project Selector --- */
 .sidebar-project-section { padding-top: 4px; padding-bottom: 0; margin-bottom: 12px; }
