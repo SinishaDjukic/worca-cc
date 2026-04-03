@@ -83,7 +83,7 @@ def check_settings_json(settings_path=".claude/settings.json"):
         return "fail", f"{settings_path} invalid JSON: {exc}"
 
 
-def check_agent_templates(core_dir=".claude/agents/core"):
+def check_agent_templates(core_dir=".claude/worca/agents/core"):
     """All 5 core agent .md files are present."""
     missing = [
         name for name in CORE_AGENT_TEMPLATES
@@ -174,7 +174,7 @@ def read_required_checks(settings_path=".claude/settings.json"):
         return []
 
 
-def run_checks(settings_path=".claude/settings.json", core_dir=".claude/agents/core"):
+def run_checks(settings_path=".claude/settings.json", core_dir=".claude/worca/agents/core"):
     """Run all checks and return (results, overall_status, summary).
 
     Reads worca.preflight.require from settings_path to promote warn→fail.
