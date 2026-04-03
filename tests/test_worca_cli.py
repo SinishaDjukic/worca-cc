@@ -1,21 +1,13 @@
-"""Tests for .claude/scripts/worca.py CLI entry point."""
+"""Tests for worca.scripts.worca_lifecycle CLI entry point."""
 
 import json
 import signal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import importlib.util
-
 import pytest
 
-# Load worca.py by file path to avoid shadowing by the worca/ package
-SCRIPTS_DIR = Path(__file__).parent.parent / ".claude" / "scripts"
-WORCA_PY = SCRIPTS_DIR / "worca.py"
-
-_spec = importlib.util.spec_from_file_location("worca_cli", WORCA_PY)
-worca_cli = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(worca_cli)
+from worca.scripts import worca_lifecycle as worca_cli
 
 
 # ---------------------------------------------------------------------------

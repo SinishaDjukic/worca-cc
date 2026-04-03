@@ -98,13 +98,13 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 
 def cmd_lifecycle(args: argparse.Namespace) -> None:
-    """Delegate pause/stop/resume/status/multi-status to the project copy's worca.py."""
+    """Delegate pause/stop/resume/status/multi-status to the project copy's worca_lifecycle."""
     git_root = _find_git_root()
     _require_project_worca(git_root)
     _inject_project_path(git_root)
 
     # Import from the project copy
-    from worca.scripts.worca import main as worca_main
+    from worca.scripts.worca_lifecycle import main as worca_main
     # Re-invoke with the subcommand and its args
     argv = [args.lifecycle_command]
     if hasattr(args, "run_id") and args.run_id:
