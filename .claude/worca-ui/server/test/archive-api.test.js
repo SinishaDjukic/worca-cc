@@ -207,6 +207,32 @@ describe('POST /api/runs/:id/archive', () => {
 
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
+
+  it('returns 409 when pipeline is running', async () => {
+    writeStatus(tmpDir, 'run-006', { pipeline_status: 'running' });
+
+    const res = await fetch(`${base}/api/runs/run-006/archive`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toMatch(/running/i);
+  });
+
+  it('returns 500 when status.json contains invalid JSON', async () => {
+    const runDir = join(tmpDir, 'runs', 'run-007');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'status.json'), 'not valid json', 'utf8');
+
+    const res = await fetch(`${base}/api/runs/run-007/archive`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toBeDefined();
+  });
 });
 
 // ─── POST /api/runs/:id/unarchive ────────────────────────────────────────────
@@ -348,6 +374,20 @@ describe('POST /api/runs/:id/unarchive', () => {
     await fetch(`${base}/api/runs/run-014/unarchive`, { method: 'POST' });
 
     expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when status.json contains invalid JSON', async () => {
+    const runDir = join(tmpDir, 'runs', 'run-015');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'status.json'), 'not valid json', 'utf8');
+
+    const res = await fetch(`${base}/api/runs/run-015/unarchive`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toBeDefined();
   });
 });
 

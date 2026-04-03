@@ -708,14 +708,20 @@ export function createProjectScopedRoutes() {
         .status(404)
         .json({ ok: false, error: `Run "${runId}" not found` });
     }
+    let tmpPath;
     try {
       const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (status.pipeline_status === 'running') {
+        return res
+          .status(409)
+          .json({ ok: false, error: 'Cannot archive a running pipeline' });
+      }
       if (status.archived === true) {
         return res.json({ ok: true });
       }
       status.archived = true;
       status.archived_at = new Date().toISOString();
-      const tmpPath = join(
+      tmpPath = join(
         dirname(statusPath),
         `.status.json.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
       );
@@ -731,6 +737,13 @@ export function createProjectScopedRoutes() {
         broadcast('run-archived', { runId, archived_at: status.archived_at });
       res.json({ ok: true });
     } catch (err) {
+      if (tmpPath) {
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          /* ignore cleanup failure */
+        }
+      }
       res.status(500).json({ ok: false, error: err.message });
     }
   });
@@ -748,6 +761,7 @@ export function createProjectScopedRoutes() {
         .status(404)
         .json({ ok: false, error: `Run "${runId}" not found` });
     }
+    let tmpPath;
     try {
       const status = JSON.parse(readFileSync(statusPath, 'utf8'));
       if (status.archived !== true) {
@@ -755,7 +769,7 @@ export function createProjectScopedRoutes() {
       }
       delete status.archived;
       delete status.archived_at;
-      const tmpPath = join(
+      tmpPath = join(
         dirname(statusPath),
         `.status.json.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
       );
@@ -770,6 +784,13 @@ export function createProjectScopedRoutes() {
       if (broadcast) broadcast('run-unarchived', { runId });
       res.json({ ok: true });
     } catch (err) {
+      if (tmpPath) {
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          /* ignore cleanup failure */
+        }
+      }
       res.status(500).json({ ok: false, error: err.message });
     }
   });

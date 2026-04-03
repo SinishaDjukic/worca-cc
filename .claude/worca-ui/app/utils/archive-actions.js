@@ -5,7 +5,7 @@
  * @param {function} deps.showConfirm - Confirmation dialog
  * @param {function} deps.showActionError - Error display
  * @param {function} deps.projectUrl - URL builder
- * @param {function} deps.fetchAndUpdateRuns - Refresh runs
+ * @param {object} deps.store - State store (getState, setRun)
  * @param {function} deps.rerender - Re-render UI
  * @param {function} deps.fetchFn - fetch implementation (defaults to global fetch)
  */
@@ -13,7 +13,7 @@ export function createArchiveActions({
   showConfirm,
   showActionError,
   projectUrl,
-  fetchAndUpdateRuns,
+  store,
   rerender,
   fetchFn = fetch,
 }) {
@@ -33,8 +33,16 @@ export function createArchiveActions({
             const data = await res.json();
             if (!data.ok) {
               showActionError(data.error || 'Failed to archive run');
+              return;
             }
-            fetchAndUpdateRuns().catch(() => {});
+            const existing = store.getRunById(runId);
+            if (existing) {
+              store.setRun(runId, {
+                ...existing,
+                archived: true,
+                archived_at: new Date().toISOString(),
+              });
+            }
           } catch (err) {
             showActionError(err?.message || 'Failed to archive run');
           }
@@ -52,8 +60,13 @@ export function createArchiveActions({
       const data = await res.json();
       if (!data.ok) {
         showActionError(data.error || 'Failed to unarchive run');
+        return;
       }
-      fetchAndUpdateRuns().catch(() => {});
+      const existing = store.getRunById(runId);
+      if (existing) {
+        const { archived: _a, archived_at: _b, ...rest } = existing;
+        store.setRun(runId, rest);
+      }
     } catch (err) {
       showActionError(err?.message || 'Failed to unarchive run');
     }

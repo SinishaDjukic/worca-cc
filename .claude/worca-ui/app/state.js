@@ -11,6 +11,15 @@
 const LOG_CAP = 5000;
 export const MAX_ARCHIVED_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** Returns true if an archived run's archived_at is older than MAX_ARCHIVED_AGE_MS. */
+export function isArchivedRunExpired(run, now) {
+  if (!run.archived_at) return false;
+  return (
+    (now || Date.now()) - new Date(run.archived_at).getTime() >
+    MAX_ARCHIVED_AGE_MS
+  );
+}
+
 export function createStore(initial = {}) {
   let state = {
     activeRunId: initial.activeRunId ?? null,
@@ -108,10 +117,7 @@ export function createStore(initial = {}) {
       const now = Date.now();
       for (const run of runArray) {
         if (run.archived === true) {
-          if (run.archived_at) {
-            const age = now - new Date(run.archived_at).getTime();
-            if (age > MAX_ARCHIVED_AGE_MS) continue;
-          }
+          if (isArchivedRunExpired(run, now)) continue;
           archivedRuns[run.id] = run;
         } else {
           runs[run.id] = run;
@@ -121,6 +127,7 @@ export function createStore(initial = {}) {
       emit();
     },
 
+    /** Centralized ID lookup across both runs and archivedRuns. */
     getRunById(id) {
       return state.runs[id] ?? state.archivedRuns[id];
     },

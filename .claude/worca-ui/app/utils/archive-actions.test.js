@@ -1,12 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createArchiveActions } from './archive-actions.js';
 
+function makeStore(runs = {}, archivedRuns = {}) {
+  const state = { runs: { ...runs }, archivedRuns: { ...archivedRuns } };
+  return {
+    getState: () => state,
+    getRunById: (id) => state.runs[id] ?? state.archivedRuns[id],
+    setRun: vi.fn((id, data) => {
+      if (data.archived) {
+        delete state.runs[id];
+        state.archivedRuns[id] = data;
+      } else {
+        delete state.archivedRuns[id];
+        state.runs[id] = data;
+      }
+    }),
+  };
+}
+
 function makeDeps(overrides = {}) {
+  const store =
+    overrides.store ||
+    makeStore({ 'run-1': { id: 'run-1', pipeline_status: 'completed' } });
   return {
     showConfirm: vi.fn(),
     showActionError: vi.fn(),
     projectUrl: (path) => `/api/projects/p1${path}`,
-    fetchAndUpdateRuns: vi.fn().mockResolvedValue(undefined),
+    store,
     rerender: vi.fn(),
     fetchFn: vi.fn(),
     ...overrides,
@@ -55,20 +75,29 @@ describe('archiveRun', () => {
     );
   });
 
-  it('onConfirm calls fetchAndUpdateRuns on success', async () => {
-    const deps = makeDeps({ fetchFn: mockFetchOk() });
+  it('onConfirm updates store on success', async () => {
+    const store = makeStore({
+      'run-1': { id: 'run-1', pipeline_status: 'completed' },
+    });
+    const deps = makeDeps({ fetchFn: mockFetchOk(), store });
     const { archiveRun } = createArchiveActions(deps);
 
     archiveRun('run-1');
     await deps.showConfirm.mock.calls[0][0].onConfirm();
 
-    expect(deps.fetchAndUpdateRuns).toHaveBeenCalledOnce();
+    expect(store.setRun).toHaveBeenCalledOnce();
+    const [id, data] = store.setRun.mock.calls[0];
+    expect(id).toBe('run-1');
+    expect(data.archived).toBe(true);
+    expect(data.archived_at).toBeDefined();
     expect(deps.showActionError).not.toHaveBeenCalled();
   });
 
-  it('onConfirm shows error when response has ok:false', async () => {
+  it('onConfirm shows error and does not update store when response has ok:false', async () => {
+    const store = makeStore({ 'run-1': { id: 'run-1' } });
     const deps = makeDeps({
       fetchFn: mockFetchOk({ ok: false, error: 'Run locked' }),
+      store,
     });
     const { archiveRun } = createArchiveActions(deps);
 
@@ -76,7 +105,7 @@ describe('archiveRun', () => {
     await deps.showConfirm.mock.calls[0][0].onConfirm();
 
     expect(deps.showActionError).toHaveBeenCalledWith('Run locked');
-    expect(deps.fetchAndUpdateRuns).toHaveBeenCalledOnce();
+    expect(store.setRun).not.toHaveBeenCalled();
   });
 
   it('onConfirm shows fallback error when response has ok:false without message', async () => {
@@ -92,14 +121,18 @@ describe('archiveRun', () => {
   });
 
   it('onConfirm shows error on fetch exception', async () => {
-    const deps = makeDeps({ fetchFn: mockFetchReject('Connection refused') });
+    const store = makeStore({ 'run-1': { id: 'run-1' } });
+    const deps = makeDeps({
+      fetchFn: mockFetchReject('Connection refused'),
+      store,
+    });
     const { archiveRun } = createArchiveActions(deps);
 
     archiveRun('run-1');
     await deps.showConfirm.mock.calls[0][0].onConfirm();
 
     expect(deps.showActionError).toHaveBeenCalledWith('Connection refused');
-    expect(deps.fetchAndUpdateRuns).not.toHaveBeenCalled();
+    expect(store.setRun).not.toHaveBeenCalled();
   });
 
   it('onConfirm shows fallback error on exception without message', async () => {
@@ -148,26 +181,44 @@ describe('unarchiveRun', () => {
     expect(deps.showConfirm).not.toHaveBeenCalled();
   });
 
-  it('calls fetchAndUpdateRuns on success', async () => {
-    const deps = makeDeps({ fetchFn: mockFetchOk() });
+  it('updates store on success', async () => {
+    const store = makeStore(
+      {},
+      {
+        'run-1': {
+          id: 'run-1',
+          archived: true,
+          archived_at: '2024-01-01',
+          pipeline_status: 'completed',
+        },
+      },
+    );
+    const deps = makeDeps({ fetchFn: mockFetchOk(), store });
     const { unarchiveRun } = createArchiveActions(deps);
 
     await unarchiveRun('run-1');
 
-    expect(deps.fetchAndUpdateRuns).toHaveBeenCalledOnce();
+    expect(store.setRun).toHaveBeenCalledOnce();
+    const [id, data] = store.setRun.mock.calls[0];
+    expect(id).toBe('run-1');
+    expect(data.archived).toBeUndefined();
+    expect(data.archived_at).toBeUndefined();
+    expect(data.pipeline_status).toBe('completed');
     expect(deps.showActionError).not.toHaveBeenCalled();
   });
 
-  it('shows error when response has ok:false', async () => {
+  it('shows error and does not update store when response has ok:false', async () => {
+    const store = makeStore({}, { 'run-1': { id: 'run-1', archived: true } });
     const deps = makeDeps({
       fetchFn: mockFetchOk({ ok: false, error: 'Not found' }),
+      store,
     });
     const { unarchiveRun } = createArchiveActions(deps);
 
     await unarchiveRun('run-1');
 
     expect(deps.showActionError).toHaveBeenCalledWith('Not found');
-    expect(deps.fetchAndUpdateRuns).toHaveBeenCalledOnce();
+    expect(store.setRun).not.toHaveBeenCalled();
   });
 
   it('shows fallback error when response has ok:false without message', async () => {
@@ -184,13 +235,14 @@ describe('unarchiveRun', () => {
   });
 
   it('shows error on fetch exception', async () => {
-    const deps = makeDeps({ fetchFn: mockFetchReject('Timeout') });
+    const store = makeStore({}, { 'run-1': { id: 'run-1', archived: true } });
+    const deps = makeDeps({ fetchFn: mockFetchReject('Timeout'), store });
     const { unarchiveRun } = createArchiveActions(deps);
 
     await unarchiveRun('run-1');
 
     expect(deps.showActionError).toHaveBeenCalledWith('Timeout');
-    expect(deps.fetchAndUpdateRuns).not.toHaveBeenCalled();
+    expect(store.setRun).not.toHaveBeenCalled();
   });
 
   it('shows fallback error on exception without message', async () => {

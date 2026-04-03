@@ -7,7 +7,7 @@
  * 3. Settings ordering contract is preserved after setRunsBulk migration
  */
 import { describe, expect, it } from 'vitest';
-import { createStore } from './state.js';
+import { createStore, isArchivedRunExpired } from './state.js';
 
 describe('simple bulk loop → setRunsBulk', () => {
   it('partitions archived runs into archivedRuns (runs-list single-project)', () => {
@@ -160,6 +160,84 @@ describe('multi-project merge loop archive routing', () => {
     expect(s.runs['new-b']).toBeDefined(); // added
   });
 
+  it('skips archived runs older than MAX_ARCHIVED_AGE_MS in merge loop', () => {
+    const store = createStore();
+    const oldDate = new Date(
+      Date.now() - 91 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const recentDate = new Date().toISOString();
+
+    const payload = {
+      runs: [
+        { id: 'old', archived: true, archived_at: oldDate },
+        { id: 'recent', archived: true, archived_at: recentDate },
+        { id: 'active', stage: 'plan' },
+      ],
+    };
+    const sourceProject = 'proj-a';
+
+    const existing = { ...store.getState().runs };
+    const archivedUpdates = { ...store.getState().archivedRuns };
+    const now = Date.now();
+
+    for (const run of payload.runs || []) {
+      if (sourceProject) run._project = sourceProject;
+      if (run.archived) {
+        if (isArchivedRunExpired(run, now)) continue;
+        archivedUpdates[run.id] = run;
+      } else {
+        existing[run.id] = run;
+      }
+    }
+    store.setState({ runs: existing, archivedRuns: archivedUpdates });
+
+    const s = store.getState();
+    expect(s.archivedRuns.old).toBeUndefined();
+    expect(s.archivedRuns.recent).toBeDefined();
+    expect(s.runs.active).toBeDefined();
+  });
+
+  it('skips archived runs older than MAX_ARCHIVED_AGE_MS in fetchAllProjectRuns', () => {
+    const store = createStore();
+    const oldDate = new Date(
+      Date.now() - 91 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const recentDate = new Date().toISOString();
+
+    const results = [
+      [
+        { id: 'old', project: 'proj-a', archived: true, archived_at: oldDate },
+        {
+          id: 'recent',
+          project: 'proj-a',
+          archived: true,
+          archived_at: recentDate,
+        },
+        { id: 'active', project: 'proj-a', stage: 'done' },
+      ],
+    ];
+
+    const runs = {};
+    const archivedRuns = {};
+    const now = Date.now();
+    for (const projectRuns of results) {
+      for (const run of projectRuns) {
+        if (run.archived) {
+          if (isArchivedRunExpired(run, now)) continue;
+          archivedRuns[run.id] = run;
+        } else {
+          runs[run.id] = run;
+        }
+      }
+    }
+    store.setState({ runs, archivedRuns });
+
+    const s = store.getState();
+    expect(s.archivedRuns.old).toBeUndefined();
+    expect(s.archivedRuns.recent).toBeDefined();
+    expect(s.runs.active).toBeDefined();
+  });
+
   it('routes archived runs in fetchAllProjectRuns merge pattern', () => {
     const store = createStore();
 
@@ -261,21 +339,36 @@ describe('WS run-unarchived handler pattern', () => {
 // ─── Notification suppression for archived runs ─────────────────────
 
 describe('notification suppression for archived runs', () => {
-  it('skips when payload has archived=true', () => {
+  it('suppresses when payload has archived=true', () => {
+    const store = createStore({ runs: { r1: { id: 'r1' } } });
     const payload = { id: 'r1', archived: true };
-    expect(payload.archived === true).toBe(true);
+    const isArchived =
+      payload.archived === true || !!store.getState().archivedRuns[payload.id];
+    expect(isArchived).toBe(true);
   });
 
-  it('skips when run is in archivedRuns', () => {
+  it('suppresses when run is in archivedRuns but payload lacks flag', () => {
     const store = createStore({
       archivedRuns: { r1: { id: 'r1', archived: true } },
     });
-    expect(!!store.getState().archivedRuns.r1).toBe(true);
+    // Incoming snapshot does not carry the archived flag
+    const payload = { id: 'r1', stage: 'done' };
+    const isArchived =
+      payload.archived === true || !!store.getState().archivedRuns[payload.id];
+    expect(isArchived).toBe(true);
   });
 
-  it('does not skip for non-archived run', () => {
+  it('does not suppress for non-archived run', () => {
     const store = createStore({ runs: { r1: { id: 'r1' } } });
     const payload = { id: 'r1', stage: 'done' };
+    const isArchived =
+      payload.archived === true || !!store.getState().archivedRuns[payload.id];
+    expect(isArchived).toBe(false);
+  });
+
+  it('does not suppress for unknown run', () => {
+    const store = createStore();
+    const payload = { id: 'unknown', stage: 'done' };
     const isArchived =
       payload.archived === true || !!store.getState().archivedRuns[payload.id];
     expect(isArchived).toBe(false);

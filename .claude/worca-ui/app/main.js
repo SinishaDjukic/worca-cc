@@ -2,7 +2,7 @@ import { html, render } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createNotificationManager } from './notifications.js';
 import { navigate, onHashChange, parseHash } from './router.js';
-import { createStore, MAX_ARCHIVED_AGE_MS } from './state.js';
+import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
 import {
@@ -275,10 +275,7 @@ ws.on('runs-list', (payload, msg) => {
     for (const run of payload.runs || []) {
       if (sourceProject) run._project = sourceProject;
       if (run.archived) {
-        if (run.archived_at) {
-          const age = now - new Date(run.archived_at).getTime();
-          if (age > MAX_ARCHIVED_AGE_MS) continue;
-        }
+        if (isArchivedRunExpired(run, now)) continue;
         archivedUpdates[run.id] = run;
         delete existing[run.id];
       } else {
@@ -431,6 +428,8 @@ ws.on('run-archived', (payload) => {
         archived: true,
         archived_at: payload.archived_at || new Date().toISOString(),
       });
+    } else {
+      fetchAndUpdateRuns().catch(() => {});
     }
   }
 });
@@ -443,6 +442,8 @@ ws.on('run-unarchived', (payload) => {
     if (existingRun) {
       const { archived: _a, archived_at: _b, ...rest } = existingRun;
       store.setRun(payload.runId, rest);
+    } else {
+      fetchAndUpdateRuns().catch(() => {});
     }
   }
 });
@@ -590,10 +591,7 @@ function fetchAllProjectRuns() {
     for (const projectRuns of results) {
       for (const run of projectRuns) {
         if (run.archived) {
-          if (run.archived_at) {
-            const age = now - new Date(run.archived_at).getTime();
-            if (age > MAX_ARCHIVED_AGE_MS) continue;
-          }
+          if (isArchivedRunExpired(run, now)) continue;
           archivedRuns[run.id] = run;
         } else {
           runs[run.id] = run;
@@ -1036,7 +1034,7 @@ const { archiveRun, unarchiveRun } = createArchiveActions({
   showConfirm,
   showActionError,
   projectUrl,
-  fetchAndUpdateRuns,
+  store,
   rerender,
 });
 
@@ -1510,7 +1508,6 @@ function mainContentView() {
   // dashboardView) that read state.runs internally.
   const filteredRunsMap = {};
   for (const r of runs) filteredRunsMap[r.id] = r;
-  const viewState = { ...state, runs: filteredRunsMap };
 
   // Archived runs — same project filter as active runs
   const allArchivedRuns = Object.values(state.archivedRuns);
@@ -1521,6 +1518,13 @@ function mainContentView() {
           return rp === currentProjectId;
         })
       : allArchivedRuns;
+  const filteredArchivedRunsMap = {};
+  for (const r of archivedRuns) filteredArchivedRunsMap[r.id] = r;
+  const viewState = {
+    ...state,
+    runs: filteredRunsMap,
+    archivedRuns: filteredArchivedRunsMap,
+  };
 
   // Beads section: two-level routing (must be checked before generic runId)
   if (route.section === 'beads') {

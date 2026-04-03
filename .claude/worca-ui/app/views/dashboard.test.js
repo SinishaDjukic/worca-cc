@@ -362,3 +362,33 @@ describe('dashboardView - recent sections capping', () => {
     expect(output).not.toContain('Recent Failures');
   });
 });
+
+// ─── Archive button passthrough ──────────────────────────────────────────────
+
+describe('dashboardView - archive button', () => {
+  it('shows archive button on non-active failed run when onArchive provided', () => {
+    const inactiveFailed = {
+      id: 'af1',
+      pipeline_status: 'failed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const state = { runs: { af1: inactiveFailed } };
+    const output = renderToString(
+      dashboardView(state, { onArchive: () => {} }),
+    );
+    expect(output).toContain('btn-quick-archive');
+  });
+
+  it('does not show archive button when onArchive not provided', () => {
+    const inactiveFailed = {
+      id: 'af2',
+      pipeline_status: 'failed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const state = { runs: { af2: inactiveFailed } };
+    const output = renderToString(dashboardView(state));
+    expect(output).not.toContain('btn-quick-archive');
+  });
+});
