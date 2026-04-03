@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "worca-cc-v*"
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          TAG_VERSION="${TAG_NAME#v}"
+          TAG_VERSION="${TAG_NAME#worca-cc-v}"
           PROJECT_VERSION=$(python3 -c "
           import re
           with open('pyproject.toml') as f:
