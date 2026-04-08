@@ -43,7 +43,39 @@ def create_parser():
                              "that would exceed ARG_MAX). The file is deleted after reading.")
     parser.add_argument("--worktree", action="store_true",
                         help="Worktree mode: skip branch creation and register in multi-pipeline registry")
+    parser.add_argument("--template", help="Template ID to apply before running")
+    parser.add_argument("--param", action="append", metavar="KEY=VALUE",
+                        help="Template parameter override (repeatable)")
     return parser
+
+
+def _parse_params(param_list):
+    """Parse a list of KEY=VALUE strings into a dict.
+
+    Raises SystemExit(2) if any item lacks an '=' separator.
+    Returns {} when param_list is None or empty.
+    """
+    if not param_list:
+        return {}
+    result = {}
+    for item in param_list:
+        if "=" not in item:
+            print(f"error: --param must be KEY=VALUE format, got: {item!r}", file=sys.stderr)
+            raise SystemExit(2)
+        key, _, value = item.partition("=")
+        result[key] = value
+    return result
+
+
+def _make_template_resolver(settings_path: str):
+    """Create a TemplateResolver with standard tier dirs relative to settings_path."""
+    from worca.orchestrator.templates import TemplateResolver
+    builtin_dir = Path(__file__).parent.parent / "templates"
+    # settings_path is typically .claude/settings.json; project root is two levels up
+    project_root = Path(settings_path).resolve().parent.parent
+    project_dir = project_root / ".claude" / "templates"
+    user_dir = Path.home() / ".worca" / "templates"
+    return TemplateResolver(builtin_dir, project_dir, user_dir)
 
 
 def build_work_request(args):
@@ -166,6 +198,49 @@ def main():
     if args.skip_preflight:
         print("  Skipping preflight checks")
 
+    # Template application: resolve, deep-merge config, prepare temp settings file
+    _template_id = args.template
+    _params = {}
+    _merged_settings = None
+    _temp_settings_path = None
+    _resolver = None
+
+    if _template_id:
+        import tempfile
+        from worca.orchestrator.templates import TemplateError
+
+        _params = _parse_params(args.param or [])
+
+        try:
+            with open(args.settings) as f:
+                _current_settings = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _current_settings = {}
+
+        _current_worca = _current_settings.get("worca", {})
+        _resolver = _make_template_resolver(args.settings)
+
+        try:
+            _merged_worca = _resolver.apply(_template_id, _current_worca, _params)
+        except TemplateError as e:
+            print(f"error: template '{_template_id}': {e}", file=sys.stderr)
+            raise SystemExit(2)
+
+        # If template has an agents/ dir, store it in settings for overlay use
+        _tmpl = _resolver.get(_template_id)
+        if _tmpl and _tmpl.agents_dir:
+            _merged_worca["_template_agents_dir"] = _tmpl.agents_dir
+
+        _merged_settings = {**_current_settings, "worca": _merged_worca}
+        _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump(_merged_settings, _tmp, indent=2)
+        _tmp.close()
+        _temp_settings_path = _tmp.name
+
+        print(f"  Template: {_template_id}")
+
+    effective_settings_path = _temp_settings_path if _template_id else args.settings
+
     try:
         # For resume, always use default .worca/status.json so runner derives
         # worca_dir correctly and finds the run via active_run pointer.
@@ -177,7 +252,7 @@ def main():
             work_request,
             plan_file=plan_file,
             resume=args.resume,
-            settings_path=args.settings,
+            settings_path=effective_settings_path,
             status_path=effective_status_path,
             msize=args.msize,
             mloops=args.mloops,
@@ -185,6 +260,22 @@ def main():
             skip_preflight=args.skip_preflight,
             worktree=args.worktree,
         )
+
+        # Snapshot template to run dir and write merged settings for traceability
+        if _template_id and _resolver and status.get("run_id"):
+            run_dir = os.path.join(args.status_dir, "runs", status["run_id"])
+            try:
+                _resolver.snapshot_to_run(_template_id, run_dir, _params)
+            except Exception as snap_err:
+                print(f"warning: template snapshot failed: {snap_err}", file=sys.stderr)
+            if _merged_settings:
+                try:
+                    Path(run_dir, "settings.json").write_text(
+                        json.dumps(_merged_settings, indent=2)
+                    )
+                except OSError:
+                    pass
+
         print(json.dumps(status, indent=2))
     except LoopExhaustedError as e:
         print(f"Loop exhausted: {e}", file=sys.stderr)
@@ -202,6 +293,12 @@ def main():
         except Exception:
             pass
         sys.exit(2)
+    finally:
+        if _temp_settings_path:
+            try:
+                os.unlink(_temp_settings_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

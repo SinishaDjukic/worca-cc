@@ -1143,15 +1143,7 @@ async function handleConfirmRestartStage() {
 
 function handleBack() {
   if (route.runId) {
-    // If active section has only one run, going back to list would auto-redirect here again
-    // So go to dashboard instead
-    const runs = Object.values(store.getState().runs);
-    const activeRuns = runs.filter((r) => r.active);
-    if (route.section === 'active' && activeRuns.length <= 1) {
-      navigate('dashboard', null, route.projectId);
-    } else {
-      navigate(route.section, null, route.projectId);
-    }
+    navigate(route.section, null, route.projectId);
   } else if (route.section && route.section !== 'dashboard') {
     navigate('dashboard', null, route.projectId);
   }
@@ -1753,11 +1745,7 @@ function mainContentView() {
 
   if (route.section === 'active') {
     const activeRuns = sortByStartDesc(runs.filter((r) => r.active));
-    if (activeRuns.length === 1) {
-      navigate('active', activeRuns[0].id, route.projectId);
-      return html``;
-    }
-    // Match the dashboard "Active Runs" section style
+    // Always show the list view — let the user click into a run.
     return html`
       <h3 class="dashboard-section-title">Active Runs</h3>
       ${

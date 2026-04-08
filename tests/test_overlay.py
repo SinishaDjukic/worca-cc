@@ -337,3 +337,118 @@ def test_overlay_file_content_parsed():
 def test_overlay_resolver_exported_from_package():
     from worca.orchestrator import OverlayResolver as _OR
     assert _OR is OverlayResolver
+
+
+# ---------------------------------------------------------------------------
+# template_agents_dir extension (three-tier resolution chain)
+# ---------------------------------------------------------------------------
+
+def test_resolve_template_agents_dir_none_no_change(tmp_path):
+    """template_agents_dir=None (default) behaves identically to before."""
+    project_dir = tmp_path / "project_agents"
+    project_dir.mkdir()
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Original rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=None)
+    assert result == core
+
+
+def test_resolve_template_overlay_replace_applied_after_project(tmp_path):
+    """Template overlay (replace mode) applied after project overlay."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+
+    # Project overlay appends to core
+    (project_dir / "implementer.md").write_text(
+        "<!-- append -->\n## Override: Rules\n\n- Project rule.\n"
+    )
+    # Template overlay replaces everything
+    (template_dir / "implementer.md").write_text("# Template Implementer\n\n- Template rule.\n")
+
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Core rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=str(template_dir))
+
+    assert "Template rule" in result
+    assert "Core rule" not in result
+    assert "Project rule" not in result
+
+
+def test_resolve_template_overlay_append_applied_after_project(tmp_path):
+    """Template overlay (append mode) applied after project overlay result."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+
+    # Project overlay replaces
+    (project_dir / "implementer.md").write_text("# Project content\n\n## Rules\n\n- Project rule.\n")
+    # Template overlay appends
+    (template_dir / "implementer.md").write_text(
+        "<!-- append -->\n## Override: Rules\n\n- Template rule.\n"
+    )
+
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Core rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=str(template_dir))
+
+    assert "Project rule" in result
+    assert "Template rule" in result
+    assert "Core rule" not in result
+
+
+def test_resolve_template_overlay_no_project_overlay(tmp_path):
+    """Template overlay applied even when no project overlay exists."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+
+    # No project overlay file
+    (template_dir / "implementer.md").write_text("# Template only.\n")
+
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Core rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=str(template_dir))
+
+    assert "Template only" in result
+    assert "Core rule" not in result
+
+
+def test_resolve_template_overlay_no_file_for_agent(tmp_path):
+    """template_agents_dir set but no file for this agent — project result returned."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+
+    (project_dir / "implementer.md").write_text("# Project content.\n")
+    # No template file for implementer
+
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Core rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=str(template_dir))
+
+    assert "Project content" in result
+    assert "Core rule" not in result
+
+
+def test_resolve_template_overlay_append_section_replace(tmp_path):
+    """Template overlay append mode with section-level replace works."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+
+    (template_dir / "implementer.md").write_text(
+        "<!-- append -->\n## Override: Rules\n<!-- replace -->\n\n- Template replaced rule.\n"
+    )
+
+    resolver = OverlayResolver(overrides_dir=str(project_dir))
+    core = "## Rules\n\n- Core rule.\n"
+    result = resolver.resolve("implementer", core, template_agents_dir=str(template_dir))
+
+    assert "Template replaced rule" in result
+    assert "Core rule" not in result

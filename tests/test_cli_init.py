@@ -526,3 +526,70 @@ class TestCleanupLegacyFiles:
 
         assert domain_dir.exists()
         assert (domain_dir / "my_agent.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Template directory handling during init
+# ---------------------------------------------------------------------------
+
+class TestRunInitTemplates:
+    def _make_src(self, base):
+        """Create a minimal fake worca source with a templates/ directory."""
+        src = base / "worca-src" / "src" / "worca"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text('__version__ = "0.5.0"')
+        (src / "settings.json").write_text(json.dumps({"worca": {}}))
+        tmpl = src / "templates" / "bugfix"
+        tmpl.mkdir(parents=True)
+        (tmpl / "template.json").write_text(json.dumps({"id": "bugfix", "name": "Bugfix"}))
+        return base / "worca-src"
+
+    def test_init_copies_builtin_templates_to_runtime(self, tmp_path, monkeypatch):
+        """worca init copies src/worca/templates/ to .claude/worca/templates/."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        src_root = self._make_src(tmp_path)
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(src_root))
+        assert (tmp_path / ".claude" / "worca" / "templates" / "bugfix" / "template.json").exists()
+
+    def test_init_creates_project_templates_dir(self, tmp_path, monkeypatch):
+        """worca init creates .claude/templates/ for project templates."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        src_root = self._make_src(tmp_path)
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(src_root))
+        assert (tmp_path / ".claude" / "templates").is_dir()
+
+    def test_upgrade_refreshes_builtin_templates(self, tmp_path, monkeypatch):
+        """worca init --upgrade refreshes built-in templates from package source."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        src_root = self._make_src(tmp_path)
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(src_root))
+        # Add a new template to source (simulating a version update)
+        new_tmpl = src_root / "src" / "worca" / "templates" / "feature"
+        new_tmpl.mkdir(parents=True)
+        (new_tmpl / "template.json").write_text(json.dumps({"id": "feature", "name": "Feature"}))
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                run_init(upgrade=True, source=str(src_root))
+        assert (tmp_path / ".claude" / "worca" / "templates" / "feature" / "template.json").exists()
+
+    def test_upgrade_preserves_project_templates_dir(self, tmp_path, monkeypatch):
+        """worca init --upgrade does not delete .claude/templates/ (project templates)."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        src_root = self._make_src(tmp_path)
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(src_root))
+        # Add a project template
+        proj_tmpl = tmp_path / ".claude" / "templates" / "my-proj-tmpl"
+        proj_tmpl.mkdir(parents=True)
+        (proj_tmpl / "template.json").write_text(json.dumps({"id": "my-proj-tmpl", "name": "Custom"}))
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                run_init(upgrade=True, source=str(src_root))
+        assert (tmp_path / ".claude" / "templates" / "my-proj-tmpl").exists()

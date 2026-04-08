@@ -247,7 +247,9 @@ def test_dispatch_event_json_is_valid_json_on_stdin(tmp_path):
     dispatch_shell_hooks(event, hooks)
 
     deadline = time.time() + 2.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     raw = out_file.read_text()

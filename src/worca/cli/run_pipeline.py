@@ -37,6 +37,10 @@ def cmd_run(args: Namespace) -> None:
         cmd.append("--resume")
     if args.source_arg:
         cmd.extend(["--source", args.source_arg])
+    if args.template:
+        cmd.extend(["--template", args.template])
+    for p in args.param or []:
+        cmd.extend(["--param", p])
 
     result = subprocess.run(cmd, cwd=str(git_root))
     raise SystemExit(result.returncode)

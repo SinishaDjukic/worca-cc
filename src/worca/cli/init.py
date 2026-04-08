@@ -494,6 +494,12 @@ def run_init(
     _copy_worca_source(worca_source, target)
     print("Copied worca to .claude/worca/")
 
+    # --- Create .claude/templates/ for project templates ---
+    project_templates_dir = git_root / ".claude" / "templates"
+    if not project_templates_dir.exists():
+        project_templates_dir.mkdir(parents=True, exist_ok=True)
+        print("Created .claude/templates/ (project templates go here)")
+
     # --- Settings merge ---
     if force:
         # Full overwrite from template

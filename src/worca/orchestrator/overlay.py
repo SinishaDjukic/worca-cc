@@ -109,20 +109,39 @@ class OverlayResolver:
     def __init__(self, overrides_dir: str = ".claude/agents"):
         self.overrides_dir = overrides_dir
 
-    def resolve(self, agent_name: str, rendered_core: str) -> str:
+    def resolve(
+        self,
+        agent_name: str,
+        rendered_core: str,
+        template_agents_dir: str | None = None,
+    ) -> str:
         """Merge overlay for agent_name into rendered_core.
+
+        Resolution chain:
+        1. core prompt (rendered_core)
+        2. project overlay (overrides_dir/{agent_name}.md)
+        3. template overlay (template_agents_dir/{agent_name}.md) — if provided
 
         Override behavior (replace by default):
         - No tag or <!-- replace -->: replace the base prompt entirely
         - <!-- append -->: merge sections into base using section merge
 
         Returns the merged prompt string. If no overlay file exists for
-        agent_name, returns rendered_core unchanged.
+        agent_name at a given tier, that tier is skipped.
         """
-        overlay_path = os.path.join(self.overrides_dir, f"{agent_name}.md")
+        result = self._apply_overlay(agent_name, rendered_core, self.overrides_dir)
+
+        if template_agents_dir is not None:
+            result = self._apply_overlay(agent_name, result, template_agents_dir)
+
+        return result
+
+    def _apply_overlay(self, agent_name: str, base: str, agents_dir: str) -> str:
+        """Apply a single overlay tier from agents_dir onto base."""
+        overlay_path = os.path.join(agents_dir, f"{agent_name}.md")
 
         if not os.path.exists(overlay_path):
-            return rendered_core
+            return base
 
         try:
             with open(overlay_path) as f:
@@ -132,14 +151,14 @@ class OverlayResolver:
                 f"[overlay] Warning: cannot read overlay '{overlay_path}': {exc}",
                 file=sys.stderr,
             )
-            return rendered_core
+            return base
 
         stripped = overlay_content.lstrip()
 
         # Append mode: merge sections into base
         if stripped.startswith("<!-- append -->"):
             overlay_body = stripped[len("<!-- append -->"):]
-            return self._apply_append_mode(agent_name, rendered_core, overlay_body)
+            return self._apply_append_mode(agent_name, base, overlay_body)
 
         # Replace mode (default): strip optional tag, use as-is
         if stripped.startswith("<!-- replace -->"):

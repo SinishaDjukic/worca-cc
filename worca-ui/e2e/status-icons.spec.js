@@ -36,10 +36,7 @@ test.describe('run card — colored left border', () => {
         await expect(card).toBeVisible({ timeout: 8000 });
 
         // Verify the computed border-left-color matches the expected status color
-        const borderColor = await card.evaluate(
-          (el) => getComputedStyle(el).borderLeftColor,
-        );
-        expect(borderColor).toBe(expectedColor);
+        await expect(card).toHaveCSS('border-left-color', expectedColor);
       } finally {
         await ctx.close();
       }

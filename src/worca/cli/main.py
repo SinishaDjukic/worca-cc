@@ -132,6 +132,8 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--mloops", type=int, default=None, help="Loop multiplier (1-10)")
     run_parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     run_parser.add_argument("--source", dest="source_arg", default=None, help="Work source")
+    run_parser.add_argument("--template", default=None, help="Template ID to apply before running")
+    run_parser.add_argument("--param", action="append", metavar="KEY=VALUE", help="Template parameter override (repeatable)")
 
     # lifecycle commands: pause, stop, resume, status
     for name in ("pause", "stop", "resume", "status"):
@@ -141,6 +143,10 @@ def create_parser() -> argparse.ArgumentParser:
 
     # multi-status
     sub.add_parser("multi-status", help="Show status of all parallel pipelines")
+
+    # templates
+    from worca.cli.templates import register_subcommand as register_templates
+    register_templates(sub)
 
     return parser
 
@@ -170,6 +176,9 @@ def main(argv=None):
         from worca.cli.control import cmd_lifecycle
         args.lifecycle_command = "multi-status"
         cmd_lifecycle(args)
+    elif args.command == "templates":
+        from worca.cli.templates import cmd_templates
+        cmd_templates(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)
