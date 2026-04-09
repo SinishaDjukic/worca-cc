@@ -286,7 +286,7 @@ describe('beadTooltipContent', () => {
   it('includes status badge with correct variant', () => {
     const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('in_progress');
-    expect(out).toContain('warning'); // statusVariant('in_progress') = 'warning'
+    expect(out).toContain('primary'); // statusVariant('in_progress') = 'primary'
   });
 
   it('includes priority badge', () => {

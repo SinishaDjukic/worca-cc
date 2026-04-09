@@ -21,8 +21,9 @@ export function priorityVariant(priority) {
 
 export function statusVariant(status) {
   if (status === 'open') return 'success';
-  if (status === 'in_progress') return 'warning';
+  if (status === 'in_progress') return 'primary';
   if (status === 'closed') return 'neutral';
+  if (status === 'blocked') return 'warning';
   return 'neutral';
 }
 
@@ -35,9 +36,9 @@ export function beadsStatusClass(issue) {
 // Status icon data for beads (maps bead status to lucide icon + CSS color var)
 const BEAD_STATUS_ICON = {
   open: { icon: Circle, color: 'var(--status-completed)' },
-  in_progress: { icon: Loader, color: 'var(--status-in-progress)' },
+  in_progress: { icon: Loader, color: 'var(--bead-in-progress)' },
   closed: { icon: CircleCheck, color: 'var(--status-completed)' },
-  blocked: { icon: Lock, color: 'var(--status-blocked)' },
+  blocked: { icon: Lock, color: 'var(--bead-blocked)' },
 };
 
 function beadDepStatusIcon(depId, issuesById) {
@@ -153,7 +154,7 @@ export function beadsDependencyGraph(issues) {
         <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border)"/>
       </marker>
       <marker id="beads-arrow-blocking" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--status-blocked)"/>
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--bead-blocked)"/>
       </marker>
     </defs>
     ${edges}
@@ -178,6 +179,7 @@ function beadToMarkdown(issue) {
 }
 
 export function beadTooltipContent(issue) {
+  const sc = beadsStatusClass(issue);
   const copyBead = (e) => {
     e.stopPropagation();
     const btn = e.currentTarget;
@@ -194,7 +196,7 @@ export function beadTooltipContent(issue) {
         <span class="bead-tooltip-id">Bead ID: ${issue.id}</span>
         <span class="bead-tooltip-badges">
           <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-          <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+          <sl-badge variant="${statusVariant(sc)}" pill>${sc}</sl-badge>
         </span>
       </div>
       <hr class="bead-tooltip-separator">

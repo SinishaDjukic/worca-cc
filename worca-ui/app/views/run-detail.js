@@ -22,6 +22,7 @@ import {
 } from '../utils/status-badge.js';
 import {
   beadsDependencyGraph,
+  beadsStatusClass,
   beadTooltipContent,
   priorityVariant,
   statusVariant,
@@ -486,19 +487,20 @@ export function runBeadsSectionView(beads) {
           <span class="run-beads-count">${beads.filter((b) => b.status === 'closed').length}/${beads.length}</span>
         </div>
         <div class="run-beads-list">
-          ${beads.map(
-            (issue) => html`
+          ${beads.map((issue) => {
+            const sc = beadsStatusClass(issue);
+            return html`
             <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
               <div slot="content">${beadTooltipContent(issue)}</div>
               <div class="run-bead-row">
-                <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+                <sl-badge variant="${statusVariant(sc)}" pill>${sc}</sl-badge>
                 <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
                 <span class="run-bead-id">#${issue.id}</span>
                 <span class="run-bead-title">${issue.title}</span>
               </div>
             </sl-tooltip>
-          `,
-          )}
+          `;
+          })}
         </div>
         ${
           beads.length > 1
