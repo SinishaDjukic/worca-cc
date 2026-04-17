@@ -532,3 +532,249 @@ export function validateSettingsPayload(body) {
 
   return details.length ? { valid: false, details } : { valid: true };
 }
+
+const VALID_WEBHOOK_OUT_FORMATS = [
+  'generic-json',
+  'slack-compatible',
+  'discord-compatible',
+  'teams-card',
+  'ntfy',
+  'plain-text',
+];
+
+export function validateIntegrationsConfig(cfg) {
+  const details = [];
+
+  if (cfg.schema_version === undefined || cfg.schema_version !== 1) {
+    details.push('schema_version must be present and equal to 1');
+  }
+
+  if (cfg.enabled !== undefined && typeof cfg.enabled !== 'boolean') {
+    details.push('enabled must be a boolean');
+  }
+
+  if (cfg.webhook_secret_env !== undefined) {
+    if (
+      typeof cfg.webhook_secret_env !== 'string' ||
+      cfg.webhook_secret_env.length === 0
+    ) {
+      details.push('webhook_secret_env must be a non-empty string');
+    }
+  }
+
+  if (cfg.webhook_secrets_env !== undefined) {
+    if (
+      typeof cfg.webhook_secrets_env !== 'string' ||
+      cfg.webhook_secrets_env.length === 0
+    ) {
+      details.push('webhook_secrets_env must be a non-empty string');
+    }
+  }
+
+  if (
+    cfg.strict_inbox_verification !== undefined &&
+    typeof cfg.strict_inbox_verification !== 'boolean'
+  ) {
+    details.push('strict_inbox_verification must be a boolean');
+  }
+
+  // telegram
+  if (cfg.telegram !== undefined) {
+    if (
+      typeof cfg.telegram !== 'object' ||
+      cfg.telegram === null ||
+      Array.isArray(cfg.telegram)
+    ) {
+      details.push('telegram must be an object');
+    } else {
+      const tg = cfg.telegram;
+      if (tg.enabled !== undefined && typeof tg.enabled !== 'boolean') {
+        details.push('telegram.enabled must be a boolean');
+      }
+      if (
+        tg.bot_token_env === undefined ||
+        typeof tg.bot_token_env !== 'string' ||
+        tg.bot_token_env.length === 0
+      ) {
+        details.push('telegram.bot_token_env must be a non-empty string');
+      }
+      if (
+        tg.chat_id === undefined ||
+        (typeof tg.chat_id !== 'string' && typeof tg.chat_id !== 'number')
+      ) {
+        details.push('telegram.chat_id must be a string or number');
+      }
+      if (tg.events === undefined || !Array.isArray(tg.events)) {
+        details.push('telegram.events must be an array');
+      } else {
+        for (let i = 0; i < tg.events.length; i++) {
+          if (typeof tg.events[i] !== 'string' || tg.events[i].length === 0) {
+            details.push(`telegram.events[${i}] must be a non-empty string`);
+          }
+        }
+      }
+      if (tg.rate_limit_per_min !== undefined) {
+        if (
+          !Number.isInteger(tg.rate_limit_per_min) ||
+          tg.rate_limit_per_min < 1
+        ) {
+          details.push(
+            'telegram.rate_limit_per_min must be a positive integer',
+          );
+        }
+      }
+    }
+  }
+
+  // discord
+  if (cfg.discord !== undefined) {
+    if (
+      typeof cfg.discord !== 'object' ||
+      cfg.discord === null ||
+      Array.isArray(cfg.discord)
+    ) {
+      details.push('discord must be an object');
+    } else {
+      const dc = cfg.discord;
+      if (dc.enabled !== undefined && typeof dc.enabled !== 'boolean') {
+        details.push('discord.enabled must be a boolean');
+      }
+      if (
+        dc.bot_token_env === undefined ||
+        typeof dc.bot_token_env !== 'string' ||
+        dc.bot_token_env.length === 0
+      ) {
+        details.push('discord.bot_token_env must be a non-empty string');
+      }
+      if (
+        dc.channel_id === undefined ||
+        typeof dc.channel_id !== 'string' ||
+        dc.channel_id.length === 0
+      ) {
+        details.push('discord.channel_id must be a non-empty string');
+      }
+      if (dc.events !== undefined && !Array.isArray(dc.events)) {
+        details.push('discord.events must be an array');
+      } else if (Array.isArray(dc.events)) {
+        for (let i = 0; i < dc.events.length; i++) {
+          if (typeof dc.events[i] !== 'string' || dc.events[i].length === 0) {
+            details.push(`discord.events[${i}] must be a non-empty string`);
+          }
+        }
+      }
+    }
+  }
+
+  // slack
+  if (cfg.slack !== undefined) {
+    if (
+      typeof cfg.slack !== 'object' ||
+      cfg.slack === null ||
+      Array.isArray(cfg.slack)
+    ) {
+      details.push('slack must be an object');
+    } else {
+      const sl = cfg.slack;
+      if (sl.enabled !== undefined && typeof sl.enabled !== 'boolean') {
+        details.push('slack.enabled must be a boolean');
+      }
+      if (
+        sl.webhook_url_env === undefined ||
+        typeof sl.webhook_url_env !== 'string' ||
+        sl.webhook_url_env.length === 0
+      ) {
+        details.push('slack.webhook_url_env must be a non-empty string');
+      }
+      if (sl.events !== undefined && !Array.isArray(sl.events)) {
+        details.push('slack.events must be an array');
+      } else if (Array.isArray(sl.events)) {
+        for (let i = 0; i < sl.events.length; i++) {
+          if (typeof sl.events[i] !== 'string' || sl.events[i].length === 0) {
+            details.push(`slack.events[${i}] must be a non-empty string`);
+          }
+        }
+      }
+    }
+  }
+
+  // webhook_out
+  if (cfg.webhook_out !== undefined) {
+    if (
+      typeof cfg.webhook_out !== 'object' ||
+      cfg.webhook_out === null ||
+      Array.isArray(cfg.webhook_out)
+    ) {
+      details.push('webhook_out must be an object');
+    } else {
+      const wo = cfg.webhook_out;
+      if (wo.enabled !== undefined && typeof wo.enabled !== 'boolean') {
+        details.push('webhook_out.enabled must be a boolean');
+      }
+      if (wo.endpoints !== undefined) {
+        if (!Array.isArray(wo.endpoints)) {
+          details.push('webhook_out.endpoints must be an array');
+        } else {
+          for (let i = 0; i < wo.endpoints.length; i++) {
+            const ep = wo.endpoints[i];
+            const pfx = `webhook_out.endpoints[${i}]`;
+            if (typeof ep !== 'object' || ep === null || Array.isArray(ep)) {
+              details.push(`${pfx} must be an object`);
+              continue;
+            }
+            if (
+              ep.url === undefined ||
+              typeof ep.url !== 'string' ||
+              ep.url.trim().length === 0
+            ) {
+              details.push(`${pfx}.url must be a non-empty string`);
+            } else {
+              try {
+                const parsed = new URL(ep.url);
+                if (
+                  parsed.protocol !== 'http:' &&
+                  parsed.protocol !== 'https:'
+                ) {
+                  details.push(`${pfx}.url must use http or https protocol`);
+                }
+              } catch {
+                details.push(`${pfx}.url is not a valid URL`);
+              }
+            }
+            if (ep.format !== undefined) {
+              if (!VALID_WEBHOOK_OUT_FORMATS.includes(ep.format)) {
+                details.push(
+                  `${pfx}.format must be one of: ${VALID_WEBHOOK_OUT_FORMATS.join(', ')}`,
+                );
+              }
+            }
+            if (ep.headers !== undefined) {
+              if (
+                typeof ep.headers !== 'object' ||
+                ep.headers === null ||
+                Array.isArray(ep.headers)
+              ) {
+                details.push(`${pfx}.headers must be an object`);
+              }
+            }
+            if (ep.events !== undefined && !Array.isArray(ep.events)) {
+              details.push(`${pfx}.events must be an array`);
+            } else if (Array.isArray(ep.events)) {
+              for (let j = 0; j < ep.events.length; j++) {
+                if (
+                  typeof ep.events[j] !== 'string' ||
+                  ep.events[j].length === 0
+                ) {
+                  details.push(
+                    `${pfx}.events[${j}] must be a non-empty string`,
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return details.length ? { valid: false, details } : { valid: true };
+}

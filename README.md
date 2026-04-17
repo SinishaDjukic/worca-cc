@@ -154,6 +154,30 @@ A real-time web dashboard for monitoring and controlling the pipeline. All updat
 
 See [Dashboard Guide](docs/dashboard.md) for the full screenshot walkthrough.
 
+## Chat Integrations
+
+Get pipeline notifications on your phone and control runs remotely via **Telegram**, **Discord**, **Slack**, or any outbound webhook. Integrations run inside the UI server process — no separate service needed.
+
+- **Telegram** — two-way: push notifications + commands (`/pause`, `/resume`, `/stop`, `/status`, `/cost`, `/pr`)
+- **Discord** — outbound push notifications via bot
+- **Slack** — outbound push notifications via incoming webhook
+- **Generic webhook** — POST to any HTTP endpoint in multiple payload formats (`generic-json`, `slack-compatible`, `ntfy`, etc.)
+
+**Quick start:**
+```bash
+# 1. Create ~/.worca/integrations/config.json (see docs)
+# 2. Set env vars for bot tokens / webhook URLs
+export TELEGRAM_BOT_TOKEN=...
+
+# 3. Restart the UI server
+pnpm worca:ui:restart
+
+# 4. Verify
+worca integrations status
+```
+
+See [Chat Integrations Setup Guide](docs/spec/integrations/README.md) for the full configuration reference, BotFather setup, Discord/Slack webhook instructions, strict inbox verification, and the security model.
+
 ## Configuration
 
 All configuration lives in `.claude/settings.json` under the `worca` key:
@@ -180,6 +204,7 @@ Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Us
 
 - [CLI Reference](docs/cli-reference.md) — all flags and commands for `worca run`, `worca multi`, `worca init`, `worca-ui`
 - [Dashboard Guide](docs/dashboard.md) — full screenshot walkthrough of the monitoring UI
+- [Chat Integrations Setup](docs/spec/integrations/README.md) — Telegram, Discord, Slack, webhook config, security model
 - [Contributing](CONTRIBUTING.md) — development setup, project structure, linting, testing, and release process
 - [Changelog — worca-cc](src/worca/CHANGELOG.md)
 - [Changelog — @worca/ui](worca-ui/CHANGELOG.md)

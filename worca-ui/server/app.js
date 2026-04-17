@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { RAW_BODY } from './integrations/index.js';
+import { verify } from './integrations/verify.js';
 import { ProcessManager } from './process-manager.js';
 import { scanDirectory } from './project-registry.js';
 import {
@@ -28,7 +30,13 @@ export function createApp(options = {}) {
   // resolve from homedir() + projectRoot.
   const subagentDirs = options.subagentDirs || null;
 
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
 
   // ─── Security headers ──────────────────────────────────────────────────
   app.use((_req, res, next) => {
@@ -282,6 +290,16 @@ export function createApp(options = {}) {
 
   // POST /api/webhooks/inbox — receive webhook events
   app.post('/api/webhooks/inbox', (req, res) => {
+    const integrations = app.locals.integrations;
+    if (integrations?.strictInboxVerification) {
+      const ok = verify(
+        req.rawBody || Buffer.alloc(0),
+        req.headers['x-worca-signature'],
+        integrations.secrets || [],
+      );
+      if (!ok)
+        return res.status(401).json({ ok: false, error: 'invalid signature' });
+    }
     const headers = {
       'x-worca-event': req.headers['x-worca-event'] || '',
       'x-worca-delivery': req.headers['x-worca-delivery'] || '',
@@ -298,9 +316,11 @@ export function createApp(options = {}) {
       envelope: req.body || {},
       projectId,
     });
+    if (req.rawBody) stored[RAW_BODY] = req.rawBody;
     if (app.locals.broadcast) {
       app.locals.broadcast('webhook-inbox-event', stored);
     }
+    app.locals.integrations?.onEvent(stored);
     res.json({ control: { action: webhookInbox.getControlAction() } });
   });
 
@@ -332,6 +352,16 @@ export function createApp(options = {}) {
 
   // PUT /api/webhooks/inbox/control — set control action
   app.put('/api/webhooks/inbox/control', (req, res) => {
+    const integrations = app.locals.integrations;
+    if (integrations?.strictInboxVerification) {
+      const ok = verify(
+        req.rawBody || Buffer.alloc(0),
+        req.headers['x-worca-signature'],
+        integrations.secrets || [],
+      );
+      if (!ok)
+        return res.status(401).json({ ok: false, error: 'invalid signature' });
+    }
     const { action } = req.body || {};
     if (!['continue', 'pause', 'abort'].includes(action)) {
       return res.status(400).json({
@@ -482,6 +512,13 @@ export function createApp(options = {}) {
       createProjectScopedRoutes({ prefsDir }),
     );
   }
+
+  // GET /api/integrations/status — adapter states, chat states, counters
+  app.get('/api/integrations/status', (_req, res) => {
+    const integrations = app.locals.integrations;
+    if (!integrations) return res.json({ enabled: false });
+    res.json(integrations.status());
+  });
 
   // ─── Dynamic favicon ──────────────────────────────────────────────────
   // Serve mode-specific favicon before express.static so it takes precedence.

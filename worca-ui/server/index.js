@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
+import { createIntegrations } from './integrations/index.js';
 import { attachWsServer } from './ws.js';
 
 // Parse argv
@@ -103,6 +104,14 @@ const { broadcast, scheduleRefresh, resolveRunProject } = attachWsServer(
 app.locals.broadcast = broadcast;
 app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
+
+// Boot chat integrations (no-op stub if config absent or disabled)
+app.locals.integrations = createIntegrations({
+  port,
+  host,
+  prefsDir,
+  configPath: join(prefsDir, 'integrations', 'config.json'),
+});
 
 // ─── worca-cc version check (non-blocking) ─────────────────────────────
 checkWorcaVersion().then((result) => {

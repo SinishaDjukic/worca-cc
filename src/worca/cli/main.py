@@ -1,13 +1,14 @@
 """worca CLI — global entry point for worca commands.
 
 Subcommands:
-  init       [--upgrade] [--force] [--check] [--source PATH]
-  run        --prompt "..." [--plan ...] [--msize N] [--mloops N] [--resume]
-  pause      [run_id]
-  stop       [run_id]
-  resume     [run_id]
-  status     [run_id]
+  init              [--upgrade] [--force] [--check] [--source PATH]
+  run               --prompt "..." [--plan ...] [--msize N] [--mloops N] [--resume]
+  pause             [run_id]
+  stop              [run_id]
+  resume            [run_id]
+  status            [run_id]
   multi-status
+  integrations status
   --version
 
 The `worca run` command is a thin launcher: it finds the git root,
@@ -105,6 +106,59 @@ def _warn_version_mismatch(project_worca_dir: Path) -> None:
         pass  # any error — never block
 
 
+def cmd_integrations_status(_args: argparse.Namespace) -> None:
+    """Probe the UI server's /api/integrations/status and print a summary table."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    base_url = os.environ.get("WORCA_UI_URL", "http://127.0.0.1:3400")
+    url = f"{base_url.rstrip('/')}/api/integrations/status"
+
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.URLError as exc:
+        print(f"error: could not reach UI server at {base_url} — {exc.reason}", file=sys.stderr)
+        raise SystemExit(1)
+
+    enabled = data.get("enabled", False)
+    strict = data.get("strict_inbox_verification", False)
+    secrets = data.get("secrets_configured", 0)
+    adapters = data.get("adapters", [])
+    chats = data.get("chats", [])
+
+    print(f"Integrations enabled : {enabled}")
+    print(f"Strict inbox verify  : {strict}")
+    print(f"Secrets configured   : {secrets}")
+
+    if adapters:
+        print()
+        print(f"{'Adapter':<12} {'Enabled':<8} {'Connected':<10} {'Dropped':<8} {'Bad Sig':<8} {'Last Event'}")
+        print("-" * 66)
+        for a in adapters:
+            name = a.get("name", "?")
+            ena = str(a.get("enabled", False))
+            conn = str(a.get("connected", "—"))
+            dropped = str(a.get("dropped_messages", "—"))
+            bad_sig = str(a.get("invalid_signature_events", "—"))
+            last = a.get("last_event_at") or "—"
+            print(f"{name:<12} {ena:<8} {conn:<10} {dropped:<8} {bad_sig:<8} {last}")
+
+    if chats:
+        print()
+        print(f"{'Platform':<10} {'Chat ID':<14} {'Active Project':<16} {'Muted Until':<14} {'Muted Msgs'}")
+        print("-" * 68)
+        for c in chats:
+            platform = c.get("platform", "?")
+            chat_id = c.get("chat_id", "?")
+            project = c.get("active_project") or "—"
+            muted = c.get("muted_until") or "—"
+            muted_msgs = str(c.get("muted_messages", 0))
+            print(f"{platform:<10} {chat_id:<14} {project:<16} {muted:<14} {muted_msgs}")
+
+
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="worca",
@@ -144,6 +198,11 @@ def create_parser() -> argparse.ArgumentParser:
     # multi-status
     sub.add_parser("multi-status", help="Show status of all parallel pipelines")
 
+    # integrations
+    integ_parser = sub.add_parser("integrations", help="Chat integration commands")
+    integ_sub = integ_parser.add_subparsers(dest="integrations_command")
+    integ_sub.add_parser("status", help="Show integrations health from the UI server")
+
     # templates
     from worca.cli.templates import register_subcommand as register_templates
     register_templates(sub)
@@ -176,6 +235,12 @@ def main(argv=None):
         from worca.cli.control import cmd_lifecycle
         args.lifecycle_command = "multi-status"
         cmd_lifecycle(args)
+    elif args.command == "integrations":
+        if args.integrations_command == "status":
+            cmd_integrations_status(args)
+        else:
+            print("error: specify a subcommand, e.g. 'worca integrations status'", file=sys.stderr)
+            raise SystemExit(1)
     elif args.command == "templates":
         from worca.cli.templates import cmd_templates
         cmd_templates(args)
