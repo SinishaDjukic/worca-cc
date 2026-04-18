@@ -2189,6 +2189,7 @@ if (route.projectId) {
 fetchProjectInfo();
 if (route.section === 'settings') {
   loadSettings(null).then(() => rerender());
+  startIntegrationsPoll();
 }
 if (route.section === 'project-settings') {
   loadSettings(store.getState().currentProjectId || null).then(() =>
