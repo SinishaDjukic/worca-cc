@@ -87,7 +87,8 @@ export function createProjectHandlers({ chatContext, restClient }) {
     const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
     if (all.length === 0) return 'No runs found.';
     const r = all[0];
-    return `Last run: ${r.id ?? r.run_id} \u2014 ${r.status}`;
+    const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+    return `Last run: ${r.id ?? r.run_id} \u2014 ${ps}`;
   }
 
   async function cost(chatKey, args) {
