@@ -180,6 +180,27 @@ function fetchIntegrationsData() {
     });
 }
 
+// Poll integrations status while settings tab is visible (updates connection badges)
+let _igPollTimer = null;
+function startIntegrationsPoll() {
+  stopIntegrationsPoll();
+  _igPollTimer = setInterval(() => {
+    fetch('/api/integrations/status')
+      .then((r) => r.json())
+      .then((status) => {
+        integrationsStatus = status;
+        rerender();
+      })
+      .catch(() => {});
+  }, 10_000);
+}
+function stopIntegrationsPoll() {
+  if (_igPollTimer) {
+    clearInterval(_igPollTimer);
+    _igPollTimer = null;
+  }
+}
+
 function getIntegrationsForm(adapter) {
   if (!integrationsForms[adapter]) {
     // Pre-fill from existing config if available
@@ -989,6 +1010,9 @@ onHashChange((newRoute) => {
 
   if (route.section === 'settings') {
     loadSettings(null).then(() => rerender());
+    startIntegrationsPoll();
+  } else {
+    stopIntegrationsPoll();
   }
 
   if (route.section === 'project-settings') {
