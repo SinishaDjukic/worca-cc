@@ -524,12 +524,10 @@ export function createApp(options = {}) {
     );
   }
 
-  // GET /api/integrations/telegram/detect — find chat IDs from recent /start messages
-  // Uses getUpdates with timeout=0 (non-blocking). Only works when the adapter
-  // is NOT running (otherwise the long-poller consumes updates). Useful during
-  // initial setup before saving config.
+  // POST /api/integrations/telegram/detect — find chat IDs from recent messages.
+  // If the Telegram adapter is running, temporarily pauses its poll loop so
+  // getUpdates returns results instead of being consumed by the long-poller.
   app.post('/api/integrations/telegram/detect', async (req, res) => {
-    // Accept token from request body (UI form), fall back to config, then env
     let token = req.body?.token;
     if (!token) {
       try {
@@ -546,13 +544,27 @@ export function createApp(options = {}) {
     if (!token) {
       return res.status(400).json({ error: 'No bot token provided' });
     }
+
+    // Pause the running adapter so getUpdates isn't consumed by the poll loop
+    const integrations = app.locals.integrations;
+    const adapterEntry = integrations?._getAdapter?.('telegram');
+    let wasStopped = false;
+    if (adapterEntry) {
+      try {
+        await adapterEntry.adapter.stop();
+        wasStopped = true;
+        // Brief delay to let the in-flight long-poll request complete
+        await new Promise((r) => setTimeout(r, 200));
+      } catch {
+        /* ignore */
+      }
+    }
+
     try {
-      // Get bot info
       const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
       const me = await meRes.json();
       const botUsername = me.ok ? me.result.username : null;
 
-      // Try to get recent updates (only works if adapter isn't polling)
       const updRes = await fetch(
         `https://api.telegram.org/bot${token}/getUpdates?timeout=0&limit=20`,
       );
@@ -579,6 +591,11 @@ export function createApp(options = {}) {
       res.json({ ok: true, botUsername, chats });
     } catch (err) {
       res.status(500).json({ error: err.message });
+    } finally {
+      // Restart the adapter if we paused it
+      if (wasStopped && adapterEntry) {
+        adapterEntry.adapter.start().catch(() => {});
+      }
     }
   });
 

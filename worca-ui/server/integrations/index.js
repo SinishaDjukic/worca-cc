@@ -267,6 +267,8 @@ export function createIntegrations({
     status,
     reloadAdapter,
     removeAdapter,
+    /** @internal — used by detect endpoint to pause/resume adapter */
+    _getAdapter: (name) => adapterMap.get(name) ?? null,
     strictInboxVerification: cfg.strict_inbox_verification ?? false,
     secrets,
   };
