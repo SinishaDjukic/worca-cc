@@ -619,7 +619,7 @@ export function createApp(options = {}) {
   });
 
   // DELETE /api/integrations/config/:adapter — remove an adapter
-  app.delete('/api/integrations/config/:adapter', (req, res) => {
+  app.delete('/api/integrations/config/:adapter', async (req, res) => {
     const { adapter } = req.params;
     const adapterKeys = ['telegram', 'discord', 'slack'];
     if (!adapterKeys.includes(adapter)) {
@@ -644,7 +644,7 @@ export function createApp(options = {}) {
         .json({ error: `Failed to write config: ${err.message}` });
     }
     if (app.locals.integrations?.removeAdapter) {
-      app.locals.integrations.removeAdapter(adapter);
+      await app.locals.integrations.removeAdapter(adapter);
     }
     res.json({ ok: true });
   });
@@ -656,7 +656,7 @@ export function createApp(options = {}) {
     slack: { tokenKey: 'webhook_url', idKey: 'chat_id' },
   };
 
-  app.post('/api/integrations/config', (req, res) => {
+  app.post('/api/integrations/config', async (req, res) => {
     const { adapter, token, chatId, events } = req.body;
     if (
       !adapter ||
@@ -716,7 +716,7 @@ export function createApp(options = {}) {
     // Hot-reload just this adapter (no full restart)
     if (app.locals.ensureIntegrations) app.locals.ensureIntegrations();
     if (app.locals.integrations?.reloadAdapter) {
-      app.locals.integrations.reloadAdapter(adapter);
+      await app.locals.integrations.reloadAdapter(adapter);
     }
 
     res.json({ ok: true, path: configPath });

@@ -119,14 +119,14 @@ export function createIntegrations({
    * Hot-reload a single adapter: re-reads config, stops the old instance,
    * boots a new one. No-op if the adapter's config section is missing/disabled.
    */
-  function reloadAdapter(name) {
+  async function reloadAdapter(name) {
     cfg = loadIntegrationsConfig(configPath) || cfg;
     if (!cfg.enabled) return;
     secrets = _loadSecrets(cfg);
     allowlist = createAllowlistGuard(_collectAllowedIds(cfg));
 
-    // Stop existing adapter if running
-    _stopAdapter(name);
+    // Stop existing adapter — must complete before booting new one
+    await _stopAdapter(name);
 
     // Boot new adapter from fresh config
     const entries = _bootAdapters({ [name]: cfg[name] }, integrationsDir);
@@ -138,8 +138,8 @@ export function createIntegrations({
   /**
    * Remove a single adapter: stops and unregisters it, refreshes config.
    */
-  function removeAdapter(name) {
-    _stopAdapter(name);
+  async function removeAdapter(name) {
+    await _stopAdapter(name);
     cfg = loadIntegrationsConfig(configPath) || cfg;
     secrets = _loadSecrets(cfg);
     allowlist = createAllowlistGuard(_collectAllowedIds(cfg));
