@@ -4318,3 +4318,196 @@ sl-tooltip.bead-tooltip::part(body) {
   width: 100%;
 }
 
+/* ── Integrations (card catalog) ─────────────────────────────────────── */
+
+.ig-page {
+  max-width: 720px;
+}
+
+.ig-subtitle {
+  margin: 0 0 1.25rem;
+  font-size: 0.85rem;
+  color: var(--sl-color-neutral-500);
+}
+
+.ig-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ig-card {
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  padding: 1rem 1.25rem;
+  background: var(--sl-color-neutral-0);
+}
+
+.ig-card--connected {
+  border-left: 3px solid var(--sl-color-success-500);
+}
+
+.ig-card--pending {
+  border-left: 3px solid var(--sl-color-warning-500);
+}
+
+.ig-card-pending-hint {
+  font-size: 0.8rem;
+  color: var(--sl-color-warning-700);
+  padding-left: 2.75rem;
+  margin-top: 0.4rem;
+}
+
+.ig-card--disconnected {
+  opacity: 0.85;
+}
+
+.ig-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ig-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.ig-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.ig-card-name {
+  display: block;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.ig-card-desc {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--sl-color-neutral-500);
+}
+
+.ig-card-stats {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  padding-left: 2.75rem;
+  font-size: 0.8rem;
+  color: var(--sl-color-neutral-500);
+}
+
+.ig-card-stats .stat-warn {
+  color: var(--sl-color-warning-600);
+}
+
+.ig-card-chats {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+  padding-left: 2.75rem;
+}
+
+.ig-chat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.ig-chat-id {
+  font-family: var(--sl-font-mono);
+  color: var(--sl-color-neutral-600);
+  font-size: 0.8rem;
+}
+
+.ig-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-left: 2.75rem;
+}
+
+/* Inline form */
+
+.ig-form {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-top: 1px solid var(--sl-color-neutral-200);
+}
+
+.ig-env-hint {
+  font-size: 0.8rem;
+  color: var(--sl-color-neutral-600);
+  background: var(--sl-color-neutral-50);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-small);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--sl-font-mono);
+}
+
+.ig-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 600px) {
+  .ig-form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ig-form-field {
+  margin-bottom: 0.75rem;
+}
+
+.ig-form-field label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+  color: var(--sl-color-neutral-700);
+}
+
+.ig-form-field .form-hint {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--sl-color-neutral-500);
+  margin-top: 0.15rem;
+}
+
+.ig-detect-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ig-detect-row sl-input {
+  flex: 1;
+}
+
+.ig-event-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.2rem 0.5rem;
+}
+
+.ig-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.ig-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--sl-color-neutral-500);
+  padding: 2rem;
+}
+

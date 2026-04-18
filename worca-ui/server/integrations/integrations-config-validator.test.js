@@ -104,23 +104,40 @@ describe('validateIntegrationsConfig — telegram', () => {
     expect(r.details).toContainEqual(expect.stringContaining('telegram'));
   });
 
-  it('rejects missing bot_token_env', () => {
+  it('rejects missing token (bot_token or bot_token_env)', () => {
     const r = validateIntegrationsConfig({
       schema_version: 1,
       telegram: { enabled: true, chat_id: '123', events: [] },
     });
     expect(r.valid).toBe(false);
     expect(r.details).toContainEqual(
-      expect.stringContaining('telegram.bot_token_env'),
+      expect.stringContaining('telegram requires bot_token or bot_token_env'),
     );
   });
 
-  it('rejects empty bot_token_env', () => {
+  it('rejects empty bot_token and bot_token_env', () => {
     const r = validateIntegrationsConfig({
       schema_version: 1,
-      telegram: { bot_token_env: '', chat_id: '123', events: [] },
+      telegram: {
+        bot_token: '',
+        bot_token_env: '',
+        chat_id: '123',
+        events: [],
+      },
     });
     expect(r.valid).toBe(false);
+  });
+
+  it('accepts bot_token without bot_token_env', () => {
+    const r = validateIntegrationsConfig({
+      schema_version: 1,
+      telegram: {
+        bot_token: 'my-token',
+        chat_id: '123',
+        events: ['pipeline.run.completed'],
+      },
+    });
+    expect(r.valid).toBe(true);
   });
 
   it('rejects missing chat_id', () => {
@@ -218,14 +235,14 @@ describe('validateIntegrationsConfig — discord', () => {
     expect(r.details).toContainEqual(expect.stringContaining('discord'));
   });
 
-  it('rejects missing bot_token_env', () => {
+  it('rejects missing token (bot_token or bot_token_env)', () => {
     const r = validateIntegrationsConfig({
       schema_version: 1,
       discord: { channel_id: '999', events: [] },
     });
     expect(r.valid).toBe(false);
     expect(r.details).toContainEqual(
-      expect.stringContaining('discord.bot_token_env'),
+      expect.stringContaining('discord requires bot_token or bot_token_env'),
     );
   });
 
@@ -262,14 +279,14 @@ describe('validateIntegrationsConfig — slack', () => {
     expect(r.details).toContainEqual(expect.stringContaining('slack'));
   });
 
-  it('rejects missing webhook_url_env', () => {
+  it('rejects missing webhook URL (webhook_url or webhook_url_env)', () => {
     const r = validateIntegrationsConfig({
       schema_version: 1,
       slack: { events: [] },
     });
     expect(r.valid).toBe(false);
     expect(r.details).toContainEqual(
-      expect.stringContaining('slack.webhook_url_env'),
+      expect.stringContaining('slack requires webhook_url or webhook_url_env'),
     );
   });
 

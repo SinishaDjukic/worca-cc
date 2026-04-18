@@ -144,6 +144,161 @@ let costsTokenData = {}; // { runId: { stage: [ { inputTokens, outputTokens, ...
 let costsExpanded = null; // runId or null
 let costsFetched = false;
 
+// ── Integrations state ──────────────────────────────────────────────────
+let integrationsStatus = null;
+let integrationsConfig = null;
+let integrationsEditingAdapter = null;
+const integrationsForms = {};
+
+const DEFAULT_EVENTS = ['pipeline.run.completed', 'pipeline.run.failed'];
+
+function fetchIntegrationsData() {
+  Promise.all([
+    fetch('/api/integrations/status').then((r) => r.json()),
+    fetch('/api/integrations/config').then((r) => r.json()),
+  ])
+    .then(([status, config]) => {
+      integrationsStatus = status;
+      integrationsConfig = config;
+      rerender();
+    })
+    .catch(() => {
+      integrationsStatus = { enabled: false };
+      integrationsConfig = {};
+      rerender();
+    });
+}
+
+function getIntegrationsForm(adapter) {
+  if (!integrationsForms[adapter]) {
+    // Pre-fill from existing config if available
+    const cfg = integrationsConfig?.[adapter];
+    integrationsForms[adapter] = {
+      token: cfg?.bot_token || cfg?.webhook_url || '',
+      chatId: String(cfg?.chat_id || cfg?.channel_id || ''),
+      events: cfg?.events ? [...cfg.events] : [...DEFAULT_EVENTS],
+      saving: false,
+      error: null,
+      saved: false,
+    };
+  }
+  return integrationsForms[adapter];
+}
+
+function handleIgStartEdit(adapter) {
+  integrationsEditingAdapter = adapter;
+  // Reset form from config
+  delete integrationsForms[adapter];
+  getIntegrationsForm(adapter);
+  rerender();
+}
+
+function handleIgCancelEdit() {
+  if (integrationsEditingAdapter) {
+    delete integrationsForms[integrationsEditingAdapter];
+  }
+  integrationsEditingAdapter = null;
+  rerender();
+}
+
+function handleIgFieldChange(adapter, field, value) {
+  const form = getIntegrationsForm(adapter);
+  form[field] = value;
+  form.saved = false;
+  form.error = null;
+  rerender();
+}
+
+function handleIgEventToggle(adapter, evt) {
+  const form = getIntegrationsForm(adapter);
+  const idx = form.events.indexOf(evt);
+  if (idx >= 0) form.events.splice(idx, 1);
+  else form.events.push(evt);
+  form.saved = false;
+  rerender();
+}
+
+function handleIgSave(adapter) {
+  const form = getIntegrationsForm(adapter);
+  form.saving = true;
+  form.error = null;
+  form.saved = false;
+  rerender();
+
+  fetch('/api/integrations/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      adapter,
+      token: form.token,
+      chatId: form.chatId,
+      events: form.events,
+    }),
+  })
+    .then((r) => {
+      if (!r.ok)
+        return r
+          .json()
+          .then((d) => Promise.reject(new Error(d.error || 'Save failed')));
+      return r.json();
+    })
+    .then(() => {
+      form.saving = false;
+      form.saved = true;
+      integrationsEditingAdapter = null;
+      fetchIntegrationsData();
+    })
+    .catch((err) => {
+      form.saving = false;
+      form.error = err.message;
+      rerender();
+    });
+}
+
+function handleIgRemove(adapter) {
+  fetch(`/api/integrations/config/${adapter}`, { method: 'DELETE' })
+    .then((r) => r.json())
+    .then(() => {
+      delete integrationsForms[adapter];
+      integrationsEditingAdapter = null;
+      fetchIntegrationsData();
+    })
+    .catch(() => rerender());
+}
+
+function handleIgDetect(adapter) {
+  if (adapter !== 'telegram') return;
+  const form = getIntegrationsForm(adapter);
+  form.detecting = true;
+  form.detectHint = null;
+  rerender();
+
+  fetch('/api/integrations/telegram/detect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: form.token }),
+  })
+    .then((r) => r.json())
+    .then((data) => {
+      form.detecting = false;
+      if (!data.ok) {
+        form.detectHint = data.error || 'Detection failed';
+      } else if (data.chats.length === 0) {
+        const bot = data.botUsername ? `@${data.botUsername}` : 'the bot';
+        form.detectHint = `No chats found. Send /start to ${bot} in Telegram, then click Detect again.`;
+      } else {
+        form.chatId = String(data.chats[0].id);
+        form.detectHint = `Found: ${data.chats[0].title} (${data.chats[0].id})`;
+      }
+      rerender();
+    })
+    .catch(() => {
+      form.detecting = false;
+      form.detectHint = 'Detection failed — check server logs.';
+      rerender();
+    });
+}
+
 // -- Webhook UI --
 let webhookSelectedId = null;
 let webhookCategoryFilter = 'all';
@@ -1753,6 +1908,7 @@ function mainContentView() {
   }
 
   if (route.section === 'settings') {
+    if (integrationsStatus === null) fetchIntegrationsData();
     return settingsView(state.preferences, {
       rerender,
       onThemeToggle: handleThemeToggle,
@@ -1760,6 +1916,24 @@ function mainContentView() {
       onSaveNotifications: handleSaveNotifications,
       onRequestPermission: () => notificationManager.requestPermission(),
       projects: state.projects || [],
+      integrations: {
+        status: integrationsStatus,
+        config: integrationsConfig,
+        editingAdapter: integrationsEditingAdapter,
+        forms: Object.fromEntries(
+          ['telegram', 'discord', 'slack'].map((k) => [
+            k,
+            getIntegrationsForm(k),
+          ]),
+        ),
+      },
+      onIgStartEdit: handleIgStartEdit,
+      onIgCancelEdit: handleIgCancelEdit,
+      onIgFieldChange: handleIgFieldChange,
+      onIgEventToggle: handleIgEventToggle,
+      onIgSave: handleIgSave,
+      onIgRemove: handleIgRemove,
+      onIgDetect: handleIgDetect,
       onProjectAdd: (result) => {
         if (result?.openDialog) {
           store.setState({ addProjectDialogOpen: true });

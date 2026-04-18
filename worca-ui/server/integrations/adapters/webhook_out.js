@@ -223,6 +223,7 @@ export function createWebhookOutAdapter({
     supportsInbound: false,
 
     async start() {},
+    async stop() {},
 
     async send(_chatId, msg) {
       await Promise.all(

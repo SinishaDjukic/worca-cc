@@ -29,6 +29,7 @@ describe('adapter typedefs', () => {
       'name',
       'supportsInbound',
       'start',
+      'stop',
       'send',
       'onInbound',
     ]);

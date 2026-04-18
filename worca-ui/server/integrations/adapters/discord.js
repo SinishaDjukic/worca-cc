@@ -67,6 +67,7 @@ export function createDiscordAdapter({
     supportsInbound: false,
 
     async start() {},
+    async stop() {},
 
     async send(chatId, msg) {
       const content = renderToMarkdown(msg);

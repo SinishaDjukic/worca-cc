@@ -155,6 +155,10 @@ export function createTelegramAdapter({
       );
     },
 
+    async stop() {
+      running = false;
+    },
+
     async send(chatId, msg) {
       const text = renderToHtml(msg);
       const url = `${TELEGRAM_API}/bot${token}/sendMessage`;

@@ -591,12 +591,13 @@ export function validateIntegrationsConfig(cfg) {
       if (tg.enabled !== undefined && typeof tg.enabled !== 'boolean') {
         details.push('telegram.enabled must be a boolean');
       }
-      if (
-        tg.bot_token_env === undefined ||
-        typeof tg.bot_token_env !== 'string' ||
-        tg.bot_token_env.length === 0
-      ) {
-        details.push('telegram.bot_token_env must be a non-empty string');
+      const hasTgToken =
+        (typeof tg.bot_token === 'string' && tg.bot_token.length > 0) ||
+        (typeof tg.bot_token_env === 'string' && tg.bot_token_env.length > 0);
+      if (!hasTgToken) {
+        details.push(
+          'telegram requires bot_token or bot_token_env (non-empty string)',
+        );
       }
       if (
         tg.chat_id === undefined ||
@@ -639,12 +640,13 @@ export function validateIntegrationsConfig(cfg) {
       if (dc.enabled !== undefined && typeof dc.enabled !== 'boolean') {
         details.push('discord.enabled must be a boolean');
       }
-      if (
-        dc.bot_token_env === undefined ||
-        typeof dc.bot_token_env !== 'string' ||
-        dc.bot_token_env.length === 0
-      ) {
-        details.push('discord.bot_token_env must be a non-empty string');
+      const hasDcToken =
+        (typeof dc.bot_token === 'string' && dc.bot_token.length > 0) ||
+        (typeof dc.bot_token_env === 'string' && dc.bot_token_env.length > 0);
+      if (!hasDcToken) {
+        details.push(
+          'discord requires bot_token or bot_token_env (non-empty string)',
+        );
       }
       if (
         dc.channel_id === undefined ||
@@ -678,12 +680,14 @@ export function validateIntegrationsConfig(cfg) {
       if (sl.enabled !== undefined && typeof sl.enabled !== 'boolean') {
         details.push('slack.enabled must be a boolean');
       }
-      if (
-        sl.webhook_url_env === undefined ||
-        typeof sl.webhook_url_env !== 'string' ||
-        sl.webhook_url_env.length === 0
-      ) {
-        details.push('slack.webhook_url_env must be a non-empty string');
+      const hasSlUrl =
+        (typeof sl.webhook_url === 'string' && sl.webhook_url.length > 0) ||
+        (typeof sl.webhook_url_env === 'string' &&
+          sl.webhook_url_env.length > 0);
+      if (!hasSlUrl) {
+        details.push(
+          'slack requires webhook_url or webhook_url_env (non-empty string)',
+        );
       }
       if (sl.events !== undefined && !Array.isArray(sl.events)) {
         details.push('slack.events must be an array');

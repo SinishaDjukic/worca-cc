@@ -25,6 +25,7 @@
  * @property {string} name
  * @property {boolean} supportsInbound
  * @property {() => Promise<void>} start
+ * @property {() => Promise<void>} stop
  * @property {(chatId: string, msg: NormalizedMessage) => Promise<void>} send
  * @property {(cb: (msg: IncomingMessage) => void) => void} onInbound
  */
@@ -43,6 +44,7 @@ export const ADAPTER_INTERFACE_KEYS = [
   'name',
   'supportsInbound',
   'start',
+  'stop',
   'send',
   'onInbound',
 ];

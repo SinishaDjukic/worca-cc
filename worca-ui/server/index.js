@@ -106,12 +106,20 @@ app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
 
 // Boot chat integrations (no-op stub if config absent or disabled)
-app.locals.integrations = createIntegrations({
+const integrationsOpts = {
   port,
   host,
   prefsDir,
   configPath: join(prefsDir, 'integrations', 'config.json'),
-});
+};
+app.locals.integrations = createIntegrations(integrationsOpts);
+// When the first adapter is saved and no integrations were configured at boot,
+// we need to create a real integrations instance to replace the no-op stub.
+app.locals.ensureIntegrations = () => {
+  if (!app.locals.integrations?.reloadAdapter) {
+    app.locals.integrations = createIntegrations(integrationsOpts);
+  }
+};
 
 // ─── worca-cc version check (non-blocking) ─────────────────────────────
 checkWorcaVersion().then((result) => {

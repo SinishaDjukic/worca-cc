@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
   createProjectScopedRoutes,
   projectResolver,
 } from './project-routes.js';
+import { validateIntegrationsConfig } from './settings-validator.js';
 import { discoverSubagents } from './subagents-discovery.js';
 import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
@@ -513,11 +514,185 @@ export function createApp(options = {}) {
     );
   }
 
+  // GET /api/integrations/telegram/detect — find chat IDs from recent /start messages
+  // Uses getUpdates with timeout=0 (non-blocking). Only works when the adapter
+  // is NOT running (otherwise the long-poller consumes updates). Useful during
+  // initial setup before saving config.
+  app.post('/api/integrations/telegram/detect', async (req, res) => {
+    // Accept token from request body (UI form), fall back to config, then env
+    let token = req.body?.token;
+    if (!token) {
+      try {
+        const cfgRaw = readFileSync(
+          join(prefsDir, 'integrations', 'config.json'),
+          'utf8',
+        );
+        token = JSON.parse(cfgRaw).telegram?.bot_token;
+      } catch {
+        /* no config */
+      }
+    }
+    if (!token) token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) {
+      return res.status(400).json({ error: 'No bot token provided' });
+    }
+    try {
+      // Get bot info
+      const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const me = await meRes.json();
+      const botUsername = me.ok ? me.result.username : null;
+
+      // Try to get recent updates (only works if adapter isn't polling)
+      const updRes = await fetch(
+        `https://api.telegram.org/bot${token}/getUpdates?timeout=0&limit=20`,
+      );
+      const upd = await updRes.json();
+
+      const chats = [];
+      if (upd.ok) {
+        for (const u of upd.result) {
+          const msg = u.message;
+          if (msg?.chat?.id) {
+            const existing = chats.find((c) => c.id === msg.chat.id);
+            if (!existing) {
+              chats.push({
+                id: msg.chat.id,
+                type: msg.chat.type,
+                title:
+                  msg.chat.title || msg.chat.first_name || String(msg.chat.id),
+              });
+            }
+          }
+        }
+      }
+
+      res.json({ ok: true, botUsername, chats });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /api/integrations/status — adapter states, chat states, counters
   app.get('/api/integrations/status', (_req, res) => {
     const integrations = app.locals.integrations;
     if (!integrations) return res.json({ enabled: false });
     res.json(integrations.status());
+  });
+
+  // GET /api/integrations/config — return saved config (secrets redacted)
+  app.get('/api/integrations/config', (_req, res) => {
+    const configPath = join(prefsDir, 'integrations', 'config.json');
+    let cfg;
+    try {
+      cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+    } catch {
+      return res.json({});
+    }
+    res.json(cfg);
+  });
+
+  // DELETE /api/integrations/config/:adapter — remove an adapter
+  app.delete('/api/integrations/config/:adapter', (req, res) => {
+    const { adapter } = req.params;
+    const adapterKeys = ['telegram', 'discord', 'slack'];
+    if (!adapterKeys.includes(adapter)) {
+      return res.status(400).json({ error: `Invalid adapter: ${adapter}` });
+    }
+    const configDir = join(prefsDir, 'integrations');
+    const configPath = join(configDir, 'config.json');
+    let cfg;
+    try {
+      cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+    } catch {
+      return res.json({ ok: true });
+    }
+    delete cfg[adapter];
+    const hasAdapters = adapterKeys.some((k) => cfg[k]?.enabled);
+    if (!hasAdapters) cfg.enabled = false;
+    try {
+      writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ error: `Failed to write config: ${err.message}` });
+    }
+    if (app.locals.integrations?.removeAdapter) {
+      app.locals.integrations.removeAdapter(adapter);
+    }
+    res.json({ ok: true });
+  });
+
+  // POST /api/integrations/config — save adapter config
+  const ADAPTER_SCHEMA = {
+    telegram: { tokenKey: 'bot_token', idKey: 'chat_id' },
+    discord: { tokenKey: 'bot_token', idKey: 'channel_id' },
+    slack: { tokenKey: 'webhook_url', idKey: 'chat_id' },
+  };
+
+  app.post('/api/integrations/config', (req, res) => {
+    const { adapter, token, chatId, events } = req.body;
+    if (
+      !adapter ||
+      !token ||
+      !chatId ||
+      !Array.isArray(events) ||
+      events.length === 0
+    ) {
+      return res.status(400).json({
+        error: 'Missing required fields: adapter, token, chatId, events',
+      });
+    }
+    const schema = ADAPTER_SCHEMA[adapter];
+    if (!schema) {
+      return res.status(400).json({
+        error: `Invalid adapter: ${adapter}. Must be one of: ${Object.keys(ADAPTER_SCHEMA).join(', ')}`,
+      });
+    }
+
+    const configDir = join(prefsDir, 'integrations');
+    const configPath = join(configDir, 'config.json');
+
+    // Load existing config or start fresh
+    let cfg = { schema_version: 1, enabled: true };
+    try {
+      const raw = readFileSync(configPath, 'utf8');
+      cfg = JSON.parse(raw);
+    } catch {
+      /* start fresh */
+    }
+
+    // Build adapter block — store token directly in config
+    const adapterBlock = { enabled: true, events };
+    adapterBlock[schema.tokenKey] = token;
+    adapterBlock[schema.idKey] = chatId;
+
+    cfg[adapter] = adapterBlock;
+    cfg.enabled = true;
+    if (!cfg.schema_version) cfg.schema_version = 1;
+
+    const result = validateIntegrationsConfig(cfg);
+    if (!result.valid) {
+      return res
+        .status(400)
+        .json({ error: `Validation failed: ${result.details.join('; ')}` });
+    }
+
+    try {
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ error: `Failed to write config: ${err.message}` });
+    }
+
+    // Hot-reload just this adapter (no full restart)
+    if (app.locals.ensureIntegrations) app.locals.ensureIntegrations();
+    if (app.locals.integrations?.reloadAdapter) {
+      app.locals.integrations.reloadAdapter(adapter);
+    }
+
+    res.json({ ok: true, path: configPath });
   });
 
   // ─── Dynamic favicon ──────────────────────────────────────────────────

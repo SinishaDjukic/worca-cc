@@ -48,10 +48,10 @@ export function createIntegrations({
   prefsDir,
   configPath,
 }) {
-  const cfg = loadIntegrationsConfig(configPath);
+  let cfg = loadIntegrationsConfig(configPath);
   if (!cfg || !cfg.enabled) return NO_OP_STUB;
 
-  const secrets = _loadSecrets(cfg);
+  let secrets = _loadSecrets(cfg);
   const integrationsDir = join(prefsDir, 'integrations');
   const chatContext = createChatContext(
     join(integrationsDir, 'chat_context.json'),
@@ -71,23 +71,25 @@ export function createIntegrations({
     ...controlHandlers,
   };
 
-  const adapters = _bootAdapters(cfg, integrationsDir);
-
+  // Mutable adapter registry — keyed by adapter name
+  const adapterMap = new Map(); // name → { adapter, adapterCfg }
   const rateLimiters = new Map();
-  for (const { adapter, adapterCfg } of adapters) {
-    rateLimiters.set(
-      adapter.name,
-      createRateLimiter({ ratePerMin: adapterCfg.rate_limit_per_min ?? 20 }),
-    );
-  }
-
-  const allowedIds = _collectAllowedIds(cfg);
-  const allowlist = createAllowlistGuard(allowedIds);
+  let allowlist = createAllowlistGuard(_collectAllowedIds(cfg));
 
   let invalidSigEvents = 0;
   let lastEventAt = null;
 
-  for (const { adapter } of adapters) {
+  // Boot initial adapters from config
+  for (const entry of _bootAdapters(cfg, integrationsDir)) {
+    _startEntry(entry);
+  }
+
+  function _startEntry({ adapter, adapterCfg }) {
+    adapterMap.set(adapter.name, { adapter, adapterCfg });
+    rateLimiters.set(
+      adapter.name,
+      createRateLimiter({ ratePerMin: adapterCfg.rate_limit_per_min ?? 20 }),
+    );
     if (adapter.supportsInbound) {
       adapter.onInbound((msg) => _handleInbound(msg));
     }
@@ -99,6 +101,48 @@ export function createIntegrations({
           err.message,
         ),
       );
+  }
+
+  async function _stopAdapter(name) {
+    const entry = adapterMap.get(name);
+    if (!entry) return;
+    try {
+      await entry.adapter.stop();
+    } catch (err) {
+      console.error(`[integrations] ${name} stop error:`, err.message);
+    }
+    adapterMap.delete(name);
+    rateLimiters.delete(name);
+  }
+
+  /**
+   * Hot-reload a single adapter: re-reads config, stops the old instance,
+   * boots a new one. No-op if the adapter's config section is missing/disabled.
+   */
+  function reloadAdapter(name) {
+    cfg = loadIntegrationsConfig(configPath) || cfg;
+    if (!cfg.enabled) return;
+    secrets = _loadSecrets(cfg);
+    allowlist = createAllowlistGuard(_collectAllowedIds(cfg));
+
+    // Stop existing adapter if running
+    _stopAdapter(name);
+
+    // Boot new adapter from fresh config
+    const entries = _bootAdapters({ [name]: cfg[name] }, integrationsDir);
+    for (const entry of entries) {
+      _startEntry(entry);
+    }
+  }
+
+  /**
+   * Remove a single adapter: stops and unregisters it, refreshes config.
+   */
+  function removeAdapter(name) {
+    _stopAdapter(name);
+    cfg = loadIntegrationsConfig(configPath) || cfg;
+    secrets = _loadSecrets(cfg);
+    allowlist = createAllowlistGuard(_collectAllowedIds(cfg));
   }
 
   async function _handleInbound(msg) {
@@ -127,7 +171,7 @@ export function createIntegrations({
   }
 
   async function _sendReply(platform, chatId, text) {
-    const entry = adapters.find(({ adapter }) => adapter.name === platform);
+    const entry = adapterMap.get(platform);
     if (!entry) return;
     const msg = {
       title: null,
@@ -156,7 +200,7 @@ export function createIntegrations({
     lastEventAt = new Date().toISOString();
     const envelope = stored.envelope;
 
-    for (const { adapter, adapterCfg } of adapters) {
+    for (const [, { adapter, adapterCfg }] of adapterMap) {
       const events = adapterCfg.events ?? [];
       if (!events.includes(envelope?.event_type)) continue;
 
@@ -197,7 +241,7 @@ export function createIntegrations({
       enabled: true,
       strict_inbox_verification: cfg.strict_inbox_verification ?? false,
       secrets_configured: secrets.length,
-      adapters: adapters.map(({ adapter }) => ({
+      adapters: [...adapterMap.values()].map(({ adapter }) => ({
         name: adapter.name,
         enabled: true,
         connected: true,
@@ -213,6 +257,8 @@ export function createIntegrations({
   return {
     onEvent,
     status,
+    reloadAdapter,
+    removeAdapter,
     strictInboxVerification: cfg.strict_inbox_verification ?? false,
     secrets,
   };
@@ -244,12 +290,11 @@ function _bootAdapters(cfg, integrationsDir) {
   const adapters = [];
 
   if (cfg.telegram?.enabled) {
-    const envName = cfg.telegram.bot_token_env;
-    const token = process.env[envName];
+    const token =
+      cfg.telegram.bot_token ||
+      process.env[cfg.telegram.bot_token_env || 'TELEGRAM_BOT_TOKEN'];
     if (!token) {
-      console.warn(
-        `[integrations] telegram.bot_token_env "${envName}" not set — skipping telegram`,
-      );
+      console.warn('[integrations] telegram token not configured — skipping');
     } else {
       adapters.push({
         adapter: createTelegramAdapter({
@@ -262,12 +307,11 @@ function _bootAdapters(cfg, integrationsDir) {
   }
 
   if (cfg.discord?.enabled) {
-    const envName = cfg.discord.bot_token_env;
-    const botToken = process.env[envName];
+    const botToken =
+      cfg.discord.bot_token ||
+      process.env[cfg.discord.bot_token_env || 'DISCORD_BOT_TOKEN'];
     if (!botToken) {
-      console.warn(
-        `[integrations] discord.bot_token_env "${envName}" not set — skipping discord`,
-      );
+      console.warn('[integrations] discord token not configured — skipping');
     } else {
       adapters.push({
         adapter: createDiscordAdapter({
@@ -280,11 +324,12 @@ function _bootAdapters(cfg, integrationsDir) {
   }
 
   if (cfg.slack?.enabled) {
-    const envName = cfg.slack.webhook_url_env;
-    const webhookUrl = process.env[envName];
+    const webhookUrl =
+      cfg.slack.webhook_url ||
+      process.env[cfg.slack.webhook_url_env || 'SLACK_WEBHOOK_URL'];
     if (!webhookUrl) {
       console.warn(
-        `[integrations] slack.webhook_url_env "${envName}" not set — skipping slack`,
+        '[integrations] slack webhook URL not configured — skipping',
       );
     } else {
       adapters.push({

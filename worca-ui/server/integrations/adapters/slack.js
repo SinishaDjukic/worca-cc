@@ -62,6 +62,7 @@ export function createSlackAdapter({
     supportsInbound: false,
 
     async start() {},
+    async stop() {},
 
     async send(_chatId, msg) {
       const text = renderToMrkdwn(msg);

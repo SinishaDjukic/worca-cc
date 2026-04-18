@@ -456,7 +456,7 @@ describe('createIntegrations', () => {
       const integrations = createIntegrations(BASE_OPTS);
       expect(integrations.status().adapters).toHaveLength(0);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('TELEGRAM_BOT_TOKEN'),
+        expect.stringContaining('telegram token not configured'),
       );
       warnSpy.mockRestore();
     });

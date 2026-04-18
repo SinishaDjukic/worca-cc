@@ -29,6 +29,7 @@ import {
   removeTag,
   SUBAGENT_DENYLIST,
 } from './dispatch-tag-state.js';
+import { integrationsTab } from './integrations.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 export const STAGE_AGENT_MAP = {
@@ -1742,6 +1743,14 @@ export function settingsView(
     onProjectAdd,
     onProjectRemove,
     onProjectsRefresh,
+    integrations,
+    onIgStartEdit,
+    onIgCancelEdit,
+    onIgFieldChange,
+    onIgEventToggle,
+    onIgSave,
+    onIgRemove,
+    onIgDetect,
   } = {},
 ) {
   // Reload base settings when switching from project-scoped view
@@ -1766,10 +1775,15 @@ export function settingsView(
           ${unsafeHTML(iconSvg(Settings, 14))}
           Preferences
         </sl-tab>
+        <sl-tab slot="nav" panel="integrations">
+          ${unsafeHTML(iconSvg(Zap, 14))}
+          Integrations
+        </sl-tab>
 
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
         <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, rerender })}</sl-tab-panel>
+        <sl-tab-panel name="integrations">${integrationsTab(integrations || {}, { onStartEdit: onIgStartEdit, onCancelEdit: onIgCancelEdit, onFieldChange: onIgFieldChange, onEventToggle: onIgEventToggle, onSave: onIgSave, onRemove: onIgRemove, onDetect: onIgDetect })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;
