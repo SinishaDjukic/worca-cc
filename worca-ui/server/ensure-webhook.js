@@ -49,7 +49,6 @@ export function ensureWebhookForUi(projectPath, { host, port }) {
   local.worca.webhooks.push({
     url: inboxUrl,
     events: ['pipeline.*'],
-    control: true,
   });
 
   // Ensure events are enabled
