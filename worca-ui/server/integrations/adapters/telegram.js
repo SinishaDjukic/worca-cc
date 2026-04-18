@@ -161,7 +161,18 @@ export function createTelegramAdapter({
     persistent: true,
 
     connectionState() {
-      return { state: connState, error: connError, lastPollOk };
+      // If the last successful poll is older than 2× the poll timeout,
+      // the connection is stale (e.g. network dropped, fetch is hanging).
+      let effectiveState = connState;
+      let effectiveError = connError;
+      if (connState === 'connected' && lastPollOk) {
+        const staleMs = (LONG_POLL_TIMEOUT_SEC * 2 + 10) * 1000; // ~70s
+        if (Date.now() - new Date(lastPollOk).getTime() > staleMs) {
+          effectiveState = 'disconnected';
+          effectiveError = 'Connection stale — no poll response';
+        }
+      }
+      return { state: effectiveState, error: effectiveError, lastPollOk };
     },
 
     async start() {
