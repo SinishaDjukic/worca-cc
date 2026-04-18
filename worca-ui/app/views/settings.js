@@ -1418,11 +1418,6 @@ function webhookEntry(wh, i, rerender) {
     <div class="settings-card webhook-card">
       <div class="settings-card-header">
         <span class="settings-card-title">Webhook ${i + 1}</span>
-        <sl-icon-button label="Remove webhook" @click=${() => {
-          settingsData.worca.webhooks.splice(i, 1);
-          delete webhookTestResults[i];
-          rerender();
-        }}>${unsafeHTML(iconSvg(X, 14))}</sl-icon-button>
       </div>
       <div class="settings-card-body">
         <div class="settings-field">
@@ -1479,6 +1474,26 @@ function webhookEntry(wh, i, rerender) {
             }
             rerender();
           }}>Test</sl-button>
+          <sl-button size="small" variant="danger" outline @click=${() => {
+            const url = wh.url || `Webhook ${i + 1}`;
+            showConfirm(
+              {
+                label: 'Remove Webhook',
+                message: html`Are you sure you want to remove <strong>${url}</strong>?`,
+                confirmLabel: 'Remove',
+                confirmVariant: 'danger',
+                onConfirm: () => {
+                  settingsData.worca.webhooks.splice(i, 1);
+                  delete webhookTestResults[i];
+                  rerender();
+                },
+              },
+              rerender,
+            );
+          }}>
+            ${unsafeHTML(iconSvg(Trash2, 14))}
+            Remove
+          </sl-button>
           ${
             testResult
               ? html`
