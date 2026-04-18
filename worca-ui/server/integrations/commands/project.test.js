@@ -68,14 +68,20 @@ describe('project-scoped commands — no active project', () => {
 // --- /status ---
 
 describe('/status', () => {
-  it('calls GET /api/projects/:id/runs/:runId/status with explicit run_id', async () => {
+  it('fetches runs and returns status for explicit run_id', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
-      '/runs/run-001/status': {
-        ok: true,
-        pipeline_status: 'running',
-        stage: 'implementer',
-        iteration: 2,
+      '/runs': {
+        runs: [
+          {
+            id: 'run-001',
+            pipeline_status: 'running',
+            stage: 'implementer',
+            started_at: '2026-04-18T10:00:00Z',
+            work_request: { title: 'Add auth' },
+            stages: {},
+          },
+        ],
       },
     });
     const handlers = createProjectHandlers({
@@ -83,13 +89,9 @@ describe('/status', () => {
       restClient,
     });
     const reply = await handlers.status(CHAT, ['run-001']);
-    expect(restClient.get).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `/api/projects/${encodeURIComponent(PROJECT)}/runs/run-001/status`,
-      ),
-    );
     expect(reply).toContain('run-001');
     expect(reply).toContain('running');
+    expect(reply).toContain('Add auth');
   });
 
   it('/status with no run_id resolves the unique active run', async () => {
@@ -135,15 +137,16 @@ describe('/status', () => {
     expect(reply).toContain('run-002');
   });
 
-  it('/status returns not-found message when run does not exist', async () => {
+  it('/status returns unknown status when run is not in list', async () => {
     const chatCtx = makeChatContext(PROJECT);
-    const restClient = makeRestClient({});
+    const restClient = makeRestClient({ '/runs': { runs: [] } });
     const handlers = createProjectHandlers({
       chatContext: chatCtx,
       restClient,
     });
     const reply = await handlers.status(CHAT, ['run-missing']);
-    expect(reply).toMatch(/not found|404/i);
+    expect(reply).toContain('run-missing');
+    expect(reply).toContain('unknown');
   });
 });
 
@@ -259,26 +262,21 @@ describe('/last', () => {
 // --- /cost ---
 
 describe('/cost', () => {
-  it('calls GET /api/projects/:id/costs', async () => {
+  it('shows USD cost from stage iterations', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
-      [`/api/projects/${encodeURIComponent(PROJECT)}/costs`]: {
-        ok: true,
-        tokenData: {
-          'run-001': {
-            implementer: [
-              {
-                inputTokens: 100,
-                outputTokens: 50,
-                cacheReadInputTokens: 0,
-                cacheCreationInputTokens: 0,
-                webSearchRequests: 0,
-                cacheEphemeral1hTokens: 0,
-                cacheEphemeral5mTokens: 0,
+      '/runs': {
+        runs: [
+          {
+            id: 'run-001',
+            pipeline_status: 'completed',
+            stages: {
+              implementer: {
+                iterations: [{ cost_usd: 0.42 }],
               },
-            ],
+            },
           },
-        },
+        ],
       },
     });
     const handlers = createProjectHandlers({
@@ -286,47 +284,26 @@ describe('/cost', () => {
       restClient,
     });
     const reply = await handlers.cost(CHAT, []);
-    expect(restClient.get).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `/api/projects/${encodeURIComponent(PROJECT)}/costs`,
-      ),
-    );
     expect(reply).toContain('run-001');
+    expect(reply).toContain('$0.42');
   });
 
   it('/cost with run_id arg filters to that run', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
-      [`/api/projects/${encodeURIComponent(PROJECT)}/costs`]: {
-        ok: true,
-        tokenData: {
-          'run-001': {
-            planner: [
-              {
-                inputTokens: 200,
-                outputTokens: 100,
-                cacheReadInputTokens: 0,
-                cacheCreationInputTokens: 0,
-                webSearchRequests: 0,
-                cacheEphemeral1hTokens: 0,
-                cacheEphemeral5mTokens: 0,
-              },
-            ],
+      '/runs': {
+        runs: [
+          {
+            id: 'run-001',
+            pipeline_status: 'completed',
+            stages: { plan: { iterations: [{ cost_usd: 0.1 }] } },
           },
-          'run-002': {
-            planner: [
-              {
-                inputTokens: 50,
-                outputTokens: 20,
-                cacheReadInputTokens: 0,
-                cacheCreationInputTokens: 0,
-                webSearchRequests: 0,
-                cacheEphemeral1hTokens: 0,
-                cacheEphemeral5mTokens: 0,
-              },
-            ],
+          {
+            id: 'run-002',
+            pipeline_status: 'completed',
+            stages: { plan: { iterations: [{ cost_usd: 0.05 }] } },
           },
-        },
+        ],
       },
     });
     const handlers = createProjectHandlers({
@@ -338,20 +315,15 @@ describe('/cost', () => {
     expect(reply).not.toContain('run-002');
   });
 
-  it('/cost returns message when no cost data exists', async () => {
+  it('/cost returns message when no runs exist', async () => {
     const chatCtx = makeChatContext(PROJECT);
-    const restClient = makeRestClient({
-      [`/api/projects/${encodeURIComponent(PROJECT)}/costs`]: {
-        ok: true,
-        tokenData: {},
-      },
-    });
+    const restClient = makeRestClient({ '/runs': { runs: [] } });
     const handlers = createProjectHandlers({
       chatContext: chatCtx,
       restClient,
     });
     const reply = await handlers.cost(CHAT, []);
-    expect(reply).toMatch(/no cost data|no data/i);
+    expect(reply).toMatch(/no runs/i);
   });
 });
 

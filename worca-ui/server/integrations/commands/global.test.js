@@ -88,7 +88,7 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await start(CHAT, []);
-    expect(reply).toContain(CHAT);
+    expect(reply).toContain('telegram:12345');
   });
 
   // /help
@@ -119,7 +119,7 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await whoami(CHAT, []);
-    expect(reply).toContain(CHAT);
+    expect(reply).toContain('telegram:12345');
     expect(reply).toContain('my-proj');
     expect(reply).toMatch(/muted.*no/i);
   });

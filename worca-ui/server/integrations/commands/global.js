@@ -13,22 +13,63 @@ export function parseDuration(str) {
   return Number(match[1]) * UNITS_MS[match[2].toLowerCase()];
 }
 
-const HELP_TEXT = `/start — show your chat ID for allowlist setup
-/help — this list
-/whoami — your chat ID, active project, mute state
-/projects — list registered projects
-/use <project> — set active project for this chat
-/active — show running pipelines across all projects
-/mute [duration] — silence notifications (e.g. /mute 1h, /mute 30m)
-/unmute — restore notifications
-/status [run_id] — run status (requires active project)
-/runs [N] — recent runs (requires active project)
-/last — most recent run (requires active project)
-/cost [today|week|run_id] — cost summary (requires active project)
-/pr [run_id] — PR URL (requires active project)
-/pause [run_id] — pause active run (requires active project)
-/resume [run_id] — resume paused run (requires active project)
-/stop [run_id] — stop run (requires active project)`;
+function chatIdOnly(chatKey) {
+  // chatKey is "platform:id" — return just the id
+  const idx = chatKey.indexOf(':');
+  return idx >= 0 ? chatKey.slice(idx + 1) : chatKey;
+}
+
+function fmtRunLine(run, projectName) {
+  const id = run.id ?? run.run_id;
+  const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
+  const title = run.work_request?.title;
+  const label = title
+    ? title.length > 40
+      ? `${title.slice(0, 40)}\u2026`
+      : title
+    : '';
+  const prefix = projectName ? `[${projectName}] ` : '';
+  return label
+    ? `\u2022 ${prefix}${id} "${label}" \u2014 ${ps}`
+    : `\u2022 ${prefix}${id} \u2014 ${ps}`;
+}
+
+function fmtCostFromStages(stages) {
+  let totalCost = 0;
+  for (const stage of Object.values(stages || {})) {
+    for (const iter of stage.iterations || []) {
+      totalCost += iter.cost_usd || 0;
+    }
+  }
+  return totalCost > 0 ? `$${totalCost.toFixed(2)}` : null;
+}
+
+function fmtElapsed(startedAt) {
+  if (!startedAt) return null;
+  const ms = Date.now() - new Date(startedAt).getTime();
+  if (ms < 0) return null;
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`;
+}
+
+const HELP_TEXT = `/start \u2014 show your chat ID
+/help \u2014 this list
+/whoami \u2014 chat ID, active project, mute state
+/projects \u2014 list registered projects
+/use <project> \u2014 set active project
+/active \u2014 running pipelines across all projects
+/mute [duration] \u2014 silence notifications (e.g. /mute 1h)
+/unmute \u2014 restore notifications
+/status [run_id] \u2014 run status (requires active project)
+/runs [N] \u2014 recent runs (requires active project)
+/last \u2014 most recent run (requires active project)
+/cost [run_id] \u2014 cost summary (requires active project)
+/pr [run_id] \u2014 PR URL (requires active project)
+/pause [run_id] \u2014 pause active run
+/resume [run_id] \u2014 resume paused run
+/stop [run_id] \u2014 stop run`;
 
 /**
  * Creates handlers for global (non-project-scoped) commands.
@@ -38,7 +79,7 @@ const HELP_TEXT = `/start — show your chat ID for allowlist setup
  */
 export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
   async function start(chatKey) {
-    return `Your chat ID is: ${chatKey}\nAdd it to the allowlist in your integrations config to enable commands.`;
+    return `Your chat ID is: ${chatIdOnly(chatKey)}`;
   }
 
   async function help() {
@@ -51,7 +92,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     const muted = chatContext.isMuted(chatKey)
       ? `yes (until ${state.mute_until})`
       : 'no';
-    return `Chat ID: ${chatKey}\nActive project: ${active}\nMuted: ${muted}`;
+    return `Chat ID: ${chatIdOnly(chatKey)}\nActive project: ${active}\nMuted: ${muted}`;
   }
 
   async function projects() {
@@ -92,9 +133,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
       for (const run of runs) {
         const ps = run.pipeline_status || (run.active ? 'running' : null);
         if (ps === 'running' || ps === 'paused' || ps === 'resuming') {
-          lines.push(
-            `\u2022 [${project.name}] ${run.id ?? run.run_id} \u2014 ${ps}`,
-          );
+          lines.push(fmtRunLine(run, project.name));
         }
       }
     }
@@ -123,5 +162,18 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     return 'Notifications restored.';
   }
 
-  return { start, help, whoami, projects, use, active, mute, unmute };
+  return {
+    start,
+    help,
+    whoami,
+    projects,
+    use,
+    active,
+    mute,
+    unmute,
+    // Exported for reuse by project commands
+    _fmtRunLine: fmtRunLine,
+    _fmtCostFromStages: fmtCostFromStages,
+    _fmtElapsed: fmtElapsed,
+  };
 }

@@ -307,9 +307,17 @@ describe('Telegram inbound commands via loopback REST', () => {
   it('Test 4: /use worca-cc then /status run-abc → loopback GET scoped to that project', async () => {
     // Create the status file the route will read
     createStatusFile(worcaDir, 'run-abc', {
+      run_id: 'run-abc',
       pipeline_status: 'running',
       stage: 'implementer',
-      stages: { implementer: { iteration: 3 } },
+      started_at: '2026-04-18T10:00:00Z',
+      work_request: { title: 'Test run' },
+      stages: {
+        implementer: {
+          status: 'in_progress',
+          iterations: [{ number: 1 }, { number: 2 }, { number: 3 }],
+        },
+      },
     });
 
     // Set active project
