@@ -101,6 +101,10 @@ export function createTelegramAdapter({
 }) {
   let inboundCb = null;
   let running = false;
+  // Connection health tracking
+  let connState = 'disconnected'; // 'connected' | 'disconnected'
+  let connError = null;
+  let lastPollOk = null; // ISO timestamp of last successful poll
 
   async function pollLoop() {
     let cursor = await readCursor(cursorPath);
@@ -117,9 +121,14 @@ export function createTelegramAdapter({
           continue;
         }
         if (!res.ok) {
+          connState = 'disconnected';
+          connError = `HTTP ${res.status}`;
           if (running) await _sleep(5000);
           continue;
         }
+        connState = 'connected';
+        connError = null;
+        lastPollOk = new Date().toISOString();
         const data = await res.json();
         if (data.ok && data.result.length > 0) {
           for (const update of data.result) {
@@ -138,6 +147,8 @@ export function createTelegramAdapter({
           await writeCursor(cursorPath, cursor);
         }
       } catch (err) {
+        connState = 'disconnected';
+        connError = err.message;
         console.error('[telegram] poll error:', err.message);
         if (running) await _sleep(1000);
       }
@@ -147,6 +158,11 @@ export function createTelegramAdapter({
   return {
     name: 'telegram',
     supportsInbound: true,
+    persistent: true,
+
+    connectionState() {
+      return { state: connState, error: connError, lastPollOk };
+    },
 
     async start() {
       running = true;

@@ -241,15 +241,23 @@ export function createIntegrations({
       enabled: true,
       strict_inbox_verification: cfg.strict_inbox_verification ?? false,
       secrets_configured: secrets.length,
-      adapters: [...adapterMap.values()].map(({ adapter }) => ({
-        name: adapter.name,
-        enabled: true,
-        connected: true,
-        dropped_messages:
-          rateLimiters.get(adapter.name)?.getStats().dropped_messages ?? 0,
-        invalid_signature_events: invalidSigEvents,
-        last_event_at: lastEventAt,
-      })),
+      adapters: [...adapterMap.values()].map(({ adapter }) => {
+        const conn = adapter.connectionState?.() ?? {
+          state: 'n/a',
+          error: null,
+        };
+        return {
+          name: adapter.name,
+          enabled: true,
+          persistent: adapter.persistent ?? false,
+          connection: conn.state,
+          connection_error: conn.error,
+          dropped_messages:
+            rateLimiters.get(adapter.name)?.getStats().dropped_messages ?? 0,
+          invalid_signature_events: invalidSigEvents,
+          last_event_at: lastEventAt,
+        };
+      }),
       chats: _collectChatStatus(cfg, chatContext),
     };
   }

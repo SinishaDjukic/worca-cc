@@ -65,6 +65,11 @@ export function createDiscordAdapter({
   return {
     name: 'discord',
     supportsInbound: false,
+    persistent: false,
+
+    connectionState() {
+      return { state: 'n/a', error: null };
+    },
 
     async start() {},
     async stop() {},

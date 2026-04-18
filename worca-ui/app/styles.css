@@ -4390,6 +4390,13 @@ sl-tooltip.bead-tooltip::part(body) {
   color: var(--sl-color-neutral-500);
 }
 
+.ig-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
 .ig-card-stats {
   display: flex;
   gap: 1rem;

@@ -60,6 +60,11 @@ export function createSlackAdapter({
   return {
     name: 'slack',
     supportsInbound: false,
+    persistent: false,
+
+    connectionState() {
+      return { state: 'n/a', error: null };
+    },
 
     async start() {},
     async stop() {},

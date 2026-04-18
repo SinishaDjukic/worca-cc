@@ -103,6 +103,10 @@ function connectedCard(
     onDetect,
   },
 ) {
+  const isPersistent = adapterSt?.persistent;
+  const connOk = adapterSt?.connection === 'connected';
+  const connErr = adapterSt?.connection_error;
+
   return html`
     <div class="ig-card ig-card--connected">
       <div class="ig-card-header">
@@ -111,7 +115,16 @@ function connectedCard(
           <span class="ig-card-name">${meta.label}</span>
           <span class="ig-card-desc">${meta.desc}</span>
         </div>
-        <sl-badge variant="success" pill>Connected</sl-badge>
+        <div class="ig-badges">
+          <sl-badge variant="primary" pill>Configured</sl-badge>
+          ${
+            isPersistent
+              ? connOk
+                ? html`<sl-badge variant="success" pill>Connected</sl-badge>`
+                : html`<sl-tooltip content=${connErr || 'Connection lost'}><sl-badge variant="warning" pill>Disconnected</sl-badge></sl-tooltip>`
+              : nothing
+          }
+        </div>
       </div>
       <div class="ig-card-stats">
         <span>Last event: ${formatLastEvent(adapterSt?.last_event_at)}</span>
@@ -301,8 +314,8 @@ export function integrationsTab(integrationsState, options) {
           const st = adapterStatus(meta.key, status);
           const chats = adapterChats(meta.key, status);
           const cfg = adapterConfig(meta.key, config);
-          const isConnected = !!cfg?.enabled && st?.connected;
-          const isPending = !!cfg?.enabled && !st?.connected;
+          const isConnected = !!cfg?.enabled && !!st;
+          const isPending = !!cfg?.enabled && !st;
           const isEditing = editingAdapter === meta.key;
           const form = forms?.[meta.key] || {
             chatId: '',

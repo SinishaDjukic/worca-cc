@@ -221,6 +221,11 @@ export function createWebhookOutAdapter({
   return {
     name: 'webhook_out',
     supportsInbound: false,
+    persistent: false,
+
+    connectionState() {
+      return { state: 'n/a', error: null };
+    },
 
     async start() {},
     async stop() {},

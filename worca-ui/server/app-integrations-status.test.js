@@ -34,7 +34,9 @@ describe('GET /api/integrations/status', () => {
         {
           name: 'telegram',
           enabled: true,
-          connected: true,
+          persistent: true,
+          connection: 'connected',
+          connection_error: null,
           dropped_messages: 0,
           invalid_signature_events: 0,
           last_event_at: null,
