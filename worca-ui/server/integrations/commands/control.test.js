@@ -89,7 +89,7 @@ describe('/pause', () => {
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
-        runs: [{ id: 'run-002', status: 'running' }],
+        runs: [{ id: 'run-002', pipeline_status: 'running' }],
       },
       '/runs/run-002/pause': { ok: true },
     });
@@ -110,8 +110,8 @@ describe('/pause', () => {
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-001', status: 'running' },
-          { id: 'run-002', status: 'running' },
+          { id: 'run-001', pipeline_status: 'running' },
+          { id: 'run-002', pipeline_status: 'running' },
         ],
       },
     });
@@ -180,7 +180,7 @@ describe('/resume', () => {
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
-        runs: [{ id: 'run-003', status: 'paused' }],
+        runs: [{ id: 'run-003', pipeline_status: 'paused' }],
       },
       '/runs/run-003/resume': { ok: true },
     });
@@ -233,7 +233,7 @@ describe('/stop', () => {
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
-        runs: [{ id: 'run-004', status: 'running' }],
+        runs: [{ id: 'run-004', pipeline_status: 'running' }],
       },
       '/runs/run-004/stop': { ok: true },
     });
@@ -254,8 +254,8 @@ describe('/stop', () => {
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-005', status: 'running' },
-          { id: 'run-006', status: 'paused' },
+          { id: 'run-005', pipeline_status: 'running' },
+          { id: 'run-006', pipeline_status: 'paused' },
         ],
       },
     });

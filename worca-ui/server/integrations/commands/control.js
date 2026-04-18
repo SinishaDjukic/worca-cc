@@ -7,9 +7,10 @@ async function resolveRunId(restClient, projectId, args) {
     `/api/projects/${encodeURIComponent(projectId)}/runs`,
   );
   const runs = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
-  const active = runs.filter(
-    (r) => r.status === 'running' || r.status === 'paused',
-  );
+  const active = runs.filter((r) => {
+    const ps = r.pipeline_status || (r.active ? 'running' : null);
+    return ps === 'running' || ps === 'paused' || ps === 'resuming';
+  });
   if (active.length === 1) return { runId: active[0].id ?? active[0].run_id };
   if (active.length > 1) {
     const list = active.map((r) => `\u2022 ${r.id ?? r.run_id}`).join('\n');
