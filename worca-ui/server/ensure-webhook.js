@@ -18,7 +18,11 @@ import { localPathFor } from './settings-merge.js';
 export function ensureWebhookForUi(projectPath, { host, port }) {
   const settingsPath = join(projectPath, '.claude', 'settings.json');
   const localPath = localPathFor(settingsPath);
-  const inboxUrl = `http://${host}:${port}/api/webhooks/inbox`;
+  // Use localhost instead of 127.0.0.1 — the pipeline validator only allows
+  // https:// or http://localhost for security.
+  const displayHost =
+    host === '127.0.0.1' || host === '::1' ? 'localhost' : host;
+  const inboxUrl = `http://${displayHost}:${port}/api/webhooks/inbox`;
 
   // Read existing local settings (or start fresh)
   let local = {};
