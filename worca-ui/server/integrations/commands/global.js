@@ -90,9 +90,10 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
       const runs =
         resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
       for (const run of runs) {
-        if (run.status === 'running') {
+        const ps = run.pipeline_status || (run.active ? 'running' : null);
+        if (ps === 'running' || ps === 'paused' || ps === 'resuming') {
           lines.push(
-            `\u2022 [${project.name}] ${run.id ?? run.run_id} \u2014 running`,
+            `\u2022 [${project.name}] ${run.id ?? run.run_id} \u2014 ${ps}`,
           );
         }
       }

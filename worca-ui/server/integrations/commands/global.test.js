@@ -319,7 +319,7 @@ describe('createGlobalHandlers', () => {
     const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
     const prefsDir = makePrefsDir(tmp, [{ name: 'myproj', path: '/myproj' }]);
     const rc = makeRestClient({
-      myproj: { runs: [{ id: 'run-001', status: 'running' }] },
+      myproj: { runs: [{ id: 'run-001', pipeline_status: 'running' }] },
     });
     chatCtx.get.mockReturnValue({
       active_project: 'myproj',
