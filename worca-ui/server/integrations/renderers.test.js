@@ -11,11 +11,18 @@ function bodyText(msg) {
 }
 
 describe('TIER1_EVENTS', () => {
-  it('exports exactly 7 event type strings', () => {
-    expect(TIER1_EVENTS).toHaveLength(7);
+  it('exports exactly 14 event type strings', () => {
+    expect(TIER1_EVENTS).toHaveLength(14);
+    expect(TIER1_EVENTS).toContain('pipeline.run.started');
     expect(TIER1_EVENTS).toContain('pipeline.run.completed');
     expect(TIER1_EVENTS).toContain('pipeline.run.failed');
     expect(TIER1_EVENTS).toContain('pipeline.run.interrupted');
+    expect(TIER1_EVENTS).toContain('pipeline.run.paused');
+    expect(TIER1_EVENTS).toContain('pipeline.run.resumed');
+    expect(TIER1_EVENTS).toContain('pipeline.run.resumed_from_pause');
+    expect(TIER1_EVENTS).toContain('pipeline.stage.started');
+    expect(TIER1_EVENTS).toContain('pipeline.stage.completed');
+    expect(TIER1_EVENTS).toContain('pipeline.stage.interrupted');
     expect(TIER1_EVENTS).toContain('pipeline.git.pr_created');
     expect(TIER1_EVENTS).toContain('pipeline.git.pr_merged');
     expect(TIER1_EVENTS).toContain('pipeline.circuit_breaker.tripped');
@@ -25,7 +32,7 @@ describe('TIER1_EVENTS', () => {
 
 describe('renderEvent', () => {
   it('returns null for unknown event type', () => {
-    expect(renderEvent(envelope('pipeline.stage.started', {}))).toBeNull();
+    expect(renderEvent(envelope('pipeline.bead.created', {}))).toBeNull();
   });
 
   it('returns null for missing envelope', () => {
@@ -299,6 +306,94 @@ describe('renderEvent', () => {
         envelope('pipeline.cost.budget_warning', payload),
       );
       expect(bodyText(msg)).toContain('run-abc123');
+    });
+  });
+
+  describe('pipeline.run.started', () => {
+    it('returns valid message', () => {
+      const msg = renderEvent(
+        envelope('pipeline.run.started', { title: 'Add auth' }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      expect(msg.severity).toBe('info');
+      expect(bodyText(msg)).toContain('started');
+      expect(bodyText(msg)).toContain('Add auth');
+    });
+
+    it('truncates long titles', () => {
+      const msg = renderEvent(
+        envelope('pipeline.run.started', { title: 'A'.repeat(100) }),
+      );
+      expect(bodyText(msg)).toContain('…');
+    });
+
+    it('works without title', () => {
+      const msg = renderEvent(envelope('pipeline.run.started', {}));
+      expect(isValidMessage(msg)).toBe(true);
+    });
+  });
+
+  describe('pipeline.run.paused', () => {
+    it('returns valid warning', () => {
+      const msg = renderEvent(
+        envelope('pipeline.run.paused', { stage: 'implement' }),
+      );
+      expect(msg.severity).toBe('warning');
+      expect(bodyText(msg)).toContain('paused');
+      expect(bodyText(msg)).toContain('implement');
+    });
+  });
+
+  describe('pipeline.run.resumed', () => {
+    it('returns valid info', () => {
+      const msg = renderEvent(envelope('pipeline.run.resumed', {}));
+      expect(msg.severity).toBe('info');
+      expect(bodyText(msg)).toContain('resumed');
+    });
+  });
+
+  describe('pipeline.run.resumed_from_pause', () => {
+    it('returns valid info', () => {
+      const msg = renderEvent(envelope('pipeline.run.resumed_from_pause', {}));
+      expect(msg.severity).toBe('info');
+      expect(bodyText(msg)).toContain('resumed from pause');
+    });
+  });
+
+  describe('pipeline.stage.started', () => {
+    it('returns valid message with stage name', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.started', { stage: 'plan', iteration: 1 }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      expect(bodyText(msg)).toContain('plan');
+      expect(bodyText(msg)).toContain('iter 1');
+    });
+  });
+
+  describe('pipeline.stage.completed', () => {
+    it('returns valid success with duration', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.completed', {
+          stage: 'test',
+          duration_ms: 65000,
+        }),
+      );
+      expect(msg.severity).toBe('success');
+      expect(bodyText(msg)).toContain('test');
+      expect(bodyText(msg)).toContain('done');
+      expect(bodyText(msg)).toContain('1m05s');
+    });
+  });
+
+  describe('pipeline.stage.interrupted', () => {
+    it('returns valid warning', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.interrupted', { stage: 'implement' }),
+      );
+      expect(msg.severity).toBe('warning');
+      expect(bodyText(msg)).toContain('implement');
+      expect(bodyText(msg)).toContain('interrupted');
     });
   });
 });

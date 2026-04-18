@@ -1,9 +1,16 @@
 import { html, nothing } from 'lit-html';
 
 const TIER1_EVENTS = [
+  'pipeline.run.started',
   'pipeline.run.completed',
   'pipeline.run.failed',
   'pipeline.run.interrupted',
+  'pipeline.run.paused',
+  'pipeline.run.resumed',
+  'pipeline.run.resumed_from_pause',
+  'pipeline.stage.started',
+  'pipeline.stage.completed',
+  'pipeline.stage.interrupted',
   'pipeline.git.pr_created',
   'pipeline.git.pr_merged',
   'pipeline.circuit_breaker.tripped',

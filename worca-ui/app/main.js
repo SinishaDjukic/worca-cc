@@ -150,7 +150,18 @@ let integrationsConfig = null;
 let integrationsEditingAdapter = null;
 const integrationsForms = {};
 
-const DEFAULT_EVENTS = ['pipeline.run.completed', 'pipeline.run.failed'];
+const DEFAULT_EVENTS = [
+  'pipeline.run.started',
+  'pipeline.run.completed',
+  'pipeline.run.failed',
+  'pipeline.run.interrupted',
+  'pipeline.run.paused',
+  'pipeline.run.resumed',
+  'pipeline.run.resumed_from_pause',
+  'pipeline.git.pr_created',
+  'pipeline.circuit_breaker.tripped',
+  'pipeline.cost.budget_warning',
+];
 
 function fetchIntegrationsData() {
   Promise.all([

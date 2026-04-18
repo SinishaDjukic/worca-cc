@@ -151,14 +151,124 @@ function renderCostBudgetWarning(envelope) {
   };
 }
 
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderRunStarted(envelope) {
+  const p = envelope.payload;
+  const title = p.title ?? p.prompt ?? '';
+  const label = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+  return {
+    title: null,
+    body: [
+      b('▶'),
+      t(' '),
+      c(runLabel(envelope)),
+      t(' started'),
+      ...(label ? [t(' — '), t(label)] : []),
+    ],
+    severity: 'info',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderRunPaused(envelope) {
+  const p = envelope.payload;
+  const stage = p.stage ?? '';
+  return {
+    title: null,
+    body: [
+      b('⏸'),
+      t(' '),
+      c(runLabel(envelope)),
+      t(' paused'),
+      ...(stage ? [t(' at '), c(stage)] : []),
+    ],
+    severity: 'warning',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderRunResumed(envelope) {
+  return {
+    title: null,
+    body: [b('▶'), t(' '), c(runLabel(envelope)), t(' resumed')],
+    severity: 'info',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderRunResumedFromPause(envelope) {
+  return {
+    title: null,
+    body: [b('▶'), t(' '), c(runLabel(envelope)), t(' resumed from pause')],
+    severity: 'info',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderStageStarted(envelope) {
+  const p = envelope.payload;
+  return {
+    title: null,
+    body: [
+      t('⚙ '),
+      c(runLabel(envelope)),
+      t(' → '),
+      b(p.stage ?? 'unknown'),
+      ...(p.iteration ? [t(` (iter ${p.iteration})`)] : []),
+    ],
+    severity: 'info',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderStageCompleted(envelope) {
+  const p = envelope.payload;
+  return {
+    title: null,
+    body: [
+      t('✓ '),
+      c(runLabel(envelope)),
+      t(' '),
+      b(p.stage ?? 'unknown'),
+      t(' done'),
+      ...(p.duration_ms ? [t(` · ${fmtMs(p.duration_ms)}`)] : []),
+    ],
+    severity: 'success',
+  };
+}
+
+/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderStageInterrupted(envelope) {
+  const p = envelope.payload;
+  return {
+    title: null,
+    body: [
+      b('⏸'),
+      t(' '),
+      c(runLabel(envelope)),
+      t(' '),
+      b(p.stage ?? 'unknown'),
+      t(' interrupted'),
+    ],
+    severity: 'warning',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 const EVENT_RENDERERS = {
+  'pipeline.run.started': renderRunStarted,
   'pipeline.run.completed': renderRunCompleted,
   'pipeline.run.failed': renderRunFailed,
   'pipeline.run.interrupted': renderRunInterrupted,
+  'pipeline.run.paused': renderRunPaused,
+  'pipeline.run.resumed': renderRunResumed,
+  'pipeline.run.resumed_from_pause': renderRunResumedFromPause,
+  'pipeline.stage.started': renderStageStarted,
+  'pipeline.stage.completed': renderStageCompleted,
+  'pipeline.stage.interrupted': renderStageInterrupted,
   'pipeline.git.pr_created': renderGitPrCreated,
   'pipeline.git.pr_merged': renderGitPrMerged,
   'pipeline.circuit_breaker.tripped': renderCbTripped,
