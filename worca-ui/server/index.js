@@ -58,6 +58,8 @@ const app = createApp({
   projectRoot,
   webhookInbox,
   prefsDir,
+  serverHost: host,
+  serverPort: port,
 });
 const server = createServer(app);
 

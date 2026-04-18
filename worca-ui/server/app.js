@@ -26,7 +26,14 @@ import { createInbox } from './webhook-inbox.js';
 export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
-  const { settingsPath, worcaDir, projectRoot, prefsDir } = options;
+  const {
+    settingsPath,
+    worcaDir,
+    projectRoot,
+    prefsDir,
+    serverHost,
+    serverPort,
+  } = options;
   // subagentDirs is a test-injection seam; production calls omit it and we
   // resolve from homedir() + projectRoot.
   const subagentDirs = options.subagentDirs || null;
@@ -103,7 +110,7 @@ export function createApp(options = {}) {
       };
       next();
     },
-    createProjectScopedRoutes(),
+    createProjectScopedRoutes({ serverHost, serverPort }),
   );
 
   // ─── Unique routes (not in project-scoped router) ──────────────────────
@@ -506,11 +513,14 @@ export function createApp(options = {}) {
 
   // ─── Multi-project routes ──────────────────────────────────────────────
   if (prefsDir) {
-    app.use('/api/projects', createProjectRoutes({ prefsDir, projectRoot }));
+    app.use(
+      '/api/projects',
+      createProjectRoutes({ prefsDir, projectRoot, serverHost, serverPort }),
+    );
     app.use(
       '/api/projects/:projectId',
       projectResolver({ prefsDir, projectRoot }),
-      createProjectScopedRoutes({ prefsDir }),
+      createProjectScopedRoutes({ prefsDir, serverHost, serverPort }),
     );
   }
 

@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Router } from 'express';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { ensureWebhookForUi } from './ensure-webhook.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import {
@@ -138,7 +139,12 @@ export function projectResolver({ prefsDir, projectRoot }) {
 /**
  * Router for project CRUD: GET/POST/DELETE /api/projects[/:id]
  */
-export function createProjectRoutes({ prefsDir, projectRoot }) {
+export function createProjectRoutes({
+  prefsDir,
+  projectRoot,
+  serverHost,
+  serverPort,
+}) {
   const router = Router();
 
   // GET /api/projects — list all projects (or synthesized default)
@@ -169,6 +175,17 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
     }
     try {
       writeProject(prefsDir, entry);
+      // Auto-configure webhook so pipeline events reach this UI server
+      if (serverHost && serverPort) {
+        try {
+          ensureWebhookForUi(entry.path, {
+            host: serverHost,
+            port: serverPort,
+          });
+        } catch {
+          /* best-effort — don't fail project creation */
+        }
+      }
       res.status(201).json({ ok: true, project: entry });
     } catch (err) {
       res.status(400).json({ ok: false, error: err.message });
@@ -267,6 +284,16 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
       for (const entry of batch) {
         writeProject(prefsDir, entry);
         written.push(entry.name);
+        if (serverHost && serverPort) {
+          try {
+            ensureWebhookForUi(entry.path, {
+              host: serverHost,
+              port: serverPort,
+            });
+          } catch {
+            /* best-effort */
+          }
+        }
       }
       res.status(201).json({ ok: true, projects: batch });
     } catch (err) {
@@ -290,7 +317,11 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
  * @param {{ prefsDir?: string|null }} [options] — prefsDir enables active
  *   worca-cc version lookup for /worca-status' `outdated` flag.
  */
-export function createProjectScopedRoutes({ prefsDir = null } = {}) {
+export function createProjectScopedRoutes({
+  prefsDir = null,
+  serverHost,
+  serverPort,
+} = {}) {
   const router = Router({ mergeParams: true });
   const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
 
@@ -1365,6 +1396,17 @@ export function createProjectScopedRoutes({ prefsDir = null } = {}) {
 
     try {
       const { pid } = runWorcaSetup(projectRoot, { source });
+      // Auto-configure webhook so pipeline events reach this UI server
+      if (serverHost && serverPort) {
+        try {
+          ensureWebhookForUi(projectRoot, {
+            host: serverHost,
+            port: serverPort,
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
       res.json({ ok: true, pid });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
