@@ -102,7 +102,7 @@ export function createTelegramAdapter({
   let inboundCb = null;
   let running = false;
   // Connection health tracking
-  let connState = 'disconnected'; // 'connected' | 'disconnected'
+  let connState = 'connecting'; // 'connecting' | 'connected' | 'disconnected'
   let connError = null;
   let lastPollOk = null; // ISO timestamp of last successful poll
 
@@ -166,6 +166,8 @@ export function createTelegramAdapter({
 
     async start() {
       running = true;
+      connState = 'connecting';
+      connError = null;
       pollLoop().catch((err) =>
         console.error('[telegram] fatal poll error:', err.message),
       );

@@ -104,8 +104,17 @@ function connectedCard(
   },
 ) {
   const isPersistent = adapterSt?.persistent;
-  const connOk = adapterSt?.connection === 'connected';
+  const conn = adapterSt?.connection; // 'connecting' | 'connected' | 'disconnected'
   const connErr = adapterSt?.connection_error;
+
+  function connectionBadge() {
+    if (!isPersistent) return nothing;
+    if (conn === 'connected')
+      return html`<sl-badge variant="success" pill>Connected</sl-badge>`;
+    if (conn === 'connecting')
+      return html`<sl-badge variant="neutral" pill>Connecting\u2026</sl-badge>`;
+    return html`<sl-tooltip content=${connErr || 'Connection lost'}><sl-badge variant="warning" pill>Disconnected</sl-badge></sl-tooltip>`;
+  }
 
   return html`
     <div class="ig-card ig-card--connected">
@@ -117,13 +126,7 @@ function connectedCard(
         </div>
         <div class="ig-badges">
           <sl-badge variant="primary" pill>Configured</sl-badge>
-          ${
-            isPersistent
-              ? connOk
-                ? html`<sl-badge variant="success" pill>Connected</sl-badge>`
-                : html`<sl-tooltip content=${connErr || 'Connection lost'}><sl-badge variant="warning" pill>Disconnected</sl-badge></sl-tooltip>`
-              : nothing
-          }
+          ${connectionBadge()}
         </div>
       </div>
       <div class="ig-card-stats">
