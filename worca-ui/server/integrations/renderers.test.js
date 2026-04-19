@@ -186,11 +186,10 @@ describe('renderEvent', () => {
       expect(bodyText(msg)).toContain('Add user auth');
     });
 
-    it('includes a link segment with pr_url as href', () => {
+    it('includes pr_url as markdown link', () => {
       const msg = renderEvent(envelope('pipeline.git.pr_created', payload));
-      const linkSeg = msg.body.find((s) => s.kind === 'link');
-      expect(linkSeg).toBeDefined();
-      expect(linkSeg.href).toBe('https://github.com/org/repo/pull/193');
+      expect(bodyText(msg)).toContain('https://github.com/org/repo/pull/193');
+      expect(bodyText(msg)).toContain('[#193]');
     });
   });
 
@@ -215,11 +214,10 @@ describe('renderEvent', () => {
       expect(bodyText(msg)).toContain('193');
     });
 
-    it('includes a link segment with pr_url as href', () => {
+    it('includes pr_url as markdown link', () => {
       const msg = renderEvent(envelope('pipeline.git.pr_merged', payload));
-      const linkSeg = msg.body.find((s) => s.kind === 'link');
-      expect(linkSeg).toBeDefined();
-      expect(linkSeg.href).toBe('https://github.com/org/repo/pull/193');
+      expect(bodyText(msg)).toContain('https://github.com/org/repo/pull/193');
+      expect(bodyText(msg)).toContain('[#193]');
     });
   });
 
@@ -367,7 +365,7 @@ describe('renderEvent', () => {
       );
       expect(isValidMessage(msg)).toBe(true);
       expect(bodyText(msg)).toContain('plan');
-      expect(bodyText(msg)).toContain('iter 1');
+      expect(bodyText(msg)).toContain('iteration 1');
     });
   });
 
@@ -381,7 +379,7 @@ describe('renderEvent', () => {
       );
       expect(msg.severity).toBe('success');
       expect(bodyText(msg)).toContain('test');
-      expect(bodyText(msg)).toContain('done');
+      expect(bodyText(msg)).toContain('completed');
       expect(bodyText(msg)).toContain('1m05s');
     });
   });

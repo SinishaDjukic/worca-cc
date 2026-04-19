@@ -1,29 +1,18 @@
 /**
  * Tier 1 event renderers — map pipeline event envelopes to NormalizedMessage.
+ * Uses markdown segments so each adapter converts to its native format.
  * @module renderers
  */
 
 // ---------------------------------------------------------------------------
-// Segment constructors
+// Helpers
 // ---------------------------------------------------------------------------
 
 /** @param {string} value @returns {import('./adapter.js').MessageSegment} */
-const t = (value) => ({ kind: 'text', value });
-
-/** @param {string} value @returns {import('./adapter.js').MessageSegment} */
-const b = (value) => ({ kind: 'bold', value });
-
-/** @param {string} value @returns {import('./adapter.js').MessageSegment} */
-const c = (value) => ({ kind: 'code', value });
-
-/** @param {string} value @param {string} href @returns {import('./adapter.js').MessageSegment} */
-const link = (value, href) => ({ kind: 'link', value, href });
-
-// ---------------------------------------------------------------------------
-// Formatting helpers
-// ---------------------------------------------------------------------------
+const md = (value) => ({ kind: 'markdown', value });
 
 function fmtMs(ms) {
+  if (ms == null) return null;
   const totalSec = Math.floor(ms / 1000);
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
@@ -31,227 +20,138 @@ function fmtMs(ms) {
 }
 
 function fmtUsd(usd) {
+  if (usd == null) return null;
   return `$${Number(usd).toFixed(2)}`;
 }
 
-function runLabel(envelope) {
+function runId(envelope) {
   return envelope.run_id ?? 'run';
+}
+
+function mdMsg(text, severity) {
+  return { title: null, body: [md(text)], severity };
 }
 
 // ---------------------------------------------------------------------------
 // Per-event renderers
 // ---------------------------------------------------------------------------
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderRunCompleted(envelope) {
+function renderRunStarted(envelope) {
   const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      b('✓'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(` done · ${fmtMs(p.duration_ms)} · ${fmtUsd(p.total_cost_usd)}`),
-    ],
-    severity: 'success',
-  };
+  const title = p.title ?? p.prompt ?? '';
+  const label = title.length > 60 ? `${title.slice(0, 60)}\u2026` : title;
+  const parts = [`\u{1F7E2} **Run:** \`${runId(envelope)}\``];
+  if (label) parts.push(`   **Title:** ${label}`);
+  parts.push('   **Status:** started');
+  return mdMsg(parts.join('\n'), 'info');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
+function renderRunCompleted(envelope) {
+  const p = envelope.payload;
+  const parts = [`\u2705 **Run:** \`${runId(envelope)}\``];
+  if (p.title) parts.push(`   **Title:** ${p.title}`);
+  parts.push('   **Status:** completed');
+  const dur = fmtMs(p.duration_ms);
+  if (dur) parts.push(`   **Duration:** ${dur}`);
+  const cost = fmtUsd(p.total_cost_usd);
+  if (cost) parts.push(`   **Cost:** ${cost}`);
+  return mdMsg(parts.join('\n'), 'success');
+}
+
 function renderRunFailed(envelope) {
   const p = envelope.payload;
   const errLabel = p.error_type ?? p.error ?? 'error';
   const stage = p.failed_stage ?? 'unknown';
-  return {
-    title: null,
-    body: [
-      b('✗'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(' failed at '),
-      c(stage),
-      t(' · '),
-      t(errLabel),
-    ],
-    severity: 'error',
-  };
+  const parts = [`\u{1F534} **Run:** \`${runId(envelope)}\``];
+  if (p.title) parts.push(`   **Title:** ${p.title}`);
+  parts.push(`   **Status:** failed at ${stage}`);
+  parts.push(`   **Error:** ${errLabel}`);
+  return mdMsg(parts.join('\n'), 'error');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderRunInterrupted(envelope) {
   const p = envelope.payload;
   const stage = p.interrupted_stage ?? 'unknown';
-  return {
-    title: null,
-    body: [
-      b('⏸'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(' interrupted at '),
-      c(stage),
-      t(` (${fmtMs(p.elapsed_ms)} in)`),
-    ],
-    severity: 'warning',
-  };
+  const parts = [`\u{1F534} **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **Status:** interrupted at ${stage}`);
+  const dur = fmtMs(p.elapsed_ms);
+  if (dur) parts.push(`   **Duration:** ${dur}`);
+  return mdMsg(parts.join('\n'), 'warning');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderGitPrCreated(envelope) {
-  const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      b('🔀 PR opened'),
-      t(': '),
-      link(`#${p.pr_number}`, p.pr_url),
-      t(` — ${p.title}`),
-    ],
-    severity: 'info',
-  };
-}
-
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderGitPrMerged(envelope) {
-  const p = envelope.payload;
-  return {
-    title: null,
-    body: [b('✅ PR merged'), t(': '), link(`#${p.pr_number}`, p.pr_url)],
-    severity: 'success',
-  };
-}
-
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderCbTripped(envelope) {
-  const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      b('⚠'),
-      t(` ${p.consecutive_failures}× `),
-      c(p.category),
-      t(' — run halted'),
-    ],
-    severity: 'error',
-  };
-}
-
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderCostBudgetWarning(envelope) {
-  const p = envelope.payload;
-  const pct = Math.round(p.pct_used * 100);
-  return {
-    title: null,
-    body: [
-      b('💸'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(` at ${pct}% of ${fmtUsd(p.budget_usd)} budget`),
-    ],
-    severity: 'warning',
-  };
-}
-
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
-function renderRunStarted(envelope) {
-  const p = envelope.payload;
-  const title = p.title ?? p.prompt ?? '';
-  const label = title.length > 60 ? `${title.slice(0, 60)}…` : title;
-  return {
-    title: null,
-    body: [
-      b('▶'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(' started'),
-      ...(label ? [t(' — '), t(label)] : []),
-    ],
-    severity: 'info',
-  };
-}
-
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderRunPaused(envelope) {
   const p = envelope.payload;
   const stage = p.stage ?? '';
-  return {
-    title: null,
-    body: [
-      b('⏸'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(' paused'),
-      ...(stage ? [t(' at '), c(stage)] : []),
-    ],
-    severity: 'warning',
-  };
+  const parts = [`\u{1F7E1} **Run:** \`${runId(envelope)}\``];
+  const statusLine = stage ? `paused at ${stage}` : 'paused';
+  parts.push(`   **Status:** ${statusLine}`);
+  return mdMsg(parts.join('\n'), 'warning');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderRunResumed(envelope) {
-  return {
-    title: null,
-    body: [b('▶'), t(' '), c(runLabel(envelope)), t(' resumed')],
-    severity: 'info',
-  };
+  const parts = [`\u{1F7E2} **Run:** \`${runId(envelope)}\``];
+  parts.push('   **Status:** resumed');
+  return mdMsg(parts.join('\n'), 'info');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderRunResumedFromPause(envelope) {
-  return {
-    title: null,
-    body: [b('▶'), t(' '), c(runLabel(envelope)), t(' resumed from pause')],
-    severity: 'info',
-  };
+  const parts = [`\u{1F7E2} **Run:** \`${runId(envelope)}\``];
+  parts.push('   **Status:** resumed from pause');
+  return mdMsg(parts.join('\n'), 'info');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderStageStarted(envelope) {
   const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      t('⚙ '),
-      c(runLabel(envelope)),
-      t(' → '),
-      b(p.stage ?? 'unknown'),
-      ...(p.iteration ? [t(` (iter ${p.iteration})`)] : []),
-    ],
-    severity: 'info',
-  };
+  const iterPart = p.iteration ? ` (iteration ${p.iteration})` : '';
+  const parts = [`\u2699 **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **Stage:** ${p.stage ?? 'unknown'}${iterPart}`);
+  return mdMsg(parts.join('\n'), 'info');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderStageCompleted(envelope) {
   const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      t('✓ '),
-      c(runLabel(envelope)),
-      t(' '),
-      b(p.stage ?? 'unknown'),
-      t(' done'),
-      ...(p.duration_ms ? [t(` · ${fmtMs(p.duration_ms)}`)] : []),
-    ],
-    severity: 'success',
-  };
+  const parts = [`\u2705 **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **Stage:** ${p.stage ?? 'unknown'} completed`);
+  const dur = fmtMs(p.duration_ms);
+  if (dur) parts.push(`   **Duration:** ${dur}`);
+  return mdMsg(parts.join('\n'), 'success');
 }
 
-/** @param {object} envelope @returns {import('./adapter.js').NormalizedMessage} */
 function renderStageInterrupted(envelope) {
   const p = envelope.payload;
-  return {
-    title: null,
-    body: [
-      b('⏸'),
-      t(' '),
-      c(runLabel(envelope)),
-      t(' '),
-      b(p.stage ?? 'unknown'),
-      t(' interrupted'),
-    ],
-    severity: 'warning',
-  };
+  const parts = [`\u23F8 **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **Stage:** ${p.stage ?? 'unknown'} interrupted`);
+  return mdMsg(parts.join('\n'), 'warning');
+}
+
+function renderGitPrCreated(envelope) {
+  const p = envelope.payload;
+  const parts = [`\u{1F500} **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **PR:** [#${p.pr_number}](${p.pr_url}) \u2014 ${p.title}`);
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderGitPrMerged(envelope) {
+  const p = envelope.payload;
+  const parts = [`\u2705 **PR merged:** [#${p.pr_number}](${p.pr_url})`];
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderCbTripped(envelope) {
+  const p = envelope.payload;
+  const parts = [`\u26A0 **Run:** \`${runId(envelope)}\``];
+  parts.push(
+    `   **Circuit breaker:** ${p.consecutive_failures}\u00D7 ${p.category} \u2014 run halted`,
+  );
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+function renderCostBudgetWarning(envelope) {
+  const p = envelope.payload;
+  const pct = Math.round(p.pct_used * 100);
+  const parts = [`\u{1F4B8} **Run:** \`${runId(envelope)}\``];
+  parts.push(`   **Budget:** ${pct}% of ${fmtUsd(p.budget_usd)} used`);
+  return mdMsg(parts.join('\n'), 'warning');
 }
 
 // ---------------------------------------------------------------------------
