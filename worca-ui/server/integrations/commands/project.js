@@ -4,17 +4,71 @@ const NO_ACTIVE_PROJECT =
   'No active project. Use `/projects` to list, `/use <name>` to select.';
 
 /**
+ * Match a run ID that may be a wildcard suffix (e.g. "*2db5", "*658-1111").
+ * Returns { runId } for exact or unique suffix match, { disambig } for
+ * multiple matches, or null for no match (falls through to active-run logic).
+ */
+function matchRunIdPattern(pattern, runs, command) {
+  if (!pattern) return null;
+
+  // Strip leading * if present
+  const isWildcard = pattern.startsWith('*');
+  const suffix = isWildcard ? pattern.slice(1) : null;
+
+  if (!isWildcard) {
+    // Exact match — return as-is (may not exist, caller handles)
+    return { runId: pattern };
+  }
+
+  if (!suffix) return null;
+
+  const matches = runs.filter((r) => {
+    const id = r.id ?? r.run_id ?? '';
+    return id.endsWith(suffix);
+  });
+
+  if (matches.length === 1) {
+    return { runId: matches[0].id ?? matches[0].run_id };
+  }
+
+  if (matches.length > 1) {
+    const lines = matches.map((r) => {
+      const id = r.id ?? r.run_id;
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
+      return parts.join('\n');
+    });
+    const cmd = command || 'status';
+    return {
+      disambig: `Multiple runs match \`*${suffix}\`:\n\n${lines.join('\n')}\n\nUsage: /${cmd} <run_id>`,
+    };
+  }
+
+  // No match — return the pattern as-is so caller shows "not found"
+  return { runId: pattern };
+}
+
+/**
  * Resolve run_id when the caller omits it:
  * - exactly one active run -> return its id
  * - zero active runs -> return null (caller handles)
  * - multiple active runs -> return disambiguation message string
+ *
+ * Supports wildcard suffix: *2db5 matches any run ending in "2db5".
  */
 async function resolveRunId(restClient, projectId, args, command) {
-  if (args[0]) return { runId: args[0] };
   const resp = await restClient.get(
     `/api/projects/${encodeURIComponent(projectId)}/runs`,
   );
   const runs = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
+
+  // If an arg is provided, try wildcard/exact match
+  if (args[0]) {
+    const matched = matchRunIdPattern(args[0], runs, command);
+    if (matched) return matched;
+  }
   const active = runs.filter((r) => {
     const ps = r.pipeline_status || (r.active ? 'running' : null);
     return ps === 'running' || ps === 'paused' || ps === 'resuming';
@@ -150,12 +204,9 @@ export function createProjectHandlers({ chatContext, restClient }) {
     const project = requireProject(chatKey);
     if (!project) return NO_ACTIVE_PROJECT;
 
-    let runId = args[0] ?? null;
-    if (!runId) {
-      const resolved = await resolveRunId(restClient, project, args, 'status');
-      if (resolved.disambig) return resolved.disambig;
-      runId = resolved.runId;
-    }
+    const resolved = await resolveRunId(restClient, project, args, 'status');
+    if (resolved.disambig) return resolved.disambig;
+    const runId = resolved.runId;
     if (!runId)
       return 'No active run found.\nUse /runs to see recent runs, or specify a run ID: /status <run_id>';
 
@@ -224,9 +275,15 @@ export function createProjectHandlers({ chatContext, restClient }) {
     );
     const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
     const filter = args[0] ?? null;
-    const filtered = filter
-      ? all.filter((r) => (r.id ?? r.run_id) === filter)
-      : all.slice(0, 5);
+    let filtered;
+    if (filter?.startsWith('*')) {
+      const suffix = filter.slice(1);
+      filtered = all.filter((r) => (r.id ?? r.run_id ?? '').endsWith(suffix));
+    } else if (filter) {
+      filtered = all.filter((r) => (r.id ?? r.run_id) === filter);
+    } else {
+      filtered = all.slice(0, 5);
+    }
     if (filtered.length === 0) return `No runs found for ${project}.`;
 
     let grandTotal = 0;
@@ -253,12 +310,9 @@ export function createProjectHandlers({ chatContext, restClient }) {
     const project = requireProject(chatKey);
     if (!project) return NO_ACTIVE_PROJECT;
 
-    let runId = args[0] ?? null;
-    if (!runId) {
-      const resolved = await resolveRunId(restClient, project, args, 'pr');
-      if (resolved.disambig) return resolved.disambig;
-      runId = resolved.runId;
-    }
+    const resolved = await resolveRunId(restClient, project, args, 'pr');
+    if (resolved.disambig) return resolved.disambig;
+    const runId = resolved.runId;
     if (!runId) return 'No active run found.';
 
     const resp = await restClient.get(
@@ -274,14 +328,18 @@ export function createProjectHandlers({ chatContext, restClient }) {
     const project = requireProject(chatKey);
     if (!project) return NO_ACTIVE_PROJECT;
 
-    let runId = args[0] ?? null;
-    if (!runId) {
+    const resp = await restClient.get(
+      `/api/projects/${encodeURIComponent(project)}/runs`,
+    );
+    const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
+
+    let runId = null;
+    if (args[0]) {
+      const matched = matchRunIdPattern(args[0], all, 'error');
+      if (matched?.disambig) return matched.disambig;
+      runId = matched?.runId ?? null;
+    } else {
       // Find the most recent failed run
-      const resp = await restClient.get(
-        `/api/projects/${encodeURIComponent(project)}/runs`,
-      );
-      const all =
-        resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
       const failed = all.find(
         (r) =>
           r.pipeline_status === 'failed' || r.pipeline_status === 'interrupted',
@@ -291,10 +349,6 @@ export function createProjectHandlers({ chatContext, restClient }) {
     if (!runId)
       return 'No failed run found.\nUse /error <run_id> to check a specific run.';
 
-    const resp = await restClient.get(
-      `/api/projects/${encodeURIComponent(project)}/runs`,
-    );
-    const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
     const run = all.find((r) => (r.id ?? r.run_id) === runId);
     if (!run) return `Run "${runId}" not found.`;
 

@@ -3,12 +3,40 @@ import { statusEmoji } from './global.js';
 const NO_ACTIVE_PROJECT =
   'No active project. Use `/projects` to list, `/use <name>` to select.';
 
+function matchRunIdPattern(pattern, runs, command) {
+  if (!pattern) return null;
+  const isWildcard = pattern.startsWith('*');
+  const suffix = isWildcard ? pattern.slice(1) : null;
+  if (!isWildcard) return { runId: pattern };
+  if (!suffix) return null;
+  const matches = runs.filter((r) => (r.id ?? r.run_id ?? '').endsWith(suffix));
+  if (matches.length === 1)
+    return { runId: matches[0].id ?? matches[0].run_id };
+  if (matches.length > 1) {
+    const lines = matches.map((r) => {
+      const id = r.id ?? r.run_id;
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
+      return parts.join('\n');
+    });
+    return {
+      disambig: `Multiple runs match \`*${suffix}\`:\n\n${lines.join('\n')}\n\nUsage: /${command} <run_id>`,
+    };
+  }
+  return { runId: pattern };
+}
+
 async function resolveRunId(restClient, projectId, args, command) {
-  if (args[0]) return { runId: args[0] };
   const resp = await restClient.get(
     `/api/projects/${encodeURIComponent(projectId)}/runs`,
   );
   const runs = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
+  if (args[0]) {
+    const matched = matchRunIdPattern(args[0], runs, command);
+    if (matched) return matched;
+  }
   const active = runs.filter((r) => {
     const ps = r.pipeline_status || (r.active ? 'running' : null);
     return ps === 'running' || ps === 'paused' || ps === 'resuming';

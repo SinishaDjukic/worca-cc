@@ -170,6 +170,53 @@ describe('/status', () => {
     expect(reply).toContain('run-missing');
     expect(reply).toContain('unknown');
   });
+
+  it('/status with wildcard suffix resolves unique match', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: '20260418-165332-245-2db5',
+            pipeline_status: 'failed',
+            stages: {},
+          },
+          {
+            id: '20260418-164951-689-931f',
+            pipeline_status: 'completed',
+            stages: {},
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['*2db5']);
+    expect(reply).toContain('20260418-165332-245-2db5');
+    expect(reply).toContain('failed');
+  });
+
+  it('/status with wildcard suffix shows disambig for multiple matches', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          { id: 'run-001-abc', pipeline_status: 'running', stages: {} },
+          { id: 'run-002-abc', pipeline_status: 'failed', stages: {} },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['*abc']);
+    expect(reply).toContain('Multiple runs match');
+    expect(reply).toContain('run-001-abc');
+    expect(reply).toContain('run-002-abc');
+  });
 });
 
 // --- /runs ---
