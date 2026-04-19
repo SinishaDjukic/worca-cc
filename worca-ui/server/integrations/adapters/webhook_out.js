@@ -3,6 +3,8 @@
  * @module adapters/webhook_out
  */
 
+import { toDiscordMarkdown, toPlainText, toSlackMrkdwn } from '../markdown.js';
+
 const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
 
 // ---------------------------------------------------------------------------
@@ -10,7 +12,11 @@ const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
 // ---------------------------------------------------------------------------
 
 function bodyToPlain(msg) {
-  return msg.body.map((seg) => seg.value).join('');
+  return msg.body
+    .map((seg) =>
+      seg.kind === 'markdown' ? toPlainText(seg.value) : seg.value,
+    )
+    .join('');
 }
 
 function bodyToMrkdwn(msg) {
@@ -18,6 +24,9 @@ function bodyToMrkdwn(msg) {
   if (msg.title) parts.push(`*${msg.title}*\n`);
   for (const seg of msg.body) {
     switch (seg.kind) {
+      case 'markdown':
+        parts.push(toSlackMrkdwn(seg.value));
+        break;
       case 'bold':
         parts.push(`*${seg.value}*`);
         break;
@@ -42,6 +51,9 @@ function bodyToMarkdown(msg) {
   if (msg.title) parts.push(`**${msg.title}**\n`);
   for (const seg of msg.body) {
     switch (seg.kind) {
+      case 'markdown':
+        parts.push(toDiscordMarkdown(seg.value));
+        break;
       case 'bold':
         parts.push(`**${seg.value}**`);
         break;

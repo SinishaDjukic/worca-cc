@@ -144,7 +144,7 @@ describe('createGlobalHandlers', () => {
     const reply = await whoami(CHAT, []);
     expect(reply).toContain('telegram:12345');
     expect(reply).toContain('my-proj');
-    expect(reply).toContain('Muted: no');
+    expect(reply).toContain('**Muted:** no');
   });
 
   // /projects — no projects
@@ -194,7 +194,7 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await use(CHAT, ['worca-cc']);
-    expect(reply).toContain('Active project set to: worca-cc');
+    expect(reply).toContain('**Active project** set to: worca-cc');
     expect(chatCtx.set).toHaveBeenCalledWith(CHAT, {
       active_project: 'worca-cc',
     });
@@ -372,7 +372,7 @@ describe('createGlobalHandlers', () => {
     const reply = await handlers.active(CHAT, []);
     expect(reply).toContain('Active pipelines');
     expect(reply).toContain('run-001');
-    expect(reply).toContain('Project: myproj');
+    expect(reply).toContain('**Project:** myproj');
   });
 
   // /active — no runs

@@ -126,7 +126,7 @@ Project commands require /use first.`;
  */
 export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
   async function start(chatKey) {
-    return `Your chat ID is: ${chatIdOnly(chatKey)}`;
+    return `**Chat ID:** \`${chatIdOnly(chatKey)}\``;
   }
 
   async function help() {
@@ -137,7 +137,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     const state = chatContext.get(chatKey);
     const active = state.active_project ?? '(none)';
     const muted = chatContext.isMuted(chatKey) ? 'yes' : 'no';
-    return `Chat ID: ${chatIdOnly(chatKey)}\nActive project: ${active}\nMuted: ${muted}`;
+    return `**Chat ID:** \`${chatIdOnly(chatKey)}\`\n**Active project:** ${active}\n**Muted:** ${muted}`;
   }
 
   async function projects() {
@@ -156,7 +156,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
       return `Project "${name}" not found.\nKnown projects: ${known}`;
     }
     chatContext.set(chatKey, { active_project: name });
-    return `Active project set to: ${name}`;
+    return `**Active project** set to: ${name}`;
   }
 
   async function active(chatKey) {
@@ -182,15 +182,15 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
           const title = run.work_request?.title;
           const stage = run.stage;
           const elapsed = fmtElapsedFromRun(run);
-          const parts = [`${statusEmoji(ps)} Run: ${id}`];
-          parts.push(`   Project: ${project.name}`);
-          if (title) parts.push(`   Title: ${title}`);
+          const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+          parts.push(`   **Project:** ${project.name}`);
+          if (title) parts.push(`   **Title:** ${title}`);
           if (stage && elapsed) {
-            parts.push(`   Stage: ${stage} | Duration: ${elapsed}`);
+            parts.push(`   **Stage:** ${stage} | **Duration:** ${elapsed}`);
           } else if (stage) {
-            parts.push(`   Stage: ${stage}`);
+            parts.push(`   **Stage:** ${stage}`);
           } else if (elapsed) {
-            parts.push(`   Duration: ${elapsed}`);
+            parts.push(`   **Duration:** ${elapsed}`);
           }
           lines.push(parts.join('\n'));
         }

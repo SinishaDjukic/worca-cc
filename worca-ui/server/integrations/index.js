@@ -175,7 +175,7 @@ export function createIntegrations({
     if (!entry) return;
     const msg = {
       title: null,
-      body: [{ kind: 'text', value: text }],
+      body: [{ kind: 'markdown', value: text }],
       severity: 'info',
     };
     const rl = rateLimiters.get(platform);

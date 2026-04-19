@@ -36,6 +36,7 @@ export const MESSAGE_SEGMENT_KINDS = [
   'code',
   'code_block',
   'link',
+  'markdown',
 ];
 
 export const SEVERITY_LEVELS = ['info', 'success', 'warning', 'error'];

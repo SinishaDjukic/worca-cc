@@ -22,6 +22,9 @@ export function renderToMarkdown(msg) {
   }
   for (const seg of msg.body) {
     switch (seg.kind) {
+      case 'markdown':
+        parts.push(seg.value);
+        break;
       case 'bold':
         parts.push(`**${seg.value}**`);
         break;

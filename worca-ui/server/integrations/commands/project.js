@@ -25,8 +25,8 @@ async function resolveRunId(restClient, projectId, args, command) {
       const id = r.id ?? r.run_id;
       const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
       const title = r.work_request?.title;
-      const parts = [`${statusEmoji(ps)} Run: ${id}`];
-      if (title) parts.push(`   Title: ${title}`);
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
       return parts.join('\n');
     });
     const cmd = command || 'status';
@@ -120,16 +120,17 @@ function fmtStatusBlock(run) {
   const stage = run.stage;
   const iteration = run.iteration ?? run.stages?.[stage]?.iterations?.length;
 
-  const parts = [`${statusEmoji(ps)} Run: ${id}`];
-  if (title) parts.push(`   Title: ${title}`);
-  parts.push(`   Status: ${ps}`);
+  const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+  if (title) parts.push(`   **Title:** ${title}`);
+  parts.push(`   **Status:** ${ps}`);
   if (stage) {
     const iterPart = iteration ? ` (iteration ${iteration})` : '';
-    parts.push(`   Stage: ${stage}${iterPart}`);
+    parts.push(`   **Stage:** ${stage}${iterPart}`);
   }
-  if (elapsed) parts.push(`   Duration: ${elapsed}`);
-  if (cost) parts.push(`   Cost: ${cost}`);
-  if (ps === 'completed' && run.pr_url) parts.push(`   PR: ${run.pr_url}`);
+  if (elapsed) parts.push(`   **Duration:** ${elapsed}`);
+  if (cost) parts.push(`   **Cost:** ${cost}`);
+  if (ps === 'completed' && run.pr_url)
+    parts.push(`   **PR:** [${run.pr_url}](${run.pr_url})`);
   return parts.join('\n');
 }
 
@@ -192,9 +193,9 @@ export function createProjectHandlers({ chatContext, restClient }) {
       const id = r.id ?? r.run_id;
       const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
       const title = r.work_request?.title;
-      const parts = [`${statusEmoji(ps)} Run: ${id}`];
-      if (title) parts.push(`   Title: ${title}`);
-      parts.push(`   Status: ${ps}`);
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
+      parts.push(`   **Status:** ${ps}`);
       return parts.join('\n');
     });
     return `Recent runs (${project}):\n\n${lines.join('\n')}`;
@@ -235,9 +236,9 @@ export function createProjectHandlers({ chatContext, restClient }) {
       const title = r.work_request?.title;
       const costVal = rawCostFromStages(r.stages);
       grandTotal += costVal;
-      const parts = [`${statusEmoji(ps)} Run: ${id}`];
-      if (title) parts.push(`   Title: ${title}`);
-      parts.push(`   Cost: $${costVal.toFixed(2)}`);
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
+      parts.push(`   **Cost:** $${costVal.toFixed(2)}`);
       return parts.join('\n');
     });
 
@@ -265,8 +266,8 @@ export function createProjectHandlers({ chatContext, restClient }) {
     );
     if (!resp.data?.ok) return `Run "${runId}" not found (404).`;
     const { pr_url } = resp.data;
-    if (!pr_url) return `Run: ${runId}\nNo PR created yet.`;
-    return `\u{1F517} Run: ${runId}\n   PR: ${pr_url}`;
+    if (!pr_url) return `**Run:** \`${runId}\`\nNo PR created yet.`;
+    return `\u{1F517} **Run:** \`${runId}\`\n   **PR:** [${pr_url}](${pr_url})`;
   }
 
   async function error(chatKey, args) {
@@ -317,17 +318,17 @@ export function createProjectHandlers({ chatContext, restClient }) {
       if (errorMsg) break;
     }
 
-    const parts = [`${statusEmoji(ps)} Run: ${runId}`];
-    if (title) parts.push(`   Title: ${title}`);
-    if (stopReason) parts.push(`   Stop reason: ${stopReason}`);
+    const parts = [`${statusEmoji(ps)} **Run:** \`${runId}\``];
+    if (title) parts.push(`   **Title:** ${title}`);
+    if (stopReason) parts.push(`   **Stop reason:** ${stopReason}`);
     if (failedStage) {
       const iterLabel = failedIter ? ` (iteration ${failedIter})` : '';
-      parts.push(`   Failed stage: ${failedStage}${iterLabel}`);
+      parts.push(`   **Failed stage:** ${failedStage}${iterLabel}`);
     }
     if (errorMsg) {
       const truncated =
         errorMsg.length > 300 ? `${errorMsg.slice(0, 300)}\u2026` : errorMsg;
-      parts.push(`   Error: ${truncated}`);
+      parts.push(`   **Error:** ${truncated}`);
     }
     if (!stopReason && !errorMsg) {
       parts.push('   No error details available.');

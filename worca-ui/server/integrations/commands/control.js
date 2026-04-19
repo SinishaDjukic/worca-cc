@@ -19,8 +19,8 @@ async function resolveRunId(restClient, projectId, args, command) {
       const id = r.id ?? r.run_id;
       const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
       const title = r.work_request?.title;
-      const parts = [`${statusEmoji(ps)} Run: ${id}`];
-      if (title) parts.push(`   Title: ${title}`);
+      const parts = [`${statusEmoji(ps)} **Run:** \`${id}\``];
+      if (title) parts.push(`   **Title:** ${title}`);
       return parts.join('\n');
     });
     return {
@@ -73,7 +73,7 @@ export function createControlHandlers({ chatContext, restClient }) {
     const resp = await invokeControl(restClient, project, runId, action);
     if (!resp.data)
       return `Failed to ${action} run "${runId}" (${resp.status}).`;
-    return `${ACTION_EMOJI[action]} ${ACTION_PAST[action]} run: ${runId}`;
+    return `${ACTION_EMOJI[action]} ${ACTION_PAST[action]} run: \`${runId}\``;
   }
 
   async function pause(chatKey, args) {

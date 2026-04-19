@@ -3,6 +3,8 @@
  * @module adapters/slack
  */
 
+import { toSlackMrkdwn } from '../markdown.js';
+
 const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
 
 // ---------------------------------------------------------------------------
@@ -21,6 +23,9 @@ export function renderToMrkdwn(msg) {
   }
   for (const seg of msg.body) {
     switch (seg.kind) {
+      case 'markdown':
+        parts.push(toSlackMrkdwn(seg.value));
+        break;
       case 'bold':
         parts.push(`*${seg.value}*`);
         break;

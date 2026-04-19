@@ -17,6 +17,7 @@ describe('adapter typedefs', () => {
       'code',
       'code_block',
       'link',
+      'markdown',
     ]);
   });
 

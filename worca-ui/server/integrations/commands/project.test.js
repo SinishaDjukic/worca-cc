@@ -89,10 +89,10 @@ describe('/status', () => {
       restClient,
     });
     const reply = await handlers.status(CHAT, ['run-001']);
-    expect(reply).toContain('Run: run-001');
-    expect(reply).toContain('Status: running');
-    expect(reply).toContain('Title: Add auth');
-    expect(reply).toContain('Stage: implementer');
+    expect(reply).toContain('run-001');
+    expect(reply).toContain('**Status:** running');
+    expect(reply).toContain('**Title:** Add auth');
+    expect(reply).toContain('**Stage:** implementer');
   });
 
   it('/status with no run_id resolves the unique active run', async () => {
@@ -198,9 +198,9 @@ describe('/runs', () => {
     expect(reply).toContain(`Recent runs (${PROJECT})`);
     expect(reply).toContain('run-001');
     expect(reply).toContain('run-002');
-    expect(reply).toContain('Title: First task');
-    expect(reply).toContain('Status: completed');
-    expect(reply).toContain('Status: running');
+    expect(reply).toContain('**Title:** First task');
+    expect(reply).toContain('**Status:** completed');
+    expect(reply).toContain('**Status:** running');
   });
 
   it('/runs [N] limits results', async () => {
@@ -265,8 +265,8 @@ describe('/last', () => {
     });
     const reply = await handlers.last(CHAT, []);
     expect(reply).toContain('run-001');
-    expect(reply).toContain('Status: completed');
-    expect(reply).toContain('Title: My task');
+    expect(reply).toContain('**Status:** completed');
+    expect(reply).toContain('**Title:** My task');
   });
 
   it('/last returns message with project name when no runs exist', async () => {
@@ -316,7 +316,7 @@ describe('/cost', () => {
     expect(reply).toContain(`Cost summary (${PROJECT})`);
     expect(reply).toContain('run-001');
     expect(reply).toContain('$0.42');
-    expect(reply).toContain('Title: Auth feature');
+    expect(reply).toContain('**Title:** Auth feature');
   });
 
   it('/cost with run_id arg filters to that run', async () => {
@@ -403,8 +403,8 @@ describe('/pr', () => {
     });
     const reply = await handlers.pr(CHAT, ['run-001']);
     expect(reply).toContain('https://github.com/org/repo/pull/42');
-    expect(reply).toContain('Run: run-001');
-    expect(reply).toContain('PR:');
+    expect(reply).toContain('run-001');
+    expect(reply).toContain('**PR:**');
   });
 
   it('/pr returns no-pr message when pr_url is absent', async () => {

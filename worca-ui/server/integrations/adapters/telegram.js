@@ -5,6 +5,7 @@
 
 import { mkdir, open, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { toTelegramHtml } from '../markdown.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const LONG_POLL_TIMEOUT_SEC = 30;
@@ -34,6 +35,9 @@ export function renderToHtml(msg) {
   }
   for (const seg of msg.body) {
     switch (seg.kind) {
+      case 'markdown':
+        parts.push(toTelegramHtml(seg.value));
+        break;
       case 'bold':
         parts.push(`<b>${escapeHtml(seg.value)}</b>`);
         break;
