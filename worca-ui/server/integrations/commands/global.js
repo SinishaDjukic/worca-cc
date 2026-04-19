@@ -53,21 +53,48 @@ const TERMINAL_STATUSES = new Set([
   'cancelled',
 ]);
 
-/**
- * Format elapsed time. For terminal runs without completed_at, returns null
- * (avoids showing "time since start until now" which grows indefinitely).
- * For running pipelines, shows live elapsed from started_at.
- */
-function fmtElapsed(startedAt, completedAt, pipelineStatus) {
-  if (!startedAt) return null;
-  if (!completedAt && TERMINAL_STATUSES.has(pipelineStatus)) return null;
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const ms = end - new Date(startedAt).getTime();
-  if (ms < 0) return null;
+function fmtMs(ms) {
   const totalSec = Math.floor(ms / 1000);
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`;
+}
+
+/**
+ * Compute run duration from stage iteration timestamps. Uses run-level
+ * completed_at when available, otherwise derives from the latest iteration.
+ * For running pipelines, shows live elapsed.
+ */
+function fmtElapsedFromRun(run) {
+  if (!run?.started_at) return null;
+  const startedAt = run.started_at;
+  const completedAt = run.completed_at;
+
+  if (completedAt) {
+    const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+    return ms >= 0 ? fmtMs(ms) : null;
+  }
+
+  const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
+  if (TERMINAL_STATUSES.has(ps)) {
+    let lastEnd = null;
+    for (const stage of Object.values(run.stages || {})) {
+      for (const iter of stage.iterations || []) {
+        if (iter.completed_at) {
+          const t = new Date(iter.completed_at).getTime();
+          if (!lastEnd || t > lastEnd) lastEnd = t;
+        }
+      }
+    }
+    if (lastEnd) {
+      const ms = lastEnd - new Date(startedAt).getTime();
+      return ms >= 0 ? fmtMs(ms) : null;
+    }
+    return null;
+  }
+
+  const ms = Date.now() - new Date(startedAt).getTime();
+  return ms >= 0 ? fmtMs(ms) : null;
 }
 
 const HELP_TEXT = `/start \u2014 show your chat ID
@@ -153,7 +180,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
           const id = run.id ?? run.run_id;
           const title = run.work_request?.title;
           const stage = run.stage;
-          const elapsed = fmtElapsed(run.started_at, run.completed_at, ps);
+          const elapsed = fmtElapsedFromRun(run);
           const parts = [`${statusEmoji(ps)} Run: ${id}`];
           parts.push(`   Project: ${project.name}`);
           if (title) parts.push(`   Title: ${title}`);
@@ -205,6 +232,6 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     unmute,
     // Exported for reuse by project commands
     _fmtCostFromStages: fmtCostFromStages,
-    _fmtElapsed: fmtElapsed,
+    _fmtElapsedFromRun: fmtElapsedFromRun,
   };
 }
