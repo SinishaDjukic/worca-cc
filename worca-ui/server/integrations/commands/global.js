@@ -45,8 +45,22 @@ function fmtCostFromStages(stages) {
   return totalCost > 0 ? `$${totalCost.toFixed(2)}` : null;
 }
 
-function fmtElapsed(startedAt, completedAt) {
+const TERMINAL_STATUSES = new Set([
+  'completed',
+  'failed',
+  'interrupted',
+  'stopped',
+  'cancelled',
+]);
+
+/**
+ * Format elapsed time. For terminal runs without completed_at, returns null
+ * (avoids showing "time since start until now" which grows indefinitely).
+ * For running pipelines, shows live elapsed from started_at.
+ */
+function fmtElapsed(startedAt, completedAt, pipelineStatus) {
   if (!startedAt) return null;
+  if (!completedAt && TERMINAL_STATUSES.has(pipelineStatus)) return null;
   const end = completedAt ? new Date(completedAt).getTime() : Date.now();
   const ms = end - new Date(startedAt).getTime();
   if (ms < 0) return null;
@@ -139,7 +153,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
           const id = run.id ?? run.run_id;
           const title = run.work_request?.title;
           const stage = run.stage;
-          const elapsed = fmtElapsed(run.started_at, run.completed_at);
+          const elapsed = fmtElapsed(run.started_at, run.completed_at, ps);
           const parts = [`${statusEmoji(ps)} Run: ${id}`];
           parts.push(`   Project: ${project.name}`);
           if (title) parts.push(`   Title: ${title}`);

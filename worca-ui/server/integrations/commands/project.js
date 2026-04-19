@@ -37,8 +37,17 @@ async function resolveRunId(restClient, projectId, args, command) {
   return { runId: null };
 }
 
-function fmtElapsed(startedAt, completedAt) {
+const TERMINAL_STATUSES = new Set([
+  'completed',
+  'failed',
+  'interrupted',
+  'stopped',
+  'cancelled',
+]);
+
+function fmtElapsed(startedAt, completedAt, pipelineStatus) {
   if (!startedAt) return null;
+  if (!completedAt && TERMINAL_STATUSES.has(pipelineStatus)) return null;
   const end = completedAt ? new Date(completedAt).getTime() : Date.now();
   const ms = end - new Date(startedAt).getTime();
   if (ms < 0) return null;
@@ -72,7 +81,7 @@ function fmtStatusBlock(run) {
   const id = run.id ?? run.run_id;
   const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
   const title = run.work_request?.title;
-  const elapsed = fmtElapsed(run.started_at, run.completed_at);
+  const elapsed = fmtElapsed(run.started_at, run.completed_at, ps);
   const cost = fmtCostFromStages(run.stages);
   const stage = run.stage;
   const iteration = run.iteration ?? run.stages?.[stage]?.iterations?.length;

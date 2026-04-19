@@ -107,21 +107,24 @@ app.locals.broadcast = broadcast;
 app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
 
-// Boot chat integrations (no-op stub if config absent or disabled)
-const integrationsOpts = {
-  port,
-  host,
-  prefsDir,
-  configPath: join(prefsDir, 'integrations', 'config.json'),
-};
-app.locals.integrations = createIntegrations(integrationsOpts);
-// When the first adapter is saved and no integrations were configured at boot,
-// we need to create a real integrations instance to replace the no-op stub.
-app.locals.ensureIntegrations = () => {
-  if (!app.locals.integrations?.reloadAdapter) {
-    app.locals.integrations = createIntegrations(integrationsOpts);
-  }
-};
+// Boot chat integrations only in global mode — project-scoped instances skip
+// integrations to avoid duplicate Telegram long-poll connections on the same bot.
+if (isGlobal) {
+  const integrationsOpts = {
+    port,
+    host,
+    prefsDir,
+    configPath: join(prefsDir, 'integrations', 'config.json'),
+  };
+  app.locals.integrations = createIntegrations(integrationsOpts);
+  app.locals.ensureIntegrations = () => {
+    if (!app.locals.integrations?.reloadAdapter) {
+      app.locals.integrations = createIntegrations(integrationsOpts);
+    }
+  };
+} else {
+  console.log('[integrations] Skipped — integrations only run in global mode');
+}
 
 // ─── worca-cc version check (non-blocking) ─────────────────────────────
 checkWorcaVersion().then((result) => {
