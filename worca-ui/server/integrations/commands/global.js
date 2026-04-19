@@ -116,7 +116,7 @@ const HELP_TEXT = `/start \u2014 show your chat ID
 /stop [run_id] \u2014 stop run
 
 Commands with [run_id] auto-resolve to the active run if omitted.
-Use *suffix to match by ending, e.g. /status *2db5
+Use \`*suffix\` to match by ending, e.g. /status \`*2db5\`
 Project commands require /use first.`;
 
 /**
