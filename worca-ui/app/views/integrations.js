@@ -325,8 +325,6 @@ export function integrationsTab(integrationsState, options) {
           const st = adapterStatus(meta.key, status);
           const cfg = adapterConfig(meta.key, config);
           const hasConfig = !!cfg;
-          const isRunning = hasConfig && !!st;
-          const isPending = hasConfig && !st && cfg.enabled !== false;
           const isEditing = editingAdapter === meta.key;
           const form = forms?.[meta.key] || {
             chatId: '',
@@ -352,9 +350,7 @@ export function integrationsTab(integrationsState, options) {
               options.onToggleEnabled?.(meta.key, enabled),
           };
 
-          if (isRunning || (hasConfig && cfg.enabled !== false))
-            return configuredCard(meta, st, cfg, cardOptions);
-          if (isPending) return pendingCard(meta, cfg, cardOptions);
+          if (hasConfig) return configuredCard(meta, st, cfg, cardOptions);
           return unconfiguredCard(meta, cardOptions);
         })}
       </div>
