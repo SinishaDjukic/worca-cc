@@ -4347,8 +4347,21 @@ sl-tooltip.bead-tooltip::part(body) {
   border-left: 3px solid var(--sl-color-success-500);
 }
 
+.ig-card--disabled {
+  border-left: 3px solid var(--sl-color-neutral-300);
+  opacity: 0.7;
+}
+
 .ig-card--pending {
   border-left: 3px solid var(--sl-color-warning-500);
+}
+
+.ig-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+  padding-left: 2.75rem;
 }
 
 .ig-card-pending-hint {

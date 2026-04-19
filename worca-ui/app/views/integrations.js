@@ -86,21 +86,16 @@ function adapterStatus(key, status) {
   return status.adapters.find((a) => a.name === key) || null;
 }
 
-function adapterChats(key, status) {
-  if (!status?.chats) return [];
-  return status.chats.filter((c) => c.platform === key);
-}
-
 function adapterConfig(key, config) {
   return config?.[key] || null;
 }
 
-// ── Connected card (expanded with stats) ────────────────────────────────
+// ── Configured card (has config saved) ──────────────────────────────────
 
-function connectedCard(
+function configuredCard(
   meta,
   adapterSt,
-  _cfg,
+  cfg,
   {
     editing,
     form,
@@ -111,14 +106,16 @@ function connectedCard(
     onSave,
     onRemove,
     onDetect,
+    onToggleEnabled,
   },
 ) {
+  const isEnabled = cfg?.enabled !== false;
   const isPersistent = adapterSt?.persistent;
-  const conn = adapterSt?.connection; // 'connecting' | 'connected' | 'disconnected'
+  const conn = adapterSt?.connection;
   const connErr = adapterSt?.connection_error;
 
   function connectionBadge() {
-    if (!isPersistent) return nothing;
+    if (!isPersistent || !isEnabled) return nothing;
     if (conn === 'connected')
       return html`<sl-badge variant="success" pill>Connected</sl-badge>`;
     if (conn === 'connecting')
@@ -127,7 +124,7 @@ function connectedCard(
   }
 
   return html`
-    <div class="ig-card ig-card--connected">
+    <div class="ig-card ${isEnabled ? 'ig-card--connected' : 'ig-card--disabled'}">
       <div class="ig-card-header">
         <span class="ig-card-icon">${unsafeHTML(meta.icon)}</span>
         <div class="ig-card-title">
@@ -139,10 +136,16 @@ function connectedCard(
           ${connectionBadge()}
         </div>
       </div>
-      <div class="ig-card-stats">
-        <span>Last event: ${formatLastEvent(adapterSt?.last_event_at)}</span>
-        ${(adapterSt?.dropped_messages || 0) > 0 ? html`<span class="stat-warn">Dropped: ${adapterSt.dropped_messages}</span>` : nothing}
-      </div>
+      ${
+        isEnabled && adapterSt
+          ? html`
+        <div class="ig-card-stats">
+          <span>Last event: ${formatLastEvent(adapterSt.last_event_at)}</span>
+          ${(adapterSt.dropped_messages || 0) > 0 ? html`<span class="stat-warn">Dropped: ${adapterSt.dropped_messages}</span>` : nothing}
+        </div>
+      `
+          : nothing
+      }
       ${
         editing
           ? configForm(meta, form, {
@@ -153,9 +156,14 @@ function connectedCard(
               onDetect,
             })
           : html`
-          <div class="ig-card-actions">
-            <sl-button size="small" @click=${onEdit}>Edit</sl-button>
-            <sl-button size="small" variant="danger" outline @click=${onRemove}>Remove</sl-button>
+          <div class="ig-card-footer">
+            <div class="ig-card-actions">
+              <sl-button size="small" @click=${onEdit}>Edit</sl-button>
+              <sl-button size="small" variant="danger" outline @click=${onRemove}>Remove</sl-button>
+            </div>
+            <sl-switch size="small" ?checked=${isEnabled}
+              @sl-change=${(e) => onToggleEnabled(e.target.checked)}
+            >${isEnabled ? 'Enabled' : 'Disabled'}</sl-switch>
           </div>
         `
       }
@@ -163,9 +171,10 @@ function connectedCard(
   `;
 }
 
-// ── Pending card (configured, needs restart) ────────────────────────────
+// ── Pending card (configured but adapter not started) ───────────────────
 
-function pendingCard(meta, _cfg, { onEdit, onRemove }) {
+function pendingCard(meta, cfg, { onEdit, onRemove, onToggleEnabled }) {
+  const isEnabled = cfg?.enabled !== false;
   return html`
     <div class="ig-card ig-card--pending">
       <div class="ig-card-header">
@@ -177,22 +186,27 @@ function pendingCard(meta, _cfg, { onEdit, onRemove }) {
         <sl-badge variant="warning" pill>Not connected</sl-badge>
       </div>
       <div class="ig-card-pending-hint">Configuration saved but adapter failed to connect. Check the token and server logs.</div>
-      <div class="ig-card-actions">
-        <sl-button size="small" @click=${onEdit}>Edit</sl-button>
-        <sl-button size="small" variant="danger" outline @click=${onRemove}>Remove</sl-button>
+      <div class="ig-card-footer">
+        <div class="ig-card-actions">
+          <sl-button size="small" @click=${onEdit}>Edit</sl-button>
+          <sl-button size="small" variant="danger" outline @click=${onRemove}>Remove</sl-button>
+        </div>
+        <sl-switch size="small" ?checked=${isEnabled}
+          @sl-change=${(e) => onToggleEnabled(e.target.checked)}
+        >${isEnabled ? 'Enabled' : 'Disabled'}</sl-switch>
       </div>
     </div>
   `;
 }
 
-// ── Disconnected card (compact) ─────────────────────────────────────────
+// ── Unconfigured card ───────────────────────────────────────────────────
 
-function disconnectedCard(
+function unconfiguredCard(
   meta,
   {
     editing,
     form,
-    onConnect,
+    onConfigure,
     onCancel,
     onFieldChange,
     onEventToggle,
@@ -221,7 +235,7 @@ function disconnectedCard(
             })
           : html`
           <div class="ig-card-actions">
-            <sl-button size="small" variant="primary" @click=${onConnect}>Connect</sl-button>
+            <sl-button size="small" variant="primary" @click=${onConfigure}>Configure</sl-button>
           </div>
         `
       }
@@ -310,8 +324,9 @@ export function integrationsTab(integrationsState, options) {
         ${ADAPTERS.map((meta) => {
           const st = adapterStatus(meta.key, status);
           const cfg = adapterConfig(meta.key, config);
-          const isConnected = !!cfg?.enabled && !!st;
-          const isPending = !!cfg?.enabled && !st;
+          const hasConfig = !!cfg;
+          const isRunning = hasConfig && !!st;
+          const isPending = hasConfig && !st && cfg.enabled !== false;
           const isEditing = editingAdapter === meta.key;
           const form = forms?.[meta.key] || {
             chatId: '',
@@ -325,7 +340,7 @@ export function integrationsTab(integrationsState, options) {
             editing: isEditing,
             form,
             onEdit: () => options.onStartEdit(meta.key),
-            onConnect: () => options.onStartEdit(meta.key),
+            onConfigure: () => options.onStartEdit(meta.key),
             onCancel: () => options.onCancelEdit(),
             onFieldChange: (field, value) =>
               options.onFieldChange(meta.key, field, value),
@@ -333,11 +348,14 @@ export function integrationsTab(integrationsState, options) {
             onSave: () => options.onSave(meta.key),
             onRemove: () => options.onRemove(meta.key),
             onDetect: () => options.onDetect?.(meta.key),
+            onToggleEnabled: (enabled) =>
+              options.onToggleEnabled?.(meta.key, enabled),
           };
 
-          if (isConnected) return connectedCard(meta, st, cfg, cardOptions);
+          if (isRunning || (hasConfig && cfg.enabled !== false))
+            return configuredCard(meta, st, cfg, cardOptions);
           if (isPending) return pendingCard(meta, cfg, cardOptions);
-          return disconnectedCard(meta, cardOptions);
+          return unconfiguredCard(meta, cardOptions);
         })}
       </div>
     </div>

@@ -298,6 +298,17 @@ function handleIgRemove(adapter) {
     .catch(() => rerender());
 }
 
+function handleIgToggleEnabled(adapter, enabled) {
+  fetch(`/api/integrations/config/${adapter}/enabled`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+    .then((r) => r.json())
+    .then(() => fetchIntegrationsData())
+    .catch(() => rerender());
+}
+
 function handleIgDetect(adapter) {
   if (adapter !== 'telegram') return;
   const form = getIntegrationsForm(adapter);
@@ -1969,6 +1980,7 @@ function mainContentView() {
       onIgSave: handleIgSave,
       onIgRemove: handleIgRemove,
       onIgDetect: handleIgDetect,
+      onIgToggleEnabled: handleIgToggleEnabled,
       onProjectAdd: (result) => {
         if (result?.openDialog) {
           store.setState({ addProjectDialogOpen: true });

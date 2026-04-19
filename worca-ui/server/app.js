@@ -619,6 +619,46 @@ export function createApp(options = {}) {
   });
 
   // DELETE /api/integrations/config/:adapter — remove an adapter
+  // PATCH /api/integrations/config/:adapter/enabled — toggle adapter on/off
+  app.patch('/api/integrations/config/:adapter/enabled', async (req, res) => {
+    const { adapter } = req.params;
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    const adapterKeys = ['telegram', 'discord', 'slack'];
+    if (!adapterKeys.includes(adapter)) {
+      return res.status(400).json({ error: `Invalid adapter: ${adapter}` });
+    }
+    const configPath = join(prefsDir, 'integrations', 'config.json');
+    let cfg;
+    try {
+      cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+    } catch {
+      return res.status(404).json({ error: 'No integrations config' });
+    }
+    if (!cfg[adapter]) {
+      return res
+        .status(404)
+        .json({ error: `Adapter ${adapter} not configured` });
+    }
+    cfg[adapter].enabled = enabled;
+    writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+
+    // Hot-reload: if disabling, remove the adapter; if enabling, reload it
+    if (app.locals.ensureIntegrations) app.locals.ensureIntegrations();
+    if (enabled) {
+      if (app.locals.integrations?.reloadAdapter) {
+        await app.locals.integrations.reloadAdapter(adapter);
+      }
+    } else {
+      if (app.locals.integrations?.removeAdapter) {
+        await app.locals.integrations.removeAdapter(adapter);
+      }
+    }
+    res.json({ ok: true, enabled });
+  });
+
   app.delete('/api/integrations/config/:adapter', async (req, res) => {
     const { adapter } = req.params;
     const adapterKeys = ['telegram', 'discord', 'slack'];

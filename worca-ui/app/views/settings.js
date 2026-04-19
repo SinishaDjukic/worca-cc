@@ -1766,6 +1766,7 @@ export function settingsView(
     onIgSave,
     onIgRemove,
     onIgDetect,
+    onIgToggleEnabled,
   } = {},
 ) {
   // Reload base settings when switching from project-scoped view
@@ -1798,7 +1799,7 @@ export function settingsView(
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
         <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, rerender })}</sl-tab-panel>
-        <sl-tab-panel name="integrations">${integrationsTab(integrations || {}, { onStartEdit: onIgStartEdit, onCancelEdit: onIgCancelEdit, onFieldChange: onIgFieldChange, onEventToggle: onIgEventToggle, onSave: onIgSave, onRemove: onIgRemove, onDetect: onIgDetect })}</sl-tab-panel>
+        <sl-tab-panel name="integrations">${integrationsTab(integrations || {}, { onStartEdit: onIgStartEdit, onCancelEdit: onIgCancelEdit, onFieldChange: onIgFieldChange, onEventToggle: onIgEventToggle, onSave: onIgSave, onRemove: onIgRemove, onDetect: onIgDetect, onToggleEnabled: onIgToggleEnabled })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;
