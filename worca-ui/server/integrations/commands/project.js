@@ -269,5 +269,71 @@ export function createProjectHandlers({ chatContext, restClient }) {
     return `\u{1F517} Run: ${runId}\n   PR: ${pr_url}`;
   }
 
-  return { status, runs, last, cost, pr };
+  async function error(chatKey, args) {
+    const project = requireProject(chatKey);
+    if (!project) return NO_ACTIVE_PROJECT;
+
+    let runId = args[0] ?? null;
+    if (!runId) {
+      // Find the most recent failed run
+      const resp = await restClient.get(
+        `/api/projects/${encodeURIComponent(project)}/runs`,
+      );
+      const all =
+        resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
+      const failed = all.find(
+        (r) =>
+          r.pipeline_status === 'failed' || r.pipeline_status === 'interrupted',
+      );
+      runId = failed ? (failed.id ?? failed.run_id) : null;
+    }
+    if (!runId)
+      return 'No failed run found.\nUse /error <run_id> to check a specific run.';
+
+    const resp = await restClient.get(
+      `/api/projects/${encodeURIComponent(project)}/runs`,
+    );
+    const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
+    const run = all.find((r) => (r.id ?? r.run_id) === runId);
+    if (!run) return `Run "${runId}" not found.`;
+
+    const ps = run.pipeline_status || 'unknown';
+    const title = run.work_request?.title;
+    const stopReason = run.stop_reason;
+
+    // Find the failed stage and its error
+    let failedStage = null;
+    let failedIter = null;
+    let errorMsg = null;
+    for (const [sname, sdata] of Object.entries(run.stages || {})) {
+      for (const iter of sdata.iterations || []) {
+        if (iter.error || iter.status === 'error') {
+          failedStage = sname;
+          failedIter = iter.number;
+          errorMsg = iter.error;
+          break;
+        }
+      }
+      if (errorMsg) break;
+    }
+
+    const parts = [`${statusEmoji(ps)} Run: ${runId}`];
+    if (title) parts.push(`   Title: ${title}`);
+    if (stopReason) parts.push(`   Stop reason: ${stopReason}`);
+    if (failedStage) {
+      const iterLabel = failedIter ? ` (iteration ${failedIter})` : '';
+      parts.push(`   Failed stage: ${failedStage}${iterLabel}`);
+    }
+    if (errorMsg) {
+      const truncated =
+        errorMsg.length > 300 ? `${errorMsg.slice(0, 300)}\u2026` : errorMsg;
+      parts.push(`   Error: ${truncated}`);
+    }
+    if (!stopReason && !errorMsg) {
+      parts.push('   No error details available.');
+    }
+    return parts.join('\n');
+  }
+
+  return { status, runs, last, cost, pr, error };
 }

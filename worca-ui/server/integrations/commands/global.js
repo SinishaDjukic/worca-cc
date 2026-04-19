@@ -110,6 +110,7 @@ const HELP_TEXT = `/start \u2014 show your chat ID
 /last \u2014 most recent run
 /cost [run_id] \u2014 cost summary
 /pr [run_id] \u2014 PR URL
+/error [run_id] \u2014 show failure details
 /pause [run_id] \u2014 pause active run
 /resume [run_id] \u2014 resume paused run
 /stop [run_id] \u2014 stop run

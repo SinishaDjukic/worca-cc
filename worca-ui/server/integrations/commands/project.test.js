@@ -43,7 +43,7 @@ function makeRestClient(responses = {}) {
 // --- requires active project ---
 
 describe('project-scoped commands — no active project', () => {
-  const commands = ['status', 'runs', 'last', 'cost', 'pr'];
+  const commands = ['status', 'runs', 'last', 'cost', 'pr', 'error'];
   let chatCtx;
   let restClient;
 
@@ -444,5 +444,89 @@ describe('/pr', () => {
     });
     const reply = await handlers.pr(CHAT, []);
     expect(reply).toContain('https://github.com/org/repo/pull/99');
+  });
+});
+
+// --- /error ---
+
+describe('/error', () => {
+  it('shows error details for a failed run', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-fail',
+            pipeline_status: 'failed',
+            stop_reason: 'circuit_breaker',
+            work_request: { title: 'add auth' },
+            stages: {
+              implement: {
+                iterations: [
+                  {
+                    number: 1,
+                    status: 'error',
+                    error: 'SyntaxError: unexpected token',
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.error(CHAT, ['run-fail']);
+    expect(reply).toContain('run-fail');
+    expect(reply).toContain('add auth');
+    expect(reply).toContain('circuit_breaker');
+    expect(reply).toContain('implement');
+    expect(reply).toContain('SyntaxError');
+  });
+
+  it('auto-selects most recent failed run when no run_id given', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          { id: 'run-ok', pipeline_status: 'completed', stages: {} },
+          {
+            id: 'run-bad',
+            pipeline_status: 'failed',
+            stop_reason: 'signal',
+            stages: {
+              plan: {
+                iterations: [{ number: 1, status: 'error', error: 'timeout' }],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.error(CHAT, []);
+    expect(reply).toContain('run-bad');
+    expect(reply).toContain('timeout');
+  });
+
+  it('returns message when no failed runs exist', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [{ id: 'run-ok', pipeline_status: 'completed', stages: {} }],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.error(CHAT, []);
+    expect(reply).toMatch(/no failed run/i);
   });
 });
