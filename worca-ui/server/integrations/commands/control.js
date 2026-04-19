@@ -1,7 +1,9 @@
+import { statusEmoji } from './global.js';
+
 const NO_ACTIVE_PROJECT =
   'No active project. Use `/projects` to list, `/use <name>` to select.';
 
-async function resolveRunId(restClient, projectId, args) {
+async function resolveRunId(restClient, projectId, args, command) {
   if (args[0]) return { runId: args[0] };
   const resp = await restClient.get(
     `/api/projects/${encodeURIComponent(projectId)}/runs`,
@@ -13,8 +15,17 @@ async function resolveRunId(restClient, projectId, args) {
   });
   if (active.length === 1) return { runId: active[0].id ?? active[0].run_id };
   if (active.length > 1) {
-    const list = active.map((r) => `\u2022 ${r.id ?? r.run_id}`).join('\n');
-    return { disambig: `Multiple active runs — specify a run ID:\n${list}` };
+    const lines = active.map((r) => {
+      const id = r.id ?? r.run_id;
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const parts = [`${statusEmoji(ps)} Run: ${id}`];
+      if (title) parts.push(`   Title: ${title}`);
+      return parts.join('\n');
+    });
+    return {
+      disambig: `Multiple active runs \u2014 specify a run ID:\n\n${lines.join('\n')}\n\nUsage: /${command} <run_id>`,
+    };
   }
   return { runId: null };
 }
@@ -25,6 +36,18 @@ async function invokeControl(restClient, projectId, runId, action) {
   );
   return resp;
 }
+
+const ACTION_EMOJI = {
+  pause: '\u{1F7E1}',
+  resume: '\u{1F7E2}',
+  stop: '\u{1F534}',
+};
+
+const ACTION_PAST = {
+  pause: 'Paused',
+  resume: 'Resumed',
+  stop: 'Stopped',
+};
 
 /**
  * Creates handlers for control commands: /pause /resume /stop.
@@ -38,31 +61,31 @@ export function createControlHandlers({ chatContext, restClient }) {
     return active_project ?? null;
   }
 
-  async function makeControlHandler(chatKey, args, action, pastTense) {
+  async function makeControlHandler(chatKey, args, action) {
     const project = requireProject(chatKey);
     if (!project) return NO_ACTIVE_PROJECT;
 
-    const resolved = await resolveRunId(restClient, project, args);
+    const resolved = await resolveRunId(restClient, project, args, action);
     if (resolved.disambig) return resolved.disambig;
     const runId = resolved.runId;
-    if (!runId) return 'No active run found.';
+    if (!runId) return 'No active run found.\nUse /runs to see recent runs.';
 
     const resp = await invokeControl(restClient, project, runId, action);
     if (!resp.data)
       return `Failed to ${action} run "${runId}" (${resp.status}).`;
-    return `${pastTense} ${runId}.`;
+    return `${ACTION_EMOJI[action]} ${ACTION_PAST[action]} run: ${runId}`;
   }
 
   async function pause(chatKey, args) {
-    return makeControlHandler(chatKey, args, 'pause', 'Paused');
+    return makeControlHandler(chatKey, args, 'pause');
   }
 
   async function resume(chatKey, args) {
-    return makeControlHandler(chatKey, args, 'resume', 'Resumed');
+    return makeControlHandler(chatKey, args, 'resume');
   }
 
   async function stop(chatKey, args) {
-    return makeControlHandler(chatKey, args, 'stop', 'Stopped');
+    return makeControlHandler(chatKey, args, 'stop');
   }
 
   return { pause, resume, stop };

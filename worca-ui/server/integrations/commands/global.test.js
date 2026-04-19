@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGlobalHandlers, parseDuration } from './global.js';
+import { createGlobalHandlers, parseDuration, statusEmoji } from './global.js';
 
 // --- parseDuration ---
 
@@ -16,6 +16,27 @@ describe('parseDuration', () => {
     expect(parseDuration('1week')).toBeNull();
     expect(parseDuration('abc')).toBeNull();
   });
+});
+
+// --- statusEmoji ---
+
+describe('statusEmoji', () => {
+  it('maps running to green circle', () =>
+    expect(statusEmoji('running')).toBe('\u{1F7E2}'));
+  it('maps resuming to green circle', () =>
+    expect(statusEmoji('resuming')).toBe('\u{1F7E2}'));
+  it('maps failed to red circle', () =>
+    expect(statusEmoji('failed')).toBe('\u{1F534}'));
+  it('maps stopped to red circle', () =>
+    expect(statusEmoji('stopped')).toBe('\u{1F534}'));
+  it('maps paused to yellow circle', () =>
+    expect(statusEmoji('paused')).toBe('\u{1F7E1}'));
+  it('maps completed to check mark', () =>
+    expect(statusEmoji('completed')).toBe('\u2705'));
+  it('maps unknown to white circle', () =>
+    expect(statusEmoji('unknown')).toBe('\u26AA'));
+  it('maps undefined to white circle', () =>
+    expect(statusEmoji(undefined)).toBe('\u26AA'));
 });
 
 // --- createGlobalHandlers ---
@@ -81,7 +102,7 @@ describe('createGlobalHandlers', () => {
   });
 
   // /start
-  it('/start returns the chat key in the response', async () => {
+  it('/start returns the numeric chat ID stripped of platform prefix', async () => {
     const { start } = createGlobalHandlers({
       chatContext: chatCtx,
       prefsDir: '/tmp',
@@ -103,6 +124,8 @@ describe('createGlobalHandlers', () => {
     expect(reply).toContain('/use');
     expect(reply).toContain('/mute');
     expect(reply).toContain('/stop');
+    expect(reply).toContain('auto-resolve');
+    expect(reply).toContain('/use first');
   });
 
   // /whoami
@@ -121,7 +144,7 @@ describe('createGlobalHandlers', () => {
     const reply = await whoami(CHAT, []);
     expect(reply).toContain('telegram:12345');
     expect(reply).toContain('my-proj');
-    expect(reply).toMatch(/muted.*no/i);
+    expect(reply).toContain('Muted: no');
   });
 
   // /projects — no projects
@@ -138,8 +161,8 @@ describe('createGlobalHandlers', () => {
     expect(reply).toMatch(/no projects/i);
   });
 
-  // /projects — lists projects
-  it('/projects lists registered project names', async () => {
+  // /projects — lists projects with header
+  it('/projects lists registered project names with header', async () => {
     const { mkdtempSync } = require('node:fs');
     const { join } = require('node:path');
     const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
@@ -152,6 +175,7 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await projects(CHAT, []);
+    expect(reply).toContain('Registered projects');
     expect(reply).toContain('alpha');
     expect(reply).toContain('/projects/alpha');
   });
@@ -170,14 +194,14 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await use(CHAT, ['worca-cc']);
-    expect(reply).toContain('worca-cc');
+    expect(reply).toContain('Active project set to: worca-cc');
     expect(chatCtx.set).toHaveBeenCalledWith(CHAT, {
       active_project: 'worca-cc',
     });
   });
 
-  // /use — rejects unknown project
-  it('/use rejects an unknown project name', async () => {
+  // /use — rejects unknown project with new format
+  it('/use rejects an unknown project name with "not found"', async () => {
     const { mkdtempSync } = require('node:fs');
     const { join } = require('node:path');
     const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
@@ -190,8 +214,9 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     const reply = await use(CHAT, ['no-such-project']);
-    expect(reply).toMatch(/unknown/i);
+    expect(reply).toContain('not found');
     expect(reply).toContain('no-such-project');
+    expect(reply).toContain('Known projects');
     expect(chatCtx.set).not.toHaveBeenCalled();
   });
 
@@ -225,7 +250,9 @@ describe('createGlobalHandlers', () => {
       restClient,
     });
     await active(CHAT, []);
-    expect(chatCtx.set).toHaveBeenCalledWith(CHAT, { active_project: 'solo' });
+    expect(chatCtx.set).toHaveBeenCalledWith(CHAT, {
+      active_project: 'solo',
+    });
   });
 
   // auto-select does NOT trigger with multiple projects
@@ -267,20 +294,22 @@ describe('createGlobalHandlers', () => {
   });
 
   // /mute with no arg mutes indefinitely (large future date)
-  it('/mute with no duration mutes indefinitely', async () => {
+  it('/mute with no duration mutes indefinitely with /unmute hint', async () => {
     const handlers = createGlobalHandlers({
       chatContext: chatCtx,
       prefsDir: '/tmp',
       restClient,
     });
-    await handlers.mute(CHAT, []);
+    const reply = await handlers.mute(CHAT, []);
+    expect(reply).toContain('muted indefinitely');
+    expect(reply).toContain('/unmute');
     const [, patch] = chatCtx.set.mock.calls[0];
     const muteUntil = new Date(patch.mute_until);
     // Should be at least 1 year in the future
     expect(muteUntil.getTime()).toBeGreaterThan(Date.now() + 364 * 86_400_000);
   });
 
-  // mute expiry: mute_until in the past → isMuted returns false
+  // mute expiry: mute_until in the past -> isMuted returns false
   it('mute expiry: isMuted() returns false when mute_until is in the past', () => {
     chatCtx._store[CHAT] = {
       mute_until: new Date(Date.now() - 1000).toISOString(),
@@ -308,18 +337,27 @@ describe('createGlobalHandlers', () => {
       prefsDir: '/tmp',
       restClient,
     });
-    await handlers.unmute(CHAT, []);
+    const reply = await handlers.unmute(CHAT, []);
+    expect(reply).toContain('Notifications restored');
     expect(chatCtx.set).toHaveBeenCalledWith(CHAT, { mute_until: null });
   });
 
-  // /active — lists running pipelines
-  it('/active lists running pipelines via REST', async () => {
+  // /active — lists running pipelines with project and emoji
+  it('/active lists running pipelines with project name and emoji', async () => {
     const { mkdtempSync } = require('node:fs');
     const { join } = require('node:path');
     const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
     const prefsDir = makePrefsDir(tmp, [{ name: 'myproj', path: '/myproj' }]);
     const rc = makeRestClient({
-      myproj: { runs: [{ id: 'run-001', pipeline_status: 'running' }] },
+      myproj: {
+        runs: [
+          {
+            id: 'run-001',
+            pipeline_status: 'running',
+            work_request: { title: 'Add auth' },
+          },
+        ],
+      },
     });
     chatCtx.get.mockReturnValue({
       active_project: 'myproj',
@@ -332,11 +370,13 @@ describe('createGlobalHandlers', () => {
       restClient: rc,
     });
     const reply = await handlers.active(CHAT, []);
+    expect(reply).toContain('Active pipelines');
     expect(reply).toContain('run-001');
+    expect(reply).toContain('Project: myproj');
   });
 
   // /active — no runs
-  it('/active returns no-active-runs message when all runs are non-running', async () => {
+  it('/active returns no-active-pipelines message when all runs are non-running', async () => {
     const { mkdtempSync } = require('node:fs');
     const { join } = require('node:path');
     const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
@@ -355,6 +395,6 @@ describe('createGlobalHandlers', () => {
       restClient: rc,
     });
     const reply = await handlers.active(CHAT, []);
-    expect(reply).toMatch(/no active/i);
+    expect(reply).toContain('No active pipelines');
   });
 });

@@ -68,7 +68,7 @@ describe('project-scoped commands — no active project', () => {
 // --- /status ---
 
 describe('/status', () => {
-  it('fetches runs and returns status for explicit run_id', async () => {
+  it('returns multi-line status block with emoji for explicit run_id', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs': {
@@ -89,9 +89,10 @@ describe('/status', () => {
       restClient,
     });
     const reply = await handlers.status(CHAT, ['run-001']);
-    expect(reply).toContain('run-001');
-    expect(reply).toContain('running');
-    expect(reply).toContain('Add auth');
+    expect(reply).toContain('Run: run-001');
+    expect(reply).toContain('Status: running');
+    expect(reply).toContain('Title: Add auth');
+    expect(reply).toContain('Stage: implementer');
   });
 
   it('/status with no run_id resolves the unique active run', async () => {
@@ -101,12 +102,6 @@ describe('/status', () => {
         ok: true,
         runs: [{ id: 'run-002', pipeline_status: 'running' }],
       },
-      '/runs/run-002/status': {
-        ok: true,
-        pipeline_status: 'running',
-        stage: 'tester',
-        iteration: 1,
-      },
     });
     const handlers = createProjectHandlers({
       chatContext: chatCtx,
@@ -116,14 +111,22 @@ describe('/status', () => {
     expect(reply).toContain('run-002');
   });
 
-  it('/status with no run_id and multiple active runs returns disambiguation list', async () => {
+  it('/status with no run_id and multiple active runs returns disambiguation with titles', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-001', pipeline_status: 'running' },
-          { id: 'run-002', pipeline_status: 'running' },
+          {
+            id: 'run-001',
+            pipeline_status: 'running',
+            work_request: { title: 'First' },
+          },
+          {
+            id: 'run-002',
+            pipeline_status: 'running',
+            work_request: { title: 'Second' },
+          },
         ],
       },
     });
@@ -132,9 +135,28 @@ describe('/status', () => {
       restClient,
     });
     const reply = await handlers.status(CHAT, []);
-    expect(reply).toMatch(/multiple.*active|disambig|specify/i);
+    expect(reply).toContain('Multiple active runs');
     expect(reply).toContain('run-001');
     expect(reply).toContain('run-002');
+    expect(reply).toContain('/status <run_id>');
+  });
+
+  it('/status with no active run returns helpful message', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
+        ok: true,
+        runs: [],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, []);
+    expect(reply).toContain('No active run found');
+    expect(reply).toContain('/runs');
+    expect(reply).toContain('/status <run_id>');
   });
 
   it('/status returns unknown status when run is not in list', async () => {
@@ -153,13 +175,17 @@ describe('/status', () => {
 // --- /runs ---
 
 describe('/runs', () => {
-  it('calls GET /api/projects/:id/runs', async () => {
+  it('returns runs with header, emoji, and status', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-001', status: 'completed' },
+          {
+            id: 'run-001',
+            pipeline_status: 'completed',
+            work_request: { title: 'First task' },
+          },
           { id: 'run-002', pipeline_status: 'running' },
         ],
       },
@@ -169,19 +195,18 @@ describe('/runs', () => {
       restClient,
     });
     const reply = await handlers.runs(CHAT, []);
-    expect(restClient.get).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `/api/projects/${encodeURIComponent(PROJECT)}/runs`,
-      ),
-    );
+    expect(reply).toContain(`Recent runs (${PROJECT})`);
     expect(reply).toContain('run-001');
     expect(reply).toContain('run-002');
+    expect(reply).toContain('Title: First task');
+    expect(reply).toContain('Status: completed');
+    expect(reply).toContain('Status: running');
   });
 
   it('/runs [N] limits results', async () => {
     const runs = Array.from({ length: 15 }, (_, i) => ({
       id: `run-${i + 1}`,
-      status: 'completed',
+      pipeline_status: 'completed',
     }));
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
@@ -198,7 +223,7 @@ describe('/runs', () => {
     for (const id of notMentioned) expect(reply).not.toContain(id);
   });
 
-  it('/runs returns message when no runs exist', async () => {
+  it('/runs returns message with project name when no runs exist', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
@@ -211,21 +236,26 @@ describe('/runs', () => {
       restClient,
     });
     const reply = await handlers.runs(CHAT, []);
-    expect(reply).toMatch(/no runs/i);
+    expect(reply).toContain('No runs found');
+    expect(reply).toContain(PROJECT);
   });
 });
 
 // --- /last ---
 
 describe('/last', () => {
-  it('calls GET /api/projects/:id/runs and returns most recent run', async () => {
+  it('returns full status block for most recent run', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-001', status: 'completed' },
-          { id: 'run-002', status: 'failed' },
+          {
+            id: 'run-001',
+            pipeline_status: 'completed',
+            work_request: { title: 'My task' },
+          },
+          { id: 'run-002', pipeline_status: 'failed' },
         ],
       },
     });
@@ -234,15 +264,12 @@ describe('/last', () => {
       restClient,
     });
     const reply = await handlers.last(CHAT, []);
-    expect(restClient.get).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `/api/projects/${encodeURIComponent(PROJECT)}/runs`,
-      ),
-    );
     expect(reply).toContain('run-001');
+    expect(reply).toContain('Status: completed');
+    expect(reply).toContain('Title: My task');
   });
 
-  it('/last returns message when no runs exist', async () => {
+  it('/last returns message with project name when no runs exist', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
@@ -255,14 +282,15 @@ describe('/last', () => {
       restClient,
     });
     const reply = await handlers.last(CHAT, []);
-    expect(reply).toMatch(/no runs/i);
+    expect(reply).toContain('No runs found');
+    expect(reply).toContain(PROJECT);
   });
 });
 
 // --- /cost ---
 
 describe('/cost', () => {
-  it('shows USD cost from stage iterations', async () => {
+  it('shows cost with header, emoji and run details', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs': {
@@ -270,6 +298,7 @@ describe('/cost', () => {
           {
             id: 'run-001',
             pipeline_status: 'completed',
+            work_request: { title: 'Auth feature' },
             stages: {
               implementer: {
                 iterations: [{ cost_usd: 0.42 }],
@@ -284,8 +313,10 @@ describe('/cost', () => {
       restClient,
     });
     const reply = await handlers.cost(CHAT, []);
+    expect(reply).toContain(`Cost summary (${PROJECT})`);
     expect(reply).toContain('run-001');
     expect(reply).toContain('$0.42');
+    expect(reply).toContain('Title: Auth feature');
   });
 
   it('/cost with run_id arg filters to that run', async () => {
@@ -315,7 +346,33 @@ describe('/cost', () => {
     expect(reply).not.toContain('run-002');
   });
 
-  it('/cost returns message when no runs exist', async () => {
+  it('/cost shows Total line when multiple runs', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-001',
+            pipeline_status: 'completed',
+            stages: { plan: { iterations: [{ cost_usd: 0.1 }] } },
+          },
+          {
+            id: 'run-002',
+            pipeline_status: 'completed',
+            stages: { plan: { iterations: [{ cost_usd: 0.05 }] } },
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.cost(CHAT, []);
+    expect(reply).toContain('Total: $0.15');
+  });
+
+  it('/cost returns message with project name when no runs exist', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({ '/runs': { runs: [] } });
     const handlers = createProjectHandlers({
@@ -323,14 +380,15 @@ describe('/cost', () => {
       restClient,
     });
     const reply = await handlers.cost(CHAT, []);
-    expect(reply).toMatch(/no runs/i);
+    expect(reply).toContain('No runs found');
+    expect(reply).toContain(PROJECT);
   });
 });
 
 // --- /pr ---
 
 describe('/pr', () => {
-  it('calls GET /api/projects/:id/runs/:runId/status and returns pr_url', async () => {
+  it('returns link emoji and PR URL', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs/run-001/status': {
@@ -345,6 +403,8 @@ describe('/pr', () => {
     });
     const reply = await handlers.pr(CHAT, ['run-001']);
     expect(reply).toContain('https://github.com/org/repo/pull/42');
+    expect(reply).toContain('Run: run-001');
+    expect(reply).toContain('PR:');
   });
 
   it('/pr returns no-pr message when pr_url is absent', async () => {
@@ -361,7 +421,8 @@ describe('/pr', () => {
       restClient,
     });
     const reply = await handlers.pr(CHAT, ['run-001']);
-    expect(reply).toMatch(/no pr|no pull request/i);
+    expect(reply).toContain('No PR created yet');
+    expect(reply).toContain('run-001');
   });
 
   it('/pr with no run_id resolves unique active run and returns pr_url', async () => {

@@ -66,7 +66,7 @@ describe('control commands — no active project', () => {
 // --- /pause ---
 
 describe('/pause', () => {
-  it('calls POST /api/projects/:id/runs/:runId/pause with explicit run_id', async () => {
+  it('calls POST pause and returns emoji + message', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs/run-001/pause': { ok: true },
@@ -81,7 +81,8 @@ describe('/pause', () => {
         `/api/projects/${encodeURIComponent(PROJECT)}/runs/run-001/pause`,
       ),
     );
-    expect(reply).toMatch(/paused.*run-001|run-001.*paused/i);
+    expect(reply).toContain('Paused');
+    expect(reply).toContain('run-001');
   });
 
   it('/pause with no run_id resolves unique active run', async () => {
@@ -101,17 +102,26 @@ describe('/pause', () => {
     expect(restClient.post).toHaveBeenCalledWith(
       expect.stringContaining('/runs/run-002/pause'),
     );
-    expect(reply).toMatch(/paused.*run-002|run-002.*paused/i);
+    expect(reply).toContain('Paused');
+    expect(reply).toContain('run-002');
   });
 
-  it('/pause with multiple active runs returns disambiguation list', async () => {
+  it('/pause with multiple active runs returns disambiguation with titles', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-001', pipeline_status: 'running' },
-          { id: 'run-002', pipeline_status: 'running' },
+          {
+            id: 'run-001',
+            pipeline_status: 'running',
+            work_request: { title: 'First' },
+          },
+          {
+            id: 'run-002',
+            pipeline_status: 'running',
+            work_request: { title: 'Second' },
+          },
         ],
       },
     });
@@ -120,9 +130,10 @@ describe('/pause', () => {
       restClient,
     });
     const reply = await handlers.pause(CHAT, []);
-    expect(reply).toMatch(/multiple.*active|disambig|specify/i);
+    expect(reply).toContain('Multiple active runs');
     expect(reply).toContain('run-001');
     expect(reply).toContain('run-002');
+    expect(reply).toContain('/pause <run_id>');
     expect(restClient.post).not.toHaveBeenCalled();
   });
 
@@ -139,7 +150,8 @@ describe('/pause', () => {
       restClient,
     });
     const reply = await handlers.pause(CHAT, []);
-    expect(reply).toMatch(/no active run/i);
+    expect(reply).toContain('No active run found');
+    expect(reply).toContain('/runs');
   });
 
   it('/pause returns error message on non-200 response', async () => {
@@ -157,7 +169,7 @@ describe('/pause', () => {
 // --- /resume ---
 
 describe('/resume', () => {
-  it('calls POST /api/projects/:id/runs/:runId/resume with explicit run_id', async () => {
+  it('calls POST resume and returns emoji + message', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs/run-001/resume': { ok: true },
@@ -172,7 +184,8 @@ describe('/resume', () => {
         `/api/projects/${encodeURIComponent(PROJECT)}/runs/run-001/resume`,
       ),
     );
-    expect(reply).toMatch(/resumed.*run-001|run-001.*resumed/i);
+    expect(reply).toContain('Resumed');
+    expect(reply).toContain('run-001');
   });
 
   it('/resume with no run_id resolves unique paused run', async () => {
@@ -192,7 +205,8 @@ describe('/resume', () => {
     expect(restClient.post).toHaveBeenCalledWith(
       expect.stringContaining('/runs/run-003/resume'),
     );
-    expect(reply).toMatch(/resumed.*run-003|run-003.*resumed/i);
+    expect(reply).toContain('Resumed');
+    expect(reply).toContain('run-003');
   });
 
   it('/resume returns error message on non-200 response', async () => {
@@ -210,7 +224,7 @@ describe('/resume', () => {
 // --- /stop ---
 
 describe('/stop', () => {
-  it('calls POST /api/projects/:id/runs/:runId/stop with explicit run_id', async () => {
+  it('calls POST stop and returns emoji + message', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       '/runs/run-001/stop': { ok: true },
@@ -225,7 +239,8 @@ describe('/stop', () => {
         `/api/projects/${encodeURIComponent(PROJECT)}/runs/run-001/stop`,
       ),
     );
-    expect(reply).toMatch(/stopped.*run-001|run-001.*stopped/i);
+    expect(reply).toContain('Stopped');
+    expect(reply).toContain('run-001');
   });
 
   it('/stop with no run_id resolves unique active run', async () => {
@@ -245,17 +260,26 @@ describe('/stop', () => {
     expect(restClient.post).toHaveBeenCalledWith(
       expect.stringContaining('/runs/run-004/stop'),
     );
-    expect(reply).toMatch(/stopped.*run-004|run-004.*stopped/i);
+    expect(reply).toContain('Stopped');
+    expect(reply).toContain('run-004');
   });
 
-  it('/stop with multiple active runs returns disambiguation list', async () => {
+  it('/stop with multiple active runs returns disambiguation with titles', async () => {
     const chatCtx = makeChatContext(PROJECT);
     const restClient = makeRestClient({
       [`/api/projects/${encodeURIComponent(PROJECT)}/runs`]: {
         ok: true,
         runs: [
-          { id: 'run-005', pipeline_status: 'running' },
-          { id: 'run-006', pipeline_status: 'paused' },
+          {
+            id: 'run-005',
+            pipeline_status: 'running',
+            work_request: { title: 'Task A' },
+          },
+          {
+            id: 'run-006',
+            pipeline_status: 'paused',
+            work_request: { title: 'Task B' },
+          },
         ],
       },
     });
@@ -264,9 +288,10 @@ describe('/stop', () => {
       restClient,
     });
     const reply = await handlers.stop(CHAT, []);
-    expect(reply).toMatch(/multiple.*active|disambig|specify/i);
+    expect(reply).toContain('Multiple active runs');
     expect(reply).toContain('run-005');
     expect(reply).toContain('run-006');
+    expect(reply).toContain('/stop <run_id>');
     expect(restClient.post).not.toHaveBeenCalled();
   });
 

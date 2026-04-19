@@ -300,7 +300,7 @@ describe('Telegram inbound commands via loopback REST', () => {
     const [calledChatId, msg] = mock.send.mock.calls[0];
     expect(calledChatId).toBe(CHAT_ID);
     const replyText = msg.body[0].value;
-    expect(replyText).toMatch(/Paused/);
+    expect(replyText).toContain('Paused');
     expect(replyText).toContain('run-abc');
   });
 

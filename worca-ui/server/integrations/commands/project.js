@@ -1,13 +1,15 @@
+import { statusEmoji } from './global.js';
+
 const NO_ACTIVE_PROJECT =
   'No active project. Use `/projects` to list, `/use <name>` to select.';
 
 /**
  * Resolve run_id when the caller omits it:
- * - exactly one active run → return its id
- * - zero active runs → return null (caller handles)
- * - multiple active runs → return disambiguation message string
+ * - exactly one active run -> return its id
+ * - zero active runs -> return null (caller handles)
+ * - multiple active runs -> return disambiguation message string
  */
-async function resolveRunId(restClient, projectId, args) {
+async function resolveRunId(restClient, projectId, args, command) {
   if (args[0]) return { runId: args[0] };
   const resp = await restClient.get(
     `/api/projects/${encodeURIComponent(projectId)}/runs`,
@@ -19,26 +21,20 @@ async function resolveRunId(restClient, projectId, args) {
   });
   if (active.length === 1) return { runId: active[0].id ?? active[0].run_id };
   if (active.length > 1) {
-    const list = active.map((r) => `\u2022 ${r.id ?? r.run_id}`).join('\n');
+    const lines = active.map((r) => {
+      const id = r.id ?? r.run_id;
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const parts = [`${statusEmoji(ps)} Run: ${id}`];
+      if (title) parts.push(`   Title: ${title}`);
+      return parts.join('\n');
+    });
+    const cmd = command || 'status';
     return {
-      disambig: `Multiple active runs \u2014 specify a run ID:\n${list}`,
+      disambig: `Multiple active runs \u2014 specify a run ID:\n\n${lines.join('\n')}\n\nUsage: /${cmd} <run_id>`,
     };
   }
   return { runId: null };
-}
-
-function fmtRunLine(run) {
-  const id = run.id ?? run.run_id;
-  const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
-  const title = run.work_request?.title;
-  const label = title
-    ? title.length > 40
-      ? `${title.slice(0, 40)}\u2026`
-      : title
-    : '';
-  return label
-    ? `\u2022 ${id} "${label}" \u2014 ${ps}`
-    : `\u2022 ${id} \u2014 ${ps}`;
 }
 
 function fmtElapsed(startedAt, completedAt) {
@@ -62,6 +58,38 @@ function fmtCostFromStages(stages) {
   return totalCost > 0 ? `$${totalCost.toFixed(2)}` : null;
 }
 
+function rawCostFromStages(stages) {
+  let totalCost = 0;
+  for (const stage of Object.values(stages || {})) {
+    for (const iter of stage.iterations || []) {
+      totalCost += iter.cost_usd || 0;
+    }
+  }
+  return totalCost;
+}
+
+function fmtStatusBlock(run) {
+  const id = run.id ?? run.run_id;
+  const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
+  const title = run.work_request?.title;
+  const elapsed = fmtElapsed(run.started_at, run.completed_at);
+  const cost = fmtCostFromStages(run.stages);
+  const stage = run.stage;
+  const iteration = run.iteration ?? run.stages?.[stage]?.iterations?.length;
+
+  const parts = [`${statusEmoji(ps)} Run: ${id}`];
+  if (title) parts.push(`   Title: ${title}`);
+  parts.push(`   Status: ${ps}`);
+  if (stage) {
+    const iterPart = iteration ? ` (iteration ${iteration})` : '';
+    parts.push(`   Stage: ${stage}${iterPart}`);
+  }
+  if (elapsed) parts.push(`   Duration: ${elapsed}`);
+  if (cost) parts.push(`   Cost: ${cost}`);
+  if (ps === 'completed' && run.pr_url) parts.push(`   PR: ${run.pr_url}`);
+  return parts.join('\n');
+}
+
 /**
  * Creates handlers for project-scoped commands.
  *
@@ -80,11 +108,12 @@ export function createProjectHandlers({ chatContext, restClient }) {
 
     let runId = args[0] ?? null;
     if (!runId) {
-      const resolved = await resolveRunId(restClient, project, args);
+      const resolved = await resolveRunId(restClient, project, args, 'status');
       if (resolved.disambig) return resolved.disambig;
       runId = resolved.runId;
     }
-    if (!runId) return 'No active run found.';
+    if (!runId)
+      return 'No active run found.\nUse /runs to see recent runs, or specify a run ID: /status <run_id>';
 
     // Fetch full run data for title, cost, duration
     const runsResp = await restClient.get(
@@ -95,33 +124,37 @@ export function createProjectHandlers({ chatContext, restClient }) {
       (Array.isArray(runsResp.data) ? runsResp.data : []);
     const run = allRuns.find((r) => (r.id ?? r.run_id) === runId);
 
-    const ps = run?.pipeline_status || 'unknown';
-    const title = run?.work_request?.title;
-    const elapsed = fmtElapsed(run?.started_at, run?.completed_at);
-    const cost = fmtCostFromStages(run?.stages);
-    const stage = run?.stage;
+    if (!run) {
+      return `${statusEmoji('unknown')} Run: ${runId}\n   Status: unknown`;
+    }
 
-    const parts = [`Run: ${runId}`];
-    if (title) parts.push(`Title: ${title}`);
-    parts.push(`Status: ${ps}`);
-    if (stage) parts.push(`Stage: ${stage}`);
-    if (elapsed) parts.push(`Duration: ${elapsed}`);
-    if (cost) parts.push(`Cost: ${cost}`);
-    return parts.join('\n');
+    return fmtStatusBlock(run);
   }
 
   async function runs(chatKey, args) {
     const project = requireProject(chatKey);
     if (!project) return NO_ACTIVE_PROJECT;
 
-    const limit = args[0] ? Math.max(1, parseInt(args[0], 10) || 10) : 10;
+    const limit = args[0]
+      ? Math.max(1, Number.parseInt(args[0], 10) || 10)
+      : 10;
     const resp = await restClient.get(
       `/api/projects/${encodeURIComponent(project)}/runs`,
     );
     const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
     const slice = all.slice(0, limit);
-    if (slice.length === 0) return 'No runs found.';
-    return slice.map((r) => fmtRunLine(r)).join('\n');
+    if (slice.length === 0) return `No runs found for ${project}.`;
+
+    const lines = slice.map((r) => {
+      const id = r.id ?? r.run_id;
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const parts = [`${statusEmoji(ps)} Run: ${id}`];
+      if (title) parts.push(`   Title: ${title}`);
+      parts.push(`   Status: ${ps}`);
+      return parts.join('\n');
+    });
+    return `Recent runs (${project}):\n\n${lines.join('\n')}`;
   }
 
   async function last(chatKey, _args) {
@@ -132,19 +165,9 @@ export function createProjectHandlers({ chatContext, restClient }) {
       `/api/projects/${encodeURIComponent(project)}/runs`,
     );
     const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
-    if (all.length === 0) return 'No runs found.';
-    const r = all[0];
-    const id = r.id ?? r.run_id;
-    const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
-    const title = r.work_request?.title;
-    const elapsed = fmtElapsed(r.started_at, r.completed_at);
-    const cost = fmtCostFromStages(r.stages);
+    if (all.length === 0) return `No runs found for ${project}.`;
 
-    const parts = [`Last run: ${id} \u2014 ${ps}`];
-    if (title) parts.push(`Title: ${title}`);
-    if (elapsed) parts.push(`Duration: ${elapsed}`);
-    if (cost) parts.push(`Cost: ${cost}`);
-    return parts.join('\n');
+    return fmtStatusBlock(all[0]);
   }
 
   async function cost(chatKey, args) {
@@ -157,28 +180,29 @@ export function createProjectHandlers({ chatContext, restClient }) {
     );
     const all = resp.data?.runs ?? (Array.isArray(resp.data) ? resp.data : []);
     const filter = args[0] ?? null;
-    const runs = filter
+    const filtered = filter
       ? all.filter((r) => (r.id ?? r.run_id) === filter)
       : all.slice(0, 5);
-    if (runs.length === 0) return 'No runs found.';
+    if (filtered.length === 0) return `No runs found for ${project}.`;
 
     let grandTotal = 0;
-    const lines = runs.map((r) => {
+    const lines = filtered.map((r) => {
       const id = r.id ?? r.run_id;
-      const usd = fmtCostFromStages(r.stages);
-      let costVal = 0;
-      for (const stage of Object.values(r.stages || {})) {
-        for (const iter of stage.iterations || []) {
-          costVal += iter.cost_usd || 0;
-        }
-      }
+      const ps = r.pipeline_status || (r.active ? 'running' : 'unknown');
+      const title = r.work_request?.title;
+      const costVal = rawCostFromStages(r.stages);
       grandTotal += costVal;
-      return `\u2022 ${id}: ${usd || '$0.00'}`;
+      const parts = [`${statusEmoji(ps)} Run: ${id}`];
+      if (title) parts.push(`   Title: ${title}`);
+      parts.push(`   Cost: $${costVal.toFixed(2)}`);
+      return parts.join('\n');
     });
-    if (runs.length > 1) {
-      lines.push(`Total: $${grandTotal.toFixed(2)}`);
+
+    const header = `Cost summary (${project}):\n\n`;
+    if (filtered.length > 1) {
+      lines.push(`\nTotal: $${grandTotal.toFixed(2)}`);
     }
-    return lines.join('\n');
+    return header + lines.join('\n');
   }
 
   async function pr(chatKey, args) {
@@ -187,7 +211,7 @@ export function createProjectHandlers({ chatContext, restClient }) {
 
     let runId = args[0] ?? null;
     if (!runId) {
-      const resolved = await resolveRunId(restClient, project, args);
+      const resolved = await resolveRunId(restClient, project, args, 'pr');
       if (resolved.disambig) return resolved.disambig;
       runId = resolved.runId;
     }
@@ -198,8 +222,8 @@ export function createProjectHandlers({ chatContext, restClient }) {
     );
     if (!resp.data?.ok) return `Run "${runId}" not found (404).`;
     const { pr_url } = resp.data;
-    if (!pr_url) return `No PR for run ${runId}.`;
-    return `PR for ${runId}: ${pr_url}`;
+    if (!pr_url) return `Run: ${runId}\nNo PR created yet.`;
+    return `\u{1F517} Run: ${runId}\n   PR: ${pr_url}`;
   }
 
   return { status, runs, last, cost, pr };

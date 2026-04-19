@@ -13,25 +13,26 @@ export function parseDuration(str) {
   return Number(match[1]) * UNITS_MS[match[2].toLowerCase()];
 }
 
+const STATUS_EMOJI = {
+  running: '\u{1F7E2}',
+  resuming: '\u{1F7E2}',
+  failed: '\u{1F534}',
+  stopped: '\u{1F534}',
+  paused: '\u{1F7E1}',
+  completed: '\u2705',
+};
+
+/**
+ * Map a pipeline_status string to its emoji.
+ */
+export function statusEmoji(ps) {
+  return STATUS_EMOJI[ps] || '\u26AA';
+}
+
 function chatIdOnly(chatKey) {
   // chatKey is "platform:id" — return just the id
   const idx = chatKey.indexOf(':');
   return idx >= 0 ? chatKey.slice(idx + 1) : chatKey;
-}
-
-function fmtRunLine(run, projectName) {
-  const id = run.id ?? run.run_id;
-  const ps = run.pipeline_status || (run.active ? 'running' : 'unknown');
-  const title = run.work_request?.title;
-  const label = title
-    ? title.length > 40
-      ? `${title.slice(0, 40)}\u2026`
-      : title
-    : '';
-  const prefix = projectName ? `[${projectName}] ` : '';
-  return label
-    ? `\u2022 ${prefix}${id} "${label}" \u2014 ${ps}`
-    : `\u2022 ${prefix}${id} \u2014 ${ps}`;
 }
 
 function fmtCostFromStages(stages) {
@@ -44,9 +45,10 @@ function fmtCostFromStages(stages) {
   return totalCost > 0 ? `$${totalCost.toFixed(2)}` : null;
 }
 
-function fmtElapsed(startedAt) {
+function fmtElapsed(startedAt, completedAt) {
   if (!startedAt) return null;
-  const ms = Date.now() - new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  const ms = end - new Date(startedAt).getTime();
   if (ms < 0) return null;
   const totalSec = Math.floor(ms / 1000);
   const m = Math.floor(totalSec / 60);
@@ -62,14 +64,17 @@ const HELP_TEXT = `/start \u2014 show your chat ID
 /active \u2014 running pipelines across all projects
 /mute [duration] \u2014 silence notifications (e.g. /mute 1h)
 /unmute \u2014 restore notifications
-/status [run_id] \u2014 run status (requires active project)
-/runs [N] \u2014 recent runs (requires active project)
-/last \u2014 most recent run (requires active project)
-/cost [run_id] \u2014 cost summary (requires active project)
-/pr [run_id] \u2014 PR URL (requires active project)
+/status [run_id] \u2014 run status
+/runs [N] \u2014 recent runs
+/last \u2014 most recent run
+/cost [run_id] \u2014 cost summary
+/pr [run_id] \u2014 PR URL
 /pause [run_id] \u2014 pause active run
 /resume [run_id] \u2014 resume paused run
-/stop [run_id] \u2014 stop run`;
+/stop [run_id] \u2014 stop run
+
+Commands with [run_id] auto-resolve to the active run if omitted.
+Project commands require /use first.`;
 
 /**
  * Creates handlers for global (non-project-scoped) commands.
@@ -89,16 +94,14 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
   async function whoami(chatKey) {
     const state = chatContext.get(chatKey);
     const active = state.active_project ?? '(none)';
-    const muted = chatContext.isMuted(chatKey)
-      ? `yes (until ${state.mute_until})`
-      : 'no';
+    const muted = chatContext.isMuted(chatKey) ? 'yes' : 'no';
     return `Chat ID: ${chatIdOnly(chatKey)}\nActive project: ${active}\nMuted: ${muted}`;
   }
 
   async function projects() {
     const list = readProjects(prefsDir);
     if (list.length === 0) return 'No projects registered.';
-    return list.map((p) => `\u2022 ${p.name} \u2014 ${p.path}`).join('\n');
+    return `Registered projects:\n${list.map((p) => `\u2022 ${p.name} \u2014 ${p.path}`).join('\n')}`;
   }
 
   async function use(chatKey, args) {
@@ -108,7 +111,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     const found = list.find((p) => p.name === name);
     if (!found) {
       const known = list.map((p) => p.name).join(', ') || '(none)';
-      return `Unknown project "${name}". Known: ${known}`;
+      return `Project "${name}" not found.\nKnown projects: ${known}`;
     }
     chatContext.set(chatKey, { active_project: name });
     return `Active project set to: ${name}`;
@@ -133,11 +136,26 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
       for (const run of runs) {
         const ps = run.pipeline_status || (run.active ? 'running' : null);
         if (ps === 'running' || ps === 'paused' || ps === 'resuming') {
-          lines.push(fmtRunLine(run, project.name));
+          const id = run.id ?? run.run_id;
+          const title = run.work_request?.title;
+          const stage = run.stage;
+          const elapsed = fmtElapsed(run.started_at, run.completed_at);
+          const parts = [`${statusEmoji(ps)} Run: ${id}`];
+          parts.push(`   Project: ${project.name}`);
+          if (title) parts.push(`   Title: ${title}`);
+          if (stage && elapsed) {
+            parts.push(`   Stage: ${stage} | Duration: ${elapsed}`);
+          } else if (stage) {
+            parts.push(`   Stage: ${stage}`);
+          } else if (elapsed) {
+            parts.push(`   Duration: ${elapsed}`);
+          }
+          lines.push(parts.join('\n'));
         }
       }
     }
-    return lines.length > 0 ? lines.join('\n') : 'No active runs.';
+    if (lines.length === 0) return 'No active pipelines across any project.';
+    return `Active pipelines:\n\n${lines.join('\n')}`;
   }
 
   async function mute(chatKey, args) {
@@ -154,7 +172,7 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     chatContext.set(chatKey, { mute_until });
     return durStr
       ? `Notifications muted for ${durStr}.`
-      : 'Notifications muted indefinitely.';
+      : 'Notifications muted indefinitely.\nUse /unmute to restore.';
   }
 
   async function unmute(chatKey) {
@@ -172,7 +190,6 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
     mute,
     unmute,
     // Exported for reuse by project commands
-    _fmtRunLine: fmtRunLine,
     _fmtCostFromStages: fmtCostFromStages,
     _fmtElapsed: fmtElapsed,
   };
