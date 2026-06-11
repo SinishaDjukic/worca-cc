@@ -79,13 +79,16 @@ class TestDefaultFlowParity:
         for stage, schema in STAGE_SCHEMA_MAP.items():
             assert by_name[stage.value].schema == schema
 
-    def test_default_flow_blocks_match_runner_map(self, tmp_path):
-        from worca.orchestrator.runner import _STAGE_BLOCK_MAP
+    def test_default_flow_blocks_match_default_map(self, tmp_path):
+        # The runner-local _STAGE_BLOCK_MAP was retired in W-071 — the loop
+        # now consumes FlowStage.prompt_block, so DEFAULT_STAGE_BLOCKS is the
+        # single source of truth for the builtin block names.
+        from worca.orchestrator.flow import DEFAULT_STAGE_BLOCKS
         settings = _write_settings(tmp_path, {})
         flow = compile_default_flow(settings)
         by_name = {s.name: s for s in flow.all_stages}
         for stage in list(STAGE_ORDER) + [Stage.LEARN]:
-            expected = _STAGE_BLOCK_MAP.get(stage)
+            expected = DEFAULT_STAGE_BLOCKS.get(stage.value)
             assert by_name[stage.value].prompt_block == expected
 
     def test_default_flow_transitions_match_jump_sites(self, tmp_path):

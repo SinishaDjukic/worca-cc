@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from worca.orchestrator.runner import _STAGE_BLOCK_MAP, run_pipeline
+from worca.orchestrator.flow import DEFAULT_STAGE_BLOCKS
+from worca.orchestrator.runner import run_pipeline
 from worca.orchestrator.stages import Stage
 from worca.orchestrator.work_request import WorkRequest
 
@@ -91,12 +92,14 @@ def _mock_beads():
 # ---------------------------------------------------------------------------
 
 class TestStageBlockMapDefaults:
+    # W-071: the runner-local _STAGE_BLOCK_MAP was retired; the loop consumes
+    # FlowStage.prompt_block, sourced from flow.DEFAULT_STAGE_BLOCKS.
 
     def test_plan_review_default_block_name(self):
-        assert _STAGE_BLOCK_MAP[Stage.PLAN_REVIEW] == "plan-review"
+        assert DEFAULT_STAGE_BLOCKS[Stage.PLAN_REVIEW.value] == "plan-review"
 
     def test_plan_review_in_map(self):
-        assert Stage.PLAN_REVIEW in _STAGE_BLOCK_MAP
+        assert Stage.PLAN_REVIEW.value in DEFAULT_STAGE_BLOCKS
 
 
 # ---------------------------------------------------------------------------

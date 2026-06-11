@@ -25,10 +25,10 @@ from worca.utils.settings import load_settings
 
 FLOW_VERSION = 1
 
-# User-message block (.block.md) per builtin stage. Mirrors
-# runner._STAGE_BLOCK_MAP (parity-tested); stages absent here (PREFLIGHT)
-# fall back to the default rendered prompt. W-071 will make the runner
-# consume this copy and retire the runner-local map.
+# User-message block (.block.md) per builtin stage. The single source of
+# truth since W-071 — the runner consumes FlowStage.prompt_block (compiled
+# from this map for the default flow). Stages absent here (PREFLIGHT) fall
+# back to the default rendered prompt.
 DEFAULT_STAGE_BLOCKS = {
     Stage.PLAN.value:        "plan",
     Stage.PLAN_REVIEW.value: "plan-review",
