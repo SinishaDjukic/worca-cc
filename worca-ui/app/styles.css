@@ -4780,6 +4780,13 @@ sl-details.learnings-panel::part(content) {
   font-size: 0.78rem;
 }
 
+/* Flow fingerprint row (W-070) — full sha256, monospace, wraps on narrow panes. */
+.preflight-flow-fingerprint {
+  font-family: var(--sl-font-mono);
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
 .preflight-check-message {
   color: var(--muted);
 }

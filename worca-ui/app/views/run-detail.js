@@ -1347,22 +1347,34 @@ function _preflightParamsRow(run) {
   return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
 }
 
-function _preflightChecksView(stage, iter, run) {
+function _preflightRunMetaRows(run) {
+  // Run-level preflight metadata: launch params (Max Beads, CLAUDE.md mode)
+  // and the flow fingerprint. These describe the RUN, not an iteration, so
+  // they render once at stage level — never duplicated inside iter tabs.
+  const paramsRow = _preflightParamsRow(run);
+  const fpRow = run?.flow_fingerprint
+    ? html`<div class="iteration-tags-row preflight-flow-row"><span class="meta-label">Flow fingerprint:</span> <span class="meta-value preflight-flow-fingerprint" title="sha256 of the compiled pipeline flow (W-070). Custom-flow runs refuse to resume if this changes.">${run.flow_fingerprint}</span></div>`
+    : nothing;
+  if (paramsRow === nothing && fpRow === nothing) return nothing;
+  return html`${paramsRow}${fpRow}`;
+}
+
+function _preflightIterRows(stage, iter) {
+  // Per-iteration preflight results: the status summary + checks table from
+  // THIS iteration's output. Bare rows — callers add the
+  // .preflight-checks-view wrapper. Rendered inside each iter tab on
+  // multi-iteration runs (e.g. resumes re-running preflight) so every
+  // iteration shows its own full results, identical to the
+  // single-iteration layout.
   const isSkipped = stage.skipped || iter.outcome === 'skipped';
   if (isSkipped) {
-    return html`<div class="preflight-checks-view"><sl-badge variant="neutral" pill>Skipped</sl-badge></div>`;
+    return html`<sl-badge variant="neutral" pill>Skipped</sl-badge>`;
   }
   const output = iter.output || {};
   const checks = output.checks || [];
   const summary = output.summary || '';
-  const paramsRow = _preflightParamsRow(run);
-  // The params row now always carries the Max Beads cap (value + source) for any
-  // real run, so it renders even with no checks/summary. Only collapse when
-  // there is genuinely nothing to show — no params row, no checks, no summary.
-  if (paramsRow === nothing && !checks.length && !summary) return nothing;
+  if (!checks.length && !summary) return nothing;
   return html`
-    <div class="preflight-checks-view">
-      ${paramsRow}
       ${
         summary
           ? html`<div class="iteration-tags-row preflight-status-row"><span class="meta-label">Status:</span> <span class="meta-value markdown-body markdown-inline">${unsafeHTML(renderMarkdown(summary))}</span></div>`
@@ -1394,8 +1406,35 @@ function _preflightChecksView(stage, iter, run) {
       `
           : nothing
       }
-    </div>
   `;
+}
+
+function _preflightIterChecksView(stage, iter) {
+  // Wrapper for the multi-iteration tab panels.
+  const rows = _preflightIterRows(stage, iter);
+  if (rows === nothing) return nothing;
+  return html`<div class="preflight-checks-view">${rows}</div>`;
+}
+
+function _preflightRunMetaView(run) {
+  // Stage-level wrapper for the run-level meta rows — used above the iter
+  // tabs on multi-iteration runs.
+  const meta = _preflightRunMetaRows(run);
+  if (meta === nothing) return nothing;
+  return html`<div class="preflight-checks-view">${meta}</div>`;
+}
+
+function _preflightChecksView(stage, iter, run) {
+  // Single-iteration composition: run-level meta rows + this iteration's
+  // checks in one wrapper (original DOM shape).
+  const isSkipped = stage.skipped || iter.outcome === 'skipped';
+  if (isSkipped) {
+    return html`<div class="preflight-checks-view"><sl-badge variant="neutral" pill>Skipped</sl-badge></div>`;
+  }
+  const meta = _preflightRunMetaRows(run);
+  const rows = _preflightIterRows(stage, iter);
+  if (meta === nothing && rows === nothing) return nothing;
+  return html`<div class="preflight-checks-view">${meta}${rows}</div>`;
 }
 
 function _stageCost(iterations) {
@@ -2232,6 +2271,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
                       ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
+                      ${key === 'preflight' ? _preflightRunMetaView(run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -2249,6 +2289,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
                             ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
+                            ${key === 'preflight' ? _preflightIterChecksView(stage, iter) : nothing}
                             ${_planIterationButton(key, iter, run, options.rerender)}
                           </sl-tab-panel>
                         `,
