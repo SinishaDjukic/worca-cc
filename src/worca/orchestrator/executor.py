@@ -259,6 +259,7 @@ class StageHandler:
             graphify_out=rc.graphify_out,
             crg_data_dir=rc.crg_data_dir,
             bead_id=rc.assigned_bead,
+            flow_stage=rc.flow_stage,
         )
         return None
 

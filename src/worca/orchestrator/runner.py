@@ -33,7 +33,7 @@ from worca.orchestrator.executor import StageDecision, StageRunContext, handler_
 from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
 from worca.orchestrator.flow import load_flow
 from worca.orchestrator.stages import (
-    Stage, get_stage_config, STAGE_AGENT_MAP,
+    Stage, get_stage_config, get_stage_config_for, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
     PreflightError, validate_tier_pinned_agent_models,
 )
@@ -1132,9 +1132,13 @@ def _warn_if_cap_deviation(effective_cap: int, created_count: int, is_pr_revisio
         )
 
 
-def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
-    """Save stage output to a per-iteration log file for resume support."""
-    stage_dir = os.path.join(logs_dir, stage.value)
+def _save_stage_output(stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
+    """Save stage output to a per-iteration log file for resume support.
+
+    stage accepts a Stage enum member or a stage-key string (W-071).
+    """
+    stage_key = stage.value if isinstance(stage, Stage) else str(stage)
+    stage_dir = os.path.join(logs_dir, stage_key)
     os.makedirs(stage_dir, exist_ok=True)
     path = os.path.join(stage_dir, f"iter-{iteration}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -1160,7 +1164,8 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
     """
     if not force:
         if flow is not None:
-            if not any(s.name == Stage.LEARN.value for s in flow.post_stages):
+            _learn_key = Stage.LEARN.value
+            if not any(s.name == _learn_key for s in flow.post_stages):
                 return
         elif not is_learn_enabled(settings_path):
             return
@@ -1462,17 +1467,19 @@ def _crg_tool_basename(tool_name: str) -> str:
 
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
-    stage: Stage,
+    stage,
     iteration: int,
     settings_path: str,
 ):
     """Create an on_event callback closure for agent telemetry.
 
+    stage accepts a Stage enum member or a stage-key string (W-071).
     Returns None if ctx is None or agent_telemetry is disabled.
     The returned callable translates stream-json events to pipeline events.
     """
     if ctx is None:
         return None
+    stage = stage.value if isinstance(stage, Stage) else str(stage)
     if not _is_agent_telemetry_enabled(settings_path):
         return None
 
@@ -1485,7 +1492,7 @@ def _make_agent_event_handler(
         if etype == "system":
             if event.get("subtype") == "init":
                 emit_event(ctx, AGENT_SPAWNED, agent_spawned_payload(
-                    stage=stage.value,
+                    stage=stage,
                     iteration=iteration,
                     agent=STAGE_AGENT_MAP.get(stage, ""),
                     model=event.get("model", ""),
@@ -1505,7 +1512,7 @@ def _make_agent_event_handler(
                     if tool_id:
                         tool_id_to_name[tool_id] = tool_name
                     emit_event(ctx, AGENT_TOOL_USE, agent_tool_use_payload(
-                        stage=stage.value,
+                        stage=stage,
                         iteration=iteration,
                         tool=tool_name,
                         tool_input_summary=_summarize_tool_input(block),
@@ -1515,7 +1522,7 @@ def _make_agent_event_handler(
                     text = block.get("text", "")
                     if text:
                         emit_event(ctx, AGENT_TEXT, agent_text_payload(
-                            stage=stage.value,
+                            stage=stage,
                             iteration=iteration,
                             text_length=len(text),
                             turn=turn,
@@ -1529,7 +1536,7 @@ def _make_agent_event_handler(
                         tool_id = block.get("tool_use_id", "")
                         tool_name = tool_id_to_name.get(tool_id, "")
                         emit_event(ctx, AGENT_TOOL_RESULT, agent_tool_result_payload(
-                            stage=stage.value,
+                            stage=stage,
                             iteration=iteration,
                             tool=tool_name,
                             is_error=block.get("is_error", False),
@@ -1538,7 +1545,7 @@ def _make_agent_event_handler(
 
         elif etype == "result":
             emit_event(ctx, AGENT_COMPLETED, agent_completed_payload(
-                stage=stage.value,
+                stage=stage,
                 iteration=iteration,
                 turns=event.get("num_turns", 0),
                 cost_usd=event.get("total_cost_usd", 0.0),
@@ -1590,7 +1597,7 @@ def _lift_pr_deferred_to_status(result: dict, status: dict) -> None:
 
 
 def run_stage(
-    stage: Stage,
+    stage,
     context: dict,
     settings_path: str = ".claude/settings.json",
     msize: int = 1,
@@ -1602,13 +1609,17 @@ def run_stage(
     graphify_out: Optional[str] = None,
     crg_data_dir: Optional[str] = None,
     bead_id: Optional[str] = None,
+    flow_stage=None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
-    Gets stage config via get_stage_config(), calls run_agent() with the
-    appropriate agent path, prompt, max_turns, and schema.
+    Gets stage config via get_stage_config() (Stage enum) or
+    get_stage_config_for() (when a FlowSpec entry is provided), then calls
+    run_agent() with the appropriate agent path, prompt, max_turns, and schema.
 
     Args:
+        stage: Stage enum member (builtin) or stage-key string (custom
+            stages, W-071). String stages require flow_stage for config.
         context: Dict with 'prompt', '_run_dir', '_logs_dir' keys.
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
@@ -1625,11 +1636,19 @@ def run_stage(
             run-scoped CRG database so the agent gets code-review-graph MCP
             tools filtered to the stage's allow-list.
 
+        flow_stage: Resolved FlowSpec entry (W-071). When provided, agent
+            and schema come from the flow — this is what lets per-entry
+            agent/schema overrides and custom stages reach dispatch.
+
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
     is the full claude CLI JSON response for logging.
     """
-    config = get_stage_config(stage, settings_path=settings_path)
+    stage_key = stage.value if isinstance(stage, Stage) else str(stage)
+    if flow_stage is not None:
+        config = get_stage_config_for(flow_stage, settings_path=settings_path)
+    else:
+        config = get_stage_config(stage, settings_path=settings_path)
     # PR stage uses a different schema when the run defers PR creation — either a
     # workspace child (WORCA_DEFER_PR=1, set by dag_executor) or a project that
     # set worca.stages.pr.defer:true. _pr_stage_is_deferred resolves this the
@@ -1638,14 +1657,14 @@ def run_stage(
     # the PR while the schema still demands pr_number/pr_url). Two flat schemas
     # instead of one conditional schema keeps each flat — the Claude API rejects
     # custom tools whose input_schema has top-level allOf/oneOf/anyOf.
-    if stage == Stage.PR and _pr_stage_is_deferred(settings_path):
+    if stage_key == "pr" and _pr_stage_is_deferred(settings_path):
         config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
     prompt = prompt_override if prompt_override is not None else raw_prompt
     logs_dir = context.get("_logs_dir", ".worca/logs")
     run_dir = context.get("_run_dir")
-    log_dir = os.path.join(logs_dir, stage.value)
+    log_dir = os.path.join(logs_dir, stage_key)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
     _telemetry_on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
@@ -1686,7 +1705,13 @@ def run_stage(
 
     _mcp_config: Optional[str] = None
     if crg_data_dir:
-        _agent_role = STAGE_AGENT_MAP.get(stage, "")
+        # CRG tools are filtered by the builtin agent ROLE for enum stages
+        # (historical behavior — survives user agent overrides); custom
+        # stages key on their resolved agent name.
+        if isinstance(stage, Stage):
+            _agent_role = STAGE_AGENT_MAP.get(stage, "")
+        else:
+            _agent_role = config.get("agent") or ""
         _crg_tools = crg_tools_for_stage(
             _agent_role or "",
             stage_tools=_resolve_crg_stage_tools(settings_path),
@@ -1713,7 +1738,7 @@ def run_stage(
         mcp_config=_mcp_config,
         claude_md_overlay_path=context.get("_claude_md_overlay_path"),
         run_dir=run_dir,
-        stage=stage.value,
+        stage=stage_key,
         iteration=iteration,
         bead_id=bead_id,
     )
@@ -1733,7 +1758,7 @@ def run_stage(
     # emit JSON-only, but pre-existing runs and the occasional slip would
     # otherwise lose pr_number/pr_url. Recover what we can from the prose so
     # downstream events (GIT_PR_CREATED, status.json) still see the PR.
-    if stage == Stage.PR and isinstance(raw, dict):
+    if stage_key == "pr" and isinstance(raw, dict):
         recovered = _extract_pr_fields_from_text(raw.get("result"))
         if recovered:
             raw["graphify_invocations"] = _gfx
@@ -2921,10 +2946,10 @@ def run_pipeline(
 
         # Load the declarative flow (W-070). The compiled default reproduces
         # the legacy STAGE_ORDER walk exactly (parity-tested); worca.flow
-        # overrides the topology. stage_order stays an enum list so the
-        # builtin-stage identity checks below keep working — W-071 retires it.
+        # overrides the topology. Since W-071 the loop walks the FlowSpec
+        # entries directly by stage key — no enum round-trip, so custom
+        # stage names flow through to the generic handler.
         flow = load_flow(settings_path)
-        stage_order = [Stage(s.name) for s in flow.stages]
 
         # Flow fingerprint (W-070 §4): a run must never silently resume under
         # a different topology than the one that produced its status.json.
@@ -3049,8 +3074,9 @@ def run_pipeline(
 
         # Determine starting index
         if resume_stage:
-            if resume_stage in stage_order:
-                stage_idx = stage_order.index(resume_stage)
+            _stage_names = [s.name for s in flow.stages]
+            if resume_stage.value in _stage_names:
+                stage_idx = _stage_names.index(resume_stage.value)
             else:
                 # resume_stage is disabled (e.g. PREFLIGHT) — start from the
                 # first enabled stage; the skip-completed logic below will
@@ -3117,43 +3143,50 @@ def run_pipeline(
         rc.crg_data_dir = _crg_data_dir
         rc.crg_cfg = _crg_cfg
 
-        while stage_idx < len(stage_order):
-            current_stage = stage_order[stage_idx]
+        while stage_idx < len(flow.stages):
+            flow_stage = flow.stages[stage_idx]
+            stage_name = flow_stage.name
 
             # --- Control file polling ---
             _check_control_file(status.get("run_id"), worca_dir, status, actual_status_path, ctx, registry_dir)
 
+            # Per-pass handler (W-071): fresh instance each pass; selection
+            # is deterministic from the stage key, with GenericHandler as the
+            # fallback for non-builtin (user-defined) stages.
+            _handler = handler_for(stage_name)
+
             # Skip stages pre-marked as skipped (e.g. PLAN when plan_file provided)
-            existing_stage = status.get("stages", {}).get(current_stage.value, {})
+            existing_stage = status.get("stages", {}).get(stage_name, {})
             if existing_stage.get("skipped"):
-                _log(f"{current_stage.value.upper()} already completed — skipping")
+                _log(f"{stage_name.upper()} already completed — skipping")
                 stage_idx += 1
                 continue
 
-            # On resume, skip stages already completed (PREFLIGHT always re-runs).
-            # Once we reach a non-completed stage (the actual resume point),
-            # clear resume_stage so subsequent loop-backs (e.g. implement→test)
-            # don't incorrectly skip stages that were "completed" in a prior loop.
-            if resume_stage and current_stage != Stage.PREFLIGHT:
+            # On resume, skip stages already completed (PREFLIGHT always re-runs
+            # — the only handler with rerun_on_resume). Once we reach a
+            # non-completed stage (the actual resume point), clear resume_stage
+            # so subsequent loop-backs (e.g. implement→test) don't incorrectly
+            # skip stages that were "completed" in a prior loop.
+            if resume_stage and not _handler.rerun_on_resume:
                 if existing_stage.get("status") == "completed":
-                    _log(f"{current_stage.value.upper()} already completed — skipping on resume")
+                    _log(f"{stage_name.upper()} already completed — skipping on resume")
                     stage_idx += 1
                     continue
                 else:
                     resume_stage = None
 
             # Update current stage tracker
-            status["stage"] = current_stage.value
+            status["stage"] = stage_name
 
             # Determine iteration trigger and number
-            trigger = _next_trigger.pop(current_stage.value, "initial")
-            stage_config = get_stage_config(current_stage, settings_path=settings_path)
+            trigger = _next_trigger.pop(stage_name, "initial")
+            stage_config = get_stage_config_for(flow_stage, settings_path=settings_path)
 
             # Preserve existing iterations but reset stage-level status
-            prev_iterations = status.get("stages", {}).get(current_stage.value, {}).get("iterations", [])
-            prev_iteration_count = status.get("stages", {}).get(current_stage.value, {}).get("iteration")
+            prev_iterations = status.get("stages", {}).get(stage_name, {}).get("iterations", [])
+            prev_iteration_count = status.get("stages", {}).get(stage_name, {}).get("iteration")
             stage_started = datetime.now(timezone.utc).isoformat()
-            status["stages"][current_stage.value] = {
+            status["stages"][stage_name] = {
                 "status": "in_progress",
                 "started_at": stage_started,
                 "agent": stage_config["agent"],
@@ -3169,16 +3202,14 @@ def run_pipeline(
                 ),
             }
             if prev_iterations:
-                status["stages"][current_stage.value]["iterations"] = prev_iterations
+                status["stages"][stage_name]["iterations"] = prev_iterations
             if prev_iteration_count:
-                status["stages"][current_stage.value]["iteration"] = prev_iteration_count
+                status["stages"][stage_name]["iteration"] = prev_iteration_count
 
-            # Per-pass handler + shared-context reset (W-071). Handlers are
-            # fresh instances each pass; rc carries the loop-local state the
-            # bespoke per-stage blocks read and mutate.
-            _handler = handler_for(current_stage.value)
+            # Shared-context reset (W-071): rc carries the loop-local state
+            # the per-stage handlers read and mutate.
             rc.begin_pass(
-                flow_stage=flow.stages[stage_idx],
+                flow_stage=flow_stage,
                 trigger=trigger,
                 stage_config=stage_config,
             )
@@ -3238,7 +3269,7 @@ def run_pipeline(
             # Stage-specific iteration linkage (implement bead_id/bead_title)
             _iter_kwargs.update(_handler.iteration_kwargs(rc))
             iter_record = start_iteration(
-                status, current_stage.value,
+                status, stage_name,
                 **_iter_kwargs,
             )
             iter_num = iter_record["number"]
@@ -3248,7 +3279,7 @@ def run_pipeline(
 
             if ctx:
                 emit_event(ctx, STAGE_STARTED, stage_started_payload(
-                    stage=current_stage.value,
+                    stage=stage_name,
                     iteration=iter_num,
                     agent=stage_config["agent"],
                     model=stage_config.get("model", ""),
@@ -3258,7 +3289,7 @@ def run_pipeline(
                 ))
                 _handler.on_stage_started(rc)
 
-            stage_label = current_stage.value.upper()
+            stage_label = stage_name.upper()
             iter_label = f" (iter {iter_num})" if iter_num > 1 else ""
             _effort_line = format_effort_log_line(stage_label, iter_num, rc.effort_dict, trigger=trigger)
             if _effort_line:
@@ -3270,12 +3301,12 @@ def run_pipeline(
 
             # Check shutdown flag between stages
             if _shutdown_requested:
-                complete_iteration(status, current_stage.value, status="interrupted")
-                update_stage(status, current_stage.value, status="interrupted")
+                complete_iteration(status, stage_name, status="interrupted")
+                update_stage(status, stage_name, status="interrupted")
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
@@ -3292,7 +3323,7 @@ def run_pipeline(
                 # (coordinate max-beads cap, plan_review mode + edit minting —
                 # the latter may swap rc.agent_name and rebuild rc.ctx_dict).
                 _handler.pre_build_context(rc)
-                rc.ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
+                rc.ctx_dict = prompt_builder.build_context(stage_name, pb_iteration)
                 _handler.post_build_context(rc)
 
                 _template_path = (
@@ -3315,7 +3346,7 @@ def run_pipeline(
                     _resolved_dir = os.path.join(run_dir, "agents", "resolved")
                     os.makedirs(_resolved_dir, exist_ok=True)
                     _resolved_path = os.path.join(
-                        _resolved_dir, f"{current_stage.value}-{rc.agent_name}-iter-{iter_num}.md"
+                        _resolved_dir, f"{stage_name}-{rc.agent_name}-iter-{iter_num}.md"
                     )
                     with open(_resolved_path, "w", encoding="utf-8") as _f:
                         _f.write(_resolved)
@@ -3358,7 +3389,7 @@ def run_pipeline(
 
                 rc.rendered_prompt = rendered_prompt
                 # Store rendered prompt in status for UI visibility
-                status["stages"][current_stage.value]["prompt"] = rendered_prompt
+                status["stages"][stage_name]["prompt"] = rendered_prompt
                 iter_record["prompt"] = rendered_prompt
                 save_status(status, actual_status_path)
 
@@ -3378,23 +3409,23 @@ def run_pipeline(
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="interrupted",
                     completed_at=stage_completed,
                 )
                 update_stage(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="interrupted",
                     completed_at=stage_completed,
                 )
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
-                raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
+                raise PipelineInterrupted(f"Pipeline interrupted during {stage_name}", stop_reason="signal")
             except Exception as e:
                 # Treat as interruption when EITHER the in-process signal
                 # handler has run (sets _shutdown_requested) OR the agent
@@ -3402,30 +3433,30 @@ def run_pipeline(
                 # whose handler hasn't yet been delivered to Python).
                 if _shutdown_requested or _is_signal_kill_exception(e):
                     stage_completed = datetime.now(timezone.utc).isoformat()
-                    complete_iteration(status, current_stage.value, status="interrupted", completed_at=stage_completed)
-                    update_stage(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    complete_iteration(status, stage_name, status="interrupted", completed_at=stage_completed)
+                    update_stage(status, stage_name, status="interrupted", completed_at=stage_completed)
                     save_status(status, actual_status_path)
                     if ctx:
                         emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                            stage=current_stage.value, iteration=iter_num,
+                            stage=stage_name, iteration=iter_num,
                             elapsed_ms=int((time.time() - t0) * 1000),
                         ))
-                    raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
+                    raise PipelineInterrupted(f"Pipeline interrupted during {stage_name}", stop_reason="signal")
                 # Telemetry: when the failure carries a subprocess
                 # returncode, surface it so future flakes give us data
                 # instead of speculation.
                 _rc = getattr(e, "returncode", None)
                 _rc_suffix = f" (returncode={_rc})" if _rc is not None else ""
-                _log(f"Stage {current_stage.value} failed: {e}{_rc_suffix}", "warn")
+                _log(f"Stage {stage_name} failed: {e}{_rc_suffix}", "warn")
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="error",
                     completed_at=stage_completed,
                     error=str(e),
                 )
                 update_stage(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="error",
                     completed_at=stage_completed,
                     error=str(e),
@@ -3433,7 +3464,7 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_FAILED, stage_failed_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         error=str(e),
                         error_type=type(e).__name__,
@@ -3449,12 +3480,12 @@ def run_pipeline(
                 if _cb_config.get("enabled", False) and _handler.is_agent_stage:
                     _failure_history = get_circuit_breaker_state(status).get("failure_history", [])
                     classification = classify_error(
-                        str(e), current_stage.value, _failure_history, settings_path
+                        str(e), stage_name, _failure_history, settings_path
                     )
-                    record_failure(status, current_stage.value, str(e), classification)
+                    record_failure(status, stage_name, str(e), classification)
                     if ctx:
                         emit_event(ctx, CB_FAILURE_RECORDED, cb_failure_recorded_payload(
-                            stage=current_stage.value,
+                            stage=stage_name,
                             error=str(e),
                             category=classification.get("category", "unknown"),
                             retriable=classification.get("retriable", False),
@@ -3492,7 +3523,7 @@ def run_pipeline(
                             _log(f"Transient error — retrying in {_delay}s", "warn")
                             if ctx:
                                 emit_event(ctx, CB_RETRY, cb_retry_payload(
-                                    stage=current_stage.value,
+                                    stage=stage_name,
                                     attempt=_retry_attempt + 1,
                                     delay_seconds=_delay,
                                     consecutive_failures=get_circuit_breaker_state(status)["consecutive_failures"],
@@ -3510,7 +3541,7 @@ def run_pipeline(
                 record_success(status)
                 if ctx and _prev_consecutive > 0:
                     emit_event(ctx, CB_RESET, cb_reset_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         previous_consecutive_failures=_prev_consecutive,
                     ))
 
@@ -3535,7 +3566,7 @@ def run_pipeline(
                 )
 
             # Save full envelope for resume/debugging (per-iteration)
-            _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
+            _save_stage_output(stage_name, raw_envelope, logs_dir, iteration=iter_num)
 
             # Emit cost events after token extraction
             if ctx and isinstance(raw_envelope, dict):
@@ -3544,7 +3575,7 @@ def run_pipeline(
                 _stage_output = usage.get("output_tokens", 0)
                 if _stage_cost or _stage_input or _stage_output:
                     emit_event(ctx, COST_STAGE_TOTAL, cost_stage_total_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         cost_usd=_stage_cost,
                         input_tokens=_stage_input,
@@ -3560,7 +3591,7 @@ def run_pipeline(
                 _prev_costs = sum(
                     (v.get("cost_usd") or 0)
                     for k, v in status.get("stages", {}).items()
-                    if k != current_stage.value
+                    if k != stage_name
                 )
                 _running_cost = _prev_costs + _stage_cost
                 _prev_input = sum(
@@ -3639,7 +3670,7 @@ def run_pipeline(
 
             # Compute stage-level token aggregate across all iterations
             all_iter_usages = []
-            for it in status.get("stages", {}).get(current_stage.value, {}).get("iterations", []):
+            for it in status.get("stages", {}).get(stage_name, {}).get("iterations", []):
                 it_usage = it.get("token_usage")
                 if it_usage:
                     all_iter_usages.append(it_usage)
@@ -3668,7 +3699,7 @@ def run_pipeline(
                 # Outcome-driven transition: record the trigger for the target
                 # stage and jump via the flow (W-070 declarative loops).
                 _next_trigger[_decision.goto] = _decision.trigger
-                stage_idx = flow.next_index(current_stage.value, _decision.trigger)
+                stage_idx = flow.next_index(stage_name, _decision.trigger)
                 continue
             if _decision.action == StageDecision.REPEAT:
                 # Re-enter the same stage (PR verification retry).

@@ -319,7 +319,14 @@ def _parse_flow_doc(doc, stages_config: dict) -> list:
         default_post = name == Stage.LEARN.value
         entries.append(FlowStage(
             name=name,
-            agent=raw.get("agent", _default_agent(name)),
+            # Agent precedence mirrors the legacy runner path (W-071): an
+            # explicit flow-entry agent wins, else worca.stages.<name>.agent,
+            # else the builtin map (custom names default to themselves).
+            agent=(
+                raw.get("agent")
+                or stages_config.get(name, {}).get("agent")
+                or _default_agent(name)
+            ),
             schema=raw.get("schema", _default_schema(name)),
             prompt_block=raw.get("prompt_block", _default_block(name)),
             enabled=_stage_enabled(name, raw.get("enabled"), stages_config),
