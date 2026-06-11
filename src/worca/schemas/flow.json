@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "worca.flow",
+  "description": "Declarative pipeline flow specification (W-070). Describes the ordered stage list and outcome-driven transitions, including loops with counters and limits. Semantic validation (goto targets, cycle bounds, file existence) is enforced by worca.orchestrator.flow.load_flow at launch.",
+  "type": "object",
+  "required": ["version", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Flow spec format version."
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered stage list. Order is the linear-advance order; 'on' transitions jump within it.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stage key. Becomes the status.json stages.* key verbatim."
+          },
+          "agent": {
+            "type": ["string", "null"],
+            "description": "Agent template name. Default: builtin map lookup for builtin stage names, else the stage name."
+          },
+          "schema": {
+            "type": ["string", "null"],
+            "description": "Structured-output schema filename under .claude/worca/schemas/. Default: builtin map lookup, else '{name}.json'."
+          },
+          "prompt_block": {
+            "type": ["string", "null"],
+            "description": "Stage block .block.md name. Default: builtin map lookup, else the stage name."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Same semantics as worca.stages.<name>.enabled. Default: per-stage builtin default (plan_review and learn default disabled, everything else enabled), overridable via worca.stages config."
+          },
+          "post": {
+            "type": "boolean",
+            "description": "Runs after the terminal transition (today: learn). Post stages cannot be jump targets.",
+            "default": false
+          },
+          "on": {
+            "type": "object",
+            "description": "Map of outcome trigger -> transition. Absence of a matching trigger means 'advance to the next stage in the list'.",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["goto"],
+              "additionalProperties": false,
+              "properties": {
+                "goto": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Target stage name. Must name an enabled, non-post stage."
+                },
+                "loop": {
+                  "type": "string",
+                  "description": "Loop counter key; limit from worca.loops.<key> (default 5). Required for backward/self jumps (unbounded cycles are rejected). Must not collide with the reserved per-stage '<name>_iteration' counters."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
