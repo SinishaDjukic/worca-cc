@@ -3160,12 +3160,15 @@ def _make_learn_settings(tmp_path):
                 "test": {"agent": "tester", "enabled": False},
                 "review": {"agent": "guardian", "enabled": False},
                 "pr": {"agent": "guardian", "enabled": False},
+                # W-070: learn enablement must be real config (not just an
+                # is_learn_enabled patch) — the flow's post_stages gate reads
+                # settings, so a patched-only enable would be skipped.
+                "learn": {"enabled": True},
             },
             "agents": {
                 "learner": {"model": "opus", "max_turns": 10},
             },
             "loops": {},
-            "learn": {"enabled": True},
         }
     }
     p = tmp_path / "settings.json"
@@ -4829,3 +4832,138 @@ def test_run_pipeline_emits_template_dropped_on_resume_regression(tmp_path, monk
     evt = next(e for e in events if e["event_type"] == "pipeline.template.dropped")
     assert evt["payload"]["template_id"] == "my-template"
     assert evt["payload"]["reason"] == "missing_on_resume"
+
+
+# --- Flow fingerprint on resume (W-070 §4) ---
+
+def _make_flow_settings(tmp_path, flow_doc=None):
+    """Settings with only coordinate enabled, plus an optional worca.flow."""
+    cfg = {
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }
+    if flow_doc is not None:
+        cfg["worca"]["flow"] = flow_doc
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps(cfg))
+    return str(p)
+
+
+_FP_FLOW_DOC = {
+    "version": 1,
+    "stages": [
+        {"name": "preflight"},
+        {"name": "coordinate", "agent": "coordinator", "schema": "coordinate.json"},
+    ],
+}
+
+
+def _install_flow_runtime(tmp_path):
+    """Materialize the minimal .claude/worca tree the flow validator checks."""
+    core = tmp_path / ".claude" / "worca" / "agents" / "core"
+    core.mkdir(parents=True, exist_ok=True)
+    (core / "coordinator.md").write_text("# coordinator")
+    schemas = tmp_path / ".claude" / "worca" / "schemas"
+    schemas.mkdir(parents=True, exist_ok=True)
+    (schemas / "coordinate.json").write_text("{}")
+
+
+def _fp_resume_status(fingerprint):
+    return {
+        "run_id": "20260101-000000-000-flow-fp",
+        "pipeline_status": "failed",
+        "work_request": {"title": "Flow fp test"},
+        "branch": "feat/flow-fp",
+        "flow_fingerprint": fingerprint,
+        "stages": {
+            "preflight": {"status": "completed"},
+            "coordinate": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {},
+    }
+
+
+def _run_flow_fp_pipeline(tmp_path, flow_doc, resume_status=None):
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    wr = WorkRequest(source_type="prompt", title="Flow fp test")
+    settings_path = _make_flow_settings(tmp_path, flow_doc)
+    _install_flow_runtime(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    if resume_status:
+        run_dir = worca_dir / "runs" / resume_status["run_id"]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "status.json").write_text(json.dumps(resume_status))
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        return run_pipeline(
+            wr,
+            plan_file=str(plan),
+            settings_path=settings_path,
+            status_path=status_path,
+            resume=resume_status is not None,
+        )
+
+
+def test_fingerprint_persisted_on_fresh_run(tmp_path, monkeypatch):
+    """A fresh run records the flow fingerprint in status.json."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_flow_fp_pipeline(tmp_path, _FP_FLOW_DOC)
+    assert len(result.get("flow_fingerprint", "")) == 64
+
+
+def test_fingerprint_mismatch_fails_resume(tmp_path, monkeypatch):
+    """Resuming a custom-flow run under a changed flow fails loudly (W-070 §4)."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(PipelineError, match="worca.flow changed"):
+        _run_flow_fp_pipeline(
+            tmp_path, _FP_FLOW_DOC, resume_status=_fp_resume_status("0" * 64)
+        )
+
+
+def test_fingerprint_match_resumes(tmp_path, monkeypatch):
+    """Matching fingerprint resumes normally under a custom flow."""
+    from worca.orchestrator.flow import load_flow
+    monkeypatch.chdir(tmp_path)
+    settings_path = _make_flow_settings(tmp_path, _FP_FLOW_DOC)
+    _install_flow_runtime(tmp_path)
+    current_fp = load_flow(settings_path).fingerprint()
+    result = _run_flow_fp_pipeline(
+        tmp_path, _FP_FLOW_DOC, resume_status=_fp_resume_status(current_fp)
+    )
+    assert result["flow_fingerprint"] == current_fp
+    assert result["pipeline_status"] == "completed"
+
+
+def test_fingerprint_not_enforced_for_default_flow(tmp_path, monkeypatch):
+    """Default-flow runs keep legacy resume semantics: a stale fingerprint is
+    backfilled, never rejected (zero behavior change by default)."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_flow_fp_pipeline(
+        tmp_path, None, resume_status=_fp_resume_status("0" * 64)
+    )
+    assert result["pipeline_status"] == "completed"
+    assert result["flow_fingerprint"] != "0" * 64

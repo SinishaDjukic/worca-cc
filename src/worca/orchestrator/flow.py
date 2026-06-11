@@ -118,8 +118,13 @@ class FlowSpec:
     introspection and fingerprinting.
     """
 
-    def __init__(self, all_stages: list):
+    def __init__(self, all_stages: list, custom: bool = False):
         self.all_stages = list(all_stages)
+        # True when this flow came from a user-supplied worca.flow document.
+        # The runner's resume fingerprint check is enforced only for custom
+        # flows — default-flow runs keep the legacy "re-derive from current
+        # settings" resume semantics (zero behavior change by default).
+        self.custom = custom
         self.stages = [s for s in self.all_stages if s.enabled and not s.post]
         self.post_stages = [s for s in self.all_stages if s.enabled and s.post]
         self._index = {s.name: i for i, s in enumerate(self.stages)}
@@ -130,6 +135,16 @@ class FlowSpec:
             return self._index[name]
         except KeyError:
             raise FlowError(f"flow has no enabled stage named {name!r}") from None
+
+    def transition_for(self, current: str, trigger: str) -> Transition | None:
+        """The declared transition for a trigger on an enabled stage, or None.
+
+        None means the flow has no such jump — either never declared, or
+        dropped at compile time because the target stage is disabled (the
+        runner's legacy "target stage is disabled — skipping loop" guards
+        map onto this check).
+        """
+        return self.stages[self.index_of(current)].on.get(trigger)
 
     def next_index(self, current: str, trigger: str | None = None) -> int | None:
         """Next stage index from `current`.
@@ -412,7 +427,7 @@ def load_flow(settings_path: str = ".claude/settings.json",
 
     entries = _parse_flow_doc(doc, worca.get("stages", {}))
     _validate_flow(entries, project_root=project_root)
-    return FlowSpec(entries)
+    return FlowSpec(entries, custom=True)
 
 
 def resolve_loop_limit(loop_key: str, settings_path: str, mloops: int = 1,

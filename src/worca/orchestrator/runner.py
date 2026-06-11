@@ -30,8 +30,9 @@ from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
 from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
+from worca.orchestrator.flow import load_flow
 from worca.orchestrator.stages import (
-    Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
+    Stage, get_stage_config, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
     PreflightError, validate_tier_pinned_agent_models,
 )
@@ -1133,19 +1134,26 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
 
 def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                      termination_type, termination_reason, msize, logs_dir,
-                     force=False, ctx=None):
+                     force=False, ctx=None, flow=None):
     """Run the LEARN stage if enabled (or forced). Called after pipeline termination.
 
     Non-fatal: any exception is logged but not propagated.
 
     Args:
-        force: If True, skip the is_learn_enabled() check. Used by the
-               manual trigger (run_learn.py / UI button) so that learning
-               analysis runs even when learn.enabled is false.
+        force: If True, skip the enabled check. Used by the manual trigger
+               (run_learn.py / UI button) so that learning analysis runs
+               even when learn.enabled is false.
         ctx: Optional EventContext for emitting learn events.
+        flow: Optional FlowSpec (W-070). When provided, learn runs iff it is
+              an enabled post stage of the flow; without it (manual trigger,
+              legacy callers) the is_learn_enabled() settings check applies.
     """
-    if not force and not is_learn_enabled(settings_path):
-        return
+    if not force:
+        if flow is not None:
+            if not any(s.name == Stage.LEARN.value for s in flow.post_stages):
+                return
+        elif not is_learn_enabled(settings_path):
+            return
     _log("Running learn stage...", "info")
     actual_status_path = os.path.join(run_dir, "status.json") if run_dir else ".worca/status.json"
     learn_start = time.monotonic()
@@ -2549,6 +2557,10 @@ def run_pipeline(
         existing = load_status(status_path)
 
     resume_stage = None
+    # Assigned inside the main try once settings are ready; None until then so
+    # the exception handlers' learn dispatch can fall back to the legacy
+    # is_learn_enabled() check for failures before flow load.
+    flow = None
     _claude_md_overlay_path: Optional[str] = None
     _resolved_claude_md_mode: str = "all"
     _claude_md_overlay_dict: Optional[dict] = None
@@ -2896,7 +2908,31 @@ def run_pipeline(
         _effort_auto_cap = _effort_settings.get("auto_cap", "xhigh")
         _log(f"Effort: auto_mode={_effort_auto_mode}, auto_cap={_effort_auto_cap}")
 
-        stage_order = get_enabled_stages(settings_path)
+        # Load the declarative flow (W-070). The compiled default reproduces
+        # the legacy STAGE_ORDER walk exactly (parity-tested); worca.flow
+        # overrides the topology. stage_order stays an enum list so the
+        # builtin-stage identity checks below keep working — W-071 retires it.
+        flow = load_flow(settings_path)
+        stage_order = [Stage(s.name) for s in flow.stages]
+
+        # Flow fingerprint (W-070 §4): a run must never silently resume under
+        # a different topology than the one that produced its status.json.
+        # Enforced for custom flows only — default-flow runs keep the legacy
+        # "re-derive from current settings" resume semantics, so toggling
+        # worca.stages.* while paused behaves exactly as before. Runs from
+        # older versions have no fingerprint; it's backfilled, not rejected.
+        _flow_fp = flow.fingerprint()
+        if resume_stage is not None and flow.custom:
+            _prior_fp = status.get("flow_fingerprint")
+            if _prior_fp and _prior_fp != _flow_fp:
+                raise PipelineError(
+                    "worca.flow changed while this run was stopped "
+                    f"(fingerprint {_prior_fp[:12]}… -> {_flow_fp[:12]}…; "
+                    f"current flow stages: {[s.name for s in flow.stages]}). "
+                    "Restore the previous flow to resume this run, or start "
+                    "a new run under the new flow."
+                )
+        status["flow_fingerprint"] = _flow_fp
 
         # Handle plan file
         if not resume_stage:
@@ -3996,19 +4032,27 @@ def run_pipeline(
                     prompt_builder.update_context("plan_review_issues", list(critical_issues))
                     prompt_builder.update_context("plan_revision_mode", True)
 
+                    # Declarative jump (W-070). No plan_review_revise
+                    # transition (PLAN disabled in the flow) falls through to
+                    # the exhausted path: unresolved issues carry forward to
+                    # COORDINATE instead of crashing on a missing stage.
+                    _prv_tr = flow.transition_for(current_stage.value, "plan_review_revise")
+                    _prv_loop = (_prv_tr.loop if _prv_tr else None) or "plan_review"
+
                     # Update ALL counters before saving — single save to avoid inconsistent state
-                    loop_counters["plan_review"] = loop_counters.get("plan_review", 0) + 1
+                    loop_counters[_prv_loop] = loop_counters.get(_prv_loop, 0) + 1
                     loop_counters[f"{Stage.PLAN_REVIEW.value}_iteration"] = (
                         loop_counters.get(f"{Stage.PLAN_REVIEW.value}_iteration", 0) + 1
                     )
                     status["loop_counters"] = dict(loop_counters)
 
-                    if check_loop_limit("plan_review", loop_counters["plan_review"],
-                                        settings_path, mloops=mloops):
+                    if _prv_tr is not None and check_loop_limit(
+                            _prv_loop, loop_counters[_prv_loop],
+                            settings_path, mloops=mloops):
                         if ctx:
                             _emit_loop_triggered_and_gate(
-                                ctx, "plan_review", loop_counters["plan_review"],
-                                Stage.PLAN_REVIEW.value, Stage.PLAN.value, "plan_review_revise",
+                                ctx, _prv_loop, loop_counters[_prv_loop],
+                                current_stage.value, _prv_tr.goto, "plan_review_revise",
                             )
 
                         # --- Atomic loop-back sequence ---
@@ -4057,8 +4101,8 @@ def run_pipeline(
                             }, overrides_dir=_lb_overrides_dir,
                                template_agents_dir=_lb_template_agents_dir)
                         # 3. In-memory transitions (context keys drive behavior on crash/resume)
-                        _next_trigger[Stage.PLAN.value] = "plan_review_revise"
-                        stage_idx = stage_order.index(Stage.PLAN)
+                        _next_trigger[_prv_tr.goto] = "plan_review_revise"
+                        stage_idx = flow.next_index(current_stage.value, "plan_review_revise")
                         continue  # Loop back to PLAN
                     else:
                         if critical_issues:
@@ -4071,9 +4115,9 @@ def run_pipeline(
                         save_status(status, actual_status_path)
                         if ctx:
                             emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                loop_key="plan_review",
-                                iteration=loop_counters["plan_review"],
-                                limit=_get_loop_limit("plan_review", settings_path, mloops),
+                                loop_key=_prv_loop,
+                                iteration=loop_counters[_prv_loop],
+                                limit=_get_loop_limit(_prv_loop, settings_path, mloops),
                             ))
                         n_carried = len(critical_issues) if critical_issues else 0
                         _log(f"Plan review loop exhausted — {n_carried} unresolved issues carried to COORDINATE", "warn")
@@ -4231,16 +4275,21 @@ def run_pipeline(
                                 "warn",
                             )
                             next_bead = None
-                    if next_bead and Stage.IMPLEMENT in stage_order:
+                    # Declarative jump (W-070): the bead self-loop is declared
+                    # on the implement stage. bead_iteration's cap is dynamic
+                    # (depends on created bead count) — runtime-provided, not
+                    # from worca.loops.
+                    _nb_tr = flow.transition_for(current_stage.value, "next_bead")
+                    if next_bead and _nb_tr is not None:
                         safety_cap = max(created_bead_count, len(run_bead_ids or [])) + 3
                         if loop_counters["bead_iteration"] < safety_cap:
                             # Keep stage in_progress between beads so resume works
                             if prompt_context_path:
                                 prompt_builder.save_context(prompt_context_path)
                             save_status(status, actual_status_path)
-                            _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
-                            _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                            stage_idx = stage_order.index(Stage.IMPLEMENT)
+                            _log(f"Next bead available — looping back to {_nb_tr.goto.upper()} (bead {loop_counters['bead_iteration']})", "ok")
+                            _next_trigger[_nb_tr.goto] = "next_bead"
+                            stage_idx = flow.next_index(current_stage.value, "next_bead")
                             if ctx:
                                 emit_event(ctx, BEAD_NEXT, bead_next_payload(
                                     next_bead_id=next_bead["id"],
@@ -4316,39 +4365,44 @@ def run_pipeline(
                             failures=new_failures,
                         ))
                         _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                    if Stage.IMPLEMENT not in stage_order:
-                        _log("Tests failed but IMPLEMENT stage is disabled — treating as pass", "warn")
+                    # Declarative jump (W-070): the flow declares whether (and
+                    # where) test_failure loops back. No transition = the
+                    # legacy "IMPLEMENT stage is disabled" case.
+                    _tf_tr = flow.transition_for(current_stage.value, "test_failure")
+                    if _tf_tr is None:
+                        _log("Tests failed but the flow has no test_failure loop (IMPLEMENT stage disabled) — treating as pass", "warn")
                     else:
+                        _tf_loop = _tf_tr.loop or "implement_test"
                         # Flat test-fix counter (not per-bead)
-                        loop_counters["implement_test"] = loop_counters.get("implement_test", 0) + 1
+                        loop_counters[_tf_loop] = loop_counters.get(_tf_loop, 0) + 1
                         status["loop_counters"] = dict(loop_counters)
                         bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                         prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                        _log(f"Tests failed — looping back to IMPLEMENT fix mode (attempt {loop_counters['implement_test']})", "warn")
-                        if check_loop_limit("implement_test", loop_counters["implement_test"], settings_path, mloops=mloops):
+                        _log(f"Tests failed — looping back to {_tf_tr.goto.upper()} fix mode (attempt {loop_counters[_tf_loop]})", "warn")
+                        if check_loop_limit(_tf_loop, loop_counters[_tf_loop], settings_path, mloops=mloops):
                             if ctx:
                                 emit_event(ctx, TEST_FIX_ATTEMPT, test_fix_attempt_payload(
-                                    attempt=loop_counters["implement_test"],
-                                    limit=_get_loop_limit("implement_test", settings_path, mloops),
+                                    attempt=loop_counters[_tf_loop],
+                                    limit=_get_loop_limit(_tf_loop, settings_path, mloops),
                                     failures_summary=str(new_failures[:3]),
                                 ))
                                 _emit_loop_triggered_and_gate(
-                                    ctx, "implement_test", loop_counters["implement_test"],
-                                    Stage.TEST.value, Stage.IMPLEMENT.value, "test_failure",
+                                    ctx, _tf_loop, loop_counters[_tf_loop],
+                                    current_stage.value, _tf_tr.goto, "test_failure",
                                 )
                             if prompt_context_path:
                                 prompt_builder.save_context(prompt_context_path)
                             save_status(status, actual_status_path)
-                            _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
-                            stage_idx = stage_order.index(Stage.IMPLEMENT)
+                            _next_trigger[_tf_tr.goto] = "test_failure"
+                            stage_idx = flow.next_index(current_stage.value, "test_failure")
                             continue
                         else:
-                            _log(f"Test fix limit exhausted after {loop_counters['implement_test']} attempts — finishing", "warn")
+                            _log(f"Test fix limit exhausted after {loop_counters[_tf_loop]} attempts — finishing", "warn")
                             if ctx:
                                 emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                    loop_key="implement_test",
-                                    iteration=loop_counters["implement_test"],
-                                    limit=_get_loop_limit("implement_test", settings_path, mloops),
+                                    loop_key=_tf_loop,
+                                    iteration=loop_counters[_tf_loop],
+                                    limit=_get_loop_limit(_tf_loop, settings_path, mloops),
                                 ))
                 else:
                     iter_extras["outcome"] = "success"
@@ -4417,46 +4471,53 @@ def run_pipeline(
                         prompt_builder.update_context("test_failures", None)
                         prompt_builder.update_context("test_failure_history", None)
 
-                        if Stage.IMPLEMENT not in stage_order:
-                            _log("Changes requested but IMPLEMENT stage is disabled — skipping loop", "warn")
+                        # Declarative jump (W-070): no review_changes
+                        # transition = the legacy "IMPLEMENT disabled" case.
+                        _rc_tr = flow.transition_for(current_stage.value, "review_changes")
+                        if _rc_tr is None:
+                            _log("Changes requested but the flow has no review_changes loop (IMPLEMENT stage disabled) — skipping loop", "warn")
                         else:
+                            _rc_loop = _rc_tr.loop or "pr_changes"
                             # Flat review-fix counter (not per-bead)
-                            loop_counters["pr_changes"] = loop_counters.get("pr_changes", 0) + 1
+                            loop_counters[_rc_loop] = loop_counters.get(_rc_loop, 0) + 1
                             status["loop_counters"] = dict(loop_counters)
                             bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
                             prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                            _log(f"Changes requested — looping back to IMPLEMENT fix mode (attempt {loop_counters['pr_changes']})", "warn")
-                            if check_loop_limit("pr_changes", loop_counters["pr_changes"], settings_path, mloops=mloops):
+                            _log(f"Changes requested — looping back to {_rc_tr.goto.upper()} fix mode (attempt {loop_counters[_rc_loop]})", "warn")
+                            if check_loop_limit(_rc_loop, loop_counters[_rc_loop], settings_path, mloops=mloops):
                                 if ctx:
                                     emit_event(ctx, REVIEW_FIX_ATTEMPT, review_fix_attempt_payload(
-                                        attempt=loop_counters["pr_changes"],
-                                        limit=_get_loop_limit("pr_changes", settings_path, mloops),
+                                        attempt=loop_counters[_rc_loop],
+                                        limit=_get_loop_limit(_rc_loop, settings_path, mloops),
                                         critical_issues=critical_issues,
                                     ))
                                     _emit_loop_triggered_and_gate(
-                                        ctx, "pr_changes", loop_counters["pr_changes"],
-                                        Stage.REVIEW.value, Stage.IMPLEMENT.value, "review_changes",
+                                        ctx, _rc_loop, loop_counters[_rc_loop],
+                                        current_stage.value, _rc_tr.goto, "review_changes",
                                     )
                                 if prompt_context_path:
                                     prompt_builder.save_context(prompt_context_path)
                                 save_status(status, actual_status_path)
-                                _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
-                                stage_idx = stage_order.index(Stage.IMPLEMENT)
+                                _next_trigger[_rc_tr.goto] = "review_changes"
+                                stage_idx = flow.next_index(current_stage.value, "review_changes")
                                 continue
                             else:
-                                _log(f"Review fix limit exhausted after {loop_counters['pr_changes']} attempts — finishing", "warn")
+                                _log(f"Review fix limit exhausted after {loop_counters[_rc_loop]} attempts — finishing", "warn")
                                 if ctx:
                                     emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                        loop_key="pr_changes",
-                                        iteration=loop_counters["pr_changes"],
-                                        limit=_get_loop_limit("pr_changes", settings_path, mloops),
+                                        loop_key=_rc_loop,
+                                        iteration=loop_counters[_rc_loop],
+                                        limit=_get_loop_limit(_rc_loop, settings_path, mloops),
                                     ))
 
                 elif next_stage == Stage.PLAN:
-                    if Stage.PLAN not in stage_order:
-                        _log("Restart planning requested but PLAN stage is disabled — skipping loop", "warn")
+                    # Declarative jump (W-070): no restart_planning
+                    # transition = the legacy "PLAN disabled" case.
+                    _rp_tr = flow.transition_for(current_stage.value, "restart_planning")
+                    if _rp_tr is None:
+                        _log("Restart planning requested but the flow has no restart_planning loop (PLAN stage disabled) — skipping loop", "warn")
                     else:
-                        loop_key = "restart_planning"
+                        loop_key = _rp_tr.loop or "restart_planning"
                         loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
                         status["loop_counters"] = dict(loop_counters)
                         _log(f"Restart planning requested (iteration {loop_counters[loop_key]})", "warn")
@@ -4473,10 +4534,10 @@ def run_pipeline(
                         if ctx:
                             _emit_loop_triggered_and_gate(
                                 ctx, loop_key, loop_counters[loop_key],
-                                Stage.REVIEW.value, Stage.PLAN.value, "restart_planning",
+                                current_stage.value, _rp_tr.goto, "restart_planning",
                             )
-                        _next_trigger[Stage.PLAN.value] = "restart_planning"
-                        stage_idx = stage_order.index(Stage.PLAN)
+                        _next_trigger[_rp_tr.goto] = "restart_planning"
+                        stage_idx = flow.next_index(current_stage.value, "restart_planning")
                         continue
 
             # PR stage: approval gate + completion
@@ -4762,7 +4823,7 @@ def run_pipeline(
                 _log(f"Totals: {' | '.join(summary_parts)}")
 
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "success", "", msize, logs_dir, ctx=ctx)
+                             "success", "", msize, logs_dir, ctx=ctx, flow=flow)
 
             if ctx:
                 _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == PipelineStatus.COMPLETED]
@@ -4802,7 +4863,7 @@ def run_pipeline(
             status["stop_reason"] = "loop_exhausted"
             save_status(status, actual_status_path)
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "loop_exhausted", str(e), msize, logs_dir, ctx=ctx)
+                             "loop_exhausted", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),
@@ -4820,7 +4881,7 @@ def run_pipeline(
             # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
             if status.get("stage") != "preflight":
                 _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                                 "failure", str(e), msize, logs_dir, ctx=ctx)
+                                 "failure", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),
@@ -4836,7 +4897,7 @@ def run_pipeline(
             status["stop_reason"] = type(e).__name__
             save_status(status, actual_status_path)
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "failure", str(e), msize, logs_dir, ctx=ctx)
+                             "failure", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),

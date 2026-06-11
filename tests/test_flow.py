@@ -191,6 +191,22 @@ class TestNextIndex:
         flow = self._flow(tmp_path)
         assert flow.next_index("test", "no_such_trigger") == flow.index_of("review")
 
+    def test_transition_for_declared_trigger(self, tmp_path):
+        flow = self._flow(tmp_path)
+        tr = flow.transition_for("test", "test_failure")
+        assert tr == Transition(goto="implement", loop="implement_test")
+
+    def test_transition_for_missing_trigger_returns_none(self, tmp_path):
+        flow = self._flow(tmp_path)
+        assert flow.transition_for("plan", "test_failure") is None
+
+    def test_transition_for_dropped_when_target_disabled(self, tmp_path):
+        settings = _write_settings(
+            tmp_path, {"stages": {"implement": {"enabled": False}}}
+        )
+        flow = compile_default_flow(settings)
+        assert flow.transition_for("test", "test_failure") is None
+
     def test_next_index_unknown_stage_raises(self, tmp_path):
         flow = self._flow(tmp_path)
         with pytest.raises(FlowError):
@@ -227,6 +243,13 @@ class TestLoadFlow:
         settings = _write_settings(tmp_path, {})
         flow = load_flow(settings)
         assert [s.name for s in flow.stages] == [s.value for s in get_enabled_stages(settings)]
+        assert flow.custom is False
+
+    def test_load_flow_custom_sets_custom_flag(self, tmp_path, monkeypatch):
+        _install_runtime(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        settings = _write_settings(tmp_path, {"flow": _custom_flow_doc()})
+        assert load_flow(settings).custom is True
 
     def test_load_flow_custom(self, tmp_path, monkeypatch):
         _install_runtime(tmp_path)

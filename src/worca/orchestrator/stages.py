@@ -222,20 +222,15 @@ def validate_tier_pinned_agent_models(settings: dict) -> list:
 def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:
     """Return list of enabled stages in pipeline order.
 
-    Reads worca.stages.<stage>.enabled from settings.json.
-    Stages in _STAGES_DEFAULT_DISABLED default to disabled if not configured.
-    All other stages default to enabled if not configured.
+    Thin wrapper over the declarative flow (W-070): the effective flow —
+    worca.flow if present, else the compiled default — determines order and
+    enabled-ness. The compiled default preserves the legacy semantics
+    exactly: worca.stages.<stage>.enabled overrides, _STAGES_DEFAULT_DISABLED
+    stages default disabled, everything else enabled.
     """
-    settings = _read_settings(settings_path)
-    stages_config = settings.get("worca", {}).get("stages", {})
+    from worca.orchestrator.flow import load_flow  # local import: flow imports stages
 
-    enabled = []
-    for stage in STAGE_ORDER:
-        stage_entry = stages_config.get(stage.value, {})
-        default_enabled = stage not in _STAGES_DEFAULT_DISABLED
-        if stage_entry.get("enabled", default_enabled):
-            enabled.append(stage)
-    return enabled
+    return [Stage(s.name) for s in load_flow(settings_path).stages]
 
 
 VALID_PLAN_REVIEW_MODES = ("review", "review_and_edit")
