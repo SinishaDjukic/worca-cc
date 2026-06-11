@@ -29,6 +29,7 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
+from worca.orchestrator.executor import StageDecision, StageRunContext, handler_for
 from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
 from worca.orchestrator.flow import load_flow
 from worca.orchestrator.stages import (
@@ -3073,6 +3074,34 @@ def run_pipeline(
         # Track triggers for loop-back iterations
         _next_trigger = {}  # {stage_value: trigger_reason}
 
+        # Shared loop<->handler state (W-071). Mutable containers are shared
+        # by reference with the loop locals; scalar cross-stage fields are
+        # mirrored onto rc as the per-stage blocks migrate into handlers.
+        rc = StageRunContext()
+        rc.flow = flow
+        rc.status = status
+        rc.prompt_builder = prompt_builder
+        rc.loop_counters = loop_counters
+        rc.next_trigger = _next_trigger
+        rc.settings_path = settings_path
+        rc.actual_status_path = actual_status_path
+        rc.status_path = status_path
+        rc.worca_dir = worca_dir
+        rc.registry_dir = registry_dir
+        rc.run_dir = run_dir
+        rc.logs_dir = logs_dir
+        rc.prompt_context_path = prompt_context_path
+        rc.ctx = ctx
+        rc.work_request = work_request
+        rc.branch_name = branch_name
+        rc.msize = msize
+        rc.mloops = mloops
+        rc.max_beads_override = max_beads_override
+        rc.skip_preflight = skip_preflight
+        rc.context = context
+        rc.run_id_param = run_id
+        rc.created_bead_count = created_bead_count
+
         while stage_idx < len(stage_order):
             current_stage = stage_order[stage_idx]
 
@@ -3207,6 +3236,22 @@ def run_pipeline(
             )
             iter_num = iter_record["number"]
             save_status(status, actual_status_path)
+
+            # Per-pass handler + shared-context reset (W-071). Handlers are
+            # fresh instances each pass; rc carries the loop-local state the
+            # bespoke per-stage blocks read and mutate.
+            _handler = handler_for(current_stage.value)
+            rc.begin_pass(
+                flow_stage=flow.stages[stage_idx],
+                trigger=trigger,
+                stage_config=stage_config,
+                iter_num=iter_num,
+                iter_record=iter_record,
+            )
+            rc.effort_env_overrides = _effort_env_overrides
+            rc.effort_dict = _effort_dict
+            rc.assigned_bead = _assigned_bead if current_stage == Stage.IMPLEMENT else None
+
             if ctx:
                 emit_event(ctx, STAGE_STARTED, stage_started_payload(
                     stage=current_stage.value,
@@ -3217,13 +3262,8 @@ def run_pipeline(
                     max_turns=(stage_config.get("max_turns") or 0) * msize,
                     effort=_effort_dict,
                 ))
-                if current_stage == Stage.TEST:
-                    emit_event(ctx, TEST_SUITE_STARTED, test_suite_started_payload(
-                        stage=current_stage.value,
-                        iteration=iter_num,
-                        trigger=trigger,
-                    ))
-                elif current_stage == Stage.REVIEW:
+                _handler.on_stage_started(rc)
+                if current_stage == Stage.REVIEW:
                     emit_event(ctx, REVIEW_STARTED, review_started_payload(
                         iteration=iter_num,
                         files_under_review=prompt_builder.get_context("files_changed"),
@@ -3752,6 +3792,13 @@ def run_pipeline(
                 all_iter_usages.append(usage)
             if all_iter_usages:
                 stage_extras["token_usage"] = aggregate_token_usage(all_iter_usages)
+
+            # Expose completion state to the stage handler (W-071)
+            rc.result = result
+            rc.raw_envelope = raw_envelope
+            rc.usage = usage
+            rc.iter_extras = iter_extras
+            rc.stage_extras = stage_extras
 
             # Handle PREFLIGHT completion
             if current_stage == Stage.PREFLIGHT:
@@ -4331,93 +4378,13 @@ def run_pipeline(
                         **_bead_kwargs,
                     )
 
-            # Handle test results — simplified (flat counter, no per-bead logic)
+            # Handle test results — TestHandler (W-071)
             elif current_stage == Stage.TEST:
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
-
-                passed = result.get("passed", False)
-                _emit_guide_conflicts(ctx, "test", result)
-                # Thread test outputs into PromptBuilder
-                prompt_builder.update_context("test_passed", passed)
-                prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
-                prompt_builder.update_context("proof_artifacts", result.get("proof_artifacts", []))
-                if not passed:
-                    new_failures = result.get("failures", [])
-                    # Accumulate test failure history
-                    prev_history = prompt_builder.get_context("test_failure_history") or []
-                    prev_history.append({"attempt": len(prev_history) + 1, "failures": new_failures})
-                    prompt_builder.update_context("test_failure_history", prev_history)
-                    prompt_builder.update_context("test_failures", new_failures)
-                    prompt_builder.update_context("review_issues", None)
-                    prompt_builder.update_context("review_history", None)
-                    iter_extras["outcome"] = "test_failure"
-                    complete_iteration(status, current_stage.value, **iter_extras)
-                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                    update_stage(status, current_stage.value, **stage_extras)
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, TEST_SUITE_FAILED, test_suite_failed_payload(
-                            iteration=iter_num,
-                            failure_count=len(new_failures),
-                            failures=new_failures,
-                        ))
-                        _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                    # Declarative jump (W-070): the flow declares whether (and
-                    # where) test_failure loops back. No transition = the
-                    # legacy "IMPLEMENT stage is disabled" case.
-                    _tf_tr = flow.transition_for(current_stage.value, "test_failure")
-                    if _tf_tr is None:
-                        _log("Tests failed but the flow has no test_failure loop (IMPLEMENT stage disabled) — treating as pass", "warn")
-                    else:
-                        _tf_loop = _tf_tr.loop or "implement_test"
-                        # Flat test-fix counter (not per-bead)
-                        loop_counters[_tf_loop] = loop_counters.get(_tf_loop, 0) + 1
-                        status["loop_counters"] = dict(loop_counters)
-                        bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
-                        prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                        _log(f"Tests failed — looping back to {_tf_tr.goto.upper()} fix mode (attempt {loop_counters[_tf_loop]})", "warn")
-                        if check_loop_limit(_tf_loop, loop_counters[_tf_loop], settings_path, mloops=mloops):
-                            if ctx:
-                                emit_event(ctx, TEST_FIX_ATTEMPT, test_fix_attempt_payload(
-                                    attempt=loop_counters[_tf_loop],
-                                    limit=_get_loop_limit(_tf_loop, settings_path, mloops),
-                                    failures_summary=str(new_failures[:3]),
-                                ))
-                                _emit_loop_triggered_and_gate(
-                                    ctx, _tf_loop, loop_counters[_tf_loop],
-                                    current_stage.value, _tf_tr.goto, "test_failure",
-                                )
-                            if prompt_context_path:
-                                prompt_builder.save_context(prompt_context_path)
-                            save_status(status, actual_status_path)
-                            _next_trigger[_tf_tr.goto] = "test_failure"
-                            stage_idx = flow.next_index(current_stage.value, "test_failure")
-                            continue
-                        else:
-                            _log(f"Test fix limit exhausted after {loop_counters[_tf_loop]} attempts — finishing", "warn")
-                            if ctx:
-                                emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                    loop_key=_tf_loop,
-                                    iteration=loop_counters[_tf_loop],
-                                    limit=_get_loop_limit(_tf_loop, settings_path, mloops),
-                                ))
-                else:
-                    iter_extras["outcome"] = "success"
-                    complete_iteration(status, current_stage.value, **iter_extras)
-                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                    update_stage(status, current_stage.value, **stage_extras)
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, TEST_SUITE_PASSED, test_suite_passed_payload(
-                            iteration=iter_num,
-                            coverage_pct=result.get("coverage_pct"),
-                            proof_artifacts=result.get("proof_artifacts"),
-                        ))
-                        _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                    _log("Tests passed", "ok")
+                _decision = _handler.post_dispatch(rc)
+                if _decision.action == StageDecision.JUMP:
+                    _next_trigger[_decision.goto] = _decision.trigger
+                    stage_idx = flow.next_index(current_stage.value, _decision.trigger)
+                    continue
 
             # Handle review results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.REVIEW:
