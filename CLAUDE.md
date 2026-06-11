@@ -116,6 +116,7 @@ Skills and subagents in this repo split into two scopes:
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
 - `worca.default_template` — optional template id pinned as the project default; every run uses it unless `--template` overrides at launch
 - `worca.stages` — enable/disable stages, override agents
+- `worca.flow` — declarative pipeline topology: stage order + outcome-driven loop transitions (W-070). Omitted = builtin 9-stage flow, byte-identical to legacy behavior. Custom flows are validated fail-loud at launch and fingerprinted into `status.json` so a paused run never silently resumes under a changed topology. See [`docs/flow.md`](./docs/flow.md).
 - `worca.agents` — model, max_turns, effort, and max_beads per agent (coordinator only for max_beads)
 - `worca.agents.coordinator.max_beads` — bead decomposition cap: `0` = auto (default, current behavior), `1` = single-bead mandate, `>1` = advisory budget. Enforcement is soft (logs on deviation, run proceeds). Suppressed when PR-revision mode is active (review comments drive bead count). Precedence: per-run `--max-beads` override → template config → `0`. The `quick-fix` template ships with `max_beads: 1` (entire fix as one atomic bead).
 - `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
@@ -124,7 +125,7 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 - `worca.circuit_breaker` — error classification and halt thresholds
 - `worca.governance` — hook guards and dispatch rules (see [`docs/governance.md`](./docs/governance.md) for the full reference)
 
-**Template-driven keys.** When a template is in play at run launch (explicit or via `worca.default_template`), these are stripped from the project-Settings merge base before the template's `config` applies: `worca.agents`, `worca.stages`, `worca.loops`, `worca.circuit_breaker`, `worca.effort`, `worca.governance.dispatch`. The template owns them outright. Cross-template keys (`models`, `webhooks`, `pricing`, `governance.guards`, `graphify`, `code_review_graph`, preflight definitions) keep applying. Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
+**Template-driven keys.** When a template is in play at run launch (explicit or via `worca.default_template`), these are stripped from the project-Settings merge base before the template's `config` applies: `worca.agents`, `worca.stages`, `worca.flow`, `worca.loops`, `worca.circuit_breaker`, `worca.effort`, `worca.governance.dispatch`. The template owns them outright. Cross-template keys (`models`, `webhooks`, `pricing`, `governance.guards`, `graphify`, `code_review_graph`, preflight definitions) keep applying. Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
 
 ### Model Profiles (`worca.models`)
 
