@@ -13,6 +13,7 @@ malformed flow fails at launch (FlowError), never mid-run.
 import hashlib
 import json
 import os
+import re
 
 from worca.orchestrator.stages import (
     STAGE_AGENT_MAP,
@@ -64,6 +65,12 @@ _STAGE_ENTRY_FIELDS = {"name", "agent", "schema", "prompt_block", "enabled", "po
 _TRANSITION_FIELDS = {"goto", "loop"}
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}
+_BUILTIN_AGENTS = {a for a in STAGE_AGENT_MAP.values() if a}
+
+# Custom stage and agent names (W-071). Hyphens are rejected because the
+# resolved prompt filename is ``{stage}-{agent}-iter-{N}`` — a hyphenated
+# agent name breaks the role extraction that keys dispatch governance.
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class FlowError(Exception):
@@ -344,14 +351,33 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
         if n in seen:
             raise FlowError(f"duplicate stage name {n!r} in worca.flow")
         seen.add(n)
-        # W-070 is topology-only: reordering, disabling, and rewiring the
-        # builtin stages. User-defined stage names need the generic stage
-        # executor (W-071) to have anything to dispatch them.
-        if n not in _BUILTIN_BY_NAME:
+        # Custom stage names (W-071) run under the generic stage executor.
+        # They must be safe identifiers — the name becomes the status.json
+        # stages.* key and the resolved-prompt filename prefix.
+        if n not in _BUILTIN_BY_NAME and not _NAME_RE.match(n):
             raise FlowError(
-                f"unknown stage name {n!r} in worca.flow — custom stages are "
-                f"not supported yet (W-071); builtin stages: "
-                f"{sorted(_BUILTIN_BY_NAME)}"
+                f"invalid custom stage name {n!r} in worca.flow — must match "
+                f"^[a-z][a-z0-9_]*$ (use underscores, not hyphens)"
+            )
+
+    for entry in entries:
+        # Custom (non-builtin) agent names key dispatch governance and the
+        # {stage}-{agent}-iter-N role extraction — same identifier rule.
+        if (
+            entry.agent
+            and entry.agent not in _BUILTIN_AGENTS
+            and not _NAME_RE.match(entry.agent)
+        ):
+            raise FlowError(
+                f"stage {entry.name!r}: invalid agent name {entry.agent!r} — "
+                f"must match ^[a-z][a-z0-9_]*$ (use underscores, not hyphens)"
+            )
+        # Custom post stages would need the bespoke learn execution path
+        # generalized — deliberately out of W-071 scope.
+        if entry.name not in _BUILTIN_BY_NAME and entry.post:
+            raise FlowError(
+                f"stage {entry.name!r}: custom stages cannot be post stages "
+                f"(post-pipeline execution is builtin-only; W-071 scope)"
             )
 
     ordered = [e for e in entries if e.enabled and not e.post]
@@ -395,25 +421,70 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
 
     # File-existence checks last, enabled stages only: a flow that names a
     # missing agent template or schema must fail at launch, not mid-run.
+    # W-071: artifacts resolve across tiers — shipped core AND the project
+    # tiers (.claude/agents/ for agent .md, .claude/schemas/ for schemas) —
+    # so custom stages ship as project files with no core counterpart.
     for entry in entries:
         if not entry.enabled:
             continue
         if entry.agent:
-            agent_path = os.path.join(
-                project_root, ".claude", "worca", "agents", "core",
-                f"{entry.agent}.md",
-            )
-            if not os.path.exists(agent_path):
+            agent_candidates = [
+                os.path.join(project_root, ".claude", "worca", "agents",
+                             "core", f"{entry.agent}.md"),
+                os.path.join(project_root, ".claude", "agents",
+                             f"{entry.agent}.md"),
+            ]
+            if not any(os.path.exists(p) for p in agent_candidates):
                 raise FlowError(
-                    f"stage {entry.name!r}: agent template not found: {agent_path}"
+                    f"stage {entry.name!r}: agent template not found for "
+                    f"{entry.agent!r} (searched: {', '.join(agent_candidates)})"
                 )
+        schema_path = None
         if entry.schema:
-            schema_path = os.path.join(
-                project_root, ".claude", "worca", "schemas", entry.schema
+            schema_candidates = [
+                os.path.join(project_root, ".claude", "schemas", entry.schema),
+                os.path.join(project_root, ".claude", "worca", "schemas",
+                             entry.schema),
+            ]
+            schema_path = next(
+                (p for p in schema_candidates if os.path.exists(p)), None
             )
-            if not os.path.exists(schema_path):
+            if schema_path is None:
                 raise FlowError(
-                    f"stage {entry.name!r}: schema file not found: {schema_path}"
+                    f"stage {entry.name!r}: schema file not found for "
+                    f"{entry.schema!r} (searched: {', '.join(schema_candidates)})"
+                )
+
+        # W-071 §2 cross-check: a custom stage's on: triggers are driven by
+        # its structured output's `outcome` field, so the schema must declare
+        # outcome as a string enum covering every declared trigger — an
+        # undeclared outcome would silently advance instead of jumping.
+        if entry.name not in _BUILTIN_BY_NAME and entry.on and schema_path:
+            try:
+                with open(schema_path, encoding="utf-8") as f:
+                    schema_doc = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise FlowError(
+                    f"stage {entry.name!r}: cannot read schema "
+                    f"{schema_path!r}: {exc}"
+                ) from None
+            enum = (
+                schema_doc.get("properties", {})
+                .get("outcome", {})
+                .get("enum")
+            )
+            if not isinstance(enum, list) or not enum:
+                raise FlowError(
+                    f"stage {entry.name!r}: declares on: transitions but its "
+                    f"schema {entry.schema!r} has no 'outcome' string enum — "
+                    f"the generic executor maps outcome values to triggers"
+                )
+            undeclared = sorted(set(entry.on) - set(enum))
+            if undeclared:
+                raise FlowError(
+                    f"stage {entry.name!r}: on: trigger(s) {undeclared} are "
+                    f"not in the schema's outcome enum {sorted(enum)} — the "
+                    f"agent could never produce them"
                 )
 
 

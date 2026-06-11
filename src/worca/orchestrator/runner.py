@@ -592,10 +592,20 @@ def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
 
 def _render_agent_templates(run_dir: str, template_vars: dict,
                             overrides_dir: str = ".claude/agents",
-                            template_agents_dir: str | None = None) -> None:
+                            template_agents_dir: str | None = None,
+                            extra_agents: list | None = None) -> None:
     """Read agent .md templates from .claude/worca/agents/core/, replace placeholders,
     apply project overlays from overrides_dir and template overlays from
-    template_agents_dir, write results to {run_dir}/agents/."""
+    template_agents_dir, write results to {run_dir}/agents/.
+
+    extra_agents (W-071): agent names referenced by the flow that have no core
+    template (custom stage agents). Each is resolved through the same overlay
+    chain with an EMPTY base — the project/template tier file IS the
+    definition — and rendered into run_dir so dispatch-time placeholder
+    resolution works exactly as for builtin agents. Names with no file at any
+    tier are skipped (flow validation already failed the launch for enabled
+    stages, so this only happens for disabled ones).
+    """
     src_dir = ".claude/worca/agents/core"
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
@@ -604,6 +614,7 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
 
     resolver = OverlayResolver(overrides_dir=overrides_dir)
 
+    rendered_names = set()
     for filename in os.listdir(src_dir):
         if filename.endswith(".block.md"):
             continue
@@ -616,23 +627,89 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
                                    template_agents_dir=template_agents_dir)
         with open(os.path.join(dst_dir, filename), "w", encoding="utf-8") as f:
             f.write(content)
+        rendered_names.add(agent_name)
+
+    for agent_name in (extra_agents or []):
+        if not agent_name or agent_name in rendered_names:
+            continue
+        content = resolver.resolve(agent_name, "",
+                                   template_agents_dir=template_agents_dir)
+        if not content.strip():
+            continue  # no tier provides it — leave to _agent_path fallback
+        with open(os.path.join(dst_dir, f"{agent_name}.md"), "w", encoding="utf-8") as f:
+            f.write(content)
+        rendered_names.add(agent_name)
+
+
+def _warn_custom_agents_locked_down(flow, settings_path: str) -> None:
+    """Launch-time warning for custom agents with no dispatch grants (W-071 §4).
+
+    A custom agent not named in ``worca.governance.dispatch.<section>.
+    per_agent_allow`` resolves to the lockdown sentinel instead of
+    ``_defaults`` — it gets no tools/skills/subagents. Name the missing
+    sections at launch so the operator isn't debugging a tool-less agent
+    mid-run. Best-effort: never blocks the launch.
+    """
+    try:
+        from worca.hooks.tracking import KNOWN_PIPELINE_AGENTS
+        dispatch_cfg = (
+            load_settings(settings_path)
+            .get("worca", {}).get("governance", {}).get("dispatch", {})
+        )
+    except Exception:
+        return
+    for s in list(flow.stages) + list(flow.post_stages):
+        agent = s.agent
+        if not agent or agent in KNOWN_PIPELINE_AGENTS:
+            continue
+        missing = [
+            section for section in ("tools", "skills", "subagents")
+            if agent not in (
+                (dispatch_cfg.get(section, {}) or {}).get("per_agent_allow", {}) or {}
+            )
+        ]
+        if missing:
+            _log(
+                f"Custom agent {agent!r} (stage {s.name!r}) has no "
+                f"per_agent_allow entry for: {', '.join(missing)} — it runs "
+                f"locked down there (no grants). Add worca.governance."
+                f"dispatch.<section>.per_agent_allow.{agent} to grant "
+                f"capabilities.",
+                "warn",
+            )
 
 
 def _agent_path(agent_name: str, run_dir: str = None) -> str:
     """Resolve agent name to the .md definition file path.
 
-    If run_dir is provided, checks for a rendered template there first.
-    Falls back to the static template in .claude/worca/agents/core/.
+    Resolution order (W-071): rendered template in run_dir → shipped core
+    template → project tier (``.claude/agents/``). The project tier only wins
+    when no core template exists: for builtin agents a project file is an
+    *overlay* (merged at render time by OverlayResolver), never a standalone
+    definition — but for a custom agent name the project file IS the
+    definition.
     """
     if run_dir:
         rendered = os.path.join(run_dir, "agents", f"{agent_name}.md")
         if os.path.exists(rendered):
             return rendered
-    return f".claude/worca/agents/core/{agent_name}.md"
+    core = f".claude/worca/agents/core/{agent_name}.md"
+    if not os.path.exists(core):
+        project = os.path.join(".claude", "agents", f"{agent_name}.md")
+        if os.path.exists(project):
+            return project
+    return core
 
 
 def _schema_path(schema_name: str) -> str:
-    """Resolve schema filename to full path."""
+    """Resolve schema filename to full path.
+
+    Resolution order (W-071): project tier (``.claude/schemas/``, the home of
+    custom-stage schemas) → shipped ``.claude/worca/schemas/``. First hit wins.
+    """
+    project = os.path.join(".claude", "schemas", schema_name)
+    if os.path.exists(project):
+        return project
     return f".claude/worca/schemas/{schema_name}"
 
 
@@ -1470,15 +1547,23 @@ def _make_agent_event_handler(
     stage,
     iteration: int,
     settings_path: str,
+    agent: Optional[str] = None,
 ):
     """Create an on_event callback closure for agent telemetry.
 
-    stage accepts a Stage enum member or a stage-key string (W-071).
+    stage accepts a Stage enum member or a stage-key string (W-071); agent is
+    the resolved agent role for the AGENT_SPAWNED payload — run_stage passes
+    the flow-resolved name, and enum-stage callers without it fall back to the
+    builtin role map (which is keyed by Stage members, so the lookup must
+    happen BEFORE the stage-key coercion below).
     Returns None if ctx is None or agent_telemetry is disabled.
     The returned callable translates stream-json events to pipeline events.
     """
     if ctx is None:
         return None
+    if agent is None and isinstance(stage, Stage):
+        agent = STAGE_AGENT_MAP.get(stage, "")
+    agent = agent or ""
     stage = stage.value if isinstance(stage, Stage) else str(stage)
     if not _is_agent_telemetry_enabled(settings_path):
         return None
@@ -1494,7 +1579,7 @@ def _make_agent_event_handler(
                 emit_event(ctx, AGENT_SPAWNED, agent_spawned_payload(
                     stage=stage,
                     iteration=iteration,
-                    agent=STAGE_AGENT_MAP.get(stage, ""),
+                    agent=agent,
                     model=event.get("model", ""),
                     max_turns=0,
                 ))
@@ -1667,7 +1752,9 @@ def run_stage(
     log_dir = os.path.join(logs_dir, stage_key)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
-    _telemetry_on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    _telemetry_on_event = _make_agent_event_handler(
+        ctx, stage, iteration, settings_path, agent=config.get("agent"),
+    )
     # Count read-only graphify queries this iteration, independent of telemetry,
     # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
     # handler so disabling agent_telemetry doesn't zero the count.
@@ -2605,7 +2692,16 @@ def run_pipeline(
     if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
         # Explicit resume requested and same work request found
         from worca.orchestrator.resume import find_resume_point, check_git_divergence, restore_loop_counters, backfill_prompt_context
-        resume_stage = find_resume_point(existing)
+        # W-071: custom (non-builtin) stages are invisible to the legacy
+        # STAGE_ORDER walk — pass the flow's stage names so an incomplete
+        # custom stage counts as resumable work. Best-effort: a malformed
+        # flow falls back to builtin-only detection here and fails loudly
+        # at the authoritative load_flow below.
+        try:
+            _resume_flow_names = [s.name for s in load_flow(settings_path).stages]
+        except Exception:
+            _resume_flow_names = None
+        resume_stage = find_resume_point(existing, flow_stage_names=_resume_flow_names)
         if resume_stage is not None:
             # Git divergence guard: warn if HEAD changed since pipeline start
             divergence = check_git_divergence(existing)
@@ -2970,6 +3066,11 @@ def run_pipeline(
                 )
         status["flow_fingerprint"] = _flow_fp
 
+        # W-071 §4: custom agents resolve to the dispatch lockdown sentinel
+        # unless explicitly named in per_agent_allow — surface that at launch
+        # so a silently tool-less stage isn't a mid-run mystery.
+        _warn_custom_agents_locked_down(flow, settings_path)
+
         # Handle plan file
         if not resume_stage:
             if plan_file:
@@ -3031,7 +3132,11 @@ def run_pipeline(
                     "branch": branch_name,
                     "title": work_request.title,
                 }, overrides_dir=overrides_dir,
-                   template_agents_dir=template_agents_dir)
+                   template_agents_dir=template_agents_dir,
+                   extra_agents=[
+                       s.agent for s in list(flow.stages) + list(flow.post_stages)
+                       if s.agent
+                   ])
 
             save_status(status, actual_status_path)
 

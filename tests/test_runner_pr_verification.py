@@ -21,7 +21,6 @@ from worca.orchestrator.runner import (
     _fetch_pr_url_via_gh,
     _revise_pr_writeback,
 )
-from worca.orchestrator import runner as _runner_module
 
 
 SHA_BASELINE = "aaa0000000000000000000000000000000000000"

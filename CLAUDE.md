@@ -116,7 +116,7 @@ Skills and subagents in this repo split into two scopes:
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
 - `worca.default_template` — optional template id pinned as the project default; every run uses it unless `--template` overrides at launch
 - `worca.stages` — enable/disable stages, override agents
-- `worca.flow` — declarative pipeline topology: stage order + outcome-driven loop transitions (W-070). Omitted = builtin 9-stage flow, byte-identical to legacy behavior. Custom flows are validated fail-loud at launch and fingerprinted into `status.json` so a paused run never silently resumes under a changed topology. See [`docs/flow.md`](./docs/flow.md).
+- `worca.flow` — declarative pipeline topology: stage order + outcome-driven loop transitions (W-070). Omitted = builtin 9-stage flow, byte-identical to legacy behavior. Custom flows are validated fail-loud at launch and fingerprinted into `status.json` so a paused run never silently resumes under a changed topology. **Custom stages** (W-071): a non-builtin stage name runs under the generic stage executor — drop an agent `.md` in `.claude/agents/`, a schema in `.claude/schemas/`, and a flow entry; the schema's `outcome` enum drives the stage's `on:` transitions (`success` advances, `reject` fails, declared outcomes jump). Custom agents are dispatch-locked-down until granted via `per_agent_allow`. See [`docs/flow.md`](./docs/flow.md).
 - `worca.agents` — model, max_turns, effort, and max_beads per agent (coordinator only for max_beads)
 - `worca.agents.coordinator.max_beads` — bead decomposition cap: `0` = auto (default, current behavior), `1` = single-bead mandate, `>1` = advisory budget. Enforcement is soft (logs on deviation, run proceeds). Suppressed when PR-revision mode is active (review comments drive bead count). Precedence: per-run `--max-beads` override → template config → `0`. The `quick-fix` template ships with `max_beads: 1` (entire fix as one atomic bead).
 - `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
@@ -256,7 +256,7 @@ Do **not** binary-bisect the spec to find the offending block — the file is fi
 
 1. **`always_disallowed`** — hard-deny defaults. Shipped from `_DISPATCH_DEFAULTS` in `tracking.py`; project-editable but rarely should be edited.
 2. **`default_denied`** — blocked unless the agent names them in `per_agent_allow`. The `"*"` wildcard does NOT include these.
-3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. `"*"` means "everything except the deny tiers". `[]` falls through to `_defaults`. `["none"]` is the explicit lockdown sentinel (`LOCKDOWN_SENTINEL`).
+3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. `"*"` means "everything except the deny tiers". `[]` falls through to `_defaults`. `["none"]` is the explicit lockdown sentinel (`LOCKDOWN_SENTINEL`). The `_defaults` fallback applies to the shipped agent roster only — an unknown (W-071 custom) agent with no entry resolves to lockdown, with a launch-time warning naming the missing sections.
 
 MCP tools (`mcp_*`) flow through other channels, not `--tools`. For the full reference — including the shipped denylist contents, mixed-form semantics, the CLI-flag mapping for `tools`, and the resolution algorithm — see [`docs/governance.md`](./docs/governance.md). Dispatch the `worca-dispatch-governance-reviewer` subagent after changes here.
 

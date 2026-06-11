@@ -1,6 +1,6 @@
 """Integration tests for agent .md + block resolution.
 
-Post channel-separation restoration (see runner.py _STAGE_BLOCK_MAP), the
+Post channel-separation restoration (block routing in the runner loop), the
 agent .md files carry only static role/process/rules content — the per-run
 block content travels via the -p user message. These tests split into two
 suites:
@@ -356,3 +356,42 @@ def test_learn_block_contains_postmortem_framing_and_run_data():
     assert "post-mortem" in result.lower()
     assert "run-xyz-99" in result
     assert '{"foo": 1}' in result
+
+
+# ---------------------------------------------------------------------------
+# Custom agent names (W-071) — project tier resolves with an empty core base
+# ---------------------------------------------------------------------------
+
+
+def test_project_tier_agent_with_no_core_base_resolves(tmp_path):
+    """A .claude/agents/ file for a NEW name is the agent definition itself:
+    OverlayResolver.resolve applies it as a replace-mode overlay onto an
+    empty base, and placeholders still resolve."""
+    overrides = tmp_path / "agents"
+    overrides.mkdir()
+    (overrides / "docs_auditor.md").write_text(
+        "# Docs Auditor\n\nAudit docs for {{title}} (run {{run_id}}).\n",
+        encoding="utf-8",
+    )
+    resolver = OverlayResolver(overrides_dir=str(overrides))
+
+    merged = resolver.resolve("docs_auditor", "")  # empty core base
+    result = resolve_placeholders(merged, {"title": "W-071", "run_id": "run-1"})
+
+    assert "# Docs Auditor" in result
+    assert "Audit docs for W-071 (run run-1)." in result
+
+
+def test_project_tier_block_with_no_core_base_resolves(tmp_path):
+    """A .block.md for a NEW name resolves through the project tier alone."""
+    overrides = tmp_path / "agents"
+    overrides.mkdir()
+    (overrides / "docs_audit.block.md").write_text(
+        "Audit the docs.\n\nPlan: {{plan_file}}\n", encoding="utf-8",
+    )
+    resolver = OverlayResolver(overrides_dir=str(overrides))
+
+    raw = resolver.resolve_block("docs_audit", str(CORE_DIR))
+    assert raw is not None
+    result = resolve_placeholders(raw, {"plan_file": "plans/p.md"})
+    assert "Plan: plans/p.md" in result

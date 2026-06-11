@@ -59,13 +59,20 @@ def restore_loop_counters(status: dict) -> dict:
     return dict(counters)
 
 
-def find_resume_point(status: dict) -> Optional[Stage]:
+def find_resume_point(status: dict, flow_stage_names: list | None = None) -> Optional[Stage]:
     """Find the stage where the pipeline should resume.
 
     Always returns PREFLIGHT to re-validate the environment on every resume,
     regardless of its previous completion status. Circuit breaker state in
     status["circuit_breaker"] is preserved automatically since it lives in the
     status dict.
+
+    flow_stage_names (W-071): the effective flow's stage keys. Custom
+    (non-builtin) stages are invisible to the STAGE_ORDER walk below; any
+    custom stage that is not completed counts as resumable work. Without the
+    list, custom names recorded in status["stages"] are still checked — only
+    a custom stage that never started AND sits after every builtin stage
+    would be missed.
 
     Returns None only when all stages are genuinely completed and no milestone
     gates are pending.
@@ -79,6 +86,16 @@ def find_resume_point(status: dict) -> Optional[Stage]:
     )
     if not all_stages_done:
         return Stage.PREFLIGHT
+
+    # W-071: custom stages. Builtin names (learn included — post stages run
+    # outside the main walk and must not retrigger a resume) are excluded.
+    _builtin_names = {s.value for s in Stage}
+    _candidate_names = flow_stage_names if flow_stage_names is not None else list(stages)
+    for name in _candidate_names:
+        if name in _builtin_names:
+            continue
+        if stages.get(name, {}).get("status", "pending") != PipelineStatus.COMPLETED:
+            return Stage.PREFLIGHT
 
     # All stages completed — check milestone gates
     if milestones.get("plan_approved") is None:

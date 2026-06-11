@@ -99,6 +99,26 @@ def make_rc(tmp_path, flow, stage_name="test", trigger="initial",
 # ---------------------------------------------------------------------------
 
 class TestHandlerRegistry:
+    def test_handler_registry_covers_builtin_flow(self):
+        """Every default-flow stage (and learn) has a registered handler."""
+        from worca.orchestrator.stages import STAGE_ORDER, Stage
+        for stage in list(STAGE_ORDER) + [Stage.LEARN]:
+            assert stage.value in HANDLER_REGISTRY, (
+                f"builtin stage {stage.value!r} has no registered handler"
+            )
+
+    def test_runner_has_no_stage_enum_ladder(self):
+        """W-071 obstacle #7 grep-gate: the per-stage enum ladder must not
+        regrow in runner.py — `== Stage.` / `!= Stage.` comparisons belong in
+        the handler registry (executor.py), never in the loop."""
+        import pathlib
+        import re
+
+        import worca.orchestrator.runner as runner_module
+        src = pathlib.Path(runner_module.__file__).read_text(encoding="utf-8")
+        matches = re.findall(r".*[=!]= Stage\..*", src)
+        assert matches == [], f"Stage-enum comparisons found in runner.py: {matches}"
+
     def test_test_stage_resolves_to_test_handler(self):
         assert isinstance(handler_for("test"), TestHandler)
 
@@ -233,8 +253,18 @@ class TestTestHandlerPostDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Generic completion path
+# Generic completion path — outcome→trigger mapping (W-071 §2)
 # ---------------------------------------------------------------------------
+
+def _custom_flow():
+    """implement + a docs_audit custom stage with a needs_rework loopback."""
+    return FlowSpec([
+        FlowStage(name="implement", agent="implementer", schema="implement.json"),
+        FlowStage(name="docs_audit", agent="docs_auditor", schema="docs_audit.json",
+                  on={"needs_rework": Transition(goto="implement", loop="docs_rework"),
+                      "extra_pass": Transition(goto="docs_audit", loop="extra_pass_loop")}),
+    ])
+
 
 class TestGenericHandlerPostDispatch:
     def test_marks_success_and_advances(self, tmp_path):
@@ -245,3 +275,75 @@ class TestGenericHandlerPostDispatch:
         assert decision.action == StageDecision.ADVANCE
         assert rc.iter_extras["outcome"] == "success"
         assert rc.status["stages"]["test"]["status"] == "completed"
+
+    def test_missing_outcome_advances(self, tmp_path):
+        rc = make_rc(tmp_path, _custom_flow(), stage_name="docs_audit")
+        rc.result = {"summary": "no outcome field"}
+        decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.ADVANCE
+        assert rc.iter_extras["outcome"] == "success"
+
+    def test_declared_outcome_jumps_with_outcome_as_trigger(self, tmp_path):
+        rc = make_rc(tmp_path, _custom_flow(), stage_name="docs_audit")
+        rc.result = {"outcome": "needs_rework"}
+        decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.JUMP
+        assert decision.trigger == "needs_rework"
+        assert decision.goto == "implement"
+        assert rc.loop_counters["docs_rework"] == 1
+        assert rc.iter_extras["outcome"] == "needs_rework"
+        # context persisted before the jump
+        assert rc.prompt_context_path in rc.prompt_builder.saved_to
+
+    def test_declared_outcome_exhausted_loop_advances(self, tmp_path):
+        rc = make_rc(tmp_path, _custom_flow(), stage_name="docs_audit",
+                     loop_counters={"docs_rework": 5})  # default limit 5
+        rc.result = {"outcome": "needs_rework"}
+        decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.ADVANCE
+        assert rc.loop_counters["docs_rework"] == 6
+
+    def test_reject_outcome_raises_stage_failure(self, tmp_path):
+        from worca.orchestrator.runner import PipelineError
+        rc = make_rc(tmp_path, _custom_flow(), stage_name="docs_audit")
+        rc.result = {"outcome": "reject"}
+        with pytest.raises(PipelineError):
+            GenericHandler().post_dispatch(rc)
+        # the iteration was still recorded with the reject outcome
+        assert rc.iter_extras["outcome"] == "reject"
+
+    def test_declared_reject_transition_wins_over_failure(self, tmp_path):
+        """A flow that declares on.reject gets a jump, not a stage failure."""
+        flow = FlowSpec([
+            FlowStage(name="implement", agent="implementer"),
+            FlowStage(name="docs_audit", agent="docs_auditor",
+                      on={"reject": Transition(goto="implement", loop="rework")}),
+        ])
+        rc = make_rc(tmp_path, flow, stage_name="docs_audit")
+        rc.result = {"outcome": "reject"}
+        decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.JUMP
+        assert decision.goto == "implement"
+
+    def test_undeclared_outcome_advances_with_warning(self, tmp_path):
+        from unittest.mock import patch
+        rc = make_rc(tmp_path, _custom_flow(), stage_name="docs_audit")
+        rc.result = {"outcome": "mystery"}
+        with patch("worca.orchestrator.runner._log") as mock_log:
+            decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.ADVANCE
+        assert any("mystery" in str(c.args[0]) for c in mock_log.call_args_list)
+
+    def test_forward_jump_without_loop_key(self, tmp_path):
+        """A declared forward transition with no loop key jumps unconditionally."""
+        flow = FlowSpec([
+            FlowStage(name="docs_audit", agent="docs_auditor",
+                      on={"escalate": Transition(goto="final_check")}),
+            FlowStage(name="final_check", agent="final_checker"),
+        ])
+        rc = make_rc(tmp_path, flow, stage_name="docs_audit")
+        rc.result = {"outcome": "escalate"}
+        decision = GenericHandler().post_dispatch(rc)
+        assert decision.action == StageDecision.JUMP
+        assert decision.goto == "final_check"
+        assert rc.loop_counters == {}

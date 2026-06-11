@@ -1198,7 +1198,7 @@ class TestReviseLoopbackRendersAgentTemplates:
             return _mock_stage(stage, {})
 
         def mock_render(run_dir, template_vars, overrides_dir=".claude/agents",
-                        template_agents_dir=None):
+                        template_agents_dir=None, extra_agents=None):
             render_calls.append({
                 "run_dir": run_dir,
                 "template_vars": dict(template_vars),
@@ -1251,7 +1251,7 @@ class TestReviseLoopbackRendersAgentTemplates:
             return _mock_stage(stage, {})
 
         def mock_render(run_dir, template_vars, overrides_dir=".claude/agents",
-                        template_agents_dir=None):
+                        template_agents_dir=None, extra_agents=None):
             render_calls.append(dict(template_vars))
 
         with patch("worca.orchestrator.runner._render_agent_templates", side_effect=mock_render):

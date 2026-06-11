@@ -389,6 +389,49 @@ def test_agent_path_fallback_missing_rendered(tmp_path):
     assert result == ".claude/worca/agents/core/coordinator.md"
 
 
+def test_agent_path_project_tier_new_name(tmp_path, monkeypatch):
+    """W-071: a .claude/agents/ file with no core counterpart resolves as the
+    agent definition itself (custom stage agents)."""
+    monkeypatch.chdir(tmp_path)
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "docs_auditor.md").write_text("# Docs auditor")
+
+    result = _agent_path("docs_auditor")
+    assert result == os.path.join(".claude", "agents", "docs_auditor.md")
+
+
+def test_agent_path_core_wins_over_project_tier(tmp_path, monkeypatch):
+    """For builtin names the project file is an overlay (merged at render
+    time), never a standalone definition — core wins in _agent_path."""
+    monkeypatch.chdir(tmp_path)
+    core = tmp_path / ".claude" / "worca" / "agents" / "core"
+    core.mkdir(parents=True)
+    (core / "planner.md").write_text("# Core planner")
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "planner.md").write_text("<!-- append -->\noverlay")
+
+    result = _agent_path("planner")
+    assert result == ".claude/worca/agents/core/planner.md"
+
+
+def test_schema_path_project_tier(tmp_path, monkeypatch):
+    """W-071: .claude/schemas/ takes precedence over the shipped schema dir."""
+    from worca.orchestrator.runner import _schema_path
+
+    monkeypatch.chdir(tmp_path)
+    schemas_dir = tmp_path / ".claude" / "schemas"
+    schemas_dir.mkdir(parents=True)
+    (schemas_dir / "docs_audit.json").write_text("{}")
+
+    assert _schema_path("docs_audit.json") == os.path.join(
+        ".claude", "schemas", "docs_audit.json"
+    )
+    # names with no project-tier file keep resolving to the shipped dir
+    assert _schema_path("plan.json") == ".claude/worca/schemas/plan.json"
+
+
 # --- plan_file support ---
 
 def test_run_pipeline_with_plan_file_skips_plan_stage(tmp_path):
@@ -3553,7 +3596,7 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
     captured_calls = []
 
     def fake_render(run_dir, template_vars, overrides_dir=".claude/agents",
-                    template_agents_dir=None):
+                    template_agents_dir=None, extra_agents=None):
         captured_calls.append(overrides_dir)
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,

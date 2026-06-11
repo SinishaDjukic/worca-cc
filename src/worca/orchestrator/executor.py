@@ -1553,9 +1553,78 @@ class LearnHandler(StageHandler):
 class GenericHandler(StageHandler):
     """Fallback for stages with no registered handler — user-defined stages.
 
-    Phase 1 note: outcome→trigger mapping (W-071 §2) lands with Phase 3;
-    until then this is the plain generic completion path.
+    Outcome contract (W-071 §2, convention over configuration). The stage's
+    structured output may carry an ``outcome`` string:
+
+    * missing / ``"success"`` → advance
+    * declared in the flow's ``on:`` map → the outcome IS the trigger; jump
+      per the flow spec (loop-keyed transitions consume their ``worca.loops``
+      budget; an exhausted loop advances instead of jumping)
+    * ``"reject"`` (undeclared) → stage failure via the existing failure path
+    * anything else → advance with a warning (flow validation cross-checks
+      custom schema outcome enums against declared triggers at launch, so
+      this is the enum-less escape hatch, not the normal path)
     """
+
+    def post_dispatch(self, rc):
+        r = _runner()
+        result = rc.result if isinstance(rc.result, dict) else {}
+        outcome = result.get("outcome") or "success"
+        iter_extras = rc.iter_extras
+        r._aggregate_file_access_into_extras(
+            iter_extras, rc.settings_path, rc.status, rc.stage_name, rc.iter_num,
+            bead_id=rc.assigned_bead,
+        )
+        iter_extras["outcome"] = outcome
+        r.complete_iteration(rc.status, rc.stage_name, **iter_extras)
+        r._emit_iteration_access_event(rc.ctx, rc.status, rc.stage_name, rc.status["run_id"])
+        r.update_stage(rc.status, rc.stage_name, **rc.stage_extras)
+        r.save_status(rc.status, rc.actual_status_path)
+        if rc.ctx:
+            r._emit_stage_completed_and_gate(rc.ctx, rc.stage_name, rc.iter_num, iter_extras)
+
+        # Declared outcome → flow-driven jump. Declared transitions win over
+        # the reject convention, so a flow may route "reject" somewhere.
+        tr = rc.flow_stage.on.get(outcome) if rc.flow_stage is not None else None
+        if tr is not None:
+            if tr.loop:
+                rc.loop_counters[tr.loop] = rc.loop_counters.get(tr.loop, 0) + 1
+                rc.status["loop_counters"] = dict(rc.loop_counters)
+                if not r.check_loop_limit(tr.loop, rc.loop_counters[tr.loop],
+                                          rc.settings_path, mloops=rc.mloops):
+                    r._log(
+                        f"{rc.stage_name.upper()} loop {tr.loop!r} exhausted after "
+                        f"{rc.loop_counters[tr.loop]} attempts — advancing", "warn",
+                    )
+                    if rc.ctx:
+                        r.emit_event(rc.ctx, r.LOOP_EXHAUSTED, r.loop_exhausted_payload(
+                            loop_key=tr.loop,
+                            iteration=rc.loop_counters[tr.loop],
+                            limit=r._get_loop_limit(tr.loop, rc.settings_path, rc.mloops),
+                        ))
+                    r.save_status(rc.status, rc.actual_status_path)
+                    return StageDecision.advance()
+                if rc.ctx:
+                    r._emit_loop_triggered_and_gate(
+                        rc.ctx, tr.loop, rc.loop_counters[tr.loop],
+                        rc.stage_name, tr.goto, outcome,
+                    )
+            if rc.prompt_context_path:
+                rc.prompt_builder.save_context(rc.prompt_context_path)
+            r.save_status(rc.status, rc.actual_status_path)
+            r._log(f"{rc.stage_name.upper()} outcome {outcome!r} -> {tr.goto.upper()}", "ok")
+            return StageDecision.jump(outcome, tr.goto)
+
+        if outcome == "reject":
+            r._log(f"{rc.stage_name.upper()} outcome 'reject' — stopping", "err")
+            raise r.PipelineError(f"Stage {rc.stage_name!r} rejected")
+
+        if outcome != "success":
+            r._log(
+                f"{rc.stage_name.upper()} outcome {outcome!r} has no declared "
+                f"transition — advancing", "warn",
+            )
+        return StageDecision.advance()
 
 
 #: stage key -> handler class. Stages not present here resolve to

@@ -46,10 +46,10 @@ gives you exactly this.
 
 | Field | Required | Default | Meaning |
 |---|---|---|---|
-| `name` | yes | — | Stage key. Becomes the `status.json` `stages.*` key verbatim. W-070 accepts builtin stage names only (`preflight`, `plan`, `plan_review`, `coordinate`, `implement`, `test`, `review`, `pr`, `learn`); custom stages arrive with W-071. |
-| `agent` | no | builtin map lookup | Agent template name. |
-| `schema` | no | builtin map lookup | Structured-output schema file under `.claude/worca/schemas/`. |
-| `prompt_block` | no | builtin map lookup | Stage block `.block.md` name. |
+| `name` | yes | — | Stage key. Becomes the `status.json` `stages.*` key verbatim. Builtin names (`preflight`, `plan`, `plan_review`, `coordinate`, `implement`, `test`, `review`, `pr`, `learn`) keep their bespoke behavior; any other name is a **custom stage** (W-071, see below) and must match `^[a-z][a-z0-9_]*$`. |
+| `agent` | no | builtin map / stage name | Agent template name (custom stages default to the stage name). Resolution order: `{run_dir}/agents/` (rendered) → `.claude/agents/` → `.claude/worca/agents/core/`. Custom agent names must match `^[a-z][a-z0-9_]*$` (hyphens break role extraction). |
+| `schema` | no | builtin map / `<name>.json` | Structured-output schema file. Resolution order: `.claude/schemas/` → `.claude/worca/schemas/`. |
+| `prompt_block` | no | builtin map / stage name | Stage block `.block.md` name, resolved through the usual three-tier overlay chain (project tier `.claude/agents/<block>.block.md` works for new names). |
 | `enabled` | no | per-stage default | Same semantics as `worca.stages.<name>.enabled` (which still merges in when the flow entry doesn't set it). `plan_review` and `learn` default disabled. |
 | `on` | no | `{}` | Map of outcome trigger → transition. No matching trigger means "advance to the next stage in the list". |
 | `on.<t>.goto` | yes (in `on`) | — | Target stage `name`. Must be an enabled, non-post stage. |
@@ -86,12 +86,15 @@ A user-supplied `worca.flow` is validated by
 with a `FlowError` on:
 
 - bad `version` (must be `1`), unknown keys anywhere (typos fail, not silently no-op)
-- duplicate stage names, non-builtin stage names (W-071 scope)
+- duplicate stage names, malformed custom stage/agent names, custom `post` stages
 - `goto` targets that don't exist, are disabled, or are `post` stages
 - backward/self `goto` without a `loop` key (unbounded cycle)
 - `loop` keys colliding with the reserved `<stage>_iteration` counters
-- missing agent template (`.claude/worca/agents/core/<agent>.md`) or schema
-  file (`.claude/worca/schemas/<schema>`) for any enabled stage
+- missing agent template (searched in `.claude/agents/` and
+  `.claude/worca/agents/core/`) or schema file (searched in `.claude/schemas/`
+  and `.claude/worca/schemas/`) for any enabled stage
+- a custom stage declaring `on:` transitions whose schema has no `outcome`
+  string enum, or whose enum doesn't cover every declared trigger
 
 The compiled default flow skips file-existence checks — it isn't user input.
 
@@ -120,9 +123,58 @@ default. `worca.stages.*` remains supported as shorthand that merges *into*
 whichever flow is selected. See
 [`configuration-precedence.md`](./configuration-precedence.md).
 
-## Scope (W-070)
+## Custom stages (W-071)
 
-- Topology only: reorder, disable, and rewire the builtin stages.
-- User-defined stages/agents: **W-071** (generic stage executor).
+A stage name outside the builtin set runs under the **generic stage
+executor**: render prompt → dispatch agent → validate structured output →
+persist iteration → emit `STAGE_*` events → map the output's `outcome` field
+to a flow trigger. Adding a stage means dropping three files and one flow
+entry — no Python.
+
+```
+.claude/
+  agents/
+    docs_auditor.md        # the agent definition (no core base needed)
+    docs_audit.block.md    # optional: the -p user-message block
+  schemas/
+    docs_audit.json        # structured-output schema
+  settings.json            # worca.flow gains the stage entry
+```
+
+```json
+{ "name": "docs_audit", "agent": "docs_auditor", "schema": "docs_audit.json",
+  "on": { "needs_rework": { "goto": "implement", "loop": "docs_rework" } } }
+```
+
+**Outcome contract** (convention over configuration). The schema should
+declare `outcome` as a string enum; the generic executor maps it as:
+
+| `outcome` | Behavior |
+|---|---|
+| missing / `"success"` | advance to the next stage |
+| declared in the stage's `on:` map | the outcome IS the trigger — jump per the flow (loop-keyed transitions consume their `worca.loops` budget; an exhausted loop advances instead) |
+| `"reject"` (undeclared) | stage failure — the run fails through the existing failure path |
+| anything else | advance with a warning (launch validation cross-checks the enum against declared triggers, so this only happens for enum-less schemas) |
+
+**Placeholders** work in both the agent `.md` and the block: `{{title}}`,
+`{{plan_file}}`, `{{run_id}}`, `{{branch}}`, and the rest of the prompt-builder
+context resolve exactly as for builtin agents.
+
+**Governance**: a custom agent not named in
+`worca.governance.dispatch.<section>.per_agent_allow` resolves to the lockdown
+sentinel (`["none"]`) instead of `_defaults` — it gets **no tools, skills, or
+subagents** until explicitly granted. The launch log warns per missing
+section. The guardian-only `git commit` guard is unchanged: custom agents can
+never commit; PR/commit duties stay on the builtin `pr` stage. See
+[`governance.md`](./governance.md#custom-agents-w-071).
+
+**Scope notes**: custom stages get the ambient prompt context as-is (declared
+inputs/outputs are W-072); custom `post` stages are not supported; custom
+*handlers* (user Python) are deliberately out of scope.
+
+## Scope
+
+- W-070: topology — reorder, disable, and rewire the builtin stages.
+- W-071: user-defined stages/agents via the generic stage executor (above).
 - Declared inter-stage context inputs/outputs: **W-072**.
 - No per-run `--flow` CLI override; no UI flow editor.

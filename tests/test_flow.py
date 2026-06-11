@@ -375,12 +375,101 @@ class TestFlowValidation:
         with pytest.raises(FlowError, match="stages"):
             self._load(tmp_path, monkeypatch, {"version": 1, "stages": []})
 
-    def test_flow_rejects_custom_stage_name(self, tmp_path, monkeypatch):
-        """W-070 is topology-only — custom stage names are W-071 scope."""
+    # --- custom stages (W-071) ---
+
+    def _install_custom_stage_files(self, tmp_path, agent="docs_auditor",
+                                    schema="docs_audit.json", schema_doc=None):
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / f"{agent}.md").write_text(f"# {agent}")
+        schemas_dir = tmp_path / ".claude" / "schemas"
+        schemas_dir.mkdir(parents=True, exist_ok=True)
+        if schema_doc is None:
+            schema_doc = {"properties": {"outcome": {
+                "type": "string", "enum": ["success", "needs_rework", "reject"],
+            }}}
+        (schemas_dir / schema).write_text(json.dumps(schema_doc))
+
+    def _doc_with_custom_stage(self, **entry_overrides):
         doc = _custom_flow_doc()
-        doc["stages"].insert(2, {"name": "security_scan"})
-        with pytest.raises(FlowError, match="W-071"):
-            self._load(tmp_path, monkeypatch, doc)
+        entry = {
+            "name": "docs_audit",
+            "agent": "docs_auditor",
+            "schema": "docs_audit.json",
+            "on": {"needs_rework": {"goto": "implement", "loop": "docs_rework"}},
+        }
+        entry.update(entry_overrides)
+        doc["stages"].insert(4, entry)  # between test and pr
+        return doc
+
+    def test_flow_accepts_custom_stage(self, tmp_path, monkeypatch):
+        """W-071: a custom stage with project-tier agent + schema validates."""
+        self._install_custom_stage_files(tmp_path)
+        flow = self._load(tmp_path, monkeypatch, self._doc_with_custom_stage())
+        by_name = {s.name: s for s in flow.stages}
+        assert by_name["docs_audit"].agent == "docs_auditor"
+        assert by_name["docs_audit"].schema == "docs_audit.json"
+        # custom stages default their prompt_block to the stage name
+        assert by_name["docs_audit"].prompt_block == "docs_audit"
+
+    def test_flow_rejects_custom_stage_missing_agent_everywhere(self, tmp_path, monkeypatch):
+        self._install_custom_stage_files(tmp_path)
+        (tmp_path / ".claude" / "agents" / "docs_auditor.md").unlink()
+        with pytest.raises(FlowError, match="docs_auditor"):
+            self._load(tmp_path, monkeypatch, self._doc_with_custom_stage())
+
+    def test_flow_rejects_custom_stage_missing_schema_everywhere(self, tmp_path, monkeypatch):
+        self._install_custom_stage_files(tmp_path)
+        (tmp_path / ".claude" / "schemas" / "docs_audit.json").unlink()
+        with pytest.raises(FlowError, match="docs_audit.json"):
+            self._load(tmp_path, monkeypatch, self._doc_with_custom_stage())
+
+    def test_flow_rejects_undeclared_custom_outcome(self, tmp_path, monkeypatch):
+        """on: triggers must appear in the custom schema's outcome enum."""
+        self._install_custom_stage_files(tmp_path, schema_doc={
+            "properties": {"outcome": {"type": "string",
+                                       "enum": ["success", "reject"]}},
+        })
+        with pytest.raises(FlowError, match="needs_rework"):
+            self._load(tmp_path, monkeypatch, self._doc_with_custom_stage())
+
+    def test_flow_rejects_custom_outcomes_without_enum(self, tmp_path, monkeypatch):
+        """A custom stage with on: transitions needs an outcome enum at all."""
+        self._install_custom_stage_files(tmp_path, schema_doc={
+            "properties": {"summary": {"type": "string"}},
+        })
+        with pytest.raises(FlowError, match="outcome"):
+            self._load(tmp_path, monkeypatch, self._doc_with_custom_stage())
+
+    def test_flow_accepts_custom_stage_without_transitions_or_enum(self, tmp_path, monkeypatch):
+        """No on: map → no enum requirement."""
+        self._install_custom_stage_files(tmp_path, schema_doc={
+            "properties": {"summary": {"type": "string"}},
+        })
+        flow = self._load(tmp_path, monkeypatch,
+                          self._doc_with_custom_stage(on={}))
+        assert "docs_audit" in [s.name for s in flow.stages]
+
+    def test_flow_rejects_custom_post_stage(self, tmp_path, monkeypatch):
+        """Custom post stages are out of W-071 scope (learn path is bespoke)."""
+        self._install_custom_stage_files(tmp_path)
+        with pytest.raises(FlowError, match="post"):
+            self._load(tmp_path, monkeypatch,
+                       self._doc_with_custom_stage(on={}, post=True))
+
+    def test_flow_rejects_invalid_custom_stage_name(self, tmp_path, monkeypatch):
+        """Hyphenated / non-identifier custom names break the {stage}-{agent}
+        resolved-prompt convention and the agent-role extraction."""
+        self._install_custom_stage_files(tmp_path)
+        with pytest.raises(FlowError, match="docs-audit"):
+            self._load(tmp_path, monkeypatch,
+                       self._doc_with_custom_stage(name="docs-audit", on={}))
+
+    def test_flow_rejects_invalid_custom_agent_name(self, tmp_path, monkeypatch):
+        self._install_custom_stage_files(tmp_path, agent="docs-auditor")
+        with pytest.raises(FlowError, match="docs-auditor"):
+            self._load(tmp_path, monkeypatch,
+                       self._doc_with_custom_stage(agent="docs-auditor", on={}))
 
     def test_flow_rejects_goto_post_stage(self, tmp_path, monkeypatch):
         doc = _custom_flow_doc()
