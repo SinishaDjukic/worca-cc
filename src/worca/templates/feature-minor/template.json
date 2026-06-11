@@ -109,6 +109,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "governance": {
       "test_gate_strikes": 2,
       "plan_review_enforce": "auto"

@@ -45,6 +45,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "effort": {
       "auto_mode": "disabled",
       "auto_cap": "xhigh"

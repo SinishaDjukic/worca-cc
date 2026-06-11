@@ -1,7 +1,7 @@
 {
   "id": "test-only",
   "name": "Add Test Coverage",
-  "description": "Adds new test code to increase coverage of existing production code — \"add tests\", \"improve coverage\", \"cover the X module\". The output is new test files; the existing test suite is not the deliverable.",
+  "description": "Adds new test code to increase coverage of existing production code \u2014 \"add tests\", \"improve coverage\", \"cover the X module\". The output is new test files; the existing test suite is not the deliverable.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [
@@ -44,6 +44,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "agents": {
       "planner": {
         "model": "opus",

@@ -1,7 +1,7 @@
 {
   "id": "investigate",
   "name": "Investigation",
-  "description": "Read-only investigation mode — \"how does X work\", \"audit Y\", \"analyze Z\". Produces a detailed analysis report, publishes it to `docs/plans/`, and opens a PR. No code changes.",
+  "description": "Read-only investigation mode \u2014 \"how does X work\", \"audit Y\", \"analyze Z\". Produces a detailed analysis report, publishes it to `docs/plans/`, and opens a PR. No code changes.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [
@@ -45,6 +45,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "agents": {
       "planner": {
         "model": "opus",
