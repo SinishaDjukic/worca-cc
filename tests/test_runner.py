@@ -4845,7 +4845,7 @@ def _make_flow_settings(tmp_path, flow_doc=None):
                 "coordinate": {"agent": "coordinator", "enabled": True},
                 "implement": {"agent": "implementer", "enabled": False},
                 "test": {"agent": "tester", "enabled": False},
-                "review": {"agent": "guardian", "enabled": False},
+                "review": {"agent": "reviewer", "enabled": False},
                 "pr": {"agent": "guardian", "enabled": False},
             },
             "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
