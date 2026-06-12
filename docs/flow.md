@@ -9,6 +9,11 @@ With no `worca.flow` configured, behavior is byte-identical to the legacy
 hardcoded pipeline — the compiled default is parity-tested against the old
 literals in `tests/test_flow.py`.
 
+For the conceptual guide — which builtin stages are optional or replaceable,
+what composes freely and where the hard boundaries are — see
+[`composability.md`](./composability.md). This file is the field-level
+reference.
+
 ## The flow document
 
 ```json
