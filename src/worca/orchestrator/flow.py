@@ -100,6 +100,12 @@ DEFAULT_STAGE_OUTPUTS: dict = {
         "coverage_pct": "/coverage_pct",
         "proof_artifacts": "/proof_artifacts",
     },
+    # The raw reviewer issue list. The severity-filtered list that drives
+    # the review-fix loop stays handler code (stages.review.critical_issues
+    # via alias dual-write).
+    Stage.REVIEW.value: {
+        "issues": "/issues",
+    },
 }
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}

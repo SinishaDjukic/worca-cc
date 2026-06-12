@@ -1239,7 +1239,6 @@ class ReviewHandler(StageHandler):
     """REVIEW: verdict routing (approve/changes/reject/restart_planning)."""
 
     name = Stage.REVIEW.value
-    code_outputs = ("review_issues", "review_history")
 
     def on_stage_started(self, rc):
         r = _runner()

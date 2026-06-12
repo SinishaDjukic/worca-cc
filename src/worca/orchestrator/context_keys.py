@@ -46,6 +46,11 @@ CONTEXT_ALIASES: dict = {
     "proof_artifacts": "stages.test.proof_artifacts",
     "test_failures": "stages.test.failures",
     "test_failure_history": "stages.test.failure_history",
+    # review — code-published fix-loop transforms (severity-filtered issues,
+    # capped history). The raw issue list is a declared output
+    # (stages.review.issues).
+    "review_issues": "stages.review.critical_issues",
+    "review_history": "stages.review.history",
 }
 
 
