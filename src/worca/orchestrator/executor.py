@@ -547,10 +547,6 @@ class PlanReviewHandler(StageHandler):
     audit-trail normalization, and the plan_review_revise loop."""
 
     name = Stage.PLAN_REVIEW.value
-    code_outputs = (
-        "plan_review_issues", "plan_review_history", "plan_revision_mode",
-        "unresolved_plan_issues", "plan_file_content", "plan_file",
-    )
 
     def __init__(self):
         self.mode = None

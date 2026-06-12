@@ -763,7 +763,7 @@ class TestConsumptionLint:
             schemas={"research.json": self._RESEARCH_SCHEMA},
         )
         assert len(violations) == 1
-        assert "no enabled stage named 'bogus'" in violations[0]
+        assert "no stage named 'bogus'" in violations[0]
 
     def test_consumption_lint_orders_and_outputs(self, tmp_path, monkeypatch):
         """§3: a downstream producer with no loop back is a violation; with a

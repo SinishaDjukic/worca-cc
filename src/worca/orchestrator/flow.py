@@ -82,6 +82,12 @@ DEFAULT_STAGE_OUTPUTS: dict = {
         "approach": "/approach",
         "tasks_outline": "/tasks_outline",
     },
+    # The raw reviewer issue list. The severity-filtered list that drives the
+    # revise loop stays handler code (stages.plan_review.critical_issues via
+    # alias dual-write).
+    Stage.PLAN_REVIEW.value: {
+        "issues": "/issues",
+    },
 }
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}
@@ -663,7 +669,11 @@ def lint_flow_consumption(flow: FlowSpec, core_dir: str,
     order = {s.name: i for i, s in enumerate(flow.stages)}
     for j, s in enumerate(flow.post_stages):
         order[s.name] = len(flow.stages) + j
-    by_name = {s.name: s for s in consumers}
+    # Producers resolve against ALL declared stages, disabled included: a
+    # reference to a disabled producer legitimately renders empty (e.g. the
+    # plan template's revision-mode section when plan_review is off), so it
+    # gets the declared-output check but not the ordering check.
+    by_name = {s.name: s for s in flow.all_stages}
 
     # Handler-published flat keys (transforms that aren't schema picks).
     code_outputs: set = set()
@@ -725,11 +735,11 @@ def lint_flow_consumption(flow: FlowSpec, core_dir: str,
                 if producer is None:
                     violations.append(
                         f"stage {stage.name!r}: references {{{{{key}}}}} but "
-                        f"the flow has no enabled stage named {producer_name!r}"
+                        f"the flow has no stage named {producer_name!r}"
                     )
                     continue
-                producer_idx = order[producer_name]
-                upstream = producer_idx < consumer_idx or any(
+                producer_idx = order.get(producer_name)
+                upstream = producer_idx is None or producer_idx < consumer_idx or any(
                     src >= producer_idx and dst <= consumer_idx
                     for src, dst in backward_jumps
                 )

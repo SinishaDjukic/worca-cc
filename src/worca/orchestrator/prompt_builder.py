@@ -8,8 +8,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from worca.orchestrator.context_keys import alias_for, flat_for
-from worca.orchestrator.overlay import _dig
+from worca.orchestrator.context_keys import CONTEXT_ALIASES, alias_for, flat_for
+from worca.orchestrator.overlay import _MISS, _dig, _lookup_path
 
 _MAX_CONTEXT_BYTES = 100_000  # 100KB cap for prompt_context.json
 _DESIGN_NOTES_CAP = 2000
@@ -286,6 +286,15 @@ class PromptBuilder:
             Context dict with all keys needed for block/placeholder resolution.
         """
         ctx = dict(self._context)
+        # Materialize the flat form of every aliased namespaced value the
+        # flat key is missing for (W-072 §4): _apply_stage_context and other
+        # plain-dict consumers read flat keys, which a nested-only context
+        # (post-deprecation publication, or a hand-built one) wouldn't carry.
+        for _flat, _namespaced in CONTEXT_ALIASES.items():
+            if _flat not in ctx:
+                _val = _lookup_path(ctx, _namespaced)
+                if _val is not _MISS:
+                    ctx[_flat] = _val
         ctx["work_request"] = self._work_request_section()
         ctx["assigned_task"] = self._assigned_task_body()
         ctx["guide_content"] = self._guide_content

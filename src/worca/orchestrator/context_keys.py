@@ -28,6 +28,14 @@ CONTEXT_ALIASES: dict = {
     "plan_approach": "stages.plan.approach",
     "plan_tasks_outline": "stages.plan.tasks_outline",
     "plan_file_content": "stages.plan.file_content",
+    # plan_review — all code-published transforms of the revise loop
+    # (severity-filtered issues, capped history, loopback mode flag,
+    # exhausted-loop carry-forward). The raw issue list is a declared
+    # output (stages.plan_review.issues).
+    "plan_review_issues": "stages.plan_review.critical_issues",
+    "plan_review_history": "stages.plan_review.history",
+    "plan_revision_mode": "stages.plan_review.revision_mode",
+    "unresolved_plan_issues": "stages.plan_review.unresolved_issues",
 }
 
 

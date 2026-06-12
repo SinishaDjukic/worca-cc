@@ -42,8 +42,10 @@ def test_plan_block_has_work_request():
 
 
 def test_plan_block_has_revision_conditional():
+    """W-072: the revision flag is consumed via the plan_review namespace
+    (legacy flat plan_revision_mode still resolves via alias)."""
     content = _read("plan.block.md")
-    assert "{{#if plan_revision_mode}}" in content
+    assert "{{#if stages.plan_review.revision_mode}}" in content
     assert "{{/if}}" in content
 
 

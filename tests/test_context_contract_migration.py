@@ -74,3 +74,35 @@ def test_pr_block_omits_approach_section_when_absent():
     pb = PromptBuilder("t", "d")
     out = _render_block("pr", _pr_ctx(pb))
     assert "## Approach" not in out
+
+
+# ---------------------------------------------------------------------------
+# plan_review conversion: plan.block.md gates revision mode on
+# {{#if stages.plan_review.revision_mode}}
+# ---------------------------------------------------------------------------
+
+def test_plan_block_revision_mode_parity():
+    """The revision branch activates identically whether the flag arrives
+    via update_context dual-write, a flat-only v1 context, or nested-only."""
+    def render(pb):
+        pb.update_context("plan_file_content", "# The plan")
+        return _render_block("plan", pb.build_context("plan"))
+
+    pb_dual = PromptBuilder("t", "d")
+    pb_dual.update_context("plan_revision_mode", True)
+
+    pb_flat = PromptBuilder("t", "d")
+    pb_flat._context["plan_revision_mode"] = True  # v1 file shape
+
+    pb_nested = PromptBuilder("t", "d")
+    pb_nested._context["stages"] = {"plan_review": {"revision_mode": True}}
+
+    renders = [render(pb) for pb in (pb_dual, pb_flat, pb_nested)]
+    assert renders[0] == renders[1] == renders[2]
+    assert "# The plan" in renders[0]
+
+
+def test_plan_block_initial_mode_skips_revision_branch():
+    pb = PromptBuilder("t", "d")
+    out = _render_block("plan", pb.build_context("plan"))
+    assert "revising an existing plan" not in out.lower()

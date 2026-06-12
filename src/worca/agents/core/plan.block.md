@@ -1,4 +1,4 @@
-{{#if plan_revision_mode}}
+{{#if stages.plan_review.revision_mode}}
 ## Revision Required
 
 The plan reviewer has identified issues that must be addressed.
