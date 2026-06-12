@@ -74,6 +74,10 @@ export const HELP_LINKS = Object.freeze({
     slug: 'configuration/claude-md-mode',
     title: 'CLAUDE.md load mode',
   },
+  'costs-budgets': {
+    slug: 'configuration/costs-and-budgets',
+    title: 'Costs & budgets',
+  },
   'min-effort': {
     slug: 'configuration/agents-and-models',
     title: 'Recommended effort floors',

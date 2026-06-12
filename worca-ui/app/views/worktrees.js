@@ -1,7 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { formatDuration } from '../utils/duration.js';
-import { helpFor } from '../utils/help-links.js';
 import { iconSvg, Trash2 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
@@ -445,7 +444,6 @@ export function worktreesView(
 
   return html`
     <div class="worktrees-view">
-      ${helpFor('worktrees')}
       ${_diskSummaryView(worktrees, diskWarningBytes)}
       ${
         onStatusFilter

@@ -1,7 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { helpFor } from '../utils/help-links.js';
 import { renderMarkdown } from '../utils/markdown.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { projectBadgesView } from './fleet-card.js';
@@ -455,7 +454,6 @@ export function fleetDetailView(
 
   return html`
     <div class="new-run-page fleet-detail-page">
-      ${helpFor('fleet-runs')}
       ${_fleetOverviewSection(fleet, { runsById })}
       ${_circuitBreakerAlertView(fleet)}
       ${_userHaltAlertView(fleet)}

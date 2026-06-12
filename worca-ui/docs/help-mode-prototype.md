@@ -117,22 +117,17 @@ After the initial 16-surface validation pass, the prototype was extended to cove
 | Workspaces Config table | `workspace-runs` | advanced/workspace-runs |
 | Worktrees page | `worktrees` | advanced/worktree-cleanup |
 
-### Section headers (content-header chokepoint, 2026-06 sweep)
+### Dedup rule (2026-06): the sidebar wins
 
-One map (`SECTION_HELP_IDS` in `main.js:contentHeaderView`) renders a badge
-inline after the `<h1>` title on list pages only (detail routes — `runId` or
-`tier` set — skip it). Sections whose page body already carries a badge
-(workspaces, webhooks, new-run, settings) are omitted to avoid doubles.
-
-| Section (`#/…`) | helpId | Doc target |
-|---|---|---|
-| `active` | `monitoring` | running-pipelines/monitoring-a-run |
-| `history` | `reviewing` | running-pipelines/reviewing-the-result |
-| `fleet-runs` | `fleet-runs` | advanced/fleet-runs |
-| `beads` | `pipeline-stages` | concepts/the-pipeline-and-stages |
-| `costs` | `models` | configuration/models |
-| `templates` | `templates` | concepts/pipeline-templates |
-| `models` | `models` | configuration/models |
+Every sidebar item carries a badge, so **in-page badges that would lead to
+the same doc page were removed**: the content-header `SECTION_HELP_IDS`
+chokepoint (all its targets duplicated the sidebar), the page-root badges on
+worktrees / fleet-detail / workspace-detail / workspace-edit /
+workspaces-config / fleet-launcher / workspace-create, and the launcher's
+template-picker badge. In-page badges remain only where the target differs
+from the sidebar's (webhook inbox → `webhooks` vs sidebar `events`) or where
+there is no sidebar equivalent (run-detail panels, settings tabs, timeline,
+Access Map, Prompts tab, New Run).
 
 ### Panel additions (2026-06 sweep)
 
@@ -142,15 +137,16 @@ inline after the `<h1>` title on list pages only (detail routes — `runId` or
 | Pipelines editor → Prompts tab legend | `agent-prompt` + `custom-flows` | advanced/anatomy-of-an-agent-prompt + advanced/custom-pipeline-flows *(new registry entry)* |
 | New Run → Pipeline section title | `templates` | concepts/pipeline-templates |
 | Settings → Notifications tab | `events` | integrations/events-overview |
-| Project Settings → Costs & Budgets tab | `models` | configuration/models (pricing + budgets) |
+| Project Settings → Costs & Budgets tab | `costs-budgets` | configuration/costs-and-budgets *(new page + registry entry — the models page covers per-alias rates only and itself defers budgets to this tab)* |
 
 ### Sidebar (full coverage, 2026-06 follow-up)
 
 Every sidebar item now carries a compact (20px) inline badge: Running →
 `monitoring`, History → `reviewing`, Worktrees → `worktrees`, Fleets →
 `fleet-runs`, Workspaces (runs + config) → `workspace-runs`, Beads →
-`pipeline-stages`, Costs → `models`, Webhooks → `events`, Project Settings →
-`settings-overview`, Pipeline Templates → `templates`, Models → `models`.
+`pipeline-stages`, Costs → `costs-budgets`, Webhooks → `events`, Project
+Settings → `settings-overview`, Pipeline Templates → `templates`, Models →
+`models`.
 
 ### Placement mechanics (2026-06 fix)
 

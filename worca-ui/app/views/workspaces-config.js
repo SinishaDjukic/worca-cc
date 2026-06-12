@@ -1,6 +1,5 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { helpFor } from '../utils/help-links.js';
 import { Boxes, iconSvg, Pencil, Play, Trash2 } from '../utils/icons.js';
 
 function _runStats(name, workspaceRuns) {
@@ -36,7 +35,6 @@ export function workspacesConfigView(
 
   return html`
     <div class="workspaces-config-table">
-      ${helpFor('workspace-runs')}
       <table>
         <thead>
           <tr>

@@ -3383,7 +3383,7 @@ export function projectSettingsView(
         <sl-tab slot="nav" panel="pricing">
           ${unsafeHTML(iconSvg(Coins, 14))}
           Costs & Budgets
-          ${helpFor('models')}
+          ${helpFor('costs-budgets')}
         </sl-tab>
         <sl-tab slot="nav" panel="webhooks">
           ${unsafeHTML(iconSvg(Zap, 14))}

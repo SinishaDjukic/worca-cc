@@ -404,7 +404,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Coins, 16))}
             <span>Costs</span>
           </span>
-          ${helpFor('models')}
+          ${helpFor('costs-budgets')}
         </div>
         <div class="sidebar-item ${route.section === 'webhooks' ? 'active' : ''}"
              title=${collapsed ? 'Webhooks' : ''}

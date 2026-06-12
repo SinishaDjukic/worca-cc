@@ -1,7 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { helpFor } from '../utils/help-links.js';
 import { ClipboardCopy, iconSvg } from '../utils/icons.js';
 import { renderMarkdown } from '../utils/markdown.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
@@ -1069,7 +1068,6 @@ export function workspaceDetailView(
   // compatibility but the body doesn't render its own action row.
   return html`
     <div class="new-run-page workspace-detail-page">
-      ${helpFor('workspace-runs')}
       ${_overviewSection(workspace)}
       ${_circuitBreakerAlertView(workspace)}
       ${_userHaltAlertView(workspace)}

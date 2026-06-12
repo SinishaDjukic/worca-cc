@@ -1,6 +1,5 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { helpFor } from '../utils/help-links.js';
 import { dagGraphView } from './dag-graph.js';
 
 let workspaceName = '';
@@ -562,7 +561,6 @@ export function workspaceEditView(_appState, { rerender } = {}) {
 
   return html`
     <div class="new-run-page workspace-edit-page">
-      ${helpFor('workspace-runs')}
       ${_snapshotBanner()}
       ${
         submitStatus === 'error'
