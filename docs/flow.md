@@ -54,6 +54,7 @@ gives you exactly this.
 | `on` | no | `{}` | Map of outcome trigger → transition. No matching trigger means "advance to the next stage in the list". |
 | `on.<t>.goto` | yes (in `on`) | — | Target stage `name`. Must be an enabled, non-post stage. |
 | `on.<t>.loop` | no | — | Loop counter key; limit from `worca.loops.<key>` (default 5). Required for backward/self jumps — an unbounded cycle is rejected at launch. |
+| `outputs` | no | builtin declarations | Declared stage outputs (W-072): output name → JSON pointer into the stage's validated schema result. The executor publishes each value as `stages.<name>.<output>` in the prompt context. Builtin stages ship declarations (see the contract section below); an explicit entry replaces them outright. |
 | `post` | no | `false` (`true` for `learn`) | Runs after the terminal transition, outside the main walk. |
 
 ### Outcome triggers
@@ -95,8 +96,17 @@ with a `FlowError` on:
   and `.claude/worca/schemas/`) for any enabled stage
 - a custom stage declaring `on:` transitions whose schema has no `outcome`
   string enum, or whose enum doesn't cover every declared trigger
+- an `outputs` pointer that doesn't match any field declared in the stage's
+  schema (`properties`/`items` walk; free-form levels are accepted), an
+  `outputs` map on a schema-less stage, or a malformed output name/pointer
+- a **consumption-lint** violation (W-072 §3): a `{{stages.<s>.<o>}}`
+  reference in any enabled stage's resolved templates whose producer `<s>`
+  doesn't exist, runs later with no declared loop bringing execution back, or
+  doesn't declare `<o>`
 
 The compiled default flow skips file-existence checks — it isn't user input.
+The consumption lint runs for every flow (default included, since project
+overlays are user input); unknown *flat* keys are advisory warnings only.
 
 ## Flow fingerprint and resume
 
@@ -168,13 +178,93 @@ section. The guardian-only `git commit` guard is unchanged: custom agents can
 never commit; PR/commit duties stay on the builtin `pr` stage. See
 [`governance.md`](./governance.md#custom-agents-w-071).
 
-**Scope notes**: custom stages get the ambient prompt context as-is (declared
-inputs/outputs are W-072); custom `post` stages are not supported; custom
+**Scope notes**: custom stages publish downstream data via `outputs`
+declarations and consume upstream data via `{{stages.<s>.<o>}}` placeholders
+(W-072, next section); custom `post` stages are not supported; custom
 *handlers* (user Python) are deliberately out of scope.
+
+## Declared context contract (W-072)
+
+Data flows between stages through the prompt context. Each stage **declares**
+the outputs it publishes; downstream templates consume them through
+**namespaced placeholders**:
+
+```json
+{ "name": "research", "agent": "researcher", "schema": "research.json",
+  "outputs": { "findings": "/findings" } }
+```
+
+After the stage's structured output validates, the executor publishes
+`stages.research.findings`; any later stage's agent `.md` or block renders it
+with `{{stages.research.findings}}` (and `{{#if stages.research.findings}}`
+works in conditionals). Pointers are JSON pointers into the validated result
+(`/risk/level`, `/tasks/0`), checked against the schema at launch. Absent
+optional fields are skipped — they render falsy/empty downstream.
+
+### Consumption lint
+
+At launch the runner renders every enabled stage's *resolved* template set
+(three-tier overlays included) and checks each `stages.<s>.<o>` reference:
+`<s>` must be a declared stage that runs earlier (or is reachable via a
+declared loop — e.g. `implement` may reference `stages.test.failures` because
+`test_failure` loops back), and `<o>` must be one of `<s>`'s declared outputs.
+Violations are launch-time errors — a typo'd placeholder fails the launch
+instead of silently rendering as an empty string. References to a *disabled*
+producer are accepted (they legitimately render empty). Runtime-provided
+builtins (`work_request`, `branch`, `run_id`, … — `RESERVED_CONTEXT_KEYS` in
+`context_keys.py`) are exempt; unknown flat keys produce advisory warnings.
+
+### Builtin declarations and the legacy alias table
+
+Builtin stages declare their schema picks in `DEFAULT_STAGE_OUTPUTS`
+(flow.py); transforms (filtered issue lists, accumulated file sets) stay
+handler code and reach the namespace through the alias dual-write. The flat →
+namespaced table (`CONTEXT_ALIASES` in `context_keys.py`):
+
+| Legacy flat key | Namespaced key | Kind |
+|---|---|---|
+| `plan_approach` | `stages.plan.approach` | declared |
+| `plan_tasks_outline` | `stages.plan.tasks_outline` | declared |
+| `plan_file_content` | `stages.plan.file_content` | transform |
+| `plan_review_issues` | `stages.plan_review.critical_issues` | transform |
+| `plan_review_history` | `stages.plan_review.history` | transform |
+| `plan_revision_mode` | `stages.plan_review.revision_mode` | transform |
+| `unresolved_plan_issues` | `stages.plan_review.unresolved_issues` | transform |
+| `beads_ids` | `stages.coordinate.beads_ids` | declared |
+| `dependency_graph` | `stages.coordinate.dependency_graph` | declared |
+| `files_changed` | `stages.implement.files_changed` | declared |
+| `tests_added` | `stages.implement.tests_added` | declared |
+| `all_files_changed` | `stages.implement.all_files_changed` | transform |
+| `all_tests_added` | `stages.implement.all_tests_added` | transform |
+| `test_passed` | `stages.test.passed` | declared |
+| `test_coverage` | `stages.test.coverage_pct` | declared |
+| `proof_artifacts` | `stages.test.proof_artifacts` | declared |
+| `test_failures` | `stages.test.failures` | transform |
+| `test_failure_history` | `stages.test.failure_history` | transform |
+| `review_issues` | `stages.review.critical_issues` | transform |
+| `review_history` | `stages.review.history` | transform |
+
+The raw reviewer issue lists are additionally declared as
+`stages.plan_review.issues` / `stages.review.issues` (no flat alias — the
+flat names carry the severity-*filtered* lists). `pr` and `learn` declare no
+outputs by design (PR metadata lifts into `status.json`; learn is a
+post-pipeline consumer).
+
+### Migration and deprecation
+
+Publication currently **dual-writes** both forms, and lookups fall through
+the alias table in both directions, so templates and project overlays
+referencing either form keep resolving — including resumes from
+schema-version-1 `prompt_context.json` files (v2 adds the nested `stages`
+namespace and a `schema_version` marker). Flat *publication* is removed after
+a two-release deprecation window; alias *read* support is permanent. Project
+overlay authors: grep your `.claude/agents/` for the flat keys above and move
+to the namespaced form at your convenience.
 
 ## Scope
 
 - W-070: topology — reorder, disable, and rewire the builtin stages.
 - W-071: user-defined stages/agents via the generic stage executor (above).
-- Declared inter-stage context inputs/outputs: **W-072**.
+- W-072: declared inter-stage context contract (outputs, namespaced
+  placeholders, consumption lint — above).
 - No per-run `--flow` CLI override; no UI flow editor.

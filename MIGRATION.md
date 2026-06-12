@@ -943,6 +943,43 @@ Tier-pinned model refs (`user:alias`, `project:alias`, `builtin:alias`) are a ne
 
 No `worca init --upgrade` migration required — settings file shape is unchanged.
 
+### Unreleased — declared inter-stage context contract (W-072)
+
+Stage outputs are now a declared contract: flow stages carry an `outputs` map
+(name → JSON pointer into the validated schema result), the executor
+publishes each value as `stages.<stage>.<output>` in the prompt context, and
+templates consume them via namespaced placeholders (`{{stages.plan.approach}}`).
+Full reference: [`docs/flow.md` § Declared context contract](./docs/flow.md#declared-context-contract-w-072).
+
+- **Legacy flat keys keep working.** Publication dual-writes both the
+  namespaced and the legacy flat form (`plan_approach`, `test_failures`, …),
+  and lookups fall through the flat ↔ namespaced alias table in both
+  directions. Project agent overlays referencing flat keys are unaffected.
+  Flat *publication* will be removed after a two-release deprecation window;
+  alias *read* support is permanent. Grep your `.claude/agents/` for the flat
+  keys listed in docs/flow.md and migrate at your convenience.
+
+- **`prompt_context.json` schema version 2.** The per-run context file gains
+  a `schema_version: 2` marker and a nested `stages` namespace. Version-1
+  files (from runs started under an older worca) load unchanged and resume
+  cleanly — namespaced reads resolve through the alias table.
+
+- **Launch-time consumption lint — behaviour change.** Every enabled stage's
+  resolved templates (project overlays included) are linted at launch: a
+  `{{stages.<s>.<o>}}` reference whose producer doesn't exist upstream (or
+  via a declared loop) or doesn't declare the output now **fails the launch**
+  with a `FlowError`, for custom and default flows alike. Previously a typo'd
+  placeholder silently rendered as an empty string. Unknown *flat* keys only
+  produce advisory warnings.
+
+- **Custom-flow fingerprints change shape.** `outputs` is part of the flow
+  fingerprint, so a custom-flow run paused under a pre-W-072 build cannot
+  resume across the upgrade boundary (the fingerprint check fails loudly).
+  Finish or restart such runs.
+
+Run `worca init --upgrade` to refresh the runtime copy (templates +
+`flow.json` schema).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues
