@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-The pipeline's nine stages are described in [The pipeline & stages](/concepts/the-pipeline-and-stages/). **Every stage except Preflight has an on/off toggle.**
+The pipeline's nine stages are described in [The pipeline & stages](/concepts/the-pipeline-and-stages/). **Every stage except Preflight has an on/off toggle.** (Toggling is the simple surface — reordering stages, rewiring loops, and adding custom stages is covered in [Custom pipeline flows](/advanced/custom-pipeline-flows/).)
 
 Stage enable/disable lives inside **Pipeline Templates**, not Project Settings — every run uses an active template, and the template decides which stages run. To change the stage set: open **Pipeline Templates**, edit your active template, and use the **Pipeline** tab.
 

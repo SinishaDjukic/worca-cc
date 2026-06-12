@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-A worca run is a fixed sequence of stages. Each stage is handled by a specialized agent with one responsibility, and stages hand off to each other until a pull request exists.
+A worca run is a sequence of stages. Each stage is handled by a specialized agent with one responsibility, and stages hand off to each other until a pull request exists. The sequence below is the default — the topology is itself configuration, and you can reorder stages, rewire the loops, or add your own stages entirely (see [Custom pipeline flows](/advanced/custom-pipeline-flows/)).
 
 ## The stages
 
@@ -26,3 +26,7 @@ The pipeline isn't strictly linear. Implement and Test iterate until the tests p
 :::note
 Plan Review and Learn ship disabled. Enable them per project in the Settings UI when you want the extra plan rigor or the post-run retrospective.
 :::
+
+## Beyond the default sequence
+
+The stage list and its loops are declared data (`worca.flow`), not hardcoded control flow. You can disable or reorder stages, redirect the loops, insert custom stages run by your own agents, and wire any stage's structured outputs into a later stage's prompt — all validated when the run launches. [Custom pipeline flows](/advanced/custom-pipeline-flows/) covers the whole surface, including which builtin stages are optional or replaceable.
