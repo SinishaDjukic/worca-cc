@@ -639,10 +639,13 @@ def load_flow(settings_path: str = ".claude/settings.json",
     return FlowSpec(entries, custom=True)
 
 
-# W-072 §3: builtin agent templates still reference legacy flat keys
-# mid-migration, so lint findings on the *default* flow stay warnings until
-# the Phase 3 stage conversions complete. Custom flows always fail loudly.
-DEFAULT_FLOW_LINT_ERRORS = False
+# W-072 §3: with the Phase 3 builtin stage conversions complete (all shipped
+# templates lint clean), namespaced-reference violations are launch-time
+# errors for the default flow too — a typo'd stages.* key in a project
+# overlay fails the launch instead of silently rendering empty. Flat-key
+# findings remain warnings either way (third-party overlays own their flat
+# refs; the alias table keeps them resolving).
+DEFAULT_FLOW_LINT_ERRORS = True
 
 # stages.<producer>.<output>[.<deeper>...] — namespaced context reference.
 _STAGES_REF_RE = re.compile(

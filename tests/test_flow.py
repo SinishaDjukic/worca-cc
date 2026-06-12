@@ -863,3 +863,40 @@ class TestConsumptionLint:
         )
         assert violations == []
         assert warnings == []
+
+
+class TestDefaultFlowLintFlip:
+    """Phase 3 complete: default-flow namespaced violations are launch errors."""
+
+    def test_flag_is_flipped(self):
+        from worca.orchestrator.flow import DEFAULT_FLOW_LINT_ERRORS
+        assert DEFAULT_FLOW_LINT_ERRORS is True
+
+    def test_project_overlay_with_bad_namespaced_ref_violates(
+            self, tmp_path, monkeypatch):
+        """A project agent overlay referencing an undeclared stages.* key is
+        a violation on the default flow (the runner escalates to launch
+        failure now that DEFAULT_FLOW_LINT_ERRORS is on)."""
+        import shutil
+        from pathlib import Path
+
+        from worca.orchestrator.flow import lint_flow_consumption
+
+        repo_core = Path(__file__).resolve().parents[1] / "src" / "worca" / "agents" / "core"
+        core = tmp_path / ".claude" / "worca" / "agents" / "core"
+        shutil.copytree(repo_core, core)
+        overrides = tmp_path / ".claude" / "agents"
+        overrides.mkdir(parents=True)
+        (overrides / "guardian.md").write_text(
+            "<!-- append -->\n\n## Override: Extra\n\n"
+            "Approach was {{stages.plan.approch}}\n",  # typo'd output name
+            encoding="utf-8",
+        )
+        settings = _write_settings(tmp_path, {})
+        flow = compile_default_flow(settings)
+        violations, _ = lint_flow_consumption(
+            flow, str(core), overrides_dir=str(overrides),
+        )
+        assert len(violations) == 1
+        assert "approch" in violations[0]
+        assert "does not declare output" in violations[0]
