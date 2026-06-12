@@ -141,6 +141,26 @@ inline after the `<h1>` title on list pages only (detail routes — `runId` or
 | Run Detail → Access Map panel (`run-file-access.js`) | `access-map` | running-pipelines/access-map *(new registry entry)* |
 | Pipelines editor → Prompts tab legend | `agent-prompt` + `custom-flows` | advanced/anatomy-of-an-agent-prompt + advanced/custom-pipeline-flows *(new registry entry)* |
 | New Run → Pipeline section title | `templates` | concepts/pipeline-templates |
+| Settings → Notifications tab | `events` | integrations/events-overview |
+| Project Settings → Costs & Budgets tab | `models` | configuration/models (pricing + budgets) |
+
+### Sidebar (full coverage, 2026-06 follow-up)
+
+Every sidebar item now carries a compact (20px) inline badge: Running →
+`monitoring`, History → `reviewing`, Worktrees → `worktrees`, Fleets →
+`fleet-runs`, Workspaces (runs + config) → `workspace-runs`, Beads →
+`pipeline-stages`, Costs → `models`, Webhooks → `events`, Project Settings →
+`settings-overview`, Pipeline Templates → `templates`, Models → `models`.
+
+### Placement mechanics (2026-06 fix)
+
+Inline contexts (`.content-header-title`, `.new-run-section-title`,
+`.prompt-legend`, `.sidebar-item`, `sl-tab`) render the badge in normal flow
+after the text with `position: relative` — NOT `static`: the ::after sonar
+wave is absolutely positioned against the badge, and a static badge stops
+being its containing block, ballooning the pulse over the whole host (the
+"giant ellipse over the title" bug). The root-level floating badges on the
+templates/dashboard pages were removed in favor of the header chokepoint.
 
 ### Surfaces deliberately uninstrumented
 
