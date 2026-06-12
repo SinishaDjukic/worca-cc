@@ -1136,10 +1136,6 @@ class TestHandler(StageHandler):
     """TEST stage: suite events, failure history threading, test-fix loop."""
 
     name = Stage.TEST.value
-    code_outputs = (
-        "test_passed", "test_coverage", "proof_artifacts",
-        "test_failures", "test_failure_history",
-    )
 
     def on_stage_started(self, rc):
         r = _runner()
@@ -1161,10 +1157,9 @@ class TestHandler(StageHandler):
 
         passed = result.get("passed", False)
         r._emit_guide_conflicts(rc.ctx, "test", result)
-        # Thread test outputs into PromptBuilder
-        rc.prompt_builder.update_context("test_passed", passed)
-        rc.prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
-        rc.prompt_builder.update_context("proof_artifacts", result.get("proof_artifacts", []))
+        # passed/coverage_pct/proof_artifacts are declared flow outputs
+        # (W-072) — already auto-published as stages.test.* with flat
+        # dual-writes. Only the fix-loop transforms are threaded below.
         if not passed:
             new_failures = result.get("failures", [])
             # Accumulate test failure history

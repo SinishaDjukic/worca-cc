@@ -92,6 +92,14 @@ DEFAULT_STAGE_OUTPUTS: dict = {
         "beads_ids": "/beads_ids",
         "dependency_graph": "/dependency_graph",
     },
+    # passed is required; coverage_pct/proof_artifacts are optional picks
+    # (absent fields are skipped — they render falsy/empty downstream).
+    # The failure list/history that drive the fix loop stay handler code.
+    Stage.TEST.value: {
+        "passed": "/passed",
+        "coverage_pct": "/coverage_pct",
+        "proof_artifacts": "/proof_artifacts",
+    },
 }
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}

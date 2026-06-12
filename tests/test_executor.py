@@ -195,8 +195,22 @@ class TestTestHandlerPostDispatch:
         decision = TestHandler().post_dispatch(rc)
         assert decision.action == StageDecision.ADVANCE
         assert rc.iter_extras["outcome"] == "success"
-        assert rc.prompt_builder.get_context("test_passed") is True
-        assert rc.prompt_builder.get_context("test_coverage") == 90
+
+    def test_passed_published_via_declared_outputs(self, tmp_path):
+        """W-072: passed/coverage_pct are declared flow outputs — the runner
+        loop publishes them via publish_declared_outputs before post_dispatch
+        (the handler no longer hand-publishes them)."""
+        from worca.orchestrator.executor import publish_declared_outputs
+        from worca.orchestrator.flow import DEFAULT_STAGE_OUTPUTS
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        pb = PromptBuilder("t", "d")
+        stage = FlowStage(name="test", agent="tester",
+                          schema="test_result.json",
+                          outputs=DEFAULT_STAGE_OUTPUTS["test"])
+        publish_declared_outputs(pb, stage, {"passed": True, "coverage_pct": 90})
+        assert pb.get_context("test_passed") is True
+        assert pb.get_context("test_coverage") == 90
+        assert pb.get_context("stages.test.passed") is True
 
     def test_failure_within_limit_jumps_to_goto(self, tmp_path):
         rc = make_rc(tmp_path, _default_like_flow())

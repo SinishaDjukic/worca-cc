@@ -39,6 +39,13 @@ CONTEXT_ALIASES: dict = {
     # coordinate — both declared outputs (required schema fields)
     "beads_ids": "stages.coordinate.beads_ids",
     "dependency_graph": "stages.coordinate.dependency_graph",
+    # test — passed/coverage_pct/proof_artifacts are declared outputs;
+    # failures/failure_history are code-published fix-loop transforms.
+    "test_passed": "stages.test.passed",
+    "test_coverage": "stages.test.coverage_pct",
+    "proof_artifacts": "stages.test.proof_artifacts",
+    "test_failures": "stages.test.failures",
+    "test_failure_history": "stages.test.failure_history",
 }
 
 
