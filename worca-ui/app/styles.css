@@ -9011,6 +9011,17 @@ body.help-mode-active sl-tab {
   padding: var(--sl-spacing-medium);
 }
 
+/* Shared blocks / auxiliary agents cards (files no stage claims) */
+.overlay-shared-note {
+  color: var(--sl-color-neutral-600);
+  font-size: var(--sl-font-size-small);
+  margin-bottom: var(--sl-spacing-small);
+}
+
+.overlay-shared-note code {
+  font-size: var(--sl-font-size-x-small);
+}
+
 /* ── Prompts tab (pipelines-editor-overlays.js) ─────────────────────────── */
 
 .prompt-file-content.markdown-body {

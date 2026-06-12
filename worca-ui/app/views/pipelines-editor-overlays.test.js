@@ -16,6 +16,7 @@ import {
   promptsTabView,
   STAGE_OVERLAY_MAP,
   stagePromptFiles,
+  unmappedPromptFiles,
 } from './pipelines-editor-overlays.js';
 
 function mount(prompts) {
@@ -168,5 +169,83 @@ describe('promptsTabView', () => {
     expect(appendBlocks.length).toBe(1);
     expect(container.querySelector('.prompt-merge-overwrite')).toBeNull();
     expect(container.textContent).toContain('appended tail text');
+  });
+});
+
+// ─── 4. Shared blocks / auxiliary agents (unmapped files) ────────────────────
+
+describe('unmappedPromptFiles', () => {
+  it('splits unmapped files into shared blocks and auxiliary agents', () => {
+    const prompts = {
+      'planner.md': builtin(),
+      'plan.block.md': builtin(),
+      'graphify-reminder.block.md': builtin('# graphify'),
+      'crg-reminder.block.md': builtin('# crg'),
+      'template-advisor.md': builtin('# advisor'),
+      'workspace_planner.md': builtin('# wsp'),
+    };
+    const { blocks, agents } = unmappedPromptFiles(prompts);
+    expect(blocks.map((f) => f.name)).toEqual([
+      'crg-reminder.block.md',
+      'graphify-reminder.block.md',
+    ]);
+    expect(agents.map((f) => f.name)).toEqual([
+      'template-advisor.md',
+      'workspace_planner.md',
+    ]);
+    expect(blocks[0].role).toBe('user');
+    expect(agents[0].role).toBe('agent');
+  });
+
+  it('returns empty groups when every file is stage-mapped', () => {
+    const { blocks, agents } = unmappedPromptFiles({
+      'planner.md': builtin(),
+      'plan.block.md': builtin(),
+    });
+    expect(blocks).toEqual([]);
+    expect(agents).toEqual([]);
+  });
+});
+
+describe('promptsTabView shared cards', () => {
+  it('renders a Shared blocks card with each unmapped block file', () => {
+    const el = mount({
+      'planner.md': builtin(),
+      'graphify-reminder.block.md': builtin('# graphify body'),
+      'crg-reminder.block.md': {
+        source: 'pipeline',
+        content: '# replaced crg',
+      },
+    });
+    const shared = [...el.querySelectorAll('sl-details')].find(
+      (d) => d.getAttribute('summary') === 'Shared blocks',
+    );
+    expect(shared).toBeTruthy();
+    expect(shared.textContent).toContain('graphify-reminder.block');
+    expect(shared.textContent).toContain('crg-reminder.block');
+    expect(shared.textContent).toContain('Shared block');
+    // source badges flow through the same classification
+    expect(shared.textContent).toContain('Replaced');
+  });
+
+  it('renders an Auxiliary agents card for unmapped agent files', () => {
+    const el = mount({
+      'planner.md': builtin(),
+      'workspace_planner.md': builtin('# wsp'),
+    });
+    const aux = [...el.querySelectorAll('sl-details')].find(
+      (d) => d.getAttribute('summary') === 'Auxiliary agents',
+    );
+    expect(aux).toBeTruthy();
+    expect(aux.textContent).toContain('workspace_planner');
+  });
+
+  it('omits both cards when nothing is unmapped', () => {
+    const el = mount({ 'planner.md': builtin() });
+    const summaries = [...el.querySelectorAll('sl-details')].map((d) =>
+      d.getAttribute('summary'),
+    );
+    expect(summaries).not.toContain('Shared blocks');
+    expect(summaries).not.toContain('Auxiliary agents');
   });
 });
