@@ -36,6 +36,9 @@ CONTEXT_ALIASES: dict = {
     "plan_review_history": "stages.plan_review.history",
     "plan_revision_mode": "stages.plan_review.revision_mode",
     "unresolved_plan_issues": "stages.plan_review.unresolved_issues",
+    # coordinate — both declared outputs (required schema fields)
+    "beads_ids": "stages.coordinate.beads_ids",
+    "dependency_graph": "stages.coordinate.dependency_graph",
 }
 
 

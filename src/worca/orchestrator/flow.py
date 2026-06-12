@@ -88,6 +88,10 @@ DEFAULT_STAGE_OUTPUTS: dict = {
     Stage.PLAN_REVIEW.value: {
         "issues": "/issues",
     },
+    Stage.COORDINATE.value: {
+        "beads_ids": "/beads_ids",
+        "dependency_graph": "/dependency_graph",
+    },
 }
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}

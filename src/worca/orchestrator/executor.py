@@ -845,7 +845,6 @@ class CoordinateHandler(StageHandler):
     """COORDINATE: bead decomposition, run labeling, effort label backfill."""
 
     name = Stage.COORDINATE.value
-    code_outputs = ("beads_ids", "dependency_graph")
 
     def pre_build_context(self, rc):
         # Thread max_beads cap into prompt_builder before building COORDINATE context
@@ -886,7 +885,8 @@ class CoordinateHandler(StageHandler):
         r.save_status(status, rc.actual_status_path)
         if rc.ctx:
             r._emit_stage_completed_and_gate(rc.ctx, rc.stage_name, rc.iter_num, iter_extras)
-        # Thread coordinate outputs into PromptBuilder
+        # beads_ids/dependency_graph are declared flow outputs (W-072) —
+        # already auto-published as stages.coordinate.* with flat dual-writes.
         beads_ids = result.get("beads_ids", [])
         rc.created_bead_count = len(beads_ids)
         r._warn_if_cap_deviation(
@@ -894,8 +894,6 @@ class CoordinateHandler(StageHandler):
             rc.created_bead_count,
             bool(rc.prompt_builder.get_context("review_comments")),
         )
-        rc.prompt_builder.update_context("beads_ids", beads_ids)
-        rc.prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
         rc.prompt_builder.pop_context("unresolved_plan_issues")
         # Link beads to this run via label
         if beads_ids:
