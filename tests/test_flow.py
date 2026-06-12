@@ -900,3 +900,38 @@ class TestDefaultFlowLintFlip:
         assert len(violations) == 1
         assert "approch" in violations[0]
         assert "does not declare output" in violations[0]
+
+
+def test_consumption_lint_conditional_later_producer_is_benign(
+        tmp_path, monkeypatch):
+    """A conditional-only reference to a later producer with no loop is
+    accepted — the section legitimately collapses (builtin templates rely on
+    this under rearranged custom flows). A bare value reference stays a
+    violation (test_consumption_lint_orders_and_outputs)."""
+    monkeypatch.chdir(tmp_path)
+    violations, warnings = TestConsumptionLint()._setup(
+        tmp_path,
+        {
+            "researcher.md": (
+                "{{#if stages.verify.failures}}fix them{{/if}} "
+                "{{stages.verify.failures|none yet}}"
+            ),
+            "verifier.md": "# v",
+        },
+        flow_doc={
+            "version": 1,
+            "stages": [
+                {"name": "research", "agent": "researcher",
+                 "schema": "verify.json"},
+                {"name": "verify", "agent": "verifier",
+                 "schema": "verify.json",
+                 "outputs": {"failures": "/failures"}},
+            ],
+        },
+        schemas={"verify.json": {
+            "type": "object",
+            "properties": {"failures": {"type": "array"}},
+        }},
+    )
+    assert violations == []
+    assert warnings == []

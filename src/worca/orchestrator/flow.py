@@ -773,7 +773,14 @@ def lint_flow_consumption(flow: FlowSpec, core_dir: str,
                     src >= producer_idx and dst <= consumer_idx
                     for src, dst in backward_jumps
                 )
-                if not upstream:
+                # Ordering is topology-dependent, not a typo class: builtin
+                # templates legitimately reference a later stage inside
+                # {{#if}} (or with a |default) and rely on the section
+                # collapsing when the flow never loops back — e.g. the plan
+                # template's revision branch under a custom flow that keeps
+                # plan_review but drops the plan_review_revise loop. Only a
+                # BARE value reference to a later producer is a wiring error.
+                if not upstream and not meta["defaulted"]:
                     violations.append(
                         f"stage {stage.name!r}: references {{{{{key}}}}} but "
                         f"stage {producer_name!r} runs later and no declared "

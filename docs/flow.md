@@ -101,8 +101,8 @@ with a `FlowError` on:
   `outputs` map on a schema-less stage, or a malformed output name/pointer
 - a **consumption-lint** violation (W-072 §3): a `{{stages.<s>.<o>}}`
   reference in any enabled stage's resolved templates whose producer `<s>`
-  doesn't exist, runs later with no declared loop bringing execution back, or
-  doesn't declare `<o>`
+  doesn't exist, doesn't declare `<o>`, or — for bare value references only —
+  runs later with no declared loop bringing execution back
 
 The compiled default flow skips file-existence checks — it isn't user input.
 The consumption lint runs for every flow (default included, since project
@@ -205,14 +205,18 @@ optional fields are skipped — they render falsy/empty downstream.
 
 At launch the runner renders every enabled stage's *resolved* template set
 (three-tier overlays included) and checks each `stages.<s>.<o>` reference:
-`<s>` must be a declared stage that runs earlier (or is reachable via a
-declared loop — e.g. `implement` may reference `stages.test.failures` because
-`test_failure` loops back), and `<o>` must be one of `<s>`'s declared outputs.
-Violations are launch-time errors — a typo'd placeholder fails the launch
-instead of silently rendering as an empty string. References to a *disabled*
-producer are accepted (they legitimately render empty). Runtime-provided
-builtins (`work_request`, `branch`, `run_id`, … — `RESERVED_CONTEXT_KEYS` in
-`context_keys.py`) are exempt; unknown flat keys produce advisory warnings.
+`<s>` must be a declared stage and `<o>` one of its declared outputs, and a
+*bare* value reference additionally requires `<s>` to run earlier (or be
+reachable via a declared loop — e.g. `implement` may reference
+`stages.test.failures` because `test_failure` loops back). Violations are
+launch-time errors — a typo'd placeholder fails the launch instead of
+silently rendering as an empty string. Two reference shapes are accepted as
+legitimately-empty rather than flagged: a *disabled* producer, and a
+conditional-only / `|default`-carrying reference to a later producer with no
+loop back (the section collapses by design — builtin templates rely on this
+under rearranged custom flows). Runtime-provided builtins (`work_request`,
+`branch`, `run_id`, … — `RESERVED_CONTEXT_KEYS` in `context_keys.py`) are
+exempt; unknown flat keys produce advisory warnings.
 
 ### Builtin declarations and the legacy alias table
 
