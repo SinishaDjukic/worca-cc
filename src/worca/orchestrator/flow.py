@@ -74,8 +74,15 @@ _OUTPUT_POINTER_RE = re.compile(r"^(/[^/]+)+$")
 
 # Builtin per-stage output declarations (W-072 Phase 3). Stages convert one
 # at a time; an entry here means the executor auto-publishes these picks
-# under stages.<name>.* after schema validation.
-DEFAULT_STAGE_OUTPUTS: dict = {}
+# under stages.<name>.* after schema validation. Transforms (filtered issue
+# lists, accumulated file sets) stay handler code — they reach the namespace
+# through the CONTEXT_ALIASES dual-write, not through declarations.
+DEFAULT_STAGE_OUTPUTS: dict = {
+    Stage.PLAN.value: {
+        "approach": "/approach",
+        "tasks_outline": "/tasks_outline",
+    },
+}
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}
 _BUILTIN_AGENTS = {a for a in STAGE_AGENT_MAP.values() if a}

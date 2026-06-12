@@ -463,7 +463,6 @@ class PlanHandler(StageHandler):
     """PLAN: plan-file materialization guard + plan_approved milestone gate."""
 
     name = Stage.PLAN.value
-    code_outputs = ("plan_approach", "plan_tasks_outline", "plan_file_content")
 
     def post_dispatch(self, rc):
         r = _runner()
@@ -529,9 +528,9 @@ class PlanHandler(StageHandler):
             raise r.PipelineError("Plan not approved")
         r._log("PLAN approved", "ok")
         r._emit_guide_conflicts(rc.ctx, "plan", result)
-        # Thread plan outputs into PromptBuilder for downstream stages
-        rc.prompt_builder.update_context("plan_approach", result.get("approach", ""))
-        rc.prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
+        # approach/tasks_outline are declared flow outputs (W-072) — the
+        # runner loop auto-published them as stages.plan.* (with legacy flat
+        # dual-writes) before this hook ran. Only the transform remains here:
         # Read plan file content now so plan_review has it immediately
         # (avoids race where plan_review starts before the file is flushed)
         _plan_path = status.get("plan_file")

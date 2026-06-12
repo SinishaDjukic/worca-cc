@@ -21,7 +21,14 @@ namespaced, and are exempt from the flow consumption lint.
 
 # flat key -> namespaced "stages.<stage>.<output>" key.
 # Populated one stage per commit as builtin stages convert (W-072 Phase 3).
-CONTEXT_ALIASES: dict = {}
+CONTEXT_ALIASES: dict = {
+    # plan — approach/tasks_outline are declared outputs (flow.py
+    # DEFAULT_STAGE_OUTPUTS); file_content is a code-published transform
+    # (the materialized plan file read back from disk).
+    "plan_approach": "stages.plan.approach",
+    "plan_tasks_outline": "stages.plan.tasks_outline",
+    "plan_file_content": "stages.plan.file_content",
+}
 
 
 def alias_for(flat_key: str):
