@@ -5,6 +5,7 @@ import { navigate, onHashChange, parseHash } from './router.js';
 import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
+import { helpFor } from './utils/help-links.js';
 import { bindKeyboard as bindHelpKeyboard } from './utils/help-mode.js';
 import {
   AlertTriangle,
@@ -4402,6 +4403,20 @@ async function doRunLearn() {
 
 // --- Render ---
 
+// Section -> helpId for the content-header docs badge (W-061 help mode).
+// List pages only — detail routes (runId/tier set) skip it, and sections
+// whose page body already carries its own badge (workspaces, webhooks,
+// new-run, settings) are omitted to avoid doubled markers.
+const SECTION_HELP_IDS = {
+  active: 'monitoring',
+  history: 'reviewing',
+  'fleet-runs': 'fleet-runs',
+  beads: 'pipeline-stages',
+  costs: 'models',
+  templates: 'templates',
+  models: 'models',
+};
+
 function contentHeaderView() {
   const state = store.getState();
   let title = 'Dashboard';
@@ -4972,7 +4987,13 @@ function contentHeaderView() {
       `
           : ''
       }
-      <h1 class="content-header-title">${title}</h1>
+      <h1 class="content-header-title help-host">
+        ${title}${
+          !route.runId && !route.tier && SECTION_HELP_IDS[route.section]
+            ? helpFor(SECTION_HELP_IDS[route.section])
+            : ''
+        }
+      </h1>
       ${badge || ''}
       ${
         actionButton

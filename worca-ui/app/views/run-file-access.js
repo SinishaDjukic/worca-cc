@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   AlertTriangle,
   ChevronDown,
@@ -143,7 +144,8 @@ export function runFileAccessView(_run, _settings, options = {}) {
   const rootStyle =
     _fileColWidth != null ? `--fa-file-col-width:${_fileColWidth}px` : nothing;
 
-  return html`<div class="run-file-access" style=${rootStyle}>
+  return html`<div class="run-file-access help-host" style=${rootStyle}>
+    ${helpFor('access-map')}
     ${_kpiStrip(summary)}
     ${_controlsBar()}
     ${_treetable(tree, columns, stageGroups, searches)}

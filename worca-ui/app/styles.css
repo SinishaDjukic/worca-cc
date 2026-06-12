@@ -8890,6 +8890,16 @@ body.help-mode-active .help-badge {
   display: inline-flex;
 }
 
+/* Content-header title badges flow inline after the text instead of
+   absolutely positioning over it — the h1 hugs its content, so the
+   default top-right anchor would overlap the last characters. */
+.content-header-title .help-badge {
+  position: static;
+  transform: none;
+  margin-left: var(--sl-spacing-small);
+  vertical-align: middle;
+}
+
 body.help-mode-active .help-badge::after {
   animation: help-badge-sonar 2.4s ease-out infinite;
 }

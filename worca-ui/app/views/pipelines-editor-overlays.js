@@ -17,6 +17,7 @@
 
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import { renderMarkdown } from '../utils/markdown.js';
 
 /**
@@ -310,7 +311,8 @@ export function promptsTabView(prompts) {
 
   return html`
     <div class="settings-tab-content overlay-stages">
-      <div class="prompt-legend">
+      <div class="prompt-legend help-host">
+        ${helpFor('agent-prompt')}${helpFor('custom-flows')}
         Each stage shows the prompt the pipeline actually runs.
         <sl-badge class="prompt-source-badge" variant="neutral" pill>Built-in</sl-badge>
         unchanged default ·

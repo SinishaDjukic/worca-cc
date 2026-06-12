@@ -26,6 +26,8 @@
  *   + settings-overview       — better fit for the Preferences tab
  *   - effort / permissions     — those tabs no longer exist in settings.js
  *                                (folded into the template editor)
+ *   + access-map              — running-pipelines/access-map.md (W-064 surface)
+ *   + custom-flows            — advanced/custom-pipeline-flows.md (W-070/071/072)
  */
 
 import { html } from 'lit-html';
@@ -115,6 +117,10 @@ export const HELP_LINKS = Object.freeze({
     slug: 'running-pipelines/timeline-view',
     title: 'Timeline view',
   },
+  'access-map': {
+    slug: 'running-pipelines/access-map',
+    title: 'Access Map',
+  },
 
   // Advanced
   effort: { slug: 'advanced/tuning-effort', title: 'Effort levels' },
@@ -140,6 +146,10 @@ export const HELP_LINKS = Object.freeze({
   'authoring-templates': {
     slug: 'advanced/authoring-templates',
     title: 'Authoring templates',
+  },
+  'custom-flows': {
+    slug: 'advanced/custom-pipeline-flows',
+    title: 'Custom pipeline flows',
   },
 
   // Integrations
