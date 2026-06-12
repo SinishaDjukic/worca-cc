@@ -20,6 +20,31 @@ _DESIGN_NOTES_CAP = 2000
 # their data resolve through the alias table (context_keys.CONTEXT_ALIASES).
 PROMPT_CONTEXT_SCHEMA_VERSION = 2
 
+# Keys _apply_stage_context computes for the named consumer stage (W-072 §3).
+# Consumer-side formatting and mode flags, not inter-stage contract — the
+# flow consumption lint exempts them for that stage's own templates only.
+BUILDER_STAGE_KEYS: dict = {
+    "plan": {
+        "has_review_comments", "plan_content",
+        "plan_review_issues_formatted", "plan_review_history_formatted",
+    },
+    "plan_review": {"plan_content", "plan_review_history_formatted"},
+    "coordinate": {
+        "current_plan", "has_review_comments", "max_beads",
+        "bead_cap_single", "bead_cap_multi", "unresolved_plan_issues_formatted",
+    },
+    "implement": {
+        "is_retry", "issue_type", "attempt_count", "test_failures_formatted",
+        "review_issues_formatted", "previous_attempts",
+    },
+    "test": {"implementation_summary"},
+    "review": {"test_results", "files_changed_formatted", "review_base"},
+    "learn": {
+        "termination_type", "plan_content", "run_id", "run_data",
+        "files_changed_since_git_head",
+    },
+}
+
 
 def _render_notes(notes: list[dict], cap: int) -> str:
     """Render design notes as an attributed bullet list, drop-oldest to fit cap."""

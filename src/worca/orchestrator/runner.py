@@ -29,9 +29,15 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
-from worca.orchestrator.executor import StageDecision, StageRunContext, handler_for
+from worca.orchestrator.executor import (
+    StageDecision,
+    StageRunContext,
+    handler_for,
+    publish_declared_outputs,
+)
 from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
-from worca.orchestrator.flow import load_flow
+from worca.orchestrator import flow as flow_module
+from worca.orchestrator.flow import lint_flow_consumption, load_flow
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_stage_config_for, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
@@ -3071,6 +3077,27 @@ def run_pipeline(
         # so a silently tool-less stage isn't a mid-run mystery.
         _warn_custom_agents_locked_down(flow, settings_path)
 
+        # W-072 §3: consumption lint — every namespaced placeholder a stage's
+        # resolved templates reference must be produced by a declared upstream
+        # output. Errors for custom flows (fail at launch, never mid-run);
+        # warnings for the default flow until the builtin template migration
+        # completes (flow.DEFAULT_FLOW_LINT_ERRORS).
+        _lint_violations, _lint_warnings = lint_flow_consumption(
+            flow, _pb_core_dir,
+            overrides_dir=_pb_overrides_dir,
+            template_agents_dir=_pb_template_agents_dir,
+        )
+        for _w in _lint_warnings:
+            _log(f"flow lint: {_w}", "warn")
+        if _lint_violations:
+            if flow.custom or flow_module.DEFAULT_FLOW_LINT_ERRORS:
+                raise PipelineError(
+                    "flow consumption lint failed:\n"
+                    + "\n".join(f"  - {v}" for v in _lint_violations)
+                )
+            for _v in _lint_violations:
+                _log(f"flow lint: {_v}", "warn")
+
         # Handle plan file
         if not resume_stage:
             if plan_file:
@@ -3790,6 +3817,19 @@ def run_pipeline(
             rc.usage = usage
             rc.iter_extras = iter_extras
             rc.stage_extras = stage_extras
+
+            # Declared output publication (W-072): extract each output the
+            # flow declares for this stage from the validated structured
+            # result and publish it as stages.<name>.<output> — BEFORE the
+            # handler's bespoke completion, so jump paths that persist the
+            # prompt context carry the namespaced values too.
+            if (
+                _handler.is_agent_stage
+                and rc.flow_stage is not None
+                and rc.flow_stage.outputs
+                and isinstance(result, dict)
+            ):
+                publish_declared_outputs(prompt_builder, rc.flow_stage, result)
 
             # Stage-specific completion (W-071): the handler performs its
             # bespoke bookkeeping (outcome mapping, milestones, loop-backs)

@@ -229,16 +229,24 @@ class TestBlockRouting:
 
         block_calls = []
         original_resolve_block = None
+        dispatch_started = []
+
+        def gated_run_stage(*args, **kwargs):
+            dispatch_started.append(True)
+            return mock_run_stage(*args, **kwargs)
 
         def tracking_resolve_block(self, block_name, *args, **kwargs):
-            block_calls.append(block_name)
+            # Only dispatch-time routing matters here — the W-072 launch-time
+            # consumption lint also resolves blocks, before any stage runs.
+            if dispatch_started:
+                block_calls.append(block_name)
             return original_resolve_block(self, block_name, *args, **kwargs)
 
         from worca.orchestrator.overlay import OverlayResolver
         original_resolve_block = OverlayResolver.resolve_block
 
         with patch.object(OverlayResolver, "resolve_block", tracking_resolve_block):
-            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=gated_run_stage):
                 with patch("worca.orchestrator.runner.create_branch"):
                     with patch("worca.orchestrator.runner._write_pid"):
                         with patch("worca.orchestrator.runner._remove_pid"):
@@ -257,9 +265,13 @@ class TestBlockRouting:
 
         block_calls = []
         original_resolve_block = None
+        dispatch_started = []
 
         def tracking_resolve_block(self, block_name, *args, **kwargs):
-            block_calls.append(block_name)
+            # Only dispatch-time routing matters here — the W-072 launch-time
+            # consumption lint also resolves blocks, before any stage runs.
+            if dispatch_started:
+                block_calls.append(block_name)
             return original_resolve_block(self, block_name, *args, **kwargs)
 
         from worca.orchestrator.overlay import OverlayResolver
@@ -275,8 +287,12 @@ class TestBlockRouting:
                 return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
             return _mock_stage(stage, {})
 
+        def gated_run_stage(*args, **kwargs):
+            dispatch_started.append(True)
+            return mock_run_stage(*args, **kwargs)
+
         with patch.object(OverlayResolver, "resolve_block", tracking_resolve_block):
-            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=gated_run_stage):
                 with patch("worca.orchestrator.runner.create_branch"):
                     with patch("worca.orchestrator.runner._write_pid"):
                         with patch("worca.orchestrator.runner._remove_pid"):

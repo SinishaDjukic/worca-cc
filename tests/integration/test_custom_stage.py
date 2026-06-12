@@ -272,3 +272,91 @@ class TestCustomStageResume:
         assert result.status["pipeline_status"] == "completed"
         audit = result.status["stages"]["docs_audit"]
         assert audit["status"] == "completed"
+
+
+class TestCustomStageDeclaredOutputs:
+    """W-072: a custom stage declares an output; a downstream custom stage
+    consumes it via a namespaced placeholder; the lint guards the contract."""
+
+    _PUBLISH_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "outcome": {"type": "string", "enum": ["success", "reject"]},
+        },
+        "required": ["outcome"],
+    }
+
+    def _install_publish_stage(self, pipeline_env, consumer_block):
+        """Add a docs_publish stage after docs_audit; docs_audit declares
+        its summary as an output."""
+        project = pipeline_env.project
+
+        flow_doc = json.loads(json.dumps(_CUSTOM_STAGE_FLOW))
+        for entry in flow_doc["stages"]:
+            if entry["name"] == "docs_audit":
+                entry["outputs"] = {"summary": "/summary"}
+        flow_doc["stages"].insert(-1, {
+            "name": "docs_publish",
+            "agent": "docs_publisher",
+            "schema": "docs_publish.json",
+        })
+        _install_custom_stage(pipeline_env, flow_doc=flow_doc)
+
+        agents_dir = project / ".claude" / "agents"
+        (agents_dir / "docs_publisher.md").write_text(
+            "# Docs Publisher\n\nYou publish documentation.\n",
+            encoding="utf-8",
+        )
+        (agents_dir / "docs_publish.block.md").write_text(
+            consumer_block, encoding="utf-8",
+        )
+        (project / ".claude" / "schemas" / "docs_publish.json").write_text(
+            json.dumps(self._PUBLISH_SCHEMA, indent=2), encoding="utf-8",
+        )
+
+    def test_downstream_stage_consumes_declared_output(self, pipeline_env):
+        """The published stages.docs_audit.summary value renders into the
+        downstream stage's prompt via the namespaced placeholder."""
+        self._install_publish_stage(
+            pipeline_env,
+            "Publish the docs.\n\nAudit summary: {{stages.docs_audit.summary}}\n",
+        )
+        result = pipeline_env.run(
+            make_iteration_scenario({
+                "docs_auditor": {
+                    "default": {
+                        "action": "succeed", "delay_s": 0.05,
+                        "structured_output": {"outcome": "success",
+                                              "summary": "all docs verified"},
+                    },
+                },
+                "docs_publisher": {
+                    "default": {
+                        "action": "succeed", "delay_s": 0.05,
+                        "structured_output": {"outcome": "success"},
+                    },
+                },
+            }),
+            prompt="declared output run",
+            timeout=120,
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr[-800:]}"
+        assert result.status["pipeline_status"] == "completed"
+        prompt = result.status["stages"]["docs_publish"].get("prompt", "")
+        assert "Audit summary: all docs verified" in prompt
+
+    def test_undeclared_consumption_fails_at_launch(self, pipeline_env):
+        """A namespaced reference to an undeclared output is a launch-time
+        FlowError for custom flows (W-072 §3) — never a silent empty render."""
+        self._install_publish_stage(
+            pipeline_env,
+            "Publish the docs.\n\nAudit verdict: {{stages.docs_audit.verdict}}\n",
+        )
+        result = pipeline_env.run(
+            make_iteration_scenario({}),
+            prompt="undeclared consumption run",
+            timeout=120,
+        )
+        assert result.returncode != 0
+        assert "verdict" in result.stderr
+        assert "does not declare output" in result.stderr

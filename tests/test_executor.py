@@ -347,3 +347,77 @@ class TestGenericHandlerPostDispatch:
         assert decision.action == StageDecision.JUMP
         assert decision.goto == "final_check"
         assert rc.loop_counters == {}
+
+
+# --- declared output publication (W-072) ---
+
+class TestResolveJsonPointer:
+    def test_resolves_top_level_field(self):
+        from worca.orchestrator.executor import resolve_json_pointer
+        assert resolve_json_pointer({"approach": "JWT"}, "/approach") == "JWT"
+
+    def test_resolves_nested_and_array(self):
+        from worca.orchestrator.executor import resolve_json_pointer
+        doc = {"risk": {"level": "low"}, "tasks": ["a", "b"]}
+        assert resolve_json_pointer(doc, "/risk/level") == "low"
+        assert resolve_json_pointer(doc, "/tasks/1") == "b"
+
+    def test_missing_returns_sentinel(self):
+        from worca.orchestrator.executor import _POINTER_MISS, resolve_json_pointer
+        assert resolve_json_pointer({}, "/nope") is _POINTER_MISS
+        assert resolve_json_pointer({"a": {}}, "/a/b") is _POINTER_MISS
+        assert resolve_json_pointer({"a": []}, "/a/0") is _POINTER_MISS
+
+    def test_stored_none_is_not_a_miss(self):
+        from worca.orchestrator.executor import _POINTER_MISS, resolve_json_pointer
+        assert resolve_json_pointer({"a": None}, "/a") is None
+        assert resolve_json_pointer({"a": None}, "/a") is not _POINTER_MISS
+
+    def test_escaped_segments(self):
+        from worca.orchestrator.executor import resolve_json_pointer
+        assert resolve_json_pointer({"a/b": 1, "c~d": 2}, "/a~1b") == 1
+        assert resolve_json_pointer({"a/b": 1, "c~d": 2}, "/c~0d") == 2
+
+
+class TestPublishDeclaredOutputs:
+    def _pb(self):
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        return PromptBuilder("t", "d")
+
+    def test_executor_publishes_declared_outputs(self):
+        """Declared picks land as stages.<name>.<output> post-validation."""
+        from worca.orchestrator.executor import publish_declared_outputs
+        pb = self._pb()
+        stage = FlowStage(
+            "plan", agent="planner", schema="plan.json",
+            outputs={"approach": "/approach", "tasks": "/tasks_outline"},
+        )
+        result = {"approach": "Use JWT", "tasks_outline": ["t1", "t2"]}
+        published = publish_declared_outputs(pb, stage, result)
+        assert sorted(published) == ["approach", "tasks"]
+        assert pb.get_context("stages.plan.approach") == "Use JWT"
+        assert pb.get_context("stages.plan.tasks") == ["t1", "t2"]
+
+    def test_absent_optional_field_is_skipped(self):
+        from worca.orchestrator.executor import publish_declared_outputs
+        pb = self._pb()
+        stage = FlowStage("plan", outputs={"approach": "/approach"})
+        published = publish_declared_outputs(pb, stage, {})
+        assert published == []
+        assert pb.get_context("stages.plan.approach") is None
+
+    def test_no_outputs_is_noop(self):
+        from worca.orchestrator.executor import publish_declared_outputs
+        pb = self._pb()
+        stage = FlowStage("plan")
+        assert publish_declared_outputs(pb, stage, {"approach": "x"}) == []
+        assert pb._context == {}
+
+    def test_dual_writes_flat_alias(self, monkeypatch):
+        from worca.orchestrator.context_keys import CONTEXT_ALIASES
+        from worca.orchestrator.executor import publish_declared_outputs
+        monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+        pb = self._pb()
+        stage = FlowStage("plan", outputs={"approach": "/approach"})
+        publish_declared_outputs(pb, stage, {"approach": "x"})
+        assert pb.get_context("plan_approach") == "x"

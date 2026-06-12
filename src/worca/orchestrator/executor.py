@@ -50,6 +50,54 @@ def _runner():
     return runner
 
 
+# Sentinel distinguishing "pointer target absent" from a stored None value.
+_POINTER_MISS = object()
+
+
+def resolve_json_pointer(doc, pointer: str):
+    """Resolve an RFC-6901-style JSON pointer against a dict/list document.
+
+    Supports dict keys and numeric list indices (the subset flow output
+    declarations use — see flow.json). Returns ``_POINTER_MISS`` when any
+    segment is absent, so callers can skip publication for optional fields
+    instead of publishing a literal None.
+    """
+    cur = doc
+    for seg in pointer.lstrip("/").split("/"):
+        seg = seg.replace("~1", "/").replace("~0", "~")
+        if isinstance(cur, dict):
+            if seg not in cur:
+                return _POINTER_MISS
+            cur = cur[seg]
+        elif isinstance(cur, list) and seg.isdigit() and int(seg) < len(cur):
+            cur = cur[int(seg)]
+        else:
+            return _POINTER_MISS
+    return cur
+
+
+def publish_declared_outputs(prompt_builder, flow_stage, result: dict) -> list:
+    """Publish a stage's declared outputs into the namespaced context (W-072).
+
+    Runs after schema validation, before the handler's ``post_dispatch`` —
+    each declared output is extracted from the validated structured result
+    via its JSON pointer and published as ``stages.<name>.<output>`` (with a
+    legacy flat dual-write where an alias exists). Absent pointer targets
+    (optional schema fields the agent omitted) are skipped — a missing key
+    renders falsy/empty downstream, which is the contract for optionals.
+
+    Returns the list of output names actually published.
+    """
+    published = []
+    for name, pointer in (flow_stage.outputs or {}).items():
+        value = resolve_json_pointer(result, pointer)
+        if value is _POINTER_MISS:
+            continue
+        prompt_builder.publish_output(flow_stage.name, name, value)
+        published.append(name)
+    return published
+
+
 class StageDecision:
     """What the loop should do after a stage's ``post_dispatch``.
 
@@ -190,6 +238,10 @@ class StageHandler:
     is_agent_stage = True
     #: True only for preflight — it always re-runs on resume.
     rerun_on_resume = False
+    #: Flat context keys this handler publishes in code (transforms/filters
+    #: that aren't declarative schema picks). Lint metadata only (W-072 §3) —
+    #: the consumption lint treats them as declared producer outputs.
+    code_outputs: tuple = ()
 
     # --- pre-iteration hooks -------------------------------------------------
 
@@ -411,6 +463,7 @@ class PlanHandler(StageHandler):
     """PLAN: plan-file materialization guard + plan_approved milestone gate."""
 
     name = Stage.PLAN.value
+    code_outputs = ("plan_approach", "plan_tasks_outline", "plan_file_content")
 
     def post_dispatch(self, rc):
         r = _runner()
@@ -495,6 +548,10 @@ class PlanReviewHandler(StageHandler):
     audit-trail normalization, and the plan_review_revise loop."""
 
     name = Stage.PLAN_REVIEW.value
+    code_outputs = (
+        "plan_review_issues", "plan_review_history", "plan_revision_mode",
+        "unresolved_plan_issues", "plan_file_content", "plan_file",
+    )
 
     def __init__(self):
         self.mode = None
@@ -793,6 +850,7 @@ class CoordinateHandler(StageHandler):
     """COORDINATE: bead decomposition, run labeling, effort label backfill."""
 
     name = Stage.COORDINATE.value
+    code_outputs = ("beads_ids", "dependency_graph")
 
     def pre_build_context(self, rc):
         # Thread max_beads cap into prompt_builder before building COORDINATE context
@@ -890,6 +948,9 @@ class ImplementHandler(StageHandler):
     plus test-failure / review-changes fix mode."""
 
     name = Stage.IMPLEMENT.value
+    code_outputs = (
+        "files_changed", "tests_added", "all_files_changed", "all_tests_added",
+    )
 
     def __init__(self):
         self._run_bead_ids = None
@@ -1082,6 +1143,10 @@ class TestHandler(StageHandler):
     """TEST stage: suite events, failure history threading, test-fix loop."""
 
     name = Stage.TEST.value
+    code_outputs = (
+        "test_passed", "test_coverage", "proof_artifacts",
+        "test_failures", "test_failure_history",
+    )
 
     def on_stage_started(self, rc):
         r = _runner()
@@ -1186,6 +1251,7 @@ class ReviewHandler(StageHandler):
     """REVIEW: verdict routing (approve/changes/reject/restart_planning)."""
 
     name = Stage.REVIEW.value
+    code_outputs = ("review_issues", "review_history")
 
     def on_stage_started(self, rc):
         r = _runner()

@@ -392,6 +392,8 @@ def collect_placeholder_keys(content: str) -> dict:
     keys: dict = {}
     for m in _PLACEHOLDER_RE.finditer(content):
         key, default = m.group(1), m.group(2)
+        if key == "else":
+            continue  # conditional syntax ({{else}}), not a context key
         entry = keys.setdefault(key, {"defaulted": True})
         if default is None:
             entry["defaulted"] = False

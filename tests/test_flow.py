@@ -533,3 +533,327 @@ class TestFingerprint:
         s2 = tmp_path / "settings2.json"
         s2.write_text(json.dumps({"worca": {"loops": {"implement_test": 9}}}))
         assert compile_default_flow(str(s2)).fingerprint() == base
+
+
+# --- declared outputs (W-072 §1) ---
+
+_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "approach": {"type": "string"},
+        "tasks_outline": {"type": "array", "items": {"type": "string"}},
+        "risk": {
+            "type": "object",
+            "properties": {"level": {"type": "string"}},
+        },
+    },
+}
+
+
+def _install_runtime_with_plan_schema(tmp_path):
+    _install_runtime(tmp_path)
+    schema_path = tmp_path / ".claude" / "worca" / "schemas" / "plan.json"
+    schema_path.write_text(json.dumps(_PLAN_SCHEMA))
+    return tmp_path
+
+
+class TestOutputsDeclarations:
+    def _flow_with_plan_outputs(self, tmp_path, outputs):
+        _install_runtime_with_plan_schema(tmp_path)
+        doc = _custom_flow_doc()
+        doc["stages"][1] = {
+            "name": "plan", "agent": "planner", "schema": "plan.json",
+            "outputs": outputs,
+        }
+        return _write_settings(tmp_path, {"flow": doc})
+
+    def test_outputs_parsed_onto_flow_stage(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"approach": "/approach", "tasks": "/tasks_outline"}
+        )
+        flow = load_flow(settings)
+        by_name = {s.name: s for s in flow.stages}
+        assert by_name["plan"].outputs == {
+            "approach": "/approach", "tasks": "/tasks_outline",
+        }
+        # undeclared stages default to empty
+        assert by_name["implement"].outputs == {}
+
+    def test_outputs_pointer_validated_against_schema(self, tmp_path, monkeypatch):
+        """§1 launch failure: an output naming a nonexistent field."""
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"approach": "/no_such_field"}
+        )
+        with pytest.raises(FlowError, match="no_such_field"):
+            load_flow(settings)
+
+    def test_outputs_nested_pointer_validated(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"risk_level": "/risk/level"}
+        )
+        flow = load_flow(settings)  # valid nested pointer — accepted
+        assert flow.stages[1].outputs == {"risk_level": "/risk/level"}
+
+    def test_outputs_nested_pointer_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"bad": "/risk/nope"}
+        )
+        with pytest.raises(FlowError, match="bad"):
+            load_flow(settings)
+
+    def test_outputs_array_items_pointer_accepted(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"first_task": "/tasks_outline/0"}
+        )
+        flow = load_flow(settings)
+        assert flow.stages[1].outputs == {"first_task": "/tasks_outline/0"}
+
+    def test_outputs_freeform_schema_accepts_any_pointer(self, tmp_path, monkeypatch):
+        """A schema without properties can't be verified — accepted."""
+        monkeypatch.chdir(tmp_path)
+        _install_runtime(tmp_path)  # writes "{}" schemas
+        doc = _custom_flow_doc()
+        doc["stages"][2] = {
+            "name": "implement", "agent": "implementer",
+            "schema": "implement.json", "outputs": {"x": "/anything/goes"},
+        }
+        settings = _write_settings(tmp_path, {"flow": doc})
+        flow = load_flow(settings)
+        by_name = {s.name: s for s in flow.stages}
+        assert by_name["implement"].outputs == {"x": "/anything/goes"}
+
+    def test_outputs_invalid_name_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"bad-name": "/approach"}
+        )
+        with pytest.raises(FlowError, match="bad-name"):
+            load_flow(settings)
+
+    def test_outputs_invalid_pointer_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(
+            tmp_path, {"approach": "approach"}  # missing leading slash
+        )
+        with pytest.raises(FlowError, match="JSON\\s+pointer"):
+            load_flow(settings)
+
+    def test_outputs_non_dict_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        settings = self._flow_with_plan_outputs(tmp_path, ["approach"])
+        with pytest.raises(FlowError, match="outputs"):
+            load_flow(settings)
+
+    def test_outputs_without_schema_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _install_runtime(tmp_path)
+        doc = _custom_flow_doc()
+        doc["stages"][1] = {
+            "name": "plan", "agent": "planner", "schema": None,
+            "outputs": {"approach": "/approach"},
+        }
+        settings = _write_settings(tmp_path, {"flow": doc})
+        with pytest.raises(FlowError, match="no\\s+schema"):
+            load_flow(settings)
+
+    def test_outputs_included_in_fingerprint(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        s1 = self._flow_with_plan_outputs(tmp_path, {"approach": "/approach"})
+        f1 = load_flow(s1).fingerprint()
+        s2 = tmp_path / "settings2.json"
+        doc = _custom_flow_doc()
+        doc["stages"][1] = {
+            "name": "plan", "agent": "planner", "schema": "plan.json",
+            "outputs": {"approach": "/tasks_outline"},
+        }
+        s2.write_text(json.dumps({"worca": {"flow": doc}}))
+        assert load_flow(str(s2)).fingerprint() != f1
+
+
+# --- consumption lint (W-072 §3) ---
+
+class TestConsumptionLint:
+    """lint_flow_consumption renders resolved templates and checks every
+    namespaced reference against declared upstream outputs."""
+
+    def _setup(self, tmp_path, agent_contents: dict, flow_doc=None,
+               schemas=None):
+        from worca.orchestrator.flow import lint_flow_consumption
+        core = tmp_path / ".claude" / "worca" / "agents" / "core"
+        core.mkdir(parents=True, exist_ok=True)
+        agents = set()
+        for fname, content in agent_contents.items():
+            (core / fname).write_text(content)
+            if not fname.endswith(".block.md"):
+                agents.add(fname[:-3])
+        schema_dir = tmp_path / ".claude" / "worca" / "schemas"
+        schema_dir.mkdir(parents=True, exist_ok=True)
+        for sname, sdoc in (schemas or {}).items():
+            (schema_dir / sname).write_text(json.dumps(sdoc))
+        settings = _write_settings(
+            tmp_path, {"flow": flow_doc} if flow_doc else {}
+        )
+        flow = load_flow(settings)
+        return lint_flow_consumption(
+            flow, str(core),
+            overrides_dir=str(tmp_path / ".claude" / "agents"),
+        )
+
+    def _two_stage_doc(self, producer_outputs):
+        return {
+            "version": 1,
+            "stages": [
+                {"name": "research", "agent": "researcher",
+                 "schema": "research.json", "outputs": producer_outputs},
+                {"name": "summarize", "agent": "summarizer",
+                 "schema": "research.json"},
+            ],
+        }
+
+    _RESEARCH_SCHEMA = {
+        "type": "object",
+        "properties": {"findings": {"type": "string"}},
+    }
+
+    def test_consumption_lint_accepts_declared_upstream_output(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        violations, warnings = self._setup(
+            tmp_path,
+            {
+                "researcher.md": "# r\n{{work_request}}",
+                "summarizer.md": "# s\nUse: {{stages.research.findings}}",
+            },
+            flow_doc=self._two_stage_doc({"findings": "/findings"}),
+            schemas={"research.json": self._RESEARCH_SCHEMA},
+        )
+        assert violations == []
+        assert warnings == []
+
+    def test_consumption_lint_flags_undeclared_output(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        violations, _ = self._setup(
+            tmp_path,
+            {
+                "researcher.md": "# r",
+                "summarizer.md": "{{stages.research.nope}}",
+            },
+            flow_doc=self._two_stage_doc({"findings": "/findings"}),
+            schemas={"research.json": self._RESEARCH_SCHEMA},
+        )
+        assert len(violations) == 1
+        assert "does not declare output 'nope'" in violations[0]
+
+    def test_consumption_lint_flags_unknown_producer(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        violations, _ = self._setup(
+            tmp_path,
+            {
+                "researcher.md": "# r",
+                "summarizer.md": "{{stages.bogus.findings}}",
+            },
+            flow_doc=self._two_stage_doc({"findings": "/findings"}),
+            schemas={"research.json": self._RESEARCH_SCHEMA},
+        )
+        assert len(violations) == 1
+        assert "no enabled stage named 'bogus'" in violations[0]
+
+    def test_consumption_lint_orders_and_outputs(self, tmp_path, monkeypatch):
+        """§3: a downstream producer with no loop back is a violation; with a
+        declared loop the same reference is reachable and accepted."""
+        monkeypatch.chdir(tmp_path)
+
+        def doc(with_loop):
+            entry2 = {"name": "verify", "agent": "verifier",
+                      "schema": "verify.json",
+                      "outputs": {"failures": "/failures"}}
+            if with_loop:
+                entry2["on"] = {"verify_failed": {
+                    "goto": "research", "loop": "verify_fix"}}
+            return {"version": 1, "stages": [
+                {"name": "research", "agent": "researcher",
+                 "schema": "verify.json"},
+                entry2,
+            ]}
+
+        agents = {
+            "researcher.md": "{{stages.verify.failures}}",
+            "verifier.md": "# v",
+        }
+        schemas = {"verify.json": {
+            "type": "object",
+            "properties": {
+                "failures": {"type": "array"},
+                "outcome": {"type": "string",
+                            "enum": ["success", "verify_failed"]},
+            },
+        }}
+        violations, _ = self._setup(
+            tmp_path, agents, flow_doc=doc(False), schemas=schemas)
+        assert len(violations) == 1
+        assert "runs later" in violations[0]
+
+        violations, _ = self._setup(
+            tmp_path, agents, flow_doc=doc(True), schemas=schemas)
+        assert violations == []
+
+    def test_consumption_lint_reserved_keys_exempt(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        violations, warnings = self._setup(
+            tmp_path,
+            {
+                "researcher.md": "{{work_request}} {{branch}} {{run_id}}",
+                "summarizer.md": "{{guide_content}}",
+            },
+            flow_doc=self._two_stage_doc({"findings": "/findings"}),
+            schemas={"research.json": self._RESEARCH_SCHEMA},
+        )
+        assert violations == []
+        assert warnings == []
+
+    def test_consumption_lint_warns_unknown_flat_key(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        violations, warnings = self._setup(
+            tmp_path,
+            {
+                "researcher.md": "# r",
+                "summarizer.md": "{{mystery_key}} {{defaulted_key|fine}}",
+            },
+            flow_doc=self._two_stage_doc({"findings": "/findings"}),
+            schemas={"research.json": self._RESEARCH_SCHEMA},
+        )
+        assert violations == []
+        assert len(warnings) == 1
+        assert "mystery_key" in warnings[0]
+        assert "defaulted_key" not in warnings[0]
+
+    def test_consumption_lint_default_flow_clean(self, tmp_path, monkeypatch):
+        """The shipped builtin templates lint clean against the default flow
+        (no violations; flat keys are accounted for by the reserved/builder/
+        code-output registries — warnings here mean a registry gap)."""
+        import shutil
+        from pathlib import Path
+
+        from worca.orchestrator.flow import lint_flow_consumption
+
+        repo_core = Path(__file__).resolve().parents[1] / "src" / "worca" / "agents" / "core"
+        core = tmp_path / ".claude" / "worca" / "agents" / "core"
+        shutil.copytree(repo_core, core)
+        settings = _write_settings(
+            tmp_path, {"stages": {"plan_review": {"enabled": True},
+                                  "learn": {"enabled": True}}}
+        )
+        flow = compile_default_flow(settings)
+        violations, warnings = lint_flow_consumption(
+            flow, str(core),
+            overrides_dir=str(tmp_path / ".claude" / "agents"),
+        )
+        assert violations == []
+        assert warnings == []

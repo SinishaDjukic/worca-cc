@@ -61,8 +61,21 @@ DEFAULT_TRANSITIONS = {
     },
 }
 
-_STAGE_ENTRY_FIELDS = {"name", "agent", "schema", "prompt_block", "enabled", "post", "on"}
+_STAGE_ENTRY_FIELDS = {
+    "name", "agent", "schema", "prompt_block", "enabled", "post", "on", "outputs",
+}
 _TRANSITION_FIELDS = {"goto", "loop"}
+
+# Declared stage outputs (W-072): output name -> JSON pointer into the
+# stage's validated schema result. Names become the trailing segment of the
+# namespaced context key ``stages.<stage>.<output>``.
+_OUTPUT_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_OUTPUT_POINTER_RE = re.compile(r"^(/[^/]+)+$")
+
+# Builtin per-stage output declarations (W-072 Phase 3). Stages convert one
+# at a time; an entry here means the executor auto-publishes these picks
+# under stages.<name>.* after schema validation.
+DEFAULT_STAGE_OUTPUTS: dict = {}
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}
 _BUILTIN_AGENTS = {a for a in STAGE_AGENT_MAP.values() if a}
@@ -100,10 +113,11 @@ class Transition:
 class FlowStage:
     """One resolved stage entry. `name` is the status.json stages.* key verbatim."""
 
-    __slots__ = ("name", "agent", "schema", "prompt_block", "enabled", "post", "on")
+    __slots__ = ("name", "agent", "schema", "prompt_block", "enabled", "post",
+                 "on", "outputs")
 
     def __init__(self, name, agent=None, schema=None, prompt_block=None,
-                 enabled=True, post=False, on=None):
+                 enabled=True, post=False, on=None, outputs=None):
         self.name = name
         self.agent = agent
         self.schema = schema
@@ -111,6 +125,8 @@ class FlowStage:
         self.enabled = enabled
         self.post = post
         self.on = dict(on or {})
+        # W-072: output name -> JSON pointer into the validated schema result.
+        self.outputs = dict(outputs or {})
 
     def __repr__(self):
         return f"FlowStage({self.name!r}, enabled={self.enabled}, post={self.post})"
@@ -187,6 +203,7 @@ class FlowSpec:
                     t: {"goto": tr.goto, "loop": tr.loop}
                     for t, tr in sorted(s.on.items())
                 },
+                "outputs": dict(sorted(s.outputs.items())),
             }
             for s in self.all_stages
         ]
@@ -259,6 +276,7 @@ def compile_default_flow(settings_path: str = ".claude/settings.json") -> FlowSp
             enabled=_stage_enabled(name, None, stages_config),
             post=(stage == Stage.LEARN),
             on=on,
+            outputs=DEFAULT_STAGE_OUTPUTS.get(name),
         ))
 
     enabled_names = {e.name for e in entries if e.enabled and not e.post}
@@ -321,6 +339,29 @@ def _parse_flow_doc(doc, stages_config: dict) -> list:
                 )
             on[trigger] = Transition(goto=goto, loop=raw_tr.get("loop"))
 
+        # W-072: declared outputs — name -> JSON pointer. Builtin stages
+        # default to their shipped declarations; an explicit entry replaces
+        # them outright (it's a contract, not a merge).
+        raw_outputs = raw.get("outputs")
+        if raw_outputs is None:
+            outputs = dict(DEFAULT_STAGE_OUTPUTS.get(name, {}))
+        else:
+            if not isinstance(raw_outputs, dict):
+                raise FlowError(f"flow stage {name!r}: 'outputs' must be an object")
+            outputs = {}
+            for oname, pointer in raw_outputs.items():
+                if not _OUTPUT_NAME_RE.match(oname or ""):
+                    raise FlowError(
+                        f"flow stage {name!r}: invalid output name {oname!r} — "
+                        f"must match ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                    )
+                if not isinstance(pointer, str) or not _OUTPUT_POINTER_RE.match(pointer):
+                    raise FlowError(
+                        f"flow stage {name!r}: output {oname!r} needs a JSON "
+                        f"pointer string like '/field' (got {pointer!r})"
+                    )
+                outputs[oname] = pointer
+
         # learn keeps its builtin post default so a flow that simply lists it
         # doesn't accidentally pull it into the main walk.
         default_post = name == Stage.LEARN.value
@@ -339,8 +380,32 @@ def _parse_flow_doc(doc, stages_config: dict) -> list:
             enabled=_stage_enabled(name, raw.get("enabled"), stages_config),
             post=bool(raw.get("post", default_post)),
             on=on,
+            outputs=outputs,
         ))
     return entries
+
+
+def _pointer_targets_schema(schema_doc: dict, pointer: str) -> bool:
+    """Whether a JSON pointer matches the schema's declared shape (W-072 §1).
+
+    Walks the pointer segments through ``properties`` (objects) and ``items``
+    (arrays, for numeric segments). A level that declares no ``properties``
+    is free-form — deeper segments can't be verified and are accepted.
+    """
+    node = schema_doc
+    for seg in pointer.lstrip("/").split("/"):
+        if not isinstance(node, dict):
+            return True  # can't verify deeper — accept
+        if seg.isdigit() and isinstance(node.get("items"), dict):
+            node = node["items"]
+            continue
+        props = node.get("properties")
+        if not isinstance(props, dict):
+            return True  # free-form object — accept
+        if seg not in props:
+            return False
+        node = props[seg]
+    return True
 
 
 def _validate_flow(entries: list, project_root: str = ".") -> None:
@@ -455,11 +520,13 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
                     f"{entry.schema!r} (searched: {', '.join(schema_candidates)})"
                 )
 
-        # W-071 §2 cross-check: a custom stage's on: triggers are driven by
-        # its structured output's `outcome` field, so the schema must declare
-        # outcome as a string enum covering every declared trigger — an
-        # undeclared outcome would silently advance instead of jumping.
-        if entry.name not in _BUILTIN_BY_NAME and entry.on and schema_path:
+        # Load the schema document once for the cross-checks below (the
+        # W-071 outcome-enum check and the W-072 output-pointer check).
+        schema_doc = None
+        _needs_schema_doc = bool(entry.outputs) or (
+            entry.name not in _BUILTIN_BY_NAME and entry.on
+        )
+        if schema_path and _needs_schema_doc:
             try:
                 with open(schema_path, encoding="utf-8") as f:
                     schema_doc = json.load(f)
@@ -468,6 +535,30 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
                     f"stage {entry.name!r}: cannot read schema "
                     f"{schema_path!r}: {exc}"
                 ) from None
+
+        # W-072 §1: declared outputs are validated against the schema at
+        # launch — an output naming a nonexistent field must fail loudly
+        # here, not render as a silent empty string mid-run.
+        if entry.outputs:
+            if schema_doc is None:
+                raise FlowError(
+                    f"stage {entry.name!r}: declares outputs but has no "
+                    f"schema — outputs are JSON pointers into the stage's "
+                    f"validated schema result"
+                )
+            for oname, pointer in entry.outputs.items():
+                if not _pointer_targets_schema(schema_doc, pointer):
+                    raise FlowError(
+                        f"stage {entry.name!r}: output {oname!r} pointer "
+                        f"{pointer!r} does not match any field declared in "
+                        f"schema {entry.schema!r}"
+                    )
+
+        # W-071 §2 cross-check: a custom stage's on: triggers are driven by
+        # its structured output's `outcome` field, so the schema must declare
+        # outcome as a string enum covering every declared trigger — an
+        # undeclared outcome would silently advance instead of jumping.
+        if entry.name not in _BUILTIN_BY_NAME and entry.on and schema_doc is not None:
             enum = (
                 schema_doc.get("properties", {})
                 .get("outcome", {})
@@ -506,6 +597,171 @@ def load_flow(settings_path: str = ".claude/settings.json",
     entries = _parse_flow_doc(doc, worca.get("stages", {}))
     _validate_flow(entries, project_root=project_root)
     return FlowSpec(entries, custom=True)
+
+
+# W-072 §3: builtin agent templates still reference legacy flat keys
+# mid-migration, so lint findings on the *default* flow stay warnings until
+# the Phase 3 stage conversions complete. Custom flows always fail loudly.
+DEFAULT_FLOW_LINT_ERRORS = False
+
+# stages.<producer>.<output>[.<deeper>...] — namespaced context reference.
+_STAGES_REF_RE = re.compile(
+    r"^stages\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z0-9_]+)(?:\.[a-zA-Z0-9_]+)*$"
+)
+
+
+def lint_flow_consumption(flow: FlowSpec, core_dir: str,
+                          overrides_dir: str = ".claude/agents",
+                          template_agents_dir: str | None = None) -> tuple:
+    """Lint placeholder consumption against the declared contract (W-072 §3).
+
+    Renders each enabled stage's *resolved* template set (agent .md through
+    the three-tier overlay chain, plus its prompt block, with nested blocks
+    expanded) and collects every referenced placeholder/conditional key.
+
+    Returns ``(violations, warnings)`` — both lists of human-readable strings:
+
+    - violations: namespaced ``stages.<producer>.<output>`` references whose
+      producer is missing/not upstream (and not reachable via a declared
+      loop), or whose output is undeclared. The caller escalates these to
+      :class:`FlowError` for custom flows (and for the default flow once
+      ``DEFAULT_FLOW_LINT_ERRORS`` flips).
+    - warnings: flat keys that no known producer accounts for (not runtime
+      builtins, not aliased legacy keys, not handler code outputs, not the
+      consumer's own builder-computed keys) and carry no ``|default``.
+      Always advisory — third-party overlays may reference flat keys we
+      don't control.
+
+    Missing template files contribute no keys (projects without a rendered
+    worca runtime simply lint clean).
+    """
+    from worca.orchestrator.context_keys import (
+        CONTEXT_ALIASES,
+        RESERVED_CONTEXT_KEYS,
+        flat_for,
+    )
+    from worca.orchestrator.executor import HANDLER_REGISTRY
+    from worca.orchestrator.overlay import (
+        OverlayResolver,
+        collect_placeholder_keys,
+        resolve_blocks,
+    )
+    from worca.orchestrator.prompt_builder import BUILDER_STAGE_KEYS
+
+    violations: list = []
+    warnings: list = []
+    resolver = OverlayResolver(overrides_dir=overrides_dir)
+
+    consumers = list(flow.stages) + list(flow.post_stages)
+    order = {s.name: i for i, s in enumerate(flow.stages)}
+    for j, s in enumerate(flow.post_stages):
+        order[s.name] = len(flow.stages) + j
+    by_name = {s.name: s for s in consumers}
+
+    # Handler-published flat keys (transforms that aren't schema picks).
+    code_outputs: set = set()
+    for cls in HANDLER_REGISTRY.values():
+        code_outputs.update(getattr(cls, "code_outputs", ()) or ())
+    known_flat = set(RESERVED_CONTEXT_KEYS) | set(CONTEXT_ALIASES) | code_outputs
+
+    # Backward jumps make a later producer reachable before its consumer
+    # re-runs (test -> implement, review -> plan, ...).
+    backward_jumps = [
+        (order[s.name], order[tr.goto])
+        for s in flow.stages
+        for tr in s.on.values()
+        if tr.goto in order
+    ]
+
+    def _read(path: str) -> str:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    for stage in consumers:
+        if not stage.agent:
+            continue
+        texts = []
+        core_content = _read(os.path.join(core_dir, f"{stage.agent}.md"))
+        agent_md = resolver.resolve(stage.agent, core_content, template_agents_dir)
+        if agent_md:
+            texts.append(resolve_blocks(
+                agent_md, {}, resolver, core_dir, template_agents_dir))
+        if stage.prompt_block:
+            block = resolver.resolve_block(
+                stage.prompt_block, core_dir, template_agents_dir)
+            if block:
+                texts.append(resolve_blocks(
+                    block, {}, resolver, core_dir, template_agents_dir))
+
+        keys: dict = {}
+        for text in texts:
+            for key, meta in collect_placeholder_keys(text).items():
+                entry = keys.setdefault(key, {"defaulted": True})
+                if not meta["defaulted"]:
+                    entry["defaulted"] = False
+
+        consumer_idx = order[stage.name]
+        for key, meta in sorted(keys.items()):
+            if key.startswith("stages."):
+                m = _STAGES_REF_RE.match(key)
+                if not m:
+                    violations.append(
+                        f"stage {stage.name!r}: malformed namespaced "
+                        f"reference {{{{{key}}}}}"
+                    )
+                    continue
+                producer_name, output_name = m.group(1), m.group(2)
+                producer = by_name.get(producer_name)
+                if producer is None:
+                    violations.append(
+                        f"stage {stage.name!r}: references {{{{{key}}}}} but "
+                        f"the flow has no enabled stage named {producer_name!r}"
+                    )
+                    continue
+                producer_idx = order[producer_name]
+                upstream = producer_idx < consumer_idx or any(
+                    src >= producer_idx and dst <= consumer_idx
+                    for src, dst in backward_jumps
+                )
+                if not upstream:
+                    violations.append(
+                        f"stage {stage.name!r}: references {{{{{key}}}}} but "
+                        f"stage {producer_name!r} runs later and no declared "
+                        f"loop brings execution back"
+                    )
+                declared = (
+                    output_name in producer.outputs
+                    # code-published outputs are registered via the alias
+                    # table (their namespaced form has a flat alias)
+                    or flat_for(f"stages.{producer_name}.{output_name}") is not None
+                )
+                if not declared:
+                    violations.append(
+                        f"stage {stage.name!r}: references {{{{{key}}}}} but "
+                        f"stage {producer_name!r} does not declare output "
+                        f"{output_name!r} (declared: "
+                        f"{sorted(producer.outputs) or 'none'})"
+                    )
+            elif "." in key:
+                warnings.append(
+                    f"stage {stage.name!r}: dotted reference {{{{{key}}}}} "
+                    f"is outside the stages.* namespace — nothing publishes it"
+                )
+            elif (
+                key not in known_flat
+                and key not in BUILDER_STAGE_KEYS.get(stage.name, ())
+                and not meta["defaulted"]
+            ):
+                warnings.append(
+                    f"stage {stage.name!r}: flat key {{{{{key}}}}} has no "
+                    f"known producer (legacy keys resolve via the alias "
+                    f"table; see docs/flow.md)"
+                )
+
+    return violations, warnings
 
 
 def resolve_loop_limit(loop_key: str, settings_path: str, mloops: int = 1,
