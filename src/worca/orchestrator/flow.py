@@ -381,10 +381,16 @@ def _parse_flow_doc(doc, stages_config: dict) -> list:
 
         # W-072: declared outputs — name -> JSON pointer. Builtin stages
         # default to their shipped declarations; an explicit entry replaces
-        # them outright (it's a contract, not a merge).
+        # them outright (it's a contract, not a merge). The shipped
+        # declarations point into the BUILTIN schema, so they are inherited
+        # only when the entry keeps it — a stage that overrides its schema
+        # without declaring outputs publishes nothing.
         raw_outputs = raw.get("outputs")
         if raw_outputs is None:
-            outputs = dict(DEFAULT_STAGE_OUTPUTS.get(name, {}))
+            keeps_builtin_schema = (
+                raw.get("schema", _default_schema(name)) == _default_schema(name)
+            )
+            outputs = dict(DEFAULT_STAGE_OUTPUTS.get(name, {})) if keeps_builtin_schema else {}
         else:
             if not isinstance(raw_outputs, dict):
                 raise FlowError(f"flow stage {name!r}: 'outputs' must be an object")
@@ -763,6 +769,25 @@ def lint_flow_consumption(flow: FlowSpec, core_dir: str,
                 producer_name, output_name = m.group(1), m.group(2)
                 producer = by_name.get(producer_name)
                 if producer is None:
+                    # A BUILTIN stage omitted from a custom flow is the same
+                    # contract as a disabled one — shipped templates that
+                    # reference it (e.g. plan.block.md's plan_review revision
+                    # branch) legitimately render empty. Still verify the
+                    # output name against the shipped declarations so typo'd
+                    # outputs don't hide behind the omission.
+                    if producer_name in _BUILTIN_BY_NAME:
+                        declared = (
+                            output_name in DEFAULT_STAGE_OUTPUTS.get(producer_name, {})
+                            or flat_for(f"stages.{producer_name}.{output_name}") is not None
+                        )
+                        if not declared:
+                            violations.append(
+                                f"stage {stage.name!r}: references "
+                                f"{{{{{key}}}}} but builtin stage "
+                                f"{producer_name!r} does not declare output "
+                                f"{output_name!r}"
+                            )
+                        continue
                     violations.append(
                         f"stage {stage.name!r}: references {{{{{key}}}}} but "
                         f"the flow has no stage named {producer_name!r}"

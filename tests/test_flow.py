@@ -935,3 +935,46 @@ def test_consumption_lint_conditional_later_producer_is_benign(
     )
     assert violations == []
     assert warnings == []
+
+
+def test_consumption_lint_omitted_builtin_producer_is_benign(
+        tmp_path, monkeypatch):
+    """A custom flow that simply omits a builtin stage must still launch when
+    shipped templates reference that stage's outputs — same contract as a
+    disabled producer (the section renders empty). Caught in CI by
+    test_custom_stage.py: plan.block.md references
+    {{stages.plan_review.revision_mode}} and the custom flow has no
+    plan_review entry at all. Typo'd output names on the omitted builtin are
+    still violations (checked against the shipped declarations)."""
+    monkeypatch.chdir(tmp_path)
+    helper = TestConsumptionLint()
+    flow_doc = {
+        "version": 1,
+        "stages": [
+            {"name": "plan", "agent": "planner", "schema": "research.json"},
+            {"name": "pr", "agent": "guardian", "schema": "research.json"},
+        ],
+    }
+    schemas = {"research.json": {"type": "object", "properties": {}}}
+
+    violations, warnings = helper._setup(
+        tmp_path,
+        {
+            "planner.md": "{{#if stages.plan_review.revision_mode}}revise{{/if}}",
+            "guardian.md": "# g",
+        },
+        flow_doc=flow_doc, schemas=schemas,
+    )
+    assert violations == []
+    assert warnings == []
+
+    violations, _ = helper._setup(
+        tmp_path,
+        {
+            "planner.md": "{{#if stages.plan_review.revison_mode}}typo{{/if}}",
+            "guardian.md": "# g",
+        },
+        flow_doc=flow_doc, schemas=schemas,
+    )
+    assert len(violations) == 1
+    assert "revison_mode" in violations[0]
