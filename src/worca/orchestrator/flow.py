@@ -92,6 +92,12 @@ DEFAULT_STAGE_OUTPUTS: dict = {
         "beads_ids": "/beads_ids",
         "dependency_graph": "/dependency_graph",
     },
+    # Per-bead picks; the cross-bead accumulations (all_files_changed,
+    # all_tests_added) and the final deduped overwrite stay handler code.
+    Stage.IMPLEMENT.value: {
+        "files_changed": "/files_changed",
+        "tests_added": "/tests_added",
+    },
     # passed is required; coverage_pct/proof_artifacts are optional picks
     # (absent fields are skipped — they render falsy/empty downstream).
     # The failure list/history that drive the fix loop stay handler code.
@@ -106,6 +112,9 @@ DEFAULT_STAGE_OUTPUTS: dict = {
     Stage.REVIEW.value: {
         "issues": "/issues",
     },
+    # pr and learn declare no outputs by design: the guardian's PR metadata
+    # lifts into status.json (not the prompt context), and learn is a
+    # post-pipeline consumer.
 }
 
 _BUILTIN_BY_NAME = {s.value: s for s in Stage}

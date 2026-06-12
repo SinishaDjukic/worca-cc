@@ -51,6 +51,13 @@ CONTEXT_ALIASES: dict = {
     # (stages.review.issues).
     "review_issues": "stages.review.critical_issues",
     "review_history": "stages.review.history",
+    # implement — files_changed/tests_added are declared per-bead outputs
+    # (the handler later overwrites the flat key with the deduped cross-bead
+    # union); the all_* accumulations are code-published transforms.
+    "files_changed": "stages.implement.files_changed",
+    "tests_added": "stages.implement.tests_added",
+    "all_files_changed": "stages.implement.all_files_changed",
+    "all_tests_added": "stages.implement.all_tests_added",
 }
 
 

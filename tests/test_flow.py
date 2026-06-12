@@ -577,8 +577,14 @@ class TestOutputsDeclarations:
         assert by_name["plan"].outputs == {
             "approach": "/approach", "tasks": "/tasks_outline",
         }
-        # undeclared stages default to empty
-        assert by_name["implement"].outputs == {}
+        # builtin stages without an explicit entry inherit their shipped
+        # declarations (W-072 Phase 3)
+        from worca.orchestrator.flow import DEFAULT_STAGE_OUTPUTS
+        assert by_name["implement"].outputs == DEFAULT_STAGE_OUTPUTS["implement"]
+        # an explicit entry replaces the builtin declaration outright
+        assert by_name["plan"].outputs == {
+            "approach": "/approach", "tasks": "/tasks_outline",
+        }
 
     def test_outputs_pointer_validated_against_schema(self, tmp_path, monkeypatch):
         """§1 launch failure: an output naming a nonexistent field."""

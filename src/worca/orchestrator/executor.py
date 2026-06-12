@@ -941,9 +941,6 @@ class ImplementHandler(StageHandler):
     plus test-failure / review-changes fix mode."""
 
     name = Stage.IMPLEMENT.value
-    code_outputs = (
-        "files_changed", "tests_added", "all_files_changed", "all_tests_added",
-    )
 
     def __init__(self):
         self._run_bead_ids = None
@@ -1011,11 +1008,11 @@ class ImplementHandler(StageHandler):
         r.complete_iteration(status, rc.stage_name, **iter_extras)
         r._emit_iteration_access_event(rc.ctx, status, rc.stage_name, status["run_id"])
 
-        # Thread implement outputs into PromptBuilder
+        # files_changed/tests_added are declared flow outputs (W-072) —
+        # already auto-published per bead as stages.implement.* with flat
+        # dual-writes. The cross-bead accumulation below stays handler code.
         new_files = result.get("files_changed", [])
         new_tests = result.get("tests_added", [])
-        rc.prompt_builder.update_context("files_changed", new_files)
-        rc.prompt_builder.update_context("tests_added", new_tests)
 
         impl_trigger = rc.trigger
         r._accumulate_design_note(rc.prompt_builder, result, impl_trigger)
