@@ -746,6 +746,18 @@ class TestStripTemplateOwned:
             assert all(isinstance(segment, str) for segment in path)
             assert len(path) >= 1
 
+    def test_template_owns_flow_key(self):
+        """worca.flow is template-driven (W-070): stripped from the project
+        merge base when a template is in play."""
+        assert ("flow",) in TEMPLATE_OWNED_KEYS
+        worca = {
+            "flow": {"version": 1, "stages": [{"name": "preflight"}]},
+            "models": {"opus": "id"},
+        }
+        result = strip_template_owned(worca)
+        assert "flow" not in result
+        assert result["models"] == {"opus": "id"}
+
     def test_preserves_stages_preflight_through_strip(self):
         """stages.preflight is a cross-template carve-out — it survives the
         stages-block strip so project-Settings preflight checks still apply."""

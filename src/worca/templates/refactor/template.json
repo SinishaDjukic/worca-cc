@@ -1,7 +1,7 @@
 {
   "id": "refactor",
   "name": "Refactor",
-  "description": "Full pipeline for refactor work — \"restructure without changing behavior\", \"behavioral preservation\", \"no functional change\". Review enforces behavioral preservation; learn stage captures invariants. PR opened for human review.",
+  "description": "Full pipeline for refactor work \u2014 \"restructure without changing behavior\", \"behavioral preservation\", \"no functional change\". Review enforces behavioral preservation; learn stage captures invariants. PR opened for human review.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [
@@ -46,6 +46,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "agents": {
       "planner": {
         "model": "opus",

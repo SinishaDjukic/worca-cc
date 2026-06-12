@@ -5,7 +5,11 @@ import os
 
 import pytest
 
-from worca.orchestrator.prompt_builder import PromptBuilder
+from worca.orchestrator.context_keys import CONTEXT_ALIASES
+from worca.orchestrator.prompt_builder import (
+    PROMPT_CONTEXT_SCHEMA_VERSION,
+    PromptBuilder,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +276,126 @@ def test_load_context_missing_file_still_noop(tmp_path):
     """Missing file remains a silent no-op — only *corrupt* files are fatal."""
     pb = PromptBuilder("title", "desc")
     pb.load_context(str(tmp_path / "does_not_exist.json"))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Namespaced context: schema_version 2, publish_output, aliases (W-072)
+# ---------------------------------------------------------------------------
+
+def test_save_context_writes_schema_version(tmp_path):
+    """save_context stamps the current format version into the file."""
+    ctx_path = str(tmp_path / "prompt_context.json")
+    pb = PromptBuilder("title", "desc")
+    pb.update_context("plan_approach", "x")
+    pb.save_context(ctx_path)
+
+    with open(ctx_path) as f:
+        data = json.load(f)
+    assert data["schema_version"] == PROMPT_CONTEXT_SCHEMA_VERSION
+
+
+def test_schema_version_survives_truncation(tmp_path):
+    """The schema_version marker is never dropped by the 100KB cap."""
+    ctx_path = str(tmp_path / "prompt_context.json")
+    pb = PromptBuilder("title", "desc")
+    for i in range(20):
+        pb.update_context(f"key_{i}", "x" * 10_000)
+    pb.save_context(ctx_path)
+
+    with open(ctx_path) as f:
+        data = json.load(f)
+    assert data["schema_version"] == PROMPT_CONTEXT_SCHEMA_VERSION
+
+
+def test_load_context_does_not_leak_schema_version(tmp_path):
+    """schema_version is file metadata, never a context key."""
+    ctx_path = str(tmp_path / "prompt_context.json")
+    pb = PromptBuilder("title", "desc")
+    pb.update_context("k", "v")
+    pb.save_context(ctx_path)
+
+    pb2 = PromptBuilder("title", "desc")
+    pb2.load_context(ctx_path)
+    assert pb2.get_context("schema_version") is None
+    assert pb2.get_context("k") == "v"
+
+
+def test_publish_output_namespaced_round_trip(tmp_path):
+    """publish_output writes stages.<stage>.<name>; persists and reloads."""
+    ctx_path = str(tmp_path / "prompt_context.json")
+    pb = PromptBuilder("title", "desc")
+    pb.publish_output("plan", "approach", "Use JWT")
+    assert pb.get_context("stages.plan.approach") == "Use JWT"
+    pb.save_context(ctx_path)
+
+    with open(ctx_path) as f:
+        data = json.load(f)
+    assert data["stages"]["plan"]["approach"] == "Use JWT"
+
+    pb2 = PromptBuilder("title", "desc")
+    pb2.load_context(ctx_path)
+    assert pb2.get_context("stages.plan.approach") == "Use JWT"
+
+
+def test_alias_dual_write_from_publish_output(monkeypatch):
+    """publish_output dual-writes the legacy flat key during migration."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+    pb = PromptBuilder("title", "desc")
+    pb.publish_output("plan", "approach", "Use JWT")
+    assert pb._context["plan_approach"] == "Use JWT"
+    assert pb._context["stages"]["plan"]["approach"] == "Use JWT"
+
+
+def test_alias_dual_write_from_update_context(monkeypatch):
+    """update_context on an aliased flat key also writes the namespaced form."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+    pb = PromptBuilder("title", "desc")
+    pb.update_context("plan_approach", "Use JWT")
+    assert pb._context["stages"]["plan"]["approach"] == "Use JWT"
+    assert pb.get_context("stages.plan.approach") == "Use JWT"
+
+
+def test_alias_read_through_both_directions(monkeypatch):
+    monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+    pb = PromptBuilder("title", "desc")
+    # namespaced-only data, flat read
+    pb._context["stages"] = {"plan": {"approach": "ns-only"}}
+    assert pb.get_context("plan_approach") == "ns-only"
+    # flat-only data, namespaced read (v1 file shape)
+    pb2 = PromptBuilder("title", "desc")
+    pb2._context["plan_approach"] = "flat-only"
+    assert pb2.get_context("stages.plan.approach") == "flat-only"
+
+
+def test_pop_context_removes_both_forms(monkeypatch):
+    monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+    pb = PromptBuilder("title", "desc")
+    pb.publish_output("plan", "approach", "x")
+    assert pb.pop_context("plan_approach") == "x"
+    assert pb.get_context("plan_approach") is None
+    assert pb.get_context("stages.plan.approach") is None
+
+
+def test_prompt_context_v1_loads_via_aliases(tmp_path, monkeypatch):
+    """A version-1 file (flat keys, no marker) resumes cleanly: namespaced
+    reads of its data resolve through the alias table (W-072 §4)."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "plan_approach", "stages.plan.approach")
+    ctx_path = str(tmp_path / "prompt_context.json")
+    with open(ctx_path, "w") as f:
+        json.dump({"plan_approach": "v1 approach", "assigned_bead_id": "bd-1"}, f)
+
+    pb = PromptBuilder("title", "desc")
+    pb.load_context(ctx_path)
+    assert pb.get_context("plan_approach") == "v1 approach"
+    assert pb.get_context("stages.plan.approach") == "v1 approach"
+
+
+def test_build_context_carries_namespaced_values():
+    """build_context exposes the nested stages dict for {{dotted}} rendering."""
+    pb = PromptBuilder("title", "desc")
+    pb.publish_output("plan", "approach", "nested")
+    ctx = pb.build_context("test")
+    assert ctx["stages"]["plan"]["approach"] == "nested"
 
 
 def test_load_context_after_resume_affects_context(tmp_path):

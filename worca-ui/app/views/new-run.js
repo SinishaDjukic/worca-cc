@@ -972,7 +972,7 @@ export function newRunView(_state, { rerender }) {
           const tiers = templatesByTier();
           return html`
           <div class="new-run-section">
-            <h3 class="new-run-section-title">Pipeline</h3>
+            <h3 class="new-run-section-title help-host">Pipeline${helpFor('templates')}</h3>
             <div class="settings-field">
               <div class="template-select-header">
                 <label class="settings-label">Pipeline Template</label>

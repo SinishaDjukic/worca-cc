@@ -117,9 +117,54 @@ After the initial 16-surface validation pass, the prototype was extended to cove
 | Workspaces Config table | `workspace-runs` | advanced/workspace-runs |
 | Worktrees page | `worktrees` | advanced/worktree-cleanup |
 
+### Section headers (content-header chokepoint, 2026-06 sweep)
+
+One map (`SECTION_HELP_IDS` in `main.js:contentHeaderView`) renders a badge
+inline after the `<h1>` title on list pages only (detail routes — `runId` or
+`tier` set — skip it). Sections whose page body already carries a badge
+(workspaces, webhooks, new-run, settings) are omitted to avoid doubles.
+
+| Section (`#/…`) | helpId | Doc target |
+|---|---|---|
+| `active` | `monitoring` | running-pipelines/monitoring-a-run |
+| `history` | `reviewing` | running-pipelines/reviewing-the-result |
+| `fleet-runs` | `fleet-runs` | advanced/fleet-runs |
+| `beads` | `pipeline-stages` | concepts/the-pipeline-and-stages |
+| `costs` | `models` | configuration/models |
+| `templates` | `templates` | concepts/pipeline-templates |
+| `models` | `models` | configuration/models |
+
+### Panel additions (2026-06 sweep)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| Run Detail → Access Map panel (`run-file-access.js`) | `access-map` | running-pipelines/access-map *(new registry entry)* |
+| Pipelines editor → Prompts tab legend | `agent-prompt` + `custom-flows` | advanced/anatomy-of-an-agent-prompt + advanced/custom-pipeline-flows *(new registry entry)* |
+| New Run → Pipeline section title | `templates` | concepts/pipeline-templates |
+| Settings → Notifications tab | `events` | integrations/events-overview |
+| Project Settings → Costs & Budgets tab | `models` | configuration/models (pricing + budgets) |
+
+### Sidebar (full coverage, 2026-06 follow-up)
+
+Every sidebar item now carries a compact (20px) inline badge: Running →
+`monitoring`, History → `reviewing`, Worktrees → `worktrees`, Fleets →
+`fleet-runs`, Workspaces (runs + config) → `workspace-runs`, Beads →
+`pipeline-stages`, Costs → `models`, Webhooks → `events`, Project Settings →
+`settings-overview`, Pipeline Templates → `templates`, Models → `models`.
+
+### Placement mechanics (2026-06 fix)
+
+Inline contexts (`.content-header-title`, `.new-run-section-title`,
+`.prompt-legend`, `.sidebar-item`, `sl-tab`) render the badge in normal flow
+after the text with `position: relative` — NOT `static`: the ::after sonar
+wave is absolutely positioned against the badge, and a static badge stops
+being its containing block, ballooning the pulse over the whole host (the
+"giant ellipse over the title" bug). The root-level floating badges on the
+templates/dashboard pages were removed in favor of the header chokepoint.
+
 ### Surfaces deliberately uninstrumented
 
-- `beads-panel.js`, `token-costs.js`, `learnings-panel.js`, `live-output.js`, `log-viewer.js` — no dedicated doc page yet; the skip-if-no-doc rule prevents `?` icons that would link to 404s or thin pages.
+- `beads-panel.js`, `token-costs.js`, `learnings-panel.js`, `live-output.js`, `log-viewer.js` — no dedicated doc page yet; the skip-if-no-doc rule prevents `?` icons that would link to 404s or thin pages. (The beads/costs *sections* now carry header badges to the nearest concept pages; the per-run panels stay bare.)
 - `settings-graphify.js`, `settings-code-review-graph.js` — covered transitively via the parent settings tabs.
 - `dispatch-section.js`, `stage-timeline.js` — covered transitively via `run-detail.js`.
 - `add-project-dialog.js` — dialog; help-mode activation is unlikely while modal-focused. Available as `add-project` helpId if desired later.

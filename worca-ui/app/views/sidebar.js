@@ -313,6 +313,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('monitoring')}
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
              title=${collapsed ? 'History' : ''}
@@ -328,6 +329,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('reviewing')}
         </div>
         <div class="sidebar-item ${route.section === 'worktrees' ? 'active' : ''}"
              title=${collapsed ? 'Worktrees' : ''}
@@ -359,6 +361,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('fleet-runs')}
         </div>
         <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
              title=${collapsed ? 'Workspaces' : ''}
@@ -374,6 +377,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('workspace-runs')}
         </div>
       </div>
 
@@ -387,6 +391,7 @@ export function sidebarView(
             <span>Beads</span>
           </span>
           ${beadsReady > 0 ? html`<sl-badge variant="success" pill>${beadsReady}</sl-badge>` : ''}
+          ${helpFor('pipeline-stages')}
         </div>
       </div>
 
@@ -399,6 +404,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Coins, 16))}
             <span>Costs</span>
           </span>
+          ${helpFor('models')}
         </div>
         <div class="sidebar-item ${route.section === 'webhooks' ? 'active' : ''}"
              title=${collapsed ? 'Webhooks' : ''}
@@ -428,6 +434,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
             <span>Project Settings</span>
           </span>
+          ${helpFor('settings-overview')}
         </div>
         <div class="sidebar-item ${route.section === 'templates' ? 'active' : ''}"
              title=${collapsed ? 'Pipeline Templates' : ''}
@@ -436,6 +443,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(FileText, 16))}
             <span>Pipeline Templates</span>
           </span>
+          ${helpFor('templates')}
         </div>
         <div class="sidebar-item ${route.section === 'models' ? 'active' : ''}"
              title=${collapsed ? 'Models' : ''}
@@ -444,6 +452,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Cpu, 16))}
             <span>Models</span>
           </span>
+          ${helpFor('models')}
         </div>
         `
         }
@@ -454,6 +463,7 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Boxes, 16))}
             <span>Workspaces</span>
           </span>
+          ${helpFor('workspace-runs')}
         </div>
       </div>
 

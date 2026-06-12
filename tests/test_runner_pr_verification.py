@@ -21,7 +21,6 @@ from worca.orchestrator.runner import (
     _fetch_pr_url_via_gh,
     _revise_pr_writeback,
 )
-from worca.orchestrator import runner as _runner_module
 
 
 SHA_BASELINE = "aaa0000000000000000000000000000000000000"
@@ -414,59 +413,65 @@ class TestFetchPrUrlViaGh:
 
 
 class TestReviseModeEnvWiring:
-    """Sentinel tests: WORCA_REVISE_PR is wired into agent subprocess env."""
+    """Sentinel tests: WORCA_REVISE_PR is wired into agent subprocess env.
+
+    W-071 moved the PR stage's bespoke logic from run_pipeline into
+    executor.PrHandler — the sentinels now inspect the handler source.
+    """
 
     def _pipeline_source(self):
-        return inspect.getsource(_runner_module.run_pipeline)
+        from worca.orchestrator.executor import PrHandler
+        return inspect.getsource(PrHandler)
 
     def test_worca_revise_pr_injected_when_revises_pr_set(self):
         src = self._pipeline_source()
         assert "WORCA_REVISE_PR" in src, (
-            "WORCA_REVISE_PR not found in run_pipeline — env wiring missing"
+            "WORCA_REVISE_PR not found in PrHandler — env wiring missing"
         )
 
     def test_revises_pr_read_from_status_for_env_injection(self):
         src = self._pipeline_source()
-        assert 'status.get("revises_pr")' in src or "status[\"revises_pr\"]" in src or "revises_pr" in src, (
-            "revises_pr not read from status in run_pipeline — env wiring missing"
+        assert "revises_pr" in src, (
+            "revises_pr not read from status in PrHandler — env wiring missing"
         )
 
     def test_fetch_pr_url_called_in_revise_fallback(self):
         src = self._pipeline_source()
         assert "_fetch_pr_url_via_gh" in src, (
-            "_fetch_pr_url_via_gh not called in run_pipeline — revise fallback missing"
+            "_fetch_pr_url_via_gh not called in PrHandler — revise fallback missing"
         )
 
 
 class TestPRStageHandlerWiring:
-    """Sentinel tests: fail until _verify_pr_stage is wired into run_pipeline."""
+    """Sentinel tests: _verify_pr_stage wiring lives in executor.PrHandler (W-071)."""
 
     def _pipeline_source(self):
-        return inspect.getsource(_runner_module.run_pipeline)
+        from worca.orchestrator.executor import PrHandler
+        return inspect.getsource(PrHandler)
 
     def test_verify_pr_stage_called_inside_run_pipeline(self):
         assert "_verify_pr_stage(" in self._pipeline_source(), (
-            "_verify_pr_stage is not called inside run_pipeline — wiring missing"
+            "_verify_pr_stage is not called inside PrHandler — wiring missing"
         )
 
     def test_pr_verification_retry_counter_in_run_pipeline(self):
         assert "pr_verification_retry" in self._pipeline_source(), (
-            "Loop counter 'pr_verification_retry' not found in run_pipeline — wiring missing"
+            "Loop counter 'pr_verification_retry' not found in PrHandler — wiring missing"
         )
 
     def test_pr_verified_milestone_set_in_run_pipeline(self):
         assert '"pr_verified"' in self._pipeline_source(), (
-            "Milestone 'pr_verified' is not set inside run_pipeline — wiring missing"
+            "Milestone 'pr_verified' is not set inside PrHandler — wiring missing"
         )
 
     def test_pr_baseline_captured_once_per_stage(self):
-        """Baseline must be captured only when _pr_baseline_head is None.
+        """Baseline must be captured only when pr_baseline_head is None.
 
         Recapturing per-iteration would let a partial commit on iter_1 corrupt
         the baseline that iter_2 verifies against.
         """
         src = self._pipeline_source()
-        assert "_pr_baseline_head is None" in src, (
+        assert "pr_baseline_head is None" in src, (
             "Baseline guard 'is None' missing — capture would happen every iteration"
         )
 
@@ -557,6 +562,7 @@ class TestRevisePrWriteback:
         mock_reply.assert_not_called()
 
     def test_wired_into_run_pipeline_revise_branch(self):
-        """Sentinel: run_pipeline calls _revise_pr_writeback in revise mode."""
-        src = inspect.getsource(_runner_module.run_pipeline)
+        """Sentinel: the PR stage handler calls _revise_pr_writeback in revise mode."""
+        from worca.orchestrator.executor import PrHandler
+        src = inspect.getsource(PrHandler)
         assert "_revise_pr_writeback" in src

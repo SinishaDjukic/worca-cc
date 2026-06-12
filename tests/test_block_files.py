@@ -42,8 +42,10 @@ def test_plan_block_has_work_request():
 
 
 def test_plan_block_has_revision_conditional():
+    """W-072: the revision flag is consumed via the plan_review namespace
+    (legacy flat plan_revision_mode still resolves via alias)."""
     content = _read("plan.block.md")
-    assert "{{#if plan_revision_mode}}" in content
+    assert "{{#if stages.plan_review.revision_mode}}" in content
     assert "{{/if}}" in content
 
 
@@ -278,8 +280,11 @@ def test_pr_block_has_work_request():
 
 
 def test_pr_block_has_plan_approach_conditional():
+    """W-072: the PR block consumes the plan stage's declared output via the
+    namespaced key (legacy flat plan_approach still resolves via alias)."""
     content = _read("pr.block.md")
-    assert "{{#if plan_approach}}" in content
+    assert "{{#if stages.plan.approach}}" in content
+    assert "{{stages.plan.approach}}" in content
 
 
 # ---------------------------------------------------------------------------

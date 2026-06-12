@@ -23,6 +23,10 @@ from pathlib import Path
 TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
     ("agents",),
     ("stages",),
+    # Declarative pipeline topology (W-070). A template that reshapes the
+    # flow owns it outright — a project's custom worca.flow must not leak
+    # under a template that expects the builtin topology.
+    ("flow",),
     ("loops",),
     ("circuit_breaker",),
     ("effort",),

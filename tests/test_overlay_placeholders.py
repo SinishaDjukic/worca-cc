@@ -6,8 +6,11 @@ Tests for T1 and T2 of W-037: template engine functions and resolve_block in ove
 from unittest.mock import MagicMock
 
 
+from worca.orchestrator.context_keys import CONTEXT_ALIASES
 from worca.orchestrator.overlay import (
     OverlayResolver,
+    _dig,
+    collect_placeholder_keys,
     resolve_agent,
     resolve_blocks,
     resolve_placeholders,
@@ -117,6 +120,96 @@ def test_placeholder_truthy_zero_is_falsy():
     """0 is falsy in conditionals."""
     result = resolve_placeholders("{{#if val}}present{{/if}}", {"val": 0})
     assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Dotted namespaced keys (W-072)
+# ---------------------------------------------------------------------------
+
+
+_NESTED_CTX = {"stages": {"plan": {"approach": "Use JWT", "empty": ""}}}
+
+
+def test_dotted_placeholder_resolution():
+    """{{stages.plan.approach}} digs into the nested dict."""
+    result = resolve_placeholders("Approach: {{stages.plan.approach}}", _NESTED_CTX)
+    assert result == "Approach: Use JWT"
+
+
+def test_dotted_placeholder_missing_renders_empty():
+    result = resolve_placeholders("V: {{stages.plan.nope}}", _NESTED_CTX)
+    assert result == "V: "
+
+
+def test_dotted_placeholder_default():
+    result = resolve_placeholders("V: {{stages.plan.nope|fallback}}", _NESTED_CTX)
+    assert result == "V: fallback"
+
+
+def test_dotted_conditional():
+    """{{#if stages.plan.approach}} is truthy when the nested value is."""
+    content = "{{#if stages.plan.approach}}yes{{else}}no{{/if}}"
+    assert resolve_placeholders(content, _NESTED_CTX) == "yes"
+    content = "{{#if stages.plan.empty}}yes{{else}}no{{/if}}"
+    assert resolve_placeholders(content, _NESTED_CTX) == "no"
+    content = "{{#if stages.test.passed}}yes{{else}}no{{/if}}"
+    assert resolve_placeholders(content, _NESTED_CTX) == "no"
+
+
+def test_block_re_unaffected_by_dots():
+    """{{block:...}} and {{#if}}/{{/if}} parsing is unchanged by the dotted
+    key extension — block tokens never match the placeholder regex."""
+    resolver = _mock_resolver({"my.block": "dotted block content"})
+    result = resolve_blocks("{{block:my.block}}", {}, resolver, "/core")
+    assert result == "dotted block content"
+    # A placeholder pass over an unresolved block token must not touch it.
+    untouched = resolve_placeholders("{{block:my.block}}\n{{/if}}", {})
+    assert "{{block:my.block}}" in untouched
+    assert "{{/if}}" in untouched
+
+
+def test_dig_alias_read_through_flat_to_namespaced(monkeypatch):
+    """A flat lookup miss falls through to the namespaced alias target."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "x_flat", "stages.x.val")
+    ctx = {"stages": {"x": {"val": "from-namespace"}}}
+    assert _dig(ctx, "x_flat") == "from-namespace"
+
+
+def test_dig_alias_read_through_namespaced_to_flat(monkeypatch):
+    """A namespaced miss falls back to the legacy flat key (v1 resume)."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "x_flat", "stages.x.val")
+    ctx = {"x_flat": "from-flat"}
+    assert _dig(ctx, "stages.x.val") == "from-flat"
+
+
+def test_dig_direct_hit_wins_over_alias(monkeypatch):
+    monkeypatch.setitem(CONTEXT_ALIASES, "x_flat", "stages.x.val")
+    ctx = {"x_flat": "flat", "stages": {"x": {"val": "namespaced"}}}
+    assert _dig(ctx, "x_flat") == "flat"
+    assert _dig(ctx, "stages.x.val") == "namespaced"
+
+
+def test_placeholder_resolves_via_alias(monkeypatch):
+    """A template still referencing the flat key renders the namespaced value."""
+    monkeypatch.setitem(CONTEXT_ALIASES, "x_flat", "stages.x.val")
+    ctx = {"stages": {"x": {"val": "aliased"}}}
+    assert resolve_placeholders("{{x_flat}}", ctx) == "aliased"
+    assert resolve_placeholders("{{#if x_flat}}on{{/if}}", ctx) == "on"
+
+
+def test_collect_placeholder_keys():
+    content = (
+        "{{plain}} {{defaulted|x}} {{stages.plan.approach}}\n"
+        "{{#if cond_only}}body {{plain|with default}}{{/if}}\n"
+        "{{block:ignored}}"
+    )
+    keys = collect_placeholder_keys(content)
+    assert keys["plain"] == {"defaulted": False}  # one bare occurrence wins
+    assert keys["defaulted"] == {"defaulted": True}
+    assert keys["stages.plan.approach"] == {"defaulted": False}
+    assert keys["cond_only"] == {"defaulted": True}
+    assert "ignored" not in keys
+    assert "block:ignored" not in keys
 
 
 # ---------------------------------------------------------------------------

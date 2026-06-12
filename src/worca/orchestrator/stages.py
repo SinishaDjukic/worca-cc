@@ -141,6 +141,34 @@ def get_stage_config(
     stage_entry = stages_config.get(stage.value, {})
     agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
 
+    return _resolve_agent_config(
+        agent_name, STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"), settings,
+    )
+
+
+def get_stage_config_for(
+    flow_stage,
+    settings_path: str = ".claude/settings.json",
+    *,
+    global_path: str | None = None,
+) -> dict:
+    """Agent config for a resolved FlowSpec stage entry (W-071).
+
+    Unlike get_stage_config (Stage enum + legacy maps), the agent and schema
+    come from the flow entry — already merged from worca.flow, worca.stages,
+    and the builtin defaults at flow compile time. This is what lets a flow
+    entry's per-stage agent/schema overrides (and custom stage names) actually
+    reach agent dispatch. Model/effort/turns resolution is shared with
+    get_stage_config and stays keyed by agent name.
+    """
+    settings = load_settings_with_global_fallback(settings_path, global_path=global_path)
+    return _resolve_agent_config(flow_stage.agent, flow_stage.schema, settings)
+
+
+def _resolve_agent_config(agent_name, schema, settings: dict) -> dict:
+    """Shared model/env/effort/turns resolution for a resolved agent + schema."""
+    worca = settings.get("worca", {})
+
     if agent_name is None:
         return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None, "cost_alias": None}
 
@@ -189,7 +217,7 @@ def get_stage_config(
         "max_turns": agent_config.get("max_turns", 30),
         "effort": agent_config.get("effort"),
         "max_beads": agent_config.get("max_beads", 0),
-        "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
+        "schema": schema,
     }
 
 
@@ -222,20 +250,15 @@ def validate_tier_pinned_agent_models(settings: dict) -> list:
 def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:
     """Return list of enabled stages in pipeline order.
 
-    Reads worca.stages.<stage>.enabled from settings.json.
-    Stages in _STAGES_DEFAULT_DISABLED default to disabled if not configured.
-    All other stages default to enabled if not configured.
+    Thin wrapper over the declarative flow (W-070): the effective flow —
+    worca.flow if present, else the compiled default — determines order and
+    enabled-ness. The compiled default preserves the legacy semantics
+    exactly: worca.stages.<stage>.enabled overrides, _STAGES_DEFAULT_DISABLED
+    stages default disabled, everything else enabled.
     """
-    settings = _read_settings(settings_path)
-    stages_config = settings.get("worca", {}).get("stages", {})
+    from worca.orchestrator.flow import load_flow  # local import: flow imports stages
 
-    enabled = []
-    for stage in STAGE_ORDER:
-        stage_entry = stages_config.get(stage.value, {})
-        default_enabled = stage not in _STAGES_DEFAULT_DISABLED
-        if stage_entry.get("enabled", default_enabled):
-            enabled.append(stage)
-    return enabled
+    return [Stage(s.name) for s in load_flow(settings_path).stages]
 
 
 VALID_PLAN_REVIEW_MODES = ("review", "review_and_edit")

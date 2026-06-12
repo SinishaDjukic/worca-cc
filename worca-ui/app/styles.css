@@ -4780,6 +4780,13 @@ sl-details.learnings-panel::part(content) {
   font-size: 0.78rem;
 }
 
+/* Flow fingerprint row (W-070) — full sha256, monospace, wraps on narrow panes. */
+.preflight-flow-fingerprint {
+  font-family: var(--sl-font-mono);
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
 .preflight-check-message {
   color: var(--muted);
 }
@@ -8883,6 +8890,62 @@ body.help-mode-active .help-badge {
   display: inline-flex;
 }
 
+/* Inline badge contexts — titles, tab labels, sidebar items, and legends
+   hug their content, so the default absolute top-right anchor overlaps the
+   trailing characters. Flow the badge inline after the text instead.
+   `position: relative` (NOT static): the ::after sonar wave is absolutely
+   positioned with inset:0 and must keep the badge as its containing block —
+   static would resolve it against the parent and pulse a giant ellipse
+   over the whole title. */
+.content-header-title .help-badge,
+.new-run-section-title .help-badge,
+.prompt-legend .help-badge,
+.sidebar-item .help-badge,
+sl-tab .help-badge {
+  position: relative;
+  top: auto;
+  right: auto;
+  transform: none;
+  margin-left: var(--sl-spacing-x-small);
+  vertical-align: middle;
+  flex: none;
+}
+
+/* Inline badges hover-lift without the vertical-centre translate the
+   absolute-anchored base composes in. */
+.content-header-title .help-badge:hover,
+.content-header-title .help-badge:focus-visible,
+.new-run-section-title .help-badge:hover,
+.new-run-section-title .help-badge:focus-visible,
+.prompt-legend .help-badge:hover,
+.prompt-legend .help-badge:focus-visible,
+.sidebar-item .help-badge:hover,
+.sidebar-item .help-badge:focus-visible,
+sl-tab .help-badge:hover,
+sl-tab .help-badge:focus-visible {
+  transform: scale(1.1);
+}
+
+/* Sidebar items are tighter than headers — shrink the inline badge so it
+   doesn't dominate the row or collide with count badges. */
+.sidebar-item .help-badge {
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+}
+
+.sidebar-item .help-badge .help-badge__glyph {
+  font-size: 13px;
+}
+
+/* .sidebar-item is justify-content: space-between; with the badge as a
+   third child the count badge would drift to the row centre. An auto
+   right-margin on the label (first child) packs [count][?] together on
+   the right. Help-mode only — badges are display:none otherwise. */
+body.help-mode-active .sidebar-item > :first-child {
+  margin-right: auto;
+}
+
 body.help-mode-active .help-badge::after {
   animation: help-badge-sonar 2.4s ease-out infinite;
 }
@@ -9002,6 +9065,17 @@ body.help-mode-active sl-tab {
   color: var(--sl-color-neutral-500);
   font-size: var(--sl-font-size-small);
   padding: var(--sl-spacing-medium);
+}
+
+/* Shared blocks / auxiliary agents cards (files no stage claims) */
+.overlay-shared-note {
+  color: var(--sl-color-neutral-600);
+  font-size: var(--sl-font-size-small);
+  margin-bottom: var(--sl-spacing-small);
+}
+
+.overlay-shared-note code {
+  font-size: var(--sl-font-size-x-small);
 }
 
 /* ── Prompts tab (pipelines-editor-overlays.js) ─────────────────────────── */

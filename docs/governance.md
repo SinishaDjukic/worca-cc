@@ -17,16 +17,48 @@ Each section (`tools`, `skills`, `subagents`) has three tiers:
 Given a `(section, agent, candidate)` triple:
 
 1. If `candidate` matches any pattern in `always_disallowed` → **deny** (reason: `always_disallowed`).
-2. Look up `per_agent_allow[agent]`; if absent, fall back to `per_agent_allow._defaults`.
-3. If the allow list contains `"*"` (wildcard):
+2. Look up `per_agent_allow[agent]`; if absent:
+   - **known pipeline agent** (the shipped roster: `planner`, `plan_reviewer`, `plan_editor`, `coordinator`, `implementer`, `tester`, `reviewer`, `guardian`, `learner`, `workspace_planner`) → fall back to `per_agent_allow._defaults`;
+   - **unknown agent** (a W-071 custom stage agent) → resolve to the lockdown sentinel `["none"]`. See [Custom agents](#custom-agents-w-071).
+3. If the resolved list is exactly `["none"]` (the lockdown sentinel) → **deny** (reason: `lockdown`).
+4. If the allow list contains `"*"` (wildcard):
    - If `candidate` is also named explicitly in the list → **allow** (via: `explicit`).
    - If `candidate` matches any pattern in `default_denied` → **deny** (reason: `default_denied`).
    - Otherwise → **allow** (via: `wildcard`).
-4. If the allow list does not contain `"*"`:
+5. If the allow list does not contain `"*"`:
    - If `candidate` is named explicitly → **allow** (via: `explicit`).
    - Otherwise → **deny** (reason: `not_in_allow_list`).
 
 When `WORCA_AGENT` is empty (interactive mode), all dispatches are allowed — hooks do not gate interactive sessions.
+
+## Custom agents (W-071)
+
+A custom stage's agent (any name outside the shipped roster above) **does not
+inherit `_defaults`** — with no `per_agent_allow` entry it resolves to the
+lockdown sentinel in every section: no tools, no skills, no subagents. The
+`_defaults` lists are calibrated for the shipped roster; an unknown role must
+be granted explicitly:
+
+```jsonc
+{
+  "worca": {
+    "governance": {
+      "dispatch": {
+        "tools":     { "per_agent_allow": { "docs_auditor": ["Read", "Grep", "Glob"] } },
+        "skills":    { "per_agent_allow": { "docs_auditor": ["none"] } },
+        "subagents": { "per_agent_allow": { "docs_auditor": ["none"] } }
+      }
+    }
+  }
+}
+```
+
+The launch log warns per section that lacks an entry for a custom agent.
+Two invariants are unaffected by any grant:
+
+- `always_disallowed` still wins over every per-agent entry.
+- The guardian-only `git commit` guard is unchanged — a custom agent can
+  never commit; PR/commit duties stay on the builtin `pr` stage.
 
 ## Per-section defaults and rationale
 

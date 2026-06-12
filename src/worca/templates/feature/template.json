@@ -45,6 +45,7 @@
         "mode": "review"
       }
     },
+    "flow": null,
     "loops": {
       "implement_test": 10,
       "pr_changes": 5,

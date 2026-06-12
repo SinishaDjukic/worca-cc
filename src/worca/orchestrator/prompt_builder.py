@@ -8,8 +8,42 @@ import os
 import tempfile
 from pathlib import Path
 
+from worca.orchestrator.context_keys import CONTEXT_ALIASES, alias_for, flat_for
+from worca.orchestrator.overlay import _MISS, _dig, _lookup_path
+
 _MAX_CONTEXT_BYTES = 100_000  # 100KB cap for prompt_context.json
 _DESIGN_NOTES_CAP = 2000
+
+# prompt_context.json format version (W-072 §2). Version 2 adds the nested
+# "stages" namespace (stages.<stage>.<output>). Version-1 files carry flat
+# keys only and have no marker — they load unchanged; namespaced reads of
+# their data resolve through the alias table (context_keys.CONTEXT_ALIASES).
+PROMPT_CONTEXT_SCHEMA_VERSION = 2
+
+# Keys _apply_stage_context computes for the named consumer stage (W-072 §3).
+# Consumer-side formatting and mode flags, not inter-stage contract — the
+# flow consumption lint exempts them for that stage's own templates only.
+BUILDER_STAGE_KEYS: dict = {
+    "plan": {
+        "has_review_comments", "plan_content",
+        "plan_review_issues_formatted", "plan_review_history_formatted",
+    },
+    "plan_review": {"plan_content", "plan_review_history_formatted"},
+    "coordinate": {
+        "current_plan", "has_review_comments", "max_beads",
+        "bead_cap_single", "bead_cap_multi", "unresolved_plan_issues_formatted",
+    },
+    "implement": {
+        "is_retry", "issue_type", "attempt_count", "test_failures_formatted",
+        "review_issues_formatted", "previous_attempts",
+    },
+    "test": {"implementation_summary"},
+    "review": {"test_results", "files_changed_formatted", "review_base"},
+    "learn": {
+        "termination_type", "plan_content", "run_id", "run_data",
+        "files_changed_since_git_head",
+    },
+}
 
 
 def _render_notes(notes: list[dict], cap: int) -> str:
@@ -75,16 +109,76 @@ class PromptBuilder:
         self._crg_available = bool(available)
 
     def update_context(self, key: str, value) -> None:
-        """Store inter-stage output for use in downstream prompts."""
+        """Store inter-stage output for use in downstream prompts.
+
+        Dual-write (W-072 §4): a flat key with a namespaced alias also
+        writes its ``stages.<stage>.<output>`` form, so templates referencing
+        either form stay consistent during the migration window.
+        """
         self._context[key] = value
+        namespaced = alias_for(key)
+        if namespaced is not None:
+            self._set_namespaced(namespaced, value)
+
+    def publish_output(self, stage: str, name: str, value) -> None:
+        """Publish a stage output under the namespaced contract (W-072 §1).
+
+        Writes ``stages.<stage>.<name>``; when the output has a legacy flat
+        alias, dual-writes the flat key too (kept through the deprecation
+        window for third-party overlays referencing flat keys).
+        """
+        namespaced = f"stages.{stage}.{name}"
+        self._set_namespaced(namespaced, value)
+        flat = flat_for(namespaced)
+        if flat is not None:
+            self._context[flat] = value
+
+    def _set_namespaced(self, namespaced: str, value) -> None:
+        """Set a dotted key as a nested dict path inside self._context."""
+        parts = namespaced.split(".")
+        cur = self._context
+        for part in parts[:-1]:
+            nxt = cur.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                cur[part] = nxt
+            cur = nxt
+        cur[parts[-1]] = value
 
     def get_context(self, key: str, default=None):
-        """Retrieve stored inter-stage context."""
-        return self._context.get(key, default)
+        """Retrieve stored inter-stage context.
+
+        Supports dotted namespaced keys and falls through the flat<->
+        namespaced alias table on a miss (W-072 §4).
+        """
+        return _dig(self._context, key, default)
 
     def pop_context(self, key: str):
-        """Remove and return a context key value. Returns None if key not present."""
-        return self._context.pop(key, None)
+        """Remove and return a context key value. Returns None if key not present.
+
+        Pops both the flat key and its namespaced alias (when one exists) so
+        a dual-written value doesn't survive in the other form.
+        """
+        value = self._context.pop(key, None)
+        namespaced = alias_for(key) if "." not in key else key
+        if namespaced is not None and "." in namespaced:
+            popped = self._pop_namespaced(namespaced)
+            if value is None:
+                value = popped
+            flat = flat_for(namespaced)
+            if flat is not None and flat != key:
+                self._context.pop(flat, None)
+        return value
+
+    def _pop_namespaced(self, namespaced: str):
+        """Remove a dotted key from the nested dict path. Returns the value."""
+        parts = namespaced.split(".")
+        cur = self._context
+        for part in parts[:-1]:
+            cur = cur.get(part)
+            if not isinstance(cur, dict):
+                return None
+        return cur.pop(parts[-1], None)
 
     def _read_master_plan(self) -> str:
         """Read plan content from disk. Checks MASTER_PLAN.md first, then falls
@@ -119,9 +213,12 @@ class PromptBuilder:
 
         # Build a copy of the context and truncate if over the size cap
         context_copy = dict(self._context)
+        context_copy["schema_version"] = PROMPT_CONTEXT_SCHEMA_VERSION
         serialized = json.dumps(context_copy, indent=2, default=str)
         if len(serialized.encode()) > _MAX_CONTEXT_BYTES:
-            keys = list(context_copy.keys())
+            # Drop oldest-inserted keys first; the schema_version marker is
+            # never droppable (a v2 file must stay detectable as v2).
+            keys = [k for k in context_copy if k != "schema_version"]
             while keys and len(serialized.encode()) > _MAX_CONTEXT_BYTES:
                 del context_copy[keys.pop(0)]
                 serialized = json.dumps(context_copy, indent=2, default=str)
@@ -145,6 +242,11 @@ class PromptBuilder:
         Merges loaded keys into self._context (loaded values override existing).
         No-op if the file doesn't exist or no path is configured.
 
+        Handles both file format versions (W-072 §2): version 2 carries a
+        "schema_version" marker and a nested "stages" namespace; version 1
+        (no marker) carries flat keys only — it loads unchanged, and
+        namespaced reads of its data resolve through the alias table.
+
         Raises:
             ValueError: If the file exists but is not valid JSON. A corrupt
                 context file must fail the resume loudly — silently continuing
@@ -165,6 +267,7 @@ class PromptBuilder:
                 "Refusing to resume with partial inter-stage context — "
                 "fix or delete the file and resume again."
             ) from e
+        data.pop("schema_version", None)
         self._context.update(data)
 
     def build_context(self, stage: str, iteration: int = 0) -> dict:
@@ -183,6 +286,15 @@ class PromptBuilder:
             Context dict with all keys needed for block/placeholder resolution.
         """
         ctx = dict(self._context)
+        # Materialize the flat form of every aliased namespaced value the
+        # flat key is missing for (W-072 §4): _apply_stage_context and other
+        # plain-dict consumers read flat keys, which a nested-only context
+        # (post-deprecation publication, or a hand-built one) wouldn't carry.
+        for _flat, _namespaced in CONTEXT_ALIASES.items():
+            if _flat not in ctx:
+                _val = _lookup_path(ctx, _namespaced)
+                if _val is not _MISS:
+                    ctx[_flat] = _val
         ctx["work_request"] = self._work_request_section()
         ctx["assigned_task"] = self._assigned_task_body()
         ctx["guide_content"] = self._guide_content

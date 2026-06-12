@@ -29,9 +29,17 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
+from worca.orchestrator.executor import (
+    StageDecision,
+    StageRunContext,
+    handler_for,
+    publish_declared_outputs,
+)
 from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
+from worca.orchestrator import flow as flow_module
+from worca.orchestrator.flow import lint_flow_consumption, load_flow
 from worca.orchestrator.stages import (
-    Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
+    Stage, get_stage_config, get_stage_config_for, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
     PreflightError, validate_tier_pinned_agent_models,
 )
@@ -108,20 +116,29 @@ from worca.events.types import (
     CLAUDE_MD_MODE_RESOLVED, claude_md_mode_resolved_payload,
 )
 
-# Maps pipeline stages to their user-message block files. The stage's
-# .block.md is resolved (three-tier overlay + placeholders) and passed as
-# the -p user message to the agent. Stages not listed (e.g. PREFLIGHT) fall
-# back to the default rendered_prompt (title + description).
-_STAGE_BLOCK_MAP = {
-    Stage.PLAN:         "plan",
-    Stage.PLAN_REVIEW:  "plan-review",
-    Stage.COORDINATE:   "coordinate",
-    Stage.IMPLEMENT:    "implement",
-    Stage.TEST:         "test",
-    Stage.REVIEW:       "review",
-    Stage.PR:           "pr",
-    Stage.LEARN:        "learn",
-}
+# Symbols accessed dynamically by the stage handlers through the runner
+# module namespace (executor._runner().<name>) — static analysis sees no
+# in-module reference, but they are load-bearing: handlers resolve them at
+# call time so unit tests patching worca.orchestrator.runner.<name> keep
+# working (W-071). Keep this list in sync when moving handler code.
+_HANDLER_NAMESPACE_EXPORTS = (
+    EFFORT_LEVELS, resolve_plan_review_mode,
+    bd_show, bd_close, bd_label_add, bd_get_effort_label, parse_pr_url,
+    BEAD_ASSIGNED, BEAD_COMPLETED, BEAD_FAILED, BEAD_LABELED, BEAD_NEXT,
+    bead_assigned_payload, bead_completed_payload, bead_failed_payload,
+    bead_labeled_payload, bead_next_payload,
+    TEST_SUITE_STARTED, TEST_SUITE_PASSED, TEST_SUITE_FAILED, TEST_FIX_ATTEMPT,
+    test_suite_started_payload, test_suite_passed_payload,
+    test_suite_failed_payload, test_fix_attempt_payload,
+    REVIEW_STARTED, REVIEW_VERDICT, REVIEW_FIX_ATTEMPT,
+    review_started_payload, review_verdict_payload, review_fix_attempt_payload,
+    LOOP_EXHAUSTED, loop_exhausted_payload,
+    GIT_PR_CREATED, GIT_PR_DEFERRED,
+    git_pr_created_payload, git_pr_deferred_payload,
+    PREFLIGHT_COMPLETED, PREFLIGHT_SKIPPED,
+    preflight_completed_payload, preflight_skipped_payload,
+    PLAN_EDITED, plan_edited_payload,
+)
 
 
 def _emit_guide_conflicts(ctx, stage: str, result: dict) -> None:
@@ -581,10 +598,20 @@ def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
 
 def _render_agent_templates(run_dir: str, template_vars: dict,
                             overrides_dir: str = ".claude/agents",
-                            template_agents_dir: str | None = None) -> None:
+                            template_agents_dir: str | None = None,
+                            extra_agents: list | None = None) -> None:
     """Read agent .md templates from .claude/worca/agents/core/, replace placeholders,
     apply project overlays from overrides_dir and template overlays from
-    template_agents_dir, write results to {run_dir}/agents/."""
+    template_agents_dir, write results to {run_dir}/agents/.
+
+    extra_agents (W-071): agent names referenced by the flow that have no core
+    template (custom stage agents). Each is resolved through the same overlay
+    chain with an EMPTY base — the project/template tier file IS the
+    definition — and rendered into run_dir so dispatch-time placeholder
+    resolution works exactly as for builtin agents. Names with no file at any
+    tier are skipped (flow validation already failed the launch for enabled
+    stages, so this only happens for disabled ones).
+    """
     src_dir = ".claude/worca/agents/core"
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
@@ -593,6 +620,7 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
 
     resolver = OverlayResolver(overrides_dir=overrides_dir)
 
+    rendered_names = set()
     for filename in os.listdir(src_dir):
         if filename.endswith(".block.md"):
             continue
@@ -605,23 +633,89 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
                                    template_agents_dir=template_agents_dir)
         with open(os.path.join(dst_dir, filename), "w", encoding="utf-8") as f:
             f.write(content)
+        rendered_names.add(agent_name)
+
+    for agent_name in (extra_agents or []):
+        if not agent_name or agent_name in rendered_names:
+            continue
+        content = resolver.resolve(agent_name, "",
+                                   template_agents_dir=template_agents_dir)
+        if not content.strip():
+            continue  # no tier provides it — leave to _agent_path fallback
+        with open(os.path.join(dst_dir, f"{agent_name}.md"), "w", encoding="utf-8") as f:
+            f.write(content)
+        rendered_names.add(agent_name)
+
+
+def _warn_custom_agents_locked_down(flow, settings_path: str) -> None:
+    """Launch-time warning for custom agents with no dispatch grants (W-071 §4).
+
+    A custom agent not named in ``worca.governance.dispatch.<section>.
+    per_agent_allow`` resolves to the lockdown sentinel instead of
+    ``_defaults`` — it gets no tools/skills/subagents. Name the missing
+    sections at launch so the operator isn't debugging a tool-less agent
+    mid-run. Best-effort: never blocks the launch.
+    """
+    try:
+        from worca.hooks.tracking import KNOWN_PIPELINE_AGENTS
+        dispatch_cfg = (
+            load_settings(settings_path)
+            .get("worca", {}).get("governance", {}).get("dispatch", {})
+        )
+    except Exception:
+        return
+    for s in list(flow.stages) + list(flow.post_stages):
+        agent = s.agent
+        if not agent or agent in KNOWN_PIPELINE_AGENTS:
+            continue
+        missing = [
+            section for section in ("tools", "skills", "subagents")
+            if agent not in (
+                (dispatch_cfg.get(section, {}) or {}).get("per_agent_allow", {}) or {}
+            )
+        ]
+        if missing:
+            _log(
+                f"Custom agent {agent!r} (stage {s.name!r}) has no "
+                f"per_agent_allow entry for: {', '.join(missing)} — it runs "
+                f"locked down there (no grants). Add worca.governance."
+                f"dispatch.<section>.per_agent_allow.{agent} to grant "
+                f"capabilities.",
+                "warn",
+            )
 
 
 def _agent_path(agent_name: str, run_dir: str = None) -> str:
     """Resolve agent name to the .md definition file path.
 
-    If run_dir is provided, checks for a rendered template there first.
-    Falls back to the static template in .claude/worca/agents/core/.
+    Resolution order (W-071): rendered template in run_dir → shipped core
+    template → project tier (``.claude/agents/``). The project tier only wins
+    when no core template exists: for builtin agents a project file is an
+    *overlay* (merged at render time by OverlayResolver), never a standalone
+    definition — but for a custom agent name the project file IS the
+    definition.
     """
     if run_dir:
         rendered = os.path.join(run_dir, "agents", f"{agent_name}.md")
         if os.path.exists(rendered):
             return rendered
-    return f".claude/worca/agents/core/{agent_name}.md"
+    core = f".claude/worca/agents/core/{agent_name}.md"
+    if not os.path.exists(core):
+        project = os.path.join(".claude", "agents", f"{agent_name}.md")
+        if os.path.exists(project):
+            return project
+    return core
 
 
 def _schema_path(schema_name: str) -> str:
-    """Resolve schema filename to full path."""
+    """Resolve schema filename to full path.
+
+    Resolution order (W-071): project tier (``.claude/schemas/``, the home of
+    custom-stage schemas) → shipped ``.claude/worca/schemas/``. First hit wins.
+    """
+    project = os.path.join(".claude", "schemas", schema_name)
+    if os.path.exists(project):
+        return project
     return f".claude/worca/schemas/{schema_name}"
 
 
@@ -1121,9 +1215,13 @@ def _warn_if_cap_deviation(effective_cap: int, created_count: int, is_pr_revisio
         )
 
 
-def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
-    """Save stage output to a per-iteration log file for resume support."""
-    stage_dir = os.path.join(logs_dir, stage.value)
+def _save_stage_output(stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
+    """Save stage output to a per-iteration log file for resume support.
+
+    stage accepts a Stage enum member or a stage-key string (W-071).
+    """
+    stage_key = stage.value if isinstance(stage, Stage) else str(stage)
+    stage_dir = os.path.join(logs_dir, stage_key)
     os.makedirs(stage_dir, exist_ok=True)
     path = os.path.join(stage_dir, f"iter-{iteration}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -1133,19 +1231,27 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
 
 def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                      termination_type, termination_reason, msize, logs_dir,
-                     force=False, ctx=None):
+                     force=False, ctx=None, flow=None):
     """Run the LEARN stage if enabled (or forced). Called after pipeline termination.
 
     Non-fatal: any exception is logged but not propagated.
 
     Args:
-        force: If True, skip the is_learn_enabled() check. Used by the
-               manual trigger (run_learn.py / UI button) so that learning
-               analysis runs even when learn.enabled is false.
+        force: If True, skip the enabled check. Used by the manual trigger
+               (run_learn.py / UI button) so that learning analysis runs
+               even when learn.enabled is false.
         ctx: Optional EventContext for emitting learn events.
+        flow: Optional FlowSpec (W-070). When provided, learn runs iff it is
+              an enabled post stage of the flow; without it (manual trigger,
+              legacy callers) the is_learn_enabled() settings check applies.
     """
-    if not force and not is_learn_enabled(settings_path):
-        return
+    if not force:
+        if flow is not None:
+            _learn_key = Stage.LEARN.value
+            if not any(s.name == _learn_key for s in flow.post_stages):
+                return
+        elif not is_learn_enabled(settings_path):
+            return
     _log("Running learn stage...", "info")
     actual_status_path = os.path.join(run_dir, "status.json") if run_dir else ".worca/status.json"
     learn_start = time.monotonic()
@@ -1198,7 +1304,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                 _f.write(_learn_resolved)
             _learn_agent_override = _learn_resolved_path
         # Route learn.block.md into the -p user message (same pattern as
-        # _STAGE_BLOCK_MAP in the main pipeline loop). This stage has its own
+        # the block routing in the main pipeline loop). This stage has its own
         # code path outside that loop, so the routing needs to be duplicated
         # here. Without this, the learner received only the raw work_request
         # title/description and missed run_data + files_changed_since_git_head,
@@ -1444,17 +1550,27 @@ def _crg_tool_basename(tool_name: str) -> str:
 
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
-    stage: Stage,
+    stage,
     iteration: int,
     settings_path: str,
+    agent: Optional[str] = None,
 ):
     """Create an on_event callback closure for agent telemetry.
 
+    stage accepts a Stage enum member or a stage-key string (W-071); agent is
+    the resolved agent role for the AGENT_SPAWNED payload — run_stage passes
+    the flow-resolved name, and enum-stage callers without it fall back to the
+    builtin role map (which is keyed by Stage members, so the lookup must
+    happen BEFORE the stage-key coercion below).
     Returns None if ctx is None or agent_telemetry is disabled.
     The returned callable translates stream-json events to pipeline events.
     """
     if ctx is None:
         return None
+    if agent is None and isinstance(stage, Stage):
+        agent = STAGE_AGENT_MAP.get(stage, "")
+    agent = agent or ""
+    stage = stage.value if isinstance(stage, Stage) else str(stage)
     if not _is_agent_telemetry_enabled(settings_path):
         return None
 
@@ -1467,9 +1583,9 @@ def _make_agent_event_handler(
         if etype == "system":
             if event.get("subtype") == "init":
                 emit_event(ctx, AGENT_SPAWNED, agent_spawned_payload(
-                    stage=stage.value,
+                    stage=stage,
                     iteration=iteration,
-                    agent=STAGE_AGENT_MAP.get(stage, ""),
+                    agent=agent,
                     model=event.get("model", ""),
                     max_turns=0,
                 ))
@@ -1487,7 +1603,7 @@ def _make_agent_event_handler(
                     if tool_id:
                         tool_id_to_name[tool_id] = tool_name
                     emit_event(ctx, AGENT_TOOL_USE, agent_tool_use_payload(
-                        stage=stage.value,
+                        stage=stage,
                         iteration=iteration,
                         tool=tool_name,
                         tool_input_summary=_summarize_tool_input(block),
@@ -1497,7 +1613,7 @@ def _make_agent_event_handler(
                     text = block.get("text", "")
                     if text:
                         emit_event(ctx, AGENT_TEXT, agent_text_payload(
-                            stage=stage.value,
+                            stage=stage,
                             iteration=iteration,
                             text_length=len(text),
                             turn=turn,
@@ -1511,7 +1627,7 @@ def _make_agent_event_handler(
                         tool_id = block.get("tool_use_id", "")
                         tool_name = tool_id_to_name.get(tool_id, "")
                         emit_event(ctx, AGENT_TOOL_RESULT, agent_tool_result_payload(
-                            stage=stage.value,
+                            stage=stage,
                             iteration=iteration,
                             tool=tool_name,
                             is_error=block.get("is_error", False),
@@ -1520,7 +1636,7 @@ def _make_agent_event_handler(
 
         elif etype == "result":
             emit_event(ctx, AGENT_COMPLETED, agent_completed_payload(
-                stage=stage.value,
+                stage=stage,
                 iteration=iteration,
                 turns=event.get("num_turns", 0),
                 cost_usd=event.get("total_cost_usd", 0.0),
@@ -1572,7 +1688,7 @@ def _lift_pr_deferred_to_status(result: dict, status: dict) -> None:
 
 
 def run_stage(
-    stage: Stage,
+    stage,
     context: dict,
     settings_path: str = ".claude/settings.json",
     msize: int = 1,
@@ -1584,13 +1700,17 @@ def run_stage(
     graphify_out: Optional[str] = None,
     crg_data_dir: Optional[str] = None,
     bead_id: Optional[str] = None,
+    flow_stage=None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
-    Gets stage config via get_stage_config(), calls run_agent() with the
-    appropriate agent path, prompt, max_turns, and schema.
+    Gets stage config via get_stage_config() (Stage enum) or
+    get_stage_config_for() (when a FlowSpec entry is provided), then calls
+    run_agent() with the appropriate agent path, prompt, max_turns, and schema.
 
     Args:
+        stage: Stage enum member (builtin) or stage-key string (custom
+            stages, W-071). String stages require flow_stage for config.
         context: Dict with 'prompt', '_run_dir', '_logs_dir' keys.
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
@@ -1607,11 +1727,19 @@ def run_stage(
             run-scoped CRG database so the agent gets code-review-graph MCP
             tools filtered to the stage's allow-list.
 
+        flow_stage: Resolved FlowSpec entry (W-071). When provided, agent
+            and schema come from the flow — this is what lets per-entry
+            agent/schema overrides and custom stages reach dispatch.
+
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
     is the full claude CLI JSON response for logging.
     """
-    config = get_stage_config(stage, settings_path=settings_path)
+    stage_key = stage.value if isinstance(stage, Stage) else str(stage)
+    if flow_stage is not None:
+        config = get_stage_config_for(flow_stage, settings_path=settings_path)
+    else:
+        config = get_stage_config(stage, settings_path=settings_path)
     # PR stage uses a different schema when the run defers PR creation — either a
     # workspace child (WORCA_DEFER_PR=1, set by dag_executor) or a project that
     # set worca.stages.pr.defer:true. _pr_stage_is_deferred resolves this the
@@ -1620,17 +1748,19 @@ def run_stage(
     # the PR while the schema still demands pr_number/pr_url). Two flat schemas
     # instead of one conditional schema keeps each flat — the Claude API rejects
     # custom tools whose input_schema has top-level allOf/oneOf/anyOf.
-    if stage == Stage.PR and _pr_stage_is_deferred(settings_path):
+    if stage_key == "pr" and _pr_stage_is_deferred(settings_path):
         config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
     prompt = prompt_override if prompt_override is not None else raw_prompt
     logs_dir = context.get("_logs_dir", ".worca/logs")
     run_dir = context.get("_run_dir")
-    log_dir = os.path.join(logs_dir, stage.value)
+    log_dir = os.path.join(logs_dir, stage_key)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
-    _telemetry_on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    _telemetry_on_event = _make_agent_event_handler(
+        ctx, stage, iteration, settings_path, agent=config.get("agent"),
+    )
     # Count read-only graphify queries this iteration, independent of telemetry,
     # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
     # handler so disabling agent_telemetry doesn't zero the count.
@@ -1668,7 +1798,13 @@ def run_stage(
 
     _mcp_config: Optional[str] = None
     if crg_data_dir:
-        _agent_role = STAGE_AGENT_MAP.get(stage, "")
+        # CRG tools are filtered by the builtin agent ROLE for enum stages
+        # (historical behavior — survives user agent overrides); custom
+        # stages key on their resolved agent name.
+        if isinstance(stage, Stage):
+            _agent_role = STAGE_AGENT_MAP.get(stage, "")
+        else:
+            _agent_role = config.get("agent") or ""
         _crg_tools = crg_tools_for_stage(
             _agent_role or "",
             stage_tools=_resolve_crg_stage_tools(settings_path),
@@ -1695,7 +1831,7 @@ def run_stage(
         mcp_config=_mcp_config,
         claude_md_overlay_path=context.get("_claude_md_overlay_path"),
         run_dir=run_dir,
-        stage=stage.value,
+        stage=stage_key,
         iteration=iteration,
         bead_id=bead_id,
     )
@@ -1715,7 +1851,7 @@ def run_stage(
     # emit JSON-only, but pre-existing runs and the occasional slip would
     # otherwise lose pr_number/pr_url. Recover what we can from the prose so
     # downstream events (GIT_PR_CREATED, status.json) still see the PR.
-    if stage == Stage.PR and isinstance(raw, dict):
+    if stage_key == "pr" and isinstance(raw, dict):
         recovered = _extract_pr_fields_from_text(raw.get("result"))
         if recovered:
             raw["graphify_invocations"] = _gfx
@@ -2514,6 +2650,7 @@ def run_pipeline(
     # Auto-register project for global worca-ui discovery (non-fatal).
     # See _resolve_project_root_for_registration for why worktree mode needs
     # the parent project's path, not the worktree's.
+    project_root = None
     try:
         from worca.utils.project_registry import auto_register_project
         project_root = _resolve_project_root_for_registration(
@@ -2549,6 +2686,10 @@ def run_pipeline(
         existing = load_status(status_path)
 
     resume_stage = None
+    # Assigned inside the main try once settings are ready; None until then so
+    # the exception handlers' learn dispatch can fall back to the legacy
+    # is_learn_enabled() check for failures before flow load.
+    flow = None
     _claude_md_overlay_path: Optional[str] = None
     _resolved_claude_md_mode: str = "all"
     _claude_md_overlay_dict: Optional[dict] = None
@@ -2557,7 +2698,16 @@ def run_pipeline(
     if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
         # Explicit resume requested and same work request found
         from worca.orchestrator.resume import find_resume_point, check_git_divergence, restore_loop_counters, backfill_prompt_context
-        resume_stage = find_resume_point(existing)
+        # W-071: custom (non-builtin) stages are invisible to the legacy
+        # STAGE_ORDER walk — pass the flow's stage names so an incomplete
+        # custom stage counts as resumable work. Best-effort: a malformed
+        # flow falls back to builtin-only detection here and fails loudly
+        # at the authoritative load_flow below.
+        try:
+            _resume_flow_names = [s.name for s in load_flow(settings_path).stages]
+        except Exception:
+            _resume_flow_names = None
+        resume_stage = find_resume_point(existing, flow_stage_names=_resume_flow_names)
         if resume_stage is not None:
             # Git divergence guard: warn if HEAD changed since pipeline start
             divergence = check_git_divergence(existing)
@@ -2896,7 +3046,57 @@ def run_pipeline(
         _effort_auto_cap = _effort_settings.get("auto_cap", "xhigh")
         _log(f"Effort: auto_mode={_effort_auto_mode}, auto_cap={_effort_auto_cap}")
 
-        stage_order = get_enabled_stages(settings_path)
+        # Load the declarative flow (W-070). The compiled default reproduces
+        # the legacy STAGE_ORDER walk exactly (parity-tested); worca.flow
+        # overrides the topology. Since W-071 the loop walks the FlowSpec
+        # entries directly by stage key — no enum round-trip, so custom
+        # stage names flow through to the generic handler.
+        flow = load_flow(settings_path)
+
+        # Flow fingerprint (W-070 §4): a run must never silently resume under
+        # a different topology than the one that produced its status.json.
+        # Enforced for custom flows only — default-flow runs keep the legacy
+        # "re-derive from current settings" resume semantics, so toggling
+        # worca.stages.* while paused behaves exactly as before. Runs from
+        # older versions have no fingerprint; it's backfilled, not rejected.
+        _flow_fp = flow.fingerprint()
+        if resume_stage is not None and flow.custom:
+            _prior_fp = status.get("flow_fingerprint")
+            if _prior_fp and _prior_fp != _flow_fp:
+                raise PipelineError(
+                    "worca.flow changed while this run was stopped "
+                    f"(fingerprint {_prior_fp[:12]}… -> {_flow_fp[:12]}…; "
+                    f"current flow stages: {[s.name for s in flow.stages]}). "
+                    "Restore the previous flow to resume this run, or start "
+                    "a new run under the new flow."
+                )
+        status["flow_fingerprint"] = _flow_fp
+
+        # W-071 §4: custom agents resolve to the dispatch lockdown sentinel
+        # unless explicitly named in per_agent_allow — surface that at launch
+        # so a silently tool-less stage isn't a mid-run mystery.
+        _warn_custom_agents_locked_down(flow, settings_path)
+
+        # W-072 §3: consumption lint — every namespaced placeholder a stage's
+        # resolved templates reference must be produced by a declared upstream
+        # output. Errors for custom flows (fail at launch, never mid-run);
+        # warnings for the default flow until the builtin template migration
+        # completes (flow.DEFAULT_FLOW_LINT_ERRORS).
+        _lint_violations, _lint_warnings = lint_flow_consumption(
+            flow, _pb_core_dir,
+            overrides_dir=_pb_overrides_dir,
+            template_agents_dir=_pb_template_agents_dir,
+        )
+        for _w in _lint_warnings:
+            _log(f"flow lint: {_w}", "warn")
+        if _lint_violations:
+            if flow.custom or flow_module.DEFAULT_FLOW_LINT_ERRORS:
+                raise PipelineError(
+                    "flow consumption lint failed:\n"
+                    + "\n".join(f"  - {v}" for v in _lint_violations)
+                )
+            for _v in _lint_violations:
+                _log(f"flow lint: {_v}", "warn")
 
         # Handle plan file
         if not resume_stage:
@@ -2959,7 +3159,11 @@ def run_pipeline(
                     "branch": branch_name,
                     "title": work_request.title,
                 }, overrides_dir=overrides_dir,
-                   template_agents_dir=template_agents_dir)
+                   template_agents_dir=template_agents_dir,
+                   extra_agents=[
+                       s.agent for s in list(flow.stages) + list(flow.post_stages)
+                       if s.agent
+                   ])
 
             save_status(status, actual_status_path)
 
@@ -3002,8 +3206,9 @@ def run_pipeline(
 
         # Determine starting index
         if resume_stage:
-            if resume_stage in stage_order:
-                stage_idx = stage_order.index(resume_stage)
+            _stage_names = [s.name for s in flow.stages]
+            if resume_stage.value in _stage_names:
+                stage_idx = _stage_names.index(resume_stage.value)
             else:
                 # resume_stage is disabled (e.g. PREFLIGHT) — start from the
                 # first enabled stage; the skip-completed logic below will
@@ -3037,43 +3242,83 @@ def run_pipeline(
         # Track triggers for loop-back iterations
         _next_trigger = {}  # {stage_value: trigger_reason}
 
-        while stage_idx < len(stage_order):
-            current_stage = stage_order[stage_idx]
+        # Shared loop<->handler state (W-071). Mutable containers are shared
+        # by reference with the loop locals; scalar cross-stage fields are
+        # mirrored onto rc as the per-stage blocks migrate into handlers.
+        rc = StageRunContext()
+        rc.flow = flow
+        rc.status = status
+        rc.prompt_builder = prompt_builder
+        rc.loop_counters = loop_counters
+        rc.next_trigger = _next_trigger
+        rc.settings_path = settings_path
+        rc.actual_status_path = actual_status_path
+        rc.status_path = status_path
+        rc.worca_dir = worca_dir
+        rc.registry_dir = registry_dir
+        rc.run_dir = run_dir
+        rc.logs_dir = logs_dir
+        rc.prompt_context_path = prompt_context_path
+        rc.ctx = ctx
+        rc.work_request = work_request
+        rc.branch_name = branch_name
+        rc.msize = msize
+        rc.mloops = mloops
+        rc.max_beads_override = max_beads_override
+        rc.skip_preflight = skip_preflight
+        rc.context = context
+        rc.run_id_param = run_id
+        rc.project_root = project_root
+        rc.created_bead_count = created_bead_count
+        rc.pr_baseline_head = _pr_baseline_head
+        rc.graphify_out = _graphify_out
+        rc.crg_data_dir = _crg_data_dir
+        rc.crg_cfg = _crg_cfg
+
+        while stage_idx < len(flow.stages):
+            flow_stage = flow.stages[stage_idx]
+            stage_name = flow_stage.name
 
             # --- Control file polling ---
             _check_control_file(status.get("run_id"), worca_dir, status, actual_status_path, ctx, registry_dir)
 
+            # Per-pass handler (W-071): fresh instance each pass; selection
+            # is deterministic from the stage key, with GenericHandler as the
+            # fallback for non-builtin (user-defined) stages.
+            _handler = handler_for(stage_name)
+
             # Skip stages pre-marked as skipped (e.g. PLAN when plan_file provided)
-            existing_stage = status.get("stages", {}).get(current_stage.value, {})
+            existing_stage = status.get("stages", {}).get(stage_name, {})
             if existing_stage.get("skipped"):
-                _log(f"{current_stage.value.upper()} already completed — skipping")
+                _log(f"{stage_name.upper()} already completed — skipping")
                 stage_idx += 1
                 continue
 
-            # On resume, skip stages already completed (PREFLIGHT always re-runs).
-            # Once we reach a non-completed stage (the actual resume point),
-            # clear resume_stage so subsequent loop-backs (e.g. implement→test)
-            # don't incorrectly skip stages that were "completed" in a prior loop.
-            if resume_stage and current_stage != Stage.PREFLIGHT:
+            # On resume, skip stages already completed (PREFLIGHT always re-runs
+            # — the only handler with rerun_on_resume). Once we reach a
+            # non-completed stage (the actual resume point), clear resume_stage
+            # so subsequent loop-backs (e.g. implement→test) don't incorrectly
+            # skip stages that were "completed" in a prior loop.
+            if resume_stage and not _handler.rerun_on_resume:
                 if existing_stage.get("status") == "completed":
-                    _log(f"{current_stage.value.upper()} already completed — skipping on resume")
+                    _log(f"{stage_name.upper()} already completed — skipping on resume")
                     stage_idx += 1
                     continue
                 else:
                     resume_stage = None
 
             # Update current stage tracker
-            status["stage"] = current_stage.value
+            status["stage"] = stage_name
 
             # Determine iteration trigger and number
-            trigger = _next_trigger.pop(current_stage.value, "initial")
-            stage_config = get_stage_config(current_stage, settings_path=settings_path)
+            trigger = _next_trigger.pop(stage_name, "initial")
+            stage_config = get_stage_config_for(flow_stage, settings_path=settings_path)
 
             # Preserve existing iterations but reset stage-level status
-            prev_iterations = status.get("stages", {}).get(current_stage.value, {}).get("iterations", [])
-            prev_iteration_count = status.get("stages", {}).get(current_stage.value, {}).get("iteration")
+            prev_iterations = status.get("stages", {}).get(stage_name, {}).get("iterations", [])
+            prev_iteration_count = status.get("stages", {}).get(stage_name, {}).get("iteration")
             stage_started = datetime.now(timezone.utc).isoformat()
-            status["stages"][current_stage.value] = {
+            status["stages"][stage_name] = {
                 "status": "in_progress",
                 "started_at": stage_started,
                 "agent": stage_config["agent"],
@@ -3089,22 +3334,24 @@ def run_pipeline(
                 ),
             }
             if prev_iterations:
-                status["stages"][current_stage.value]["iterations"] = prev_iterations
+                status["stages"][stage_name]["iterations"] = prev_iterations
             if prev_iteration_count:
-                status["stages"][current_stage.value]["iteration"] = prev_iteration_count
+                status["stages"][stage_name]["iteration"] = prev_iteration_count
 
-            # Resolve effort level for non-preflight stages
-            _effort_env_overrides = {}
-            _effort_dict = None
-            if current_stage != Stage.PREFLIGHT and stage_config["agent"]:
-                _assigned_bead = (
-                    prompt_builder.get_context("assigned_bead_id")
-                    if current_stage == Stage.IMPLEMENT else None
-                )
-                if _assigned_bead is None and current_stage == Stage.IMPLEMENT:
-                    _bead_ids = prompt_builder.get_context("beads_ids") or []
-                    if _bead_ids:
-                        _assigned_bead = _bead_ids[0]
+            # Shared-context reset (W-071): rc carries the loop-local state
+            # the per-stage handlers read and mutate.
+            rc.begin_pass(
+                flow_stage=flow_stage,
+                trigger=trigger,
+                stage_config=stage_config,
+            )
+            # Stage-specific pre-iteration state: implement resolves the
+            # assigned bead (effort + iteration linkage), pr seeds revise-mode
+            # env overrides.
+            _handler.pre_iteration(rc)
+
+            # Resolve effort level for agent stages
+            if _handler.is_agent_stage and stage_config["agent"]:
                 # Escalation depth counts only escalation-relevant loopbacks,
                 # NOT total stage iterations (per-bead Phase-1 fan-out would
                 # otherwise inflate the multiplier — see escalation_iter_num).
@@ -3120,7 +3367,7 @@ def run_pipeline(
                     auto_cap=_effort_auto_cap,
                     trigger=trigger,
                     iter_num=_eff_iter_num,
-                    bead=_assigned_bead,
+                    bead=rc.assigned_bead,
                     model=stage_config["model"] or "",
                 )
                 _iter_num = len(prev_iterations) + 1
@@ -3128,7 +3375,7 @@ def run_pipeline(
                     [trigger] if trigger in _ESCALATION_TRIGGERS and _iter_num > 1
                     else []
                 )
-                _effort_dict = {
+                rc.effort_dict = {
                     "level": _eff_level,
                     "requested": _eff_requested,
                     "source": _eff_source,
@@ -3138,186 +3385,81 @@ def run_pipeline(
                     "bead_classified": _eff_bc,
                 }
                 if _eff_level is not None:
-                    _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
-
-            if current_stage == Stage.PR:
-                _revises_pr_num = status.get("revises_pr")
-                if _revises_pr_num is not None:
-                    _effort_env_overrides["WORCA_REVISE_PR"] = str(_revises_pr_num)
+                    rc.effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
 
             # Start a new iteration record
             _iter_kwargs = {
                 "agent": stage_config["agent"],
                 "model": stage_config["model"],
                 "trigger": trigger,
-                "effort": _effort_dict,
+                "effort": rc.effort_dict,
             }
             # Only set model_alias when distinct from the resolved id — keeps
             # old runs and plain-model configs unchanged on disk.
             if stage_config.get("model_alias"):
                 _iter_kwargs["model_alias"] = stage_config["model_alias"]
-            # Bead linkage on implement iterations only — _assigned_bead is
-            # resolved above (claimed bead, or beads_ids[0] fallback). Title is
-            # cached when the bead is claimed via _query_ready_bead; absent on
-            # the beads_ids[0] fallback, which keeps it null on disk.
-            if current_stage == Stage.IMPLEMENT and _assigned_bead:
-                _iter_kwargs["bead_id"] = _assigned_bead
-                _bead_title = prompt_builder.get_context("assigned_bead_title")
-                if _bead_title:
-                    _iter_kwargs["bead_title"] = _bead_title
+            # Stage-specific iteration linkage (implement bead_id/bead_title)
+            _iter_kwargs.update(_handler.iteration_kwargs(rc))
             iter_record = start_iteration(
-                status, current_stage.value,
+                status, stage_name,
                 **_iter_kwargs,
             )
             iter_num = iter_record["number"]
+            rc.iter_num = iter_num
+            rc.iter_record = iter_record
             save_status(status, actual_status_path)
+
             if ctx:
                 emit_event(ctx, STAGE_STARTED, stage_started_payload(
-                    stage=current_stage.value,
+                    stage=stage_name,
                     iteration=iter_num,
                     agent=stage_config["agent"],
                     model=stage_config.get("model", ""),
                     trigger=trigger,
                     max_turns=(stage_config.get("max_turns") or 0) * msize,
-                    effort=_effort_dict,
+                    effort=rc.effort_dict,
                 ))
-                if current_stage == Stage.TEST:
-                    emit_event(ctx, TEST_SUITE_STARTED, test_suite_started_payload(
-                        stage=current_stage.value,
-                        iteration=iter_num,
-                        trigger=trigger,
-                    ))
-                elif current_stage == Stage.REVIEW:
-                    emit_event(ctx, REVIEW_STARTED, review_started_payload(
-                        iteration=iter_num,
-                        files_under_review=prompt_builder.get_context("files_changed"),
-                    ))
+                _handler.on_stage_started(rc)
 
-            stage_label = current_stage.value.upper()
+            stage_label = stage_name.upper()
             iter_label = f" (iter {iter_num})" if iter_num > 1 else ""
-            _effort_line = format_effort_log_line(stage_label, iter_num, _effort_dict, trigger=trigger)
+            _effort_line = format_effort_log_line(stage_label, iter_num, rc.effort_dict, trigger=trigger)
             if _effort_line:
                 _log(_effort_line)
             else:
                 _log(f"{stage_label}{iter_label} starting...")
             t0 = time.time()
+            rc.t0 = t0
 
             # Check shutdown flag between stages
             if _shutdown_requested:
-                complete_iteration(status, current_stage.value, status="interrupted")
-                update_stage(status, current_stage.value, status="interrupted")
+                complete_iteration(status, stage_name, status="interrupted")
+                update_stage(status, stage_name, status="interrupted")
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
                 raise PipelineInterrupted("Pipeline interrupted before stage start", stop_reason="signal")
 
-            # --- Phase 1 bead assignment (IMPLEMENT only) ---
-            if current_stage == Stage.IMPLEMENT:
-                if trigger in ("initial", "next_bead"):
-                    # Phase 1: implement all beads sequentially
-                    run_bead_ids = prompt_builder.get_context("beads_ids")
-                    bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
-                    if bead:
-                        bead_id = bead["id"]
-                        _claim_bead(bead_id)
-                        if ctx:
-                            emit_event(ctx, BEAD_ASSIGNED, bead_assigned_payload(
-                                bead_id=bead_id,
-                                title=bead["title"],
-                                iteration=loop_counters.get("bead_iteration", 0) + 1,
-                            ))
-                        prompt_builder.update_context("assigned_bead_id", bead_id)
-                        prompt_builder.update_context("assigned_bead_title", bead["title"])
-                        try:
-                            details = bd_show(bead_id)
-                            prompt_builder.update_context("assigned_bead_description", details.get("description", ""))
-                        except Exception:
-                            prompt_builder.update_context("assigned_bead_description", "")
-                elif trigger in ("test_failure", "review_changes"):
-                    prompt_builder.update_context("assigned_bead_title", None)
-                    prompt_builder.update_context("assigned_bead_description", None)
+            # Stage-specific work assignment (implement bead claim)
+            _handler.assign_work(rc)
 
             # Build stage-specific context and resolve agent template per-stage
-            if current_stage != Stage.PREFLIGHT:
-                if current_stage.value == "implement":
-                    pb_iteration = prompt_builder.get_context("bead_prompt_iteration") or 0
-                else:
-                    pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
+            if _handler.is_agent_stage:
+                pb_iteration = _handler.pb_iteration(rc)
 
-                # Thread max_beads cap into prompt_builder before building COORDINATE context
-                if current_stage == Stage.COORDINATE:
-                    prompt_builder.update_context("max_beads_override", max_beads_override)
-                    prompt_builder.update_context("max_beads_config", stage_config["max_beads"])
+                # Stage-specific context threading before/after the build
+                # (coordinate max-beads cap, plan_review mode + edit minting —
+                # the latter may swap rc.agent_name and rebuild rc.ctx_dict).
+                _handler.pre_build_context(rc)
+                rc.ctx_dict = prompt_builder.build_context(stage_name, pb_iteration)
+                _handler.post_build_context(rc)
 
-                ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
-
-                # W-069: persist the resolved coordinator bead cap + its source so
-                # the UI preflight row can surface the EFFECTIVE cap (not just the
-                # launch override). Written before COORDINATE executes, so it's
-                # visible even if the stage later fails.
-                if current_stage == Stage.COORDINATE:
-                    status.update(effective_bead_cap_status(
-                        int(ctx_dict.get("max_beads", 0) or 0),
-                        max_beads_override,
-                        bool(ctx_dict.get("has_review_comments")),
-                    ))
-                    save_status(status, actual_status_path)
-
-                _stage_agent_name = stage_config["agent"]
-                if current_stage == Stage.PLAN_REVIEW:
-                    _pr_mode, _pr_mode_reason = resolve_plan_review_mode(
-                        load_settings(settings_path)
-                    )
-                    update_stage(status, current_stage.value, mode=_pr_mode, mode_reason=_pr_mode_reason)
-                    save_status(status, actual_status_path)
-                    if _pr_mode == "review_and_edit":
-                        _stage_agent_name = "plan_editor"
-                        _effort_env_overrides["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
-                        # W-061 reconciliation: the editor rewrites the *next*
-                        # numbered revision in place (plan-(N+1).md); the pre-edit
-                        # plan-N.md is the retained original (append-only history).
-                        # Copy forward, then re-point every consumer (status,
-                        # WORCA_PLAN_FILE, {{plan_file}}) and re-render so the
-                        # editor's writable-path matches the guard carve-out.
-                        # Idempotent across crash/resume via the plan_edit_target
-                        # marker (cleared in the PLAN_REVIEW handler).
-                        _pre_edit_plan = status.get("plan_file", "")
-                        _already_minted = (
-                            bool(_pre_edit_plan)
-                            and status.get("plan_edit_target") == _pre_edit_plan
-                            and os.path.isfile(_pre_edit_plan)
-                        )
-                        if not _already_minted:
-                            _edit_target = _mint_plan_edit_target(run_dir, _pre_edit_plan)
-                            if _edit_target:
-                                status["plan_file"] = _edit_target
-                                status["plan_edit_target"] = _edit_target
-                                status["plan_pre_edit_file"] = _pre_edit_plan
-                                os.environ["WORCA_PLAN_FILE"] = _edit_target
-                                prompt_builder.update_context("plan_file", _edit_target)
-                                if prompt_context_path:
-                                    prompt_builder.save_context(prompt_context_path)
-                                save_status(status, actual_status_path)
-                                _em_worca = load_settings(settings_path).get("worca", {})
-                                _render_agent_templates(run_dir, {
-                                    "plan_file": status["plan_file"],
-                                    "run_id": status.get("run_id", ""),
-                                    "branch": branch_name,
-                                    "title": work_request.title,
-                                }, overrides_dir=_em_worca.get(
-                                       "agent_overrides_dir", ".claude/agents"),
-                                   template_agents_dir=_em_worca.get("_template_agents_dir"))
-                                # Rebuild ctx so {{plan_content}} reflects the copy.
-                                ctx_dict = prompt_builder.build_context(
-                                    current_stage.value, pb_iteration)
-                                _log(f"Plan edit -> {_edit_target} "
-                                     f"(original retained: {_pre_edit_plan})", "ok")
                 _template_path = (
-                    os.path.join(run_dir, "agents", f"{_stage_agent_name}.md")
+                    os.path.join(run_dir, "agents", f"{rc.agent_name}.md")
                     if run_dir else None
                 )
 
@@ -3329,20 +3471,18 @@ def run_pipeline(
                     with open(_template_path, encoding="utf-8") as _f:
                         _agent_content = _f.read()
                     _resolved = resolve_agent(
-                        _agent_content, ctx_dict,
+                        _agent_content, rc.ctx_dict,
                         prompt_builder._resolver, prompt_builder._core_dir,
                         prompt_builder._template_agents_dir,
                     )
                     _resolved_dir = os.path.join(run_dir, "agents", "resolved")
                     os.makedirs(_resolved_dir, exist_ok=True)
                     _resolved_path = os.path.join(
-                        _resolved_dir, f"{current_stage.value}-{_stage_agent_name}-iter-{iter_num}.md"
+                        _resolved_dir, f"{stage_name}-{rc.agent_name}-iter-{iter_num}.md"
                     )
                     with open(_resolved_path, "w", encoding="utf-8") as _f:
                         _f.write(_resolved)
-                    _agent_override = _resolved_path
-                else:
-                    _agent_override = None
+                    rc.agent_override = _resolved_path
 
                 # Default -p payload: minimal work request. Used when no stage
                 # block exists, the resolver isn't configured, or for stages
@@ -3355,10 +3495,10 @@ def run_pipeline(
                 # Route the stage's .block.md to the -p user message (pre-W-037
                 # contract): system prompt stays role/rules-only, dynamic
                 # per-iteration content travels as a user message. Keeps W-037's
-                # three-tier overlay + placeholder flexibility intact.
-                _block_name = _STAGE_BLOCK_MAP.get(current_stage)
-                if current_stage == Stage.PLAN_REVIEW and _pr_mode == "review_and_edit":
-                    _block_name = "plan-edit"
+                # three-tier overlay + placeholder flexibility intact. The block
+                # name comes from the flow entry (W-070 prompt_block), with the
+                # plan_review edit-mode override applied by its handler.
+                _block_name = _handler.block_name(rc)
                 if (
                     _block_name
                     and prompt_builder._resolver is not None
@@ -3374,97 +3514,50 @@ def run_pipeline(
                         # Resolve nested {{block:...}} refs (e.g. the shared
                         # graphify/CRG reminder blocks) before placeholders.
                         _block = resolve_blocks(
-                            _block, ctx_dict, prompt_builder._resolver,
+                            _block, rc.ctx_dict, prompt_builder._resolver,
                             prompt_builder._core_dir, prompt_builder._template_agents_dir,
                         )
-                        rendered_prompt = resolve_placeholders(_block, ctx_dict).strip()
+                        rendered_prompt = resolve_placeholders(_block, rc.ctx_dict).strip()
 
+                rc.rendered_prompt = rendered_prompt
                 # Store rendered prompt in status for UI visibility
-                status["stages"][current_stage.value]["prompt"] = rendered_prompt
+                status["stages"][stage_name]["prompt"] = rendered_prompt
                 iter_record["prompt"] = rendered_prompt
                 save_status(status, actual_status_path)
-            else:
-                rendered_prompt = None
-                _agent_override = None
 
-            # Run the stage
+            # Run the stage. pre_dispatch covers the stage-specific setup the
+            # legacy ladder did inside this try (coordinate beads init); the
+            # handler dispatch runs the agent (or preflight script) and may
+            # short-circuit the pass (preflight --skip-preflight).
             try:
-                # Ensure beads is initialized before coordinate stage
-                if current_stage == Stage.COORDINATE:
-                    _ensure_beads_initialized()
-
-                if current_stage == Stage.PREFLIGHT and skip_preflight:
-                    _log("PREFLIGHT skipped (--skip-preflight)", "warn")
-                    stage_completed = datetime.now(timezone.utc).isoformat()
-                    _elapsed_ms = int((time.time() - t0) * 1000)
-                    complete_iteration(
-                        status, current_stage.value,
-                        status="completed",
-                        completed_at=stage_completed,
-                    )
-                    update_stage(
-                        status, current_stage.value,
-                        status="completed",
-                        skipped=True,
-                        completed_at=stage_completed,
-                    )
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, PREFLIGHT_SKIPPED, preflight_skipped_payload(
-                            reason="--skip-preflight",
-                        ))
-                        _emit_stage_completed_and_gate(
-                            ctx, current_stage.value, iter_num,
-                            {"duration_ms": _elapsed_ms, "cost_usd": 0.0,
-                             "turns": 0, "outcome": "skipped"},
-                        )
+                _handler.pre_dispatch(rc)
+                _short = _handler.dispatch(rc)
+                if _short is not None:
+                    # Stage finalized itself during dispatch — advance without
+                    # the shared completion bookkeeping (and, matching the
+                    # legacy continue, without the bottom-of-loop persist).
                     stage_idx += 1
                     continue
-                elif current_stage == Stage.PREFLIGHT:
-                    result = run_preflight(context, settings_path, iteration=iter_num)
-                    raw_envelope = {"type": "preflight", "checks": result.get("checks", [])}
-                else:
-                    # Re-check shutdown flag before spawning a subprocess.
-                    # The first check (above) runs before context building;
-                    # a signal arriving during that ~160-line gap would set the
-                    # flag but miss the earlier guard.  Without this second
-                    # check the new subprocess starts, hangs, and nothing
-                    # kills it (terminate_current already fired as a no-op).
-                    if _shutdown_requested:
-                        raise InterruptedError("Pipeline shutdown requested before stage execution")
-                    if current_stage == Stage.PR and _pr_baseline_head is None:
-                        _pr_baseline_head = get_current_git_head()
-                    result, raw_envelope = run_stage(
-                        current_stage, context, settings_path,
-                        msize=msize, iteration=iter_num,
-                        prompt_override=rendered_prompt,
-                        agent_override=_agent_override,
-                        ctx=ctx,
-                        env_overrides=_effort_env_overrides,
-                        graphify_out=_graphify_out,
-                        crg_data_dir=_crg_data_dir,
-                        bead_id=_assigned_bead,
-                    )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="interrupted",
                     completed_at=stage_completed,
                 )
                 update_stage(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="interrupted",
                     completed_at=stage_completed,
                 )
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
-                raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
+                raise PipelineInterrupted(f"Pipeline interrupted during {stage_name}", stop_reason="signal")
             except Exception as e:
                 # Treat as interruption when EITHER the in-process signal
                 # handler has run (sets _shutdown_requested) OR the agent
@@ -3472,30 +3565,30 @@ def run_pipeline(
                 # whose handler hasn't yet been delivered to Python).
                 if _shutdown_requested or _is_signal_kill_exception(e):
                     stage_completed = datetime.now(timezone.utc).isoformat()
-                    complete_iteration(status, current_stage.value, status="interrupted", completed_at=stage_completed)
-                    update_stage(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    complete_iteration(status, stage_name, status="interrupted", completed_at=stage_completed)
+                    update_stage(status, stage_name, status="interrupted", completed_at=stage_completed)
                     save_status(status, actual_status_path)
                     if ctx:
                         emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
-                            stage=current_stage.value, iteration=iter_num,
+                            stage=stage_name, iteration=iter_num,
                             elapsed_ms=int((time.time() - t0) * 1000),
                         ))
-                    raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
+                    raise PipelineInterrupted(f"Pipeline interrupted during {stage_name}", stop_reason="signal")
                 # Telemetry: when the failure carries a subprocess
                 # returncode, surface it so future flakes give us data
                 # instead of speculation.
                 _rc = getattr(e, "returncode", None)
                 _rc_suffix = f" (returncode={_rc})" if _rc is not None else ""
-                _log(f"Stage {current_stage.value} failed: {e}{_rc_suffix}", "warn")
+                _log(f"Stage {stage_name} failed: {e}{_rc_suffix}", "warn")
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="error",
                     completed_at=stage_completed,
                     error=str(e),
                 )
                 update_stage(
-                    status, current_stage.value,
+                    status, stage_name,
                     status="error",
                     completed_at=stage_completed,
                     error=str(e),
@@ -3503,7 +3596,7 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 if ctx:
                     emit_event(ctx, STAGE_FAILED, stage_failed_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         error=str(e),
                         error_type=type(e).__name__,
@@ -3516,15 +3609,15 @@ def run_pipeline(
                 except Exception:
                     _cb_config = {}
 
-                if _cb_config.get("enabled", False) and current_stage != Stage.PREFLIGHT:
+                if _cb_config.get("enabled", False) and _handler.is_agent_stage:
                     _failure_history = get_circuit_breaker_state(status).get("failure_history", [])
                     classification = classify_error(
-                        str(e), current_stage.value, _failure_history, settings_path
+                        str(e), stage_name, _failure_history, settings_path
                     )
-                    record_failure(status, current_stage.value, str(e), classification)
+                    record_failure(status, stage_name, str(e), classification)
                     if ctx:
                         emit_event(ctx, CB_FAILURE_RECORDED, cb_failure_recorded_payload(
-                            stage=current_stage.value,
+                            stage=stage_name,
                             error=str(e),
                             category=classification.get("category", "unknown"),
                             retriable=classification.get("retriable", False),
@@ -3562,7 +3655,7 @@ def run_pipeline(
                             _log(f"Transient error — retrying in {_delay}s", "warn")
                             if ctx:
                                 emit_event(ctx, CB_RETRY, cb_retry_payload(
-                                    stage=current_stage.value,
+                                    stage=stage_name,
                                     attempt=_retry_attempt + 1,
                                     delay_seconds=_delay,
                                     consecutive_failures=get_circuit_breaker_state(status)["consecutive_failures"],
@@ -3580,10 +3673,11 @@ def run_pipeline(
                 record_success(status)
                 if ctx and _prev_consecutive > 0:
                     emit_event(ctx, CB_RESET, cb_reset_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         previous_consecutive_failures=_prev_consecutive,
                     ))
 
+            result, raw_envelope = rc.result, rc.raw_envelope
             elapsed = time.time() - t0
             _log(f"{stage_label}{iter_label} completed ({_format_duration(elapsed)})", "ok")
 
@@ -3604,7 +3698,7 @@ def run_pipeline(
                 )
 
             # Save full envelope for resume/debugging (per-iteration)
-            _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
+            _save_stage_output(stage_name, raw_envelope, logs_dir, iteration=iter_num)
 
             # Emit cost events after token extraction
             if ctx and isinstance(raw_envelope, dict):
@@ -3613,7 +3707,7 @@ def run_pipeline(
                 _stage_output = usage.get("output_tokens", 0)
                 if _stage_cost or _stage_input or _stage_output:
                     emit_event(ctx, COST_STAGE_TOTAL, cost_stage_total_payload(
-                        stage=current_stage.value,
+                        stage=stage_name,
                         iteration=iter_num,
                         cost_usd=_stage_cost,
                         input_tokens=_stage_input,
@@ -3629,7 +3723,7 @@ def run_pipeline(
                 _prev_costs = sum(
                     (v.get("cost_usd") or 0)
                     for k, v in status.get("stages", {}).items()
-                    if k != current_stage.value
+                    if k != stage_name
                 )
                 _running_cost = _prev_costs + _stage_cost
                 _prev_input = sum(
@@ -3678,7 +3772,7 @@ def run_pipeline(
                 _iter_cost = usage.get("total_cost_usd", raw_envelope.get("total_cost_usd"))
                 if _iter_cost:
                     iter_extras["cost_usd"] = _iter_cost
-                if current_stage != Stage.PREFLIGHT:
+                if _handler.is_agent_stage:
                     iter_extras["graphify_invocations"] = raw_envelope.get(
                         "graphify_invocations", 0
                     )
@@ -3693,7 +3787,7 @@ def run_pipeline(
                 _ctx_pct = usage.get("context_final_pct")
                 if _ctx_pct is not None:
                     iter_extras["context_final_pct"] = _ctx_pct
-            iter_extras["prompt"] = rendered_prompt
+            iter_extras["prompt"] = rc.rendered_prompt
             if isinstance(result, dict):
                 iter_extras["output"] = result
 
@@ -3708,7 +3802,7 @@ def run_pipeline(
 
             # Compute stage-level token aggregate across all iterations
             all_iter_usages = []
-            for it in status.get("stages", {}).get(current_stage.value, {}).get("iterations", []):
+            for it in status.get("stages", {}).get(stage_name, {}).get("iterations", []):
                 it_usage = it.get("token_usage")
                 if it_usage:
                     all_iter_usages.append(it_usage)
@@ -3717,975 +3811,44 @@ def run_pipeline(
             if all_iter_usages:
                 stage_extras["token_usage"] = aggregate_token_usage(all_iter_usages)
 
-            # Handle PREFLIGHT completion
-            if current_stage == Stage.PREFLIGHT:
-                preflight_skipped = result.get("status") == "skipped"
-                iter_extras["outcome"] = "skipped" if preflight_skipped else "success"
-                # No AI call — zero out session/api so timing bar shows this as pipeline overhead
-                iter_extras.setdefault("duration_session_ms", 0)
-                iter_extras.setdefault("duration_api_ms", 0)
-                complete_iteration(status, current_stage.value, **iter_extras)
-                _pf_stage_extras = {**stage_extras, "skipped": preflight_skipped}
-                # Run-level graphify enablement (single source of truth for the
-                # UI: drives "(disabled)" vs an integer invocation count).
-                try:
-                    _gfx_cfg = effective_graphify_config(
-                        load_global_settings(), load_settings(settings_path)
-                    )
-                    status["graphify_enabled"] = bool(_gfx_cfg.enabled)
-                except Exception:
-                    status["graphify_enabled"] = False
-                if result.get("graphify_status"):
-                    status["graphify_status"] = result["graphify_status"]
-                    _pf_stage_extras["graphify_status"] = result["graphify_status"]
-                for _gfx_key in ("graphify_outcome", "graphify_mode", "graphify_reason"):
-                    if result.get(_gfx_key):
-                        status[_gfx_key] = result[_gfx_key]
-                        _pf_stage_extras[_gfx_key] = result[_gfx_key]
-                if result.get("graphify_report_path"):
-                    status["graphify_report_path"] = result["graphify_report_path"]
-                    _pf_stage_extras["graphify_report_path"] = result["graphify_report_path"]
-                    _rp = result["graphify_report_path"]
-                    if os.path.isfile(_rp):
-                        # Agents query the graph on demand via GRAPHIFY_OUT; the
-                        # prompt only carries a per-run availability note.
-                        _graphify_out = os.path.dirname(_rp)
-                        prompt_builder.set_graphify_available(True)
-                        _log(
-                            "Graphify: ready — agents query the cached graph via "
-                            f"GRAPHIFY_OUT={_graphify_out}"
-                        )
-                if result.get("crg_status"):
-                    status["crg_status"] = result["crg_status"]
-                    _pf_stage_extras["crg_status"] = result["crg_status"]
-                if result.get("crg_outcome"):
-                    status["crg_outcome"] = result["crg_outcome"]
-                    _pf_stage_extras["crg_outcome"] = result["crg_outcome"]
-                if result.get("crg_reason"):
-                    status["crg_reason"] = result["crg_reason"]
-                    _pf_stage_extras["crg_reason"] = result["crg_reason"]
-                if result.get("crg_data_dir"):
-                    _crg_dd = result["crg_data_dir"]
-                    if os.path.isdir(_crg_dd):
-                        _crg_data_dir = _crg_dd
-                        status["crg_data_dir"] = _crg_dd
-                        _pf_stage_extras["crg_data_dir"] = _crg_dd
-                        prompt_builder.set_crg_available(True)
-                        _log(f"CRG: ready — agents get MCP tools via crg_data_dir={_crg_data_dir}")
-                try:
-                    _crg_cfg = effective_crg_config(
-                        load_global_settings(), load_settings(settings_path)
-                    )
-                    status["crg_enabled"] = bool(_crg_cfg.enabled)
-                except Exception:
-                    status["crg_enabled"] = False
-                update_stage(status, current_stage.value, **_pf_stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    if preflight_skipped:
-                        emit_event(ctx, PREFLIGHT_SKIPPED, preflight_skipped_payload(
-                            reason=result.get("summary", "preflight skipped"),
-                        ))
-                    else:
-                        _pf_checks = result.get("checks", [])
-                        _pf_all_passed = all(
-                            c.get("status") in ("pass", "warn") for c in _pf_checks
-                        ) if _pf_checks else True
-                        emit_event(ctx, PREFLIGHT_COMPLETED, preflight_completed_payload(
-                            checks=_pf_checks,
-                            all_passed=_pf_all_passed,
-                        ))
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
+            # Expose completion state to the stage handler (W-071)
+            rc.result = result
+            rc.raw_envelope = raw_envelope
+            rc.usage = usage
+            rc.iter_extras = iter_extras
+            rc.stage_extras = stage_extras
 
-            # Milestone gate after PLAN
-            elif current_stage == Stage.PLAN:
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
+            # Declared output publication (W-072): extract each output the
+            # flow declares for this stage from the validated structured
+            # result and publish it as stages.<name>.<output> — BEFORE the
+            # handler's bespoke completion, so jump paths that persist the
+            # prompt context carry the namespaced values too.
+            if (
+                _handler.is_agent_stage
+                and rc.flow_stage is not None
+                and rc.flow_stage.outputs
+                and isinstance(result, dict)
+            ):
+                publish_declared_outputs(prompt_builder, rc.flow_stage, result)
 
-                # Resilience guard: the planner is expected to Write its plan to
-                # status["plan_file"], but agents occasionally return a complete
-                # structured plan (+ prose) while skipping the file Write. The
-                # stage still "succeeds" (valid structured output), yet the plan
-                # file never lands on disk — so the coordinator has nothing to
-                # read and the UI "View plan" button 404s ("No plan file found").
-                # Materialize the structured output to the plan file so the run
-                # owns a real artifact. No-op when the planner wrote the file.
-                _plan_file = status.get("plan_file")
-                if _plan_file and isinstance(result, dict) and not os.path.exists(_plan_file):
-                    try:
-                        _pdir = os.path.dirname(_plan_file)
-                        if _pdir:
-                            os.makedirs(_pdir, exist_ok=True)
-                        with open(_plan_file, "w", encoding="utf-8") as _pf:
-                            _pf.write(_materialize_plan_markdown(result, work_request))
-                        iter_extras["plan_materialized"] = True
-                        _log(
-                            "Planner produced no plan file; materialized "
-                            f"{_plan_file} from structured output",
-                            "warn",
-                        )
-                    except OSError as _e:
-                        _log(f"Failed to materialize plan file {_plan_file}: {_e}", "err")
+            # Stage-specific completion (W-071): the handler performs its
+            # bespoke bookkeeping (outcome mapping, milestones, loop-backs)
+            # and returns a StageDecision the loop applies.
+            _decision = _handler.post_dispatch(rc)
 
-                # Plan approval is a webhook-controlled gate, not a planner
-                # self-assessment. Default to approved; the webhook (when
-                # plan_approval is enabled and a subscriber is connected) can
-                # override below via "reject".
-                approved = True
-                iter_extras["outcome"] = "success" if approved else "rejected"
-                complete_iteration(status, current_stage.value, **iter_extras)
-                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                update_stage(status, current_stage.value, **stage_extras)
-                set_milestone(status, "plan_approved", approved)
-                _gate_action = _emit_milestone_and_gate(
-                    ctx, "plan_approved", approved, Stage.PLAN.value,
-                )
-                if _gate_action == "approve":
-                    approved = True
-                    set_milestone(status, "plan_approved", True)
-                    iter_extras["outcome"] = "success"
-                elif _gate_action == "reject":
-                    approved = False
-                    set_milestone(status, "plan_approved", False)
-                    iter_extras["outcome"] = "rejected"
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                if not approved:
-                    _log("PLAN not approved — stopping", "err")
-                    raise PipelineError("Plan not approved")
-                _log("PLAN approved", "ok")
-                _emit_guide_conflicts(ctx, "plan", result)
-                # Thread plan outputs into PromptBuilder for downstream stages
-                prompt_builder.update_context("plan_approach", result.get("approach", ""))
-                prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
-                # Read plan file content now so plan_review has it immediately
-                # (avoids race where plan_review starts before the file is flushed)
-                _plan_path = status.get("plan_file")
-                if _plan_path and os.path.exists(_plan_path):
-                    with open(_plan_path, encoding="utf-8") as _pf:
-                        _plan_text = _pf.read().strip()
-                    if _plan_text:
-                        prompt_builder.update_context("plan_file_content", _plan_text)
-
-            # Handle plan review results
-            elif current_stage == Stage.PLAN_REVIEW:
-                outcome = result.get("outcome", "revise")  # fail-closed default
-                issues = result.get("issues", [])
-                critical_issues = [i for i in issues if i.get("severity") in ("critical", "major")]
-
-                # Audit-trail integrity: normalize the agent's self-reported
-                # outcome and per-issue resolution to match what was physically
-                # possible, BEFORE recording the iteration / emitting events.
-                #
-                # - Edit mode (`review_and_edit`): the editor was given a fresh
-                #   plan-(N+1).md copy and may write to it. We determine the
-                #   honest outcome from the actual file content (W-061
-                #   reconciliation), not the editor's verdict — the model has
-                #   been observed to return "revise" without editing or to
-                #   claim resolution=edited without writing. When unchanged,
-                #   downgrade outcome → approve and resolution=edited →
-                #   deferred, and collapse the speculative copy so the
-                #   numbered sequence stays meaningful in the W-061 viewer.
-                # - Review mode (or any non-edit mode): plan_reviewer is in
-                #   read_only_agents and the guard blocks Write/Edit, so the
-                #   reviewer can NEVER edit the plan. Any "approve_with_edits"
-                #   or per-issue resolution value is a contract violation by
-                #   the agent. Strip them so the audit trail is honest.
-                _plan_actually_edited = False
-                if _pr_mode == "review_and_edit":
-                    _pre = status.get("plan_pre_edit_file")
-                    _post = status.get("plan_file")
-                    if _pre and _post and os.path.isfile(_pre) and os.path.isfile(_post):
-                        try:
-                            with open(_pre, "rb") as _a, open(_post, "rb") as _b:
-                                _plan_actually_edited = _a.read() != _b.read()
-                        except OSError:
-                            _plan_actually_edited = False
-                    if _plan_actually_edited:
-                        outcome = "approve_with_edits"
-                    else:
-                        outcome = "approve"
-                        if isinstance(result, dict):
-                            for _iss in result.get("issues") or []:
-                                if isinstance(_iss, dict) and _iss.get("resolution") == "edited":
-                                    _iss["resolution"] = "deferred"
-                        if (run_dir and _pre and _post and _post != _pre
-                                and os.path.isfile(_post)):
-                            try:
-                                os.remove(_post)
-                            except OSError:
-                                pass
-                            status["plan_file"] = _pre
-                            os.environ["WORCA_PLAN_FILE"] = _pre
-                            prompt_builder.update_context("plan_file", _pre)
-                else:
-                    # Review mode: read-only reviewer cannot edit, so any
-                    # "approve_with_edits" or per-issue resolution claim is
-                    # categorically impossible. Downgrade outcome and strip
-                    # the resolution field — the schema permits these values
-                    # because it is shared with edit mode, but in review mode
-                    # they are fabrications. "revise" / "approve" outcomes
-                    # flow through unchanged.
-                    if outcome == "approve_with_edits":
-                        outcome = "approve"
-                    if isinstance(result, dict):
-                        for _iss in result.get("issues") or []:
-                            if isinstance(_iss, dict):
-                                _iss.pop("resolution", None)
-
-                iter_extras["outcome"] = outcome
-                complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-
-                # Revise gate: outcome == "revise" AND (critical issues present OR issues list empty)
-                # Minor/suggestion-only issues are treated as approve.
-                # Empty issues list with revise outcome is fail-closed — still revise.
-                should_revise = (outcome == "revise") and bool(critical_issues or not issues)
-
-                if _pr_mode == "review_and_edit":
-                    # Edit mode: the plan editor rewrote the next numbered
-                    # revision (plan-(N+1).md) in place — or produced a clean
-                    # approve with no edits (the speculative copy was collapsed
-                    # above). Either way, no loopback is needed.
-                    set_milestone(status, "plan_approved", True)
-                    # The pre-edit plan-N.md is the retained original (W-061).
-                    _orig_path = status.get("plan_pre_edit_file") or None
-                    # Clear edit markers so a later restart_planning re-entry
-                    # mints a fresh revision instead of reusing this one.
-                    status.pop("plan_edit_target", None)
-                    status.pop("plan_pre_edit_file", None)
-                    prompt_builder.pop_context("plan_review_issues")
-                    prompt_builder.pop_context("plan_revision_mode")
-                    prompt_builder.pop_context("plan_review_history")
-                    if prompt_context_path:
-                        prompt_builder.save_context(prompt_context_path)
-                    save_status(status, actual_status_path)
-                    _log("Plan approved by editor (no edits needed)"
-                         if outcome == "approve"
-                         else "Plan approved with edits", "ok")
-                    # PLAN_EDITED only fires when the plan was actually rewritten —
-                    # claiming edits we didn't make would inflate the audit trail.
-                    if ctx and _plan_actually_edited:
-                        _severity_counts = {"critical": 0, "major": 0, "minor": 0, "suggestion": 0}
-                        for _iss in issues:
-                            _sev = _iss.get("severity", "")
-                            if _sev in _severity_counts:
-                                _severity_counts[_sev] += 1
-                        emit_event(ctx, PLAN_EDITED, plan_edited_payload(
-                            stage=current_stage.value,
-                            mode=_pr_mode,
-                            mode_reason=_pr_mode_reason,
-                            issue_counts=_severity_counts,
-                            original_plan_path=_orig_path,
-                        ))
-
-                elif should_revise:
-                    # Thread review feedback — only critical/major issues to limit context growth
-                    prev_history = list(prompt_builder.get_context("plan_review_history") or [])
-                    prev_history.append({"attempt": len(prev_history) + 1, "issues": list(critical_issues)})
-                    # Cap history to most recent 50 entries to bound context growth
-                    if len(prev_history) > 50:
-                        prev_history = prev_history[-50:]
-                    prompt_builder.update_context("plan_review_history", prev_history)
-                    prompt_builder.update_context("plan_review_issues", list(critical_issues))
-                    prompt_builder.update_context("plan_revision_mode", True)
-
-                    # Update ALL counters before saving — single save to avoid inconsistent state
-                    loop_counters["plan_review"] = loop_counters.get("plan_review", 0) + 1
-                    loop_counters[f"{Stage.PLAN_REVIEW.value}_iteration"] = (
-                        loop_counters.get(f"{Stage.PLAN_REVIEW.value}_iteration", 0) + 1
-                    )
-                    status["loop_counters"] = dict(loop_counters)
-
-                    if check_loop_limit("plan_review", loop_counters["plan_review"],
-                                        settings_path, mloops=mloops):
-                        if ctx:
-                            _emit_loop_triggered_and_gate(
-                                ctx, "plan_review", loop_counters["plan_review"],
-                                Stage.PLAN_REVIEW.value, Stage.PLAN.value, "plan_review_revise",
-                            )
-
-                        # --- Atomic loop-back sequence ---
-                        # 1. Reset PLAN stage status and clear plan_approved milestone
-                        update_stage(status, Stage.PLAN.value, status="pending", skipped=False)
-                        status.get("milestones", {}).pop("plan_approved", None)
-                        # 1a. Append-only plan revision (W-061): preserve the current
-                        # plan as the revision *source* (threaded into plan_file_content
-                        # so the revision Planner reads it regardless of the re-pointed
-                        # path), then mint the next numbered plan file as the *target*
-                        # and re-point every consumer. The prior plan-00N.md is left
-                        # intact as audit history; the Planner is restricted to
-                        # WORCA_PLAN_FILE, so older revisions are immutable.
-                        if run_dir:
-                            _cur_plan_path = status.get("plan_file")
-                            _cur_plan_text = ""
-                            if _cur_plan_path and os.path.exists(_cur_plan_path):
-                                with open(_cur_plan_path, encoding="utf-8") as _cpf:
-                                    _cur_plan_text = _cpf.read().strip()
-                            if _cur_plan_text:
-                                prompt_builder.update_context("plan_file_content", _cur_plan_text)
-                            _rev_plan_path = _next_plan_path(run_dir)
-                            status["plan_file"] = _rev_plan_path
-                            os.environ["WORCA_PLAN_FILE"] = _rev_plan_path
-                            prompt_builder.update_context("plan_file", _rev_plan_path)
-                            _log(f"Plan revision -> {_rev_plan_path} (revising {_cur_plan_path})", "ok")
-                        # 2. Persist context + status before any in-memory transitions
-                        if prompt_context_path:
-                            prompt_builder.save_context(prompt_context_path)
-                        save_status(status, actual_status_path)
-                        # 2a. Re-render agent templates so planner.md stays consistent
-                        # with the current plan_file path (defensive: prevents stale
-                        # template instructions if plan_file ever changes mid-revision).
-                        if run_dir:
-                            _lb_settings = load_settings(settings_path)
-                            _lb_worca = _lb_settings.get("worca", {})
-                            _lb_overrides_dir = _lb_worca.get(
-                                "agent_overrides_dir", ".claude/agents"
-                            )
-                            _lb_template_agents_dir = _lb_worca.get("_template_agents_dir")
-                            _render_agent_templates(run_dir, {
-                                "plan_file": status["plan_file"],
-                                "run_id": status.get("run_id", ""),
-                                "branch": branch_name,
-                                "title": work_request.title,
-                            }, overrides_dir=_lb_overrides_dir,
-                               template_agents_dir=_lb_template_agents_dir)
-                        # 3. In-memory transitions (context keys drive behavior on crash/resume)
-                        _next_trigger[Stage.PLAN.value] = "plan_review_revise"
-                        stage_idx = stage_order.index(Stage.PLAN)
-                        continue  # Loop back to PLAN
-                    else:
-                        if critical_issues:
-                            prompt_builder.update_context("unresolved_plan_issues", list(critical_issues))
-                        prompt_builder.pop_context("plan_review_issues")
-                        prompt_builder.pop_context("plan_revision_mode")
-                        prompt_builder.pop_context("plan_review_history")
-                        if prompt_context_path:
-                            prompt_builder.save_context(prompt_context_path)
-                        save_status(status, actual_status_path)
-                        if ctx:
-                            emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                loop_key="plan_review",
-                                iteration=loop_counters["plan_review"],
-                                limit=_get_loop_limit("plan_review", settings_path, mloops),
-                            ))
-                        n_carried = len(critical_issues) if critical_issues else 0
-                        _log(f"Plan review loop exhausted — {n_carried} unresolved issues carried to COORDINATE", "warn")
-                else:
-                    # Approve path — pop cross-context keys to prevent leaking
-                    prompt_builder.pop_context("plan_review_issues")
-                    prompt_builder.pop_context("plan_revision_mode")
-                    prompt_builder.pop_context("plan_review_history")
-                    if prompt_context_path:
-                        prompt_builder.save_context(prompt_context_path)
-
-                    if outcome == "revise" and not critical_issues and issues:
-                        _log(f"Plan approved with {len(issues)} minor issues (logged)", "ok")
-                    elif issues:
-                        _log(f"Plan approved with {len(issues)} minor issues (logged)", "ok")
-                    else:
-                        _log("Plan approved by reviewer", "ok")
-
-            # Handle coordinate results
-            elif current_stage == Stage.COORDINATE:
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
-
-                iter_extras["outcome"] = "success"
-                complete_iteration(status, current_stage.value, **iter_extras)
-                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                # Thread coordinate outputs into PromptBuilder
-                beads_ids = result.get("beads_ids", [])
-                created_bead_count = len(beads_ids)
-                _warn_if_cap_deviation(
-                    ctx_dict.get("max_beads", 0),
-                    created_bead_count,
-                    bool(prompt_builder.get_context("review_comments")),
-                )
-                prompt_builder.update_context("beads_ids", beads_ids)
-                prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
-                prompt_builder.pop_context("unresolved_plan_issues")
-                # Link beads to this run via label
-                if beads_ids:
-                    run_label = f"run:{status['run_id']}"
-                    if bd_label_add(beads_ids, run_label):
-                        _log(f"Labeled {len(beads_ids)} beads with {run_label}", "ok")
-                        if ctx:
-                            emit_event(ctx, BEAD_LABELED, bead_labeled_payload(
-                                bead_ids=beads_ids,
-                                label=run_label,
-                            ))
-                    else:
-                        _log(f"Failed to label beads with {run_label}", "warn")
-                # Effort label backfill from structured output
-                _effort_backfilled = set()
-                effort_map = result.get("effort", {})
-                if beads_ids and effort_map:
-                    beads_set = set(beads_ids)
-                    for bid, level in effort_map.items():
-                        if bid not in beads_set:
-                            _log(f"Effort backfill: skip unknown bead {bid}", "warn")
-                            continue
-                        if level not in EFFORT_LEVELS:
-                            _log(f"Effort backfill: skip invalid level '{level}' for {bid}", "warn")
-                            continue
-                        if bd_get_effort_label(bid):
-                            continue
-                        if bd_label_add([bid], f"worca-effort:{level}"):
-                            _effort_backfilled.add(bid)
-                    if _effort_backfilled:
-                        _log(f"Effort backfill: labeled {len(_effort_backfilled)} bead(s) from structured output", "ok")
-                # Best-effort check: warn about beads missing worca-effort:* labels
-                if beads_ids:
-                    _unlabeled = [
-                        bid for bid in beads_ids
-                        if bid not in _effort_backfilled and not bd_get_effort_label(bid)
-                    ]
-                    if _unlabeled:
-                        _log(f"{len(_unlabeled)} bead(s) missing worca-effort label: {', '.join(_unlabeled)}", "warn")
-
-            # Handle implement results — batch-then-test flow
-            elif current_stage == Stage.IMPLEMENT:
-                iter_extras["outcome"] = "success"
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
-                complete_iteration(status, current_stage.value, **iter_extras)
-                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-
-                # Thread implement outputs into PromptBuilder
-                new_files = result.get("files_changed", [])
-                new_tests = result.get("tests_added", [])
-                prompt_builder.update_context("files_changed", new_files)
-                prompt_builder.update_context("tests_added", new_tests)
-
-                impl_trigger = trigger  # trigger was popped earlier in the loop
-                _accumulate_design_note(prompt_builder, result, impl_trigger)
-                if impl_trigger in ("initial", "next_bead"):
-                    # Phase 1: close the bead we just implemented
-                    claimed_bead = prompt_builder.get_context("assigned_bead_id")
-                    if claimed_bead:
-                        if bd_close(claimed_bead, reason="implemented"):
-                            _log(f"Closed bead {claimed_bead}", "ok")
-                            if ctx:
-                                emit_event(ctx, BEAD_COMPLETED, bead_completed_payload(
-                                    bead_id=claimed_bead,
-                                    reason="implemented",
-                                ))
-                        else:
-                            _log(f"Failed to close bead {claimed_bead}", "warn")
-                            if ctx:
-                                emit_event(ctx, BEAD_FAILED, bead_failed_payload(
-                                    bead_id=claimed_bead,
-                                    error="bd_close failed",
-                                ))
-                        # Record the bead as processed regardless of bd_close
-                        # outcome — implementation is the expensive step and
-                        # must not be retried on the same bead. Persisting here
-                        # (via save_context below) lets resume skip it too.
-                        _implemented = prompt_builder.get_context("implemented_bead_ids") or []
-                        if claimed_bead not in _implemented:
-                            _implemented.append(claimed_bead)
-                            prompt_builder.update_context("implemented_bead_ids", _implemented)
-
-                    # Accumulate files across all beads
-                    all_files = prompt_builder.get_context("all_files_changed") or []
-                    all_files.extend(new_files)
-                    prompt_builder.update_context("all_files_changed", all_files)
-                    all_tests = prompt_builder.get_context("all_tests_added") or []
-                    all_tests.extend(new_tests)
-                    prompt_builder.update_context("all_tests_added", all_tests)
-
-                    loop_counters["bead_iteration"] = loop_counters.get("bead_iteration", 0) + 1
-                    status["loop_counters"] = dict(loop_counters)
-
-                    # Check for more beads (scoped to this run)
-                    # NOTE: Do NOT mark IMPLEMENT "completed" yet — if the pipeline
-                    # is stopped between bead iterations, resume must re-enter
-                    # IMPLEMENT to process remaining beads.
-                    next_bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
-                    # Drain when bd_ready re-surfaces an already-implemented
-                    # bead. Happens when the bead store doesn't reflect our
-                    # closure yet (slow daemon, stateless test stub, or a
-                    # bd_close failure). Re-implementing is never the right
-                    # answer — advance instead.
-                    if next_bead:
-                        _impl_set = set(prompt_builder.get_context("implemented_bead_ids") or [])
-                        if next_bead["id"] in _impl_set:
-                            _log(
-                                f"bd ready returned already-implemented bead {next_bead['id']} "
-                                f"— treating bead queue as drained",
-                                "warn",
-                            )
-                            next_bead = None
-                    if next_bead and Stage.IMPLEMENT in stage_order:
-                        safety_cap = max(created_bead_count, len(run_bead_ids or [])) + 3
-                        if loop_counters["bead_iteration"] < safety_cap:
-                            # Keep stage in_progress between beads so resume works
-                            if prompt_context_path:
-                                prompt_builder.save_context(prompt_context_path)
-                            save_status(status, actual_status_path)
-                            _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
-                            _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
-                            stage_idx = stage_order.index(Stage.IMPLEMENT)
-                            if ctx:
-                                emit_event(ctx, BEAD_NEXT, bead_next_payload(
-                                    next_bead_id=next_bead["id"],
-                                    bead_iteration=loop_counters["bead_iteration"],
-                                    max_beads=created_bead_count,
-                                ))
-                            continue
-                        else:
-                            _log(f"Safety cap reached ({safety_cap}) but bd ready still has "
-                                 f"run-scoped beads — halting to prevent partial implementation", "err")
-                            raise PipelineInterrupted(
-                                f"implement_incomplete: bead {next_bead['id']} and possibly more still unstarted",
-                                stop_reason="implement_incomplete",
-                            )
-
-                    # All beads done — NOW mark IMPLEMENT completed
-                    prompt_builder.update_context("files_changed", list(set(all_files)))
-                    prompt_builder.update_context("tests_added", list(set(all_tests)))
-                    _log("All beads implemented — advancing to TEST", "ok")
-                # Phase 3 (fix mode): just fall through to TEST with current files
-
-                # Mark IMPLEMENT completed only when all beads are done (or fix mode)
-                update_stage(status, current_stage.value, **stage_extras)
-
-                if _crg_data_dir and _crg_cfg and _crg_cfg.update_on_post_implement:
-                    _crg_ok = _crg_post_implement_refresh(_crg_data_dir, project_root, timeout=30)
-                    if not _crg_ok:
-                        iter_extras["crg_refresh_failed"] = True
-                        _log("CRG post-implement refresh failed or timed out — tester proceeds with stale graph", "warn")
-
-                save_status(status, actual_status_path)
-                if ctx:
-                    _bead_kwargs = {}
-                    if created_bead_count:
-                        _bead_kwargs["beads_done"] = loop_counters.get("bead_iteration", 0)
-                        _bead_kwargs["beads_total"] = created_bead_count
-                    _emit_stage_completed_and_gate(
-                        ctx, current_stage.value, iter_num, iter_extras,
-                        **_bead_kwargs,
-                    )
-
-            # Handle test results — simplified (flat counter, no per-bead logic)
-            elif current_stage == Stage.TEST:
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
-
-                passed = result.get("passed", False)
-                _emit_guide_conflicts(ctx, "test", result)
-                # Thread test outputs into PromptBuilder
-                prompt_builder.update_context("test_passed", passed)
-                prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
-                prompt_builder.update_context("proof_artifacts", result.get("proof_artifacts", []))
-                if not passed:
-                    new_failures = result.get("failures", [])
-                    # Accumulate test failure history
-                    prev_history = prompt_builder.get_context("test_failure_history") or []
-                    prev_history.append({"attempt": len(prev_history) + 1, "failures": new_failures})
-                    prompt_builder.update_context("test_failure_history", prev_history)
-                    prompt_builder.update_context("test_failures", new_failures)
-                    prompt_builder.update_context("review_issues", None)
-                    prompt_builder.update_context("review_history", None)
-                    iter_extras["outcome"] = "test_failure"
-                    complete_iteration(status, current_stage.value, **iter_extras)
-                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                    update_stage(status, current_stage.value, **stage_extras)
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, TEST_SUITE_FAILED, test_suite_failed_payload(
-                            iteration=iter_num,
-                            failure_count=len(new_failures),
-                            failures=new_failures,
-                        ))
-                        _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                    if Stage.IMPLEMENT not in stage_order:
-                        _log("Tests failed but IMPLEMENT stage is disabled — treating as pass", "warn")
-                    else:
-                        # Flat test-fix counter (not per-bead)
-                        loop_counters["implement_test"] = loop_counters.get("implement_test", 0) + 1
-                        status["loop_counters"] = dict(loop_counters)
-                        bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
-                        prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                        _log(f"Tests failed — looping back to IMPLEMENT fix mode (attempt {loop_counters['implement_test']})", "warn")
-                        if check_loop_limit("implement_test", loop_counters["implement_test"], settings_path, mloops=mloops):
-                            if ctx:
-                                emit_event(ctx, TEST_FIX_ATTEMPT, test_fix_attempt_payload(
-                                    attempt=loop_counters["implement_test"],
-                                    limit=_get_loop_limit("implement_test", settings_path, mloops),
-                                    failures_summary=str(new_failures[:3]),
-                                ))
-                                _emit_loop_triggered_and_gate(
-                                    ctx, "implement_test", loop_counters["implement_test"],
-                                    Stage.TEST.value, Stage.IMPLEMENT.value, "test_failure",
-                                )
-                            if prompt_context_path:
-                                prompt_builder.save_context(prompt_context_path)
-                            save_status(status, actual_status_path)
-                            _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
-                            stage_idx = stage_order.index(Stage.IMPLEMENT)
-                            continue
-                        else:
-                            _log(f"Test fix limit exhausted after {loop_counters['implement_test']} attempts — finishing", "warn")
-                            if ctx:
-                                emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                    loop_key="implement_test",
-                                    iteration=loop_counters["implement_test"],
-                                    limit=_get_loop_limit("implement_test", settings_path, mloops),
-                                ))
-                else:
-                    iter_extras["outcome"] = "success"
-                    complete_iteration(status, current_stage.value, **iter_extras)
-                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                    update_stage(status, current_stage.value, **stage_extras)
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, TEST_SUITE_PASSED, test_suite_passed_payload(
-                            iteration=iter_num,
-                            coverage_pct=result.get("coverage_pct"),
-                            proof_artifacts=result.get("proof_artifacts"),
-                        ))
-                        _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                    _log("Tests passed", "ok")
-
-            # Handle review results — simplified (flat counter, no per-bead logic)
-            elif current_stage == Stage.REVIEW:
-                _aggregate_file_access_into_extras(
-                    iter_extras, settings_path, status, current_stage.value, iter_num,
-                    bead_id=_assigned_bead,
-                )
-
-                outcome = result.get("outcome", "approve")
-                _log(f"Review outcome: {outcome}")
-                _emit_guide_conflicts(ctx, "review", result)
-                # Persist observations across iterations (non-blocking, best-effort)
-                _persist_observations(status, loop_counters, result, prompt_builder, run_id)
-                next_stage, status = handle_pr_review(outcome, status)
-                _all_issues = result.get("issues", [])
-                _critical_count = sum(
-                    1 for i in _all_issues if i.get("severity") in ("critical", "major")
-                )
-                if ctx:
-                    emit_event(ctx, REVIEW_VERDICT, review_verdict_payload(
-                        outcome=outcome,
-                        issue_count=len(_all_issues),
-                        critical_count=_critical_count,
-                    ))
-                iter_extras["outcome"] = outcome
-                complete_iteration(status, current_stage.value, **iter_extras)
-                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                if next_stage is None:
-                    if outcome == "reject":
-                        _log("PR rejected — stopping", "err")
-                        raise PipelineError("PR rejected")
-                    _log("Review approved", "ok")
-
-                elif next_stage == Stage.IMPLEMENT:
-                    new_issues = result.get("issues", [])
-
-                    # Severity-gate: only loop back for critical/major issues
-                    critical_issues = [i for i in new_issues if i.get("severity") in ("critical", "major")]
-                    if not critical_issues:
-                        _log("Only minor/suggestion issues — treating as approve", "ok")
-                    else:
-                        # Accumulate review history
-                        prev_history = prompt_builder.get_context("review_history") or []
-                        prev_history.append({"attempt": len(prev_history) + 1, "issues": new_issues})
-                        prompt_builder.update_context("review_history", prev_history)
-                        prompt_builder.update_context("review_issues", critical_issues)
-                        prompt_builder.update_context("test_failures", None)
-                        prompt_builder.update_context("test_failure_history", None)
-
-                        if Stage.IMPLEMENT not in stage_order:
-                            _log("Changes requested but IMPLEMENT stage is disabled — skipping loop", "warn")
-                        else:
-                            # Flat review-fix counter (not per-bead)
-                            loop_counters["pr_changes"] = loop_counters.get("pr_changes", 0) + 1
-                            status["loop_counters"] = dict(loop_counters)
-                            bead_prompt_iter = prompt_builder.get_context("bead_prompt_iteration") or 0
-                            prompt_builder.update_context("bead_prompt_iteration", bead_prompt_iter + 1)
-                            _log(f"Changes requested — looping back to IMPLEMENT fix mode (attempt {loop_counters['pr_changes']})", "warn")
-                            if check_loop_limit("pr_changes", loop_counters["pr_changes"], settings_path, mloops=mloops):
-                                if ctx:
-                                    emit_event(ctx, REVIEW_FIX_ATTEMPT, review_fix_attempt_payload(
-                                        attempt=loop_counters["pr_changes"],
-                                        limit=_get_loop_limit("pr_changes", settings_path, mloops),
-                                        critical_issues=critical_issues,
-                                    ))
-                                    _emit_loop_triggered_and_gate(
-                                        ctx, "pr_changes", loop_counters["pr_changes"],
-                                        Stage.REVIEW.value, Stage.IMPLEMENT.value, "review_changes",
-                                    )
-                                if prompt_context_path:
-                                    prompt_builder.save_context(prompt_context_path)
-                                save_status(status, actual_status_path)
-                                _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
-                                stage_idx = stage_order.index(Stage.IMPLEMENT)
-                                continue
-                            else:
-                                _log(f"Review fix limit exhausted after {loop_counters['pr_changes']} attempts — finishing", "warn")
-                                if ctx:
-                                    emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                        loop_key="pr_changes",
-                                        iteration=loop_counters["pr_changes"],
-                                        limit=_get_loop_limit("pr_changes", settings_path, mloops),
-                                    ))
-
-                elif next_stage == Stage.PLAN:
-                    if Stage.PLAN not in stage_order:
-                        _log("Restart planning requested but PLAN stage is disabled — skipping loop", "warn")
-                    else:
-                        loop_key = "restart_planning"
-                        loop_counters[loop_key] = loop_counters.get(loop_key, 0) + 1
-                        status["loop_counters"] = dict(loop_counters)
-                        _log(f"Restart planning requested (iteration {loop_counters[loop_key]})", "warn")
-                        if not check_loop_limit(loop_key, loop_counters[loop_key], settings_path, mloops=mloops):
-                            if ctx:
-                                emit_event(ctx, LOOP_EXHAUSTED, loop_exhausted_payload(
-                                    loop_key=loop_key,
-                                    iteration=loop_counters[loop_key],
-                                    limit=_get_loop_limit(loop_key, settings_path, mloops),
-                                ))
-                            raise LoopExhaustedError(
-                                f"Loop {loop_key} exhausted after {loop_counters[loop_key]} iterations"
-                            )
-                        if ctx:
-                            _emit_loop_triggered_and_gate(
-                                ctx, loop_key, loop_counters[loop_key],
-                                Stage.REVIEW.value, Stage.PLAN.value, "restart_planning",
-                            )
-                        _next_trigger[Stage.PLAN.value] = "restart_planning"
-                        stage_idx = stage_order.index(Stage.PLAN)
-                        continue
-
-            # PR stage: approval gate + completion
-            elif current_stage == Stage.PR:
-                # Milestone semantics intentionally asymmetric across approval gates:
-                #   - plan_approval: default-true (opt-out). Already in production at this default;
-                #     flipping it would silently disable an existing gate on every upgraded project.
-                #   - pr_approval:   default-false (opt-in). New in W-049; default-true would hang
-                #     every autonomous run waiting for an approval event nobody sends.
-                _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
-                if _ms_cfg.get("pr_approval") is not True:
-                    pr_approved = True
-                else:
-                    set_milestone(status, "pr_approved", False)
-                    status["pipeline_status"] = PipelineStatus.PAUSED
-                    save_status(status, actual_status_path)
-                    pr_approved = False
-                    if ctx:
-                        _ms_event = emit_event(ctx, MILESTONE_SET, milestone_set_payload(
-                            milestone="pr_approved", value=False, stage=Stage.PR.value,
-                        ))
-                        if _ms_event:
-                            _action = _check_control_response_with_timeout(
-                                ctx, _ms_event,
-                                timeout_seconds=_ms_cfg.get("pr_approval_timeout_seconds", 3600),
-                                timeout_default="approve",
-                            )
-                            if _action == "approve":
-                                pr_approved = True
-                                set_milestone(status, "pr_approved", True)
-                                status["pipeline_status"] = PipelineStatus.RUNNING
-                            elif _action == "reject":
-                                raise PipelineInterrupted("PR creation rejected by user", stop_reason="pr_rejected")
-                            elif _action == "pause":
-                                _handle_pause(ctx, "pr_approved milestone")
-                            elif _action == "abort":
-                                raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
-                    else:
-                        pr_approved = True
-                        set_milestone(status, "pr_approved", True)
-                        status["pipeline_status"] = PipelineStatus.RUNNING
-
-                if not pr_approved:
-                    save_status(status, actual_status_path)
-                    # Mirror paused into the multi-pipeline registry before
-                    # returning — otherwise the entry stays "running" while
-                    # this process exits at the PR-approval gate, and
-                    # reconcile_stale() / fleet status derivation misread it.
-                    if status.get("worktree") and status.get("run_id"):
-                        try:
-                            update_pipeline(
-                                status["run_id"], status="paused", base=registry_dir
-                            )
-                        except Exception:
-                            pass  # registry mirror is best-effort
-                    return
-
-                # Post-condition verification: only when guardian explicitly
-                # declares outcome=success (prose-fallback and partial outputs
-                # bypass this gate — they already recovered what they can).
-                _pr_verification_passed = False
-                if isinstance(result, dict) and result.get("outcome") == "success":
-                    _vr = _verify_pr_stage(result, _pr_baseline_head)
-                    if not _vr.ok:
-                        _log(f"PR stage verification failed: {_vr.reason}", "warn")
-                        loop_counters["pr_verification_retry"] = (
-                            loop_counters.get("pr_verification_retry", 0) + 1
-                        )
-                        status["loop_counters"] = dict(loop_counters)
-                        iter_extras["outcome"] = "reject"
-                        complete_iteration(status, current_stage.value, **iter_extras)
-                        if loop_counters["pr_verification_retry"] > 1:
-                            set_milestone(status, "pr_verified", False)
-                            if ctx:
-                                emit_event(ctx, MILESTONE_SET, milestone_set_payload(
-                                    milestone="pr_verified", value=False,
-                                    stage=Stage.PR.value,
-                                ))
-                            raise PipelineError(
-                                f"PR verification failed after retry: {_vr.reason}"
-                            )
-                        save_status(status, actual_status_path)
-                        continue
-                    _pr_verification_passed = True
-
-                iter_extras["outcome"] = "success"
-                complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
-                if _pr_verification_passed:
-                    set_milestone(status, "pr_verified", True)
-                    save_status(status, actual_status_path)
-                    if ctx:
-                        emit_event(ctx, MILESTONE_SET, milestone_set_payload(
-                            milestone="pr_verified", value=True,
-                            stage=Stage.PR.value,
-                        ))
-                if isinstance(result, dict):
-                    _lift_pr_deferred_to_status(result, status)
-                    if result.get("deferred") is True:
-                        # Lift deferred fields to stages.pr so worca pr create
-                        # can read them without traversing iterations.
-                        update_stage(status, Stage.PR.value,
-                            deferred=True,
-                            pr_title=result.get("pr_title", ""),
-                            pr_body=result.get("pr_body", ""),
-                            base_branch=(
-                                result.get("base_branch")
-                                or result.get("target_branch") or ""
-                            ),
-                            source_branch=(
-                                result.get("source_branch")
-                                or status.get("branch") or ""
-                            ),
-                        )
-                        save_status(status, actual_status_path)
-                        if ctx:
-                            emit_event(ctx, GIT_PR_DEFERRED, git_pr_deferred_payload(
-                                pr_title=result.get("pr_title", ""),
-                                base_branch=result.get("base_branch") or result.get("target_branch") or "",
-                                head_branch=result.get("source_branch") or status.get("branch") or "",
-                                commit_sha=result.get("commit_sha"),
-                            ))
-                    _pr_url = result.get("pr_url")
-                    _pr_number = result.get("pr_number")
-                    # In revise mode, if the agent's prose fallback didn't carry
-                    # pr_url/pr_number, re-read the existing PR via gh so
-                    # status["pr"] still populates with the correct number/url.
-                    _revises_pr = status.get("revises_pr")
-                    if _revises_pr is not None and (not _pr_url or _pr_number is None):
-                        _fetched_url = _fetch_pr_url_via_gh(_revises_pr)
-                        if _fetched_url and not _pr_url:
-                            _pr_url = _fetched_url
-                        if _pr_number is None:
-                            _pr_number = _revises_pr
-                    if _pr_url and _pr_number is not None:
-                        _commit_sha = result.get("commit_sha")
-                        # Branches: prefer agent value, fall back to runner state.
-                        # The orchestrator already knows both — no reason to
-                        # require the agent to re-emit them.
-                        _source_branch = (
-                            result.get("source_branch")
-                            or status.get("branch")
-                        )
-                        _target_branch = (
-                            result.get("target_branch")
-                            or status.get("target_branch")
-                        )
-                        # Provider: agent may emit it, but verify/fill from URL.
-                        _provider = result.get("provider")
-                        if not _provider or _provider == "other":
-                            _parsed = parse_pr_url(_pr_url)
-                            if _parsed["provider"] != "other":
-                                _provider = _parsed["provider"]
-                            elif not _provider:
-                                _provider = "other"
-                        _review_status = result.get("review_status")
-                        status["pr"] = {
-                            "url": _pr_url,
-                            "number": _pr_number,
-                            "commit_sha": _commit_sha,
-                            "source_branch": _source_branch,
-                            "target_branch": _target_branch,
-                            "provider": _provider,
-                            "review_status": _review_status,
-                        }
-                        save_status(status, actual_status_path)
-                        if ctx:
-                            emit_event(ctx, GIT_PR_CREATED, git_pr_created_payload(
-                                pr_url=_pr_url,
-                                pr_number=_pr_number,
-                                title=work_request.title,
-                                commit_sha=_commit_sha,
-                                source_branch=_source_branch,
-                                target_branch=_target_branch,
-                                provider=_provider,
-                            ))
-
-                        # Revise mode: worca owns the PR writeback (summary
-                        # comment + per-thread replies). The guardian only
-                        # pushes the head branch; doing the writeback here keeps
-                        # it off the agent tool path and reliable (D3 — replies
-                        # only, never resolve).
-                        if _revises_pr is not None:
-                            _revise_pr_writeback(
-                                _pr_number,
-                                _commit_sha,
-                                status.get("review_feedback", []),
-                            )
-
-                    _maybe_graphify_post_guardian(
-                        settings_path=settings_path,
-                        is_worktree=bool(status.get("worktree")),
-                    )
-                    _maybe_crg_post_guardian(
-                        settings_path=settings_path,
-                        is_worktree=bool(status.get("worktree")),
-                    )
-
-            # Default: complete iteration for stages without special handling
-            else:
-                iter_extras["outcome"] = "success"
-                complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _emit_stage_completed_and_gate(ctx, current_stage.value, iter_num, iter_extras)
+            if _decision.action == StageDecision.PAUSE_RETURN:
+                # PR approval gate left the run paused on disk; exit without
+                # touching terminal state (legacy bare-return semantics).
+                return
+            if _decision.action == StageDecision.JUMP:
+                # Outcome-driven transition: record the trigger for the target
+                # stage and jump via the flow (W-070 declarative loops).
+                _next_trigger[_decision.goto] = _decision.trigger
+                stage_idx = flow.next_index(stage_name, _decision.trigger)
+                continue
+            if _decision.action == StageDecision.REPEAT:
+                # Re-enter the same stage (PR verification retry).
+                continue
 
             # Persist context and loop counters after each completed stage
             status["loop_counters"] = dict(loop_counters)
@@ -4762,7 +3925,7 @@ def run_pipeline(
                 _log(f"Totals: {' | '.join(summary_parts)}")
 
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "success", "", msize, logs_dir, ctx=ctx)
+                             "success", "", msize, logs_dir, ctx=ctx, flow=flow)
 
             if ctx:
                 _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == PipelineStatus.COMPLETED]
@@ -4802,7 +3965,7 @@ def run_pipeline(
             status["stop_reason"] = "loop_exhausted"
             save_status(status, actual_status_path)
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "loop_exhausted", str(e), msize, logs_dir, ctx=ctx)
+                             "loop_exhausted", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),
@@ -4820,7 +3983,7 @@ def run_pipeline(
             # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
             if status.get("stage") != "preflight":
                 _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                                 "failure", str(e), msize, logs_dir, ctx=ctx)
+                                 "failure", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),
@@ -4836,7 +3999,7 @@ def run_pipeline(
             status["stop_reason"] = type(e).__name__
             save_status(status, actual_status_path)
             _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "failure", str(e), msize, logs_dir, ctx=ctx)
+                             "failure", str(e), msize, logs_dir, ctx=ctx, flow=flow)
             if ctx:
                 emit_event(ctx, RUN_FAILED, run_failed_payload(
                     error=str(e),

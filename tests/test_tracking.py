@@ -111,9 +111,52 @@ def test_allows_all_in_interactive_mode_any_agent():
     assert code == 0
 
 
-def test_unknown_parent_gets_defaults():
-    """W-054 + PR B: unknown agents fall through to _defaults: ['*']."""
+def test_unknown_parent_locked_down():
+    """W-071 §4: unknown (custom) agents resolve to the lockdown sentinel
+    instead of _defaults — an unknown role must be granted explicitly.
+    (Supersedes the W-054 PR B fall-through-to-defaults behavior.)"""
     code, reason = check_dispatch("unknown_agent", "Explore")
+    assert code == 2
+
+
+def test_unknown_parent_with_explicit_grant_allowed():
+    """A custom agent named in per_agent_allow gets exactly its grants."""
+    cfg = {"worca": {"governance": {"dispatch": {"subagents": {
+        "per_agent_allow": {"docs_auditor": ["Explore"]},
+    }}}}}
+    allowed, _, via = check_allowed(
+        "subagents", "docs_auditor", "Explore", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "explicit"
+    allowed, reason, _ = check_allowed(
+        "subagents", "docs_auditor", "general-purpose", settings_override=cfg,
+    )
+    assert allowed is False
+
+
+def test_unknown_agent_locked_down_for_tools():
+    """The lockdown applies to every dispatch section, tools included."""
+    allowed, reason, _ = check_allowed(
+        "tools", "docs_auditor", "Read", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "lockdown"
+
+
+def test_known_pipeline_agents_match_orchestrator_roster():
+    """The hook-local roster stays in sync with the orchestrator's agent set
+    (plus plan_editor, which substitutes for plan_reviewer in edit mode but
+    has no STAGE_AGENT_MAP entry of its own)."""
+    from worca.hooks.tracking import KNOWN_PIPELINE_AGENTS
+    from worca.orchestrator.stages import ALL_AGENTS
+
+    assert KNOWN_PIPELINE_AGENTS == frozenset(ALL_AGENTS) | {"plan_editor"}
+
+
+def test_plan_editor_still_falls_back_to_defaults():
+    """plan_editor is a shipped agent — it must keep the _defaults fall-through."""
+    code, reason = check_dispatch("plan_editor", "Explore")
     assert code == 0
 
 

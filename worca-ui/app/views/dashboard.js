@@ -387,7 +387,6 @@ export function dashboardView(
   // attribution was unreliable when runs lacked a projectId field.
   return html`
     <div class="dashboard">
-      ${helpFor('monitoring')}
       <div class="dashboard-stats">
         <div class="stat-card stat-total">
           <div class="stat-icon-ring">${unsafeHTML(iconSvg(Zap, 20))}</div>

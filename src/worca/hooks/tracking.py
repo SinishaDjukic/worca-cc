@@ -15,6 +15,19 @@ import sys
 # anything real). Empty list [] falls through to _defaults instead.
 LOCKDOWN_SENTINEL = "none"
 
+# Pipeline agents shipped with worca: the stage agents plus plan_editor
+# (substitutes for plan_reviewer in review_and_edit mode) and the workspace
+# planner. Kept as a literal so the hook stays stdlib-only; a sync test
+# asserts it matches worca.orchestrator.stages.ALL_AGENTS | {"plan_editor"}.
+#
+# W-071: agents OUTSIDE this set (user-defined custom stage agents) that have
+# no explicit per_agent_allow entry resolve to the lockdown sentinel instead
+# of _defaults — an unknown role must be granted explicitly.
+KNOWN_PIPELINE_AGENTS = frozenset({
+    "planner", "plan_reviewer", "plan_editor", "coordinator", "implementer",
+    "tester", "reviewer", "guardian", "learner", "workspace_planner",
+})
+
 _DISPATCH_DEFAULTS = {
     "tools": {
         "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
@@ -430,7 +443,11 @@ def resolve_per_agent_entry(cfg: dict, agent: str) -> list[str]:
     """Resolve the effective per_agent_allow entry for an agent.
 
     Fall-through rules:
-      * Missing key for ``agent``     → use ``_defaults``.
+      * Missing key for a KNOWN agent → use ``_defaults``.
+      * Missing key for an UNKNOWN agent (W-071 custom stage agents) → the
+        lockdown sentinel. ``_defaults`` is calibrated for the shipped agent
+        roster; an unknown role is too permissive a fit, so the grant must be
+        explicit (per_agent_allow.<agent>).
       * Empty list ``[]`` for ``agent`` → fall through to ``_defaults`` too,
         because clearing the chip list in the UI shouldn't silently brick
         an agent. To express lockdown, set the entry to ``[LOCKDOWN_SENTINEL]``.
@@ -440,6 +457,8 @@ def resolve_per_agent_entry(cfg: dict, agent: str) -> list[str]:
     """
     entry = cfg["per_agent_allow"].get(agent)
     if not entry:  # None or [] both fall through
+        if agent and agent not in KNOWN_PIPELINE_AGENTS:
+            return [LOCKDOWN_SENTINEL]
         entry = list(cfg["per_agent_allow"].get("_defaults", []))
     return list(entry)
 

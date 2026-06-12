@@ -3304,7 +3304,7 @@ export function settingsView(
         <sl-tab slot="nav" panel="notifications">
           ${unsafeHTML(iconSvg(Bell, 14))}
           Notifications
-          <!-- no dedicated doc page yet (W-061 prototype: skip-if-no-doc) -->
+          ${helpFor('events')}
         </sl-tab>
         <sl-tab slot="nav" panel="preferences">
           ${unsafeHTML(iconSvg(Settings, 14))}
@@ -3383,7 +3383,7 @@ export function projectSettingsView(
         <sl-tab slot="nav" panel="pricing">
           ${unsafeHTML(iconSvg(Coins, 14))}
           Costs & Budgets
-          <!-- no dedicated doc page yet (W-061 prototype: skip-if-no-doc) -->
+          ${helpFor('models')}
         </sl-tab>
         <sl-tab slot="nav" panel="webhooks">
           ${unsafeHTML(iconSvg(Zap, 14))}

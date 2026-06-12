@@ -24,8 +24,8 @@ description, and surface it rather than silently resolving it.
 
 {{block:graphify-reminder}}
 {{block:crg-reminder}}
-{{#if plan_approach}}
+{{#if stages.plan.approach}}
 ## Approach
 
-{{plan_approach}}
+{{stages.plan.approach}}
 {{/if}}

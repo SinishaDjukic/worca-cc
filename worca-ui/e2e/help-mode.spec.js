@@ -39,9 +39,11 @@ test.describe('help-mode toggle — edge tab + hotkey + reveal', () => {
     const ctx = await startServer();
     try {
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      // Dashboard view carries helpFor('monitoring') — the badge element
-      // exists in the DOM but starts hidden via `display: none`.
-      const badge = page.locator('.dashboard .help-badge').first();
+      // The sidebar Running item carries helpFor('monitoring') — the badge
+      // element exists in the DOM but starts hidden via `display: none`.
+      // (The dashboard's root-level badge was removed in favor of the
+      // content-header / sidebar placements — 2026-06 sweep.)
+      const badge = page.locator('.sidebar-item .help-badge').first();
       await expect(badge).toBeAttached();
       await expect(badge).toBeHidden();
 

@@ -133,8 +133,27 @@ def test_system_init_emits_agent_spawned():
     payload = mock_emit.call_args[0][2]
     assert event_type == AGENT_SPAWNED
     assert payload["stage"] == "plan"
+    # The agent role must survive the W-071 stage-key coercion — an enum
+    # stage resolves its builtin role; a missing assertion here previously
+    # hid an always-empty agent field.
+    assert payload["agent"] == "planner"
     assert payload["model"] == "claude-sonnet-4-6"
     assert payload["iteration"] == 1
+
+
+def test_agent_spawned_carries_explicit_agent_for_custom_stage():
+    """W-071: run_stage passes the flow-resolved agent name; custom stage-key
+    strings have no builtin role to fall back to."""
+    ctx = _make_ctx()
+    with patch("worca.orchestrator.runner.emit_event") as mock_emit:
+        handler = _make_agent_event_handler(
+            ctx, "docs_audit", 1, ".claude/settings.json", agent="docs_auditor",
+        )
+        handler({"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"})
+
+    payload = mock_emit.call_args[0][2]
+    assert payload["stage"] == "docs_audit"
+    assert payload["agent"] == "docs_auditor"
 
 
 def test_system_hook_event_not_emitted():

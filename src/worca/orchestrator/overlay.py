@@ -14,6 +14,8 @@ import os
 import re
 import sys
 
+from worca.orchestrator.context_keys import alias_for, flat_for
+
 
 def _parse_sections(content: str) -> list:
     """Split content into sections at ## headings.
@@ -315,10 +317,16 @@ def _apply_append(section: dict, override_body: str) -> None:
 # Template engine — placeholder and block resolution
 # ---------------------------------------------------------------------------
 
+# Key syntax shared by placeholders and conditionals (W-072): a plain
+# identifier, optionally extended with dotted segments for namespaced
+# context paths ("stages.plan.approach"). The dot is only valid *inside*
+# a key — {{block:...}} / {{#if}} / {{/if}} parsing is unaffected.
+_KEY_FRAGMENT = r"[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)*"
+
 # Matches the innermost {{#if name}}...{{/if}} block (no nested {{#if inside).
 # Uses a tempered greedy token to avoid matching across nested conditionals.
 _INNER_COND_RE = re.compile(
-    r"\{\{#if (\w+)\}\}"
+    r"\{\{#if (" + _KEY_FRAGMENT + r")\}\}"
     r"((?:(?!\{\{#if )[\s\S])*?)"
     r"\{\{/if\}\}",
     re.DOTALL,
@@ -326,7 +334,7 @@ _INNER_COND_RE = re.compile(
 
 # Matches {{name}} or {{name|default text}} but not {{block:...}}, {{#...}}, {{/...}}.
 _PLACEHOLDER_RE = re.compile(
-    r"\{\{(?!block:|#|/)([a-zA-Z_][a-zA-Z0-9_]*)(?:\|([^}]*))?\}\}"
+    r"\{\{(?!block:|#|/)(" + _KEY_FRAGMENT + r")(?:\|([^}]*))?\}\}"
 )
 
 # Matches {{block:name}} on its own line (block references must be line-isolated).
@@ -334,6 +342,64 @@ _PLACEHOLDER_RE = re.compile(
 # blank lines, silently deleting the separator between a block and the next
 # section (caught by the byte-identical render check in the 2026-06 dedup).
 _BLOCK_RE = re.compile(r"^\{\{block:(\S+)\}\}[ \t]*$", re.MULTILINE)
+
+# Sentinel distinguishing "key absent" from a stored None/falsy value.
+_MISS = object()
+
+
+def _lookup_path(context: dict, key: str):
+    """Direct lookup of a (possibly dotted) key. Returns _MISS when absent.
+
+    A flat key is a plain dict get; a dotted key digs through nested dicts
+    ("stages.plan.approach" -> context["stages"]["plan"]["approach"]).
+    """
+    if "." not in key:
+        return context.get(key, _MISS)
+    cur = context
+    for part in key.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return _MISS
+    return cur
+
+
+def _dig(context: dict, key: str, default=None):
+    """Context lookup with alias read-through (W-072 §4).
+
+    Direct (possibly dotted) lookup first; on a miss, fall through the
+    flat<->namespaced alias table in whichever direction applies, so a
+    template written against either form resolves during (and after) the
+    migration window — including resumes from schema-version-1
+    prompt_context.json files that only carry flat keys.
+    """
+    val = _lookup_path(context, key)
+    if val is _MISS:
+        alias = alias_for(key) if "." not in key else flat_for(key)
+        if alias is not None:
+            val = _lookup_path(context, alias)
+    return default if val is _MISS else val
+
+
+def collect_placeholder_keys(content: str) -> dict:
+    """All context keys referenced by placeholders/conditionals in content.
+
+    Returns ``{key: {"defaulted": bool}}`` — ``defaulted`` is True when every
+    bare-placeholder occurrence carries a ``|default`` (conditional-only
+    references also count as defaulted: a missing key is legitimately falsy
+    in ``{{#if}}``). Used by the flow consumption lint (W-072 §3).
+    """
+    keys: dict = {}
+    for m in _PLACEHOLDER_RE.finditer(content):
+        key, default = m.group(1), m.group(2)
+        if key == "else":
+            continue  # conditional syntax ({{else}}), not a context key
+        entry = keys.setdefault(key, {"defaulted": True})
+        if default is None:
+            entry["defaulted"] = False
+    for m in re.finditer(r"\{\{#if (" + _KEY_FRAGMENT + r")\}\}", content):
+        keys.setdefault(m.group(1), {"defaulted": True})
+    return keys
 
 
 def resolve_placeholders(content: str, context: dict) -> str:
@@ -354,7 +420,7 @@ def resolve_placeholders(content: str, context: dict) -> str:
             parts = body.split("{{else}}", 1)
             if_body = parts[0]
             else_body = parts[1] if len(parts) > 1 else ""
-            return if_body if context.get(key) else else_body
+            return if_body if _dig(context, key) else else_body
 
         content = _INNER_COND_RE.sub(_replace_cond, content)
 
@@ -363,8 +429,8 @@ def resolve_placeholders(content: str, context: dict) -> str:
         key = m.group(1)
         default = m.group(2)
         if default is not None:
-            return str(context.get(key, default))
-        return str(context.get(key, ""))
+            return str(_dig(context, key, default))
+        return str(_dig(context, key, ""))
 
     return _PLACEHOLDER_RE.sub(_replace_ph, content)
 

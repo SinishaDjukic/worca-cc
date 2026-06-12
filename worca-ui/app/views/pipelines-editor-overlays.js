@@ -17,6 +17,7 @@
 
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import { renderMarkdown } from '../utils/markdown.js';
 
 /**
@@ -92,6 +93,35 @@ export function stagePromptFiles(stage, prompts) {
     }
   }
   return files;
+}
+
+/**
+ * Prompt files no stage in STAGE_OVERLAY_MAP claims, split into shared
+ * blocks (`*.block.md` embedded into stage prompts via `{{block:...}}` —
+ * crg-reminder, graphify-orientation/-reminder, …) and auxiliary agents
+ * (`*.md` outside the stage walk — template-advisor, workspace_planner).
+ * Dynamic over the server model, so new core files (and custom-stage
+ * overlays shipped by a template) appear without a mapping change.
+ * Returns `{ blocks: [...], agents: [...] }` of { name, role, model },
+ * each sorted by name.
+ */
+export function unmappedPromptFiles(prompts) {
+  const mapped = new Set();
+  for (const stage of STAGE_OVERLAY_MAP) {
+    for (const name of stage.agentFiles) mapped.add(name);
+    for (const name of stage.blockFiles) mapped.add(name);
+  }
+  const blocks = [];
+  const agents = [];
+  for (const name of Object.keys(prompts || {}).sort()) {
+    if (mapped.has(name)) continue;
+    if (name.endsWith('.block.md')) {
+      blocks.push({ name, role: 'user', model: prompts[name] });
+    } else {
+      agents.push({ name, role: 'agent', model: prompts[name] });
+    }
+  }
+  return { blocks, agents };
 }
 
 // Source → badge variant + label + tooltip. Colors follow the badge-color
@@ -192,7 +222,8 @@ function _stageTabs(stage, files) {
   for (const f of files) {
     const panelId = `prompt-${stage.key}-${f.name.replace(/\./g, '-')}`;
     const baseName = f.name.replace(/\.md$/, '');
-    const roleLabel = f.role === 'agent' ? 'Agent prompt' : 'User prompt';
+    const roleLabel =
+      f.label || (f.role === 'agent' ? 'Agent prompt' : 'User prompt');
     tabs.push(html`
       <sl-tab slot="nav" panel=${panelId}>
         ${roleLabel}
@@ -238,9 +269,50 @@ export function promptsTabView(prompts) {
     `;
   });
 
+  // Files no stage claims: shared blocks ({{block:...}} inserts like
+  // crg-reminder / graphify-*) and auxiliary agents (template-advisor,
+  // workspace_planner). Dynamic — new files appear without a map change.
+  const { blocks: sharedBlocks, agents: auxAgents } =
+    unmappedPromptFiles(prompts);
+  const sharedCard =
+    sharedBlocks.length === 0
+      ? nothing
+      : html`
+          <sl-details
+            class="overlay-stage-card overlay-shared-card"
+            summary="Shared blocks"
+          >
+            <div class="overlay-shared-note">
+              Inserted into stage prompts via
+              <code>{{block:&lt;name&gt;}}</code> references — a change here
+              affects every stage that embeds the block.
+            </div>
+            ${_stageTabs(
+              { key: 'shared-blocks' },
+              sharedBlocks.map((f) => ({ ...f, label: 'Shared block' })),
+            )}
+          </sl-details>
+        `;
+  const auxCard =
+    auxAgents.length === 0
+      ? nothing
+      : html`
+          <sl-details
+            class="overlay-stage-card overlay-shared-card"
+            summary="Auxiliary agents"
+          >
+            <div class="overlay-shared-note">
+              Agents outside the stage walk (template advisor, workspace
+              planner, custom-stage agents shipped by this pipeline).
+            </div>
+            ${_stageTabs({ key: 'aux-agents' }, auxAgents)}
+          </sl-details>
+        `;
+
   return html`
     <div class="settings-tab-content overlay-stages">
-      <div class="prompt-legend">
+      <div class="prompt-legend help-host">
+        ${helpFor('agent-prompt')}${helpFor('custom-flows')}
         Each stage shows the prompt the pipeline actually runs.
         <sl-badge class="prompt-source-badge" variant="neutral" pill>Built-in</sl-badge>
         unchanged default ·
@@ -249,7 +321,7 @@ export function promptsTabView(prompts) {
         <sl-badge class="prompt-source-badge" variant="warning" pill>Merged</sl-badge>
         built-in + highlighted changes
       </div>
-      ${stageCards}
+      ${stageCards}${sharedCard}${auxCard}
     </div>
   `;
 }

@@ -35,6 +35,8 @@ When a template is in play at run launch (explicit `--template`, `POST /runs` bo
 
 - `worca.agents`
 - `worca.stages`
+- `worca.flow` (declarative pipeline topology, W-070, including the per-stage
+  `outputs` context-contract declarations, W-072 — see [`flow.md`](./flow.md))
 - `worca.loops`
 - `worca.circuit_breaker`
 - `worca.effort`

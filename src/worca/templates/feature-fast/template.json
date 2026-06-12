@@ -1,7 +1,7 @@
 {
   "id": "feature-fast",
   "name": "Feature Development (Fast)",
-  "description": "Full pipeline for substantial features without a pre-drafted plan. Plan is drafted and reviewed in-line — review can edit directly, shortcutting the review-revise loop. Learn stage on, higher retry limits.",
+  "description": "Full pipeline for substantial features without a pre-drafted plan. Plan is drafted and reviewed in-line \u2014 review can edit directly, shortcutting the review-revise loop. Learn stage on, higher retry limits.",
   "builtin": true,
   "created_at": "2026-05-29T00:00:00Z",
   "tags": [
@@ -46,6 +46,7 @@
         "mode": "review_and_edit"
       }
     },
+    "flow": null,
     "loops": {
       "implement_test": 10,
       "pr_changes": 5,

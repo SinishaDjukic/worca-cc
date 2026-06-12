@@ -373,3 +373,104 @@ describe('runDetailView preflight stage', () => {
     expect(html).toContain('template');
   });
 });
+
+describe('preflight flow fingerprint row (W-070)', () => {
+  const FP = 'ddf975025ca4431f558718e62d26773ce59c49f1f1fd1602b18a3f27c8e0e615';
+
+  function _runWithFingerprint(fingerprint) {
+    const run = {
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: {
+                status: 'pass',
+                checks: [{ name: 'claude_cli', status: 'pass', message: 'ok' }],
+                summary: '1/1 checks passed, 0 failed, 0 warnings',
+              },
+            },
+          ],
+        },
+      },
+    };
+    if (fingerprint) run.flow_fingerprint = fingerprint;
+    return run;
+  }
+
+  it('renders the fingerprint label and full value when present', () => {
+    const html = renderToString(runDetailView(_runWithFingerprint(FP)));
+    expect(html).toContain('Flow fingerprint:');
+    expect(html).toContain(FP);
+    expect(html).toContain('preflight-flow-fingerprint');
+  });
+
+  it('omits the row entirely when flow_fingerprint is absent (legacy runs)', () => {
+    const html = renderToString(runDetailView(_runWithFingerprint(null)));
+    expect(html).not.toContain('Flow fingerprint:');
+    expect(html).not.toContain('preflight-flow-fingerprint');
+  });
+});
+
+describe('multi-iteration preflight parity', () => {
+  // A resumed run re-runs preflight → 2+ iterations. Each iter tab must show
+  // its own full results (status summary + checks table), and the run-level
+  // meta rows (params, fingerprint) render once at stage level.
+  const FP = 'ddf975025ca4431f558718e62d26773ce59c49f1f1fd1602b18a3f27c8e0e615';
+
+  function _multiIterRun() {
+    return {
+      flow_fingerprint: FP,
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: {
+                status: 'pass',
+                checks: [
+                  { name: 'claude_cli', status: 'pass', message: 'iter1 ok' },
+                ],
+                summary: '10/10 checks passed, 0 failed, 0 warnings',
+              },
+            },
+            {
+              number: 2,
+              status: 'completed',
+              outcome: 'success',
+              output: {
+                status: 'pass',
+                checks: [
+                  { name: 'claude_cli', status: 'pass', message: 'iter2 ok' },
+                ],
+                summary: '9/10 checks passed, 0 failed, 1 warning',
+              },
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  it('renders each iteration summary and checks inside its tab', () => {
+    const html = renderToString(runDetailView(_multiIterRun()));
+    expect(html).toContain('10/10 checks passed, 0 failed, 0 warnings');
+    expect(html).toContain('9/10 checks passed, 0 failed, 1 warning');
+    expect(html).toContain('iter1 ok');
+    expect(html).toContain('iter2 ok');
+    // Both panels carry the full table.
+    expect(html.split('preflight-table').length - 1).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders run-level meta (fingerprint) exactly once at stage level', () => {
+    const html = renderToString(runDetailView(_multiIterRun()));
+    expect(html.split('Flow fingerprint:').length - 1).toBe(1);
+    expect(html).toContain(FP);
+  });
+});
