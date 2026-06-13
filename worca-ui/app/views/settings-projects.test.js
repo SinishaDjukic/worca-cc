@@ -105,6 +105,43 @@ describe('Projects tab in settings', () => {
     expect(badge.textContent).toContain('1.0.0');
   });
 
+  it('flags a deleted project: "not found" badge + disabled Setup', () => {
+    const onProjectSetup = vi.fn();
+    const projects = [{ name: 'gone', path: '/gone', exists: false }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        onProjectSetup,
+        rerender: vi.fn(),
+      }),
+    );
+    expect(container.querySelector('.proj-missing-badge')).not.toBeNull();
+    // Buttons are Update / Setup / Remove. Update + Setup must be disabled;
+    // Remove stays enabled so the dead entry can still be unregistered.
+    const actionBtns = container.querySelectorAll(
+      '.projects-list-item .proj-action-btn',
+    );
+    const [updateBtn, setupBtn, removeBtn] = actionBtns;
+    expect(updateBtn.hasAttribute('disabled')).toBe(true);
+    expect(setupBtn.hasAttribute('disabled')).toBe(true);
+    expect(removeBtn.hasAttribute('disabled')).toBe(false);
+    setupBtn.click();
+    expect(onProjectSetup).not.toHaveBeenCalled();
+  });
+
+  it('does not flag a project whose path exists', () => {
+    const projects = [{ name: 'ok', path: '/ok', exists: true }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
+    );
+    expect(container.querySelector('.proj-missing-badge')).toBeNull();
+  });
+
   it('Setup button calls onProjectSetup with the project name', () => {
     const onProjectSetup = vi.fn();
     const projects = [{ name: 'alpha', path: '/alpha' }];

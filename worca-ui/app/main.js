@@ -6053,6 +6053,18 @@ notificationManager.setRerender(rerender);
 store.subscribe(() => scheduleRerender());
 applyTheme(store.getState().preferences.theme);
 
+// When the project setup wizard closes, refresh the projects list — its Install
+// step may have changed a project's worca version.
+window.addEventListener('worca:setup-closed', () => {
+  fetch('/api/projects')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ projects: data.projects || [] });
+      rerender();
+    })
+    .catch(() => {});
+});
+
 // Cmd/Ctrl+B toggles the sidebar (VS Code convention).
 // Ignore the shortcut when the user is typing in an editable element so
 // it doesn't fight with text-editing flows.

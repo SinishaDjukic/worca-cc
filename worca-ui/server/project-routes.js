@@ -175,10 +175,12 @@ export function createProjectRoutes({
     if (projects.length === 0) {
       projects = [synthesizeDefaultProject(projectRoot)];
     }
-    // Enrich each project with its worca-cc version
+    // Enrich each project with its worca-cc version and whether its path still
+    // exists on disk (a deleted project can't be configured or run).
     const enriched = projects.map((p) => ({
       ...p,
       worcaVersion: readProjectWorcaVersion(p.path),
+      exists: existsSync(p.path),
     }));
     res.json({ ok: true, projects: enriched });
   });

@@ -3239,28 +3239,65 @@ function projectsTab(
                     : isVersionBehind(p.worcaVersion, activeWorcaCc)
                       ? 'warning'
                       : 'success';
+                // `exists` is added by the API; undefined (older payloads) is
+                // treated as present so the row isn't flagged spuriously.
+                const missing = p.exists === false;
                 return html`
                   <tr class="projects-list-item">
                     <td class="proj-name"><strong>${p.name}</strong></td>
-                    <td class="proj-path"><code>${p.path}</code></td>
+                    <td class="proj-path">
+                      <code>${p.path}</code>
+                      ${
+                        missing
+                          ? html`<sl-tooltip
+                              content="This path was not found on disk — the project may have been moved or deleted."
+                            >
+                              <sl-badge
+                                variant="warning"
+                                pill
+                                class="proj-missing-badge"
+                                >not found</sl-badge
+                              >
+                            </sl-tooltip>`
+                          : nothing
+                      }
+                    </td>
                     <td>
                       <sl-badge variant=${badgeVariant} pill
-                        >worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge
+                        >${p.worcaVersion || 'unknown'}</sl-badge
                       >
                     </td>
                     <td class="proj-actions">
-                      <sl-tooltip content="Update worca">
+                      <sl-tooltip
+                        content=${
+                          missing
+                            ? 'Project not found on disk — cannot update'
+                            : 'Update worca'
+                        }
+                      >
                         <button
                           class="proj-action-btn"
-                          @click=${() => confirmWorcaUpdate(p.name)}
+                          ?disabled=${missing}
+                          @click=${() => {
+                            if (!missing) confirmWorcaUpdate(p.name);
+                          }}
                         >
                           ${unsafeHTML(iconSvg(RefreshCw, 14))}
                         </button>
                       </sl-tooltip>
-                      <sl-tooltip content="Project setup">
+                      <sl-tooltip
+                        content=${
+                          missing
+                            ? 'Project not found on disk — cannot configure'
+                            : 'Project setup'
+                        }
+                      >
                         <button
                           class="proj-action-btn"
-                          @click=${() => onProjectSetup?.(p.name)}
+                          ?disabled=${missing}
+                          @click=${() => {
+                            if (!missing) onProjectSetup?.(p.name);
+                          }}
                         >
                           ${unsafeHTML(iconSvg(Settings, 14))}
                         </button>

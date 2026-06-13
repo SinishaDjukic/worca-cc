@@ -146,7 +146,7 @@ async function _fetchIntegrations(rerender) {
   try {
     const cfg = await fetch('/api/integrations/config').then((r) => r.json());
     if (!_state || _state !== s) return;
-    s.hasIntegrations = INTEGRATION_ADAPTERS.some((k) => cfg && cfg[k]);
+    s.hasIntegrations = INTEGRATION_ADAPTERS.some((k) => cfg?.[k]);
     rerender?.();
   } catch {
     /* leave hasIntegrations as-is (assume configured → hide the nudge) */
@@ -177,6 +177,13 @@ function _curKey(s) {
 export function closeProjectSetupWizard(rerender) {
   _state = null;
   rerender?.();
+  // Notify the app so it can refresh the projects table — the install step may
+  // have changed a project's worca version. One listener in main.js handles it.
+  try {
+    window.dispatchEvent(new CustomEvent('worca:setup-closed'));
+  } catch {
+    /* no window (non-browser) — nothing to refresh */
+  }
 }
 
 async function _fetchPreflight(rerender) {

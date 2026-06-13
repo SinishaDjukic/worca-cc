@@ -1,6 +1,5 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { showConfirm } from '../utils/confirm-dialog.js';
 import { FolderOpen, iconSvg } from '../utils/icons.js';
 import { isVersionBehind } from '../utils/version-compare.js';
 
@@ -234,9 +233,9 @@ export function addProjectDialogView(
       .then((data) => {
         if (data.ok) {
           showError('');
-          // Register project first, then offer worca setup
+          // Register the project; the setup wizard (opened via onProjectAdd)
+          // handles worca installation inline via its Install step.
           onProjectAdd?.(data.project);
-          offerWorcaSetup(name, rerender);
         } else {
           showError(data.error || 'Failed to add project');
         }
@@ -529,43 +528,6 @@ export function addProjectDialogView(
       </form>
     </sl-dialog>
   `;
-}
-
-/**
- * After project is registered, check worca status and offer install/update.
- */
-function offerWorcaSetup(projectName, rerender) {
-  if (!rerender) return;
-
-  fetch(`/api/projects/${projectName}/worca-status`)
-    .then((r) => r.json())
-    .then((data) => {
-      if (!data.ok) return;
-
-      const installed = data.installed;
-      const label = installed ? 'Update Worca' : 'Install Worca';
-      const message = installed
-        ? `Update worca in "${projectName}" with the latest pipeline files?`
-        : `Install worca pipeline in "${projectName}"?`;
-      const confirmLabel = 'Yes';
-
-      showConfirm(
-        {
-          label,
-          message,
-          confirmLabel,
-          cancelLabel: 'No',
-          confirmVariant: 'primary',
-          onConfirm: () => {
-            fetch(`/api/projects/${projectName}/worca-setup`, {
-              method: 'POST',
-            }).catch(() => {});
-          },
-        },
-        rerender,
-      );
-    })
-    .catch(() => {});
 }
 
 /**

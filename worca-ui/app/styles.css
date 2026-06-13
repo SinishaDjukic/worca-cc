@@ -7471,6 +7471,20 @@ sl-dialog.markdown-dialog::part(body) {
 .proj-action-btn:hover {
   background: var(--bg-hover);
 }
+.proj-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.proj-action-btn:disabled:hover {
+  background: transparent;
+}
+.projects-config-table .proj-path code {
+  vertical-align: middle;
+}
+.proj-missing-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
 .proj-action-btn--danger:hover {
   background: rgba(220, 38, 38, 0.1);
   color: rgb(220, 38, 38);
