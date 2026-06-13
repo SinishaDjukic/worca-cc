@@ -480,14 +480,20 @@ export function addProjectDialogView(
           @sl-change=${handleModeChange}
         >
           <sl-radio value="single">Single project</sl-radio>
-          <sl-radio value="workspace">Workspace</sl-radio>
+          <sl-radio value="workspace">Multiple projects</sl-radio>
         </sl-radio-group>
         <div class="settings-field" style="margin-bottom: 16px;">
-          <label class="settings-label">Project Path</label>
+          <label class="settings-label">${
+            dialogMode === 'workspace' ? 'Parent Path' : 'Project Path'
+          }</label>
           <div style="display:flex; gap:8px; align-items:stretch;">
             <sl-input
               id="add-project-path"
-              placeholder="/path/to/project"
+              placeholder=${
+                dialogMode === 'workspace'
+                  ? '/path/to/parent'
+                  : '/path/to/project'
+              }
               required
               style="flex:1"
               @sl-input=${handlePathInput}
