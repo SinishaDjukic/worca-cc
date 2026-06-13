@@ -23,6 +23,12 @@ async function startServerWithProject() {
   mkdirSync(join(projectRoot, '.worca', 'runs'), { recursive: true });
   mkdirSync(join(projectRoot, '.claude'), { recursive: true });
   writeFileSync(join(projectRoot, '.claude', 'settings.json'), '{}');
+  // Mark worca as installed so the wizard's 5-step flow (no install step) runs.
+  mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });
+  writeFileSync(
+    join(projectRoot, '.claude', 'worca', 'version.json'),
+    JSON.stringify({ version: '0.0.0-test' }),
+  );
   writeProject(prefsDir, { name: 'alpha', path: projectRoot });
 
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
@@ -104,14 +110,16 @@ test('Projects tab renders a table with a Setup action that opens the wizard', a
     expect(headers.map((h) => h.trim())).toEqual([
       'Name',
       'Path',
-      'worca-cc',
+      'worca version',
       'Actions',
     ]);
 
     await page.locator('sl-tooltip[content="Project setup"] button').click();
     await expect(dialog(page)).toBeVisible();
     await expect(dialog(page)).toHaveAttribute('label', 'Project Setup');
-    await expect(page.locator('.wizard-step-title')).toHaveText('Preflight');
+    await expect(page.locator('.wizard-step-title')).toHaveText(
+      'Your Project Environment',
+    );
   } finally {
     await ctx.close();
   }
@@ -128,7 +136,7 @@ test('wizard walks every step and persists the base branch', async ({
 
     await footerButton(page, 'Continue').click();
     await expect(page.locator('.wizard-step-title')).toHaveText(
-      'PR Base Branch',
+      'Set PR Base Branch',
     );
 
     await page.locator('#wizard-base-branch').evaluate((el) => {
@@ -137,16 +145,16 @@ test('wizard walks every step and persists the base branch', async ({
     });
     await footerButton(page, 'Next').click();
     await expect(page.locator('.wizard-step-title')).toHaveText(
-      'Optional Tools',
+      'Enable Optional Tools',
     );
 
     await footerButton(page, 'Next').click();
     await expect(page.locator('.wizard-step-title')).toHaveText(
-      'Default Template',
+      'Set Default Template',
     );
 
     await footerButton(page, 'Next').click();
-    await expect(page.locator('.wizard-step-title')).toHaveText('Complete');
+    await expect(page.locator('.wizard-step-title')).toHaveText("You're All Set");
     await expect(dialog(page)).toContainText('Base branch set to release-1.x');
 
     await footerButton(page, 'Done').click();

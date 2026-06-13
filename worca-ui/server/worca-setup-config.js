@@ -135,6 +135,11 @@ export async function buildProjectPreflight({
 }) {
   const isGitRepo =
     Boolean(projectRoot) && existsSync(join(projectRoot, '.git'));
+  // worca is "installed" in a project when its runtime copy exists. Built-in
+  // pipeline templates live under .claude/worca/templates/, so without this
+  // the template step has nothing to offer.
+  const worcaInstalled =
+    Boolean(projectRoot) && existsSync(join(projectRoot, '.claude', 'worca'));
   const baseBranch = projectRoot ? getDefaultBranch(projectRoot) : 'main';
 
   let graphifyInstalled = false;
@@ -165,6 +170,7 @@ export async function buildProjectPreflight({
 
   return {
     isGitRepo,
+    worcaInstalled,
     baseBranch,
     graphifyInstalled,
     crgInstalled,

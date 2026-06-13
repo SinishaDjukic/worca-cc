@@ -3226,7 +3226,7 @@ function projectsTab(
               <tr>
                 <th>Name</th>
                 <th>Path</th>
-                <th>worca-cc</th>
+                <th>worca version</th>
                 <th class="actions-col">Actions</th>
               </tr>
             </thead>

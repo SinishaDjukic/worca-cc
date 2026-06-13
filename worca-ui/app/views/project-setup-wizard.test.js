@@ -20,6 +20,7 @@ function installFetch({
   preflight = {},
   templates = [],
   isWorkspace = false,
+  integrations = {},
 } = {}) {
   applyCalls = [];
   vi.stubGlobal('fetch', async (url, opts) => {
@@ -28,6 +29,7 @@ function installFetch({
       return jsonRes({
         ok: true,
         isWorkspace,
+        worcaInstalled: true,
         baseBranch: 'master',
         graphifyInstalled: false,
         crgInstalled: false,
@@ -54,6 +56,9 @@ function installFetch({
     if (u.includes('/setup/apply')) {
       applyCalls.push(JSON.parse(opts.body));
       return jsonRes({ ok: true, worca: {} });
+    }
+    if (u.includes('/integrations/config')) {
+      return jsonRes(integrations);
     }
     return jsonRes({ ok: true });
   });
@@ -110,7 +115,7 @@ describe('single-project wizard', () => {
     await flush();
     expect(container.querySelector('sl-dialog')).not.toBeNull();
     expect(container.querySelector('.wizard-step-title').textContent).toContain(
-      'Preflight',
+      'Your Project Environment',
     );
   });
 
@@ -181,6 +186,113 @@ describe('single-project wizard', () => {
     done.dispatchEvent(new Event('click', { bubbles: true }));
     expect(_getWizardState()).toBeNull();
   });
+
+  it('shows the notify card + Configure Now when no integration is configured', async () => {
+    installFetch({ integrations: {} });
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 5;
+    rerender();
+    const card = container.querySelector('.wizard-notify-card');
+    expect(card).not.toBeNull();
+    const btn = [...card.querySelectorAll('sl-button')].find((b) =>
+      b.textContent.includes('Configure Now'),
+    );
+    expect(btn).not.toBeNull();
+  });
+
+  it('hides the notify card when an integration is already configured', async () => {
+    installFetch({ integrations: { slack: { enabled: true } } });
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 5;
+    rerender();
+    expect(container.querySelector('.wizard-notify-card')).toBeNull();
+  });
+
+  it('shows an empty-state on the template step when no templates exist', async () => {
+    // installFetch() default returns templates: [] for /templates.
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 4;
+    rerender();
+    expect(container.querySelector('.wizard-empty')).not.toBeNull();
+    expect(container.textContent).toContain('No pipeline templates found');
+    // No template dropdown when the list is empty.
+    expect(container.querySelector('.wizard-template-select')).toBeNull();
+  });
+});
+
+describe('install step (worca not installed)', () => {
+  it('inserts an install step after preflight for a single project', async () => {
+    installFetch({ preflight: { worcaInstalled: false, isGitRepo: true } });
+    const { rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    expect(_getWizardState().steps).toEqual([
+      'preflight',
+      'install',
+      'branch',
+      'tools',
+      'template',
+      'complete',
+    ]);
+  });
+
+  it('shows the Install Worca title on step 2', async () => {
+    installFetch({ preflight: { worcaInstalled: false, isGitRepo: true } });
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 2;
+    rerender();
+    expect(container.querySelector('.wizard-step-title').textContent).toContain(
+      'Install Worca',
+    );
+  });
+
+  it('omits the install step when worca is already installed', async () => {
+    installFetch({ preflight: { worcaInstalled: true } });
+    const { rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    expect(_getWizardState().steps).not.toContain('install');
+  });
+
+  it('offers the Install button on the install step (git repo)', async () => {
+    installFetch({ preflight: { worcaInstalled: false, isGitRepo: true } });
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 2;
+    rerender();
+    expect(container.querySelector('.wizard-install-btn')).not.toBeNull();
+  });
+
+  it('hides Install and warns when the project is not a git repo', async () => {
+    installFetch({ preflight: { worcaInstalled: false, isGitRepo: false } });
+    const { container, rerender } = mount();
+    openProjectSetupWizard({ target: 'alpha' }, rerender);
+    await flush();
+    _getWizardState().step = 2;
+    rerender();
+    expect(container.querySelector('.wizard-install-btn')).toBeNull();
+    expect(container.textContent).toContain('requires a git repository');
+  });
+
+  it('never inserts the install step for workspaces', async () => {
+    installFetch({ templates: [], isWorkspace: true });
+    const { rerender } = mount();
+    openProjectSetupWizard(
+      { target: 'ws', isWorkspace: true, projectCount: 2 },
+      rerender,
+    );
+    await flush();
+    expect(_getWizardState().steps).not.toContain('install');
+  });
 });
 
 describe('workspace wizard', () => {
@@ -211,12 +323,35 @@ describe('workspace wizard', () => {
     await flush();
     _getWizardState().step = 4;
     rerender();
-    const cards = [...container.querySelectorAll('.wizard-template-card')].map(
-      (c) => c.textContent.trim(),
+    const options = [
+      ...container.querySelectorAll('.wizard-template-select sl-option'),
+    ].map((o) => o.getAttribute('value'));
+    // The "No default" sentinel option is always present.
+    expect(options).toContain('__none__');
+    expect(options).toContain('feature');
+    expect(options).toContain('mine');
+    expect(options).not.toContain('local');
+  });
+
+  it('shows the chosen template description in the fixed slot', async () => {
+    const { container, rerender } = mount();
+    openProjectSetupWizard(
+      { target: 'ws', isWorkspace: true, projectCount: 2 },
+      rerender,
     );
-    expect(cards).toContain('feature');
-    expect(cards).toContain('mine');
-    expect(cards).not.toContain('local');
+    await flush();
+    _getWizardState().step = 4;
+    rerender();
+    const select = container.querySelector('.wizard-template-select');
+    select.value = 'feature';
+    select.dispatchEvent(new Event('sl-change', { bubbles: true }));
+    expect(_getWizardState().templateSel).toEqual({
+      tier: 'builtin',
+      id: 'feature',
+    });
+    const slot = container.querySelector('.wizard-template-desc-slot');
+    expect(slot).not.toBeNull();
+    expect(slot.textContent).toContain('Full');
   });
 
   it('shows the workspace-scope note on the template step', async () => {

@@ -69,7 +69,7 @@ describe('Projects tab in settings', () => {
     const headers = [
       ...container.querySelectorAll('.projects-config-table th'),
     ].map((th) => th.textContent.trim());
-    expect(headers).toEqual(['Name', 'Path', 'worca-cc', 'Actions']);
+    expect(headers).toEqual(['Name', 'Path', 'worca version', 'Actions']);
   });
 
   it('remove button present for each project', () => {

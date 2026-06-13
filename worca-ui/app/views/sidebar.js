@@ -419,7 +419,7 @@ export function sidebarView(
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-header">Project Configuration</div>
+        <div class="sidebar-section-header">Configuration</div>
         ${
           // Hide project-scoped entries in true All-Projects mode (multi-project
           // with no selection). In single-project mode (projects empty, server

@@ -90,7 +90,20 @@ describe('GET /setup/preflight', () => {
     expect(typeof body.baseBranch).toBe('string');
     expect(body.graphifyInstalled).toBe(false);
     expect(body.crgInstalled).toBe(false);
+    expect(body.worcaInstalled).toBe(false);
     expect(body.currentSettings).toBeDefined();
+  });
+
+  it('reports worcaInstalled true when .claude/worca exists', async () => {
+    mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });
+    const app = makeApp(prefsDir, projectRoot);
+    const name = await projectName(app);
+    const { body } = await request(
+      app,
+      'GET',
+      `/api/projects/${name}/setup/preflight`,
+    );
+    expect(body.worcaInstalled).toBe(true);
   });
 
   it('reflects injected graphify/crg status', async () => {
