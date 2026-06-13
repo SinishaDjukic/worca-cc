@@ -1,6 +1,13 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { Boxes, iconSvg, Pencil, Play, Trash2 } from '../utils/icons.js';
+import {
+  Boxes,
+  iconSvg,
+  Pencil,
+  Play,
+  Settings,
+  Trash2,
+} from '../utils/icons.js';
 
 function _runStats(name, workspaceRuns) {
   const matches = (workspaceRuns || []).filter(
@@ -11,7 +18,7 @@ function _runStats(name, workspaceRuns) {
 
 export function workspacesConfigView(
   appState,
-  { onCreate, onLaunch, onEdit, onDelete, onOpenRuns } = {},
+  { onCreate, onLaunch, onEdit, onDelete, onOpenRuns, onSetup } = {},
 ) {
   const definitions = appState?.workspaces || [];
   const workspaceRuns = appState?.workspaceRuns || [];
@@ -101,6 +108,14 @@ export function workspacesConfigView(
                       @click=${() => onEdit?.(d.name)}
                     >
                       ${unsafeHTML(iconSvg(Pencil, 14))}
+                    </button>
+                  </sl-tooltip>
+                  <sl-tooltip content="Workspace setup">
+                    <button
+                      class="ws-action-btn"
+                      @click=${() => onSetup?.(d.name)}
+                    >
+                      ${unsafeHTML(iconSvg(Settings, 14))}
                     </button>
                   </sl-tooltip>
                   <sl-tooltip content="Delete workspace">

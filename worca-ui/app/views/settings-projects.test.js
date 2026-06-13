@@ -57,6 +57,21 @@ describe('Projects tab in settings', () => {
     expect(items[1].textContent).toContain('proj-b');
   });
 
+  it('renders as a table with Name/Path/worca-cc/Actions columns', () => {
+    const projects = [{ name: 'alpha', path: '/alpha' }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
+    );
+    const headers = [
+      ...container.querySelectorAll('.projects-config-table th'),
+    ].map((th) => th.textContent.trim());
+    expect(headers).toEqual(['Name', 'Path', 'worca version', 'Actions']);
+  });
+
   it('remove button present for each project', () => {
     const projects = [
       { name: 'alpha', path: '/alpha' },
@@ -70,9 +85,81 @@ describe('Projects tab in settings', () => {
       }),
     );
     const removeButtons = container.querySelectorAll(
-      '.projects-list-item sl-button[variant="danger"]',
+      '.projects-list-item .proj-action-btn--danger',
     );
     expect(removeButtons.length).toBe(2);
+  });
+
+  it('renders the worca-cc version badge with a variant', () => {
+    const projects = [{ name: 'alpha', path: '/alpha', worcaVersion: '1.0.0' }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
+    );
+    const badge = container.querySelector('sl-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.getAttribute('variant')).toBeTruthy();
+    expect(badge.textContent).toContain('1.0.0');
+  });
+
+  it('flags a deleted project: "not found" badge + disabled Setup', () => {
+    const onProjectSetup = vi.fn();
+    const projects = [{ name: 'gone', path: '/gone', exists: false }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        onProjectSetup,
+        rerender: vi.fn(),
+      }),
+    );
+    expect(container.querySelector('.proj-missing-badge')).not.toBeNull();
+    // Buttons are Update / Setup / Remove. Update + Setup must be disabled;
+    // Remove stays enabled so the dead entry can still be unregistered.
+    const actionBtns = container.querySelectorAll(
+      '.projects-list-item .proj-action-btn',
+    );
+    const [updateBtn, setupBtn, removeBtn] = actionBtns;
+    expect(updateBtn.hasAttribute('disabled')).toBe(true);
+    expect(setupBtn.hasAttribute('disabled')).toBe(true);
+    expect(removeBtn.hasAttribute('disabled')).toBe(false);
+    setupBtn.click();
+    expect(onProjectSetup).not.toHaveBeenCalled();
+  });
+
+  it('does not flag a project whose path exists', () => {
+    const projects = [{ name: 'ok', path: '/ok', exists: true }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        rerender: vi.fn(),
+      }),
+    );
+    expect(container.querySelector('.proj-missing-badge')).toBeNull();
+  });
+
+  it('Setup button calls onProjectSetup with the project name', () => {
+    const onProjectSetup = vi.fn();
+    const projects = [{ name: 'alpha', path: '/alpha' }];
+    const container = renderToContainer(
+      projectsTab(projects, {
+        onProjectAdd: vi.fn(),
+        onProjectRemove: vi.fn(),
+        onProjectSetup,
+        rerender: vi.fn(),
+      }),
+    );
+    // Setup is the middle action button (Update / Setup / Remove).
+    const actionBtns = container.querySelectorAll(
+      '.projects-list-item .proj-action-btn',
+    );
+    expect(actionBtns.length).toBe(3);
+    actionBtns[1].click();
+    expect(onProjectSetup).toHaveBeenCalledWith('alpha');
   });
 });
 

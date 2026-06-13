@@ -188,8 +188,8 @@ test.describe('workspace batch add — full flow (case 37)', () => {
     await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
     await page.goto(`${ctx.url}/#/settings`, GOTO_OPTS);
     await expect(page.locator('h3:has-text("Projects")')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('.project-name').filter({ hasText: 'repo-alpha' })).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('.project-name').filter({ hasText: 'repo-beta' })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.proj-name').filter({ hasText: 'repo-alpha' })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.proj-name').filter({ hasText: 'repo-beta' })).toBeVisible({ timeout: 10000 });
   });
 });
 

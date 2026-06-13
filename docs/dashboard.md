@@ -56,9 +56,9 @@ The sidebar project picker shows all registered projects with live status dots (
 
 ## Add Project
 
-Click the **+** button next to the project picker to register a new project or workspace. Pick **Single project** for a normal directory or **Workspace** to register a folder that groups multiple project clones; the dialog validates the path and auto-generates a slug for the project name.
+Click the **+** button next to the project picker to register one or more projects. Pick **Single project** for a normal directory, or **Multiple projects** to scan a parent folder and register several repositories at once; the dialog validates the path and auto-generates a slug for the project name. Adding a single project then opens the **Project Setup** wizard, which installs worca and walks through initial configuration. (Registering multiple projects does *not* create a [workspace](#workspace-runs) — that's a separate concept.)
 
-![Add project dialog with Single project and Workspace modes](screenshots/add-project-dialog.png)
+![Add project dialog with Single project and Multiple projects modes](screenshots/add-project-dialog.png)
 
 ## Run History
 

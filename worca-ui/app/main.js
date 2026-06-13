@@ -94,6 +94,10 @@ import {
   setupTemplatePolling,
 } from './views/pipelines.js';
 import { pipelinesEditorView } from './views/pipelines-editor.js';
+import {
+  openProjectSetupWizard,
+  projectSetupWizardView,
+} from './views/project-setup-wizard.js';
 import { runCardView } from './views/run-card.js';
 import {
   prApprovalPanelView,
@@ -4526,7 +4530,7 @@ function contentHeaderView() {
         @click=${() =>
           submitWorkspaceCreate({
             rerender,
-            onCreated: (name) => {
+            onCreated: (name, createdWs) => {
               _refreshWorkspaceDefinitions();
               resetWorkspaceCreateState();
               // After creating, drop the user back at the workspaces list so
@@ -4534,6 +4538,15 @@ function contentHeaderView() {
               // (launch it, edit it, create another). The launcher remains
               // one click away via the row's Launch action.
               navigate('workspaces', null, null);
+              // Offer the workspace setup wizard as the last step of creation.
+              openProjectSetupWizard(
+                {
+                  target: name,
+                  isWorkspace: true,
+                  projectCount: createdWs?.projects?.length || 0,
+                },
+                rerender,
+              );
               return name;
             },
           })}>
@@ -5593,6 +5606,19 @@ function mainContentView() {
       onEdit: (name) => navigate('workspaces', name, null, 'edit'),
       onDelete: handleDeleteWorkspace,
       onOpenRuns: () => navigate('workspace-runs', null, null),
+      onSetup: (name) => {
+        const ws = (store.getState().workspaces || []).find(
+          (w) => w.name === name,
+        );
+        openProjectSetupWizard(
+          {
+            target: name,
+            isWorkspace: true,
+            projectCount: ws?.projects?.length || 0,
+          },
+          rerender,
+        );
+      },
     });
   }
 
@@ -5754,6 +5780,9 @@ function mainContentView() {
             rerender();
           })
           .catch(() => {});
+      },
+      onProjectSetup: (name) => {
+        openProjectSetupWizard({ target: name }, rerender);
       },
     });
   }
@@ -5946,6 +5975,11 @@ function rerender() {
             rerender();
           })
           .catch(() => {});
+        // Single-project add → offer the setup wizard. Batch/workspace adds
+        // (an array) skip auto-open to avoid stacking N wizards.
+        if (_project && !Array.isArray(_project) && _project.name) {
+          openProjectSetupWizard({ target: _project.name }, rerender);
+        }
       },
       onClose: () => {
         store.setState({ addProjectDialogOpen: false });
@@ -5957,6 +5991,7 @@ function rerender() {
       onClose: handleGistDialogClose,
       onCopy: handleGistDialogCopy,
     })}
+    ${projectSetupWizardView(rerender)}
   `,
     appEl,
   );
@@ -6017,6 +6052,18 @@ function attachStickyHeaderListener() {
 notificationManager.setRerender(rerender);
 store.subscribe(() => scheduleRerender());
 applyTheme(store.getState().preferences.theme);
+
+// When the project setup wizard closes, refresh the projects list — its Install
+// step may have changed a project's worca version.
+window.addEventListener('worca:setup-closed', () => {
+  fetch('/api/projects')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ projects: data.projects || [] });
+      rerender();
+    })
+    .catch(() => {});
+});
 
 // Cmd/Ctrl+B toggles the sidebar (VS Code convention).
 // Ignore the shortcut when the user is typing in an editable element so

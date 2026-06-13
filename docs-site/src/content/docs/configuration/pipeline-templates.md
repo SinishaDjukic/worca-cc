@@ -5,13 +5,13 @@ sidebar:
   order: 3
 ---
 
-The **Pipeline Templates** page lives under **Project Configuration** in the sidebar, next to **Project Settings**. From it you can browse every template across all three tiers (built-in, user, project), create new ones with a structured editor, duplicate built-ins as a starting point, and set a project default — without touching the CLI or editing JSON by hand.
+The **Pipeline Templates** page lives under **Configuration** in the sidebar, next to **Project Settings**. From it you can browse every template across all three tiers (built-in, user, project), create new ones with a structured editor, duplicate built-ins as a starting point, and set a project default — without touching the CLI or editing JSON by hand.
 
 :::note[Project-scoped]
-Both **Project Settings** and **Pipeline Templates** are hidden in global all-projects mode until you select a project. Pick a project in the sidebar (or launch worca-ui with `--project /path`) and the **Project Configuration** section appears.
+Both **Project Settings** and **Pipeline Templates** are hidden in global all-projects mode until you select a project. Pick a project in the sidebar (or launch worca-ui with `--project /path`) and the **Configuration** section appears.
 :::
 
-![The sidebar's Project Configuration group with Project Settings and Pipeline Templates visible, the latter open showing the three tier sections.](/screenshots/pipeline-templates/01-sidebar-templates.png)
+![The sidebar's Configuration group with Project Settings and Pipeline Templates visible, the latter open showing the three tier sections.](/screenshots/pipeline-templates/01-sidebar-templates.png)
 
 ## Opening the editor
 
