@@ -3148,7 +3148,13 @@ function feedbackAlert(rerender) {
 
 function projectsTab(
   projects,
-  { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender: _rerender },
+  {
+    onProjectAdd,
+    onProjectRemove,
+    onProjectsRefresh,
+    onProjectSetup,
+    rerender: _rerender,
+  },
 ) {
   const list = projects || [];
 
@@ -3210,40 +3216,72 @@ function projectsTab(
   return html`
     <div class="settings-card">
       <h3>Projects</h3>
-      <div class="projects-list">
-        ${list.map(
-          (p) => html`
-          <div class="projects-list-item">
-            <div>
-              <div class="project-name">${p.name}</div>
-              <div class="project-path">${p.path}</div>
-            </div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
-              <sl-badge variant="${!p.worcaVersion ? 'warning' : !activeWorcaCc ? 'neutral' : isVersionBehind(p.worcaVersion, activeWorcaCc) ? 'warning' : 'success'}" pill>worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge>
-              <sl-button
-                size="small"
-                variant="primary"
-                outline
-                @click=${() => confirmWorcaUpdate(p.name)}
-              >
-                ${unsafeHTML(iconSvg(RefreshCw, 14))}
-                Update
-              </sl-button>
-              <sl-button
-                size="small"
-                variant="danger"
-                outline
-                @click=${() => confirmRemove(p.name)}
-              >
-                ${unsafeHTML(iconSvg(Trash2, 14))}
-                Remove
-              </sl-button>
-            </div>
-          </div>
-        `,
-        )}
-        ${list.length === 0 ? html`<div class="empty-state">No projects registered</div>` : nothing}
-      </div>
+      ${
+        list.length === 0
+          ? html`<div class="empty-state">No projects registered</div>`
+          : html`
+        <div class="projects-config-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Path</th>
+                <th>worca-cc</th>
+                <th class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map((p) => {
+                const badgeVariant = !p.worcaVersion
+                  ? 'warning'
+                  : !activeWorcaCc
+                    ? 'neutral'
+                    : isVersionBehind(p.worcaVersion, activeWorcaCc)
+                      ? 'warning'
+                      : 'success';
+                return html`
+                  <tr class="projects-list-item">
+                    <td class="proj-name"><strong>${p.name}</strong></td>
+                    <td class="proj-path"><code>${p.path}</code></td>
+                    <td>
+                      <sl-badge variant=${badgeVariant} pill
+                        >worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge
+                      >
+                    </td>
+                    <td class="proj-actions">
+                      <sl-tooltip content="Update worca">
+                        <button
+                          class="proj-action-btn"
+                          @click=${() => confirmWorcaUpdate(p.name)}
+                        >
+                          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+                        </button>
+                      </sl-tooltip>
+                      <sl-tooltip content="Project setup">
+                        <button
+                          class="proj-action-btn"
+                          @click=${() => onProjectSetup?.(p.name)}
+                        >
+                          ${unsafeHTML(iconSvg(Settings, 14))}
+                        </button>
+                      </sl-tooltip>
+                      <sl-tooltip content="Remove project">
+                        <button
+                          class="proj-action-btn proj-action-btn--danger"
+                          @click=${() => confirmRemove(p.name)}
+                        >
+                          ${unsafeHTML(iconSvg(Trash2, 14))}
+                        </button>
+                      </sl-tooltip>
+                    </td>
+                  </tr>
+                `;
+              })}
+            </tbody>
+          </table>
+        </div>
+      `
+      }
       <div style="margin-top: 12px;">
         <sl-button size="small" @click=${handleOpenAddDialog}>
           ${unsafeHTML(iconSvg(Plus, 14))}
@@ -3275,6 +3313,7 @@ export function settingsView(
     onProjectAdd,
     onProjectRemove,
     onProjectsRefresh,
+    onProjectSetup,
     integrations,
     onIgStartEdit,
     onIgCancelEdit,
@@ -3317,7 +3356,7 @@ export function settingsView(
           ${helpFor('chat')}
         </sl-tab>
 
-        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
+        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, onProjectSetup, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
         <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, onSaveGlobals, rerender, globals })}</sl-tab-panel>
         <sl-tab-panel name="integrations">${integrationsTab(integrations || {}, { onStartEdit: onIgStartEdit, onCancelEdit: onIgCancelEdit, onFieldChange: onIgFieldChange, onEventToggle: onIgEventToggle, onSave: onIgSave, onRemove: onIgRemove, onDetect: onIgDetect, onToggleEnabled: onIgToggleEnabled })}</sl-tab-panel>

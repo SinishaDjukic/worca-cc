@@ -61,6 +61,10 @@ import {
   readProjectWorcaVersion,
   runWorcaSetup,
 } from './worca-setup.js';
+import {
+  applySetupPatch,
+  buildProjectPreflight,
+} from './worca-setup-config.js';
 import { createWorktreesRouter } from './worktrees-routes.js';
 
 /** Validate a runId — must not contain path traversal characters */
@@ -471,6 +475,52 @@ export function createProjectScopedRoutes({
 
   // --- Template CRUD endpoints (templates-routes.js) ---
   router.use(createTemplatesRoutes());
+
+  // --- Project Setup Wizard endpoints (W-073) ---
+
+  // GET /api/projects/:projectId/setup/preflight
+  // Read-only diagnostics for the setup wizard: git repo, detected PR base
+  // branch, graphify/CRG install state, and the project's current values for
+  // the keys the wizard manages (so re-running the wizard pre-populates).
+  router.get('/setup/preflight', async (req, res) => {
+    try {
+      const { projectRoot, settingsPath } = req.project;
+      const payload = await buildProjectPreflight({
+        projectRoot,
+        settingsPath,
+        graphifyStatus: req.app.locals.graphifyStatus || null,
+        crgStatus: req.app.locals.crgStatus || null,
+      });
+      res.json({ ok: true, ...payload });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/projects/:projectId/setup/apply
+  // Apply one wizard step's patch to this project's settings.json. Body is a
+  // partial { baseBranch | graphifyEnabled | crgEnabled | template }. The
+  // wizard writes step-by-step, so partial completion is preserved.
+  router.post('/setup/apply', (req, res) => {
+    const { settingsPath } = req.project;
+    if (!settingsPath) {
+      return res
+        .status(501)
+        .json({ ok: false, error: 'settingsPath not configured' });
+    }
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Request body must be a JSON object' });
+    }
+    try {
+      const worca = applySetupPatch(settingsPath, body);
+      res.json({ ok: true, worca });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
 
   // --- Project-scoped settings endpoints ---
 

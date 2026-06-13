@@ -27,6 +27,11 @@ import {
   workspaceRunsDir as resolveWorkspaceRunsDir,
   workspacesDir as resolveWorkspacesDir,
 } from './paths.js';
+import { listTemplatesFlat } from './templates-routes.js';
+import {
+  applySetupPatch,
+  buildProjectPreflight,
+} from './worca-setup-config.js';
 
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024;
 const PROJECT_PLAN_CAP_BYTES = 256 * 1024;
@@ -829,6 +834,114 @@ export function createWorkspaceRouter({
       // currently-unselected repos and offer them as additions. Without
       // this the form can only remove repos, not add new ones.
       res.json({ ok: true, workspace: ws, path: reg.path });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── GET /api/workspaces/:name/setup/preflight (W-073) ─────────────────
+  // Aggregate setup preflight across every child project of the workspace.
+  // Graphify/CRG are host-global tools, so their install state is reported
+  // once; base branch and current settings are reported per child.
+  workspaces.get('/:name/setup/preflight', async (req, res) => {
+    const name = sanitizeFilename(req.params.name);
+    const regPath = join(workspacesDir, `${name}.json`);
+    if (!existsSync(regPath)) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Workspace "${name}" not found` });
+    }
+    try {
+      const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+      const ws = readWorkspaceJson(reg.path);
+      if (!ws) {
+        return res.status(404).json({
+          ok: false,
+          error: `workspace.json not found at ${reg.path}`,
+        });
+      }
+      const graphifyStatus = req.app.locals.graphifyStatus || null;
+      const crgStatus = req.app.locals.crgStatus || null;
+      const projects = [];
+      for (const p of ws.projects ?? []) {
+        const projectRoot = join(reg.path, p.path);
+        const settingsPath = join(projectRoot, '.claude', 'settings.json');
+        const pf = await buildProjectPreflight({
+          projectRoot,
+          settingsPath,
+          graphifyStatus,
+          crgStatus,
+        });
+        projects.push({ name: p.name, path: p.path, ...pf });
+      }
+      // Host-global tool install state — read once from the first child (all
+      // children share the same host), defaulting to false for empty workspaces.
+      const graphifyInstalled = projects.some((p) => p.graphifyInstalled);
+      const crgInstalled = projects.some((p) => p.crgInstalled);
+      // Only globally-accessible templates (builtin + user) are offered at the
+      // workspace level — project-tier templates are per-project. Builtin
+      // templates resolve from a child's runtime copy, so list from the first
+      // child root and drop any project-tier entries.
+      let templates = [];
+      const firstChildRoot =
+        (ws.projects ?? []).length > 0
+          ? join(reg.path, ws.projects[0].path)
+          : null;
+      if (firstChildRoot) {
+        try {
+          templates = listTemplatesFlat(firstChildRoot).filter(
+            (t) => t.tier !== 'project',
+          );
+        } catch {
+          templates = [];
+        }
+      }
+      res.json({
+        ok: true,
+        isWorkspace: true,
+        projectCount: projects.length,
+        graphifyInstalled,
+        crgInstalled,
+        projects,
+        templates,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── POST /api/workspaces/:name/setup/apply (W-073) ────────────────────
+  // Apply one wizard step's patch to every child project's settings.json.
+  workspaces.post('/:name/setup/apply', (req, res) => {
+    const name = sanitizeFilename(req.params.name);
+    const regPath = join(workspacesDir, `${name}.json`);
+    if (!existsSync(regPath)) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Workspace "${name}" not found` });
+    }
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Request body must be a JSON object' });
+    }
+    try {
+      const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+      const ws = readWorkspaceJson(reg.path);
+      if (!ws) {
+        return res.status(404).json({
+          ok: false,
+          error: `workspace.json not found at ${reg.path}`,
+        });
+      }
+      const applied = [];
+      for (const p of ws.projects ?? []) {
+        const settingsPath = join(reg.path, p.path, '.claude', 'settings.json');
+        applySetupPatch(settingsPath, body);
+        applied.push(p.name);
+      }
+      res.json({ ok: true, applied });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

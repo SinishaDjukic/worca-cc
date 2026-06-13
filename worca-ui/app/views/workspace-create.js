@@ -153,7 +153,7 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
 
     if (data.ok) {
       submitStatus = null;
-      onCreated?.(workspaceName.trim());
+      onCreated?.(workspaceName.trim(), { projects });
     } else {
       submitStatus = 'error';
       submitError = data.error || 'Creation failed';

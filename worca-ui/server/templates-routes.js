@@ -108,7 +108,7 @@ function dirForTier(projectRoot, tier) {
  * Output sort order matches `TemplateResolver.list` on the Python
  * side: builtins alpha → projects alpha → users newest-first.
  */
-function listTemplatesFlat(projectRoot) {
+export function listTemplatesFlat(projectRoot) {
   const out = [];
   for (const tier of TIERS) {
     const dir = dirForTier(projectRoot, tier);
