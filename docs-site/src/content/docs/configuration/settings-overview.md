@@ -9,13 +9,13 @@ Every project's configuration lives under a `worca` namespace in `.claude/settin
 
 ## The Settings panel
 
-Open a project's **Settings** — found in the sidebar under **Project Configuration → Project Settings**, alongside its siblings [**Pipeline Templates**](/configuration/pipeline-templates/) and [**Models**](/configuration/models/) — to configure the project-wide pipeline knobs that aren't owned by a template: preflight, plan-path template, run defaults (size/loop multipliers), execution & parallelism, governance guards, costs & budgets, webhooks, integrations, Graphify, and Code Review Graph. All three Project Configuration entries are hidden in global all-projects mode until you select a project. Saves are written to `.claude/settings.json` and are effective on the next run.
+Open a project's **Settings** — found in the sidebar under **Configuration → Project Settings**, alongside its siblings [**Pipeline Templates**](/configuration/pipeline-templates/) and [**Models**](/configuration/models/) — to configure the project-wide pipeline knobs that aren't owned by a template: preflight, plan-path template, run defaults (size/loop multipliers), execution & parallelism, governance guards, costs & budgets, webhooks, integrations, Graphify, and Code Review Graph. All three Configuration entries are hidden in global all-projects mode until you select a project. Saves are written to `.claude/settings.json` and are effective on the next run.
 
 Per-agent tuning (models, max turns, effort) and stage on/off lives in the **Pipeline Templates** editor, not here — every run uses an active template, so the template owns those keys. Per-alias model definitions live on the **Models** page. Project Settings covers everything that's the same across templates.
 
 Saves are **locked while a pipeline is running** to prevent mid-run config drift — finish or stop the run before changing settings.
 
-![The Project Configuration sidebar group with Project Settings open on its Pipeline tab — preflight, plan path, run defaults, execution & parallelism, fleet & guide — with Pipeline Templates, Models, and Workspaces visible as siblings beneath.](/screenshots/settings-overview/01-sidebar-group.png)
+![The Configuration sidebar group with Project Settings open on its Pipeline tab — preflight, plan path, run defaults, execution & parallelism, fleet & guide — with Pipeline Templates, Models, and Workspaces visible as siblings beneath.](/screenshots/settings-overview/01-sidebar-group.png)
 
 ## Three places config lives
 

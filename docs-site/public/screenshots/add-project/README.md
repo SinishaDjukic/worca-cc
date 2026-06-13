@@ -6,7 +6,8 @@ Screenshots referenced by `docs-site/src/content/docs/getting-started/add-your-p
 
 | Filename | Section in docs | Suggested framing |
 |---|---|---|
-| `01-dialog.png` | After the Steps list | The **Add Project** dialog with a representative path filled in (e.g. `/Users/<you>/Projects/<repo>`) so the **Project Name** field shows its auto-generated slug. Single project mode selected. Crop tight to the dialog card with a sliver of the dimmed backdrop visible so the reader recognises it as a modal. |
+| `01-dialog.png` | After the Steps list | The **Add Project** dialog with a representative path filled in (e.g. `/Users/<you>/Projects/<repo>`) so the **Project Name** field shows its auto-generated slug. **Single project** mode selected — the radios show **Single project / Multiple projects**. Crop tight to the dialog card with a sliver of the dimmed backdrop visible so the reader recognises it as a modal. |
+| `02-setup-wizard.png` | Under "The setup wizard" | The **Project Setup** wizard on its first step ("Your Project Environment"), showing the 5-dot step indicator and the preflight checklist (git repository, worca runtime, PR base branch, Graphify, CRG). Same tight-crop + backdrop-sliver framing as the dialog. |
 
 ## Conventions
 

@@ -5,10 +5,10 @@ sidebar:
   order: 4
 ---
 
-The **Models** page lives under **Project Configuration** in the sidebar, next to **Pipeline Templates**. From it you can browse every model alias across all three tiers, edit a model's id, env, and pricing in one place, and see which templates reference it — without touching the CLI or editing `settings.json` by hand.
+The **Models** page lives under **Configuration** in the sidebar, next to **Pipeline Templates**. From it you can browse every model alias across all three tiers, edit a model's id, env, and pricing in one place, and see which templates reference it — without touching the CLI or editing `settings.json` by hand.
 
 :::note[Project-scoped]
-The Models page is hidden in global all-projects mode until you select a project. Pick a project in the sidebar (or launch worca-ui with `--project /path`) and **Models** appears under **Project Configuration**.
+The Models page is hidden in global all-projects mode until you select a project. Pick a project in the sidebar (or launch worca-ui with `--project /path`) and **Models** appears under **Configuration**.
 :::
 
 ![The Models list: three tier sections — Project (open), User and Built-in (collapsed) — with cards showing alias id, env-var count, and per-card actions.](/screenshots/models/01-list.png)
