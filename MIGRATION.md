@@ -927,7 +927,7 @@ UI-only release tracking the worca-cc 0.55.0 surface changes plus a docs-coverag
 - **Models editor polish.** New cost-source badge taxonomy (`explicit` / `Claude CLI` / no badge); `—` placeholder for unset pricing fields (so `0` stays meaningful for truly-free rates); a **Clear pricing** button that wipes all four fields; widened env-var key/value columns; a **Not configured** danger badge + red-outlined value cell when any env value is still `<YOUR-SECRET-HERE>`.
 - **Bundle import id/env split.** Imported `worca.models.<alias>` entries now land split across `settings.json` (id) and `settings.local.json` (env) so secret-bearing env always stays out of the committed file. Models cache refreshes automatically after import.
 
-### Unreleased — tier-pinned model refs
+### 0.55.x → 0.56.0 — tier-pinned model refs
 
 Tier-pinned model refs (`user:alias`, `project:alias`, `builtin:alias`) are a new syntax for `worca.agents.<name>.model` and template model fields.
 
@@ -943,9 +943,13 @@ Tier-pinned model refs (`user:alias`, `project:alias`, `builtin:alias`) are a ne
 
 No `worca init --upgrade` migration required — settings file shape is unchanged.
 
-### Unreleased — declared inter-stage context contract (W-072)
+### 0.55.x → 0.56.0 — pluggable pipeline & declared context contract (W-070/071/072)
 
-Stage outputs are now a declared contract: flow stages carry an `outputs` map
+The pipeline is now declarative: stage order and outcome-driven loop transitions
+live in `worca.flow`, every builtin stage runs through a generic executor, and
+custom stages are supported (drop an agent `.md` + schema + flow entry). Omitting
+`worca.flow` keeps the byte-identical builtin 9-stage flow, so existing projects
+need no change. Stage outputs are now a declared contract: flow stages carry an `outputs` map
 (name → JSON pointer into the validated schema result), the executor
 publishes each value as `stages.<stage>.<output>` in the prompt context, and
 templates consume them via namespaced placeholders (`{{stages.plan.approach}}`).
@@ -979,6 +983,15 @@ Full reference: [`docs/flow.md` § Declared context contract](./docs/flow.md#dec
 
 Run `worca init --upgrade` to refresh the runtime copy (templates +
 `flow.json` schema).
+
+### 0.48.x → 0.49.0 (@worca/ui) — project setup wizard (W-073)
+
+UI-only release. Adding a project now opens a guided **Project Setup** wizard, and the Settings → Projects tab is reworked. Purely additive — no settings migration.
+
+- **Project Setup wizard.** After adding a single project, a 5-step wizard opens (Preflight → PR Base Branch → Optional Tools → Default Template → Done) and is re-triggerable from **Settings → Projects** (gear icon). When the project lacks the worca runtime it inserts an **Install Worca** step that runs `worca init --upgrade` inline — replacing the old standalone install prompt. The template step reuses the launcher's grouped tier dropdown; the final step links straight to Integrations when no chat notifier is configured.
+- **Projects tab reworked + terminology.** The Projects list is now a table (matching Workspaces) with banded rows and a version-only badge; projects whose path is missing on disk show a "not found" badge and have Update/Setup disabled. The Add Project dialog's second mode is renamed **Workspace → Multiple projects** ("Parent Path"), since it batch-registers projects rather than creating a workspace. The sidebar group **Project Configuration → Configuration**.
+
+No `worca init --upgrade` migration required — the wizard writes the same settings keys you could already edit by hand.
 
 ## Getting help
 
