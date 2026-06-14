@@ -1,97 +1,64 @@
 ---
 title: Customizing dispatch governance
-description: Control which tools, skills, and subagents each agent may invoke.
+description: Control which tools, skills, and subagents each agent may invoke — from the chip-based editor in the Pipeline Templates Governance tab.
 sidebar:
   order: 10
 ---
 
-Beyond the always-on safety hooks described in [Governance](/concepts/governance/), worca lets you control exactly which **tools**, **skills**, and **subagents** each pipeline agent may dispatch.
+Beyond the always-on safety hooks described in [Governance](/concepts/governance/), worca lets you control exactly which **tools**, **skills**, and **subagents** each pipeline agent may dispatch. The whole model is editable from the dashboard.
 
-## Edit it from the dashboard
+## Edit it in the template
 
-Open **Settings → Governance**. The dispatch editor has three sections — **Tools**, **Skills**, **Subagents** — each with per-agent allow/deny chips. Adding or removing a chip updates the allow list for that agent; an agent set to deny-everything shows a **Lockdown** marker. This is the simplest way to grant or revoke a capability without editing JSON.
+Dispatch governance lives on each pipeline template's **Governance** tab. Open the [Pipeline Templates](/configuration/pipeline-templates/) editor, pick the template you're customizing, and scroll past Test Gate and Plan Review Enforcement to reach **Governance Dispatch** — one section per dispatch domain (**Tools**, **Skills**, **Subagents**), each with the same three-tier structure:
+
+![The Governance Dispatch overview at the top of the Tools section: a description paragraph, then a Tools card with three tier-labeled chip rows — Always Disallowed (chips: EnterPlanMode, EnterWorktree, TodoWrite), an empty Default Denied input, and the first Per-Agent Allow rows (_defaults, Planner, Plan_reviewer, Coordinator) each with an `any` chip.](/screenshots/dispatch-governance/03-tools-tiers.png)
 
 The run-detail view then shows each iteration's actual dispatch decisions as allow (green) / deny (red) badges, so you can confirm a change took effect.
 
-![The Settings → Governance dispatch editor: the Tools / Skills / Subagents sections with per-agent allow chips.](/screenshots/dispatch-governance/01-tools.png)
-
-The rest of this page explains the model the editor writes to — useful when you want the precise semantics or are scripting `settings.json` directly. All three sections share one three-tier model under `worca.governance.dispatch`.
+The rest of this page explains the model the chip editor writes to — useful for understanding precedence or when you're scripting `settings.json` directly.
 
 ## The three tiers
 
 Each section (`tools`, `skills`, `subagents`) has the same structure:
 
-| Tier | Key | Meaning |
-|---|---|---|
-| 1 | `always_disallowed` | Hard deny. Editable, but rarely should be — these are footguns no agent should invoke. |
-| 2 | `default_denied` | Blocked **unless** an agent names it in `per_agent_allow`. The `"*"` wildcard does *not* include these. |
-| 3 | `per_agent_allow` | Per-agent allow list, with a `_defaults` fallback. |
+| Tier | Meaning |
+|---|---|
+| **Always Disallowed** | Hard deny. Editable, but rarely should be — these are footguns no agent should invoke. |
+| **Default Denied** | Blocked **unless** an agent names it in Per-Agent Allow. The `any` wildcard does *not* include these. |
+| **Per-Agent Allow** | Per-agent allow list, with a `_defaults` fallback row. |
+
+The chip colours in the editor reinforce the tiers — gray for the locked Always Disallowed list, amber for the Default Denied opt-in tier, blue for per-agent allowances.
 
 ## Resolution
 
 For a given `(section, agent, candidate)`:
 
-1. Matches `always_disallowed`? → **deny**.
-2. Look up `per_agent_allow[agent]`, falling back to `_defaults`.
-3. If the list has `"*"`: allow anything not in `default_denied` (a name listed explicitly opts in past `default_denied`).
-4. If the list has no `"*"`: allow only names listed explicitly; deny the rest.
+1. Matches Always Disallowed? → **deny**.
+2. Look up Per-Agent Allow for the agent, falling back to `_defaults`.
+3. If the row has `any` (wildcard): allow anything not in Default Denied (a name listed explicitly opts in past Default Denied).
+4. If the row has no `any`: allow only names listed explicitly; deny the rest.
 
 Interactive sessions (no `WORCA_AGENT` set) are never gated — this only applies to pipeline agents.
 
-## The allow-list dialects
+## Examples — read the chip rows
 
-`per_agent_allow` entries read like this:
+A picture worth several JSON examples. The Skills section below shows three patterns at once — and these are all just chip-add operations in the editor:
 
-| Form | Meaning |
-|---|---|
-| `["*"]` | Everything except the deny tiers (the default). |
-| `["*", "review"]` | Wildcard **plus** an explicit opt-in to a `default_denied` item. |
-| `["Read", "Grep"]` | Only these named items. |
-| `[]` | Falls through to `_defaults` — clearing the list doesn't brick the agent. |
-| `["none"]` | Explicit lockdown — nothing allowed in this section. |
+![The Skills dispatch card: Always Disallowed chip list (batch, fewer-permission-prompts, loop, schedule, worca-release, worca-rc, worca-pr-prep, worca-install, worca-sync, worca-sync-commit, worca-sync-pr, worca-agent-override, worca-analyze, worca-plan-new, update-config, hookify:hookify, hookify:configure, hookify:list, hookify:writing-rules, init). Default Denied chips: claude-api, debug, review, security-review, simplify, feature-dev:feature-dev, claude-md-management:revise-claude-md, claude-md-management:claude-md-improver. Per-Agent Allow rows: _defaults (empty), Planner (any), Plan_reviewer (any), Coordinator (any), Implementer (any · simplify · claude-api), Tester (any · debug), Reviewer (any · review · security-review).](/screenshots/dispatch-governance/02-skills-chips.png)
 
-## Examples
+What each row says:
 
-Each of these JSON edits maps to a chip operation in **Settings → Governance** — adding a name to a `per_agent_allow` list is adding a chip to that agent, and `["none"]` is the Lockdown marker. The JSON is shown for when you're scripting or reviewing a diff.
+- **`_defaults`** (empty) → any agent without an explicit row inherits the fallback. Empty means "use the implicit `any`."
+- **Planner / Plan_reviewer / Coordinator** all have just the `any` chip → wildcard, anything allowed except the deny tiers.
+- **Implementer** has `any · simplify · claude-api` → wildcard *plus* an explicit opt-in to two skills from the Default Denied tier. That's how you grant a normally-blocked skill to one agent — add a chip with that name to its row.
+- **Tester** has `any · debug` → same pattern: wildcard plus opt-in to the `debug` skill.
+- **Reviewer** has `any · review · security-review` → exactly the "let the reviewer use the `review` skill" example: add the `review` chip to the Reviewer row.
 
-Let the reviewer use the (normally denied) `review` skill:
-
-```jsonc
-"skills": {
-  "per_agent_allow": {
-    "_defaults": ["*"],
-    "reviewer": ["*", "review"]
-  }
-}
-```
-
-Lock the coordinator out of all subagent dispatch while leaving everyone else open:
-
-```jsonc
-"subagents": {
-  "per_agent_allow": {
-    "_defaults": ["*"],
-    "coordinator": ["none"]
-  }
-}
-```
-
-Restrict the reviewer to a read-only tool subset:
-
-```jsonc
-"tools": {
-  "per_agent_allow": {
-    "_defaults": ["*"],
-    "reviewer": ["Read", "Grep"]
-  }
-}
-```
-
-A named tool list auto-includes `Skill` and `Agent` so worca's own skill/subagent governance still fires.
+To **lock an agent out** of a section entirely, replace its row with a single `none` chip (the explicit lockdown sentinel). To **restrict to a named subset** (e.g. give the Reviewer only `Read` and `Grep`), remove the `any` chip and add only the names you want. A named tool list auto-includes `Skill` and `Agent` so worca's own skill/subagent governance still fires.
 
 ## What `--tools` does and doesn't cover
 
-The `tools` section maps to the agent subprocess's `--tools` / `--disallowedTools` flags, which restrict only the **built-in** tool set. **MCP tools (`mcp_*`) are not covered** — they flow through separate channels and a named tool allowlist won't block them.
+The Tools section maps to the agent subprocess's `--tools` / `--disallowedTools` flags, which restrict only the **built-in** tool set. **MCP tools (`mcp_*`) are not covered** — they flow through separate channels and a named tool allowlist won't block them.
 
 :::tip
 The full default configuration and the complete resolution algorithm are documented in [`docs/governance.md`](https://github.com/SinishaDjukic/worca-cc/blob/master/docs/governance.md) in the source repository.

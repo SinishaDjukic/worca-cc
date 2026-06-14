@@ -1,11 +1,11 @@
 ---
 title: Non-Anthropic providers
-description: Per-provider compatibility notes — how worca's model and effort axes map onto each provider's API surface.
+description: Per-provider compatibility notes — how worca's model and effort axes map onto each provider's API surface, with screenshot-driven setup recipes.
 sidebar:
   order: 5.5
 ---
 
-worca's model alias and per-agent effort axes were designed around the Anthropic API. Any provider that exposes an Anthropic-compatible endpoint can be wired up via the `env` block on a model alias (see [Adding & routing models](/advanced/adding-models/)) — but each provider's thinking/reasoning semantics differ, so the effort ladder doesn't always translate 1:1.
+worca's model alias and per-agent effort axes were designed around the Anthropic API. Any provider that exposes an Anthropic-compatible endpoint can be wired up via the **Environment variables** table on a model alias (see [Adding & routing models](/advanced/adding-models/)) — but each provider's thinking/reasoning semantics differ, so the effort ladder doesn't always translate 1:1.
 
 This page collects the quirks per provider: which endpoint to point at, how worca's effort levels actually map onto the provider's API, and how to drive the provider's thinking modes from the **Pipeline Templates** editor without hand-editing JSON.
 
@@ -17,25 +17,20 @@ worca resolves a per-agent effort rung (`low | medium | high | xhigh | max`) and
 
 MiniMax exposes an Anthropic-compatible endpoint at `https://api.minimax.io/anthropic` covering the M2.x family (M2, M2.1, M2.5, M2.7, plus `-highspeed` variants) and M3.
 
-### Endpoint setup
+### Endpoint setup — on the Models page
 
-Define a model alias on the [Models page](/configuration/models/) that routes through MiniMax. The `env` block lives in `settings.local.json` (gitignored) so the API key never gets committed:
+Open the [Models](/configuration/models/) page, click **+ New** to create an alias, and fill the **Environment variables** table — minimum is `ANTHROPIC_BASE_URL` and an auth token. The screenshot below shows another alt-endpoint alias (`glm-ds`) configured the same way — replace the values with MiniMax's:
 
-```jsonc
-"worca": {
-  "models": {
-    "minimax-m3": {
-      "id": "MiniMax-M3",
-      "env": {
-        "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
-        "ANTHROPIC_AUTH_TOKEN": "<YOUR-MINIMAX-API-KEY>"
-      }
-    }
-  }
-}
-```
+![The Edit Model editor with the alias field, Storage tier badge (Project), model id, and the Environment variables table containing ANTHROPIC_BASE_URL plus seven more env rows for an alt-endpoint profile.](/screenshots/adding-models/01-editor-env.png)
 
-Set per-token rates in the model card's **Pricing** accordion — alt-endpoint runs override the Claude CLI's `total_cost_usd` from `worca.pricing.models.<alias>` so cost accounting stays accurate.
+For MiniMax:
+
+| Env key | Value |
+|---|---|
+| `ANTHROPIC_BASE_URL` | `https://api.minimax.io/anthropic` |
+| `ANTHROPIC_AUTH_TOKEN` | your MiniMax API key (lives in `settings.local.json` — gitignored) |
+
+Set per-token rates in the alias card's **Pricing** accordion — alt-endpoint runs override the Claude CLI's `total_cost_usd` from your configured rates so cost accounting stays accurate.
 
 ### Thinking semantics
 
@@ -66,10 +61,17 @@ The whole effort ladder — explicit per-agent values, adaptive bead labels, loo
 
 In the **Pipeline Templates** editor (see [Pipeline templates](/configuration/pipeline-templates/)), two settings together pin every stage to a thinking-off request:
 
-1. **Pipeline tab → Effort policy card → Auto mode → `disabled`**
-   Adaptive mode would otherwise inject the coordinator's bead-complexity label as the implementer's starting point, which becomes a non-null effort level → sets `CLAUDE_CODE_EFFORT_LEVEL` → the Claude CLI emits a `thinking` block → M3 turns thinking on. Pinning `disabled` removes that path.
-2. **Agents tab → every agent's Effort field → `(default)`**
-   Stores `effort: null`, which omits `CLAUDE_CODE_EFFORT_LEVEL` from the subprocess env. No env var → no `thinking` block in the request → M3 falls back to its default (off).
+**Step 1.** On the **Agents** tab, set **Auto mode** in the Effort Mode card to `disabled`:
+
+![The Effort Mode card on the Agents tab with AUTO MODE set to `disabled` (inline description "Per-agent effort only; no runtime escalation on loopbacks.") and AUTO CAP set to `xhigh`. The Edit Template view's NAME field reads "Feature Development (GLM-DS)" with a Project storage badge.](/screenshots/non-anthropic-providers/02-effort-mode-disabled.png)
+
+Why: adaptive mode would otherwise inject the coordinator's bead-complexity label as the implementer's starting point, which becomes a non-null effort level → sets `CLAUDE_CODE_EFFORT_LEVEL` → the Claude CLI emits a `thinking` block → M3 turns thinking on. Pinning `disabled` removes that path.
+
+**Step 2.** On the same tab, set every per-agent **Effort** field to `(default)`:
+
+![Agent cards on the Agents tab for the GLM-DS template: every visible agent — Planner, Plan_reviewer, Coordinator, Implementer, Tester, Reviewer — has its Effort field set to `(default)`. Each card's MODEL field reads `glm-ds`.](/screenshots/non-anthropic-providers/03-per-agent-default.png)
+
+Why: `(default)` stores `effort: null`, which omits `CLAUDE_CODE_EFFORT_LEVEL` from the subprocess env. No env var → no `thinking` block in the request → M3 falls back to its default (off).
 
 ### Recipe — enable thinking on M3
 
@@ -77,8 +79,8 @@ Set any per-agent **Effort** to a literal rung (`low` through `max` — all equi
 
 ### Caveats
 
-- **M2.x always thinks.** The Effort field is purely cosmetic for M2.x models — no setting on either axis changes the request. Treat the effort policy as Anthropic-only when running M2.x; pin `auto_mode: disabled` to avoid misleading escalation telemetry in `status.json`.
-- **Advisory min-effort indicators are false signals.** The yellow ⚠ "Below recommended floor" chip on `planner` / `reviewer` / `guardian` (see [Agents & models](/configuration/agents-and-models/)) is calibrated for Anthropic's reasoning ladder. On MiniMax, `low` and `max` are identical — ignore the indicator.
+- **M2.x always thinks.** The Effort field is purely cosmetic for M2.x models — no setting on either axis changes the request. Treat the effort policy as Anthropic-only when running M2.x; pin **Auto mode** to `disabled` to avoid misleading escalation telemetry in `status.json`.
+- **Advisory min-effort indicators are false signals.** The yellow ⚠ "Below recommended floor" chip on `planner` / `reviewer` / `guardian` (see [Tuning effort § Advisory recommended floors](/advanced/tuning-effort/#advisory-recommended-floors)) is calibrated for Anthropic's reasoning ladder. On MiniMax, `low` and `max` are identical — ignore the indicator.
 - **Forensic `requested` vs `level` is misleading.** The iteration record in `status.json` reports `requested: "xhigh"` / `level: "high"` based on the model's ladder, but the request actually carried `thinking.enabled` regardless of the rung. The forensic pair is only meaningful for Anthropic models.
 - **Template scope, not project scope.** Effort lives on the template, not in project settings — configure these two knobs on whichever template runs MiniMax. See [Configuration precedence](/configuration/precedence/) for the strip-and-merge rules.
 
