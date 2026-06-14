@@ -174,6 +174,38 @@ class TestRunPreflightSuccess:
 
         assert (logs_dir / "preflight" / "iter-1.log").exists()
 
+    def test_log_lines_carry_timestamp_prefix(self, tmp_path):
+        """Preflight's captured stdout is timestamped per line (not a raw blob),
+        so the UI renders real write-times instead of a "--:--:--" legacy block.
+        """
+        import re
+
+        from worca.orchestrator.runner import run_preflight
+
+        # Pretty-printed (multi-line) JSON mirrors the real preflight script and
+        # exercises write_log_block's per-line timestamping.
+        script = tmp_path / "pf.py"
+        script.write_text(
+            "import json, sys\n"
+            "print(json.dumps({'status': 'pass', 'checks': [], "
+            "'summary': 'ok'}, indent=2))\n"
+            "sys.exit(0)\n"
+        )
+        settings_path = _settings_file(tmp_path, script_path=str(script))
+        logs_dir = tmp_path / "logs"
+        run_preflight({"_logs_dir": str(logs_dir)}, settings_path, iteration=1)
+
+        ts_re = re.compile(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+            r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\t"
+        )
+        text = (logs_dir / "preflight" / "iter-1.log").read_text()
+        lines = [ln for ln in text.split("\n") if ln]
+        assert len(lines) >= 2  # multi-line JSON → multiple records
+        for ln in lines:
+            assert ts_re.match(ln), f"preflight log line missing prefix: {ln!r}"
+        assert any('"summary": "ok"' in ln for ln in lines)
+
     def test_uses_logs_dir_from_context(self, tmp_path):
         from worca.orchestrator.runner import run_preflight
         result_data = {"status": "pass", "checks": [], "summary": "ok"}

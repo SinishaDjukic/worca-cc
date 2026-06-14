@@ -7,15 +7,10 @@ TestProcessStream) so they are collected by CI (testpaths = ["tests"]).
 import io
 import json
 import re
-from datetime import datetime, timezone
 
 import pytest
 
-from worca.utils.claude_cli import (
-    _format_log_line,
-    _write_log_line,
-    process_stream,
-)
+from worca.utils.claude_cli import _format_log_line, process_stream
 
 # ISO-8601 + TAB prefix that every persisted log line now carries. Mirrors the
 # LOG_TS_RE sniff in worca-ui/server/log-tailer.js.
@@ -296,40 +291,6 @@ def test_process_stream_no_result_raises():
     )
     with pytest.raises(RuntimeError, match="No result event"):
         process_stream(events)
-
-
-# ---------------------------------------------------------------------------
-# _write_log_line — ISO-8601 write-time prefix
-# ---------------------------------------------------------------------------
-
-
-def test_write_log_line_prefixes_iso_timestamp_and_tab():
-    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
-    buf = io.StringIO()
-    _write_log_line(buf, "[tool:Read] foo.py", now=now)
-    assert buf.getvalue() == "2026-06-14T12:00:00.000+00:00\t[tool:Read] foo.py\n"
-
-
-def test_write_log_line_collapses_embedded_newlines():
-    # Embedded newlines must not split one logical record into multiple physical
-    # lines — otherwise the reader's "first field is the timestamp" invariant
-    # breaks for the continuation lines.
-    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
-    buf = io.StringIO()
-    _write_log_line(buf, "line one\nline two\r\nline three", now=now)
-    written = buf.getvalue()
-    assert written.count("\n") == 1  # exactly one trailing physical newline
-    assert written.endswith("\n")
-    assert "line one⏎ line two⏎ line three" in written
-
-
-def test_write_log_line_first_field_parses_as_timestamp():
-    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
-    buf = io.StringIO()
-    _write_log_line(buf, "anything", now=now)
-    ts_field = buf.getvalue().split("\t", 1)[0]
-    # Round-trips back to an aware datetime.
-    assert datetime.fromisoformat(ts_field) == now
 
 
 def test_process_stream_log_lines_carry_timestamp_prefix():

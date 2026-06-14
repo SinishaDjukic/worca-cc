@@ -62,8 +62,8 @@ from worca.utils.claude_cli import (
     terminate_current,
     terminate_all,
     AgentSubprocessError,
-    _write_log_line,
 )
+from worca.utils.log_lines import write_log_line, write_log_block
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
@@ -1067,7 +1067,7 @@ def _log(msg: str, level: str = "info") -> None:
 
     stderr keeps the human-friendly local ``[HH:MM:SS]`` prefix for operators
     watching the console. The persisted log line instead carries the ISO-8601
-    UTC write-time column (via ``_write_log_line``) so the UI renders it in each
+    UTC write-time column (via ``write_log_line``) so the UI renders it in each
     viewer's local timezone \u2014 consistent with per-stage agent logs.
     """
     ts = time.strftime("%H:%M:%S")
@@ -1075,7 +1075,7 @@ def _log(msg: str, level: str = "info") -> None:
     body = f"{prefix.get(level, '  ')} {msg}"
     print(f"[{ts}] {body}", file=sys.stderr, flush=True)
     if _orchestrator_log:
-        _write_log_line(_orchestrator_log, body)
+        write_log_line(_orchestrator_log, body)
 
 
 def _format_duration(seconds: float) -> str:
@@ -2280,11 +2280,15 @@ def run_preflight(
     )
     stdout, stderr = proc.communicate()
 
+    # The captured stdout/stderr is produced at one instant (the preflight
+    # subprocess just finished), so every emitted line shares one write-time.
+    # Routing through write_log_block keeps these lines timestamped like every
+    # other stage log instead of rendering as a "--:--:--" legacy block.
+    stamp = datetime.now(timezone.utc)
     with open(log_path, "w", encoding="utf-8") as log_file:
-        log_file.write(stdout)
+        write_log_block(log_file, stdout, now=stamp)
         if stderr:
-            log_file.write("\n--- STDERR ---\n")
-            log_file.write(stderr)
+            write_log_block(log_file, f"--- STDERR ---\n{stderr}", now=stamp)
 
     try:
         result = json.loads(stdout)
