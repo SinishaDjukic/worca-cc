@@ -19,16 +19,19 @@ MiniMax exposes an Anthropic-compatible endpoint at `https://api.minimax.io/anth
 
 ### Endpoint setup — on the Models page
 
-Open the [Models](/configuration/models/) page, click **+ New** to create an alias, and fill the **Environment variables** table — minimum is `ANTHROPIC_BASE_URL` and an auth token. The screenshot below shows another alt-endpoint alias (`glm-ds`) configured the same way — replace the values with MiniMax's:
+Open the [Models](/configuration/models/) page, click **+ New** to create a MiniMax alias, and fill the **Environment variables** table:
 
-![The Edit Model editor with the alias field, Storage tier badge (Project), model id, and the Environment variables table containing ANTHROPIC_BASE_URL plus seven more env rows for an alt-endpoint profile.](/screenshots/adding-models/01-editor-env.png)
+![The Edit Model editor for the `minimax-m3` alias: ALIAS field reads "minimax-m3", Storage badge "Project", "Resolves to: opus + 8 env vars" summary, MODEL ID field set to `opus`, and the Environment variables table with ANTHROPIC_BASE_URL set to `https://api.minimax.io/anthropic`, plus API_TIMEOUT_MS (3000000), CLAUDE_CODE_MAX_OUTPUT_TOKENS (8192), MAX_THINKING_TOKENS (8191), ANTHROPIC_DEFAULT_OPUS_MODEL (`MiniMax-M3`), and ANTHROPIC_DEFAULT_SONNET_MODEL (`MiniMax-M3`) rows.](/screenshots/non-anthropic-providers/01-model-editor.png)
 
-For MiniMax:
+Minimum required env keys:
 
 | Env key | Value |
 |---|---|
 | `ANTHROPIC_BASE_URL` | `https://api.minimax.io/anthropic` |
 | `ANTHROPIC_AUTH_TOKEN` | your MiniMax API key (lives in `settings.local.json` — gitignored) |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` | the MiniMax model id the alias should route each tier to (e.g. `MiniMax-M3`, `MiniMax-M2.7-highspeed`) |
+
+The **MODEL ID** field above the env table can stay set to `opus`, `sonnet`, or `haiku` — the `ANTHROPIC_DEFAULT_*_MODEL` env vars override it on the wire, so the same alias can serve as a drop-in replacement for any Anthropic tier.
 
 Set per-token rates in the alias card's **Pricing** accordion — alt-endpoint runs override the Claude CLI's `total_cost_usd` from your configured rates so cost accounting stays accurate.
 
@@ -63,13 +66,13 @@ In the **Pipeline Templates** editor (see [Pipeline templates](/configuration/pi
 
 **Step 1.** On the **Agents** tab, set **Auto mode** in the Effort Mode card to `disabled`:
 
-![The Effort Mode card on the Agents tab with AUTO MODE set to `disabled` (inline description "Per-agent effort only; no runtime escalation on loopbacks.") and AUTO CAP set to `xhigh`. The Edit Template view's NAME field reads "Feature Development (GLM-DS)" with a Project storage badge.](/screenshots/non-anthropic-providers/02-effort-mode-disabled.png)
+![The Edit Template view for "Feature Development (Minimax)" — ID `feature-development-minim(ax)`, Project storage badge — Description noting that every agent is pinned to project-level MiniMax M3 and M2.7 models routed through the MiniMax public API endpoint. On the Agents tab, the EFFORT MODE card shows AUTO MODE set to `disabled` (inline description "Per-agent effort only; no runtime escalation on loopbacks.") and AUTO CAP set to `xhigh`.](/screenshots/non-anthropic-providers/02-effort-mode-disabled.png)
 
 Why: adaptive mode would otherwise inject the coordinator's bead-complexity label as the implementer's starting point, which becomes a non-null effort level → sets `CLAUDE_CODE_EFFORT_LEVEL` → the Claude CLI emits a `thinking` block → M3 turns thinking on. Pinning `disabled` removes that path.
 
 **Step 2.** On the same tab, set every per-agent **Effort** field to `(default)`:
 
-![Agent cards on the Agents tab for the GLM-DS template: every visible agent — Planner, Plan_reviewer, Coordinator, Implementer, Tester, Reviewer — has its Effort field set to `(default)`. Each card's MODEL field reads `glm-ds`.](/screenshots/non-anthropic-providers/03-per-agent-default.png)
+![Agent cards on the Agents tab for the MiniMax template. Top row partially visible: three agents with EFFORT `(default)` and a MAX BEADS field set to `Auto` on the rightmost (coordinator). Bottom row: IMPLEMENTER (MODEL `minimax-m2_7`, EFFORT `(default)`), TESTER (MODEL `minimax-m2_7`, EFFORT `(default)`), REVIEWER (MODEL `minimax-m3`, EFFORT `(default)`). Below that, GUARDIAN / LEARNER / WORKSPACE_PLANNER cards begin.](/screenshots/non-anthropic-providers/03-per-agent-default.png)
 
 Why: `(default)` stores `effort: null`, which omits `CLAUDE_CODE_EFFORT_LEVEL` from the subprocess env. No env var → no `thinking` block in the request → M3 falls back to its default (off).
 
