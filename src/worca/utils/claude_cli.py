@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from datetime import datetime, timezone
 from typing import Optional, Callable
 
 from worca.hooks.agent_role import role_from_worca_agent
@@ -281,6 +282,35 @@ def build_command(
     return cmd, prompt_file
 
 
+# Each persisted log record is prefixed with an ISO-8601 UTC write-time and a
+# TAB, e.g. ``2026-06-14T12:34:56.789+00:00\t[tool:Read] foo.py``. The reader
+# (worca-ui/server/log-tailer.js ``parseLogLine``) sniffs this prefix; lines
+# without it are treated as legacy (pre-timestamp) records and rendered with no
+# write-time. Embedded newlines are collapsed to this glyph so one logical
+# record is always exactly one physical line — keeping the "first field is the
+# timestamp" invariant sound for every line the reader sees.
+_LOG_NEWLINE_GLYPH = "⏎ "  # ⏎
+
+
+def _write_log_line(log_file, message: str, *, now: Optional[datetime] = None) -> None:
+    """Write *message* to *log_file* prefixed with an ISO-8601 UTC timestamp.
+
+    The timestamp is captured at write time (the moment the event is consumed),
+    which is the closest available proxy to event time — the stream-json events
+    themselves carry no per-event timestamp. ``now`` is injectable for
+    deterministic tests.
+    """
+    ts = (now or datetime.now(timezone.utc)).isoformat(timespec="milliseconds")
+    safe = (
+        str(message)
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", _LOG_NEWLINE_GLYPH)
+    )
+    log_file.write(f"{ts}\t{safe}\n")
+    log_file.flush()
+
+
 def _format_log_line(event: dict) -> Optional[str]:
     """Convert a stream-json event into a human-readable log line.
 
@@ -425,8 +455,8 @@ def process_stream(
         except json.JSONDecodeError:
             # Not valid JSON — write raw to log
             if log_file:
-                log_file.write(raw_line if isinstance(raw_line, str) else raw_line.decode())
-                log_file.flush()
+                raw = raw_line if isinstance(raw_line, str) else raw_line.decode()
+                _write_log_line(log_file, raw.rstrip("\n"))
             continue
 
         if on_event:
@@ -464,8 +494,7 @@ def process_stream(
         if log_file:
             log_line = _format_log_line(event)
             if log_line:
-                log_file.write(log_line + "\n")
-                log_file.flush()
+                _write_log_line(log_file, log_line)
 
         if event.get("type") == "result":
             # Task-notification auto-resumes (e.g. long pytest run dispatched

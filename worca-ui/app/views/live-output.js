@@ -35,6 +35,20 @@ export function formatTimestamp(iso) {
   });
 }
 
+/**
+ * Build the dim timestamp column for a terminal log line.
+ * - real ISO timestamp  → local HH:MM:SS
+ * - explicit null        → "--:--:--" placeholder (legacy line, write-time unknown)
+ * - undefined / missing  → no column at all (synthetic entries)
+ * @param {string|null|undefined} ts
+ * @returns {string}
+ */
+export function tsPrefix(ts) {
+  if (ts === null) return `${DIM}--:--:--${RESET} `;
+  if (ts) return `${DIM}${formatTimestamp(ts)}${RESET} `;
+  return '';
+}
+
 function stageColor(stage) {
   if (!stageColorCache.has(stage)) {
     stageColorCache.set(stage, STAGE_COLORS[colorIdx % STAGE_COLORS.length]);
@@ -112,9 +126,7 @@ export function writeLiveLogLine(entry) {
   if (!activeStage) return;
   if (entry.stage !== activeStage) return;
 
-  const ts = entry.timestamp
-    ? `${DIM}${formatTimestamp(entry.timestamp)}${RESET} `
-    : '';
+  const ts = tsPrefix(entry.timestamp);
   const stage = entry.stage
     ? `${stageColor(entry.stage)}[${entry.stage.toUpperCase()}]${RESET} `
     : '';

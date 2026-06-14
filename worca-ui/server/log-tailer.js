@@ -13,6 +13,52 @@ import { STAGE_ORDER_WITH_ORCHESTRATOR } from '../app/utils/stage-order.js';
 /** Re-export for consumers (includes orchestrator). */
 export const STAGE_ORDER = STAGE_ORDER_WITH_ORCHESTRATOR;
 
+/**
+ * Matches a persisted log record's `ISO-8601<TAB>message` prefix.
+ * Group 1 = the ISO timestamp, group 2 = the message body (which may itself
+ * contain tabs — we only split on the first TAB).
+ */
+const LOG_TS_RE =
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\t([\s\S]*)$/;
+
+/**
+ * Split a raw log line into its write-time and message.
+ *
+ * New-format lines (written by `_write_log_line` in claude_cli.py) carry an
+ * ISO-8601 timestamp prefix. Legacy lines (written before this format existed)
+ * have none — they return `{ ts: null, text: <raw line> }` so the UI can render
+ * them with an "unknown time" placeholder rather than a misleading current time.
+ *
+ * @param {string} raw
+ * @returns {{ ts: string|null, text: string }}
+ */
+export function parseLogLine(raw) {
+  const m = LOG_TS_RE.exec(raw);
+  if (m && Number.isFinite(Date.parse(m[1]))) {
+    return { ts: m[1], text: m[2] };
+  }
+  return { ts: null, text: raw };
+}
+
+/**
+ * Parse an array of raw log lines into parallel `lines` (message text) and
+ * `timestamps` (ISO string or null) arrays, the shape the `log-bulk` WS payload
+ * carries to the client.
+ *
+ * @param {string[]} rawLines
+ * @returns {{ lines: string[], timestamps: (string|null)[] }}
+ */
+export function splitTimestamps(rawLines) {
+  const lines = [];
+  const timestamps = [];
+  for (const raw of rawLines) {
+    const { ts, text } = parseLogLine(raw);
+    lines.push(text);
+    timestamps.push(ts);
+  }
+  return { lines, timestamps };
+}
+
 export function resolveLogPath(worcaDir, stage, iteration = null) {
   if (!stage) return join(worcaDir, 'logs', 'orchestrator.log');
   if (iteration !== null) {
@@ -104,8 +150,18 @@ export function readNewLines(filePath, byteOffset) {
       const buf = Buffer.alloc(len);
       readSync(fd, buf, 0, len, byteOffset);
       const text = buf.toString('utf8');
-      const lines = text.split('\n').filter((l) => l.length > 0);
-      return { lines, newOffset: size };
+      // Only consume up to the last newline. A trailing partial line (a write
+      // still in progress) is left buffered for the next read so it is never
+      // torn — important now that each line carries a timestamp prefix that
+      // must arrive intact for the reader to parse it.
+      const lastNl = text.lastIndexOf('\n');
+      if (lastNl === -1) return { lines: [], newOffset: byteOffset };
+      const consumed = text.slice(0, lastNl + 1);
+      const lines = consumed.split('\n').filter((l) => l.length > 0);
+      return {
+        lines,
+        newOffset: byteOffset + Buffer.byteLength(consumed, 'utf8'),
+      };
     } finally {
       closeSync(fd);
     }

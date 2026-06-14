@@ -6,10 +6,22 @@ TestProcessStream) so they are collected by CI (testpaths = ["tests"]).
 
 import io
 import json
+import re
+from datetime import datetime, timezone
 
 import pytest
 
-from worca.utils.claude_cli import _format_log_line, process_stream
+from worca.utils.claude_cli import (
+    _format_log_line,
+    _write_log_line,
+    process_stream,
+)
+
+# ISO-8601 + TAB prefix that every persisted log line now carries. Mirrors the
+# LOG_TS_RE sniff in worca-ui/server/log-tailer.js.
+_TS_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\t"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +296,75 @@ def test_process_stream_no_result_raises():
     )
     with pytest.raises(RuntimeError, match="No result event"):
         process_stream(events)
+
+
+# ---------------------------------------------------------------------------
+# _write_log_line — ISO-8601 write-time prefix
+# ---------------------------------------------------------------------------
+
+
+def test_write_log_line_prefixes_iso_timestamp_and_tab():
+    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
+    buf = io.StringIO()
+    _write_log_line(buf, "[tool:Read] foo.py", now=now)
+    assert buf.getvalue() == "2026-06-14T12:00:00.000+00:00\t[tool:Read] foo.py\n"
+
+
+def test_write_log_line_collapses_embedded_newlines():
+    # Embedded newlines must not split one logical record into multiple physical
+    # lines — otherwise the reader's "first field is the timestamp" invariant
+    # breaks for the continuation lines.
+    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
+    buf = io.StringIO()
+    _write_log_line(buf, "line one\nline two\r\nline three", now=now)
+    written = buf.getvalue()
+    assert written.count("\n") == 1  # exactly one trailing physical newline
+    assert written.endswith("\n")
+    assert "line one⏎ line two⏎ line three" in written
+
+
+def test_write_log_line_first_field_parses_as_timestamp():
+    now = datetime(2026, 6, 14, 12, 0, 0, tzinfo=timezone.utc)
+    buf = io.StringIO()
+    _write_log_line(buf, "anything", now=now)
+    ts_field = buf.getvalue().split("\t", 1)[0]
+    # Round-trips back to an aware datetime.
+    assert datetime.fromisoformat(ts_field) == now
+
+
+def test_process_stream_log_lines_carry_timestamp_prefix():
+    events = _make_ndjson(
+        {"type": "system", "subtype": "init", "model": "opus"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "working"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "done",
+            "total_cost_usd": 0.1,
+            "num_turns": 2,
+            "duration_ms": 5000,
+        },
+    )
+    log_buf = io.StringIO()
+    process_stream(events, log_file=log_buf)
+    physical_lines = [ln for ln in log_buf.getvalue().split("\n") if ln]
+    assert physical_lines, "expected at least one log line"
+    for ln in physical_lines:
+        assert _TS_PREFIX_RE.match(ln), f"line missing timestamp prefix: {ln!r}"
+    # The human-readable content survives after the prefix.
+    joined = log_buf.getvalue()
+    assert "[init] model=opus" in joined
+    assert "working" in joined
+    assert "[done]" in joined
+
+
+def test_process_stream_invalid_json_line_is_timestamped():
+    lines = [
+        "not valid json\n",
+        json.dumps({"type": "result", "subtype": "success", "result": "ok"}) + "\n",
+    ]
+    log_buf = io.StringIO()
+    process_stream(lines, log_file=log_buf)
+    raw_line = log_buf.getvalue().split("\n")[0]
+    assert _TS_PREFIX_RE.match(raw_line)
+    assert raw_line.endswith("\tnot valid json")

@@ -1240,13 +1240,18 @@ ws.on('log-line', (payload) => {
 ws.on('log-bulk', (payload) => {
   if (payload && Array.isArray(payload.lines)) {
     const entries = [];
-    for (const line of payload.lines) {
-      // NB: timestamp is receive-time, not original write-time (log files lack per-line timestamps)
+    const timestamps = Array.isArray(payload.timestamps)
+      ? payload.timestamps
+      : [];
+    for (let i = 0; i < payload.lines.length; i++) {
+      // New-format lines carry a real write-time; legacy lines (pre-timestamp
+      // format) have null here and render as a "--:--:--" placeholder rather
+      // than a misleading current time.
       const entry = {
         stage: payload.stage,
         iteration: payload.iteration,
-        line,
-        timestamp: new Date().toISOString(),
+        line: payload.lines[i],
+        timestamp: timestamps[i] ?? null,
       };
       entries.push(entry);
       // Log History: only write to the history terminal when a specific stage is selected

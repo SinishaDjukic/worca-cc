@@ -57,7 +57,13 @@ from worca.utils.gh_pr import (
     post_revision_summary,
     reply_to_thread,
 )
-from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
+from worca.utils.claude_cli import (
+    run_agent,
+    terminate_current,
+    terminate_all,
+    AgentSubprocessError,
+    _write_log_line,
+)
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
@@ -1057,14 +1063,19 @@ def _close_orchestrator_log() -> None:
 
 
 def _log(msg: str, level: str = "info") -> None:
-    """Print a timestamped progress message to stderr and log file."""
+    """Print a timestamped progress message to stderr and the log file.
+
+    stderr keeps the human-friendly local ``[HH:MM:SS]`` prefix for operators
+    watching the console. The persisted log line instead carries the ISO-8601
+    UTC write-time column (via ``_write_log_line``) so the UI renders it in each
+    viewer's local timezone \u2014 consistent with per-stage agent logs.
+    """
     ts = time.strftime("%H:%M:%S")
     prefix = {"info": "  ", "ok": "  \u2713", "err": "  \u2717", "warn": "  !"}
-    line = f"[{ts}] {prefix.get(level, '  ')} {msg}"
-    print(line, file=sys.stderr, flush=True)
+    body = f"{prefix.get(level, '  ')} {msg}"
+    print(f"[{ts}] {body}", file=sys.stderr, flush=True)
     if _orchestrator_log:
-        _orchestrator_log.write(line + "\n")
-        _orchestrator_log.flush()
+        _write_log_line(_orchestrator_log, body)
 
 
 def _format_duration(seconds: float) -> str:

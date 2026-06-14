@@ -101,4 +101,40 @@ describe('log-line events include server-side timestamp', () => {
 
     ws.close();
   }, 15000);
+
+  it('uses the persisted write-time for a new-format (timestamped) line', async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws`);
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+
+    ws.send(
+      JSON.stringify({
+        id: 'sub-2',
+        type: 'subscribe-log',
+        payload: { stage: null },
+      }),
+    );
+    await waitForWsEvent(ws, 'subscribe-log');
+    await new Promise((r) => setTimeout(r, 500));
+
+    const logLinePromise = waitForWsEvent(ws, 'log-line', 10000);
+
+    // A historical write-time, far from "now", in the on-disk record format.
+    const writeTime = '2020-01-02T03:04:05.000+00:00';
+    const logsDir = join(worcaDir, 'runs', 'test-run', 'logs');
+    appendFileSync(
+      join(logsDir, 'orchestrator.log'),
+      `${writeTime}\t[tool:Read] foo.py\n`,
+    );
+
+    const msg = await logLinePromise;
+    // The TS prefix is stripped from the displayed line...
+    expect(msg.payload.line).toBe('[tool:Read] foo.py');
+    // ...and the payload carries the persisted write-time, NOT receive-time.
+    expect(msg.payload.timestamp).toBe(writeTime);
+
+    ws.close();
+  }, 15000);
 });
