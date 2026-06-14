@@ -7,47 +7,45 @@ sidebar:
 
 Chat integrations turn the event stream into readable messages in your team's chat. worca ships adapters for **Telegram**, **Discord**, **Slack**, and a **generic webhook**.
 
-## Set them up in the Integrations panel
+## The Integrations card catalog
 
-The dashboard's **Integrations** tab is where you add and manage adapters — no JSON to hand-edit. It's a card catalog: one card per adapter with a live connection-health badge (polled every 10s while the tab is open), an enable/disable toggle, and Edit/Remove buttons.
+Open **Settings → Integrations** in the dashboard. The panel is a card catalog — one card per adapter with the live connection-health badges (polled every 10s while the tab is open), an Enabled toggle, and Edit/Remove buttons:
 
-To add one, open **Integrations → Add**, pick the adapter (Telegram / Discord / Slack / generic webhook), set its chat target, and choose the event filter. Credentials are entered through the [Secrets](/configuration/secrets/) panel rather than typed into the config — see below. Adding or updating a project also auto-configures its outbound webhook, so events route correctly with no manual wiring.
+![The Settings → Integrations tab with three adapter cards: Telegram with a green left border, Configured + Connected badges, "Last event: 2m ago" timestamp, Edit/Remove buttons and an Enabled toggle (on). Below it Discord and Slack cards each with a Configured badge and a Disabled toggle (off), each with their own Edit/Remove buttons. Header text reads "Receive pipeline notifications in chat apps."](/screenshots/chat-integrations/01-catalog.png)
 
-![The Integrations card catalog: Telegram connected, Discord and Slack configured.](/screenshots/chat-integrations/01-catalog.png)
+Each card surfaces:
+
+- **Configured** badge — the adapter has the credentials it needs.
+- **Connected** badge — the most recent send (or status poll) succeeded.
+- **Last event** timestamp — when the adapter last delivered.
+- **Enabled / Disabled** toggle — the master switch for that adapter, independent of the configuration.
+
+Adding or updating a project also auto-configures its outbound webhook, so events route correctly with no manual wiring.
+
+## The adapter edit form
+
+Click **Edit** on any card to open its configuration form. The Telegram edit form below shows the shape — Discord, Slack, and the generic webhook follow the same pattern with platform-specific credential fields:
+
+![Telegram adapter edit form: Bot Token field (masked dots) with caption "Create a bot via @BotFather in Telegram, then paste the token here", Chat ID field (`8205108758`) next to a Detect button with caption "Send /start to the bot in Telegram, then click Detect", and an "Events to forward" checkbox grid covering fleet.completed, fleet.failed, fleet.halted, circuit_breaker.tripped, cost.budget_warning, git.pr_created, git.pr_deferred, git.pr_merged, run.completed, run.failed, run.interrupted, run.paused, run.resumed, run.resumed_from_pause, run.started, stage.completed, stage.interrupted, stage.started, and workspace.* events.](/screenshots/chat-integrations/02-telegram-edit.png)
+
+| Field | What it controls |
+|---|---|
+| **Bot Token / Webhook URL / Bot credentials** | The platform-specific credential. Stored against an env-var reference (see below). |
+| **Chat ID / Channel** | Where to deliver. Telegram's **Detect** button finds it after you send `/start` to your bot. |
+| **Events to forward** | Per-adapter event filter. Check the events this channel should see. |
+
+Save the form and the catalog card flips to **Configured** — flip the Enabled toggle on and the adapter starts delivering on the next event.
 
 ## Secrets stay out of the config
 
-Adapter credentials are **never** inlined. Each is referenced by the name of an environment variable — the `*_env` keys (`bot_token_env`, `webhook_secret_env`) — and the validator rejects a config that inlines a token. Set the values through the dashboard's **Secrets** panel (it writes them to the gitignored `settings.local.json`); the adapter reads them at send time. See [Secrets](/configuration/secrets/).
-
-## Under the hood: the config file
-
-The Integrations panel writes a global config at `~/.worca/integrations/config.json` (applies across projects). You rarely touch it by hand, but the shape is worth knowing if you're scripting it or reviewing a diff:
-
-```jsonc
-{
-  "schema_version": 1,
-  "enabled": true,
-  "webhook_secret_env": "WORCA_WEBHOOK_SECRET",
-  "adapters": {
-    "telegram": {
-      "enabled": true,
-      "bot_token_env": "TELEGRAM_BOT_TOKEN",
-      "chat_id": "123456789",
-      "rate_limit_per_min": 20,
-      "events": ["pipeline.run.completed", "pipeline.run.failed", "pipeline.git.pr_merged"]
-    }
-  }
-}
-```
-
-`discord`, `slack`, and `webhook_out` follow the same shape. Each adapter takes its own `events` filter and a `rate_limit_per_min`.
+Adapter credentials are **never** inlined. Each is referenced by the name of an environment variable — the form fields write to the gitignored `settings.local.json` automatically, and the validator rejects a config that inlines a token. See [Secrets](/configuration/secrets/).
 
 ## What gets sent
 
-Adapters render a **curated subset** of events into chat messages — not the full firehose. The default set centers on the moments a human cares about: run completed / failed / interrupted, PR created / merged, circuit breaker tripped, and budget warnings. The per-adapter `events` filter narrows it further.
+Adapters render a **curated subset** of events into chat messages — not the full firehose. The default set centers on the moments a human cares about: run completed / failed / interrupted, PR created / merged, circuit breaker tripped, and budget warnings. The **Events to forward** checkbox grid on each adapter narrows it further per channel.
 
 :::tip
-Narrow what each adapter posts with its `events` filter — e.g. only `pipeline.run.*` plus `pipeline.git.pr_merged` for a channel that just wants outcomes, not every stage transition.
+Narrow what each adapter posts with its **Events to forward** filter — e.g. only `run.completed` plus `git.pr_merged` for a channel that just wants outcomes, not every stage transition.
 :::
 
 ## Send ad-hoc messages with `/worca-notify`
