@@ -6,10 +6,17 @@ TestProcessStream) so they are collected by CI (testpaths = ["tests"]).
 
 import io
 import json
+import re
 
 import pytest
 
 from worca.utils.claude_cli import _format_log_line, process_stream
+
+# ISO-8601 + TAB prefix that every persisted log line now carries. Mirrors the
+# LOG_TS_RE sniff in worca-ui/server/log-tailer.js.
+_TS_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\t"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +291,41 @@ def test_process_stream_no_result_raises():
     )
     with pytest.raises(RuntimeError, match="No result event"):
         process_stream(events)
+
+
+def test_process_stream_log_lines_carry_timestamp_prefix():
+    events = _make_ndjson(
+        {"type": "system", "subtype": "init", "model": "opus"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "working"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "done",
+            "total_cost_usd": 0.1,
+            "num_turns": 2,
+            "duration_ms": 5000,
+        },
+    )
+    log_buf = io.StringIO()
+    process_stream(events, log_file=log_buf)
+    physical_lines = [ln for ln in log_buf.getvalue().split("\n") if ln]
+    assert physical_lines, "expected at least one log line"
+    for ln in physical_lines:
+        assert _TS_PREFIX_RE.match(ln), f"line missing timestamp prefix: {ln!r}"
+    # The human-readable content survives after the prefix.
+    joined = log_buf.getvalue()
+    assert "[init] model=opus" in joined
+    assert "working" in joined
+    assert "[done]" in joined
+
+
+def test_process_stream_invalid_json_line_is_timestamped():
+    lines = [
+        "not valid json\n",
+        json.dumps({"type": "result", "subtype": "success", "result": "ok"}) + "\n",
+    ]
+    log_buf = io.StringIO()
+    process_stream(lines, log_file=log_buf)
+    raw_line = log_buf.getvalue().split("\n")[0]
+    assert _TS_PREFIX_RE.match(raw_line)
+    assert raw_line.endswith("\tnot valid json")

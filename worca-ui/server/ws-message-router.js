@@ -24,6 +24,7 @@ import {
   readLastLines,
   resolveIterationLogPath,
   resolveLogPath,
+  splitTimestamps,
 } from './log-tailer.js';
 import { readPreferences, writePreferences } from './preferences.js';
 import {
@@ -390,14 +391,16 @@ export function createMessageRouter({
       if (stage) {
         if (iteration != null) {
           const logPath = resolveIterationLogPath(logsBase, stage, iteration);
-          const lines = readLastLines(logPath, 200);
+          const { lines, timestamps } = splitTimestamps(
+            readLastLines(logPath, 200),
+          );
           if (lines.length > 0) {
             ws.send(
               JSON.stringify({
                 id: `evt-${Date.now()}`,
                 ok: true,
                 type: 'log-bulk',
-                payload: { stage, iteration, lines },
+                payload: { stage, iteration, lines, timestamps },
               }),
             );
           }
@@ -406,28 +409,32 @@ export function createMessageRouter({
           if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
             const iters = listIterationFiles(logsBase, stage);
             for (const { iteration: iterNum, path } of iters) {
-              const lines = readLastLines(path, 200);
+              const { lines, timestamps } = splitTimestamps(
+                readLastLines(path, 200),
+              );
               if (lines.length > 0) {
                 ws.send(
                   JSON.stringify({
                     id: `evt-${Date.now()}-iter${iterNum}`,
                     ok: true,
                     type: 'log-bulk',
-                    payload: { stage, iteration: iterNum, lines },
+                    payload: { stage, iteration: iterNum, lines, timestamps },
                   }),
                 );
               }
             }
           } else {
             const logPath = join(logsBase, 'logs', `${stage}.log`);
-            const lines = readLastLines(logPath, 200);
+            const { lines, timestamps } = splitTimestamps(
+              readLastLines(logPath, 200),
+            );
             if (lines.length > 0) {
               ws.send(
                 JSON.stringify({
                   id: `evt-${Date.now()}`,
                   ok: true,
                   type: 'log-bulk',
-                  payload: { stage, lines },
+                  payload: { stage, lines, timestamps },
                 }),
               );
             }
@@ -439,7 +446,9 @@ export function createMessageRouter({
       } else {
         const logFiles = listLogFiles(logsBase);
         for (const { stage: s2, iteration: iterNum, path } of logFiles) {
-          const lines = readLastLines(path, 200);
+          const { lines, timestamps } = splitTimestamps(
+            readLastLines(path, 200),
+          );
           if (lines.length > 0) {
             ws.send(
               JSON.stringify({
@@ -450,6 +459,7 @@ export function createMessageRouter({
                   stage: s2,
                   iteration: iterNum ?? undefined,
                   lines,
+                  timestamps,
                 },
               }),
             );

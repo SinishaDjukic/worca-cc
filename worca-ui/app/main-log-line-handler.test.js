@@ -83,8 +83,13 @@ describe('log-bulk handler: Log History backfill', () => {
     expect(handler).toContain('iteration: payload.iteration');
   });
 
-  it('includes timestamp in bulk entries', () => {
-    // Each bulk entry must have a timestamp for display in log history
-    expect(handler).toMatch(/timestamp:\s*new Date\(\)\.toISOString\(\)/);
+  it('uses the persisted per-line write-time, not receive-time', () => {
+    // Each bulk entry's timestamp comes from the parallel payload.timestamps
+    // array (the real write-time parsed from the log file), NOT a synthesized
+    // receive-time. Legacy lines have null there and render as "--:--:--".
+    expect(handler).toContain('payload.timestamps');
+    expect(handler).toMatch(/timestamp:\s*timestamps\[i\]\s*\?\?\s*null/);
+    // The old receive-time stamping must be gone.
+    expect(handler).not.toMatch(/timestamp:\s*new Date\(\)\.toISOString\(\)/);
   });
 });

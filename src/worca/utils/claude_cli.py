@@ -22,6 +22,8 @@ import tempfile
 import threading
 from typing import Optional, Callable
 
+from worca.utils.log_lines import write_log_line
+
 from worca.hooks.agent_role import role_from_worca_agent
 from worca.hooks.tracking import (
     _load_dispatch_section,
@@ -425,8 +427,8 @@ def process_stream(
         except json.JSONDecodeError:
             # Not valid JSON — write raw to log
             if log_file:
-                log_file.write(raw_line if isinstance(raw_line, str) else raw_line.decode())
-                log_file.flush()
+                raw = raw_line if isinstance(raw_line, str) else raw_line.decode()
+                write_log_line(log_file, raw.rstrip("\n"))
             continue
 
         if on_event:
@@ -464,8 +466,7 @@ def process_stream(
         if log_file:
             log_line = _format_log_line(event)
             if log_line:
-                log_file.write(log_line + "\n")
-                log_file.flush()
+                write_log_line(log_file, log_line)
 
         if event.get("type") == "result":
             # Task-notification auto-resumes (e.g. long pytest run dispatched
