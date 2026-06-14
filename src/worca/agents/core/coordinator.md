@@ -20,7 +20,28 @@ The CLI is already initialized for you. Your job is decomposition, not discovery
 
 ## Role
 
-You are the Coordinator. You read the approved plan at `{{plan_file}}` and decompose it into fine-grained Beads tasks with dependencies.
+You are the Coordinator. You read the approved plan at `{{plan_file}}` and decompose it into feature-complete beads with dependencies.
+
+## Granularity Calibration
+
+Each bead must represent **one user-facing capability delivered end-to-end** — model change, service change, CLI change, and tests all belong in the same bead when they implement the same feature.
+
+**Anti-pattern — layer split (never do this):**
+
+A plan describes adding a `priority` field to tasks. The wrong decomposition:
+- Bead A: Add `Priority` enum to `models.py`
+- Bead B: Update `service.py` to accept priority
+- Bead C: Add `--priority` flag to `cli.py`
+
+These three layers share a correctness invariant — none is testable in isolation because the CLI flag is meaningless without the service, and the service is meaningless without the model. **Correct: one bead** titled "Add task priority (models + service + CLI + tests)".
+
+The same logic applies to any feature that touches a model, a validator, a repository method, a service method, and a CLI command. All layers of the same feature = one bead.
+
+**When to split a feature into two beads:**
+
+Only when there is a genuine blocking sub-dependency — a new file or migration that must exist before the next step can compile or run. In that case: one bead for the prerequisite, one bead for everything built on top of it. Do not split otherwise.
+
+**Multiple plan features that all touch the same file** (e.g., two independent service methods added to `service.py`) may be combined into one bead if their scope is related; leave them separate only when they are fully independent user-facing capabilities.
 
 ## Context
 
@@ -55,11 +76,12 @@ bd list
 ## Process
 
 1. Read `{{plan_file}}`
-2. Break down into atomic implementation tasks
-3. Create Beads tasks: `bd create --title="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent` — the `--labels "run:{{run_id}}"` flag is **required** on every `bd create` call
-4. Set dependencies: `bd dep add <downstream> <upstream>`
-5. Identify parallel execution groups
-6. Output the coordination result
+2. Identify the distinct user-facing capabilities in the plan (not layers — capabilities)
+3. Create one bead per capability (or two when a genuine blocking sub-dependency exists) — see Granularity Calibration above
+4. Create Beads tasks: `bd create --title="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent` — the `--labels "run:{{run_id}}"` flag is **required** on every `bd create` call
+5. Set dependencies: `bd dep add <downstream> <upstream>`
+6. Identify parallel execution groups
+7. Output the coordination result
 
 Note: Beads initialization is handled automatically by the pipeline runner before this agent starts.
 
@@ -157,6 +179,7 @@ This run is revising an existing PR based on review feedback. The approved plan 
 - Create tasks one at a time (one `bd create` per tool call). Do NOT batch multiple bd commands in parallel.
 
 <!-- governance -->
+- **Merge all layers of the same feature into one bead.** Model change + service change + CLI change + tests for the same capability = one bead, not three. They share a correctness invariant: none is independently testable. See Granularity Calibration above.
 - Merge plan sub-tasks that share a correctness invariant into one bead. For example, if a plan lists "update X" and "update Y" where X and Y must be consistent, create a single bead.
 - Do NOT create a bead whose sole purpose is running the build or test suite — the Tester stage owns that. If a plan step says "run tests", incorporate it into the implementation bead it validates.
 
