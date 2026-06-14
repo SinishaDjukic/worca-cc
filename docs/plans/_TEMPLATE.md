@@ -117,7 +117,7 @@ Each numbered subsection follows: *Current state* (`file:line`) → *Obstacle/ga
 - **Architectural/infra** → obstacle catalog (W-030).
 - **Config/settings** → lead with current `settings.json`, include migration (W-031, W-038).
 - **UI features** → separate client/server/UI design sections (W-032, W-039).
-- **Multi-stage pipelines** → Phases in Implementation Plan, not just file lists.
+- **Multi-stage pipelines** → Phases in Implementation Plan, not just file lists. Phase boundaries must be **capability boundaries, not layer boundaries** — a phase titled "Service Layer" causes downstream agents to decompose by layer instead of by feature. Write phases as vertical slices: "Phase 1: Add task priority (models + service + CLI)".
 - **Harness/tool swaps** → comparison tables (W-036).
 
 ## Hard Rules
