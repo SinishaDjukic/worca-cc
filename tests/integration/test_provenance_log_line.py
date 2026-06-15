@@ -38,3 +38,40 @@ def test_orchestrator_log_contains_runtime_line(pipeline_env):
         f"Runtime line is degraded (manifest not loaded from .claude/worca/): "
         f"{runtime_line!r}"
     )
+
+
+def test_provenance_resolved_with_template(pipeline_env):
+    """Templated runs must still record a source-qualified provenance.
+
+    Regression: with a --template, run_pipeline.py writes the merged settings to
+    a tempfile and passes its path as settings_path. The runner used to derive
+    the provenance dir from settings_path.parent, landing in the tempfile's dir
+    (no provenance.json) and recording runtime_source: null. The fix passes the
+    real runtime dir (derived from the on-disk --settings path) so provenance is
+    read from .claude/worca/ regardless of the temp settings swap.
+    """
+    result = pipeline_env.run(
+        {"default": {"action": "succeed", "delay_s": 0.05}},
+        prompt="provenance template test",
+        extra_args=["--template", "bugfix"],
+        timeout=60,
+    )
+    assert result.returncode == 0, f"pipeline failed: {result.stderr[-500:]}"
+
+    # status.json must carry a non-null runtime_source (not the degraded fallback).
+    prov = (result.status or {}).get("provenance")
+    assert prov, f"no provenance block in status.json: {result.status!r}"
+    assert prov.get("runtime_source") is not None, (
+        f"runtime_source is null under a template — provenance dir resolved from "
+        f"the temp settings path instead of .claude/worca/: {prov!r}"
+    )
+    assert prov["runtime_source"].get("source") in ("git", "pip")
+
+    # And the orchestrator.log line stays source-qualified.
+    run_dir = read_run_dir(pipeline_env.worca_dir)
+    log_text = (run_dir / "logs" / "orchestrator.log").read_text(encoding="utf-8")
+    runtime_lines = [ln for ln in log_text.splitlines() if "Runtime: worca " in ln]
+    assert runtime_lines, "No 'Runtime: worca ' line found"
+    assert "(pip)" in runtime_lines[0] or "(src " in runtime_lines[0], (
+        f"Runtime line degraded under template: {runtime_lines[0]!r}"
+    )

@@ -2649,6 +2649,7 @@ def run_pipeline(
     run_id: Optional[str] = None,
     max_beads_override: Optional[int] = None,
     claude_md_mode_override: Optional[str] = None,
+    runtime_dir: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -2703,6 +2704,14 @@ def run_pipeline(
     registry_dir = registry_base or worca_dir
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
+
+    # The provenance manifest lives in the real runtime dir (<project>/.claude/worca).
+    # Resolve it from the caller-supplied runtime_dir when given: for templated runs
+    # run_pipeline.py writes the merged settings to a tempfile and passes its path as
+    # settings_path, whose parent has no provenance.json — deriving the runtime dir
+    # from it would degrade runtime_source to null. Fall back to the settings-relative
+    # derivation for non-templated / direct callers.
+    _provenance_dir = Path(runtime_dir) if runtime_dir else Path(settings_path).parent / "worca"
 
     # Auto-register project for global worca-ui discovery (non-fatal).
     # See _resolve_project_root_for_registration for why worktree mode needs
@@ -2784,7 +2793,7 @@ def run_pipeline(
             # Backfill provenance when absent (older runs pre-W-074).
             # First write wins — never overwrite an existing provenance block.
             if "provenance" not in status:
-                status["provenance"] = load_provenance(Path(settings_path).parent / "worca")
+                status["provenance"] = load_provenance(_provenance_dir)
             branch_name = status.get("branch", "")
             # Derive run_dir from status if not already set
             if not run_dir and status.get("run_id"):
@@ -2849,7 +2858,7 @@ def run_pipeline(
             _branch_just_created = True
 
         wr_dict = dataclasses.asdict(work_request)
-        _provenance = load_provenance(Path(settings_path).parent / "worca")
+        _provenance = load_provenance(_provenance_dir)
         status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template, provenance=_provenance)
 
         if worktree:

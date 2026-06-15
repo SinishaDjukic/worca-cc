@@ -394,6 +394,12 @@ def main():
             run_id=args.run_id,
             max_beads_override=args.max_beads,
             claude_md_mode_override=args.claude_md_mode,
+            # Always derive the runtime dir from the REAL settings path, never
+            # effective_settings_path — for templated runs the latter is a tempfile
+            # whose parent has no provenance.json (would record runtime_source: null).
+            runtime_dir=os.path.join(
+                os.path.dirname(os.path.abspath(args.settings)), "worca"
+            ),
         )
 
         # Snapshot template to run dir and write merged settings for traceability.

@@ -997,6 +997,8 @@ No `worca init --upgrade` migration required — the wizard writes the same sett
 
 `worca init` and `worca init --upgrade` now write a `.claude/worca/provenance.json` manifest that records the worca version and how the runtime copy was sourced (git checkout or pip install). Each pipeline run stamps this block into `status.json` and the `pipeline.run.started` event, and displays it as a **Runtime:** row in the Preflight UI panel.
 
+**Bug fix (post-0.57.0):** templated runs previously recorded `runtime_source: null` (the Runtime row showed the version only, no commit/source). When a `--template` is active, `run_pipeline.py` writes the merged settings to a tempfile and passed its path as `settings_path`; the runner derived the provenance dir from it (`<tempfile-dir>/worca`, which has no manifest) and fell back to the degraded block. The runner now resolves the manifest from the real runtime dir (a new `runtime_dir` argument derived from the on-disk `--settings` path), so templated runs — i.e. essentially all UI launches — record the full git/pip source again. No action required.
+
 ### 0.57.x → 0.58.0 — user-tier `settings.local.json` now read by model resolution (bug fix)
 
 The user-global tier now deep-merges `~/.worca/settings.local.json` everywhere, matching how the project tier and the public `load_global_settings` API already behaved. Previously `load_settings_with_global_fallback` read `~/.worca/settings.json` with a raw `json.load` that skipped the `.local` sibling, so user-tier model `env` blocks (alt-endpoint base URLs, auth tokens) stored there were silently dropped from both the merged config and the `user:` tier-pin views.
