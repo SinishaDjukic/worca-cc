@@ -49,7 +49,7 @@ All event types are dotted strings, prefixed by **domain**: `pipeline.*`, `contr
 
 | Type | Constant | Payload builder |
 |---|---|---|
-| `pipeline.run.started` | `RUN_STARTED` | `run_started_payload(resume, started_at, plan_file?, settings_snapshot?)` |
+| `pipeline.run.started` | `RUN_STARTED` | `run_started_payload(resume, started_at, plan_file?, settings_snapshot?, provenance?)` |
 | `pipeline.run.completed` | `RUN_COMPLETED` | `run_completed_payload(duration_ms, total_cost_usd, total_turns, total_tokens, stages_completed)` |
 | `pipeline.run.failed` | `RUN_FAILED` | `run_failed_payload(error, failed_stage, error_type, loop_counters?)` |
 | `pipeline.run.interrupted` | `RUN_INTERRUPTED` | `run_interrupted_payload(interrupted_stage, elapsed_ms, source)` |
@@ -57,6 +57,25 @@ All event types are dotted strings, prefixed by **domain**: `pipeline.*`, `contr
 | `pipeline.run.resumed` | `RUN_RESUMED` | `run_resumed_payload(resume_stage, previous_stages_completed)` |
 | `pipeline.run.paused` | `RUN_PAUSED` | `run_paused_payload(...)` |
 | `pipeline.run.resumed_from_pause` | `RUN_RESUMED_FROM_PAUSE` | `run_resumed_from_pause_payload(...)` |
+
+#### Provenance block (`pipeline.run.started` payload)
+
+The optional `provenance` field in `pipeline.run.started` identifies the worca runtime that ran the pipeline. It is populated from the manifest written by `worca init` (or `worca init --upgrade`) at `.claude/worca/provenance.json`. Absent before the first `worca init --upgrade` after W-074 ships; subscribers must treat it as optional.
+
+```json
+{
+  "worca_version": "0.57.0",
+  "runtime_source": {
+    "source": "git",
+    "repo": "worca-cc",
+    "commit": "ba1795b8",
+    "branch": "main",
+    "dirty": false
+  }
+}
+```
+
+`runtime_source.source` is `"git"` (dev checkout), `"pip"` (installed package), or `null` (degraded — version only). No `schema_version` bump required: the field is additive per §2 of this document.
 
 ### `pipeline.stage.*` — per-stage lifecycle
 

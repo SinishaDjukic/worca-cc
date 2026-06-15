@@ -1,7 +1,10 @@
 """Tests for worca init (src/worca/cli/init.py)."""
 
 import json
+import os
 import pytest
+from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 from worca.cli.init import (
@@ -13,6 +16,7 @@ from worca.cli.init import (
     _get_worca_source,
     _migrate_settings_paths,
     _migrate_agent_overrides,
+    _write_provenance_manifest,
     read_version,
     run_init,
 )
@@ -740,3 +744,183 @@ class TestRunInitTemplates:
             with patch("worca.cli.init._upgrade_beads", return_value=False):
                 run_init(upgrade=True, source=str(src_root))
         assert (tmp_path / ".claude" / "templates" / "my-proj-tmpl").exists()
+
+
+# ---------------------------------------------------------------------------
+# _write_provenance_manifest
+# ---------------------------------------------------------------------------
+
+def _proc(stdout="", returncode=0):
+    return CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def _make_source(base: Path, version: str = "0.5.0") -> tuple[Path, Path]:
+    """Create a minimal fake worca source tree; return (source_dir, settings_path)."""
+    src = base / "worca-src" / "src" / "worca"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text(f'__version__ = "{version}"')
+    (src / "settings.json").write_text(json.dumps({"worca": {}}))
+    settings_path = base / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({}))
+    return src, settings_path
+
+
+class TestWriteProvenanceManifest:
+    def _git_side_effect(self, commit="abc123def456abc123def456abc123def456abc1",
+                          branch="main", dirty_output=""):
+        """Return a side_effect function that simulates git commands."""
+        def side_effect(args, **kwargs):
+            cmd = " ".join(args)
+            if "rev-parse HEAD" in cmd:
+                return _proc(stdout=commit + "\n")
+            if "rev-parse --abbrev-ref HEAD" in cmd:
+                return _proc(stdout=branch + "\n")
+            if "status --porcelain" in cmd:
+                return _proc(stdout=dirty_output)
+            return _proc()
+        return side_effect
+
+    def test_fresh_init_writes_provenance_json(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        with patch("worca.cli.init.subprocess.run", side_effect=self._git_side_effect()):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        manifest = target / "provenance.json"
+        assert manifest.exists()
+        block = json.loads(manifest.read_text(encoding="utf-8"))
+        assert block["worca_version"] == "0.5.0"
+        assert block["runtime_source"]["source"] == "git"
+
+    def test_upgrade_rewrites_provenance_json(self, tmp_path):
+        src, settings = _make_source(tmp_path, version="0.5.0")
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        with patch("worca.cli.init.subprocess.run", side_effect=self._git_side_effect(commit="aaa")):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        # Upgrade with new version
+        (src / "__init__.py").write_text('__version__ = "0.6.0"')
+        with patch("worca.cli.init.subprocess.run", side_effect=self._git_side_effect(commit="bbb")):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        assert block["worca_version"] == "0.6.0"
+        assert block["runtime_source"]["commit"].startswith("bbb")
+
+    def test_git_case_clean(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        commit = "ba1795b8abcdef1234567890abcdef1234567890"
+        with patch("worca.cli.init.subprocess.run",
+                   side_effect=self._git_side_effect(commit=commit, branch="main", dirty_output="")):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        rs = block["runtime_source"]
+        assert rs["source"] == "git"
+        assert rs["commit"] == commit
+        assert rs["branch"] == "main"
+        assert rs["dirty"] is False
+
+    def test_git_case_dirty(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        with patch("worca.cli.init.subprocess.run",
+                   side_effect=self._git_side_effect(dirty_output=" M src/foo.py\n")):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        assert block["runtime_source"]["dirty"] is True
+
+    def test_git_case_detached_head(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        with patch("worca.cli.init.subprocess.run",
+                   side_effect=self._git_side_effect(branch="HEAD")):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        assert block["runtime_source"]["branch"] is None
+
+    def test_git_repo_fallback_to_basename(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        with patch("worca.cli.init.subprocess.run", side_effect=self._git_side_effect()):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        # source.parent.parent.name = "worca-src"
+        assert block["runtime_source"]["repo"] == "worca-src"
+
+    def test_pip_case_no_git(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+
+        def git_fails(args, **kwargs):
+            return _proc(returncode=128)
+
+        with patch("worca.cli.init.subprocess.run", side_effect=git_fails):
+            _write_provenance_manifest(src, target, tmp_path, settings)
+
+        block = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        assert block["runtime_source"]["source"] == "pip"
+        assert block["runtime_source"]["version"] == "0.5.0"
+
+    def test_atomic_write_no_half_file_on_error(self, tmp_path):
+        src, settings = _make_source(tmp_path)
+        target = tmp_path / ".claude" / "worca"
+        target.mkdir(parents=True)
+        manifest = target / "provenance.json"
+        manifest.write_text(json.dumps({"worca_version": "old", "runtime_source": None}),
+                            encoding="utf-8")
+
+        # Simulate os.replace failing — original file must survive intact.
+        real_replace = os.replace
+
+        def failing_replace(src_path, dst_path):
+            if "provenance" in str(dst_path):
+                raise OSError("simulated disk full")
+            return real_replace(src_path, dst_path)
+
+        with patch("worca.cli.init.subprocess.run", side_effect=self._git_side_effect()):
+            with patch("os.replace", side_effect=failing_replace):
+                _write_provenance_manifest(src, target, tmp_path, settings)
+
+        # Original must be unchanged (atomic write preserved it)
+        block = json.loads(manifest.read_text(encoding="utf-8"))
+        assert block["worca_version"] == "old"
+
+    def test_run_init_writes_provenance(self, tmp_path, monkeypatch):
+        """Integration: run_init creates provenance.json."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        src = tmp_path / "worca-src" / "src" / "worca"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text('__version__ = "0.5.0"')
+        (src / "settings.json").write_text(json.dumps({"worca": {}}))
+
+        def git_fails(args, **kwargs):
+            return _proc(returncode=128)
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init.subprocess.run", side_effect=git_fails):
+                run_init(source=str(tmp_path / "worca-src"))
+
+        manifest = tmp_path / ".claude" / "worca" / "provenance.json"
+        assert manifest.exists()
+        block = json.loads(manifest.read_text(encoding="utf-8"))
+        assert block["worca_version"] == "0.5.0"

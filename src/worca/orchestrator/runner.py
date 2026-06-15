@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Mapping, Optional
 
 from worca.orchestrator.guardian_context import build_guardian_context
@@ -121,6 +122,7 @@ from worca.events.types import (
     template_applied_payload, template_dropped_payload,
     CLAUDE_MD_MODE_RESOLVED, claude_md_mode_resolved_payload,
 )
+from worca.utils.provenance import load_provenance, _fmt_provenance
 
 # Symbols accessed dynamically by the stage handlers through the runner
 # module namespace (executor._runner().<name>) — static analysis sees no
@@ -2739,6 +2741,10 @@ def run_pipeline(
                         return existing
             _log(f"Resuming from {resume_stage.value.upper()}")
             status = existing
+            # Backfill provenance when absent (older runs pre-W-074).
+            # First write wins — never overwrite an existing provenance block.
+            if "provenance" not in status:
+                status["provenance"] = load_provenance(Path(settings_path).parent / "worca")
             branch_name = status.get("branch", "")
             # Derive run_dir from status if not already set
             if not run_dir and status.get("run_id"):
@@ -2803,7 +2809,8 @@ def run_pipeline(
             _branch_just_created = True
 
         wr_dict = dataclasses.asdict(work_request)
-        status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template)
+        _provenance = load_provenance(Path(settings_path).parent / "worca")
+        status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template, provenance=_provenance)
 
         if worktree:
             status["worktree"] = True
@@ -2878,6 +2885,7 @@ def run_pipeline(
     ctx = None
     try:
         _log(f"Pipeline: {work_request.title}")
+        _log(f"Runtime: {_fmt_provenance(status.get('provenance'))}")
         _log(f"Branch: {branch_name}")
         pipeline_t0 = time.time()
 
@@ -2922,6 +2930,7 @@ def run_pipeline(
                     resume=False,
                     started_at=status.get("started_at", ""),
                     plan_file=status.get("plan_file"),
+                    provenance=status.get("provenance"),
                 ))
 
             if _branch_just_created:

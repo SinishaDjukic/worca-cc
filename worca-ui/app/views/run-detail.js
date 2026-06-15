@@ -1347,6 +1347,31 @@ function _preflightParamsRow(run) {
   return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
 }
 
+function _preflightProvenanceRow(run) {
+  if (!run?.provenance) return nothing;
+  const p = run.provenance;
+  const version = p.worca_version || 'unknown';
+  const rs = p.runtime_source;
+  const pill = (text, variant = 'neutral') =>
+    html`<sl-badge class="preflight-param-badge" variant="${variant}" pill>${text}</sl-badge>`;
+
+  const pills = [pill(`worca ${version}`)];
+
+  if (rs?.source === 'git') {
+    const short = rs.commit ? rs.commit.slice(0, 8) : '';
+    const repo = rs.repo || '';
+    pills.push(pill(`${repo}@${short}`));
+    if (rs.branch) pills.push(pill(rs.branch));
+    if (rs.dirty) pills.push(pill('dirty', 'warning'));
+  } else if (rs?.source === 'pip') {
+    pills.push(pill('pip'));
+  }
+
+  return html`<div class="iteration-tags-row preflight-params-row">
+    <span class="meta-label">Runtime:</span> ${pills}
+  </div>`;
+}
+
 function _preflightRunMetaRows(run) {
   // Run-level preflight metadata: launch params (Max Beads, CLAUDE.md mode)
   // and the flow fingerprint. These describe the RUN, not an iteration, so
@@ -1355,8 +1380,10 @@ function _preflightRunMetaRows(run) {
   const fpRow = run?.flow_fingerprint
     ? html`<div class="iteration-tags-row preflight-flow-row"><span class="meta-label">Flow fingerprint:</span> <span class="meta-value preflight-flow-fingerprint" title="sha256 of the compiled pipeline flow (W-070). Custom-flow runs refuse to resume if this changes.">${run.flow_fingerprint}</span></div>`
     : nothing;
-  if (paramsRow === nothing && fpRow === nothing) return nothing;
-  return html`${paramsRow}${fpRow}`;
+  const provRow = _preflightProvenanceRow(run);
+  if (paramsRow === nothing && fpRow === nothing && provRow === nothing)
+    return nothing;
+  return html`${paramsRow}${fpRow}${provRow}`;
 }
 
 function _preflightIterRows(stage, iter) {

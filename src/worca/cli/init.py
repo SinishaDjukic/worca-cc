@@ -743,6 +743,91 @@ def _cleanup_legacy_files(git_root: Path) -> list[str]:
     return changes
 
 
+def _write_provenance_manifest(
+    source: Path, target: Path, git_root: Path, settings_path: Path
+) -> None:
+    """Write .claude/worca/provenance.json at init or upgrade time.
+
+    Probes the source git state once; falls back to a pip block when git is
+    unavailable (pip-installed source). On any unexpected error, writes a
+    degraded {worca_version, runtime_source: null} block rather than aborting
+    init — a successful init with a degraded manifest beats a failed init.
+
+    Schema additions (e.g. a future runtime_hash) are additive — no
+    schema_version field is included while the manifest is a single flat block.
+    """
+    from worca.template_advisor import _source_repo_nwo as _nwo  # noqa: PLC0415
+
+    worca_version = read_version(source) or "unknown"
+    runtime_source = None
+
+    try:
+        git_dir = source.parent
+        head = subprocess.run(
+            ["git", "-C", str(git_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if head.returncode == 0:
+            commit = head.stdout.strip()
+
+            abbrev = subprocess.run(
+                ["git", "-C", str(git_dir), "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            branch_raw = abbrev.stdout.strip() if abbrev.returncode == 0 else "HEAD"
+            branch = None if branch_raw == "HEAD" else branch_raw
+
+            status = subprocess.run(
+                ["git", "-C", str(git_dir), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            dirty = bool(status.stdout.strip()) if status.returncode == 0 else False
+
+            repo = None
+            local = settings_path.parent / "settings.local.json"
+            if local.exists():
+                try:
+                    with open(local, encoding="utf-8") as f:
+                        source_repo_val = json.load(f).get("worca", {}).get("source_repo")
+                    if source_repo_val:
+                        repo = _nwo(source_repo_val)
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if not repo:
+                repo = source.parent.parent.name
+
+            runtime_source = {
+                "source": "git",
+                "repo": repo,
+                "commit": commit,
+                "branch": branch,
+                "dirty": dirty,
+            }
+    except Exception:
+        pass
+
+    if runtime_source is None:
+        runtime_source = {"source": "pip", "version": worca_version}
+
+    block = {"worca_version": worca_version, "runtime_source": runtime_source}
+    try:
+        _atomic_write_json(str(target / "provenance.json"), block)
+    except Exception:
+        try:
+            _atomic_write_json(
+                str(target / "provenance.json"),
+                {"worca_version": worca_version, "runtime_source": None},
+            )
+        except Exception:
+            pass
+
+
 def _copy_worca_source(source: Path, target: Path) -> None:
     """Copy worca source to target, excluding cli/, skills/, and __pycache__/.
 
@@ -1123,6 +1208,7 @@ def run_init(
 
     # --- Copy worca source ---
     _copy_worca_source(worca_source, target)
+    _write_provenance_manifest(worca_source, target, git_root, settings_path)
     print("Copied worca to .claude/worca/")
 
     # --- Install worca-owned skills into .claude/skills/ ---
