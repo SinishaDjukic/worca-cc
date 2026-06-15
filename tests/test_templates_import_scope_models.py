@@ -375,6 +375,54 @@ class TestAutoPinModelRefs:
         assert "project:glm-ds" in captured.err
 
 
+class TestUserScopeImportRoundTrip:
+    """`import --scope user` of an alt-endpoint alias resolves end-to-end.
+
+    Regression for the user-tier parity bug: import writes the model `env`
+    (secrets) to ~/.worca/settings.local.json and auto-pins the template ref to
+    `user:<alias>`, but the resolver used to read ~/.worca/settings.json raw,
+    silently dropping the env — so the pinned ref ran against the wrong endpoint.
+    """
+
+    def test_user_import_env_lands_in_local_and_resolves(self, project_dir, capsys):
+        from worca.utils.settings import (
+            load_settings_with_global_fallback,
+            resolve_tier_pinned,
+        )
+
+        project, worca_home = project_dir
+        bundle = project / "bundle.json"
+        _write_bundle(bundle)  # custom-alias carries env={ANTHROPIC_BASE_URL: ...}
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="user"))
+
+        # id stays in the committed user settings.json; env (secret) in .local.
+        user_settings = worca_home / "settings.json"
+        user_local = worca_home / "settings.local.json"
+        assert user_local.exists(), "import --scope user must write env to settings.local.json"
+        local_data = json.loads(user_local.read_text())
+        assert (
+            local_data["worca"]["models"]["custom-alias"]["env"]["ANTHROPIC_BASE_URL"]
+            == "https://example.com/"
+        )
+
+        # The auto-pinned template ref is user:custom-alias.
+        tpl = json.loads(
+            (worca_home / "templates" / "imported-tpl" / "template.json").read_text()
+        )
+        assert tpl["config"]["agents"]["planner"]["model"] == "user:custom-alias"
+
+        # End-to-end: the resolver now sees the .local env for the user tier.
+        settings = load_settings_with_global_fallback(
+            str(project / ".claude" / "settings.json"),
+            global_path=str(user_settings),
+        )
+        model_id, env, err = resolve_tier_pinned("user:custom-alias", settings)
+        assert err is None
+        assert model_id == "claude-opus-4-7"
+        assert env.get("ANTHROPIC_BASE_URL") == "https://example.com/"
+
+
 class TestBuildCollisionPreviewRefRewrites:
     """_build_collision_preview surfaces ref_rewrites for the UI dialog."""
 

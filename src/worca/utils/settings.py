@@ -186,9 +186,18 @@ def load_settings_with_global_fallback(
     if global_path is None:
         global_path = _default_global_path()
 
+    # Probe the committed global file first so a malformed-JSON warning is still
+    # emitted for it; then read through load_global_settings so the sibling
+    # ~/.worca/settings.local.json is deep-merged in. The .local merge mirrors
+    # how the project tier (load_settings) and the public load_global_settings
+    # API already treat .local. Without it, user-tier model `env` blocks were
+    # unreachable: `worca templates import --scope user` of an alt-endpoint alias
+    # writes the env (secrets) to ~/.worca/settings.local.json, but a raw
+    # json.load of ~/.worca/settings.json never saw it — so both the merged
+    # config below and the `user` tier-view stash silently dropped the env.
     try:
         with open(global_path, encoding="utf-8") as f:
-            global_blob = json.load(f)
+            json.load(f)
     except FileNotFoundError:
         global_blob = {}
     except json.JSONDecodeError:
@@ -197,6 +206,8 @@ def load_settings_with_global_fallback(
             file=sys.stderr,
         )
         global_blob = {}
+    else:
+        global_blob = load_global_settings(global_path=global_path)
 
     project = load_settings(settings_path)
     if not global_blob:
