@@ -192,6 +192,110 @@ class TestLoadSettingsWithGlobalFallback:
         assert views["project"]["fast"] == "claude-worktree-fast"
         assert "fast" not in views["project"] or views["project"]["fast"] == "claude-worktree-fast"
 
+    def test_user_local_env_merges_into_merged_config(self, tmp_path):
+        """User-global settings.local.json env deep-merges into the merged config.
+
+        Regression for the user-tier parity bug: the global tier was read with a
+        raw json.load that skipped ~/.worca/settings.local.json, so model env
+        blocks (alt-endpoint secrets) written there by `templates import
+        --scope user` were silently dropped.
+        """
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "opus"}}}
+        }))
+        # Sibling .local carries the env block (secrets), id stays in base.
+        global_local = tmp_path / "global.local.json"
+        global_local.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"env": {"ANTHROPIC_BASE_URL": "https://alt.example"}}}}
+        }))
+
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({"worca": {}}))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        merged = result["worca"]["models"]["glm-ds"]
+        assert merged["id"] == "opus"
+        assert merged["env"]["ANTHROPIC_BASE_URL"] == "https://alt.example"
+
+    def test_user_local_env_in_tier_view_stash(self, tmp_path):
+        """The `user` tier-view stash includes env merged from the .local sibling."""
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "opus"}}}
+        }))
+        global_local = tmp_path / "global.local.json"
+        global_local.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"env": {"ANTHROPIC_AUTH_TOKEN": "tok"}}}}
+        }))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({"worca": {}}))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        user_view = result["_worca_tier_views"]["user"]["glm-ds"]
+        assert user_view["id"] == "opus"
+        assert user_view["env"]["ANTHROPIC_AUTH_TOKEN"] == "tok"
+
+    def test_user_tier_pinned_ref_resolves_local_env(self, tmp_path):
+        """resolve_tier_pinned('user:alias') returns env from the .local sibling.
+
+        End-to-end: this is what makes a user-tier template pinned to
+        `user:glm-ds` actually route through the alt endpoint.
+        """
+        from worca.utils.settings import resolve_tier_pinned
+
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "opus"}}}
+        }))
+        global_local = tmp_path / "global.local.json"
+        global_local.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"env": {"ANTHROPIC_BASE_URL": "https://alt.example"}}}}
+        }))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({"worca": {}}))
+
+        settings = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        model_id, env, err = resolve_tier_pinned("user:glm-ds", settings)
+        assert err is None
+        assert model_id == "opus"
+        assert env == {"ANTHROPIC_BASE_URL": "https://alt.example"}
+
+    def test_project_tier_still_shadows_user_with_local_env(self, tmp_path):
+        """Atomic cross-tier replace still holds: a project-tier entry shadows the
+        user entry wholesale even when the user entry now carries .local env."""
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "opus"}}}
+        }))
+        global_local = tmp_path / "global.local.json"
+        global_local.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"env": {"ANTHROPIC_BASE_URL": "https://user.example"}}}}
+        }))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": "sonnet"}}
+        }))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        # Project tier wins wholesale — no leakage of the user-tier env.
+        assert result["worca"]["models"]["glm-ds"] == "sonnet"
+        # But the user tier-view still carries its own merged entry intact.
+        user_view = result["_worca_tier_views"]["user"]["glm-ds"]
+        assert user_view["env"]["ANTHROPIC_BASE_URL"] == "https://user.example"
+
     def test_default_global_path(self, tmp_path, monkeypatch):
         """Without explicit global_path, uses $WORCA_HOME/settings.json."""
         fake_home = tmp_path / "home"

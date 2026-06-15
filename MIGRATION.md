@@ -997,6 +997,14 @@ No `worca init --upgrade` migration required — the wizard writes the same sett
 
 `worca init` and `worca init --upgrade` now write a `.claude/worca/provenance.json` manifest that records the worca version and how the runtime copy was sourced (git checkout or pip install). Each pipeline run stamps this block into `status.json` and the `pipeline.run.started` event, and displays it as a **Runtime:** row in the Preflight UI panel.
 
+### 0.57.x → 0.58.0 — user-tier `settings.local.json` now read by model resolution (bug fix)
+
+The user-global tier now deep-merges `~/.worca/settings.local.json` everywhere, matching how the project tier and the public `load_global_settings` API already behaved. Previously `load_settings_with_global_fallback` read `~/.worca/settings.json` with a raw `json.load` that skipped the `.local` sibling, so user-tier model `env` blocks (alt-endpoint base URLs, auth tokens) stored there were silently dropped from both the merged config and the `user:` tier-pin views.
+
+**Symptom this fixes.** `worca templates import --scope user` of an alt-endpoint alias writes the `env` (secrets) to `~/.worca/settings.local.json` and auto-pins the template's refs to `user:<alias>` — but the resolver never saw that env, so every agent ran against the default Anthropic endpoint instead of the routed one (the `[init] model=` line showed the builtin model, not the alias target).
+
+**Action required only if** you have a user-tier model alias whose `env` (routing/secrets) lives outside `~/.worca/settings.local.json` — e.g. the `id` in `~/.worca/settings.json` but the `env` only in a *project's* `settings.local.json`. For `user:<alias>` refs to route correctly, the `env` block must live in `~/.worca/settings.local.json`. Move it there (or re-run `worca templates import --scope user`, which now writes it to the right place). No `worca init --upgrade` migration is needed — this is a resolver fix; the on-disk file shape is unchanged.
+
 **No breaking changes.** Existing runs and integrations are unaffected. Projects that have not yet run `worca init --upgrade` will show a degraded provenance block (version only, `runtime_source: null`) until the manifest is written.
 
 Run `worca init --upgrade` in each project to populate the manifest and enable full provenance display.
