@@ -60,15 +60,31 @@ _LOG_WRITE_LOCK = threading.Lock()
 _REAP_WAIT_TIMEOUT = 2.0
 
 # Matches the Claude CLI's 429/529/503 throttling + backoff diagnostics on
-# stderr. Deliberately broad but anchored on retry vocabulary so a CLI wording
-# tweak degrades to "we still persisted the raw err line" rather than silently
-# zeroing the count (the matcher only drives the count/event, never what is
-# written). Unit-tested against captured samples in test_claude_cli.py and
-# intentionally trivial to extend.
-_RETRY_RE = re.compile(
-    r"(?i)\b(?:overloaded|rate.?limit|retry(?:ing)?|too many requests|"
-    r"429|529|503)\b"
+# stderr. Two branches, both case-insensitive:
+#   1. Retry/overload *vocabulary* — sufficient signal on its own.
+#   2. A bare 4xx/5xx HTTP status, but ONLY when it sits next to an HTTP/error
+#      context word. This is the precision guard: a stray "503"/"529" in tool
+#      output (e.g. "529 assertions", "tests passed: 503") no longer inflates
+#      the count, while every realistic CLI throttling line still matches.
+# Anchored on vocabulary so a CLI wording tweak degrades to "we still persisted
+# the raw err line" rather than silently zeroing the count (the matcher only
+# drives the count/event, never what is written). Unit-tested against captured
+# samples in test_claude_cli.py and intentionally trivial to extend.
+_RETRY_VOCAB = (
+    r"overloaded|rate.?limit|too many requests|retr(?:y|ying)|"
+    r"backing off|service unavailable"
 )
+_RETRY_STATUS_CONTEXT = (
+    r"(?:http|https|error|status|code|response|upstream|api|got|received|"
+    r"request)\b[^\n]{0,24}?\b(?:429|529|503|500|502|504)\b"
+)
+_RETRY_RE = re.compile(rf"(?i)(?:{_RETRY_VOCAB}|{_RETRY_STATUS_CONTEXT})")
+
+# Pulls the numeric HTTP status out of a matched throttling line so the
+# api_error_status signal has a producer (the last status seen in an iteration
+# wins, mirroring the "last API status N" UI tooltip). None when a retry line
+# carries vocabulary but no status (e.g. "Overloaded, backing off").
+_STATUS_RE = re.compile(r"\b(429|529|503|500|502|504)\b")
 
 
 class AgentSubprocessError(RuntimeError):
@@ -607,7 +623,8 @@ def run_agent(
             it runs on the daemon tee thread (exceptions are swallowed).
 
     Returns the parsed result event with ``api_retries`` (matched retry-line
-    count) and ``api_retry_wait_ms`` (Σ measured backoff-window wall spans) set.
+    count), ``api_retry_wait_ms`` (Σ measured backoff-window wall spans), and
+    ``api_error_status`` (last HTTP status parsed from a retry line, or None) set.
 
     Raises RuntimeError on subprocess failure or missing result.
     """
@@ -691,8 +708,11 @@ def run_agent(
     # Shared throttling/backoff signal mutated by the stderr tee daemon and read
     # by process_stream (which closes each backoff window) — all access guarded
     # by _LOG_WRITE_LOCK. count: matched retry lines; wait_ms: Σ backoff-window
-    # wall spans; pending_since: monotonic start of the currently-open window.
-    retry_state = {"count": 0, "wait_ms": 0, "pending_since": None}
+    # wall spans; pending_since: monotonic start of the currently-open window;
+    # error_status: last HTTP status parsed from a retry line (None if none).
+    retry_state = {
+        "count": 0, "wait_ms": 0, "pending_since": None, "error_status": None,
+    }
     try:
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -727,6 +747,9 @@ def run_agent(
                         retry_state["count"] += 1
                         if retry_state["pending_since"] is None:
                             retry_state["pending_since"] = time.monotonic()
+                        status_match = _STATUS_RE.search(text)
+                        if status_match:
+                            retry_state["error_status"] = int(status_match.group(1))
                         fire_count = retry_state["count"]
                 # Fire the callback outside the lock so a slow handler can't
                 # stall the stdout reader closing the next backoff window.
@@ -752,11 +775,25 @@ def run_agent(
             )
             stderr_thread.join(timeout=5)
             proc.wait()
-            # Thread joined → retry_state is settled. Stamp the aggregate
-            # throttling signal onto the result event (additive; both default 0).
+            # join() has a timeout, so the tee daemon *may* still be draining a
+            # trailing stderr burst — read retry_state under the lock rather than
+            # assuming it is quiescent. A backoff window can also still be open
+            # here: retry lines that arrive on stderr after the final stdout
+            # event was processed are never closed by process_stream, so close
+            # that trailing window now (span = stream end − pending_since) before
+            # stamping the aggregate throttling signal onto the result event
+            # (additive; all default 0/None on a clean run).
             if result_event is not None:
-                result_event["api_retries"] = retry_state["count"]
-                result_event["api_retry_wait_ms"] = retry_state["wait_ms"]
+                with _LOG_WRITE_LOCK:
+                    pending_since = retry_state["pending_since"]
+                    if pending_since is not None:
+                        retry_state["wait_ms"] += int(
+                            (time.monotonic() - pending_since) * 1000
+                        )
+                        retry_state["pending_since"] = None
+                    result_event["api_retries"] = retry_state["count"]
+                    result_event["api_retry_wait_ms"] = retry_state["wait_ms"]
+                    result_event["api_error_status"] = retry_state["error_status"]
         except Exception as stream_exc:
             # The streaming layer cannot tell why the subprocess stopped
             # producing output. Reap it (with a bounded wait) so the

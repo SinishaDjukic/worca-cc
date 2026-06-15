@@ -58,8 +58,11 @@ def test_api_retry_signal_captured_end_to_end(pipeline_env):
     it, tu = retry_iters[0]
     assert tu["api_retries"] >= 1
     assert tu["api_retry_wait_ms"] >= 0
+    # The HTTP status parsed from "API Error 529: ..." flows through token_usage.
+    assert tu["api_error_status"] == 529
     # Surfaced onto the iteration top-level too (the UI view-model reads it there).
     assert it.get("api_retries", 0) >= 1
+    assert it.get("api_error_status") == 529
 
     # 3. A pipeline.agent.api_retry event is emitted.
     retry_events = [

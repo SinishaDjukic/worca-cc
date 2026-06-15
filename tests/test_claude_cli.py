@@ -1850,16 +1850,22 @@ def test_tee_stderr_still_echoes_to_console(tmp_path, capfd):
 @pytest.mark.parametrize(
     "line",
     [
+        # Retry/overload vocabulary — sufficient on its own.
         "API Error 529: overloaded, retrying in 4s",
         "Overloaded, backing off",
         "Rate limit exceeded (429)",
         "rate-limit hit, retrying",
         "ratelimit reached",
         "HTTP 429 Too Many Requests",
-        "Got 529 from upstream",
         "503 Service Unavailable",
         "Retrying request (attempt 2)",
         "retry scheduled",
+        # Bare HTTP status next to an HTTP/error context word.
+        "Got 529 from upstream",
+        "HTTP 503",
+        "error 500 internal",
+        "received 502 from api",
+        "status code 429",
     ],
 )
 def test_retry_re_matches_samples(line):
@@ -1873,18 +1879,17 @@ def test_retry_re_matches_samples(line):
         "[tool:Read] src/main.py",
         "Wrote 42 lines to file",
         "Compiling project assets",
-        "tests passed: 529 assertions",  # 529 embedded in a word-ish context: still digits, but...
+        # Bare HTTP-status tokens with NO http/error context word: the
+        # precision guard keeps these from inflating the retry count.
+        "tests passed: 529 assertions",
+        "503 tests passed",
+        "ran 429 examples",
+        "line 500 of report.txt",
     ],
 )
 def test_retry_re_misses_benign(line):
-    """_RETRY_RE does not fire on benign progress lines without retry vocab.
-
-    Note "529 assertions" DOES contain a bare 529 token with word boundaries, so
-    it is intentionally treated as a (false-positive-tolerant) match by the broad
-    matcher — excluded here to keep the negative set honest.
-    """
-    if "529" in line or "429" in line or "503" in line:
-        pytest.skip("contains a bare HTTP-status token — broad matcher matches")
+    """_RETRY_RE does not fire on benign lines — including bare HTTP-status
+    tokens that lack any retry vocabulary or HTTP/error context word."""
     assert not _RETRY_RE.search(line), f"unexpected match: {line!r}"
 
 
@@ -2002,3 +2007,78 @@ def test_run_agent_on_retry_exception_does_not_crash():
             on_retry=lambda detail, count: (_ for _ in ()).throw(ValueError("boom")),
         )
     assert result["api_retries"] == 1
+
+
+def test_run_agent_sets_api_error_status_from_retry_line():
+    """The HTTP status parsed from a retry line is stamped as api_error_status."""
+    mock_proc = _make_retry_mock_proc(["API Error 529: overloaded, retrying\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_error_status"] == 529
+
+
+def test_run_agent_api_error_status_last_seen_wins():
+    """When multiple statuses appear, the last one parsed wins (mirrors the
+    'last API status N' UI tooltip)."""
+    mock_proc = _make_retry_mock_proc([
+        "HTTP 429 Too Many Requests, retrying\n",
+        "API Error 503: service unavailable, retrying\n",
+    ])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_error_status"] == 503
+
+
+def test_run_agent_api_error_status_none_when_vocab_only():
+    """A vocabulary-only retry line (no numeric status) leaves api_error_status
+    None while still counting the retry."""
+    mock_proc = _make_retry_mock_proc(["Overloaded, backing off\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_retries"] == 1
+    assert result["api_error_status"] is None
+
+
+def test_run_agent_api_error_status_none_on_clean_run():
+    """A clean run reports api_error_status None (legacy-identical)."""
+    mock_proc = _make_retry_mock_proc(["just some normal output\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_error_status"] is None
+
+
+def test_run_agent_closes_trailing_backoff_window():
+    """A retry line that arrives *after* the last stdout event is processed
+    still has its backoff window closed at stamp time, not lost.
+
+    process_stream closes a window only when it sees a stdout event; a retry
+    burst that lands on stderr once stdout has already EOF'd would otherwise
+    leave pending_since open forever. run_agent closes that trailing window
+    after joining the tee. The Event sequencing makes the ordering
+    deterministic: the retry line is read strictly after stdout is exhausted.
+    """
+    import threading as _t
+
+    stdout_done = _t.Event()
+
+    def _stdout():
+        yield json.dumps({"type": "result", "result": "ok", "duration_ms": 1}) + "\n"
+        stdout_done.set()  # signal: all stdout consumed before tee unblocks
+
+    def _stderr():
+        # Block until process_stream has fully drained stdout, so this retry
+        # line opens a window with no subsequent stdout event to close it.
+        stdout_done.wait(timeout=5)
+        yield "overloaded, retrying\n"
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = _stdout()
+    mock_proc.stderr = _stderr()
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    # The trailing retry was counted and its window closed (no crash, wait >= 0).
+    assert result["api_retries"] == 1
+    assert result["api_retry_wait_ms"] >= 0
