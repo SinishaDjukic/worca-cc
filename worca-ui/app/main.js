@@ -605,11 +605,19 @@ let logFilter = '*';
 let logSearch = '';
 let logIterationFilter = null; // null = all iterations, number = specific
 let logStreamFilter = 'all'; // 'all' | 'out' | 'err' — client-side view mode
+let liveStreamFilter = 'all'; // same view mode for the Live Output tail
 
 /** Does a log entry's origin stream pass the current stream filter? */
 function logStreamMatches(entry) {
   return (
     logStreamFilter === 'all' || (entry.stream || 'out') === logStreamFilter
+  );
+}
+
+/** Does a log entry's origin stream pass the Live Output stream filter? */
+function liveStreamMatches(entry) {
+  return (
+    liveStreamFilter === 'all' || (entry.stream || 'out') === liveStreamFilter
   );
 }
 
@@ -925,6 +933,7 @@ function resetProjectState() {
   logSearch = '';
   logIterationFilter = null;
   logStreamFilter = 'all';
+  liveStreamFilter = 'all';
   // Prompt cache
   for (const key of Object.keys(promptCache)) delete promptCache[key];
   promptCachePending.clear();
@@ -1239,7 +1248,7 @@ ws.on('log-line', (payload) => {
     if (payload.iteration && payload.iteration > 1 && payload._iterStart) {
       writeLiveIterationSeparator(payload.iteration);
     }
-    writeLiveLogLine(payload);
+    if (liveStreamMatches(payload)) writeLiveLogLine(payload);
     // appendLog no longer emits; coalesced rerender keeps the Log History
     // stage-dropdown fallback current as new stages produce output.
     scheduleRerender();
@@ -1269,7 +1278,7 @@ ws.on('log-bulk', (payload) => {
       // Log History: only write to the history terminal when a specific stage
       // is selected, and only when the entry passes the stream filter.
       if (logFilter !== '*' && logStreamMatches(entry)) writeLogLine(entry);
-      writeLiveLogLine(entry);
+      if (liveStreamMatches(entry)) writeLiveLogLine(entry);
     }
     // Single buffered append + one coalesced rerender for the whole backfill,
     // instead of one full app render per line.
@@ -3424,6 +3433,18 @@ async function handleStreamFilter(value) {
   rerender();
 }
 
+// Live Output stream filter: clear the live tail and replay the buffered lines
+// kept by the active-stage filter inside writeLiveLogLine, keeping only those
+// whose origin stream passes the filter. No refetch/resubscribe.
+function handleLiveStreamFilter(value) {
+  liveStreamFilter = value || 'all';
+  clearLiveTerminal();
+  for (const entry of store.getState().logLines) {
+    if (liveStreamMatches(entry)) writeLiveLogLine(entry);
+  }
+  rerender();
+}
+
 function handleSearch(term) {
   logSearch = term;
   searchTerminal(term);
@@ -5255,7 +5276,7 @@ function mainContentView() {
         <div class="run-detail-layout__logs">
           <div class="run-detail-column-header">Artifacts</div>
           ${prApprovalPanelView(run, { onApprove: handleApprovePR, onReject: handleRejectPR })}
-          ${liveOutputView(getActiveStage(), isRunning)}
+          ${liveOutputView(getActiveStage(), isRunning, liveStreamFilter, handleLiveStreamFilter)}
           ${logViewerView(logState, {
             onStageFilter: handleStageFilter,
             onIterationFilter: handleIterationFilter,

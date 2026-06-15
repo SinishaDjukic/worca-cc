@@ -49,16 +49,16 @@ describe('log-viewer stream filter control', () => {
     expect(html).toContain('sl-radio-button');
   });
 
-  it('offers all / stdout / stderr options', () => {
+  it('offers all / out / error options', () => {
     const html = renderToString(logViewerView(BASE_STATE, BASE_OPTS));
     expect(html).toContain('value="all"');
     expect(html).toContain('value="out"');
     expect(html).toContain('value="err"');
-    expect(html).toContain('stdout');
-    expect(html).toContain('stderr');
+    expect(html).toContain('Out');
+    expect(html).toContain('Error');
   });
 
-  it('places the stream filter after the iteration select and before search', () => {
+  it('places the stream filter after search (and before the Auto button)', () => {
     const state = {
       ...BASE_STATE,
       currentLogIteration: 2,
@@ -67,8 +67,8 @@ describe('log-viewer stream filter control', () => {
     const html = renderToString(logViewerView(state, opts));
     const streamPos = html.indexOf('log-stream-filter');
     const searchPos = html.indexOf('log-search');
-    expect(streamPos).toBeGreaterThan(-1);
-    expect(searchPos).toBeGreaterThan(streamPos);
+    expect(searchPos).toBeGreaterThan(-1);
+    expect(streamPos).toBeGreaterThan(searchPos);
   });
 
   it('renders without an explicit streamFilter (defaults work)', () => {

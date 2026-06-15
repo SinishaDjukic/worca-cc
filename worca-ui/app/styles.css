@@ -3269,6 +3269,7 @@ sl-details.live-output-panel::part(content) {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   padding: 4px 12px;
   border-top: 1px solid var(--border-subtle);
 }

@@ -276,18 +276,6 @@ export function logViewerView(
             `
                 : nothing
             }
-            <sl-radio-group
-              class="log-stream-filter"
-              size="small"
-              .value=${streamFilter || 'all'}
-              @sl-change=${(e) => onStreamFilter(e.target.value)}
-            >
-              <sl-radio-button value="all">All</sl-radio-button>
-              <sl-radio-button value="out">stdout</sl-radio-button>
-              <sl-radio-button value="err">
-                ${unsafeHTML(iconSvg(AlertTriangle, 12))} stderr
-              </sl-radio-button>
-            </sl-radio-group>
             <sl-input
               class="log-search"
               type="text"
@@ -298,6 +286,18 @@ export function logViewerView(
             >
               <span slot="prefix">${unsafeHTML(iconSvg(Search, 14))}</span>
             </sl-input>
+            <sl-radio-group
+              class="log-stream-filter"
+              size="small"
+              .value=${streamFilter || 'all'}
+              @sl-change=${(e) => onStreamFilter(e.target.value)}
+            >
+              <sl-radio-button value="all">All</sl-radio-button>
+              <sl-radio-button value="out">Out</sl-radio-button>
+              <sl-radio-button value="err">
+                <span style="display:inline-flex;align-items:center;gap:5px">${unsafeHTML(iconSvg(AlertTriangle, 12))}Error</span>
+              </sl-radio-button>
+            </sl-radio-group>
             <sl-button
               size="small"
               variant="${autoScroll ? 'primary' : 'default'}"

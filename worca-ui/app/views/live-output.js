@@ -1,6 +1,11 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { Activity, ClipboardCopy, iconSvg } from '../utils/icons.js';
+import {
+  Activity,
+  AlertTriangle,
+  ClipboardCopy,
+  iconSvg,
+} from '../utils/icons.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 import { copyTerminalToClipboard } from '../utils/terminal-clipboard.js';
 
@@ -17,6 +22,11 @@ const STAGE_COLORS = [
 ];
 const RESET = '\x1b[0m';
 const DIM = '\x1b[2m';
+// stderr styling — mirrors log-viewer.js so the live tail flags throttling
+// (429/529 backoff) the same way: amber 24-bit color + an "err│" gutter so the
+// signal survives colorblindness (color-not-alone).
+const ERR_COLOR = '\x1b[38;2;245;158;11m';
+const ERR_GUTTER = 'err│ ';
 
 const stageColorCache = new Map();
 let colorIdx = 0;
@@ -131,7 +141,12 @@ export function writeLiveLogLine(entry) {
     ? `${stageColor(entry.stage)}[${entry.stage.toUpperCase()}]${RESET} `
     : '';
   const msg = entry.line || entry;
-  terminal.writeln(`${ts}${stage}${msg}`);
+  if (entry.stream === 'err') {
+    // Amber + "err│" gutter so stderr (e.g. 429/529 throttling) stands out live.
+    terminal.writeln(`${ts}${stage}${ERR_COLOR}${ERR_GUTTER}${msg}${RESET}`);
+  } else {
+    terminal.writeln(`${ts}${stage}${msg}`);
+  }
 }
 
 /**
@@ -241,8 +256,15 @@ export async function mountLiveTerminal(runId) {
  * Render the Live Output collapsible section.
  * @param {string|null} stageName - The active stage key
  * @param {boolean} isRunning - Whether the run is active
+ * @param {string} [streamFilter] - Active origin-stream filter ('all'|'out'|'err')
+ * @param {(value: string) => void} [onStreamFilter] - Stream-filter change handler
  */
-export function liveOutputView(stageName, isRunning) {
+export function liveOutputView(
+  stageName,
+  isRunning,
+  streamFilter = 'all',
+  onStreamFilter = () => {},
+) {
   if (!isRunning) return nothing;
 
   const label = stageName
@@ -258,6 +280,18 @@ export function liveOutputView(stageName, isRunning) {
           ${stageName ? html`<sl-badge variant="warning" pill>${label}</sl-badge>` : nothing}
         </div>
         <div class="live-output-controls">
+          <sl-radio-group
+            class="log-stream-filter live-stream-filter"
+            size="small"
+            .value=${streamFilter || 'all'}
+            @sl-change=${(e) => onStreamFilter(e.target.value)}
+          >
+            <sl-radio-button value="all">All</sl-radio-button>
+            <sl-radio-button value="out">Out</sl-radio-button>
+            <sl-radio-button value="err">
+              <span style="display:inline-flex;align-items:center;gap:5px">${unsafeHTML(iconSvg(AlertTriangle, 12))}Error</span>
+            </sl-radio-button>
+          </sl-radio-group>
           <button class="terminal-copy-btn" @click=${(e) => copyTerminalToClipboard(terminal, e.currentTarget)}>
             ${unsafeHTML(iconSvg(ClipboardCopy, 14))}
             Copy
