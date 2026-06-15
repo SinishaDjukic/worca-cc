@@ -1231,6 +1231,20 @@ h1, h2, h3, h4, h5, h6 {
   opacity: 0.4;
 }
 
+/* W-074: API Retry/Wait segment. A 45deg striped gradient (pattern, not solid)
+   so the meaning survives colorblindness and the a11y color-not-alone floor,
+   and stays visually distinct from the solid amber "Thinking" segment. The
+   error+caution stripe pair reads as "throttled / backing off". */
+.timing-bar-retry {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--status-error, #dc2626),
+    var(--status-error, #dc2626) 5px,
+    var(--status-blocked, #f59e0b) 5px,
+    var(--status-blocked, #f59e0b) 10px
+  );
+}
+
 .timing-bar-segment-text {
   font-size: 11px;
   font-weight: 600;
@@ -1300,6 +1314,20 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+}
+
+/* W-074: API-retry chip — amber "caution" per badge-color-language.md. The
+   ⟳ icon + count carry the meaning so color is never the sole signal. Applies
+   to both the per-iteration chip (.stage-info-item) and the collapsed
+   stage-header chip (.stage-meta-item). var(--status-blocked) is theme-aware,
+   so this reads correctly on both light and dark surfaces. */
+.iter-retry-warn,
+.iter-retry-warn .meta-value {
+  color: var(--status-blocked, #f59e0b);
+}
+
+.iter-retry-warn svg {
+  stroke: var(--status-blocked, #f59e0b);
 }
 
 .text-muted {
@@ -1680,6 +1708,16 @@ sl-details.log-history-panel::part(content) {
 
 .log-controls .terminal-copy-btn {
   margin-left: auto;
+}
+
+/* 3-way stdout/stderr/all stream filter — a segmented view-mode switch, not a
+   data dropdown. Stays its intrinsic width so it doesn't steal the search flex. */
+.log-controls .log-stream-filter {
+  flex: 0 0 auto;
+}
+
+.log-stream-filter sl-radio-button[value="err"]::part(button--checked) {
+  color: var(--status-blocked, #f59e0b);
 }
 
 .log-controls sl-input {

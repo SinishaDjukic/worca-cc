@@ -183,6 +183,57 @@ def test_empty_token_usage_has_new_fields():
 
 
 # ---------------------------------------------------------------------------
+# extract_token_usage — API-throttling/retry fields (W-074 §3)
+# ---------------------------------------------------------------------------
+
+
+def test_token_usage_carries_retry_fields():
+    envelope = {
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+        "duration_ms": 5000,
+        "duration_api_ms": 1200,
+        "api_retries": 3,
+        "api_retry_wait_ms": 1042310,
+        "api_error_status": 529,
+    }
+    result = extract_token_usage(envelope)
+    assert result["api_retries"] == 3
+    assert result["api_retry_wait_ms"] == 1042310
+    # non_api_wait_ms = max(0, duration_ms - duration_api_ms)
+    assert result["non_api_wait_ms"] == 3800
+    assert result["api_error_status"] == 529
+
+
+def test_token_usage_retry_fields_default_on_legacy_envelope():
+    """Legacy envelopes (no retry fields) default to 0 / None — additive."""
+    envelope = {
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+        "duration_ms": 1000,
+        "duration_api_ms": 1000,
+    }
+    result = extract_token_usage(envelope)
+    assert result["api_retries"] == 0
+    assert result["api_retry_wait_ms"] == 0
+    assert result["non_api_wait_ms"] == 0
+    assert result["api_error_status"] is None
+
+
+def test_token_usage_non_api_wait_ms_never_negative():
+    """duration_api_ms > duration_ms (clock skew) clamps non_api_wait_ms to 0."""
+    envelope = {"duration_ms": 100, "duration_api_ms": 500}
+    result = extract_token_usage(envelope)
+    assert result["non_api_wait_ms"] == 0
+
+
+def test_empty_token_usage_has_retry_fields():
+    empty = _empty_token_usage()
+    assert empty["api_retries"] == 0
+    assert empty["api_retry_wait_ms"] == 0
+    assert empty["non_api_wait_ms"] == 0
+    assert empty["api_error_status"] is None
+
+
+# ---------------------------------------------------------------------------
 # _SUMMABLE_FIELDS — new summable fields (W-035 section 1b)
 # ---------------------------------------------------------------------------
 

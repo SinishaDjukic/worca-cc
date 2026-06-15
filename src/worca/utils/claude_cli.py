@@ -14,12 +14,14 @@ termination; orphaned grandchildren are not reaped.
 
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from typing import Optional, Callable
 
 from worca.utils.log_lines import write_log_line
@@ -46,10 +48,43 @@ _ARG_INLINE_LIMIT = 128 * 1024  # bytes
 _current_proc = None
 _proc_lock = threading.Lock()
 
+# Serializes writes to the shared per-iteration log file. The process_stream
+# loop (main thread, stdout-derived "out" lines) and the _tee_stderr daemon
+# thread ("err" lines) both write the same handle, so every write_log_line call
+# touching that handle MUST hold this lock to avoid interleaved/torn records.
+_LOG_WRITE_LOCK = threading.Lock()
+
 # Bounded wait when reaping the agent subprocess after a stream-side
 # exception. Long enough for a signaled subprocess to finish dying, short
 # enough to keep the failure path snappy.
 _REAP_WAIT_TIMEOUT = 2.0
+
+# Matches the Claude CLI's 429/529/503 throttling + backoff diagnostics on
+# stderr. Two branches, both case-insensitive:
+#   1. Retry/overload *vocabulary* — sufficient signal on its own.
+#   2. A bare 4xx/5xx HTTP status, but ONLY when it sits next to an HTTP/error
+#      context word. This is the precision guard: a stray "503"/"529" in tool
+#      output (e.g. "529 assertions", "tests passed: 503") no longer inflates
+#      the count, while every realistic CLI throttling line still matches.
+# Anchored on vocabulary so a CLI wording tweak degrades to "we still persisted
+# the raw err line" rather than silently zeroing the count (the matcher only
+# drives the count/event, never what is written). Unit-tested against captured
+# samples in test_claude_cli.py and intentionally trivial to extend.
+_RETRY_VOCAB = (
+    r"overloaded|rate.?limit|too many requests|retr(?:y|ying)|"
+    r"backing off|service unavailable"
+)
+_RETRY_STATUS_CONTEXT = (
+    r"(?:http|https|error|status|code|response|upstream|api|got|received|"
+    r"request)\b[^\n]{0,24}?\b(?:429|529|503|500|502|504)\b"
+)
+_RETRY_RE = re.compile(rf"(?i)(?:{_RETRY_VOCAB}|{_RETRY_STATUS_CONTEXT})")
+
+# Pulls the numeric HTTP status out of a matched throttling line so the
+# api_error_status signal has a producer (the last status seen in an iteration
+# wins, mirroring the "last API status N" UI tooltip). None when a retry line
+# carries vocabulary but no status (e.g. "Overloaded, backing off").
+_STATUS_RE = re.compile(r"\b(429|529|503|500|502|504)\b")
 
 
 class AgentSubprocessError(RuntimeError):
@@ -396,6 +431,7 @@ def process_stream(
     stdout,
     log_file=None,
     on_event: Optional[Callable[[dict], None]] = None,
+    retry_state: Optional[dict] = None,
 ) -> dict:
     """Read NDJSON events from stdout and return the result event.
 
@@ -403,6 +439,13 @@ def process_stream(
         stdout: File-like object yielding lines of NDJSON.
         log_file: Open file to write human-readable log lines to.
         on_event: Optional callback invoked for each parsed event.
+        retry_state: Optional shared dict (mutated by ``_tee_stderr``) carrying
+            the API-throttling/backoff signal. When the stderr tee stamps
+            ``pending_since`` on the first retry line of a burst, the first
+            stdout event seen here closes that backoff window —
+            ``wait_ms += now − pending_since`` — measuring the wall span the CLI
+            spent silently backing off. Guarded by ``_LOG_WRITE_LOCK`` because
+            the tee daemon mutates the same dict concurrently.
 
     Returns the parsed result event dict, or raises RuntimeError if not found.
     The result event will have ``_resolved_model`` set from the system.init
@@ -428,8 +471,22 @@ def process_stream(
             # Not valid JSON — write raw to log
             if log_file:
                 raw = raw_line if isinstance(raw_line, str) else raw_line.decode()
-                write_log_line(log_file, raw.rstrip("\n"))
+                with _LOG_WRITE_LOCK:
+                    write_log_line(log_file, raw.rstrip("\n"), stream="out")
             continue
+
+        # A real stdout event arrived — if the stderr tee opened a backoff
+        # window (stamped pending_since on a retry line), close it now and fold
+        # the wall span into wait_ms. Under _LOG_WRITE_LOCK so it can't race the
+        # tee daemon's concurrent mutation of the same dict.
+        if retry_state is not None:
+            with _LOG_WRITE_LOCK:
+                pending_since = retry_state.get("pending_since")
+                if pending_since is not None:
+                    retry_state["wait_ms"] += int(
+                        (time.monotonic() - pending_since) * 1000
+                    )
+                    retry_state["pending_since"] = None
 
         if on_event:
             on_event(event)
@@ -466,7 +523,8 @@ def process_stream(
         if log_file:
             log_line = _format_log_line(event)
             if log_line:
-                write_log_line(log_file, log_line)
+                with _LOG_WRITE_LOCK:
+                    write_log_line(log_file, log_line, stream="out")
 
         if event.get("type") == "result":
             # Task-notification auto-resumes (e.g. long pytest run dispatched
@@ -536,6 +594,7 @@ def run_agent(
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
     bead_id: Optional[str] = None,
+    on_retry: Optional[Callable[[str, int], None]] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -557,6 +616,15 @@ def run_agent(
         stage: When set, exported as ``WORCA_STAGE`` in the agent subprocess.
         iteration: When set, exported as ``WORCA_ITERATION`` in the agent subprocess.
         bead_id: When set, exported as ``WORCA_BEAD_ID`` in the agent subprocess.
+        on_retry: Optional callback ``(detail_text, count)`` invoked from the
+            stderr tee thread each time a line matches ``_RETRY_RE`` (429/529/503
+            throttling / backoff). The runner uses it to emit a
+            ``pipeline.agent.api_retry`` event. Must be cheap and exception-safe;
+            it runs on the daemon tee thread (exceptions are swallowed).
+
+    Returns the parsed result event with ``api_retries`` (matched retry-line
+    count), ``api_retry_wait_ms`` (Σ measured backoff-window wall spans), and
+    ``api_error_status`` (last HTTP status parsed from a retry line, or None) set.
 
     Raises RuntimeError on subprocess failure or missing result.
     """
@@ -637,16 +705,60 @@ def run_agent(
 
     log_file = None
     result_event = None
+    # Shared throttling/backoff signal mutated by the stderr tee daemon and read
+    # by process_stream (which closes each backoff window) — all access guarded
+    # by _LOG_WRITE_LOCK. count: matched retry lines; wait_ms: Σ backoff-window
+    # wall spans; pending_since: monotonic start of the currently-open window;
+    # error_status: last HTTP status parsed from a retry line (None if none).
+    retry_state = {
+        "count": 0, "wait_ms": 0, "pending_since": None, "error_status": None,
+    }
     try:
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             log_file = open(log_path, "w", encoding="utf-8")
 
-        # Tee stderr to console in background
+        # Tee stderr to console AND persist it tagged "err" in the shared log.
+        # The CLI prints its 429/529 backoff diagnostics here; persisting them
+        # makes throttling visible in the UI instead of console-only. Each raw
+        # line carries no timestamp of its own, so stamp it with worca's
+        # receive-time (stamp=True). Writes share log_file with the main
+        # process_stream loop, so they go under _LOG_WRITE_LOCK. Each line is
+        # also run through _RETRY_RE: a match bumps the count, opens a backoff
+        # window (pending_since) if none is open, and fires on_retry.
         def _tee_stderr():
             for line in proc.stderr:
                 sys.stderr.write(line)
                 sys.stderr.flush()
+                text = line.rstrip("\n")
+                fire_count = None
+                with _LOG_WRITE_LOCK:
+                    if log_file:
+                        try:
+                            write_log_line(
+                                log_file, text, stream="err", stamp=True,
+                            )
+                        except ValueError:
+                            # log_file closed after join(timeout) while this
+                            # daemon thread was still draining — drop the line
+                            # rather than crash the thread.
+                            pass
+                    if _RETRY_RE.search(text):
+                        retry_state["count"] += 1
+                        if retry_state["pending_since"] is None:
+                            retry_state["pending_since"] = time.monotonic()
+                        status_match = _STATUS_RE.search(text)
+                        if status_match:
+                            retry_state["error_status"] = int(status_match.group(1))
+                        fire_count = retry_state["count"]
+                # Fire the callback outside the lock so a slow handler can't
+                # stall the stdout reader closing the next backoff window.
+                if fire_count is not None and on_retry is not None:
+                    try:
+                        on_retry(text, fire_count)
+                    except Exception:
+                        # Telemetry must never crash the tee daemon.
+                        pass
 
         stderr_thread = threading.Thread(target=_tee_stderr, daemon=True)
         stderr_thread.start()
@@ -659,9 +771,29 @@ def run_agent(
                 proc.stdout,
                 log_file=log_file,
                 on_event=on_event,
+                retry_state=retry_state,
             )
             stderr_thread.join(timeout=5)
             proc.wait()
+            # join() has a timeout, so the tee daemon *may* still be draining a
+            # trailing stderr burst — read retry_state under the lock rather than
+            # assuming it is quiescent. A backoff window can also still be open
+            # here: retry lines that arrive on stderr after the final stdout
+            # event was processed are never closed by process_stream, so close
+            # that trailing window now (span = stream end − pending_since) before
+            # stamping the aggregate throttling signal onto the result event
+            # (additive; all default 0/None on a clean run).
+            if result_event is not None:
+                with _LOG_WRITE_LOCK:
+                    pending_since = retry_state["pending_since"]
+                    if pending_since is not None:
+                        retry_state["wait_ms"] += int(
+                            (time.monotonic() - pending_since) * 1000
+                        )
+                        retry_state["pending_since"] = None
+                    result_event["api_retries"] = retry_state["count"]
+                    result_event["api_retry_wait_ms"] = retry_state["wait_ms"]
+                    result_event["api_error_status"] = retry_state["error_status"]
         except Exception as stream_exc:
             # The streaming layer cannot tell why the subprocess stopped
             # producing output. Reap it (with a bounded wait) so the

@@ -44,12 +44,13 @@ PIPELINE_CONSTANTS = [
     ("STAGE_COMPLETED",   "pipeline.stage.completed"),
     ("STAGE_FAILED",      "pipeline.stage.failed"),
     ("STAGE_INTERRUPTED", "pipeline.stage.interrupted"),
-    # Agent telemetry (6)
+    # Agent telemetry (7)
     ("AGENT_SPAWNED",        "pipeline.agent.spawned"),
     ("AGENT_TOOL_USE",       "pipeline.agent.tool_use"),
     ("AGENT_TOOL_RESULT",    "pipeline.agent.tool_result"),
     ("AGENT_TEXT",           "pipeline.agent.text"),
     ("AGENT_COMPLETED",      "pipeline.agent.completed"),
+    ("AGENT_API_RETRY",      "pipeline.agent.api_retry"),
     ("ITERATION_ACCESS",     "pipeline.iteration.access"),
     # Bead lifecycle (6)
     ("BEAD_CREATED",      "pipeline.bead.created"),
@@ -142,20 +143,20 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 59 pipeline.* outbound constants.
+    """There must be exactly 60 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
     + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
     + 2 template lifecycle events + 1 ITERATION_ACCESS + 1 GIT_PR_DEFERRED
-    + 1 CLAUDE_MD_MODE_RESOLVED = 59.
+    + 1 CLAUDE_MD_MODE_RESOLVED + 1 AGENT_API_RETRY (W-074) = 60.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 59, (
-        f"Expected 59 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 60, (
+        f"Expected 60 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -194,6 +195,7 @@ EXPECTED_BUILDERS = [
     "agent_tool_result_payload",
     "agent_text_payload",
     "agent_completed_payload",
+    "agent_api_retry_payload",
     "iteration_access_payload",
     # pipeline.bead.*
     "bead_created_payload",
@@ -488,6 +490,47 @@ def test_agent_completed_payload_required_fields():
     assert p["cost_usd"] == 0.25
     assert p["duration_ms"] == 45000
     assert p["exit_code"] == 0
+
+
+def test_agent_api_retry_payload_required_fields():
+    from worca.events.types import agent_api_retry_payload
+    p = agent_api_retry_payload(
+        stage="IMPLEMENT", iteration=2, agent="implementer",
+        attempt=3, detail="API Error 529: overloaded, retrying in 4s",
+    )
+    assert p["stage"] == "IMPLEMENT"
+    assert p["iteration"] == 2
+    assert p["agent"] == "implementer"
+    assert p["attempt"] == 3
+    assert p["detail"] == "API Error 529: overloaded, retrying in 4s"
+
+
+def test_agent_api_retry_payload_bead_id_omitted_by_default():
+    from worca.events.types import agent_api_retry_payload
+    p = agent_api_retry_payload(
+        stage="IMPLEMENT", iteration=1, agent="implementer",
+        attempt=1, detail="overloaded",
+    )
+    assert "bead_id" not in p
+
+
+def test_agent_api_retry_payload_bead_id_included_when_provided():
+    from worca.events.types import agent_api_retry_payload
+    p = agent_api_retry_payload(
+        stage="IMPLEMENT", iteration=1, agent="implementer",
+        attempt=1, detail="overloaded", bead_id="worca-cc-3rds",
+    )
+    assert p["bead_id"] == "worca-cc-3rds"
+
+
+def test_agent_api_retry_payload_detail_truncated():
+    from worca.events.types import agent_api_retry_payload
+    long_detail = "x" * 500
+    p = agent_api_retry_payload(
+        stage="IMPLEMENT", iteration=1, agent="implementer",
+        attempt=1, detail=long_detail,
+    )
+    assert len(p["detail"]) == 300
 
 
 def test_iteration_access_payload_required_fields():
@@ -1009,6 +1052,10 @@ def test_all_builders_return_dicts():
         "agent_completed_payload": dict(
             stage="PLAN", iteration=1, turns=1,
             cost_usd=0.0, duration_ms=1, exit_code=0,
+        ),
+        "agent_api_retry_payload": dict(
+            stage="IMPLEMENT", iteration=1, agent="implementer",
+            attempt=1, detail="overloaded, retrying",
         ),
         "iteration_access_payload": dict(
             run_id="r", stage="PLAN", agent="planner", iteration=1,

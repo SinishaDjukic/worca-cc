@@ -94,9 +94,11 @@ from worca.events.types import (
     STAGE_STARTED, STAGE_COMPLETED, STAGE_FAILED, STAGE_INTERRUPTED,
     stage_started_payload, stage_completed_payload,
     stage_failed_payload, stage_interrupted_payload,
-    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED, ITERATION_ACCESS,
+    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED,
+    AGENT_API_RETRY, ITERATION_ACCESS,
     agent_spawned_payload, agent_tool_use_payload, agent_tool_result_payload,
-    agent_text_payload, agent_completed_payload, iteration_access_payload,
+    agent_text_payload, agent_completed_payload, agent_api_retry_payload,
+    iteration_access_payload,
     BEAD_ASSIGNED, BEAD_COMPLETED, BEAD_FAILED, BEAD_LABELED, BEAD_NEXT,
     bead_assigned_payload, bead_completed_payload, bead_failed_payload,
     bead_labeled_payload, bead_next_payload,
@@ -1374,6 +1376,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                 iter_extras["cost_usd"] = _learn_cost
         if usage:
             iter_extras["token_usage"] = usage
+            _surface_retry_fields(iter_extras, usage)
 
         learn_cost = iter_extras.get("cost_usd", 0.0)
         learn_turns = iter_extras.get("turns", 0)
@@ -1461,6 +1464,27 @@ def _is_file_access_telemetry_enabled(settings_path: str) -> bool:
         return settings.get("worca", {}).get("telemetry", {}).get("file_access", {}).get("enabled", True)
     except Exception:
         return True
+
+
+def _surface_retry_fields(iter_extras: dict, usage: dict) -> None:
+    """Surface the W-074 API-throttling/retry fields onto the iteration top-level.
+
+    ``extract_token_usage`` already folds api_retries / api_retry_wait_ms /
+    non_api_wait_ms / api_error_status into ``token_usage``; the run-detail
+    view-model reads them as ``iter.<field>`` (mirroring ``duration_api_ms``), so
+    copy them up. Additive — only set when present, leaving legacy iterations and
+    zero-retry runs byte-identical.
+    """
+    if not usage:
+        return
+    if usage.get("api_retries"):
+        iter_extras["api_retries"] = usage["api_retries"]
+    if usage.get("api_retry_wait_ms"):
+        iter_extras["api_retry_wait_ms"] = usage["api_retry_wait_ms"]
+    if usage.get("non_api_wait_ms"):
+        iter_extras["non_api_wait_ms"] = usage["non_api_wait_ms"]
+    if usage.get("api_error_status") is not None:
+        iter_extras["api_error_status"] = usage["api_error_status"]
 
 
 def _aggregate_file_access_into_extras(iter_extras: dict, settings_path: str, status: dict,
@@ -1804,6 +1828,21 @@ def run_stage(
     # status.json to record a count into anyway.
     on_event = _on_event if ctx is not None else None
 
+    # API-throttling/backoff telemetry (W-074): the claude_cli stderr tee calls
+    # this for each matched retry line, emitting a pipeline.agent.api_retry
+    # event. Gated on ctx like on_event — no events.jsonl, nothing to emit.
+    def _on_retry(detail, attempt):
+        emit_event(ctx, AGENT_API_RETRY, agent_api_retry_payload(
+            stage=stage_key,
+            iteration=iteration,
+            agent=config.get("agent") or "",
+            attempt=attempt,
+            detail=detail,
+            bead_id=bead_id,
+        ))
+
+    on_retry = _on_retry if ctx is not None else None
+
     agent = agent_override if agent_override is not None else _agent_path(config["agent"], run_dir=run_dir)
     merged_env = dict(config.get("model_env") or {})
     if env_overrides:
@@ -1847,6 +1886,7 @@ def run_stage(
         stage=stage_key,
         iteration=iteration,
         bead_id=bead_id,
+        on_retry=on_retry,
     )
     _gfx = _gfx_metrics["graphify_invocations"]
     _crg = _gfx_metrics["crg_invocations"]
@@ -3811,6 +3851,7 @@ def run_pipeline(
                 _ctx_pct = usage.get("context_final_pct")
                 if _ctx_pct is not None:
                     iter_extras["context_final_pct"] = _ctx_pct
+                _surface_retry_fields(iter_extras, usage)
             iter_extras["prompt"] = rc.rendered_prompt
             if isinstance(result, dict):
                 iter_extras["output"] = result

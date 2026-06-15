@@ -97,6 +97,9 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.agent.tool_result` | `AGENT_TOOL_RESULT` |
 | `pipeline.agent.text` | `AGENT_TEXT` |
 | `pipeline.agent.completed` | `AGENT_COMPLETED` |
+| `pipeline.agent.api_retry` | `AGENT_API_RETRY` |
+
+`pipeline.agent.api_retry` (W-074) fires when the Claude CLI logs an API-throttling/backoff diagnostic on stderr (429/529/503, "overloaded", "retrying"). Payload: `stage`, `iteration`, `agent`, `attempt` (running count of matched retry lines this iteration), `detail` (raw stderr text, ≤300 chars), and optional `bead_id`. New event type — **no `schema_version` bump** (additive event types are non-breaking). Not Tier 1: no chat renderer (high-frequency, low signal-per-instance); the per-iteration count is surfaced in run-detail instead.
 
 ### `pipeline.iteration.*` — iteration-level analytics
 

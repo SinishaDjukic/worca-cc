@@ -83,7 +83,7 @@ export function createLogWatcher({
             if (newLines.length > 0) {
               logByteOffsets.set(key, newOffset);
               for (const raw of newLines) {
-                const { ts, text } = parseLogLine(raw);
+                const { ts, stream, text } = parseLogLine(raw);
                 broadcaster.broadcastToLogSubscribers(
                   stage,
                   'log-line',
@@ -91,6 +91,8 @@ export function createLogWatcher({
                     stage: stage || 'orchestrator',
                     iteration: iteration ?? undefined,
                     line: text,
+                    // Origin stream ("out"/"err"); legacy/untagged → "out".
+                    stream,
                     // New-format lines carry their write-time; legacy lines have
                     // none, so fall back to receive-time (≈ write-time for a
                     // line arriving from a live, actively-running stage).
@@ -216,7 +218,7 @@ export function createLogWatcher({
           for (const f of files) {
             const iterNum = parseInt(f.match(/\d+/)[0], 10);
             if (iteration != null && iterNum !== iteration) continue;
-            const { lines, timestamps } = splitTimestamps(
+            const { lines, timestamps, streams } = splitTimestamps(
               readLastLines(join(stageDir, f), 200),
             );
             if (lines.length > 0) {
@@ -225,14 +227,20 @@ export function createLogWatcher({
                   id: `evt-${Date.now()}-iter${iterNum}`,
                   ok: true,
                   type: 'log-bulk',
-                  payload: { stage, iteration: iterNum, lines, timestamps },
+                  payload: {
+                    stage,
+                    iteration: iterNum,
+                    lines,
+                    timestamps,
+                    streams,
+                  },
                 }),
               );
             }
           }
         } else {
           const logPath = join(archivedLogDir, `${stage}.log`);
-          const { lines, timestamps } = splitTimestamps(
+          const { lines, timestamps, streams } = splitTimestamps(
             readLastLines(logPath, 200),
           );
           if (lines.length > 0) {
@@ -241,7 +249,7 @@ export function createLogWatcher({
                 id: `evt-${Date.now()}`,
                 ok: true,
                 type: 'log-bulk',
-                payload: { stage, lines, timestamps },
+                payload: { stage, lines, timestamps, streams },
               }),
             );
           }
@@ -251,7 +259,7 @@ export function createLogWatcher({
         for (const entry of entries) {
           if (entry.isFile() && entry.name.endsWith('.log')) {
             const s2 = entry.name.replace('.log', '');
-            const { lines, timestamps } = splitTimestamps(
+            const { lines, timestamps, streams } = splitTimestamps(
               readLastLines(join(archivedLogDir, entry.name), 200),
             );
             if (lines.length > 0) {
@@ -260,7 +268,7 @@ export function createLogWatcher({
                   id: `evt-${Date.now()}-${s2}`,
                   ok: true,
                   type: 'log-bulk',
-                  payload: { stage: s2, lines, timestamps },
+                  payload: { stage: s2, lines, timestamps, streams },
                 }),
               );
             }
@@ -275,7 +283,7 @@ export function createLogWatcher({
               );
             for (const f of iterFiles) {
               const iterNum = parseInt(f.match(/\d+/)[0], 10);
-              const { lines, timestamps } = splitTimestamps(
+              const { lines, timestamps, streams } = splitTimestamps(
                 readLastLines(join(stageDir2, f), 200),
               );
               if (lines.length > 0) {
@@ -289,6 +297,7 @@ export function createLogWatcher({
                       iteration: iterNum,
                       lines,
                       timestamps,
+                      streams,
                     },
                   }),
                 );

@@ -391,7 +391,7 @@ export function createMessageRouter({
       if (stage) {
         if (iteration != null) {
           const logPath = resolveIterationLogPath(logsBase, stage, iteration);
-          const { lines, timestamps } = splitTimestamps(
+          const { lines, timestamps, streams } = splitTimestamps(
             readLastLines(logPath, 200),
           );
           if (lines.length > 0) {
@@ -400,7 +400,7 @@ export function createMessageRouter({
                 id: `evt-${Date.now()}`,
                 ok: true,
                 type: 'log-bulk',
-                payload: { stage, iteration, lines, timestamps },
+                payload: { stage, iteration, lines, timestamps, streams },
               }),
             );
           }
@@ -409,7 +409,7 @@ export function createMessageRouter({
           if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
             const iters = listIterationFiles(logsBase, stage);
             for (const { iteration: iterNum, path } of iters) {
-              const { lines, timestamps } = splitTimestamps(
+              const { lines, timestamps, streams } = splitTimestamps(
                 readLastLines(path, 200),
               );
               if (lines.length > 0) {
@@ -418,14 +418,20 @@ export function createMessageRouter({
                     id: `evt-${Date.now()}-iter${iterNum}`,
                     ok: true,
                     type: 'log-bulk',
-                    payload: { stage, iteration: iterNum, lines, timestamps },
+                    payload: {
+                      stage,
+                      iteration: iterNum,
+                      lines,
+                      timestamps,
+                      streams,
+                    },
                   }),
                 );
               }
             }
           } else {
             const logPath = join(logsBase, 'logs', `${stage}.log`);
-            const { lines, timestamps } = splitTimestamps(
+            const { lines, timestamps, streams } = splitTimestamps(
               readLastLines(logPath, 200),
             );
             if (lines.length > 0) {
@@ -434,7 +440,7 @@ export function createMessageRouter({
                   id: `evt-${Date.now()}`,
                   ok: true,
                   type: 'log-bulk',
-                  payload: { stage, lines, timestamps },
+                  payload: { stage, lines, timestamps, streams },
                 }),
               );
             }
@@ -446,7 +452,7 @@ export function createMessageRouter({
       } else {
         const logFiles = listLogFiles(logsBase);
         for (const { stage: s2, iteration: iterNum, path } of logFiles) {
-          const { lines, timestamps } = splitTimestamps(
+          const { lines, timestamps, streams } = splitTimestamps(
             readLastLines(path, 200),
           );
           if (lines.length > 0) {
@@ -460,6 +466,7 @@ export function createMessageRouter({
                   iteration: iterNum ?? undefined,
                   lines,
                   timestamps,
+                  streams,
                 },
               }),
             );

@@ -604,6 +604,14 @@ let worktreesDialogCheckbox = false; // resumable/grouped confirmation checkbox
 let logFilter = '*';
 let logSearch = '';
 let logIterationFilter = null; // null = all iterations, number = specific
+let logStreamFilter = 'all'; // 'all' | 'out' | 'err' — client-side view mode
+
+/** Does a log entry's origin stream pass the current stream filter? */
+function logStreamMatches(entry) {
+  return (
+    logStreamFilter === 'all' || (entry.stream || 'out') === logStreamFilter
+  );
+}
 
 // -- Prompt cache --
 const promptCache = {}; // { [runId]: { [stage]: { agentInstructions, userPrompt, agent } } }
@@ -916,6 +924,7 @@ function resetProjectState() {
   logFilter = '*';
   logSearch = '';
   logIterationFilter = null;
+  logStreamFilter = 'all';
   // Prompt cache
   for (const key of Object.keys(promptCache)) delete promptCache[key];
   promptCachePending.clear();
@@ -1243,19 +1252,23 @@ ws.on('log-bulk', (payload) => {
     const timestamps = Array.isArray(payload.timestamps)
       ? payload.timestamps
       : [];
+    const streams = Array.isArray(payload.streams) ? payload.streams : [];
     for (let i = 0; i < payload.lines.length; i++) {
       // New-format lines carry a real write-time; legacy lines (pre-timestamp
       // format) have null here and render as a "--:--:--" placeholder rather
-      // than a misleading current time.
+      // than a misleading current time. `stream` is the origin channel
+      // ("out"/"err"); legacy/untagged backfill defaults to "out".
       const entry = {
         stage: payload.stage,
         iteration: payload.iteration,
         line: payload.lines[i],
         timestamp: timestamps[i] ?? null,
+        stream: streams[i] || 'out',
       };
       entries.push(entry);
-      // Log History: only write to the history terminal when a specific stage is selected
-      if (logFilter !== '*') writeLogLine(entry);
+      // Log History: only write to the history terminal when a specific stage
+      // is selected, and only when the entry passes the stream filter.
+      if (logFilter !== '*' && logStreamMatches(entry)) writeLogLine(entry);
       writeLiveLogLine(entry);
     }
     // Single buffered append + one coalesced rerender for the whole backfill,
@@ -3395,6 +3408,22 @@ function handleIterationFilter(iteration) {
   rerender();
 }
 
+// Client-side stream filter: no refetch/resubscribe. Clear the history
+// terminal and replay the already-buffered lines, keeping only those whose
+// origin stream passes the filter. Mirrors the log-bulk write predicate so the
+// rendered output is identical to a fresh backfill under the same filter.
+async function handleStreamFilter(value) {
+  logStreamFilter = value || 'all';
+  if (logFilter !== '*') {
+    clearTerminal();
+    await mountTerminal(route.runId);
+    for (const entry of store.getState().logLines) {
+      if (logStreamMatches(entry)) writeLogLine(entry);
+    }
+  }
+  rerender();
+}
+
 function handleSearch(term) {
   logSearch = term;
   searchTerminal(term);
@@ -5230,9 +5259,11 @@ function mainContentView() {
           ${logViewerView(logState, {
             onStageFilter: handleStageFilter,
             onIterationFilter: handleIterationFilter,
+            onStreamFilter: handleStreamFilter,
             onSearch: handleSearch,
             onToggleAutoScroll: handleToggleAutoScroll,
             autoScroll,
+            streamFilter: logStreamFilter,
             stageIterations,
             runStages: run?.stages,
           })}

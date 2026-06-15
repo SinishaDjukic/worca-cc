@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
+  AlertTriangle,
   ArrowDown,
   ClipboardCopy,
   Clock,
@@ -26,6 +27,12 @@ const STAGE_COLORS = [
 ];
 const RESET = '\x1b[0m';
 const DIM = '\x1b[2m';
+// stderr lines render in amber (#f59e0b — the "caution" color from
+// badge-color-language.md) with a 24-bit ANSI color so it stays legible on the
+// terminal's dark surface, plus a leading "err│" gutter so the signal survives
+// colorblindness (color-not-alone). 24-bit avoids depending on a theme palette.
+const ERR_COLOR = '\x1b[38;2;245;158;11m';
+const ERR_GUTTER = 'err│ ';
 
 const stageColorCache = new Map();
 let colorIdx = 0;
@@ -136,7 +143,12 @@ export function writeLogLine(entry) {
     ? `${stageColor(entry.stage)}[${entry.stage.toUpperCase()}]${RESET} `
     : '';
   const msg = entry.line || entry;
-  terminal.writeln(`${ts}${stage}${msg}`);
+  if (entry.stream === 'err') {
+    // Amber + "err│" gutter so stderr (e.g. 429/529 throttling) stands out.
+    terminal.writeln(`${ts}${stage}${ERR_COLOR}${ERR_GUTTER}${msg}${RESET}`);
+  } else {
+    terminal.writeln(`${ts}${stage}${msg}`);
+  }
 }
 
 export function clearTerminal() {
@@ -200,9 +212,11 @@ export function logViewerView(
   {
     onStageFilter,
     onIterationFilter,
+    onStreamFilter,
     onSearch,
     onToggleAutoScroll,
     autoScroll,
+    streamFilter,
     stageIterations,
     runStages,
   },
@@ -262,6 +276,18 @@ export function logViewerView(
             `
                 : nothing
             }
+            <sl-radio-group
+              class="log-stream-filter"
+              size="small"
+              .value=${streamFilter || 'all'}
+              @sl-change=${(e) => onStreamFilter(e.target.value)}
+            >
+              <sl-radio-button value="all">All</sl-radio-button>
+              <sl-radio-button value="out">stdout</sl-radio-button>
+              <sl-radio-button value="err">
+                ${unsafeHTML(iconSvg(AlertTriangle, 12))} stderr
+              </sl-radio-button>
+            </sl-radio-group>
             <sl-input
               class="log-search"
               type="text"

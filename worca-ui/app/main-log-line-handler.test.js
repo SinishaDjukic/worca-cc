@@ -92,4 +92,17 @@ describe('log-bulk handler: Log History backfill', () => {
     // The old receive-time stamping must be gone.
     expect(handler).not.toMatch(/timestamp:\s*new Date\(\)\.toISOString\(\)/);
   });
+
+  it('carries the origin stream onto each bulk entry (W-074)', () => {
+    // The parallel payload.streams[] array tags each line out/err; entries
+    // must default to "out" for legacy/untagged backfill.
+    expect(handler).toContain('payload.streams');
+    expect(handler).toMatch(/stream:\s*streams\[i\]\s*\|\|\s*'out'/);
+  });
+
+  it('gates the Log History write on the stream filter (W-074)', () => {
+    // Backfill written to the history terminal must honor the active stream
+    // filter so a fresh subscribe matches a client-side replay.
+    expect(handler).toContain('logStreamMatches(entry)');
+  });
 });
