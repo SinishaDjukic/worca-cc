@@ -84,6 +84,18 @@ The matcher is unit-tested against captured sample lines and is intentionally ea
 - **Obstacle:** the retry count lives in the tee thread, not in the parsed result; and the captured `duration_ms`/`duration_api_ms` are stored but the "non-API wait" delta is never computed or surfaced.
 - **Resolution:** thread the tee's `retry_state` into the returned `result_event` after `proc.wait()` (`claude_cli.py:~664`): `result_event["api_retries"] = retry_state["count"]` and `result_event["api_retry_wait_ms"] = retry_state["wait_ms"]` (§2 backoff-window timing). Propagate `api_retries`, `api_retry_wait_ms`, `api_error_status`, and a derived `non_api_wait_ms = max(0, duration_ms - duration_api_ms)` into the per-iteration `token_usage` block written to `status.json`. Two distinct wait signals: `api_retry_wait_ms` is the **precise** measured backoff-window span (drives the timing-bar segment §6d); `non_api_wait_ms` is the **coarse** wall-vs-api delta that also folds in local tool execution (drives the per-iteration `Wait:` row §6b). `api_retries` is the precise count.
 
+The augmented per-iteration `token_usage` block in `status.json` (additive — all four fields default to absent/0 on legacy runs):
+
+```jsonc
+"token_usage": {
+  // ...existing fields (input_tokens, output_tokens, cost_usd, duration_ms, duration_api_ms, ...)
+  "api_retries":       3,        // int  — count of matched retry/overload stderr lines
+  "api_retry_wait_ms": 1042310,  // int  — Σ backoff-window wall spans (precise)
+  "non_api_wait_ms":   2870751,  // int  — max(0, duration_ms − duration_api_ms) (coarse: tools + backoff)
+  "api_error_status":  null      // int|null — final API HTTP status from the CLI result event
+}
+```
+
 ### 4. New event: `pipeline.agent.api_retry`
 
 - **Current state:** agent telemetry events are defined in `src/worca/events/types.py` (`AGENT_SPAWNED:35`, `AGENT_TOOL_USE:36`, `AGENT_TEXT:38`, `AGENT_COMPLETED:39`) with matching payload builders (`agent_*_payload`, `:391`+) and wired into the runner's `on_event` telemetry closure (`runner.py:1569`, imports at `runner.py:96-98`).
@@ -163,15 +175,18 @@ ${iter.non_api_wait_ms ? html`<span class="stage-info-item">
 
 Two additions to the `sl-details` summary so the signal is visible **even when the stage is collapsed**:
 - an at-a-glance `⟳ N` `.stage-meta-item` in `.stage-panel-meta` when `stageRetries > 0` (sums `iter.api_retries` across the stage), amber — sits alongside the existing turns / cost / timer meta items. *(This replaces the standalone `⟳ N retries` "pill" from the earlier draft — the count now lives in the meta strip, per-iteration chips, and the bar.)*
-- wrap the existing **Duration** meta item (Timer icon + `${stageDuration}`) in an `sl-tooltip hoist` showing the across-iterations breakdown, reusing the `stageApiMs` / `stageApiPct` aggregates already computed for the expanded body (`:2285`). `hoist` is **mandatory** — the tooltip lives inside the `sl-details` summary and would otherwise clip (same `hoist`+`placement` pattern as the bead tooltip at `:1711`).
+- wrap the existing **Duration** meta item (Timer icon + `${stageDuration}`) in an `sl-tooltip hoist` showing the across-iterations breakdown. It reuses `stageApiMs` / `stageApiPct` (already computed for the expanded body at `:2285`) and derives two new stage-level aggregates that mirror the timing bar's buckets (§6d) so every input is named and traceable: `stageRetryWaitMs = Σ iter.api_retry_wait_ms` and `stageToolsMs = max(0, stageMs − stageApiMs − stageRetryWaitMs)`. `hoist` is **mandatory** — the tooltip lives inside the `sl-details` summary and would otherwise clip (same `hoist`+`placement` pattern as the bead tooltip at `:1711`).
 
 ```js
+const stageRetryWaitMs = iterations.reduce((s, it) => s + (it.api_retry_wait_ms || 0), 0);
+const stageToolsMs = Math.max(0, stageMs - stageApiMs - stageRetryWaitMs);
+// ...
 <sl-tooltip hoist placement="bottom" distance="4">
   <div slot="content">
     <strong>Duration ${stageDuration}</strong><br>
     Thinking (API): ${formatDuration(stageApiMs)} (${stageApiPct}%)<br>
-    Tools + retry wait: ${formatDuration(stageNonApiMs)} (${100 - stageApiPct}%)
-    ${stageRetries ? html`<br>⟳ ${stageRetries} API retries` : nothing}
+    Tools: ${formatDuration(stageToolsMs)}<br>
+    API Retry/Wait: ${formatDuration(stageRetryWaitMs)}${stageRetries ? html` · ⟳ ${stageRetries} retries` : nothing}
   </div>
   <span class="meta-value">${stageDuration}</span>
 </sl-tooltip>
@@ -180,7 +195,7 @@ Two additions to the `sl-details` summary so the signal is visible **even when t
 #### 6d. Run-detail — timing-bar "API Retry/Wait" segment
 *(files: `worca-ui/app/views/run-detail.js`, `_pipelineTimingBar` `:357`; `worca-ui/app/styles.css`)*
 
-**Correctness fix first:** today `toolsMs = sessionMs − thinkingMs` (`:371`). The CLI's 429/529 backoff sleeps *inside* the session but *outside* `duration_api_ms`, so backoff time is currently mis-bucketed into **"Tools (Agent)"**, silently inflating it. (The "Rest of Pipeline" segment's tooltip claims "retry delays" but `restMs = wall − session`, so backoff is not actually there.)
+**Correctness fix first:** today `toolsMs = sessionMs − thinkingMs` (`:370`). The CLI's 429/529 backoff sleeps *inside* the session but *outside* `duration_api_ms`, so backoff time is currently mis-bucketed into **"Tools (Agent)"**, silently inflating it. (The "Rest of Pipeline" segment's tooltip claims "retry delays" but `restMs = wall − session`, so backoff is not actually there.)
 
 **Resolution — always-on dedicated segment (Option 2, chosen):** carve a new `API Retry/Wait` segment out of `toolsMs` using the precise `api_retry_wait_ms` (§2/§3):
 
@@ -305,7 +320,7 @@ Phases are vertical capability slices, not layers.
 | JS (vitest, server) | `splitTimestamps` returns `streams[]` | parallel array aligns with lines |
 | JS (vitest, component) | `_pipelineTimingBar` retry segment | with `api_retry_wait_ms > 0` a `.timing-bar-retry` segment renders, `toolsMs` is reduced; with `0` the segment is absent (identical to today) |
 | JS (vitest, component) | iteration `Wait:` row + retry chip | `.iter-retry-warn` chip + `Wait:` %-of-wall render from `iter.api_retries`/`non_api_wait_ms`; absent when zero |
-| JS (vitest, component) | stage-header Duration tooltip | `sl-tooltip hoist` breakdown + `⟳ N` meta item aggregate across iterations |
+| JS (vitest, component) | stage-header Duration tooltip | `sl-tooltip hoist` breakdown (Thinking/Tools/Retry-Wait) + `⟳ N` meta item aggregate across iterations; asserts `stageToolsMs`/`stageRetryWaitMs` derivation (Tools no longer absorbs backoff) |
 
 ### Integration / E2E Tests
 - `worca-ui/app/` (vitest, component): `log-viewer` stream filter — `all`/`out`/`err` replay filters the in-memory buffer correctly and err lines carry the gutter marker. (Component-level, not a pure unit, so listed here rather than in the unit table.)
