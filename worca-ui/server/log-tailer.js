@@ -14,49 +14,65 @@ import { STAGE_ORDER_WITH_ORCHESTRATOR } from '../app/utils/stage-order.js';
 export const STAGE_ORDER = STAGE_ORDER_WITH_ORCHESTRATOR;
 
 /**
- * Matches a persisted log record's `ISO-8601<TAB>message` prefix.
- * Group 1 = the ISO timestamp, group 2 = the message body (which may itself
- * contain tabs — we only split on the first TAB).
+ * Matches a persisted log record's `ISO-8601<TAB>rest` prefix.
+ * Group 1 = the ISO timestamp, group 2 = everything after the first TAB (which
+ * itself may begin with a `<stream>\t` token and may contain further tabs).
  */
 const LOG_TS_RE =
   /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\t([\s\S]*)$/;
 
 /**
- * Split a raw log line into its write-time and message.
+ * Matches the optional origin-stream token in column 2: `out\t…` or `err\t…`.
+ * The token is a fixed two-value enum, so a legacy message that merely happens
+ * to start with other text is never mistaken for a stream tag.
+ */
+const STREAM_RE = /^(out|err)\t([\s\S]*)$/;
+
+/**
+ * Split a raw log line into its write-time, origin stream, and message.
  *
- * New-format lines (written by `_write_log_line` in claude_cli.py) carry an
- * ISO-8601 timestamp prefix. Legacy lines (written before this format existed)
- * have none — they return `{ ts: null, text: <raw line> }` so the UI can render
- * them with an "unknown time" placeholder rather than a misleading current time.
+ * Canonical lines (written by `write_log_line` in log_lines.py) carry an
+ * ISO-8601 timestamp and a `<stream>` token: `<ts>\t<stream>\t<text>`.
+ * Legacy two-column lines (`<ts>\t<text>`) and untagged lines (no prefix at
+ * all — e.g. old logs, some `orchestrator.log` records) default to
+ * `stream: "out"`. Lines with no timestamp prefix return `ts: null` so the UI
+ * renders an "unknown time" placeholder rather than a misleading current time.
  *
  * @param {string} raw
- * @returns {{ ts: string|null, text: string }}
+ * @returns {{ ts: string|null, stream: string, text: string }}
  */
 export function parseLogLine(raw) {
   const m = LOG_TS_RE.exec(raw);
   if (m && Number.isFinite(Date.parse(m[1]))) {
-    return { ts: m[1], text: m[2] };
+    const sm = STREAM_RE.exec(m[2]);
+    if (sm) {
+      return { ts: m[1], stream: sm[1], text: sm[2] };
+    }
+    // Legacy two-column line — no recognized stream token → "out".
+    return { ts: m[1], stream: 'out', text: m[2] };
   }
-  return { ts: null, text: raw };
+  return { ts: null, stream: 'out', text: raw };
 }
 
 /**
- * Parse an array of raw log lines into parallel `lines` (message text) and
- * `timestamps` (ISO string or null) arrays, the shape the `log-bulk` WS payload
- * carries to the client.
+ * Parse an array of raw log lines into parallel `lines` (message text),
+ * `timestamps` (ISO string or null), and `streams` (`"out"`/`"err"`) arrays —
+ * the shape the `log-bulk` WS payload carries to the client.
  *
  * @param {string[]} rawLines
- * @returns {{ lines: string[], timestamps: (string|null)[] }}
+ * @returns {{ lines: string[], timestamps: (string|null)[], streams: string[] }}
  */
 export function splitTimestamps(rawLines) {
   const lines = [];
   const timestamps = [];
+  const streams = [];
   for (const raw of rawLines) {
-    const { ts, text } = parseLogLine(raw);
+    const { ts, stream, text } = parseLogLine(raw);
     lines.push(text);
     timestamps.push(ts);
+    streams.push(stream);
   }
-  return { lines, timestamps };
+  return { lines, timestamps, streams };
 }
 
 export function resolveLogPath(worcaDir, stage, iteration = null) {

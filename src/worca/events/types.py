@@ -29,7 +29,7 @@ STAGE_FAILED      = "pipeline.stage.failed"
 STAGE_INTERRUPTED = "pipeline.stage.interrupted"
 
 # ---------------------------------------------------------------------------
-# Agent telemetry (6 events)
+# Agent telemetry (7 events)
 # ---------------------------------------------------------------------------
 
 AGENT_SPAWNED        = "pipeline.agent.spawned"
@@ -37,6 +37,7 @@ AGENT_TOOL_USE       = "pipeline.agent.tool_use"
 AGENT_TOOL_RESULT    = "pipeline.agent.tool_result"
 AGENT_TEXT           = "pipeline.agent.text"
 AGENT_COMPLETED      = "pipeline.agent.completed"
+AGENT_API_RETRY      = "pipeline.agent.api_retry"
 ITERATION_ACCESS     = "pipeline.iteration.access"
 
 # ---------------------------------------------------------------------------
@@ -476,6 +477,35 @@ def agent_completed_payload(
     }
     if context_final_pct is not None:
         p["context_final_pct"] = context_final_pct
+    return p
+
+
+def agent_api_retry_payload(
+    *,
+    stage: str,
+    iteration: int,
+    agent: str,
+    attempt: int,
+    detail: str,
+    bead_id=None,
+) -> dict:
+    """Payload for ``pipeline.agent.api_retry``.
+
+    Emitted when the Claude CLI logs an API-throttling/backoff diagnostic on
+    stderr (429/529/503, "overloaded", "retrying"). ``attempt`` is the running
+    count of matched retry lines this iteration; ``detail`` is the raw stderr
+    text (truncated to 300 chars to bound payload size). Not Tier 1 — there is
+    no chat renderer; surfacing is via the per-iteration count, not a ping.
+    """
+    p: dict = {
+        "stage": stage,
+        "iteration": iteration,
+        "agent": agent,
+        "attempt": attempt,
+        "detail": detail[:300],
+    }
+    if bead_id:
+        p["bead_id"] = bead_id
     return p
 
 

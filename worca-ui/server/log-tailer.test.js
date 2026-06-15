@@ -118,29 +118,63 @@ describe('log-tailer', () => {
 });
 
 describe('parseLogLine', () => {
-  it('splits a new-format line into timestamp and message', () => {
-    const { ts, text } = parseLogLine(
+  it('splits a legacy two-column line into timestamp + message, stream=out', () => {
+    const { ts, stream, text } = parseLogLine(
       '2026-06-14T12:00:00.000+00:00\t[tool:Read] foo.py',
     );
     expect(ts).toBe('2026-06-14T12:00:00.000+00:00');
+    // No recognized stream token in column 2 → defaults to "out".
+    expect(stream).toBe('out');
     expect(text).toBe('[tool:Read] foo.py');
   });
 
+  it('splits a tagged out line into ts, stream=out, text', () => {
+    const { ts, stream, text } = parseLogLine(
+      '2026-06-14T12:00:00.000+00:00\tout\t[done] ok',
+    );
+    expect(ts).toBe('2026-06-14T12:00:00.000+00:00');
+    expect(stream).toBe('out');
+    expect(text).toBe('[done] ok');
+  });
+
+  it('splits a tagged err line into ts, stream=err, text', () => {
+    const { ts, stream, text } = parseLogLine(
+      '2026-06-14T12:00:00.000+00:00\terr\tOverloaded, retrying in 4s',
+    );
+    expect(ts).toBe('2026-06-14T12:00:00.000+00:00');
+    expect(stream).toBe('err');
+    expect(text).toBe('Overloaded, retrying in 4s');
+  });
+
   it('accepts a Z-suffixed (UTC) timestamp', () => {
-    const { ts, text } = parseLogLine('2026-06-14T12:00:00Z\thello');
+    const { ts, stream, text } = parseLogLine('2026-06-14T12:00:00Z\thello');
     expect(ts).toBe('2026-06-14T12:00:00Z');
+    expect(stream).toBe('out');
     expect(text).toBe('hello');
   });
 
-  it('only splits on the first tab — tabs inside the message survive', () => {
-    const { ts, text } = parseLogLine('2026-06-14T12:00:00.000+00:00\ta\tb\tc');
+  it('only splits off ts + stream — tabs inside the message survive', () => {
+    const { ts, stream, text } = parseLogLine(
+      '2026-06-14T12:00:00.000+00:00\terr\ta\tb\tc',
+    );
     expect(ts).toBe('2026-06-14T12:00:00.000+00:00');
+    expect(stream).toBe('err');
     expect(text).toBe('a\tb\tc');
   });
 
-  it('treats a legacy line (no prefix) as ts=null, text=raw', () => {
-    const { ts, text } = parseLogLine('[init] model=opus');
+  it('a tagless message whose body has tabs keeps them, stream=out', () => {
+    const { ts, stream, text } = parseLogLine(
+      '2026-06-14T12:00:00.000+00:00\ta\tb\tc',
+    );
+    expect(ts).toBe('2026-06-14T12:00:00.000+00:00');
+    expect(stream).toBe('out');
+    expect(text).toBe('a\tb\tc');
+  });
+
+  it('treats a legacy line (no prefix) as ts=null, stream=out, text=raw', () => {
+    const { ts, stream, text } = parseLogLine('[init] model=opus');
     expect(ts).toBeNull();
+    expect(stream).toBe('out');
     expect(text).toBe('[init] model=opus');
   });
 
@@ -159,22 +193,30 @@ describe('parseLogLine', () => {
 });
 
 describe('splitTimestamps', () => {
-  it('returns parallel lines + timestamps arrays', () => {
-    const { lines, timestamps } = splitTimestamps([
-      '2026-06-14T12:00:00.000+00:00\tone',
+  it('returns parallel lines + timestamps + streams arrays', () => {
+    const { lines, timestamps, streams } = splitTimestamps([
+      '2026-06-14T12:00:00.000+00:00\tout\tone',
       'legacy two',
-      '2026-06-14T12:00:01.000+00:00\tthree',
+      '2026-06-14T12:00:01.000+00:00\terr\tthree',
+      '2026-06-14T12:00:02.000+00:00\tlegacy-untagged',
     ]);
-    expect(lines).toEqual(['one', 'legacy two', 'three']);
+    expect(lines).toEqual(['one', 'legacy two', 'three', 'legacy-untagged']);
     expect(timestamps).toEqual([
       '2026-06-14T12:00:00.000+00:00',
       null,
       '2026-06-14T12:00:01.000+00:00',
+      '2026-06-14T12:00:02.000+00:00',
     ]);
+    // Mixed file: tagged out/err preserved; legacy + untagged default to "out".
+    expect(streams).toEqual(['out', 'out', 'err', 'out']);
   });
 
   it('handles an empty input', () => {
-    expect(splitTimestamps([])).toEqual({ lines: [], timestamps: [] });
+    expect(splitTimestamps([])).toEqual({
+      lines: [],
+      timestamps: [],
+      streams: [],
+    });
   });
 });
 

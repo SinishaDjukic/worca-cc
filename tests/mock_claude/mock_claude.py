@@ -158,6 +158,22 @@ def main():
 
     time.sleep(delay)
 
+    # Optional synthetic stderr (W-074): the real Claude CLI prints 429/529
+    # backoff diagnostics to stderr. A directive may set "stderr_lines" (a
+    # string or list of strings) to exercise worca's retry-signal capture
+    # (claude_cli._tee_stderr → _RETRY_RE → api_retries / api_retry_wait_ms and
+    # the pipeline.agent.api_retry event). Emitted before the result so the
+    # backoff window opens, then a brief sleep lets the next stdout event close
+    # it with a measurable (>= 0) span.
+    stderr_lines = directive.get("stderr_lines")
+    if stderr_lines is not None:
+        if isinstance(stderr_lines, str):
+            stderr_lines = [stderr_lines]
+        for _line in stderr_lines:
+            sys.stderr.write(str(_line).rstrip("\n") + "\n")
+            sys.stderr.flush()
+        time.sleep(0.05)
+
     if action == "succeed":
         run_cmd = directive.get("run_command")
         if run_cmd:

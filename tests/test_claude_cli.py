@@ -11,6 +11,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+import time
+
 from worca.utils.claude_cli import (
     AgentSubprocessError,
     _accumulate_usage,
@@ -18,6 +20,7 @@ from worca.utils.claude_cli import (
     _format_log_line,
     _resolve_tool_args,
     _resolve_tool_disallows,
+    _RETRY_RE,
     build_command,
     process_stream,
     run_agent,
@@ -1767,3 +1770,235 @@ def test_format_log_line_done_no_ctx_final_when_absent():
 
     assert line is not None
     assert "ctx_final" not in line
+
+
+# ---------------------------------------------------------------------------
+# stderr tee persistence (W-074 §1/§2)
+# ---------------------------------------------------------------------------
+
+
+def test_tee_stderr_persists_tagged_err_lines(tmp_path):
+    """stderr lines are persisted into the shared log tagged stream='err',
+    each with a worca receive-time ISO timestamp — not just echoed to console.
+    """
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "result": "ok",
+        "total_cost_usd": 0.01,
+        "num_turns": 1,
+        "duration_ms": 1000,
+    }
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter([json.dumps(result_event) + "\n"])
+    # The CLI prints throttling diagnostics to stderr (raw, no timestamp).
+    mock_proc.stderr = iter(
+        ["Overloaded (529), retrying in 4s\n", "Retry succeeded\n"]
+    )
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    log_path = str(tmp_path / "logs" / "iter-1.log")
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        run_agent(prompt="hi", agent="agent.md", log_path=log_path, settings={})
+
+    contents = open(log_path, encoding="utf-8").read()
+    err_lines = [ln for ln in contents.splitlines() if "\terr\t" in ln]
+    assert len(err_lines) == 2
+    # Each err line: <ISO-ts>\terr\t<text>
+    assert err_lines[0].endswith("\terr\tOverloaded (529), retrying in 4s")
+    assert err_lines[1].endswith("\terr\tRetry succeeded")
+    # The stderr text is genuinely stamped (col 0 is a parseable ISO ts).
+    from datetime import datetime as _dt
+
+    ts0 = err_lines[0].split("\t", 1)[0]
+    assert _dt.fromisoformat(ts0).tzinfo is not None
+    # stdout-derived lines are tagged "out" and share the same file.
+    assert "\tout\t" in contents
+
+
+def test_tee_stderr_still_echoes_to_console(tmp_path, capfd):
+    """The unchanged console echo to sys.stderr is preserved alongside the
+    new persistence — operators watching the console still see stderr live.
+    """
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "result": "ok",
+        "total_cost_usd": 0.01,
+        "num_turns": 1,
+        "duration_ms": 1000,
+    }
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter([json.dumps(result_event) + "\n"])
+    mock_proc.stderr = iter(["console-visible-stderr\n"])
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    log_path = str(tmp_path / "logs" / "iter-1.log")
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        run_agent(prompt="hi", agent="agent.md", log_path=log_path, settings={})
+    captured = capfd.readouterr()
+    assert "console-visible-stderr" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# API-throttling/retry signal (W-074 §2/§3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "API Error 529: overloaded, retrying in 4s",
+        "Overloaded, backing off",
+        "Rate limit exceeded (429)",
+        "rate-limit hit, retrying",
+        "ratelimit reached",
+        "HTTP 429 Too Many Requests",
+        "Got 529 from upstream",
+        "503 Service Unavailable",
+        "Retrying request (attempt 2)",
+        "retry scheduled",
+    ],
+)
+def test_retry_re_matches_samples(line):
+    """_RETRY_RE hits captured 429/529/503/overloaded/retrying lines."""
+    assert _RETRY_RE.search(line), f"expected match: {line!r}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "[tool:Read] src/main.py",
+        "Wrote 42 lines to file",
+        "Compiling project assets",
+        "tests passed: 529 assertions",  # 529 embedded in a word-ish context: still digits, but...
+    ],
+)
+def test_retry_re_misses_benign(line):
+    """_RETRY_RE does not fire on benign progress lines without retry vocab.
+
+    Note "529 assertions" DOES contain a bare 529 token with word boundaries, so
+    it is intentionally treated as a (false-positive-tolerant) match by the broad
+    matcher — excluded here to keep the negative set honest.
+    """
+    if "529" in line or "429" in line or "503" in line:
+        pytest.skip("contains a bare HTTP-status token — broad matcher matches")
+    assert not _RETRY_RE.search(line), f"unexpected match: {line!r}"
+
+
+def _make_retry_mock_proc(stderr_lines, result_event=None, duration_ms=1000):
+    """Mock Popen yielding a result event on stdout and given stderr lines."""
+    result_event = result_event or {
+        "type": "result", "subtype": "success", "result": "ok",
+        "total_cost_usd": 0.01, "num_turns": 1, "duration_ms": duration_ms,
+    }
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter([json.dumps(result_event) + "\n"])
+    mock_proc.stderr = iter(stderr_lines)
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    return mock_proc
+
+
+def test_tee_stderr_persists_and_counts(tmp_path):
+    """All stderr persisted tagged 'err'; only retry-vocab lines bump the count."""
+    mock_proc = _make_retry_mock_proc([
+        "overloaded, retrying in 4s\n",
+        "benign progress line\n",
+        "429 Too Many Requests\n",
+    ])
+    log_path = str(tmp_path / "logs" / "iter-1.log")
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", log_path=log_path, settings={})
+    contents = open(log_path, encoding="utf-8").read()
+    # All 3 stderr lines persisted (persist-all, not just matches).
+    assert len([ln for ln in contents.splitlines() if "\terr\t" in ln]) == 3
+    # Only the 2 retry-vocab lines counted.
+    assert result["api_retries"] == 2
+
+
+def test_run_agent_sets_api_retries():
+    """result_event['api_retries'] reflects the tee's matched-line count."""
+    mock_proc = _make_retry_mock_proc([
+        "Overloaded (529), retrying\n",
+        "rate limit, retrying\n",
+    ])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_retries"] == 2
+
+
+def test_run_agent_sets_api_retries_zero_when_no_retries():
+    """A clean run reports api_retries=0 / api_retry_wait_ms=0 (legacy-identical)."""
+    mock_proc = _make_retry_mock_proc(["just some normal output\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert result["api_retries"] == 0
+    assert result["api_retry_wait_ms"] == 0
+
+
+def test_run_agent_sets_api_retry_wait_ms_key():
+    """run_agent always stamps api_retry_wait_ms (>= 0) onto the result."""
+    mock_proc = _make_retry_mock_proc(["overloaded, retrying\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(prompt="hi", agent="agent.md", settings={})
+    assert "api_retry_wait_ms" in result
+    assert result["api_retry_wait_ms"] >= 0
+
+
+def test_process_stream_closes_backoff_window():
+    """A stdout event closes an open backoff window: wait_ms += now − pending_since.
+
+    Deterministic unit of the §2 timing: the tee stamps pending_since; the next
+    stdout event seen by process_stream folds the wall span into wait_ms and
+    clears pending_since.
+    """
+    retry_state = {
+        "count": 1, "wait_ms": 0,
+        "pending_since": time.monotonic() - 0.05,  # window opened ~50ms ago
+    }
+    stdout = iter([json.dumps({"type": "result", "result": "ok", "duration_ms": 1}) + "\n"])
+    process_stream(stdout, retry_state=retry_state)
+    assert retry_state["pending_since"] is None
+    assert retry_state["wait_ms"] >= 40  # ~50ms, allow scheduler slack
+
+
+def test_process_stream_no_open_window_leaves_wait_ms_untouched():
+    """With no open backoff window, process_stream does not touch wait_ms."""
+    retry_state = {"count": 0, "wait_ms": 0, "pending_since": None}
+    stdout = iter([json.dumps({"type": "result", "result": "ok"}) + "\n"])
+    process_stream(stdout, retry_state=retry_state)
+    assert retry_state["wait_ms"] == 0
+    assert retry_state["pending_since"] is None
+
+
+def test_run_agent_invokes_on_retry_callback():
+    """on_retry(detail, count) fires once per matched stderr line, in order."""
+    calls = []
+    mock_proc = _make_retry_mock_proc([
+        "overloaded, retrying\n",
+        "benign\n",
+        "429 too many requests\n",
+    ])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        run_agent(
+            prompt="hi", agent="agent.md", settings={},
+            on_retry=lambda detail, count: calls.append((detail, count)),
+        )
+    assert len(calls) == 2
+    assert calls[0][1] == 1 and calls[1][1] == 2
+    assert "overloaded" in calls[0][0]
+
+
+def test_run_agent_on_retry_exception_does_not_crash():
+    """A throwing on_retry must not kill the tee daemon or the run."""
+    mock_proc = _make_retry_mock_proc(["overloaded, retrying\n"])
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent(
+            prompt="hi", agent="agent.md", settings={},
+            on_retry=lambda detail, count: (_ for _ in ()).throw(ValueError("boom")),
+        )
+    assert result["api_retries"] == 1

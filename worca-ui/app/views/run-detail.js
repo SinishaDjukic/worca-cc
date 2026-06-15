@@ -354,7 +354,7 @@ export function formatPipelineTemplate(value) {
  * Segments: Thinking (Agent) | Tools (Agent) | Rest of Pipeline
  * 100% = pipeline wall time (started_at → last stage end).
  */
-function _pipelineTimingBar(allIters, pipelineWallMs) {
+export function _pipelineTimingBar(allIters, pipelineWallMs) {
   if (!pipelineWallMs || pipelineWallMs <= 0) return nothing;
 
   const thinkingMs = allIters.reduce(
@@ -367,14 +367,22 @@ function _pipelineTimingBar(allIters, pipelineWallMs) {
     if (it.duration_session_ms != null) return sum + it.duration_session_ms;
     return sum + (it.duration_ms || 0); // legacy fallback
   }, 0);
-  const toolsMs = Math.max(0, sessionMs - thinkingMs);
+  // Precise measured backoff-window span (W-074). The CLI's 429/529 backoff
+  // sleeps inside the session but outside duration_api_ms, so before this fix it
+  // was silently mis-bucketed into Tools — carve it out into its own segment.
+  const retryWaitMs = allIters.reduce(
+    (sum, it) => sum + (it.api_retry_wait_ms || 0),
+    0,
+  );
+  const toolsMs = Math.max(0, sessionMs - thinkingMs - retryWaitMs);
   const restMs = Math.max(0, pipelineWallMs - sessionMs);
 
   if (thinkingMs <= 0 && toolsMs <= 0) return nothing;
 
   const thinkingPct = Math.round((thinkingMs / pipelineWallMs) * 100);
   const toolsPct = Math.round((toolsMs / pipelineWallMs) * 100);
-  const restPct = Math.max(0, 100 - thinkingPct - toolsPct);
+  const retryPct = Math.round((retryWaitMs / pipelineWallMs) * 100);
+  const restPct = Math.max(0, 100 - thinkingPct - toolsPct - retryPct);
 
   const segments = [
     {
@@ -392,6 +400,14 @@ function _pipelineTimingBar(allIters, pipelineWallMs) {
       label: 'Tools (Agent)',
       desc: 'Time spent executing tools (bash, file I/O, subprocesses)',
       cls: 'timing-bar-tools',
+    },
+    {
+      key: 'retry',
+      pct: retryPct,
+      ms: retryWaitMs,
+      label: 'API Retry/Wait',
+      desc: 'Time stalled in CLI backoff after 429/529 throttling',
+      cls: 'timing-bar-retry',
     },
     {
       key: 'rest',
@@ -1517,6 +1533,11 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       duration_ms: it.duration_ms || undefined,
       duration_session_ms: it.duration_session_ms || undefined,
       duration_api_ms: it.duration_api_ms || undefined,
+      api_retries: it.api_retries || undefined,
+      api_retry_wait_ms: it.api_retry_wait_ms || undefined,
+      non_api_wait_ms: it.non_api_wait_ms || undefined,
+      api_error_status:
+        it.api_error_status != null ? it.api_error_status : undefined,
       started_at: it.started_at || undefined,
       completed_at: it.completed_at || undefined,
       effort: it.effort || undefined,
@@ -1625,6 +1646,16 @@ function _iterationDetailView(
         ${_modelInfoView(model, iter.model_alias)}
         ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iter.turns}</span></span>` : nothing}
         ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
+        ${
+          iter.api_retries
+            ? html`<span class="stage-info-item iter-retry-warn">${unsafeHTML(iconSvg(RefreshCw, 12))} <span class="meta-value">${iter.api_retries} ${iter.api_retries === 1 ? 'retry' : 'retries'}</span></span>`
+            : nothing
+        }
+        ${
+          iter.non_api_wait_ms
+            ? html`<span class="stage-info-item"><sl-tooltip content="Wall time not generating tokens (tools + API retry/backoff)${iter.api_error_status ? ` · last API status ${iter.api_error_status}` : ''}"><span class="meta-label">Wait:</span> <span class="meta-value">${formatDuration(iter.non_api_wait_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.non_api_wait_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></sl-tooltip></span>`
+            : nothing
+        }
         ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
         ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
         ${iter.context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iter.context_final_pct}%</span></sl-tooltip></span>` : nothing}
@@ -2165,6 +2196,29 @@ export function runDetailView(run, settings = {}, options = {}) {
           const iterations = stage.iterations || [];
           const hasMultipleIterations = iterations.length > 1;
           const stageCost = _stageCost(iterations);
+          // W-074 stage-level retry aggregates for the summary chip + Duration
+          // tooltip. stageToolsMs mirrors the timing bar's bucketing so the
+          // breakdown (Thinking/Tools/Retry-Wait) is traceable and adds up.
+          const stageRetries = iterations.reduce(
+            (s, it) => s + (it.api_retries || 0),
+            0,
+          );
+          const stageSummaryApiMs = iterations.reduce(
+            (s, it) => s + (it.duration_api_ms || 0),
+            0,
+          );
+          const stageRetryWaitMs = iterations.reduce(
+            (s, it) => s + (it.api_retry_wait_ms || 0),
+            0,
+          );
+          const stageSummaryApiPct =
+            stageMs > 0 && stageSummaryApiMs > 0
+              ? Math.round((stageSummaryApiMs / stageMs) * 100)
+              : 0;
+          const stageToolsMs = Math.max(
+            0,
+            stageMs - stageSummaryApiMs - stageRetryWaitMs,
+          );
 
           return html`
             <sl-details ?open=${stageStatus === 'in_progress'} class="stage-panel"
@@ -2230,11 +2284,31 @@ export function runDetailView(run, settings = {}, options = {}) {
                       : nothing
                   }
                   ${
+                    stageRetries > 0
+                      ? html`
+                    <sl-tooltip content="API retries: ${stageRetries} (throttled / backing off after 429/529)">
+                      <span class="stage-meta-item iter-retry-warn" aria-label="${stageRetries} API ${stageRetries === 1 ? 'retry' : 'retries'}">
+                        <span class="stage-meta-icon">${unsafeHTML(iconSvg(RefreshCw, 11))}</span>
+                        <span class="meta-value">${stageRetries}</span>
+                      </span>
+                    </sl-tooltip>
+                  `
+                      : nothing
+                  }
+                  ${
                     stageDuration
                       ? html`
                     <span class="stage-meta-item">
                       <span class="stage-meta-icon">${unsafeHTML(iconSvg(Timer, 11))}</span>
-                      <span class="meta-value">${stageDuration}</span>
+                      <sl-tooltip hoist placement="bottom" distance="4">
+                        <div slot="content">
+                          <strong>Duration ${stageDuration}</strong><br>
+                          Thinking (API): ${formatDuration(stageSummaryApiMs)} (${stageSummaryApiPct}%)<br>
+                          Tools: ${formatDuration(stageToolsMs)}<br>
+                          API Retry/Wait: ${formatDuration(stageRetryWaitMs)}${stageRetries > 0 ? html` · ⟳ ${stageRetries} ${stageRetries === 1 ? 'retry' : 'retries'}` : nothing}
+                        </div>
+                        <span class="meta-value">${stageDuration}</span>
+                      </sl-tooltip>
                     </span>
                   `
                       : nothing
@@ -2335,6 +2409,8 @@ export function runDetailView(run, settings = {}, options = {}) {
                         ${_modelInfoView(stageModel, stage.model_alias)}
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].api_retries ? html`<span class="stage-info-item iter-retry-warn">${unsafeHTML(iconSvg(RefreshCw, 12))} <span class="meta-value">${iterations[0].api_retries} ${iterations[0].api_retries === 1 ? 'retry' : 'retries'}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].non_api_wait_ms ? html`<span class="stage-info-item"><sl-tooltip content="Wall time not generating tokens (tools + API retry/backoff)${iterations[0].api_error_status ? ` · last API status ${iterations[0].api_error_status}` : ''}"><span class="meta-label">Wait:</span> <span class="meta-value">${formatDuration(iterations[0].non_api_wait_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].non_api_wait_ms / stageMs) * 100)}%)` : ''}</span></sl-tooltip></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iterations[0].context_final_pct}%</span></sl-tooltip></span>` : nothing}
                       </div>

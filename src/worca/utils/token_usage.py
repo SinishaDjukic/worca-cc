@@ -35,14 +35,17 @@ def extract_token_usage(
     server_tool_use = usage.get("server_tool_use") or {}
     cache_creation = usage.get("cache_creation") or {}
 
+    _duration_ms = raw_envelope.get("duration_ms", 0) or 0
+    _duration_api_ms = raw_envelope.get("duration_api_ms", 0) or 0
+
     result = {
         "input_tokens": usage.get("input_tokens", 0) or 0,
         "output_tokens": usage.get("output_tokens", 0) or 0,
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
         "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
         "total_cost_usd": raw_envelope.get("total_cost_usd", 0) or 0,
-        "duration_ms": raw_envelope.get("duration_ms", 0) or 0,
-        "duration_api_ms": raw_envelope.get("duration_api_ms", 0) or 0,
+        "duration_ms": _duration_ms,
+        "duration_api_ms": _duration_api_ms,
         "num_turns": raw_envelope.get("num_turns", 0) or 0,
         "model": raw_envelope.get("_resolved_model") or raw_envelope.get("model", ""),
         "web_search_requests": server_tool_use.get("web_search_requests", 0) or 0,
@@ -51,6 +54,15 @@ def extract_token_usage(
         "cache_ephemeral_5m_tokens": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
         "speed": usage.get("speed", "") or "",
         "context_final_pct": None,
+        # W-074 API-throttling/retry signal. api_retries / api_retry_wait_ms are
+        # the precise count and Σ backoff-window wall span (from claude_cli's
+        # stderr tee). non_api_wait_ms is the coarse wall-vs-api delta (folds in
+        # local tool execution too). api_error_status is the CLI's final API
+        # HTTP status (null on success). All additive — 0/null on legacy runs.
+        "api_retries": raw_envelope.get("api_retries", 0) or 0,
+        "api_retry_wait_ms": raw_envelope.get("api_retry_wait_ms", 0) or 0,
+        "non_api_wait_ms": max(0, _duration_ms - _duration_api_ms),
+        "api_error_status": raw_envelope.get("api_error_status"),
     }
 
     model_alias = raw_envelope.get("_model_alias")
@@ -103,6 +115,10 @@ def _empty_token_usage() -> dict:
         "cache_ephemeral_5m_tokens": 0,
         "speed": "",
         "context_final_pct": None,
+        "api_retries": 0,
+        "api_retry_wait_ms": 0,
+        "non_api_wait_ms": 0,
+        "api_error_status": None,
     }
 
 
@@ -119,6 +135,9 @@ _SUMMABLE_FIELDS = [
     "web_fetch_requests",
     "cache_ephemeral_1h_tokens",
     "cache_ephemeral_5m_tokens",
+    "api_retries",
+    "api_retry_wait_ms",
+    "non_api_wait_ms",
 ]
 
 
