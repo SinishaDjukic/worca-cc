@@ -278,7 +278,7 @@ def resolve_status(status: str) -> str:
     return _LEGACY_STATUS_MAP.get(status, status)
 
 
-def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_template: str = None) -> dict:
+def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_template: str = None, provenance: dict = None) -> dict:
     """Create a fresh status dict with all stages set to 'pending'.
 
     Populates work_request and branch per the design doc schema.
@@ -312,6 +312,8 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
         "revises_pr": work_request.get("pr_number"),
         "review_feedback": work_request.get("review_comments", []),
     }
+    if provenance:
+        status["provenance"] = provenance
     return status
 
 

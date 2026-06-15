@@ -1089,6 +1089,21 @@ def test_run_started_payload_optional_fields_omitted_by_default():
     assert "started_at" in p
 
 
+def test_run_started_payload_provenance_included_when_provided():
+    """provenance dict is included in the payload when passed."""
+    from worca.events.types import run_started_payload
+    prov = {"worca_version": "0.57.0", "runtime_source": {"source": "pip"}}
+    p = run_started_payload(resume=False, started_at="2026-01-01T00:00:00Z", provenance=prov)
+    assert p["provenance"] == prov
+
+
+def test_run_started_payload_provenance_absent_by_default():
+    """provenance key must not appear in the payload when not provided."""
+    from worca.events.types import run_started_payload
+    p = run_started_payload(resume=False, started_at="2026-01-01T00:00:00Z")
+    assert "provenance" not in p
+
+
 def test_stage_completed_payload_optional_token_usage():
     """token_usage is optional; builder must accept it when supplied."""
     from worca.events.types import stage_completed_payload

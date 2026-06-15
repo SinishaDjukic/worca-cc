@@ -993,6 +993,14 @@ UI-only release. Adding a project now opens a guided **Project Setup** wizard, a
 
 No `worca init --upgrade` migration required — the wizard writes the same settings keys you could already edit by hand.
 
+### 0.57.x → 0.58.0 — runtime provenance (W-074)
+
+`worca init` and `worca init --upgrade` now write a `.claude/worca/provenance.json` manifest that records the worca version and how the runtime copy was sourced (git checkout or pip install). Each pipeline run stamps this block into `status.json` and the `pipeline.run.started` event, and displays it as a **Runtime:** row in the Preflight UI panel.
+
+**No breaking changes.** Existing runs and integrations are unaffected. Projects that have not yet run `worca init --upgrade` will show a degraded provenance block (version only, `runtime_source: null`) until the manifest is written.
+
+Run `worca init --upgrade` in each project to populate the manifest and enable full provenance display.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

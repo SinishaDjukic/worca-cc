@@ -229,12 +229,15 @@ def run_started_payload(
     started_at: str,
     plan_file=None,
     settings_snapshot=None,
+    provenance=None,
 ) -> dict:
     p: dict = {"resume": resume, "started_at": started_at}
     if plan_file is not None:
         p["plan_file"] = plan_file
     if settings_snapshot is not None:
         p["settings_snapshot"] = settings_snapshot
+    if provenance is not None:
+        p["provenance"] = provenance
     return p
 
 
