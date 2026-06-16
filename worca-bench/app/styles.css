@@ -853,6 +853,46 @@ code {
   color: var(--fg);
 }
 
+/* ─── Configuration metadata (profile detail) ──────────────────────────── */
+.config-meta {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.config-meta-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.config-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 18px;
+}
+.config-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.config-meta-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.config-meta-value {
+  font-size: 13px;
+  color: var(--fg);
+  font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─── Run options (per-run reps / instance override) ───────────────────── */
 .run-options {
   display: flex;

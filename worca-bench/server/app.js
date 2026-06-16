@@ -86,7 +86,9 @@ export function createApp(options = {}) {
           name: def.name,
           benchmark: def.benchmark,
           worca_ref: null,
-          template: null,
+          worca_version: null,
+          template: def.template,
+          grade_mode: def.grade_mode,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -127,7 +129,12 @@ export function createApp(options = {}) {
       }
       res.json({
         ok: true,
-        aggregate: { ...aggregateProfile(name, []), benchmark: def.benchmark },
+        aggregate: {
+          ...aggregateProfile(name, []),
+          benchmark: def.benchmark,
+          template: def.template,
+          grade_mode: def.grade_mode,
+        },
         reps: [],
       });
     } catch (err) {

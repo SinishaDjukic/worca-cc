@@ -89,24 +89,35 @@ export function readProfileDefsMulti(dirs) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name: string, benchmark: string|null, _source_dir: string}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
   if (!existsSync(dir)) return [];
+  const scalar = (text, key) => {
+    const m = text.match(new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`, 'm'));
+    if (!m) return null;
+    // Strip an inline YAML comment (whitespace + #...) and surrounding quotes.
+    const v = m[1].replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
+    return v || null;
+  };
   const defs = [];
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith('.yaml') && !entry.endsWith('.yml')) continue;
     const name = entry.replace(/\.ya?ml$/, '');
     let benchmark = null;
+    let template = null;
+    let grade_mode = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
-      const m = text.match(/^\s*benchmark\s*:\s*(.+)\s*$/m);
-      if (m) benchmark = m[1].trim().replace(/^["']|["']$/g, '');
+      benchmark = scalar(text, 'benchmark');
+      template = scalar(text, 'template');
+      // grade: { mode: X } (nested) or `grade: X` (inline shorthand).
+      grade_mode = scalar(text, 'mode') || scalar(text, 'grade');
     } catch {
       // Unreadable profile file — surface the name only.
     }
-    defs.push({ name, benchmark, _source_dir: dir });
+    defs.push({ name, benchmark, template, grade_mode, _source_dir: dir });
   }
   return defs;
 }
@@ -160,7 +171,9 @@ export function aggregateProfile(name, rows) {
     name,
     benchmark: first.benchmark || null,
     worca_ref: first.worca_ref || null,
+    worca_version: first.worca_version || null,
     template: first.template || null,
+    grade_mode: first.grade_mode || null,
     reps: rows.length,
     graded: graded.length,
     resolved: resolvedCount,

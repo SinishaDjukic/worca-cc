@@ -50,4 +50,24 @@ describe('profileDetailView', () => {
     expect(out).toContain('placeholder=4');
     expect(out).toContain('placeholder="all"');
   });
+
+  it('renders a Configuration block with worca/template/benchmark/grade', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: {
+          ...data.aggregate,
+          worca_version: '0.58.0',
+          worca_ref: 'local@abc',
+          template: 'builtin:quick-fix',
+          grade_mode: 'local-docker',
+        },
+        reps: [],
+      }),
+    );
+    expect(out).toContain('config-meta');
+    expect(out).toContain('Configuration');
+    expect(out).toContain('0.58.0 (local@abc)');
+    expect(out).toContain('builtin:quick-fix');
+    expect(out).toContain('local-docker');
+  });
 });

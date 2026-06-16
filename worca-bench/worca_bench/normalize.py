@@ -36,6 +36,8 @@ def build_row(
     started_at: str | None,
     completed_at: str | None,
     artifacts_dir: str,
+    worca_version: str | None = None,
+    grade_mode: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": RESULTS_SCHEMA_VERSION,
@@ -43,7 +45,9 @@ def build_row(
         "benchmark": benchmark,
         "instance_id": instance_id,
         "worca_ref": worca_ref,
+        "worca_version": worca_version,
         "template": template,
+        "grade_mode": grade_mode,
         "rep": rep,
         "run_id": run_id,
         "status": status,

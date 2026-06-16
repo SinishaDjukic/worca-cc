@@ -237,6 +237,7 @@ def _run_one_rep(
         row = build_row(
             profile_name=profile.name, benchmark=profile.benchmark,
             instance_id=inst.id, worca_ref=wenv.describe(), template=template,
+            worca_version=wenv.version, grade_mode=profile.grade.mode,
             rep=rep, run_id=run_id, status=status, resolved=resolved, score=score,
             telemetry=telemetry, diff=diff, leaked=leaked, error=error,
             started_at=started, completed_at=_now(),
@@ -261,7 +262,8 @@ def _run_one_rep(
 def _skip_row(profile, inst, rep, wenv, template, reason) -> dict[str, Any]:
     return build_row(
         profile_name=profile.name, benchmark=profile.benchmark, instance_id=inst.id,
-        worca_ref=wenv.describe(), template=template, rep=rep,
+        worca_ref=wenv.describe(), template=template,
+        worca_version=wenv.version, grade_mode=profile.grade.mode, rep=rep,
         run_id=f"{profile.name}__{inst.id}__rep{rep}", status="skipped",
         resolved=None, score=None, telemetry=Telemetry(), diff="", leaked=False,
         error=f"template incompatible: {reason}", started_at=_now(), completed_at=_now(),
@@ -272,7 +274,8 @@ def _skip_row(profile, inst, rep, wenv, template, reason) -> dict[str, Any]:
 def _error_row(profile, inst, rep, wenv, template, err, started) -> dict[str, Any]:
     return build_row(
         profile_name=profile.name, benchmark=profile.benchmark, instance_id=inst.id,
-        worca_ref=wenv.describe(), template=template, rep=rep,
+        worca_ref=wenv.describe(), template=template,
+        worca_version=wenv.version, grade_mode=profile.grade.mode, rep=rep,
         run_id=f"{profile.name}__{inst.id}__rep{rep}", status="error",
         resolved=None, score=None, telemetry=Telemetry(), diff="", leaked=False,
         error=err, started_at=started, completed_at=_now(),

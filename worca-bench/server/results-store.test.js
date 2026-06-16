@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import {
   aggregateByProfile,
   aggregateProfile,
   compareProfiles,
+  readProfileDefs,
   readResults,
 } from './results-store.js';
 
@@ -94,6 +95,14 @@ describe('aggregateProfile', () => {
     expect(agg.template).toBe('builtin:feature');
   });
 
+  it('carries worca_version + grade_mode config metadata from the first row', () => {
+    const agg = aggregateProfile('p1', [
+      row({ worca_version: '0.58.0', grade_mode: 'local-docker' }),
+    ]);
+    expect(agg.worca_version).toBe('0.58.0');
+    expect(agg.grade_mode).toBe('local-docker');
+  });
+
   it('picks last_run as the latest completed_at', () => {
     const rows = [
       row({ rep: 1, completed_at: '2026-06-16T10:00:00Z' }),
@@ -108,6 +117,43 @@ describe('aggregateProfile', () => {
     expect(agg.resolved_rate).toBe(0);
     expect(agg.mean_cost_usd).toBeNull();
     expect(agg.mean_iterations).toBeNull();
+  });
+});
+
+describe('readProfileDefs', () => {
+  let dir;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'bench-defs-'));
+    mkdirSync(join(dir, 'profiles'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('parses benchmark, template, and nested grade.mode', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'p.yaml'),
+      'name: p\nbenchmark: swe-bench-verified\ntemplate: builtin:quick-fix\ngrade:\n  mode: local-docker\n',
+    );
+    const [def] = readProfileDefs(dir);
+    expect(def.name).toBe('p');
+    expect(def.benchmark).toBe('swe-bench-verified');
+    expect(def.template).toBe('builtin:quick-fix');
+    expect(def.grade_mode).toBe('local-docker');
+  });
+
+  it('parses the inline grade shorthand (grade: stub)', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'q.yaml'),
+      'name: q\nbenchmark: commit0\ntemplate: builtin:feature\ngrade: stub\n',
+    );
+    expect(readProfileDefs(dir)[0].grade_mode).toBe('stub');
+  });
+
+  it('strips inline YAML comments from scalar values', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'c.yaml'),
+      'name: c\nbenchmark: swe-bench-verified\ngrade:\n  mode: local-docker    # needs Docker\n',
+    );
+    expect(readProfileDefs(dir)[0].grade_mode).toBe('local-docker');
   });
 });
 

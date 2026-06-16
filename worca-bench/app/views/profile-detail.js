@@ -71,6 +71,40 @@ function _runOptionsView(agg, onRun) {
 }
 
 /**
+ * Configuration metadata — what pipeline/worca this profile benchmarks. Reads
+ * from results rows once run (worca_version, worca_ref, template, grade_mode);
+ * falls back to the YAML def's fields before the first run.
+ */
+function _configView(agg) {
+  const worca = agg.worca_version
+    ? agg.worca_ref
+      ? `${agg.worca_version} (${agg.worca_ref})`
+      : agg.worca_version
+    : agg.worca_ref || '—';
+  const items = [
+    ['Worca', worca],
+    ['Template', agg.template || '—'],
+    ['Benchmark', agg.benchmark || '—'],
+    ['Grade', agg.grade_mode || '—'],
+  ];
+  return html`
+    <div class="config-meta">
+      <div class="config-meta-title">Configuration</div>
+      <div class="config-meta-grid">
+        ${items.map(
+          ([label, value]) => html`
+            <div class="config-meta-item">
+              <span class="config-meta-label">${label}</span>
+              <span class="config-meta-value" title=${String(value)}>${value}</span>
+            </div>
+          `,
+        )}
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Detail view body for one profile: aggregate stat tiles + a per-rep table.
  * The profile name, outcome badge, back button, and "Run profile" action now
  * live in main.js's shared content header.
@@ -94,6 +128,7 @@ export function profileDetailView(data, { onRun } = {}) {
   return html`
     <section class="page">
       ${onRun ? _runOptionsView(agg, onRun) : ''}
+      ${_configView(agg)}
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
         ${_statRow('Reps', String(agg.reps))}

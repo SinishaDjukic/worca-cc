@@ -52,6 +52,7 @@ class WorcaEnv:
     env_overrides: dict[str, str] = field(default_factory=dict)
     repo: Path | None = None  # worca-cc source repo, when known
     resolved_sha: str | None = None
+    version: str | None = None  # resolved worca package version (e.g. "0.58.0")
 
     def base_env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -95,6 +96,22 @@ def _git_sha(repo: Path, ref: str) -> str | None:
         return None
 
 
+def _worca_version(python: str, env_overrides: dict[str, str] | None = None) -> str | None:
+    """Query the resolved worca package version (best-effort; None on failure)."""
+    try:
+        env = dict(os.environ)
+        if env_overrides:
+            env.update(env_overrides)
+        out = subprocess.run(
+            [python, "-c",
+             "import worca,sys; sys.stdout.write(getattr(worca,'__version__','') or '')"],
+            capture_output=True, text=True, env=env, timeout=30, check=False,
+        )
+        return out.stdout.strip() or None
+    except Exception:  # noqa: BLE001 - version is advisory metadata
+        return None
+
+
 def resolve_worca_env(
     ref: WorcaRef,
     target_dir: Path,
@@ -115,12 +132,14 @@ def resolve_worca_env(
                 "WORCA_BENCH_WORCA_REPO or use a pip-installable ref"
             )
         # Use the current interpreter; make worca importable from source.
+        overrides = {"PYTHONPATH": _prepend_pythonpath(str(repo / "src"))}
         return WorcaEnv(
             ref="local",
             python=sys.executable,
-            env_overrides={"PYTHONPATH": _prepend_pythonpath(str(repo / "src"))},
+            env_overrides=overrides,
             repo=repo,
             resolved_sha=_git_sha(repo, "HEAD"),
+            version=_worca_version(sys.executable, overrides) if build else None,
         )
 
     venv_dir = target_dir / "cache" / "venvs" / _ref_hash(ref)
@@ -138,7 +157,10 @@ def resolve_worca_env(
         # Stale/broken cache — rebuild.
         _build_venv(venv_dir, _pip_target(ref))
 
-    return WorcaEnv(ref=ref.ref, python=str(py), repo=repo, resolved_sha=resolved_sha)
+    return WorcaEnv(
+        ref=ref.ref, python=str(py), repo=repo, resolved_sha=resolved_sha,
+        version=_worca_version(str(py)),
+    )
 
 
 def _prepend_pythonpath(path: str) -> str:

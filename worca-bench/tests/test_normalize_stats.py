@@ -25,13 +25,23 @@ def _row(**over):
 def test_build_row_schema_keys():
     row = _row()
     assert row["schema_version"] == RESULTS_SCHEMA_VERSION
-    for key in ("profile", "benchmark", "instance_id", "worca_ref", "template", "rep",
+    for key in ("profile", "benchmark", "instance_id", "worca_ref", "worca_version",
+                "template", "grade_mode", "rep",
                 "run_id", "status", "resolved", "score", "cost_usd", "tokens",
                 "wall_time_s", "api_time_s", "pipeline_status", "loop_counters",
                 "stage_outcomes", "api_retries", "diff_lines", "leaked", "error",
                 "artifacts_dir"):
         assert key in row, key
     assert row["diff_lines"] == 1
+
+
+def test_build_row_carries_config_metadata():
+    row = _row(worca_version="0.58.0", grade_mode="local-docker")
+    assert row["worca_version"] == "0.58.0"
+    assert row["grade_mode"] == "local-docker"
+    # Defaults are None when not supplied (back-compat for older rows).
+    assert _row()["worca_version"] is None
+    assert _row()["grade_mode"] is None
 
 
 def test_append_and_read_roundtrip(tmp_path: Path):
