@@ -51,6 +51,38 @@ describe('profileDetailView', () => {
     expect(out).toContain('placeholder="all"');
   });
 
+  it('renders live stage chips for active runs', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: { ...data.aggregate, active: true },
+        reps: [],
+        active: [
+          {
+            kind: 'rep',
+            pipeline_status: 'running',
+            stages: [
+              { name: 'plan', status: 'completed' },
+              { name: 'coordinate', status: 'in_progress' },
+              { name: 'implement', status: 'pending' },
+              { name: 'test', status: 'completed', skipped: true },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('live-runs');
+    expect(out).toContain('stage-chip--done'); // plan
+    expect(out).toContain('stage-chip--active'); // coordinate
+    expect(out).toContain('stage-chip--pending'); // implement
+    expect(out).toContain('stage-chip--skipped'); // test
+    expect(out).toContain('coordinate');
+  });
+
+  it('renders no live section when there are no active runs', () => {
+    const out = renderToString(profileDetailView({ ...data, active: [] }));
+    expect(out).not.toContain('live-runs');
+  });
+
   it('renders a Configuration block with worca/template/benchmark/grade', () => {
     const out = renderToString(
       profileDetailView({

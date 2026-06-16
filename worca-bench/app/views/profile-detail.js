@@ -70,6 +70,52 @@ function _runOptionsView(agg, onRun) {
   `;
 }
 
+const _STAGE_CLASS = {
+  completed: 'stage-chip--done',
+  in_progress: 'stage-chip--active',
+  failed: 'stage-chip--failed',
+  error: 'stage-chip--failed',
+};
+
+/**
+ * Live progress for in-flight reps (read from worca status.json under work/).
+ * Renders nothing when there are no active runs. The dashboard's auto-refresh
+ * keeps the stage chips current.
+ */
+function _liveView(active) {
+  if (!active || active.length === 0) return '';
+  return html`
+    <div class="live-runs">
+      ${active.map(
+        (run) => html`
+          <div class="live-run">
+            <div class="live-run-head">
+              <span class="running-dot"></span>
+              <span class="live-run-label"
+                >${run.kind === 'canary' ? 'Canary' : 'Running'}</span
+              >
+              <span class="live-run-status">${run.pipeline_status || 'running'}</span>
+            </div>
+            <div class="stage-chips">
+              ${(run.stages || []).map((s) => {
+                const cls = s.skipped
+                  ? 'stage-chip--skipped'
+                  : _STAGE_CLASS[s.status] || 'stage-chip--pending';
+                const title = [s.agent, s.model].filter(Boolean).join(' · ');
+                return html`<span
+                  class="stage-chip ${cls}"
+                  title=${title || s.status}
+                  >${s.name}</span
+                >`;
+              })}
+            </div>
+          </div>
+        `,
+      )}
+    </div>
+  `;
+}
+
 /**
  * Configuration metadata — what pipeline/worca this profile benchmarks. Reads
  * from results rows once run (worca_version, worca_ref, template, grade_mode);
@@ -127,6 +173,7 @@ export function profileDetailView(data, { onRun } = {}) {
 
   return html`
     <section class="page">
+      ${_liveView(data.active)}
       ${onRun ? _runOptionsView(agg, onRun) : ''}
       ${_configView(agg)}
       <div class="stat-grid">

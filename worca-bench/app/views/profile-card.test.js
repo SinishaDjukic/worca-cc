@@ -114,4 +114,22 @@ describe('profileCardView', () => {
     );
     expect(out).toContain('run-card--selected');
   });
+
+  it('shows a running badge with the current stage when active', () => {
+    const out = renderToString(
+      profileCardView(agg({ active: true, stage: 'coordinate' })),
+    );
+    expect(out).toContain('run-card-running');
+    expect(out).toContain('running');
+    expect(out).toContain('coordinate');
+  });
+
+  it('labels an active canary run as canary', () => {
+    const out = renderToString(
+      profileCardView(
+        agg({ active: true, active_kind: 'canary', stage: 'plan' }),
+      ),
+    );
+    expect(out).toContain('canary');
+  });
 });

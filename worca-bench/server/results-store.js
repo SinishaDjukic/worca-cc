@@ -98,7 +98,10 @@ export function readProfileDefs(targetDir) {
     const m = text.match(new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`, 'm'));
     if (!m) return null;
     // Strip an inline YAML comment (whitespace + #...) and surrounding quotes.
-    const v = m[1].replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
+    const v = m[1]
+      .replace(/\s+#.*$/, '')
+      .trim()
+      .replace(/^["']|["']$/g, '');
     return v || null;
   };
   const defs = [];

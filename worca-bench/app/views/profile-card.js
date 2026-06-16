@@ -58,7 +58,13 @@ export function profileCardView(
         }
         <span class="run-card-status">${unsafeHTML(outcomeIcon(outcome, 16))}</span>
         <span class="run-card-title">${agg.name}</span>
-        <sl-badge variant="${variant}" pill class="status-badge-${outcome}">${outcome}</sl-badge>
+        ${
+          agg.active
+            ? html`<sl-badge variant="primary" pill class="run-card-running"
+                ><span class="running-dot"></span>${agg.active_kind === 'canary' ? 'canary' : 'running'}${agg.stage ? ` · ${agg.stage}` : ''}</sl-badge
+              >`
+            : html`<sl-badge variant="${variant}" pill class="status-badge-${outcome}">${outcome}</sl-badge>`
+        }
       </div>
 
       <div class="run-card-meta">

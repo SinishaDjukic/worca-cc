@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-
+import { activeByProfile, discoverActiveMulti } from './active-runs.js';
 import {
   getLeaderboard,
   leaderboardBenchmarks,
@@ -57,6 +57,7 @@ export function createApp(options = {}) {
   const effectiveDirs = () => resolveResultDirs(targetDir, settingsHome).dirs;
   const readRows = () => readResultsMulti(effectiveDirs());
   const readDefs = () => readProfileDefsMulti(effectiveDirs());
+  const readActive = () => discoverActiveMulti(effectiveDirs());
 
   app.use(express.json());
 
@@ -100,6 +101,18 @@ export function createApp(options = {}) {
           last_run: null,
         });
       }
+      // Fold in live status from in-flight work trees (running profiles surface
+      // a current stage before any results.jsonl row exists).
+      const active = activeByProfile(readActive());
+      for (const agg of aggregates) {
+        const run = active.get(agg.name);
+        if (run) {
+          agg.active = true;
+          agg.stage = run.stage;
+          agg.pipeline_status = run.pipeline_status;
+          agg.active_kind = run.kind;
+        }
+      }
       aggregates.sort((a, b) => a.name.localeCompare(b.name));
       res.json({ ok: true, profiles: aggregates });
     } catch (err) {
@@ -116,27 +129,40 @@ export function createApp(options = {}) {
       const name = req.params.name;
       const rows = readRows();
       const reps = rows.filter((r) => (r.profile || '(unknown)') === name);
+      const active = readActive().filter((r) => r.profile === name);
       if (reps.length > 0) {
         return res.json({
           ok: true,
           aggregate: aggregateProfile(name, reps),
           reps,
+          active,
         });
       }
       const def = readDefs().find((d) => d.name === name);
-      if (!def) {
+      if (!def && active.length === 0) {
         return res.status(404).json({ ok: false, error: 'profile not found' });
       }
       res.json({
         ok: true,
         aggregate: {
           ...aggregateProfile(name, []),
-          benchmark: def.benchmark,
-          template: def.template,
-          grade_mode: def.grade_mode,
+          benchmark: def?.benchmark || null,
+          template: def?.template || null,
+          grade_mode: def?.grade_mode || null,
+          active: active.length > 0,
         },
         reps: [],
+        active,
       });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Live in-flight runs (read from worca status.json under work/).
+  app.get('/api/active', (_req, res) => {
+    try {
+      res.json({ ok: true, active: readActive() });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
