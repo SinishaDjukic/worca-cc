@@ -7,7 +7,22 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
+
+// Profile names flow into a pgrep regex and into filesystem paths, so they must
+// be strictly validated to prevent arbitrary process kills / path traversal.
+const NAME_RE = /^[A-Za-z0-9_.-]+$/;
+export function assertValidProfileName(name) {
+  if (
+    typeof name !== 'string' ||
+    name === '.' ||
+    name === '..' ||
+    !NAME_RE.test(name)
+  ) {
+    throw new Error('invalid profile name');
+  }
+  return name;
+}
 
 function pgrep(args) {
   try {
@@ -37,7 +52,11 @@ const _delay = (ms) => new Promise((r) => setTimeout(r, ms));
  * @returns {Promise<number>} number of runner roots stopped
  */
 export async function stopProfileRuns(name) {
-  const roots = pgrep(['-f', `worca_bench.cli run --profile ${name}`]);
+  assertValidProfileName(name);
+  // Escape regex metachars (only `.` is possible in our charset) and anchor the
+  // match so a name can't broaden the pattern or prefix-match another run.
+  const safe = name.replace(/[.]/g, '\\.');
+  const roots = pgrep(['-f', `worca_bench\\.cli run --profile ${safe}( |$)`]);
   if (roots.length === 0) return 0;
   const acc = new Set();
   for (const r of roots) collectTree(r, acc);
@@ -66,6 +85,7 @@ export async function stopProfileRuns(name) {
  * @returns {number} rows removed
  */
 export function clearProfileResults(name, dirs) {
+  assertValidProfileName(name);
   let removed = 0;
   for (const dir of dirs) {
     const file = join(dir, 'results.jsonl');
@@ -87,8 +107,12 @@ export function clearProfileResults(name, dirs) {
       writeFileSync(file, kept.length ? `${kept.join('\n')}\n` : '');
     }
     for (const sub of ['runs', 'work']) {
-      const p = join(dir, sub, name);
-      if (existsSync(p)) rmSync(p, { recursive: true, force: true });
+      const base = resolve(join(dir, sub));
+      const p = resolve(join(base, name));
+      // Defense in depth: never delete outside <dir>/<sub>/.
+      if (p.startsWith(base + sep) && existsSync(p)) {
+        rmSync(p, { recursive: true, force: true });
+      }
     }
   }
   return removed;

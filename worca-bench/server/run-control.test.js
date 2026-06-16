@@ -58,3 +58,29 @@ describe('stopProfileRuns', () => {
     );
   });
 });
+
+describe('input validation (security)', () => {
+  it('rejects path-traversal / unsafe profile names before any fs/proc work', () => {
+    mkdirSync(join(dir, 'work'), { recursive: true });
+    for (const bad of ['../evil', 'a/b', '..', '.', 'a b', 'a;rm', '$(x)']) {
+      expect(() => clearProfileResults(bad, [dir])).toThrow(
+        /invalid profile name/,
+      );
+    }
+  });
+
+  it('rejects unsafe names in stopProfileRuns', async () => {
+    await expect(stopProfileRuns('../../x')).rejects.toThrow(
+      /invalid profile name/,
+    );
+  });
+
+  it('does not delete outside <dir>/<sub> for a crafted dirs arg', () => {
+    // Even a valid name only ever touches <dir>/runs|work/<name>.
+    mkdirSync(join(dir, 'sibling'), { recursive: true });
+    mkdirSync(join(dir, 'work', 'p'), { recursive: true });
+    clearProfileResults('p', [dir]);
+    expect(existsSync(join(dir, 'sibling'))).toBe(true);
+    expect(existsSync(join(dir, 'work', 'p'))).toBe(false);
+  });
+});

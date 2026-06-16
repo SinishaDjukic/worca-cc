@@ -169,8 +169,14 @@ export function createApp(options = {}) {
     }
   });
 
+  // Reject anything that isn't a safe profile-name identifier.
+  const _badName = (name) => !/^[A-Za-z0-9_.-]+$/.test(name);
+
   // Stop all active runs for a profile (kills the runner process tree).
   app.post('/api/profiles/:name/stop', async (req, res) => {
+    if (_badName(req.params.name)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
     try {
       const stopped = await stopProfileRuns(req.params.name);
       res.json({ ok: true, stopped });
@@ -181,6 +187,9 @@ export function createApp(options = {}) {
 
   // Clear a profile's recorded results — refused while it has active runs.
   app.post('/api/profiles/:name/clear', (req, res) => {
+    if (_badName(req.params.name)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
     try {
       const active = readActive().filter((r) => r.profile === req.params.name);
       if (active.length > 0) {
