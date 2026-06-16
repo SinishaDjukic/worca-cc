@@ -20,6 +20,8 @@ const HARD_CAP_MS = 180000;
  * @param {string} opts.targetDir   results target directory
  * @param {string} [opts.profilesDir]  extra dir to search for the profile YAML
  *        (so a profile authored in a configured, non-primary dir is findable)
+ * @param {number} [opts.reps]          per-run override of the profile's reps
+ * @param {number} [opts.maxInstances]  cap the instance count for this run
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
  * @returns {Promise<{pid: number}>}
@@ -28,6 +30,8 @@ export function runBenchmark({
   profile,
   targetDir,
   profilesDir,
+  reps,
+  maxInstances,
   _spawn = spawn,
 } = {}) {
   if (!profile) {
@@ -44,6 +48,12 @@ export function runBenchmark({
   ];
   if (profilesDir) {
     args.push('--profiles-dir', profilesDir);
+  }
+  if (Number.isInteger(reps) && reps >= 1) {
+    args.push('--reps', String(reps));
+  }
+  if (Number.isInteger(maxInstances) && maxInstances >= 1) {
+    args.push('--max-instances', String(maxInstances));
   }
 
   return new Promise((resolve, reject) => {

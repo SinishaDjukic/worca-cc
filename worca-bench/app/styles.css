@@ -681,3 +681,39 @@ code {
 .launch-toast-close:hover {
   color: var(--fg);
 }
+
+/* ─── Run options (per-run reps / instance override) ───────────────────── */
+.run-options {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+.run-options-title {
+  align-self: center;
+  margin-right: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.run-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.run-opt input {
+  width: 96px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 13px;
+}

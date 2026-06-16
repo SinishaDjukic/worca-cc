@@ -287,7 +287,9 @@ function renderView(view) {
         onToggleSelect: toggleSelect,
       });
     case 'detail':
-      return profileDetailView(view.data);
+      return profileDetailView(view.data, {
+        onRun: (name, opts) => runProfile(name, opts),
+      });
     case 'compare':
       return compareView(view.data);
     case 'leaderboard':
@@ -307,37 +309,47 @@ function renderView(view) {
 
 // ─── Route handlers ─────────────────────────────────────────────────────
 
+/** Fetch the view object for a route. Pure data — no state mutation. */
+async function loadView(path, params) {
+  if (path === '/' || path === '') {
+    const { profiles } = await getJSON('/api/profiles');
+    return { kind: 'dashboard', data: profiles };
+  }
+  if (path === '/profile') {
+    const name = params.get('name');
+    const data = await getJSON(`/api/profiles/${encodeURIComponent(name)}`);
+    return { kind: 'detail', data };
+  }
+  if (path === '/compare') {
+    const profiles = params.get('profiles') || '';
+    const { compare } = await getJSON(
+      `/api/compare?profiles=${encodeURIComponent(profiles)}`,
+    );
+    return { kind: 'compare', data: compare };
+  }
+  if (path === '/leaderboard') {
+    const benchmark = params.get('benchmark') || 'swe-bench-verified';
+    const data = await getJSON(
+      `/api/leaderboard?benchmark=${encodeURIComponent(benchmark)}`,
+    );
+    return { kind: 'leaderboard', data };
+  }
+  if (path === '/settings') {
+    const data = await getJSON('/api/settings');
+    return { kind: 'settings', data };
+  }
+  return null;
+}
+
 async function route() {
   const { path, params } = parseHash(location.hash);
   state.loading = true;
   state.error = null;
   rerender();
   try {
-    if (path === '/' || path === '') {
-      const { profiles } = await getJSON('/api/profiles');
-      state.view = { kind: 'dashboard', data: profiles };
-    } else if (path === '/profile') {
-      const name = params.get('name');
-      const data = await getJSON(`/api/profiles/${encodeURIComponent(name)}`);
-      state.view = { kind: 'detail', data };
-    } else if (path === '/compare') {
-      const profiles = params.get('profiles') || '';
-      const { compare } = await getJSON(
-        `/api/compare?profiles=${encodeURIComponent(profiles)}`,
-      );
-      state.view = { kind: 'compare', data: compare };
-    } else if (path === '/leaderboard') {
-      const benchmark = params.get('benchmark') || 'swe-bench-verified';
-      const data = await getJSON(
-        `/api/leaderboard?benchmark=${encodeURIComponent(benchmark)}`,
-      );
-      state.view = { kind: 'leaderboard', data };
-    } else if (path === '/settings') {
-      const data = await getJSON('/api/settings');
-      state.view = { kind: 'settings', data };
-    } else {
-      state.error = `No such route: ${path}`;
-    }
+    const view = await loadView(path, params);
+    if (view) state.view = view;
+    else state.error = `No such route: ${path}`;
   } catch (err) {
     state.error = err.message;
   } finally {
@@ -346,16 +358,69 @@ async function route() {
   }
 }
 
-async function runProfile(name) {
+// ─── Background auto-refresh ─────────────────────────────────────────────
+//
+// A live dashboard: the current route's data is re-fetched on an interval and
+// re-rendered only when it actually changed (so a run launched here surfaces
+// its results without a manual reload). No spinner — this is silent. Settings
+// is excluded so a poll never clobbers the add-dir form/error state. The
+// interval is overridable via `?poll=<ms>` (used by e2e to speed the tick up).
+
+const POLL_MS = (() => {
+  const raw = Number.parseInt(
+    new URLSearchParams(location.search).get('poll') || '',
+    10,
+  );
+  return Number.isInteger(raw) && raw >= 250 ? raw : 5000;
+})();
+let pollTimer = null;
+
+async function refreshCurrent() {
+  if (state.loading) return;
+  const { path, params } = parseHash(location.hash);
+  if (path === '/settings') return;
   try {
+    const next = await loadView(path, params);
+    if (next && JSON.stringify(next) !== JSON.stringify(state.view)) {
+      state.view = next;
+      rerender();
+    }
+  } catch {
+    // Silent — the next tick retries.
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => {
+    if (!document.hidden) refreshCurrent();
+  }, POLL_MS);
+}
+
+async function runProfile(name, opts = {}) {
+  try {
+    const body = { profile: name };
+    if (Number.isInteger(opts.reps)) body.reps = opts.reps;
+    if (Number.isInteger(opts.maxInstances))
+      body.maxInstances = opts.maxInstances;
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: name }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
-      showToast('success', `Launched ${name} — pid ${data.pid}`);
+      const extra = [
+        Number.isInteger(opts.reps) ? `${opts.reps} reps` : null,
+        Number.isInteger(opts.maxInstances)
+          ? `${opts.maxInstances} instances`
+          : null,
+      ].filter(Boolean);
+      const suffix = extra.length ? ` (${extra.join(', ')})` : '';
+      showToast('success', `Launched ${name}${suffix} — pid ${data.pid}`);
+      // Nudge a refresh so the run's first results surface without waiting a
+      // full poll tick (results land in seconds under mock).
+      setTimeout(refreshCurrent, 1500);
     } else {
       showToast('danger', `Launch failed: ${data.error || res.statusText}`);
     }
@@ -397,3 +462,4 @@ const removeDir = (dir) => mutateSettingsDir('DELETE', dir);
 
 window.addEventListener('hashchange', route);
 route();
+startPolling();

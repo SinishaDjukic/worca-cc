@@ -43,6 +43,12 @@ export function createApp(options = {}) {
   const launch = options._runBenchmark || runBenchmark;
   const settingsHome = options.settingsHome;
 
+  // Coerce a request value to a positive integer, else undefined (use default).
+  const _posInt = (v) => {
+    const n = Number.parseInt(v, 10);
+    return Number.isInteger(n) && n >= 1 ? n : undefined;
+  };
+
   // Effective read set = launch dir (always) + configured dirs (settings.json).
   const effectiveDirs = () => resolveResultDirs(targetDir, settingsHome).dirs;
   const readRows = () => readResultsMulti(effectiveDirs());
@@ -174,6 +180,8 @@ export function createApp(options = {}) {
         profile,
         targetDir,
         profilesDir: def?._source_dir,
+        reps: _posInt(req.body?.reps),
+        maxInstances: _posInt(req.body?.maxInstances),
       });
       res.json({ ok: true, pid });
     } catch (err) {

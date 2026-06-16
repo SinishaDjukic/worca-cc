@@ -43,6 +43,13 @@ def _resolve_profile(name_or_path: str, target_dir: Path | None,
 def cmd_run(args: argparse.Namespace) -> int:
     target = Path(args.target_dir)
     profile = _resolve_profile(args.profile, target, args.profiles_dir)
+    # Per-run override of the profile's reps (e.g. from the UI launch controls).
+    reps_override = getattr(args, "reps", None)
+    if reps_override is not None:
+        if reps_override < 1:
+            print("--reps must be >= 1", file=sys.stderr)
+            return 2
+        profile.reps = reps_override
     summary = run_profile(
         profile, target,
         dry_run=args.dry_run,
@@ -106,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--dry-run", action="store_true", help="resolve + plan, do not run")
     p_run.add_argument("--no-canary", action="store_true", help="skip the per-template canary")
     p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
+    p_run.add_argument("--reps", type=int, help="override the profile's reps for this run")
     p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
     p_run.set_defaults(func=cmd_run)
 

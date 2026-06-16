@@ -1,3 +1,5 @@
+import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { startServer } from './fixtures.js';
 
@@ -132,6 +134,50 @@ test('clicking Run surfaces a launch toast with the pid', async ({ page }) => {
   const toast = page.locator('.launch-toast--success');
   await expect(toast).toBeVisible();
   await expect(toast).toContainText('pid 1');
+});
+
+test('profile detail Run options launch reflects the reps override', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  await page
+    .locator('.run-card-title', { hasText: 'smoke-feature-opus' })
+    .click();
+  await expect(page.locator('.run-options')).toBeVisible();
+  await page.locator('.run-opt-reps').fill('2');
+  await page.locator('.run-opt-launch').click();
+  const toast = page.locator('.launch-toast--success');
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText('2 reps');
+});
+
+test('dashboard auto-refreshes when new results land', async ({ page }) => {
+  // Fast poll so the test doesn't wait the default 5s tick.
+  await page.goto(`${srv.url}/?poll=400`);
+  await expect(page.locator('.run-card')).toHaveCount(2);
+  // A new profile's result row lands on disk out-of-band (as a real run would).
+  appendFileSync(
+    join(srv.targetDir, 'results.jsonl'),
+    `${JSON.stringify({
+      schema_version: 1,
+      profile: 'late-arrival',
+      benchmark: 'swe-bench-verified',
+      instance_id: 'inst-late',
+      rep: 1,
+      status: 'graded',
+      resolved: true,
+      score: 1.0,
+      cost_usd: 0.2,
+      wall_time_s: 300,
+      loop_counters: { implement_test: 1 },
+      completed_at: '2026-06-16T12:00:00Z',
+    })}\n`,
+  );
+  // The background poll picks it up and the new card appears without a reload.
+  await expect(
+    page.locator('.run-card-title', { hasText: 'late-arrival' }),
+  ).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.run-card')).toHaveCount(3);
 });
 
 test('settings page lists result directories from the sidebar', async ({

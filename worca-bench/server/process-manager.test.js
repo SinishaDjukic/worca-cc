@@ -68,6 +68,36 @@ describe('runBenchmark', () => {
     ]);
   });
 
+  it('appends --reps and --max-instances when valid (ignores junk)', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(8);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      reps: 3,
+      maxInstances: 5,
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--reps');
+    expect(capturedArgs[capturedArgs.indexOf('--reps') + 1]).toBe('3');
+    expect(capturedArgs).toContain('--max-instances');
+    expect(capturedArgs[capturedArgs.indexOf('--max-instances') + 1]).toBe('5');
+
+    // Non-positive / non-integer values are dropped entirely.
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      reps: 0,
+      maxInstances: undefined,
+      _spawn,
+    });
+    expect(capturedArgs).not.toContain('--reps');
+    expect(capturedArgs).not.toContain('--max-instances');
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

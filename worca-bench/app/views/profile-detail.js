@@ -28,13 +28,58 @@ function _statRow(label, value) {
 }
 
 /**
+ * "Run options" launcher: per-run overrides for reps and instance cap. Empty
+ * inputs fall back to the profile's defaults. Reads input values at click time
+ * (lit-html is stateless) from the enclosing `.run-options` container.
+ */
+function _runOptionsView(agg, onRun) {
+  const launch = (e) => {
+    const box = e.target.closest('.run-options');
+    const reps = box.querySelector('.run-opt-reps').value.trim();
+    const maxInstances = box.querySelector('.run-opt-instances').value.trim();
+    onRun(agg.name, {
+      reps: reps ? Number.parseInt(reps, 10) : undefined,
+      maxInstances: maxInstances
+        ? Number.parseInt(maxInstances, 10)
+        : undefined,
+    });
+  };
+  return html`
+    <div class="run-options">
+      <span class="run-options-title">Run options</span>
+      <label class="run-opt"
+        >Reps
+        <input
+          class="run-opt-reps"
+          type="number"
+          min="1"
+          placeholder=${String(agg.reps || 1)}
+      /></label>
+      <label class="run-opt"
+        >Max instances
+        <input
+          class="run-opt-instances"
+          type="number"
+          min="1"
+          placeholder="all"
+      /></label>
+      <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
+        Run
+      </button>
+    </div>
+  `;
+}
+
+/**
  * Detail view body for one profile: aggregate stat tiles + a per-rep table.
  * The profile name, outcome badge, back button, and "Run profile" action now
  * live in main.js's shared content header.
  *
  * @param {object} data  { aggregate, reps }
+ * @param {object} [handlers]
+ * @param {(name: string, opts: {reps?: number, maxInstances?: number}) => void} [handlers.onRun]
  */
-export function profileDetailView(data) {
+export function profileDetailView(data, { onRun } = {}) {
   if (!data?.aggregate) {
     return html`<section class="page"><p class="empty-state">Profile not found.</p></section>`;
   }
@@ -48,6 +93,7 @@ export function profileDetailView(data) {
 
   return html`
     <section class="page">
+      ${onRun ? _runOptionsView(agg, onRun) : ''}
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
         ${_statRow('Reps', String(agg.reps))}

@@ -167,6 +167,40 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run forwards reps + maxInstances overrides (coerced)', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 5 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', reps: '4', maxInstances: 2 }),
+      });
+      expect(captured.reps).toBe(4); // string coerced to int
+      expect(captured.maxInstances).toBe(2);
+    });
+  });
+
+  it('POST /api/run drops invalid overrides (undefined, not 0/NaN)', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 6 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', reps: 0, maxInstances: 'abc' }),
+      });
+      expect(captured.reps).toBeUndefined();
+      expect(captured.maxInstances).toBeUndefined();
+    });
+  });
+
   it('POST /api/run rejects a missing profile with 400', async () => {
     await withServer(dir, {}, async (base) => {
       const res = await fetch(`${base}/api/run`, {
