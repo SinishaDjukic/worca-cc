@@ -116,6 +116,25 @@ describe('runBenchmark', () => {
     );
   });
 
+  it('appends --graphify and --code-review-graph when set', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(11);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      graphify: 'full',
+      codeReviewGraph: 'structural',
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--graphify') + 1]).toBe('full');
+    expect(capturedArgs[capturedArgs.indexOf('--code-review-graph') + 1]).toBe(
+      'structural',
+    );
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

@@ -82,6 +82,32 @@ class MockConfig:
 
 
 @dataclass
+class EngineConfig:
+    """Optional code-graph engine (graphify / code-review-graph). Both are
+    cross-template settings keys, off by default. ``mode`` is engine-specific
+    (graphify: structural|full) and only seeded when enabled + provided; extra
+    keys (e.g. CRG freshness) pass through ``options``."""
+
+    enabled: bool = False
+    mode: str | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+
+    def to_settings(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"enabled": True}
+        if self.mode:
+            out["mode"] = self.mode
+        out.update(self.options)
+        return out
+
+    @property
+    def label(self) -> str | None:
+        """Compact value for results rows: mode (or 'on') when enabled, else None."""
+        if not self.enabled:
+            return None
+        return self.mode or "on"
+
+
+@dataclass
 class Profile:
     name: str
     benchmark: str
@@ -103,6 +129,18 @@ class Profile:
     claude_md_mode: str = "none"
     skip_preflight: bool = True
     pr_defer: bool = True
+    # Optional code-graph engines (off by default).
+    graphify: EngineConfig = field(default_factory=EngineConfig)
+    code_review_graph: EngineConfig = field(default_factory=EngineConfig)
+
+    def engine_settings(self) -> dict[str, Any]:
+        """worca.* overlay for any enabled code-graph engine (empty when off)."""
+        out: dict[str, Any] = {}
+        if self.graphify.enabled:
+            out["graphify"] = self.graphify.to_settings()
+        if self.code_review_graph.enabled:
+            out["code_review_graph"] = self.code_review_graph.to_settings()
+        return out
 
     def template_for(self, instance_id: str) -> str:
         """Resolve the template for an instance via ``template_map`` globs, else
@@ -138,6 +176,19 @@ def _coerce_worca(raw: Any) -> WorcaRef:
     if isinstance(raw, str):
         return WorcaRef(ref=raw)
     return WorcaRef(ref=raw.get("ref", "local"), source=raw.get("source"))
+
+
+def _coerce_engine(raw: Any) -> EngineConfig:
+    if raw is None:
+        return EngineConfig()
+    if isinstance(raw, bool):
+        return EngineConfig(enabled=raw)
+    if isinstance(raw, str):  # shorthand: a bare mode string enables it
+        return EngineConfig(enabled=True, mode=raw)
+    enabled = bool(raw.get("enabled", False))
+    mode = raw.get("mode")
+    options = {k: v for k, v in raw.items() if k not in ("enabled", "mode")}
+    return EngineConfig(enabled=enabled, mode=mode, options=options)
 
 
 def _coerce_selection(raw: Any) -> Selection:
@@ -192,6 +243,8 @@ def profile_from_dict(data: dict[str, Any]) -> Profile:
         claude_md_mode=data.get("claude_md_mode", "none"),
         skip_preflight=bool(data.get("skip_preflight", True)),
         pr_defer=bool(data.get("pr_defer", True)),
+        graphify=_coerce_engine(data.get("graphify")),
+        code_review_graph=_coerce_engine(data.get("code_review_graph")),
     )
     profile.validate()
     return profile

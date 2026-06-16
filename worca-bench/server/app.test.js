@@ -274,6 +274,28 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run forwards graphify + code-review-graph engine modes', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 9 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // `true` coerces to the default mode; a string passes through.
+        body: JSON.stringify({
+          profile: 'p1',
+          graphify: true,
+          codeReviewGraph: 'structural',
+        }),
+      });
+      expect(captured.graphify).toBe('structural');
+      expect(captured.codeReviewGraph).toBe('structural');
+    });
+  });
+
   it('POST /api/run rejects a missing profile with 400', async () => {
     await withServer(dir, {}, async (base) => {
       const res = await fetch(`${base}/api/run`, {

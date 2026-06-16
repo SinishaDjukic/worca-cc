@@ -23,6 +23,8 @@ const HARD_CAP_MS = 180000;
  * @param {number} [opts.reps]          per-run override of the profile's reps
  * @param {number} [opts.maxInstances]  cap the instance count for this run
  * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
+ * @param {string} [opts.graphify]      enable graphify in this mode (structural|full)
+ * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
  * @returns {Promise<{pid: number}>}
@@ -34,6 +36,8 @@ export function runBenchmark({
   reps,
   maxInstances,
   cacheDir,
+  graphify,
+  codeReviewGraph,
   _spawn = spawn,
 } = {}) {
   if (!profile) {
@@ -59,6 +63,12 @@ export function runBenchmark({
   }
   if (cacheDir) {
     args.push('--cache-dir', cacheDir);
+  }
+  if (graphify) {
+    args.push('--graphify', String(graphify));
+  }
+  if (codeReviewGraph) {
+    args.push('--code-review-graph', String(codeReviewGraph));
   }
 
   return new Promise((resolve, reject) => {

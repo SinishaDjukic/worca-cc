@@ -32,6 +32,31 @@ def test_minimal_profile_defaults():
     assert prof.pr_defer is True
 
 
+def test_engines_off_by_default():
+    prof = profile_from_dict(_base())
+    assert prof.graphify.enabled is False
+    assert prof.code_review_graph.enabled is False
+    assert prof.engine_settings() == {}  # nothing seeded when off
+
+
+def test_graphify_and_crg_parse_and_seed():
+    prof = profile_from_dict(
+        _base(
+            graphify={"enabled": True, "mode": "full"},
+            code_review_graph="structural",  # bare-string shorthand enables it
+        )
+    )
+    assert prof.graphify.enabled and prof.graphify.mode == "full"
+    assert prof.code_review_graph.enabled
+    assert prof.code_review_graph.mode == "structural"
+    assert prof.engine_settings() == {
+        "graphify": {"enabled": True, "mode": "full"},
+        "code_review_graph": {"enabled": True, "mode": "structural"},
+    }
+    assert prof.graphify.label == "full"
+    assert prof.code_review_graph.label == "structural"
+
+
 def test_unknown_benchmark_rejected():
     with pytest.raises(ProfileError):
         profile_from_dict(_base(benchmark="nope"))

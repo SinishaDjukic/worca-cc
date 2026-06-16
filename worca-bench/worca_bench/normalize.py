@@ -38,6 +38,8 @@ def build_row(
     artifacts_dir: str,
     worca_version: str | None = None,
     grade_mode: str | None = None,
+    graphify: str | None = None,
+    code_review_graph: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": RESULTS_SCHEMA_VERSION,
@@ -48,6 +50,8 @@ def build_row(
         "worca_version": worca_version,
         "template": template,
         "grade_mode": grade_mode,
+        "graphify": graphify,
+        "code_review_graph": code_review_graph,
         "rep": rep,
         "run_id": run_id,
         "status": status,

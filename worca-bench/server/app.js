@@ -54,6 +54,13 @@ export function createApp(options = {}) {
     return Number.isInteger(n) && n >= 1 ? n : undefined;
   };
 
+  // Coerce an engine toggle to a mode string: `true` -> 'structural', a non-empty
+  // string -> that mode, anything else -> undefined (engine stays off).
+  const _engineMode = (v) => {
+    if (v === true) return 'structural';
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  };
+
   // Effective read set = launch dir (always) + configured dirs (settings.json).
   const effectiveDirs = () => resolveResultDirs(targetDir, settingsHome).dirs;
   const readRows = () => readResultsMulti(effectiveDirs());
@@ -232,6 +239,8 @@ export function createApp(options = {}) {
         reps: _posInt(req.body?.reps),
         maxInstances: _posInt(req.body?.maxInstances),
         cacheDir: resolveCacheDir(settingsHome).dir,
+        graphify: _engineMode(req.body?.graphify),
+        codeReviewGraph: _engineMode(req.body?.codeReviewGraph),
       });
       res.json({ ok: true, pid });
     } catch (err) {

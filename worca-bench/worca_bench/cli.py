@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from .config import Profile, find_profile, load_profile
+from .config import EngineConfig, Profile, find_profile, load_profile
 from .normalize import read_rows
 from .runner import run_profile
 from .stats import aggregate, aggregate_by_profile
@@ -51,6 +51,18 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("--reps must be >= 1", file=sys.stderr)
             return 2
         profile.reps = reps_override
+    # Code-graph engines: a CLI flag enables the engine (and sets its mode),
+    # overriding the profile. Absent flag => leave the profile's setting (off by
+    # default). graphify mode is validated; CRG mode passes through.
+    gfx = getattr(args, "graphify", None)
+    if gfx is not None:
+        if gfx not in ("structural", "full"):
+            print("--graphify mode must be 'structural' or 'full'", file=sys.stderr)
+            return 2
+        profile.graphify = EngineConfig(enabled=True, mode=gfx)
+    crg = getattr(args, "code_review_graph", None)
+    if crg is not None:
+        profile.code_review_graph = EngineConfig(enabled=True, mode=crg)
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
     summary = run_profile(
@@ -119,6 +131,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
     p_run.add_argument("--reps", type=int, help="override the profile's reps for this run")
     p_run.add_argument("--cache-dir", help="benchmark cache dir (HF datasets / repo mirrors)")
+    p_run.add_argument(
+        "--graphify", nargs="?", const="structural", metavar="MODE",
+        help="enable graphify (mode: structural|full; default structural)",
+    )
+    p_run.add_argument(
+        "--code-review-graph", "--crg", nargs="?", const="structural", metavar="MODE",
+        dest="code_review_graph",
+        help="enable code-review-graph (mode passthrough; default structural)",
+    )
     p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
     p_run.set_defaults(func=cmd_run)
 

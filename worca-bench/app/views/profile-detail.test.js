@@ -40,11 +40,13 @@ describe('profileDetailView', () => {
     );
   });
 
-  it('renders Run options (reps + max instances) when onRun is provided', () => {
+  it('renders Run options (reps + max instances + engine toggles) when onRun is provided', () => {
     const out = renderToString(profileDetailView(data, { onRun: () => {} }));
     expect(out).toContain('run-options');
     expect(out).toContain('run-opt-reps');
     expect(out).toContain('run-opt-instances');
+    expect(out).toContain('run-opt-graphify'); // graphify toggle
+    expect(out).toContain('run-opt-crg'); // code-review-graph toggle
     // reps input is seeded with the profile's default as a placeholder
     // (unquoted lit attribute binding -> `placeholder=4`)
     expect(out).toContain('placeholder=4');
@@ -107,6 +109,33 @@ describe('profileDetailView', () => {
   it('renders no live section when there are no active runs', () => {
     const out = renderToString(profileDetailView({ ...data, active: [] }));
     expect(out).not.toContain('live-runs');
+  });
+
+  it('shows per-rep engine metadata columns + the Duration header', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: data.aggregate,
+        reps: [
+          {
+            instance_id: 'astropy__astropy-1',
+            rep: 1,
+            status: 'graded',
+            score: 1,
+            cost_usd: 0.4,
+            wall_time_s: 200,
+            loop_counters: {},
+            graphify: 'full',
+            code_review_graph: 'structural',
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('Duration'); // renamed from Wall
+    expect(out).not.toContain('<th>Wall</th>');
+    expect(out).toContain('Graphify');
+    expect(out).toContain('CRG');
+    expect(out).toContain('full'); // graphify value
+    expect(out).toContain('structural'); // crg value
   });
 
   it('renders a Configuration block with worca/template/benchmark/grade', () => {

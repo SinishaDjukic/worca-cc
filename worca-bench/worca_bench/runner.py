@@ -168,7 +168,7 @@ def _canary_template(
     try:
         plugin.materialize(inst, work)
         worca_init(work, wenv)
-        seed_settings(work, overlay=overlay, extra_settings=profile.settings,
+        seed_settings(work, overlay=overlay, extra_settings={**profile.settings, **profile.engine_settings()},
                       pr_defer=profile.pr_defer, secret_env=secret_env)
         bare = resolve_for_launch(template, tree=work, templates=profile.templates)
         ok, reason = run_canary(
@@ -197,7 +197,7 @@ def _run_one_rep(
             shutil.rmtree(work, ignore_errors=True)
         plugin.materialize(inst, work)
         worca_init(work, wenv)
-        seed_settings(work, overlay=overlay, extra_settings=profile.settings,
+        seed_settings(work, overlay=overlay, extra_settings={**profile.settings, **profile.engine_settings()},
                       pr_defer=profile.pr_defer, secret_env=secret_env)
         prepared = plugin.prepare(inst, work)
 
@@ -238,6 +238,7 @@ def _run_one_rep(
             profile_name=profile.name, benchmark=profile.benchmark,
             instance_id=inst.id, worca_ref=wenv.describe(), template=template,
             worca_version=wenv.version, grade_mode=profile.grade.mode,
+        graphify=profile.graphify.label, code_review_graph=profile.code_review_graph.label,
             rep=rep, run_id=run_id, status=status, resolved=resolved, score=score,
             telemetry=telemetry, diff=diff, leaked=leaked, error=error,
             started_at=started, completed_at=_now(),
@@ -263,7 +264,8 @@ def _skip_row(profile, inst, rep, wenv, template, reason) -> dict[str, Any]:
     return build_row(
         profile_name=profile.name, benchmark=profile.benchmark, instance_id=inst.id,
         worca_ref=wenv.describe(), template=template,
-        worca_version=wenv.version, grade_mode=profile.grade.mode, rep=rep,
+        worca_version=wenv.version, grade_mode=profile.grade.mode,
+        graphify=profile.graphify.label, code_review_graph=profile.code_review_graph.label, rep=rep,
         run_id=f"{profile.name}__{inst.id}__rep{rep}", status="skipped",
         resolved=None, score=None, telemetry=Telemetry(), diff="", leaked=False,
         error=f"template incompatible: {reason}", started_at=_now(), completed_at=_now(),
@@ -275,7 +277,8 @@ def _error_row(profile, inst, rep, wenv, template, err, started) -> dict[str, An
     return build_row(
         profile_name=profile.name, benchmark=profile.benchmark, instance_id=inst.id,
         worca_ref=wenv.describe(), template=template,
-        worca_version=wenv.version, grade_mode=profile.grade.mode, rep=rep,
+        worca_version=wenv.version, grade_mode=profile.grade.mode,
+        graphify=profile.graphify.label, code_review_graph=profile.code_review_graph.label, rep=rep,
         run_id=f"{profile.name}__{inst.id}__rep{rep}", status="error",
         resolved=None, score=None, telemetry=Telemetry(), diff="", leaked=False,
         error=err, started_at=started, completed_at=_now(),

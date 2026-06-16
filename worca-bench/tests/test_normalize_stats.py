@@ -36,12 +36,18 @@ def test_build_row_schema_keys():
 
 
 def test_build_row_carries_config_metadata():
-    row = _row(worca_version="0.58.0", grade_mode="local-docker")
+    row = _row(
+        worca_version="0.58.0", grade_mode="local-docker",
+        graphify="full", code_review_graph="structural",
+    )
     assert row["worca_version"] == "0.58.0"
     assert row["grade_mode"] == "local-docker"
+    assert row["graphify"] == "full"
+    assert row["code_review_graph"] == "structural"
     # Defaults are None when not supplied (back-compat for older rows).
-    assert _row()["worca_version"] is None
-    assert _row()["grade_mode"] is None
+    base = _row()
+    for k in ("worca_version", "grade_mode", "graphify", "code_review_graph"):
+        assert base[k] is None
 
 
 def test_append_and_read_roundtrip(tmp_path: Path):

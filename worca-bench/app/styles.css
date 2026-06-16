@@ -240,9 +240,15 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding-bottom: 20px;
-  margin-bottom: 18px;
   border-bottom: 1px solid var(--border-subtle);
+  /* Sticky (mirrors worca-ui): bleed out to absorb .main-content's 24px/32px
+     padding so the header pins flush to the top and spans the full width. */
+  position: sticky;
+  top: -24px;
+  z-index: 10;
+  background: var(--bg);
+  margin: -24px -32px 18px;
+  padding: 24px 32px 20px;
 }
 
 .content-header-back {
@@ -1019,4 +1025,12 @@ code {
   background: var(--surface);
   color: var(--fg);
   font-size: 13px;
+}
+.run-opt-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+  padding-bottom: 4px;
 }

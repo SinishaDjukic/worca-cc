@@ -37,11 +37,19 @@ function _runOptionsView(agg, onRun) {
     const box = e.target.closest('.run-options');
     const reps = box.querySelector('.run-opt-reps').value.trim();
     const maxInstances = box.querySelector('.run-opt-instances').value.trim();
+    const graphify = box.querySelector('.run-opt-graphify')?.checked
+      ? 'structural'
+      : undefined;
+    const codeReviewGraph = box.querySelector('.run-opt-crg')?.checked
+      ? 'structural'
+      : undefined;
     onRun(agg.name, {
       reps: reps ? Number.parseInt(reps, 10) : undefined,
       maxInstances: maxInstances
         ? Number.parseInt(maxInstances, 10)
         : undefined,
+      graphify,
+      codeReviewGraph,
     });
   };
   return html`
@@ -63,6 +71,14 @@ function _runOptionsView(agg, onRun) {
           min="1"
           placeholder="all"
       /></label>
+      <label class="run-opt run-opt-toggle">
+        <sl-switch class="run-opt-graphify" size="small"></sl-switch>
+        <span>Graphify</span>
+      </label>
+      <label class="run-opt run-opt-toggle">
+        <sl-switch class="run-opt-crg" size="small"></sl-switch>
+        <span>Code Review Graph</span>
+      </label>
       <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
         Run
       </button>
@@ -225,8 +241,10 @@ export function profileDetailView(data, { onRun } = {}) {
             <th>Status</th>
             <th>Score</th>
             <th>Cost</th>
-            <th>Wall</th>
+            <th>Duration</th>
             <th>Iters</th>
+            <th>Graphify</th>
+            <th>CRG</th>
           </tr>
         </thead>
         <tbody>
@@ -241,6 +259,8 @@ export function profileDetailView(data, { onRun } = {}) {
                 <td>${formatCost(r.cost_usd) || '—'}</td>
                 <td>${typeof r.wall_time_s === 'number' ? formatDuration(r.wall_time_s) : '—'}</td>
                 <td>${_iterations(r)}</td>
+                <td>${r.graphify || '—'}</td>
+                <td>${r.code_review_graph || '—'}</td>
               </tr>
             `;
           })}

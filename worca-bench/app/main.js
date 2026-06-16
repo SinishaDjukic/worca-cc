@@ -15,8 +15,9 @@ import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
+import '@shoelace-style/shoelace/dist/components/switch/switch.js';
 
-import { outcomeIcon, profileOutcome, variantFor } from './utils/badge.js';
+import { outcomeIcon, profileOutcome } from './utils/badge.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
 import {
   folderPickerTemplate,
@@ -180,16 +181,23 @@ function buildHeader(path, view) {
 
   if (path === '/profile') {
     const agg = view?.kind === 'detail' ? view.data?.aggregate : null;
+    const active = (view?.kind === 'detail' && view.data?.active) || [];
+    const isActive = active.length > 0;
     const outcome = agg ? profileOutcome(agg) : null;
     return {
       showBack: true,
       onBack: backToDashboard,
       title: agg
-        ? html`<span class="content-header-status">${unsafeHTML(outcomeIcon(outcome, 18))}</span>${agg.name}`
+        ? html`<span class="content-header-status">${
+            isActive
+              ? html`<span class="running-dot"></span>`
+              : unsafeHTML(outcomeIcon(outcome, 18))
+          }</span>${agg.name}`
         : 'Profile',
-      badge: outcome
-        ? html`<sl-badge variant="${variantFor(outcome)}" pill>${outcome}</sl-badge>`
-        : null,
+      // No single outcome badge: a multi-rep profile has reps in mixed states
+      // (running / graded / skipped). State lives in the live block, the
+      // resolved-rate stat, and the per-rep table instead.
+      badge: null,
       action: agg
         ? html`<button class="action-btn action-btn--primary" @click=${() => runProfile(agg.name)}>Run profile</button>`
         : null,
@@ -433,6 +441,8 @@ async function runProfile(name, opts = {}) {
     if (Number.isInteger(opts.reps)) body.reps = opts.reps;
     if (Number.isInteger(opts.maxInstances))
       body.maxInstances = opts.maxInstances;
+    if (opts.graphify) body.graphify = opts.graphify;
+    if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
