@@ -43,7 +43,7 @@ export function leaderboardView(data, { onSelectBenchmark } = {}) {
           : html`
         <table class="leaderboard-table">
           <thead>
-            <tr><th>#</th><th>Agent</th><th>Resolved rate</th><th>Source</th></tr>
+            <tr><th>#</th><th>Agent</th><th>Resolved rate</th><th>Date</th><th>Source</th></tr>
           </thead>
           <tbody>
             ${rows.map(
@@ -52,6 +52,7 @@ export function leaderboardView(data, { onSelectBenchmark } = {}) {
                 <td>${i + 1}</td>
                 <td>${r.agent}</td>
                 <td>${r.resolved_rate === null || r.resolved_rate === undefined ? '—' : pct(r.resolved_rate)}</td>
+                <td class="leaderboard-date">${r.date || '—'}</td>
                 <td>
                   ${
                     r.url

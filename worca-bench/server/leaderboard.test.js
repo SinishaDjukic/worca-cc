@@ -40,6 +40,32 @@ describe('parseSwebenchVerified', () => {
     expect(parseSwebenchVerified({ leaderboards: [] })).toEqual([]);
     expect(parseSwebenchVerified({})).toEqual([]);
   });
+
+  it('links to the experiments result folder when present', () => {
+    const rows = parseSwebenchVerified({
+      leaderboards: [
+        {
+          name: 'Verified',
+          results: [{ name: 'x', resolved: 50, folder: '20260101_sys' }],
+        },
+      ],
+    });
+    expect(rows[0].url).toBe(
+      'https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20260101_sys',
+    );
+  });
+
+  it('drops a non-http(s) site URL (XSS guard)', () => {
+    const rows = parseSwebenchVerified({
+      leaderboards: [
+        {
+          name: 'Verified',
+          results: [{ name: 'x', resolved: 50, site: 'javascript:alert(1)' }],
+        },
+      ],
+    });
+    expect(rows[0].url).toBeNull();
+  });
 });
 
 describe('parseCommit0Html', () => {
@@ -60,6 +86,14 @@ describe('parseCommit0Html', () => {
 
   it('dedupes by agent name and tolerates empty html', () => {
     expect(parseCommit0Html('<p>no tables</p>')).toEqual([]);
+  });
+
+  it('drops a javascript: href (XSS guard)', () => {
+    const html =
+      '<table><tbody><tr><td>Sys</td><td>40% (1/2)</td>' +
+      '<td><a href="javascript:alert(1)">x</a></td></tr></tbody></table>';
+    const rows = parseCommit0Html(html, 'https://commit-0.github.io/analysis/');
+    expect(rows[0].url).toBeNull();
   });
 });
 

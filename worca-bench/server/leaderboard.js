@@ -86,6 +86,24 @@ function localRow() {
 
 // ----------------------------- pure parsers ------------------------------ //
 
+// Browsable per-submission result folder (predictions, logs, metadata) in the
+// SWE-bench experiments repo — the exact result/report for a Verified entry.
+const SWEBENCH_EXPERIMENTS =
+  'https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/';
+
+/** Keep only http(s) URLs (XSS guard against javascript:/data: schemes). */
+function safeHttpUrl(href, base) {
+  if (!href) {
+    return null;
+  }
+  try {
+    const u = new URL(href, base);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse the SWE-bench site leaderboards.json into Verified rows (descending). */
 export function parseSwebenchVerified(data) {
   const board = (data?.leaderboards || []).find((b) => b.name === 'Verified');
@@ -94,9 +112,11 @@ export function parseSwebenchVerified(data) {
     resolved_rate: typeof r.resolved === 'number' ? r.resolved / 100 : null,
     date: r.date || null,
     source: 'swebench.com',
-    // Per-entry deep link: the system's own result page (the same link the
-    // swebench.com leaderboard uses for that row).
-    url: r.site || null,
+    // Exact result/report: the submission's experiments-repo folder when known,
+    // else the system's own site (both scheme-validated).
+    url: r.folder
+      ? `${SWEBENCH_EXPERIMENTS}${encodeURIComponent(r.folder)}`
+      : safeHttpUrl(r.site),
   }));
   return rows.sort((a, b) => (b.resolved_rate ?? -1) - (a.resolved_rate ?? -1));
 }
@@ -111,22 +131,10 @@ function stripTags(s) {
     .trim();
 }
 
-/** Resolve a possibly-relative href against the page base; null on failure. */
-function resolveHref(href, base) {
-  if (!href) {
-    return null;
-  }
-  try {
-    return new URL(href, base).href;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Parse the Commit0 analysis HTML table(s) into rows (Tests-Passed % as the rate).
  * Per-row links (the "Analysis" link, else the first link) are captured as `url`,
- * resolved to absolute against `base`.
+ * resolved to absolute against `base` and scheme-validated.
  */
 export function parseCommit0Html(html, base = SOURCES.commit0.url) {
   const rows = [];
@@ -162,7 +170,7 @@ export function parseCommit0Html(html, base = SOURCES.commit0.url) {
         resolved_rate: rate,
         date: dateCell || null,
         source: 'commit-0.github.io',
-        url: resolveHref(pick, base),
+        url: safeHttpUrl(pick, base),
       });
     }
   }
