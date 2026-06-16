@@ -9,10 +9,11 @@
 ## Problem
 
 worca's pipeline behaviour is governed by per-agent model and effort choices in templates
-(`src/worca/templates/*/template.json` → `config.agents.<agent>.{model,effort,max_turns}`),
-but there is **no objective way to measure whether one configuration is better than another**.
-Today the only feedback loops are unit/integration tests with a deterministic mock Claude
-(`tests/mock_claude/mock_claude.py`) — which validate *plumbing*, not model quality. There is no
+(`src/worca/templates/bugfix/template.json:16-31` → `config.agents.<agent>.{model,effort,max_turns}`;
+effort caps at `:12-14`), but there is **no objective way to measure whether one configuration is
+better than another**. Today the only feedback loops are unit/integration tests with a deterministic
+mock Claude whose per-agent directives are scripted, not model-driven
+(`tests/mock_claude/mock_claude.py:10-15`) — they validate *plumbing*, not model quality. There is no
 golden-task corpus, no correctness oracle, and no cross-config comparison framework (confirmed: a
 repo survey found "no existing eval/benchmark harness"). As a result, decisions like "Sonnet-at-high
 vs Opus-at-medium for the implementer" are made on intuition, and there is no regression guard against
@@ -21,17 +22,30 @@ a template change quietly degrading task success or inflating cost.
 ## Proposal
 
 Add a standalone **`worca-bench/`** subsystem at the repo root: a headless Python CLI runner that
-evaluates any worca version/branch/commit against external coding benchmarks (**SWE-bench Verified**
-and **Commit0**), plus a **worca-ui-style dashboard** (lit-html + Shoelace + esbuild + Express) for
-launching runs and visualising results. The runner installs the pinned worca version into each cloned
-benchmark repo, runs the pipeline hermetically, extracts a source-only diff, grades it with the
-benchmark's own hidden-test oracle, and joins the verdict with worca's native cost/token/iteration
-telemetry. Experiments are defined as reusable **profiles**; results land as append-only `results.jsonl`
-under a caller-supplied `--target-dir`, which the dashboard renders.
+evaluates any worca version/branch/commit against **SWE-bench Verified** and **Commit0**, plus a
+**worca-ui-style dashboard** (lit-html + Shoelace + esbuild + Express) for launching runs and
+visualising results. The runner installs the pinned worca version into each cloned benchmark repo,
+runs the pipeline hermetically, extracts a source-only diff, grades it with the benchmark's hidden-test
+oracle, and joins the verdict with worca's native cost/token/iteration telemetry. Experiments are
+reusable **profiles**; results land as append-only `results.jsonl` under a caller-supplied
+`--target-dir`, which the dashboard renders.
 
 ## Design
 
-### 1. Core principle — the runner never imports worca
+### 0. Obstacle catalog
+
+| # | Obstacle | Severity | Resolution |
+|---|----------|----------|------------|
+| O1 | A runner that `import worca`s can only ever test its own installed version, defeating requirement (1). | **critical** | Version-agnostic orchestrator: per-ref isolated venv + shell-out, never imports worca (§1). |
+| O2 | `worca init` copies the runtime from the *installed* package, so a `PYTHONPATH` shadow would not refresh the executed `.claude/worca/` runtime. | **high** | Per-version venv with a real `pip install git+…@<ref>` (§2 step 1); cache by ref-hash. |
+| O3 | worca writes `.claude/` + `.worca/` into the tree; if they leak into `git diff` the SWE-bench patch is invalid. | **high** | Harvest diff uses `':(exclude).claude' ':(exclude).worca'` pathspec on top of `init`'s gitignore (§2 step 5). |
+| O4 | Settings schema drifts across worca versions; a v0.58 key may be rejected by v0.40. | **high** | 3-layer config: version self-seeds → minimal cross-template overlay → template carries the experiment; canary launch fails fast (§5). |
+| O5 | Commit0's gold tests may sit in the tree the agent sees → contamination / reward-hacking. | **high** | Stash gold tests during the run; grade source-only diff on a pristine tree; leakage guard fails the rep (§3). |
+| O6 | Neither benchmark grades reliably on macOS / Apple Silicon (x86-Linux Docker). | **medium** | worca runs (API-bound) run anywhere; grading uses sb-cli/Modal (no local Docker) or an x86-Linux box (§Considerations). |
+| O7 | The `claude` CLI is a separate npm/binary install, independent of the worca package. | **medium** | Treat as a host prerequisite; only the worca *package* is version-pinned (§2). |
+| O8 | A full 9-stage pipeline per instance is 10–50× a single-agent submission — cost blows up across configs × reps. | **medium** | Fixed ~30–50-instance subsets, 3–5 reps; smoke on Lite/5 instances first; batched grading is re-runnable (§9). |
+
+### 1. Core principle — the runner never imports worca (O1)
 
 - **Current state:** all worca tooling (`tests/`, `worca-ui/server/process-manager.js`) either imports
   `worca` or shells out to a single installed copy.
@@ -41,8 +55,9 @@ under a caller-supplied `--target-dir`, which the dashboard renders.
   provisions an isolated venv, `pip install`s the requested worca ref into it, and shells out to that
   venv's `worca` / `python -m worca.scripts.run_pipeline`. No `worca_bench` module imports `worca`.
 
-This mirrors the existing worca-ui ↔ pipeline contract: `worca-ui/server/process-manager.js` spawns
-`run_pipeline.py` as a subprocess and reads `.worca/runs/<id>/`. `worca-bench` reuses that paradigm —
+This mirrors the existing worca-ui ↔ pipeline contract: `worca-ui/server/process-manager.js:602`
+(`spawn('python3', …)`) launches `run_pipeline.py` (`:449`, `pipelineScriptRel`) as a subprocess and
+reads `.worca/runs/<id>/`. `worca-bench` reuses that paradigm —
 the CLI is the engine, the app spawns it and reads its on-disk output.
 
 ### 2. Per-rep lifecycle (the install-into-cloned-repo flow)
@@ -68,12 +83,13 @@ For each `(instance, template, rep)` tuple the runner executes seven steps:
 
 4. LAUNCH PIPELINE
    <venv>/bin/python -m worca.scripts.run_pipeline \
-       --prompt "<problem_statement | commit0 spec>" \
-       --template <tier:name> \                # requirement (2)
-       --claude-md-mode none \                 # hermetic
-       --skip-preflight \
-       --run-id <profile>__<instance>__rep<N>
+       --prompt "<problem_statement | commit0 spec>" \   # run_pipeline.py:24
+       --template <tier:name> \                # :48     requirement (2)
+       --claude-md-mode none \                 # :67     hermetic
+       --skip-preflight \                      # :41
+       --run-id <profile>__<instance>__rep<N>  # :59
    # template/profile sets pr.defer:true → guardian commits locally, no PR/remote needed
+   # (all flags verified in src/worca/scripts/run_pipeline.py)
 
 5. HARVEST
    patch:     git -C <wt> diff <base> HEAD -- . ':(exclude).claude' ':(exclude).worca' <test-excludes>
@@ -98,6 +114,24 @@ Non-obvious constraints carried from the worca contract:
 ### 3. Grading — source-only diff on a pristine tree (unifying both benchmarks)
 
 The agent's patch is **source-only**; the harness supplies the tests. One mental model, two plugins.
+
+| Dimension | SWE-bench Verified | Commit0 (lite) |
+|-----------|--------------------|----------------|
+| Task shape | localized bug-fix from an issue | greenfield library build from spec |
+| Prompt source | `problem_statement` | spec (PDF→text) as `--guide` |
+| Oracle | `FAIL_TO_PASS`/`PASS_TO_PASS` via `test_patch` | held-out pytest suite, `commit0 test` |
+| Verdict | binary `resolved` | pass-rate (partial credit) |
+| Tests in agent's tree? | no (clean by construction) | **yes → must stash** (leakage guard) |
+| Predictions | `{instance_id, model_name_or_path, model_patch}` | committed branch in `repos/<lib>` |
+| Default grading | sb-cli (no local Docker) | local Docker backend |
+
+**Grading-backend choice** (per profile `grade.mode`):
+
+| Backend | Local Docker | Disk | Use when |
+|---------|--------------|------|----------|
+| `sb-cli` | none | none | default for SWE-bench; laptop/macOS host |
+| `modal` | none | none | cloud throughput, no local setup |
+| `local-docker` | required | ~120 GB+ | offline/air-gapped; Commit0 default |
 
 **SWE-bench Verified** (`plugins/swebench.py`):
 - Materialize `git clone <repo> && git checkout <base_commit>`; `problem_statement` → the prompt
@@ -168,10 +202,12 @@ Guards:
 
 ### 6. Telemetry capture + normalized record (requirement 4)
 
-worca already persists everything needed in `status.json`
-(`.stages.<stage>.iterations[N].{cost_usd,token_usage,effort,duration_ms,duration_api_ms,model,outcome}`,
-top-level `loop_counters`) and `events.jsonl`. The runner archives those raw, then flattens **one row
-per rep** for the dashboard:
+worca already persists everything needed. `status.json` carries top-level `loop_counters`
+(`src/worca/state/status.py:298`) and per-iteration `.stages.<stage>.iterations[N].{cost_usd,
+token_usage,effort,duration_ms,model,outcome}`; the token/cost fields are extracted from the Claude
+envelope in `src/worca/utils/token_usage.py` (`total_cost_usd` `:46`, `duration_api_ms` `:48`,
+`non_api_wait_ms` `:64`), alongside `events.jsonl`. The runner archives those raw, then flattens
+**one row per rep** for the dashboard:
 
 ```jsonc
 { "profile": "smoke-feature-opus", "benchmark": "swe-bench-verified",
@@ -212,8 +248,9 @@ The CLI writes everything under `--target-dir`; the app reads from there and can
 - **lit-html** templates (heed the `attr="val"${expr}` element-binding gotcha that silently drops
   ChildParts); **Shoelace** components.
 - The **badge-color-language** (`worca-ui/docs/badge-color-language.md`) and **card-layout**
-  (`worca-ui/docs/card-layout.md`) specs — profile/result cards follow the 4-section `.run-card` pattern
-  + a per-domain variant map (no inline `variant="success"`).
+  (`worca-ui/docs/card-layout.md:9-13`) specs — profile/result cards extend the `.run-card` base class
+  (defined in `worca-ui/app/styles.css`) following the 4-section pattern + a per-domain variant map (no
+  inline `variant="success"`).
 - `npm run build` (esbuild) + `biome` lint + `vitest`/playwright; the npm **`files` allowlist** check on
   every new `server/`/`app/` path.
 - **Views:** profile list → run detail → compare (config-vs-config) → leaderboard.
@@ -310,6 +347,14 @@ Re-grading without re-running is cheap; a single flaky rep can be re-run by id.
   stub grader) produces a valid `results.jsonl` row — **free, deterministic plumbing check**.
 - Canary path: a deliberately incompatible `(version, template)` combo is flagged + skipped, not run.
 - Playwright: dashboard loads a fixture `target-dir`, renders profile list + run detail.
+
+### Acceptance gate (done-criteria)
+The feature is **done** when, in CI:
+1. `test_swebench_lifecycle_mock` produces a schema-valid `results.jsonl` row end-to-end against a
+   mock-Claude instance (materialize → init → run → source-only diff → stub grader → normalize).
+2. `test_commit0_leakage_guard_fails_on_test_edit` passes (contamination guard active).
+3. `test_canary_skips_incompatible_combo` passes (version/template portability guard active).
+4. The dashboard Playwright smoke renders profile-list + run-detail from a fixture `target-dir`.
 
 ### Existing Tests to Update
 - None expected — additive subsystem. Add a CI job (or doc note) for the `worca-bench` package so its
