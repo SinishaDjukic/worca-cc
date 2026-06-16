@@ -27,7 +27,9 @@ import {
   addResultDir,
   loadSettings,
   removeResultDir,
+  resolveCacheDir,
   resolveResultDirs,
+  setCacheDir,
 } from './settings-store.js';
 
 /**
@@ -111,7 +113,11 @@ export function createApp(options = {}) {
       const rows = readRows();
       const reps = rows.filter((r) => (r.profile || '(unknown)') === name);
       if (reps.length > 0) {
-        return res.json({ ok: true, aggregate: aggregateProfile(name, reps), reps });
+        return res.json({
+          ok: true,
+          aggregate: aggregateProfile(name, reps),
+          reps,
+        });
       }
       const def = readDefs().find((d) => d.name === name);
       if (!def) {
@@ -188,6 +194,7 @@ export function createApp(options = {}) {
         profilesDir: def?._source_dir,
         reps: _posInt(req.body?.reps),
         maxInstances: _posInt(req.body?.maxInstances),
+        cacheDir: resolveCacheDir(settingsHome).dir,
       });
       res.json({ ok: true, pid });
     } catch (err) {
@@ -204,6 +211,7 @@ export function createApp(options = {}) {
       primary: resolved.primary, // launch --target-dir, always included
       configured: loadSettings(settingsHome).result_dirs,
       effective: resolved.dirs, // what the dashboard actually reads
+      cache: resolveCacheDir(settingsHome), // { dir, source } for HF/repo blobs
     };
   };
 
@@ -238,6 +246,16 @@ export function createApp(options = {}) {
       res.json(settingsPayload());
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Set (body.dir) or clear (empty body.dir) the benchmark cache dir.
+  app.post('/api/settings/cache-dir', (req, res) => {
+    try {
+      setCacheDir(req.body?.dir, settingsHome);
+      res.json(settingsPayload());
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
     }
   });
 

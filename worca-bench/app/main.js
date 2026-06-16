@@ -301,6 +301,7 @@ function renderView(view) {
       return settingsView(view.data, {
         onAddDir: addDir,
         onRemoveDir: removeDir,
+        onSetCache: setCache,
       });
     default:
       return errorView('Unknown view');
@@ -459,6 +460,34 @@ async function mutateSettingsDir(method, dir) {
 
 const addDir = (dir) => mutateSettingsDir('POST', dir);
 const removeDir = (dir) => mutateSettingsDir('DELETE', dir);
+
+async function setCache(dir) {
+  try {
+    const res = await fetch('/api/settings/cache-dir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      state.view = {
+        kind: 'settings',
+        data: {
+          ...(state.view?.data || {}),
+          error: data.error || 'request failed',
+        },
+      };
+    } else {
+      state.view = { kind: 'settings', data };
+    }
+  } catch (err) {
+    state.view = {
+      kind: 'settings',
+      data: { ...(state.view?.data || {}), error: err.message },
+    };
+  }
+  rerender();
+}
 
 window.addEventListener('hashchange', route);
 route();

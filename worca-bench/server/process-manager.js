@@ -22,6 +22,7 @@ const HARD_CAP_MS = 180000;
  *        (so a profile authored in a configured, non-primary dir is findable)
  * @param {number} [opts.reps]          per-run override of the profile's reps
  * @param {number} [opts.maxInstances]  cap the instance count for this run
+ * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
  * @returns {Promise<{pid: number}>}
@@ -32,6 +33,7 @@ export function runBenchmark({
   profilesDir,
   reps,
   maxInstances,
+  cacheDir,
   _spawn = spawn,
 } = {}) {
   if (!profile) {
@@ -54,6 +56,9 @@ export function runBenchmark({
   }
   if (Number.isInteger(maxInstances) && maxInstances >= 1) {
     args.push('--max-instances', String(maxInstances));
+  }
+  if (cacheDir) {
+    args.push('--cache-dir', cacheDir);
   }
 
   return new Promise((resolve, reject) => {

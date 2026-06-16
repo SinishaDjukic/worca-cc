@@ -95,6 +95,49 @@ export function removeResultDir(dir, home) {
 }
 
 /**
+ * Resolve the benchmark cache dir (HuggingFace datasets + repo mirrors — large,
+ * kept off the user's home by default-override). Precedence:
+ *   settings.cache_dir -> WORCA_BENCH_CACHE env -> ~/.worca-bench/cache.
+ *
+ * @returns {{ dir: string, source: 'settings'|'env'|'default' }}
+ */
+export function resolveCacheDir(home) {
+  const fromSettings = loadSettings(home).cache_dir;
+  const fromEnv = process.env.WORCA_BENCH_CACHE;
+  if (fromSettings) {
+    return { dir: resolve(fromSettings), source: 'settings' };
+  }
+  if (fromEnv) {
+    return { dir: resolve(fromEnv), source: 'env' };
+  }
+  return { dir: join(settingsHome(home), 'cache'), source: 'default' };
+}
+
+/**
+ * Set the cache dir (validates an existing directory) or clear it with a
+ * null/empty value (falls back to env/default). Returns updated settings.
+ */
+export function setCacheDir(dir, home) {
+  const settings = loadSettings(home);
+  if (!dir) {
+    settings.cache_dir = undefined;
+    delete settings.cache_dir;
+    saveSettings(settings, home);
+    return settings;
+  }
+  if (typeof dir !== 'string') {
+    throw new Error('dir is required');
+  }
+  const abs = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
+  if (!isDir(abs)) {
+    throw new Error(`not a directory: ${abs}`);
+  }
+  settings.cache_dir = abs;
+  saveSettings(settings, home);
+  return settings;
+}
+
+/**
  * The effective set of result dirs to read: the always-included primary
  * (launch) dir first, then the configured dirs — absolute, deduped, and only
  * those that currently exist.

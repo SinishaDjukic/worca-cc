@@ -45,6 +45,7 @@ def _args(tmp_path, profiles_dir, **over):
         no_canary=True,
         max_instances=None,
         reps=None,
+        cache_dir=None,
         keep_work=False,
     )
     base.update(over)
@@ -88,3 +89,34 @@ def test_cmd_run_rejects_non_positive_reps(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_profile", lambda *a, **k: None)
     rc = cli.cmd_run(_args(tmp_path, profiles_dir, reps=0))
     assert rc == 2
+
+
+def test_cmd_run_threads_cache_dir(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["cache_dir"] = kw.get("cache_dir")
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    cli.cmd_run(_args(tmp_path, profiles_dir, cache_dir=str(cache)))
+    assert str(captured["cache_dir"]) == str(cache)
+
+
+def test_cmd_run_cache_dir_falls_back_to_env(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    cache = tmp_path / "envcache"
+    cache.mkdir()
+    monkeypatch.setenv("WORCA_BENCH_CACHE", str(cache))
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["cache_dir"] = kw.get("cache_dir")
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    cli.cmd_run(_args(tmp_path, profiles_dir, cache_dir=None))
+    assert str(captured["cache_dir"]) == str(cache)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,12 +51,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("--reps must be >= 1", file=sys.stderr)
             return 2
         profile.reps = reps_override
+    # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
+    cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
     summary = run_profile(
         profile, target,
         dry_run=args.dry_run,
         canary_first=not args.no_canary,
         max_instances=args.max_instances,
         keep_work=args.keep_work,
+        cache_dir=Path(cache_dir) if cache_dir else None,
     )
     if args.dry_run:
         print(f"[dry-run] profile={summary.profile} worca={summary.worca_ref} "
@@ -114,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--no-canary", action="store_true", help="skip the per-template canary")
     p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
     p_run.add_argument("--reps", type=int, help="override the profile's reps for this run")
+    p_run.add_argument("--cache-dir", help="benchmark cache dir (HF datasets / repo mirrors)")
     p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
     p_run.set_defaults(func=cmd_run)
 

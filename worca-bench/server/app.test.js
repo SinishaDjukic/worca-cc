@@ -110,6 +110,55 @@ describe('createApp API', () => {
     });
   });
 
+  it('GET /api/settings exposes the resolved cache dir', async () => {
+    await withServer(dir, {}, async (base) => {
+      const data = await (await fetch(`${base}/api/settings`)).json();
+      expect(data.cache).toBeTruthy();
+      expect(typeof data.cache.dir).toBe('string');
+      expect(['settings', 'env', 'default']).toContain(data.cache.source);
+    });
+  });
+
+  it('POST /api/settings/cache-dir sets then clears the cache dir', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'bench-cache-'));
+    await withServer(dir, {}, async (base) => {
+      let res = await fetch(`${base}/api/settings/cache-dir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: cacheDir }),
+      });
+      let data = await res.json();
+      expect(data.cache.source).toBe('settings');
+      expect(data.cache.dir).toBe(cacheDir);
+      // empty value resets to default
+      res = await fetch(`${base}/api/settings/cache-dir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: '' }),
+      });
+      data = await res.json();
+      expect(data.cache.source).toBe('default');
+    });
+    rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  it('POST /api/run forwards the resolved cacheDir to the launcher', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 8 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1' }),
+      });
+      expect(typeof captured.cacheDir).toBe('string');
+      expect(captured.cacheDir.length).toBeGreaterThan(0);
+    });
+  });
+
   it('GET /api/leaderboard returns rows (offline fallback, hermetic)', async () => {
     await withServer(dir, { leaderboardOffline: true }, async (base) => {
       const { ok, rows, benchmark } = await (

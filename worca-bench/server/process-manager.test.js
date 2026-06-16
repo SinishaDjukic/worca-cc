@@ -98,6 +98,24 @@ describe('runBenchmark', () => {
     expect(capturedArgs).not.toContain('--max-instances');
   });
 
+  it('appends --cache-dir when given', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(9);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      cacheDir: '/Volumes/big/cache',
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--cache-dir');
+    expect(capturedArgs[capturedArgs.indexOf('--cache-dir') + 1]).toBe(
+      '/Volumes/big/cache',
+    );
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

@@ -1,13 +1,15 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addResultDir,
   loadSettings,
   removeResultDir,
+  resolveCacheDir,
   resolveResultDirs,
   saveSettings,
+  setCacheDir,
 } from './settings-store.js';
 
 let home;
@@ -64,5 +66,52 @@ describe('settings-store', () => {
     expect(dirs).toContain(resolve(dirB));
     expect(dirs).not.toContain('/gone/missing');
     expect(configured).toContain('/gone/missing'); // still recorded in settings.json
+  });
+
+  describe('cache dir', () => {
+    const ENV = 'WORCA_BENCH_CACHE';
+    let saved;
+    beforeEach(() => {
+      saved = process.env[ENV];
+      delete process.env[ENV];
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env[ENV];
+      else process.env[ENV] = saved;
+    });
+
+    it('defaults to <home>/cache when unset', () => {
+      const { dir, source } = resolveCacheDir(home);
+      expect(dir).toBe(join(home, 'cache'));
+      expect(source).toBe('default');
+    });
+
+    it('prefers the env var over the default', () => {
+      process.env[ENV] = dirB;
+      const { dir, source } = resolveCacheDir(home);
+      expect(dir).toBe(resolve(dirB));
+      expect(source).toBe('env');
+    });
+
+    it('prefers settings.cache_dir over the env var', () => {
+      process.env[ENV] = dirB;
+      setCacheDir(dirA, home);
+      const { dir, source } = resolveCacheDir(home);
+      expect(dir).toBe(resolve(dirA));
+      expect(source).toBe('settings');
+    });
+
+    it('rejects a non-existent cache dir', () => {
+      expect(() => setCacheDir('/no/such/cache', home)).toThrow(
+        /not a directory/,
+      );
+    });
+
+    it('clears the cache dir with an empty value (back to default)', () => {
+      setCacheDir(dirA, home);
+      setCacheDir('', home);
+      expect(loadSettings(home).cache_dir).toBeUndefined();
+      expect(resolveCacheDir(home).source).toBe('default');
+    });
   });
 });

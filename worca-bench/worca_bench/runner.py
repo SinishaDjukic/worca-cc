@@ -8,6 +8,7 @@ fails fast on configs a worca version rejects, before the parallel sweep.
 
 from __future__ import annotations
 
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -77,6 +78,19 @@ def plan_reps(profile: Profile, instances: list[Instance]) -> list[tuple[Instanc
     return [(inst, rep) for inst in instances for rep in range(1, profile.reps + 1)]
 
 
+def _apply_cache_env(cache_dir: Path) -> None:
+    """Point HuggingFace's dataset cache at the benchmark cache dir so the large
+    SWE-bench/Commit0 dataset downloads land there (not the user's ~/.cache). Set
+    before any ``datasets.load_dataset`` call (plugin.load_instances). Also flows
+    to the run_pipeline subprocess, which inherits os.environ."""
+    cache_dir = Path(cache_dir)
+    hf = cache_dir / "hf"
+    hf.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(hf))
+    os.environ["HF_DATASETS_CACHE"] = str(hf / "datasets")
+    os.environ["WORCA_BENCH_CACHE"] = str(cache_dir)
+
+
 def run_profile(
     profile: Profile,
     target_dir: Path,
@@ -85,9 +99,12 @@ def run_profile(
     canary_first: bool = True,
     max_instances: int | None = None,
     keep_work: bool = False,
+    cache_dir: Path | None = None,
 ) -> RunSummary:
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+    if cache_dir is not None:
+        _apply_cache_env(cache_dir)
     plugin = get_plugin(profile)
     instances = plugin.load_instances(profile)
     if max_instances is not None:
