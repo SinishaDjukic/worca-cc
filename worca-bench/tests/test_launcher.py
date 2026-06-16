@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from worca_bench.config import Profile
-from worca_bench.launcher import build_launch_env
+from worca_bench.launcher import _as_text, build_launch_env
 from worca_bench.venvs import WorcaEnv
 
 
@@ -29,3 +29,11 @@ def test_pr_defer_disabled_omits_env_signal(tmp_path: Path):
     profile = Profile(name="p", benchmark="swe-bench-verified", pr_defer=False)
     env = build_launch_env(profile, _wenv(), run_scratch=tmp_path / "s")
     assert "WORCA_DEFER_PR" not in env
+
+
+def test_as_text_coerces_bytes_str_none():
+    # The timeout path can yield bytes even under text=True — must not crash.
+    assert _as_text(b"hello") == "hello"
+    assert _as_text("hello") == "hello"
+    assert _as_text(None) == ""
+    assert _as_text(b"\xff\xfe") == "��"  # invalid bytes -> replacement

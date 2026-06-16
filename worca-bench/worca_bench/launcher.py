@@ -122,6 +122,15 @@ def build_launch_env(
     return env
 
 
+def _as_text(s) -> str:
+    """Coerce subprocess output (str | bytes | None) to str."""
+    if s is None:
+        return ""
+    if isinstance(s, bytes):
+        return s.decode("utf-8", "replace")
+    return s
+
+
 def launch(
     profile: Profile,
     wenv: WorcaEnv,
@@ -154,7 +163,11 @@ def launch(
         )
         rc, out, err = proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
-        rc, out, err = 124, e.stdout or "", (e.stderr or "") + "\n[worca-bench] run timed out"
+        # On timeout the partial stdout/stderr can come back as bytes even under
+        # text=True — decode defensively so the timeout path never crashes.
+        out = _as_text(e.stdout)
+        err = _as_text(e.stderr) + "\n[worca-bench] run timed out"
+        rc = 124
 
     run_dir = tree / ".worca" / "runs" / run_id
     status_path = run_dir / "status.json"
