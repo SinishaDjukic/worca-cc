@@ -19,13 +19,20 @@ export function compareView(rows) {
           <thead>
             <tr>
               <th>Metric</th>
-              ${rows.map((r) => {
-                const o = profileOutcome(r);
-                return html`<th><span class="compare-col-name">${r.name}</span> <sl-badge variant="${variantFor(o)}" pill>${o}</sl-badge></th>`;
-              })}
+              ${rows.map(
+                (r) =>
+                  html`<th><span class="compare-col-name">${r.name}</span></th>`,
+              )}
             </tr>
           </thead>
           <tbody>
+            <tr>
+              <td class="compare-metric">Status</td>
+              ${rows.map((r) => {
+                const o = profileOutcome(r);
+                return html`<td><sl-badge variant="${variantFor(o)}" pill>${o}</sl-badge></td>`;
+              })}
+            </tr>
             <tr>
               <td class="compare-metric">Reps (n)</td>
               ${rows.map((r) => html`<td>${r.n ?? r.reps ?? 0}</td>`)}
