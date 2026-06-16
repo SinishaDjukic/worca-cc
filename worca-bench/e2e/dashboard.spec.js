@@ -74,6 +74,28 @@ test('navigates from dashboard to leaderboard via the sidebar', async ({
   ).toHaveClass(/active/);
 });
 
+test('leaderboard ranks local profile runs into the table', async ({
+  page,
+}) => {
+  await page.goto(`${srv.url}/#/leaderboard`);
+  await expect(page.locator('.leaderboard-table')).toBeVisible();
+  // Both seeded swe-bench-verified profiles surface as highlighted local rows…
+  await expect(page.locator('.leaderboard-row--local')).toHaveCount(2);
+  await expect(
+    page.locator('.leaderboard-row--local', {
+      hasText: 'smoke-quickfix-sonnet',
+    }),
+  ).toBeVisible();
+  // …and the "this run" placeholder is gone once real local rows exist.
+  await expect(page.getByText('worca (this run)')).toHaveCount(0);
+});
+
+test('top-level sidebar sections render no back button', async ({ page }) => {
+  await page.goto(`${srv.url}/#/leaderboard`);
+  await expect(page.locator('.leaderboard-table')).toBeVisible();
+  await expect(page.locator('.content-header-back')).toHaveCount(0);
+});
+
 test('sub-pages render a back button that returns to the dashboard', async ({
   page,
 }) => {

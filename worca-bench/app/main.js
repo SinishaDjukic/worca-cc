@@ -136,20 +136,19 @@ function buildHeader(path, view) {
     };
   }
 
+  // Compare / Leaderboard / Settings are top-level sidebar sections (peers of
+  // the dashboard), so they carry no back button — only true drill-downs (the
+  // profile detail above) do. Navigation back to the dashboard is the sidebar.
   if (path === '/compare') {
-    return {
-      showBack: true,
-      onBack: backToDashboard,
-      title: 'Compare Profiles',
-    };
+    return { showBack: false, title: 'Compare Profiles' };
   }
 
   if (path === '/leaderboard') {
-    return { showBack: true, onBack: backToDashboard, title: 'Leaderboard' };
+    return { showBack: false, title: 'Leaderboard' };
   }
 
   if (path === '/settings') {
-    return { showBack: true, onBack: backToDashboard, title: 'Settings' };
+    return { showBack: false, title: 'Settings' };
   }
 
   // Dashboard (home) — no back button.

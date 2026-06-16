@@ -84,6 +84,43 @@ function localRow() {
   };
 }
 
+/**
+ * Turn local profile aggregates into leaderboard rows for `benchmark`. Only
+ * profiles that have actually run (reps > 0) and target this benchmark are
+ * included; each links to its profile-detail page in the dashboard.
+ *
+ * @param {object[]} aggregates  per-profile summaries (aggregateByProfile)
+ * @param {string} benchmark
+ * @returns {Array<{agent,resolved_rate,source,date,url}>}
+ */
+export function localLeaderboardRows(aggregates, benchmark) {
+  const key = normalizeKey(benchmark);
+  return (aggregates || [])
+    .filter((a) => a && a.reps > 0 && normalizeKey(a.benchmark) === key)
+    .map((a) => ({
+      agent: a.name,
+      resolved_rate:
+        typeof a.resolved_rate === 'number' ? a.resolved_rate : null,
+      source: 'local',
+      date: a.last_run ? String(a.last_run).slice(0, 10) : null,
+      url: `#/profile?name=${encodeURIComponent(a.name)}`,
+    }));
+}
+
+/**
+ * Combine local + public rows. With real local rows we rank them in by
+ * resolved rate (local rows are highlighted in the view); with none we keep
+ * the single "this run" placeholder pinned at the top as a hint.
+ */
+function mergeRows(localRows, publicRows) {
+  if (!localRows || localRows.length === 0) {
+    return [localRow(), ...publicRows];
+  }
+  return [...localRows, ...publicRows].sort(
+    (a, b) => (b.resolved_rate ?? -1) - (a.resolved_rate ?? -1),
+  );
+}
+
 // ----------------------------- pure parsers ------------------------------ //
 
 // Browsable per-submission result folder (predictions, logs, metadata) in the
@@ -207,10 +244,11 @@ async function fetchLive(key, fetchImpl, timeoutMs) {
 
 /**
  * Return leaderboard rows for a benchmark — live, cached, with offline fallback.
- * The first row is always the local "this run" placeholder.
+ * Local rows (this machine's runs) are passed via opts.localRows and ranked in
+ * by resolved rate; with none, a single "this run" placeholder is pinned on top.
  *
  * @param {string} benchmark
- * @param {{offline?: boolean, fetchImpl?: typeof fetch, now?: () => number, timeoutMs?: number}} [opts]
+ * @param {{offline?: boolean, fetchImpl?: typeof fetch, now?: () => number, timeoutMs?: number, localRows?: object[]}} [opts]
  * @returns {Promise<Array<{agent:string, resolved_rate:number|null, source:string, date:string|null}>>}
  */
 export async function getLeaderboard(benchmark, opts = {}) {
@@ -223,16 +261,17 @@ export async function getLeaderboard(benchmark, opts = {}) {
     fetchImpl = globalThis.fetch,
     now = Date.now,
     timeoutMs = 5000,
+    localRows = [],
   } = opts;
 
   if (offline) {
-    return [localRow(), ...FALLBACK[key]];
+    return mergeRows(localRows, FALLBACK[key]);
   }
 
   const ts = now();
   const cached = _cache.get(key);
   if (cached && ts - cached.fetchedAt < TTL_MS) {
-    return [localRow(), ...cached.rows];
+    return mergeRows(localRows, cached.rows);
   }
 
   try {
@@ -241,13 +280,13 @@ export async function getLeaderboard(benchmark, opts = {}) {
       throw new Error('no rows parsed');
     }
     _cache.set(key, { rows, fetchedAt: ts });
-    return [localRow(), ...rows];
+    return mergeRows(localRows, rows);
   } catch {
     // stale-on-error, then static fallback
     if (cached) {
-      return [localRow(), ...cached.rows];
+      return mergeRows(localRows, cached.rows);
     }
-    return [localRow(), ...FALLBACK[key]];
+    return mergeRows(localRows, FALLBACK[key]);
   }
 }
 

@@ -5,10 +5,10 @@
 // `.sidebar` with a logo block and `.sidebar-section` / `.sidebar-item`
 // nav entries. The active section is highlighted via the `.active` class.
 //
-// Unlike worca-ui this rail is stateless and collapse-free — it only owns
-// the three benchmark sections (Dashboard, Compare, Leaderboard). Dashboard
-// is the home item; Compare and Leaderboard are reachable from here and from
-// the per-page back button in the content header.
+// Unlike worca-ui this rail is stateless and collapse-free. Dashboard,
+// Compare, Leaderboard, and Settings are all top-level sections reached from
+// here; only true drill-downs (profile detail) get a content-header back
+// button — the peer sections rely on the sidebar to navigate.
 
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';

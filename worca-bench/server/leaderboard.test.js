@@ -3,6 +3,7 @@ import {
   _resetLeaderboardCache,
   getLeaderboard,
   leaderboardBenchmarks,
+  localLeaderboardRows,
   parseCommit0Html,
   parseSwebenchVerified,
 } from './leaderboard.js';
@@ -139,5 +140,76 @@ describe('getLeaderboard', () => {
     expect(leaderboardBenchmarks()).toEqual(['swe-bench-verified', 'commit0']);
     const rows = await getLeaderboard('commit-0', { offline: true });
     expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it('ranks real local rows into the table (no placeholder) when present', async () => {
+    const localRows = localLeaderboardRows(
+      [
+        {
+          name: 'demo-mock',
+          benchmark: 'swe-bench-verified',
+          reps: 4,
+          resolved_rate: 0.99,
+          last_run: '2026-06-16T10:00:00Z',
+        },
+      ],
+      'swe-bench-verified',
+    );
+    const rows = await getLeaderboard('swe-bench-verified', {
+      offline: true,
+      localRows,
+    });
+    // No "this run" placeholder when we have a real local row…
+    expect(rows.some((r) => r.agent === 'worca (this run)')).toBe(false);
+    // …and the local row outranks the offline fallback (0.99 > 0.70).
+    expect(rows[0].source).toBe('local');
+    expect(rows[0].agent).toBe('demo-mock');
+    expect(rows[0].date).toBe('2026-06-16');
+    expect(rows[0].url).toBe('#/profile?name=demo-mock');
+  });
+});
+
+describe('localLeaderboardRows', () => {
+  const aggs = [
+    {
+      name: 'sweb-a',
+      benchmark: 'swe-bench-verified',
+      reps: 2,
+      resolved_rate: 0.5,
+      last_run: '2026-01-02T00:00:00Z',
+    },
+    {
+      name: 'c0-a',
+      benchmark: 'commit-0',
+      reps: 1,
+      resolved_rate: 1,
+      last_run: '2026-01-03',
+    },
+    {
+      name: 'no-runs',
+      benchmark: 'swe-bench-verified',
+      reps: 0,
+      resolved_rate: 0,
+      last_run: null,
+    },
+  ];
+
+  it('keeps only run profiles targeting the requested benchmark', () => {
+    const rows = localLeaderboardRows(aggs, 'swe-bench-verified');
+    expect(rows.map((r) => r.agent)).toEqual(['sweb-a']);
+    expect(rows[0].source).toBe('local');
+    expect(rows[0].date).toBe('2026-01-02');
+    expect(rows[0].url).toBe('#/profile?name=sweb-a');
+  });
+
+  it('normalizes the commit-0 / commit0 benchmark alias', () => {
+    expect(localLeaderboardRows(aggs, 'commit0').map((r) => r.agent)).toEqual([
+      'c0-a',
+    ]);
+  });
+
+  it('tolerates empty / missing aggregates', () => {
+    expect(localLeaderboardRows(undefined, 'commit0')).toEqual([]);
+    expect(localLeaderboardRows([], 'swe-bench-verified')).toEqual([]);
   });
 });

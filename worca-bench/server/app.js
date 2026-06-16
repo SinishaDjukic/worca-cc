@@ -10,7 +10,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
-import { getLeaderboard, leaderboardBenchmarks } from './leaderboard.js';
+import {
+  getLeaderboard,
+  leaderboardBenchmarks,
+  localLeaderboardRows,
+} from './leaderboard.js';
 import { runBenchmark } from './process-manager.js';
 import {
   aggregateByProfile,
@@ -138,11 +142,16 @@ export function createApp(options = {}) {
   app.get('/api/leaderboard', async (req, res) => {
     try {
       const benchmark = String(req.query.benchmark || 'swe-bench-verified');
+      const localRows = localLeaderboardRows(
+        aggregateByProfile(readRows()),
+        benchmark,
+      );
       res.json({
         ok: true,
         benchmark,
         rows: await getLeaderboard(benchmark, {
           offline: options.leaderboardOffline,
+          localRows,
         }),
         benchmarks: leaderboardBenchmarks(),
       });
