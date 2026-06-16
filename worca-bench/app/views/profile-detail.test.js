@@ -59,7 +59,10 @@ describe('profileDetailView', () => {
         active: [
           {
             kind: 'rep',
-            pipeline_status: 'running',
+            phase: 'running',
+            instance: 'astropy__astropy-12907',
+            rep: 1,
+            started_at: '2026-06-16T10:00:00Z',
             stages: [
               { name: 'plan', status: 'completed' },
               { name: 'coordinate', status: 'in_progress' },
@@ -76,6 +79,29 @@ describe('profileDetailView', () => {
     expect(out).toContain('stage-chip--pending'); // implement
     expect(out).toContain('stage-chip--skipped'); // test
     expect(out).toContain('coordinate');
+    expect(out).toContain('astropy__astropy-12907'); // instance shown
+    expect(out).toContain('rep 1');
+    expect(out).toContain('grade'); // grading pseudo-chip
+  });
+
+  it('labels the grading phase and marks the grade chip active', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: { ...data.aggregate, active: true },
+        reps: [],
+        active: [
+          {
+            kind: 'rep',
+            phase: 'grading',
+            instance: 'x',
+            rep: 1,
+            stages: [{ name: 'implement', status: 'completed' }],
+          },
+        ],
+      }),
+    );
+    expect(out).toContain('Grading');
+    expect(out).toContain('grade');
   });
 
   it('renders no live section when there are no active runs', () => {

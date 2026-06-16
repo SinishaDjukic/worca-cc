@@ -43,8 +43,11 @@ describe('discoverActive', () => {
     });
     const [run] = discoverActive(dir);
     expect(run.profile).toBe('p1');
+    expect(run.instance).toBe('astropy__astropy-1');
+    expect(run.rep).toBe(1);
     expect(run.kind).toBe('rep');
     expect(run.pipeline_status).toBe('running');
+    expect(run.phase).toBe('running');
     expect(run.stage).toBe('coordinate'); // the in_progress stage
     expect(run.stages.map((s) => `${s.name}:${s.status}`)).toEqual([
       'preflight:completed',
@@ -53,6 +56,18 @@ describe('discoverActive', () => {
       'implement:pending',
     ]);
     expect(run.stages[1].model).toBe('opus'); // model_alias preferred
+  });
+
+  it('reports the grading phase when the pipeline is completed but still active', () => {
+    seedStatus('p1', 'i', 1, 'p1__i__rep1', {
+      run_id: 'p1__i__rep1',
+      pipeline_status: 'completed',
+      stages: {
+        plan: { status: 'completed' },
+        implement: { status: 'completed' },
+      },
+    });
+    expect(discoverActive(dir)[0].phase).toBe('grading');
   });
 
   it('flags a canary run by its run_id', () => {

@@ -11,7 +11,7 @@
 // work/" IS the live window.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 
 const STATUS_SEG = `${'.worca'}/runs`; // status.json lives at .worca/runs/<id>/status.json
 
@@ -66,6 +66,26 @@ function currentStage(stageList) {
 }
 
 /**
+ * worca-bench phase. The pipeline subprocess writes status.json; once it
+ * reports `completed` but the work tree still exists, worca-bench is grading
+ * (diff extraction + the grader), which is not a worca pipeline stage.
+ */
+function phaseOf(pipelineStatus) {
+  if (pipelineStatus === 'failed' || pipelineStatus === 'error')
+    return 'failed';
+  if (pipelineStatus === 'completed') return 'grading';
+  return 'running';
+}
+
+/** Derive { instance, rep } from the work-tree path under work/<profile>/. */
+function instanceRep(profileWorkDir, statusFile) {
+  const segs = relative(profileWorkDir, statusFile).split(sep);
+  const instance = segs[0] || null;
+  const m = (segs[1] || '').match(/^rep(\d+)$/);
+  return { instance, rep: m ? Number(m[1]) : null };
+}
+
+/**
  * Discover active (in-flight) runs under one target dir.
  *
  * @param {string} dir
@@ -78,7 +98,8 @@ export function discoverActive(dir) {
   for (const p of safeReaddir(workRoot)) {
     if (!p.isDirectory()) continue;
     const profile = p.name;
-    for (const file of findStatusFiles(join(workRoot, profile))) {
+    const profileWorkDir = join(workRoot, profile);
+    for (const file of findStatusFiles(profileWorkDir)) {
       let s;
       try {
         s = JSON.parse(readFileSync(file, 'utf8'));
@@ -87,11 +108,16 @@ export function discoverActive(dir) {
       }
       const runId = s.run_id || basename(join(file, '..'));
       const stages = summarizeStages(s.stages);
+      const pipelineStatus = s.pipeline_status || 'running';
+      const { instance, rep } = instanceRep(profileWorkDir, file);
       out.push({
         profile,
+        instance,
+        rep,
         run_id: runId,
         kind: String(runId).startsWith('canary') ? 'canary' : 'rep',
-        pipeline_status: s.pipeline_status || 'running',
+        pipeline_status: pipelineStatus,
+        phase: phaseOf(pipelineStatus),
         stage: currentStage(stages),
         stages,
         started_at: s.started_at || null,

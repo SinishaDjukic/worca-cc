@@ -887,14 +887,29 @@ code {
   margin-bottom: 10px;
   color: var(--accent);
 }
+.live-run--failed {
+  border-color: var(--status-failed);
+}
+.live-run--failed .live-run-head {
+  color: var(--status-failed);
+}
 .live-run-label {
   font-weight: 600;
   font-size: 13px;
 }
-.live-run-status {
+.live-run-stage {
   font-size: 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--fg);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+.live-run-meta {
+  margin-left: auto;
+  font-size: 11.5px;
   color: var(--muted);
-  text-transform: capitalize;
+  font-variant: tabular-nums;
 }
 .stage-chips {
   display: flex;

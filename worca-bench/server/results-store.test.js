@@ -118,6 +118,50 @@ describe('aggregateProfile', () => {
     expect(agg.mean_cost_usd).toBeNull();
     expect(agg.mean_iterations).toBeNull();
   });
+
+  it('dedupes re-runs by (instance, rep), keeping the latest', () => {
+    const agg = aggregateProfile('p1', [
+      row({
+        status: 'skipped',
+        resolved: null,
+        completed_at: '2026-06-16T09:00:00Z',
+      }),
+      row({
+        status: 'graded',
+        resolved: true,
+        completed_at: '2026-06-16T11:00:00Z',
+      }),
+    ]);
+    expect(agg.reps).toBe(1); // the stale skipped attempt is superseded
+    expect(agg.resolved_rate).toBe(1);
+  });
+
+  it('excludes skipped reps from cost/wall/iteration means', () => {
+    const agg = aggregateProfile('p1', [
+      row({
+        instance_id: 'a',
+        rep: 1,
+        status: 'graded',
+        resolved: true,
+        cost_usd: 1.0,
+        wall_time_s: 100,
+        loop_counters: { implement_test: 2 },
+      }),
+      row({
+        instance_id: 'b',
+        rep: 1,
+        status: 'skipped',
+        resolved: null,
+        cost_usd: 0,
+        wall_time_s: 0,
+        loop_counters: {},
+      }),
+    ]);
+    expect(agg.reps).toBe(2); // both count as reps
+    expect(agg.mean_cost_usd).toBe(1.0); // the skipped 0 is excluded
+    expect(agg.mean_wall_s).toBe(100);
+    expect(agg.mean_iterations).toBe(2);
+  });
 });
 
 describe('readProfileDefs', () => {
@@ -160,9 +204,9 @@ describe('readProfileDefs', () => {
 describe('aggregateByProfile', () => {
   it('groups rows by profile and sorts by name', () => {
     const rows = [
-      row({ profile: 'zeta', resolved: true }),
-      row({ profile: 'alpha', resolved: false }),
-      row({ profile: 'alpha', resolved: true }),
+      row({ profile: 'zeta', rep: 1, resolved: true }),
+      row({ profile: 'alpha', rep: 1, resolved: false }),
+      row({ profile: 'alpha', rep: 2, resolved: true }),
     ];
     const out = aggregateByProfile(rows);
     expect(out.map((a) => a.name)).toEqual(['alpha', 'zeta']);

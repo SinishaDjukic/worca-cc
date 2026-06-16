@@ -26,6 +26,13 @@ import {
  * @param {Set<string>} [handlers.selected]  names currently selected to compare
  * @param {(name: string) => void} [handlers.onToggleSelect]
  */
+/** Compact active-state label for the card badge. */
+function _activeLabel(agg) {
+  if (agg.active_kind === 'canary') return 'canary';
+  if (agg.phase === 'grading') return 'grading';
+  return agg.stage ? `running · ${agg.stage}` : 'running';
+}
+
 export function profileCardView(
   agg,
   { onOpen, onRun, selected, onToggleSelect } = {},
@@ -61,7 +68,7 @@ export function profileCardView(
         ${
           agg.active
             ? html`<sl-badge variant="primary" pill class="run-card-running"
-                ><span class="running-dot"></span>${agg.active_kind === 'canary' ? 'canary' : 'running'}${agg.stage ? ` · ${agg.stage}` : ''}</sl-badge
+                ><span class="running-dot"></span>${_activeLabel(agg)}</sl-badge
               >`
             : html`<sl-badge variant="${variant}" pill class="status-badge-${outcome}">${outcome}</sl-badge>`
         }

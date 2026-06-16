@@ -22,6 +22,7 @@ import {
   aggregateByProfile,
   aggregateProfile,
   compareProfiles,
+  dedupeReps,
   readProfileDefsMulti,
   readResultsMulti,
 } from './results-store.js';
@@ -109,6 +110,7 @@ export function createApp(options = {}) {
         if (run) {
           agg.active = true;
           agg.stage = run.stage;
+          agg.phase = run.phase;
           agg.pipeline_status = run.pipeline_status;
           agg.active_kind = run.kind;
         }
@@ -134,7 +136,7 @@ export function createApp(options = {}) {
         return res.json({
           ok: true,
           aggregate: aggregateProfile(name, reps),
-          reps,
+          reps: dedupeReps(reps), // collapse re-runs in the per-rep table
           active,
         });
       }

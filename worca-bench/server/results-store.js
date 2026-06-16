@@ -131,6 +131,26 @@ function _mean(values) {
   return sum / values.length;
 }
 
+/**
+ * Collapse re-runs: keep only the most recent row per (instance_id, rep) so a
+ * re-run supersedes an earlier skipped/errored attempt instead of accumulating.
+ * Latest = greatest completed_at (else started_at). Order is otherwise preserved.
+ *
+ * @param {object[]} rows
+ * @returns {object[]}
+ */
+export function dedupeReps(rows) {
+  const byKey = new Map();
+  for (const r of rows) {
+    const key = `${r.instance_id ?? '?'}::${r.rep ?? '?'}`;
+    const ts = r.completed_at || r.started_at || '';
+    const cur = byKey.get(key);
+    const curTs = cur ? cur.completed_at || cur.started_at || '' : '';
+    if (!cur || ts >= curTs) byKey.set(key, r);
+  }
+  return [...byKey.values()];
+}
+
 function _iterations(row) {
   const counters = row.loop_counters;
   if (!counters || typeof counters !== 'object') return 0;
@@ -152,17 +172,21 @@ function _iterations(row) {
  * @param {object[]} rows  rows already filtered to this profile
  * @returns {object} aggregate summary
  */
-export function aggregateProfile(name, rows) {
+export function aggregateProfile(name, allRows) {
+  const rows = dedupeReps(allRows);
   const first = rows[0] || {};
   const graded = rows.filter((r) => typeof r.resolved === 'boolean');
   const resolvedCount = graded.filter((r) => r.resolved === true).length;
-  const costs = rows
+  // Skipped reps (template-incompatible canary, etc.) carry no real cost/time —
+  // exclude them so means/averages reflect reps that actually ran.
+  const measured = rows.filter((r) => r.status !== 'skipped');
+  const costs = measured
     .map((r) => r.cost_usd)
     .filter((c) => typeof c === 'number');
-  const walls = rows
+  const walls = measured
     .map((r) => r.wall_time_s)
     .filter((w) => typeof w === 'number');
-  const iterations = rows.map(_iterations);
+  const iterations = measured.map(_iterations);
 
   const lastRun = rows.reduce((latest, r) => {
     const ts = r.completed_at || r.started_at || null;

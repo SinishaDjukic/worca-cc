@@ -1,4 +1,4 @@
-import { html } from 'lit-html';
+import { html, nothing } from 'lit-html';
 import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 
@@ -77,24 +77,49 @@ const _STAGE_CLASS = {
   error: 'stage-chip--failed',
 };
 
+function _phaseLabel(run) {
+  if (run.kind === 'canary') return 'Canary';
+  if (run.phase === 'grading') return 'Grading';
+  if (run.phase === 'failed') return 'Failed';
+  return 'Running';
+}
+
+function _elapsedSince(iso) {
+  if (!iso) return null;
+  const start = Date.parse(iso);
+  if (Number.isNaN(start)) return null;
+  return formatDuration(Math.max(0, Math.round((Date.now() - start) / 1000)));
+}
+
 /**
  * Live progress for in-flight reps (read from worca status.json under work/).
  * Renders nothing when there are no active runs. The dashboard's auto-refresh
- * keeps the stage chips current.
+ * keeps the phase/stage chips and elapsed time current.
  */
 function _liveView(active) {
   if (!active || active.length === 0) return '';
   return html`
     <div class="live-runs">
-      ${active.map(
-        (run) => html`
-          <div class="live-run">
+      ${active.map((run) => {
+        const meta = [
+          run.instance,
+          run.rep != null ? `rep ${run.rep}` : null,
+          _elapsedSince(run.started_at),
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const grading = run.phase === 'grading';
+        return html`
+          <div class="live-run ${run.phase === 'failed' ? 'live-run--failed' : ''}">
             <div class="live-run-head">
               <span class="running-dot"></span>
-              <span class="live-run-label"
-                >${run.kind === 'canary' ? 'Canary' : 'Running'}</span
-              >
-              <span class="live-run-status">${run.pipeline_status || 'running'}</span>
+              <span class="live-run-label">${_phaseLabel(run)}</span>
+              ${
+                run.stage && !grading
+                  ? html`<span class="live-run-stage">${run.stage}</span>`
+                  : nothing
+              }
+              ${meta ? html`<span class="live-run-meta">${meta}</span>` : nothing}
             </div>
             <div class="stage-chips">
               ${(run.stages || []).map((s) => {
@@ -108,10 +133,16 @@ function _liveView(active) {
                   >${s.name}</span
                 >`;
               })}
+              <!-- Grading is a worca-bench step after the pipeline, not a worca stage. -->
+              <span
+                class="stage-chip ${grading ? 'stage-chip--active' : 'stage-chip--done'}"
+                title="benchmark grading"
+                >grade</span
+              >
             </div>
           </div>
-        `,
-      )}
+        `;
+      })}
     </div>
   `;
 }

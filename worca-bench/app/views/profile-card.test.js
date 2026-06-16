@@ -124,6 +124,16 @@ describe('profileCardView', () => {
     expect(out).toContain('coordinate');
   });
 
+  it('labels the grading phase distinctly', () => {
+    const out = renderToString(
+      profileCardView(
+        agg({ active: true, phase: 'grading', stage: 'implement' }),
+      ),
+    );
+    expect(out).toContain('grading');
+    expect(out).not.toContain('running · implement');
+  });
+
   it('labels an active canary run as canary', () => {
     const out = renderToString(
       profileCardView(
