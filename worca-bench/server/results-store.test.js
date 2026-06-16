@@ -136,6 +136,42 @@ describe('aggregateProfile', () => {
     expect(agg.resolved_rate).toBe(1);
   });
 
+  it('computes mean_score and excludes skipped + errored reps from means', () => {
+    const agg = aggregateProfile('p1', [
+      row({
+        instance_id: 'a',
+        rep: 1,
+        status: 'graded',
+        resolved: true,
+        score: 1.0,
+        cost_usd: 1.0,
+        wall_time_s: 100,
+      }),
+      row({
+        instance_id: 'b',
+        rep: 1,
+        status: 'graded',
+        resolved: false,
+        score: 0.0,
+        cost_usd: 3.0,
+        wall_time_s: 300,
+      }),
+      // errored rep with 0 cost/time must not drag the means down
+      row({
+        instance_id: 'c',
+        rep: 1,
+        status: 'error',
+        resolved: null,
+        score: null,
+        cost_usd: 0,
+        wall_time_s: 0,
+      }),
+    ]);
+    expect(agg.mean_score).toBe(0.5); // (1 + 0) / 2 graded
+    expect(agg.mean_cost_usd).toBe(2.0); // (1 + 3) / 2, error excluded
+    expect(agg.mean_wall_s).toBe(200);
+  });
+
   it('excludes skipped reps from cost/wall/iteration means', () => {
     const agg = aggregateProfile('p1', [
       row({

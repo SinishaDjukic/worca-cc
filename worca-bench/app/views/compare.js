@@ -42,15 +42,19 @@ export function compareView(rows) {
               ${rows.map((r) => html`<td>${pct(r.resolved_rate)}</td>`)}
             </tr>
             <tr>
-              <td class="compare-metric">Mean cost</td>
+              <td class="compare-metric">Avg score</td>
+              ${rows.map((r) => html`<td>${typeof r.mean_score === 'number' ? num(r.mean_score, 2) : 'N/A'}</td>`)}
+            </tr>
+            <tr>
+              <td class="compare-metric">Avg cost</td>
               ${rows.map((r) => html`<td>${formatCost(r.mean_cost_usd) || 'N/A'}</td>`)}
             </tr>
             <tr>
-              <td class="compare-metric">Mean wall time</td>
+              <td class="compare-metric">Avg duration</td>
               ${rows.map((r) => html`<td>${formatDuration(r.mean_wall_s)}</td>`)}
             </tr>
             <tr>
-              <td class="compare-metric">Mean iterations</td>
+              <td class="compare-metric">Avg iterations</td>
               ${rows.map((r) => html`<td>${num(r.mean_iterations, 2)}</td>`)}
             </tr>
           </tbody>

@@ -228,6 +228,7 @@ export function profileDetailView(data, { onRun } = {}) {
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
         ${_statRow('Reps', String(agg.reps))}
         ${_statRow('Resolved rate', pct(agg.resolved_rate))}
+        ${_statRow('Avg score', typeof agg.mean_score === 'number' ? num(agg.mean_score, 2) : 'N/A')}
         ${_statRow('Avg cost', formatCost(agg.mean_cost_usd) || 'N/A')}
         ${_statRow('Avg duration', formatDuration(agg.mean_wall_s))}
         ${_statRow('Avg iterations', num(agg.mean_iterations, 2))}

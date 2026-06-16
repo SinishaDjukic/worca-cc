@@ -26,6 +26,7 @@ import {
   readProfileDefsMulti,
   readResultsMulti,
 } from './results-store.js';
+import { clearProfileResults, stopProfileRuns } from './run-control.js';
 import {
   addResultDir,
   loadSettings,
@@ -163,6 +164,33 @@ export function createApp(options = {}) {
         reps: [],
         active,
       });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Stop all active runs for a profile (kills the runner process tree).
+  app.post('/api/profiles/:name/stop', async (req, res) => {
+    try {
+      const stopped = await stopProfileRuns(req.params.name);
+      res.json({ ok: true, stopped });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Clear a profile's recorded results — refused while it has active runs.
+  app.post('/api/profiles/:name/clear', (req, res) => {
+    try {
+      const active = readActive().filter((r) => r.profile === req.params.name);
+      if (active.length > 0) {
+        return res.status(409).json({
+          ok: false,
+          error: 'profile has active runs — stop them first',
+        });
+      }
+      const removed = clearProfileResults(req.params.name, effectiveDirs());
+      res.json({ ok: true, removed });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

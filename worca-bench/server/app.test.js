@@ -336,6 +336,33 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/profiles/:name/stop returns 0 when nothing is running', async () => {
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/p1/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, stopped: 0 });
+    });
+  });
+
+  it('POST /api/profiles/:name/clear drops that profile rows', async () => {
+    writeFileSync(
+      join(dir, 'results.jsonl'),
+      `${JSON.stringify(row({ profile: 'p1' }))}\n${JSON.stringify(row({ profile: 'p2' }))}\n`,
+    );
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/p1/clear`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).removed).toBe(1);
+      // p1 gone from the aggregate, p2 stays.
+      const { profiles } = await (await fetch(`${base}/api/profiles`)).json();
+      expect(profiles.map((p) => p.name)).toEqual(['p2']);
+    });
+  });
+
   it('sets security headers', async () => {
     await withServer(dir, {}, async (base) => {
       const res = await fetch(`${base}/api/health`);

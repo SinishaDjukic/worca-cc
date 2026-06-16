@@ -199,9 +199,13 @@ function buildHeader(path, view) {
       // (running / graded / skipped). State lives in the live block, the
       // resolved-rate stat, and the per-rep table instead.
       badge: null,
-      action: agg
-        ? html`<button class="action-btn action-btn--primary" @click=${() => runProfile(agg.name)}>Run profile</button>`
-        : null,
+      // Run lives in Run options. Top-right is Stop Runs (when active) or
+      // Clear Results (when idle) — never both.
+      action: !agg
+        ? null
+        : isActive
+          ? html`<button class="action-btn action-btn--danger" @click=${() => stopRuns(agg.name)}>Stop Runs</button>`
+          : html`<button class="action-btn" @click=${() => clearResults(agg.name)}>Clear Results</button>`,
     };
   }
 
@@ -517,6 +521,67 @@ function confirmRemoveDir(dir) {
 
 const browseAdd = () => openFolderPicker({ onPick: addDir }, rerender);
 const browseCache = () => openFolderPicker({ onPick: setCache }, rerender);
+
+// Destructive: stop a profile's active runs (kills the runner trees).
+function stopRuns(name) {
+  showConfirm(
+    {
+      label: 'Stop runs',
+      message: `Stop all active runs for “${name}”? Running reps are killed immediately.`,
+      confirmLabel: 'Stop runs',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/profiles/${encodeURIComponent(name)}/stop`,
+            { method: 'POST' },
+          );
+          const data = await res.json();
+          showToast(
+            data.ok ? 'success' : 'danger',
+            data.ok
+              ? `Stopped ${data.stopped} run${data.stopped === 1 ? '' : 's'}`
+              : `Stop failed: ${data.error}`,
+          );
+          setTimeout(refreshCurrent, 1200);
+        } catch (err) {
+          showToast('danger', `Stop failed: ${err.message}`);
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+// Destructive: clear a profile's recorded results + artifacts.
+function clearResults(name) {
+  showConfirm(
+    {
+      label: 'Clear results',
+      message: `Delete all recorded results for “${name}” (rows + run artifacts)? This cannot be undone.`,
+      confirmLabel: 'Clear results',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/profiles/${encodeURIComponent(name)}/clear`,
+            { method: 'POST' },
+          );
+          const data = await res.json();
+          if (data.ok) {
+            showToast('success', `Cleared ${data.removed} result rows`);
+            navigate('#/');
+          } else {
+            showToast('danger', `Clear failed: ${data.error}`);
+          }
+        } catch (err) {
+          showToast('danger', `Clear failed: ${err.message}`);
+        }
+      },
+    },
+    rerender,
+  );
+}
 
 async function setCache(dir) {
   try {

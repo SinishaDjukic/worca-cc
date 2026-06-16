@@ -177,9 +177,11 @@ export function aggregateProfile(name, allRows) {
   const first = rows[0] || {};
   const graded = rows.filter((r) => typeof r.resolved === 'boolean');
   const resolvedCount = graded.filter((r) => r.resolved === true).length;
-  // Skipped reps (template-incompatible canary, etc.) carry no real cost/time —
-  // exclude them so means/averages reflect reps that actually ran.
-  const measured = rows.filter((r) => r.status !== 'skipped');
+  // Skipped + errored reps carry no real measurement (cost/time ~0) — exclude
+  // them so means/averages reflect reps that actually ran to a graded outcome.
+  const measured = rows.filter(
+    (r) => r.status !== 'skipped' && r.status !== 'error',
+  );
   const costs = measured
     .map((r) => r.cost_usd)
     .filter((c) => typeof c === 'number');
@@ -187,6 +189,9 @@ export function aggregateProfile(name, allRows) {
     .map((r) => r.wall_time_s)
     .filter((w) => typeof w === 'number');
   const iterations = measured.map(_iterations);
+  const scores = measured
+    .map((r) => r.score)
+    .filter((s) => typeof s === 'number');
 
   const lastRun = rows.reduce((latest, r) => {
     const ts = r.completed_at || r.started_at || null;
@@ -208,6 +213,7 @@ export function aggregateProfile(name, allRows) {
     mean_cost_usd: _mean(costs),
     mean_wall_s: _mean(walls),
     mean_iterations: _mean(iterations),
+    mean_score: _mean(scores),
     n: rows.length,
     last_run: lastRun,
   };
