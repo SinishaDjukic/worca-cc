@@ -93,6 +93,16 @@ def build_launch_env(
         env.pop(k, None)
     env["WORCA_SKIP_BEADS"] = "1"
 
+    # Defer PR creation via the ENV signal, not just the settings.json seed.
+    # worca.stages is a *template-driven* key: when a template is in play (always,
+    # in worca-bench) the project's stages.pr.defer seed is stripped and the
+    # template's own stages win — so a template with the PR stage enabled (feature,
+    # bugfix, ...) would create a PR despite the seed. WORCA_DEFER_PR=1 is read
+    # directly by the guardian (compute_defer_pr) and composes monotonically, so it
+    # holds regardless of what the template sets. See docs: PR defer is monotonic.
+    if profile.pr_defer:
+        env["WORCA_DEFER_PR"] = "1"
+
     if profile.mock is not None:
         mock = profile.mock
         scenario: dict[str, Any]
