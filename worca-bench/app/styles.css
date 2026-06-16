@@ -256,30 +256,45 @@ code {
 .action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 6px 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
   color: var(--fg);
-  font-weight: 500;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .action-btn:hover {
-  background: var(--bg-tertiary);
+  background: var(--border);
+}
+
+.action-btn--danger {
+  border-color: var(--status-failed);
+  color: var(--status-failed);
+}
+
+.action-btn--danger:hover {
+  background: var(--status-failed);
+  color: #ffffff;
 }
 
 .action-btn--primary {
-  background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent);
 }
 
 .action-btn--primary:hover {
-  filter: brightness(1.05);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ─── Profile grid ─────────────────────────────────────────────────────── */
