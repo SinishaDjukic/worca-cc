@@ -103,6 +103,29 @@ describe('runBenchmark', () => {
     expect(capturedArgs).not.toContain('--max-parallel');
   });
 
+  it('appends --no-canary only when noCanary is truthy', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(12);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      noCanary: true,
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--no-canary');
+
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      noCanary: false,
+      _spawn,
+    });
+    expect(capturedArgs).not.toContain('--no-canary');
+  });
+
   it('appends --cache-dir when given', async () => {
     let capturedArgs = null;
     const _spawn = (_cmd, args) => {

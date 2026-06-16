@@ -303,6 +303,8 @@ export function createApp(options = {}) {
         reps: _posInt(req.body?.reps),
         maxInstances: _posInt(req.body?.maxInstances),
         maxParallel: _posInt(req.body?.maxParallel),
+        // Canary is on by default; only an explicit `false` disables it.
+        noCanary: req.body?.canary === false,
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),

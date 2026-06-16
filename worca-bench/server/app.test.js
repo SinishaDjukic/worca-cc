@@ -296,6 +296,31 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run maps canary:false to noCanary (default keeps canary on)', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 10 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      // Explicit opt-out disables the canary.
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', canary: false }),
+      });
+      expect(captured.noCanary).toBe(true);
+
+      // Omitted (or true) leaves the canary on.
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1' }),
+      });
+      expect(captured.noCanary).toBe(false);
+    });
+  });
+
   it('POST /api/run rejects a missing profile with 400', async () => {
     await withServer(dir, {}, async (base) => {
       const res = await fetch(`${base}/api/run`, {

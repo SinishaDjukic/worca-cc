@@ -39,6 +39,8 @@ function _runOptionsView(agg, onRun) {
     const reps = box.querySelector('.run-opt-reps').value.trim();
     const maxInstances = box.querySelector('.run-opt-instances').value.trim();
     const maxParallel = box.querySelector('.run-opt-parallel').value.trim();
+    const canaryVal = box.querySelector('.run-opt-canary')?.value;
+    const canary = canaryVal !== 'off';
     const gfxVal = box.querySelector('.run-opt-graphify')?.value;
     const graphify = gfxVal && gfxVal !== 'off' ? gfxVal : undefined;
     const crgVal = box.querySelector('.run-opt-crg')?.value;
@@ -49,6 +51,7 @@ function _runOptionsView(agg, onRun) {
         ? Number.parseInt(maxInstances, 10)
         : undefined,
       maxParallel: maxParallel ? Number.parseInt(maxParallel, 10) : undefined,
+      canary,
       graphify,
       codeReviewGraph,
     });
@@ -80,6 +83,13 @@ function _runOptionsView(agg, onRun) {
           min="1"
           placeholder="default"
       /></label>
+      <div class="run-opt run-opt-engine">
+        <span class="run-opt-label">Canary</span>
+        <sl-radio-group class="run-opt-canary" size="small" value="on">
+          <sl-radio-button value="off">Off</sl-radio-button>
+          <sl-radio-button value="on">On</sl-radio-button>
+        </sl-radio-group>
+      </div>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Graphify</span>
         <sl-radio-group class="run-opt-graphify" size="small" value="off">

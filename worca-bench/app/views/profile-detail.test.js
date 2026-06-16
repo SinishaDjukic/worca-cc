@@ -45,6 +45,8 @@ describe('profileDetailView', () => {
     expect(out).toContain('run-options');
     expect(out).toContain('run-opt-reps');
     expect(out).toContain('run-opt-instances');
+    expect(out).toContain('run-opt-parallel'); // max parallel
+    expect(out).toContain('run-opt-canary'); // canary toggle (on by default)
     expect(out).toContain('run-opt-graphify'); // graphify toggle
     expect(out).toContain('run-opt-crg'); // code-review-graph toggle
     // reps input is seeded with the profile's default as a placeholder

@@ -454,6 +454,8 @@ async function runProfile(name, opts = {}) {
     if (Number.isInteger(opts.maxInstances))
       body.maxInstances = opts.maxInstances;
     if (Number.isInteger(opts.maxParallel)) body.maxParallel = opts.maxParallel;
+    // Canary is on by default — only send the flag when explicitly disabled.
+    if (opts.canary === false) body.canary = false;
     if (opts.graphify) body.graphify = opts.graphify;
     if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
     const res = await fetch('/api/run', {
@@ -471,6 +473,7 @@ async function runProfile(name, opts = {}) {
         Number.isInteger(opts.maxParallel)
           ? `${opts.maxParallel}× parallel`
           : null,
+        opts.canary === false ? 'no canary' : null,
       ].filter(Boolean);
       const suffix = extra.length ? ` (${extra.join(', ')})` : '';
       showToast('success', `Launched ${name}${suffix} — pid ${data.pid}`);
