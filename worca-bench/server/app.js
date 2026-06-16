@@ -1,0 +1,161 @@
+// server/app.js
+//
+// Express app for the worca-bench dashboard. Structure mirrors
+// worca-ui/server/app.js: createApp() returns a configured app with security
+// headers, JSON body parsing, the JSON API, static asset serving, and a SPA
+// catch-all. The app reads benchmark results from a target directory passed in
+// via options.targetDir (the runner's --target-dir / WORCA_BENCH_DIR).
+
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+
+import { getLeaderboard, leaderboardBenchmarks } from './leaderboard.js';
+import { runBenchmark } from './process-manager.js';
+import {
+  aggregateByProfile,
+  aggregateProfile,
+  compareProfiles,
+  readProfileDefs,
+  readResults,
+} from './results-store.js';
+
+/**
+ * @param {object} options
+ * @param {string} options.targetDir  directory holding results.jsonl + profiles/
+ * @param {(opts: object) => Promise<{pid: number}>} [options._runBenchmark]  injectable for tests
+ * @returns {import('express').Express}
+ */
+export function createApp(options = {}) {
+  const app = express();
+  const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
+  const targetDir = options.targetDir || process.cwd();
+  const launch = options._runBenchmark || runBenchmark;
+
+  app.use(express.json());
+
+  // ─── Security headers ──────────────────────────────────────────────────
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    next();
+  });
+
+  // ─── API ───────────────────────────────────────────────────────────────
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  // Aggregated per-profile summaries. Surfaces the cheap profile-def fields
+  // (benchmark) for profiles that have a YAML definition but no results yet.
+  app.get('/api/profiles', (_req, res) => {
+    try {
+      const rows = readResults(targetDir);
+      const aggregates = aggregateByProfile(rows);
+      const known = new Set(aggregates.map((a) => a.name));
+      for (const def of readProfileDefs(targetDir)) {
+        if (known.has(def.name)) continue;
+        aggregates.push({
+          name: def.name,
+          benchmark: def.benchmark,
+          worca_ref: null,
+          template: null,
+          reps: 0,
+          graded: 0,
+          resolved: 0,
+          resolved_rate: 0,
+          mean_cost_usd: null,
+          mean_wall_s: null,
+          mean_iterations: null,
+          n: 0,
+          last_run: null,
+        });
+      }
+      aggregates.sort((a, b) => a.name.localeCompare(b.name));
+      res.json({ ok: true, profiles: aggregates });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // One profile: aggregate + the individual reps for the detail table.
+  app.get('/api/profiles/:name', (req, res) => {
+    try {
+      const rows = readResults(targetDir);
+      const reps = rows.filter(
+        (r) => (r.profile || '(unknown)') === req.params.name,
+      );
+      if (reps.length === 0) {
+        return res.status(404).json({ ok: false, error: 'profile not found' });
+      }
+      res.json({
+        ok: true,
+        aggregate: aggregateProfile(req.params.name, reps),
+        reps,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Raw rows — escape hatch for ad-hoc inspection.
+  app.get('/api/results', (_req, res) => {
+    try {
+      res.json({ ok: true, results: readResults(targetDir) });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Side-by-side config comparison. ?profiles=a,b,c
+  app.get('/api/compare', (req, res) => {
+    try {
+      const names = String(req.query.profiles || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const rows = readResults(targetDir);
+      res.json({ ok: true, compare: compareProfiles(rows, names) });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Public cross-agent leaderboard (static fixture for now — see leaderboard.js).
+  app.get('/api/leaderboard', (req, res) => {
+    try {
+      const benchmark = String(req.query.benchmark || 'swe-bench-verified');
+      res.json({
+        ok: true,
+        benchmark,
+        rows: getLeaderboard(benchmark),
+        benchmarks: leaderboardBenchmarks(),
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Fire-and-forget: spawn the Python runner for a profile.
+  app.post('/api/run', async (req, res) => {
+    const profile = req.body?.profile;
+    if (!profile) {
+      return res.status(400).json({ ok: false, error: 'profile is required' });
+    }
+    try {
+      const { pid } = await launch({ profile, targetDir });
+      res.json({ ok: true, pid });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Static + SPA catch-all ────────────────────────────────────────────
+  app.use(express.static(appDir));
+  app.get('/{*splat}', (_req, res) => {
+    res.sendFile('index.html', { root: appDir });
+  });
+
+  return app;
+}

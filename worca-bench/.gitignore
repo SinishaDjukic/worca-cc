@@ -1,0 +1,14 @@
+# Node (dashboard)
+node_modules/
+app/main.bundle.js
+app/main.bundle.js.map
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Default runner output / caches (the --target-dir)
+worca-bench-out/
+out/

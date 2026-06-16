@@ -1,0 +1,434 @@
+/* worca-bench dashboard styles.
+ * Card rules (.run-card and its sub-elements) are copied from
+ * worca-ui/app/styles.css so the benchmark cards share worca-ui's look.
+ * Status-color CSS variables mirror worca-ui/docs/badge-color-language.md. */
+
+:root {
+  --fg: #1e293b;
+  --bg: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --surface: var(--bg);
+  --border: #e2e8f0;
+  --border-subtle: rgba(226, 232, 240, 0.6);
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+
+  --status-pending: #94a3b8;
+  --status-running: #3b82f6;
+  --status-paused: #f59e0b;
+  --status-completed: #22c55e;
+  --status-failed: #ef4444;
+  --status-skipped: #94a3b8;
+  --status-unknown: #94a3b8;
+
+  --radius-lg: 12px;
+  --transition-fast: 0.15s ease;
+
+  --sl-color-success-600: var(--status-completed);
+  --sl-color-warning-600: var(--status-paused);
+  --sl-color-danger-600: var(--status-failed);
+  --sl-color-primary-600: var(--status-running);
+  --sl-color-neutral-600: var(--status-pending);
+  --sl-border-radius-large: var(--radius-lg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e2e8f0;
+    --bg: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-tertiary: #1a2332;
+    --border: #334155;
+    --border-subtle: rgba(51, 65, 85, 0.6);
+    --muted: #64748b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  font-size: 14px;
+}
+
+code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
+
+/* ─── Header / nav ─────────────────────────────────────────────────────── */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.app-brand {
+  font-weight: 700;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-logo {
+  color: var(--accent);
+}
+
+.app-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-link {
+  padding: 6px 14px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.nav-link:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg);
+}
+
+.nav-link--active {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+.app-main {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* ─── Page scaffolding ─────────────────────────────────────────────────── */
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  gap: 12px;
+}
+
+.page-head-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-head h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.page-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.loading-state,
+.empty-state,
+.error-state {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.empty-state {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.empty-state-hint {
+  font-size: 12px;
+}
+
+.error-state {
+  color: var(--status-failed);
+}
+
+/* ─── Action buttons (plain, mirrors worca-ui action-btn) ──────────────── */
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.action-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.action-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.action-btn--primary:hover {
+  filter: brightness(1.05);
+}
+
+/* ─── Profile grid ─────────────────────────────────────────────────────── */
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+/* ─── Card base (copied from worca-ui/app/styles.css) ──────────────────── */
+
+.run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  background: var(--surface);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.run-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.run-card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.run-card-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.run-card-title {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.run-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding-left: 26px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.meta-label {
+  font-weight: 500;
+  color: var(--fg);
+  opacity: 0.7;
+}
+
+.meta-value {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.run-card-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-left: 26px;
+}
+
+.run-card-stage-badge {
+  font-size: 10px;
+}
+
+.run-card-stage-badge::part(base) {
+  font-size: 10px;
+  padding: 2px 8px;
+  letter-spacing: 0.03em;
+}
+
+.run-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 26px;
+}
+
+.run-card-actions:empty {
+  display: none;
+}
+
+/* Status-colored left border accent (subset used by the bench domain). */
+.run-card.status-running { border-left: 3px solid var(--status-running); }
+.run-card.status-paused { border-left: 3px solid var(--status-paused); }
+.run-card.status-completed { border-left: 3px solid var(--status-completed); }
+.run-card.status-failed { border-left: 3px solid var(--status-failed); }
+.run-card.status-pending { border-left: 3px solid var(--status-pending); }
+.run-card.status-skipped { border-left: 3px solid var(--status-pending); }
+.run-card.status-unknown { border-left: 3px solid var(--status-unknown); }
+
+.icon-spin {
+  animation: icon-spin 1.5s linear infinite;
+}
+
+@keyframes icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Stat tiles (profile detail) ──────────────────────────────────────── */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat {
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Tables ───────────────────────────────────────────────────────────── */
+
+.reps-table,
+.compare-table,
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.reps-table th,
+.compare-table th,
+.leaderboard-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.reps-table td,
+.compare-table td,
+.leaderboard-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.reps-instance {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-metric {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.compare-col-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* ─── Leaderboard ──────────────────────────────────────────────────────── */
+
+.leaderboard-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.leaderboard-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.leaderboard-tab--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.leaderboard-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.leaderboard-row--local {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+}
+
+.leaderboard-source {
+  color: var(--muted);
+  font-size: 12px;
+}

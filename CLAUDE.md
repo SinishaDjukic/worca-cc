@@ -387,6 +387,15 @@ Linux, macOS, and Windows are all supported targets. worca-ui, the governance ho
 
 Key Windows degradations (all guarded): liveness probes route through `worca.utils.proc.pid_is_alive()` (never `os.kill(pid, 0)`, which would `TerminateProcess`); `SIGTERM` is a hard kill (no graceful handler); process-group reaping falls back to best-effort single-child `terminate()`; `start_new_session` detach is ignored. Full matrix and details: [`docs/platform-support.md`](./docs/platform-support.md).
 
+## Config Evaluation (worca-bench)
+
+`worca-bench/` is a standalone harness (W-075) for measuring whether one pipeline config (per-agent model/effort, template, worca version) beats another on **SWE-bench Verified** and **Commit0**. It is **version-agnostic — it never imports worca**: it provisions an isolated venv per ref, `pip install`s the requested branch/tag/commit/version, and shells out to that venv's `run_pipeline`. The dashboard half mirrors the worca-ui stack (lit-html + Shoelace + esbuild + Express) and reads results from a `--target-dir`.
+
+- **Free, deterministic e2e:** the runner has a mock mode that points the spawned pipeline at the repo's `tests/mock_claude/mock_claude.py` via `WORCA_CLAUDE_BIN` + `MOCK_CLAUDE_SCENARIO`. `tests/test_e2e_mock.py` drives a full pipeline this way (self-skips if the worca-cc repo isn't found); grading uses `grade.mode: stub`. This is also a user dry-run before paying for real grading.
+- **Grading is source-only on a pristine tree** — the diff excludes `.claude/`/`.worca/`/`MASTER_PLAN.md`/test paths; the harness supplies the tests. Commit0 stashes gold tests during the run with a leakage guard.
+- **tier:name** (`builtin:`/`project:`/`user:`) is a worca-bench concept (worca's `--template` takes a bare id) — it's parsed and project/user templates are seeded before launch.
+- Run: `worca-bench run --profile <name> --target-dir <dir>` (Python engine); `node worca-bench/bin/worca-bench-ui.js --target-dir <dir>` (dashboard, port 3500). Tests: `cd worca-bench && pytest tests/` + `npx vitest run`. Full design: [`docs/plans/W-075-worca-bench.md`](./docs/plans/W-075-worca-bench.md) and `worca-bench/README.md`.
+
 ## Migrating
 
 User-facing upgrade and cleanup steps live in [`MIGRATION.md`](./MIGRATION.md).

@@ -1,0 +1,22 @@
+# Example: SWE-bench Verified, a small fixed subset, graded via sb-cli (no local Docker).
+# Run:  worca-bench run --profile swebench-feature-opus --target-dir ./out
+name: swebench-feature-opus
+benchmark: swe-bench-verified
+worca:
+  ref: master                 # branch | tag | commit | "0.58.0" (released) | local
+selection:
+  instance_ids:
+    - astropy__astropy-12907
+    - django__django-11099
+template: builtin:feature      # tier:name
+reps: 3                        # samples per instance to beat run-to-run noise
+grade:
+  mode: sb-cli                 # stub | sb-cli | modal | local-docker
+concurrency:
+  worca: 4
+  grade: 4
+# Model aliases (cross-template; secrets come from the environment, never here).
+settings:
+  models:
+    opus: claude-opus-4-8
+    sonnet: claude-sonnet-4-6

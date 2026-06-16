@@ -1,0 +1,5 @@
+{
+  "_comment": "Version-keyed settings overlay (W-075 §5). Keys here are deep-merged into the version-self-seeded .claude/settings.json under the 'worca' namespace. Keep this MINIMAL — only cross-template keys that survive the template strip (models, pricing). Secrets never go here; they land in settings.local.json via the environment. Add a <version-range>.json sibling only when a real schema break (e.g. pre-W-051 model alias format) needs an override.",
+  "applies_to": "*",
+  "worca": {}
+}

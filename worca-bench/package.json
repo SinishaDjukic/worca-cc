@@ -1,0 +1,60 @@
+{
+  "name": "@worca/bench-ui",
+  "version": "0.1.0",
+  "description": "Benchmark results dashboard for worca-bench",
+  "license": "MIT",
+  "author": "Sinisha Djukic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SinishaDjukic/worca-cc.git",
+    "directory": "worca-bench"
+  },
+  "keywords": [
+    "worca",
+    "benchmark",
+    "swe-bench",
+    "dashboard",
+    "ai-agents",
+    "leaderboard"
+  ],
+  "type": "module",
+  "bin": {
+    "worca-bench-ui": "./bin/worca-bench-ui.js"
+  },
+  "files": [
+    "bin/",
+    "server/**/*.js",
+    "!server/**/*.test.js",
+    "app/index.html",
+    "app/styles.css",
+    "app/main.bundle.js",
+    "app/main.bundle.js.map",
+    "app/vendor/",
+    "scripts/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build-frontend.js",
+    "start": "node bin/worca-bench-ui.js",
+    "prepublishOnly": "npm run build && npm test",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "lint": "biome check",
+    "lint:fix": "biome check --write"
+  },
+  "dependencies": {
+    "@shoelace-style/shoelace": "^2.20.1",
+    "express": "^5.2.1",
+    "lit-html": "^3.3.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@playwright/test": "^1.60.0",
+    "@vitest/coverage-v8": "^4.0.15",
+    "esbuild": "^0.27.1",
+    "jsdom": "^29.0.1",
+    "vitest": "^4.0.15"
+  }
+}

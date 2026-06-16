@@ -1,0 +1,20 @@
+# Example: Commit0 greenfield library build. Gold tests are hidden during the run and
+# the source-only diff is graded on a pristine tree (see W-075 §3).
+# Requires `commit0 setup lite` to produce skeletons + a generated instances file.
+name: commit0-feature
+benchmark: commit0
+worca:
+  ref: master
+selection:
+  instances_file: ./out/commit0-instances.json   # [{instance_id, local_repo, spec, gold_test_paths}]
+template: builtin:feature
+reps: 3
+grade:
+  mode: local-docker            # commit0 runs its tests in Docker
+concurrency:
+  worca: 3
+  grade: 2
+settings:
+  models:
+    opus: claude-opus-4-8
+    sonnet: claude-sonnet-4-6

@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest';
+import { profileCardView } from './profile-card.js';
+
+// Mirrors the worca-ui renderToString helper: walks the lit-html template
+// tree, inlining strings/numbers/arrays/nested templates. unsafeHTML directives
+// and functions are skipped (the static prefix is still captured).
+function renderToString(template) {
+  if (!template) return '';
+  if (typeof template === 'string') return template;
+  if (!template.strings) return String(template);
+  let result = '';
+  template.strings.forEach((s, i) => {
+    result += s;
+    if (i < template.values.length) {
+      const v = template.values[i];
+      if (typeof v === 'string') result += v;
+      else if (typeof v === 'number') result += String(v);
+      else if (Array.isArray(v)) result += v.map(renderToString).join('');
+      else if (v?.strings) result += renderToString(v);
+    }
+  });
+  return result;
+}
+
+function agg(overrides = {}) {
+  return {
+    name: 'smoke-feature-opus',
+    benchmark: 'swe-bench-verified',
+    worca_ref: 'local',
+    template: 'builtin:feature',
+    reps: 4,
+    graded: 4,
+    resolved: 4,
+    resolved_rate: 1.0,
+    mean_cost_usd: 0.42,
+    mean_wall_s: 612,
+    mean_iterations: 2,
+    last_run: '2026-06-16T10:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('profileCardView', () => {
+  it('applies the resolved status class when fully resolved', () => {
+    const out = renderToString(profileCardView(agg()));
+    expect(out).toContain('run-card');
+    expect(out).toContain('status-completed');
+  });
+
+  it('uses the success badge variant for a fully-resolved profile', () => {
+    const out = renderToString(profileCardView(agg()));
+    expect(out).toContain('variant="success"');
+  });
+
+  it('uses the danger variant when nothing resolved', () => {
+    const out = renderToString(
+      profileCardView(agg({ resolved: 0, resolved_rate: 0 })),
+    );
+    expect(out).toContain('variant="danger"');
+    expect(out).toContain('status-failed');
+  });
+
+  it('uses the warning variant for a partial resolve rate', () => {
+    const out = renderToString(
+      profileCardView(agg({ resolved: 2, resolved_rate: 0.5 })),
+    );
+    expect(out).toContain('variant="warning"');
+    expect(out).toContain('status-paused');
+  });
+
+  it('uses the neutral pending variant when no reps are graded', () => {
+    const out = renderToString(
+      profileCardView(agg({ graded: 0, resolved: 0, resolved_rate: 0 })),
+    );
+    expect(out).toContain('status-pending');
+  });
+
+  it('does NOT hardcode an inline variant="success" ladder in source', async () => {
+    // The card must route every badge variant through the central variant map
+    // (utils/badge.js), never inline a per-status literal ladder in the view.
+    const fs = await import('node:fs');
+    const url = await import('node:url');
+    const src = fs.readFileSync(
+      url.fileURLToPath(new URL('./profile-card.js', import.meta.url)),
+      'utf8',
+    );
+    expect(src).not.toMatch(/variant="success"/);
+    expect(src).not.toMatch(/variant="danger"/);
+    expect(src).toContain('variantFor(');
+  });
+
+  it('renders the profile name and benchmark', () => {
+    const out = renderToString(profileCardView(agg()));
+    expect(out).toContain('smoke-feature-opus');
+    expect(out).toContain('swe-bench-verified');
+  });
+});

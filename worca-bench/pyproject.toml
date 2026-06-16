@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "worca-bench"
+version = "0.1.0"
+description = "Config-evaluation harness for worca pipelines against SWE-bench Verified and Commit0 (W-075)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Real benchmark grading. Kept optional so unit tests run without Docker/HF/network.
+swebench = ["datasets>=2.0", "sb-cli>=0.1"]
+commit0 = ["commit0"]
+dev = ["pytest>=7.0", "pytest-timeout>=2.0", "PyYAML>=6.0"]
+
+[project.scripts]
+worca-bench = "worca_bench.cli:main"
+
+[tool.setuptools]
+packages = ["worca_bench", "worca_bench.plugins"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+worca_bench = ["overlays/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+markers = [
+    "live_worca: end-to-end test that spawns a real worca pipeline with mock Claude (slow; skipped if worca is not importable)",
+]

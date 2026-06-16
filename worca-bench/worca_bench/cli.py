@@ -1,0 +1,131 @@
+"""worca-bench CLI (W-075).
+
+    worca-bench run    --profile NAME --target-dir DIR [--dry-run] [--no-canary]
+    worca-bench list   [--profiles-dir DIR]
+    worca-bench stats  --target-dir DIR [--profile NAME]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from .config import Profile, find_profile, load_profile
+from .normalize import read_rows
+from .runner import run_profile
+from .stats import aggregate, aggregate_by_profile
+
+
+def _default_profile_dirs(target_dir: Path | None) -> list[Path]:
+    dirs: list[Path] = []
+    if target_dir:
+        dirs.append(Path(target_dir) / "profiles")
+    dirs.append(Path.cwd() / "profiles")
+    # in-tree profiles shipped with worca-bench
+    dirs.append(Path(__file__).resolve().parents[1] / "profiles")
+    return [d for d in dirs if d.exists()]
+
+
+def _resolve_profile(name_or_path: str, target_dir: Path | None,
+                     profiles_dir: str | None) -> Profile:
+    p = Path(name_or_path)
+    if p.exists():
+        return load_profile(p)
+    search = []
+    if profiles_dir:
+        search.append(Path(profiles_dir))
+    search.extend(_default_profile_dirs(target_dir))
+    return find_profile(name_or_path, search)
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    target = Path(args.target_dir)
+    profile = _resolve_profile(args.profile, target, args.profiles_dir)
+    summary = run_profile(
+        profile, target,
+        dry_run=args.dry_run,
+        canary_first=not args.no_canary,
+        max_instances=args.max_instances,
+        keep_work=args.keep_work,
+    )
+    if args.dry_run:
+        print(f"[dry-run] profile={summary.profile} worca={summary.worca_ref} "
+              f"reps={summary.reps_total}")
+    else:
+        print(json.dumps(summary.as_dict(), indent=2))
+        if summary.incompatible_templates:
+            print("\nincompatible templates (skipped):", file=sys.stderr)
+            for t, why in summary.incompatible_templates.items():
+                print(f"  {t}: {why}", file=sys.stderr)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    dirs = []
+    if args.profiles_dir:
+        dirs.append(Path(args.profiles_dir))
+    dirs.extend(_default_profile_dirs(None))
+    seen: set[str] = set()
+    for d in dirs:
+        for f in sorted(d.glob("*.y*ml")):
+            try:
+                prof = load_profile(f)
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! {f.name}: {e}", file=sys.stderr)
+                continue
+            if prof.name in seen:
+                continue
+            seen.add(prof.name)
+            print(f"  {prof.name:30s} {prof.benchmark:20s} reps={prof.reps} "
+                  f"worca={prof.worca.ref} template={prof.template}")
+    if not seen:
+        print("(no profiles found)")
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    rows = read_rows(Path(args.target_dir))
+    if args.profile:
+        rows = [r for r in rows if r.get("profile") == args.profile]
+        print(json.dumps({args.profile: aggregate(rows)}, indent=2))
+    else:
+        print(json.dumps(aggregate_by_profile(rows), indent=2))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="worca-bench", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_run = sub.add_parser("run", help="run a profile")
+    p_run.add_argument("--profile", required=True, help="profile name or path")
+    p_run.add_argument("--target-dir", required=True, help="dir for clones/results/artifacts")
+    p_run.add_argument("--profiles-dir", help="extra dir to search for profiles")
+    p_run.add_argument("--dry-run", action="store_true", help="resolve + plan, do not run")
+    p_run.add_argument("--no-canary", action="store_true", help="skip the per-template canary")
+    p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
+    p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
+    p_run.set_defaults(func=cmd_run)
+
+    p_list = sub.add_parser("list", help="list available profiles")
+    p_list.add_argument("--profiles-dir", help="extra dir to search for profiles")
+    p_list.set_defaults(func=cmd_list)
+
+    p_stats = sub.add_parser("stats", help="aggregate results.jsonl")
+    p_stats.add_argument("--target-dir", required=True)
+    p_stats.add_argument("--profile", help="limit to one profile")
+    p_stats.set_defaults(func=cmd_stats)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
