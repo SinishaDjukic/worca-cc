@@ -8,8 +8,10 @@ the issue ``problem_statement`` (``hints_text`` is intentionally excluded).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from ..config import Profile
@@ -24,6 +26,21 @@ from .base import (
 
 HF_DATASET = "princeton-nlp/SWE-bench_Verified"
 MODEL_NAME = "worca-bench"
+
+
+def _load_dataset_with_retry(load_dataset, name, *, split="test", attempts=4):
+    """Load an HF dataset, retrying transient network failures with backoff."""
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return load_dataset(name, split=split)
+        except Exception as e:  # noqa: BLE001 - retry any transient fetch failure
+            last = e
+            if i < attempts - 1:
+                time.sleep(3 * (i + 1))
+    raise RuntimeError(
+        f"failed to load HF dataset {name!r} after {attempts} attempts: {last}"
+    ) from last
 
 
 class SwebenchPlugin(BenchmarkPlugin):
@@ -53,6 +70,11 @@ class SwebenchPlugin(BenchmarkPlugin):
         return out
 
     def _load_from_hf(self, profile: Profile) -> list[Instance]:
+        # The Verified dataset is hundreds of MB over a CDN that can be slow/flaky.
+        # HF's default 10s download timeout is too aggressive — bump it before the
+        # (lazy) datasets import so huggingface_hub reads the larger value, then
+        # retry transient network failures with backoff.
+        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
         try:
             from datasets import load_dataset
         except ImportError as e:  # pragma: no cover - optional dep
@@ -60,7 +82,7 @@ class SwebenchPlugin(BenchmarkPlugin):
                 "SWE-bench needs the 'datasets' package (pip install worca-bench[swebench]) "
                 "or a local selection.instances_file"
             ) from e
-        ds = load_dataset(HF_DATASET, split="test")
+        ds = _load_dataset_with_retry(load_dataset, HF_DATASET)
         ids = set(profile.selection.instance_ids)
         records = [r for r in ds if not ids or r["instance_id"] in ids]
         if profile.selection.sample:  # pragma: no cover - exercised via integration

@@ -9,7 +9,33 @@ from worca_bench.config import GradeConfig, profile_from_dict
 from worca_bench.plugins import get_plugin
 from worca_bench.plugins.base import Instance, stub_grade
 from worca_bench.plugins.commit0 import Commit0Plugin
-from worca_bench.plugins.swebench import SwebenchPlugin
+import pytest
+
+from worca_bench.plugins.swebench import SwebenchPlugin, _load_dataset_with_retry
+
+
+def test_load_dataset_with_retry_recovers(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)  # no real backoff
+    calls = {"n": 0}
+
+    def flaky(name, split="test"):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise TimeoutError("CDN read timed out")
+        return f"DS({name},{split})"
+
+    assert _load_dataset_with_retry(flaky, "ds", attempts=4) == "DS(ds,test)"
+    assert calls["n"] == 3
+
+
+def test_load_dataset_with_retry_exhausts(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+
+    def always_fail(name, split="test"):
+        raise TimeoutError("nope")
+
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        _load_dataset_with_retry(always_fail, "ds", attempts=3)
 
 
 def test_get_plugin_dispatch():
