@@ -25,6 +25,25 @@ function seedStatus(profile, inst, rep, runId, status) {
   writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
 }
 
+function seedTemplate(profile, inst, rep, id, stagesCfg) {
+  const tdir = join(
+    dir,
+    'work',
+    profile,
+    inst,
+    `rep${rep}`,
+    '.claude',
+    'worca',
+    'templates',
+    id,
+  );
+  mkdirSync(tdir, { recursive: true });
+  writeFileSync(
+    join(tdir, 'template.json'),
+    JSON.stringify({ config: { stages: stagesCfg } }),
+  );
+}
+
 describe('discoverActive', () => {
   it('returns nothing when there is no work/ dir', () => {
     expect(discoverActive(dir)).toEqual([]);
@@ -68,6 +87,48 @@ describe('discoverActive', () => {
       },
     });
     expect(discoverActive(dir)[0].phase).toBe('grading');
+  });
+
+  it('hides template-disabled stages but keeps ones that ran', () => {
+    seedStatus('p1', 'i', 1, 'p1__i__rep1', {
+      run_id: 'p1__i__rep1',
+      pipeline_status: 'running',
+      pipeline_template: 'builtin:quick-fix',
+      stages: {
+        preflight: { status: 'completed', skipped: true },
+        plan: { status: 'completed' },
+        coordinate: { status: 'in_progress' },
+        implement: { status: 'pending' },
+        test: { status: 'pending' },
+        review: { status: 'pending' },
+        pr: { status: 'pending' },
+      },
+    });
+    seedTemplate('p1', 'i', 1, 'quick-fix', {
+      plan: { enabled: true },
+      coordinate: { enabled: true },
+      implement: { enabled: true },
+      test: { enabled: false },
+      review: { enabled: false },
+      pr: { enabled: false },
+    });
+    const names = discoverActive(dir)[0].stages.map((s) => s.name);
+    // test/review/pr disabled + never ran -> hidden; preflight (skipped) kept.
+    expect(names).toEqual(['preflight', 'plan', 'coordinate', 'implement']);
+  });
+
+  it('shows all stages when the template config is unavailable', () => {
+    seedStatus('p1', 'i', 1, 'p1__i__rep1', {
+      run_id: 'p1__i__rep1',
+      pipeline_status: 'running',
+      pipeline_template: 'builtin:quick-fix',
+      stages: { plan: { status: 'completed' }, test: { status: 'pending' } },
+    });
+    // no seedTemplate -> can't resolve -> show everything
+    expect(discoverActive(dir)[0].stages.map((s) => s.name)).toEqual([
+      'plan',
+      'test',
+    ]);
   });
 
   it('flags a canary run by its run_id', () => {

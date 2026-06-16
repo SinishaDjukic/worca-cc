@@ -11,7 +11,7 @@
 // work/" IS the live window.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 
 const STATUS_SEG = `${'.worca'}/runs`; // status.json lives at .worca/runs/<id>/status.json
 
@@ -86,6 +86,40 @@ function instanceRep(profileWorkDir, statusFile) {
 }
 
 /**
+ * Read the template's per-stage enabled flags from the work tree (the
+ * template-resolved truth, not the all-enabled base settings.json). Returns a
+ * `{stage: enabled}` map, or null if it can't be resolved (then show all).
+ * status.json lives at <repRoot>/.worca/runs/<id>/status.json.
+ */
+function enabledStageMap(statusFile, pipelineTemplate) {
+  if (!pipelineTemplate) return null;
+  const id = String(pipelineTemplate).replace(/^(builtin|project|user):/, '');
+  const repRoot = dirname(dirname(dirname(dirname(statusFile))));
+  const f = join(repRoot, '.claude', 'worca', 'templates', id, 'template.json');
+  try {
+    const stages = JSON.parse(readFileSync(f, 'utf8'))?.config?.stages;
+    if (!stages || typeof stages !== 'object') return null;
+    const map = {};
+    for (const [k, v] of Object.entries(stages)) map[k] = v?.enabled !== false;
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+/** Keep stages the template enables — plus any that actually ran/are running. */
+function filterEnabledStages(stages, enabledMap) {
+  if (!enabledMap) return stages;
+  return stages.filter(
+    (s) =>
+      enabledMap[s.name] !== false ||
+      s.skipped ||
+      s.status === 'completed' ||
+      s.status === 'in_progress',
+  );
+}
+
+/**
  * Discover active (in-flight) runs under one target dir.
  *
  * @param {string} dir
@@ -107,7 +141,10 @@ export function discoverActive(dir) {
         continue;
       }
       const runId = s.run_id || basename(join(file, '..'));
-      const stages = summarizeStages(s.stages);
+      const stages = filterEnabledStages(
+        summarizeStages(s.stages),
+        enabledStageMap(file, s.pipeline_template),
+      );
       const pipelineStatus = s.pipeline_status || 'running';
       const { instance, rep } = instanceRep(profileWorkDir, file);
       out.push({
