@@ -101,20 +101,26 @@ export function createApp(options = {}) {
     }
   });
 
-  // One profile: aggregate + the individual reps for the detail table.
+  // One profile: aggregate + the individual reps for the detail table. A
+  // profile that has a YAML def but no results yet (reps: 0) is still openable —
+  // we synthesize a def-based aggregate so the detail page (and its Run options)
+  // render. Only 404 when neither results nor a def exist for the name.
   app.get('/api/profiles/:name', (req, res) => {
     try {
+      const name = req.params.name;
       const rows = readRows();
-      const reps = rows.filter(
-        (r) => (r.profile || '(unknown)') === req.params.name,
-      );
-      if (reps.length === 0) {
+      const reps = rows.filter((r) => (r.profile || '(unknown)') === name);
+      if (reps.length > 0) {
+        return res.json({ ok: true, aggregate: aggregateProfile(name, reps), reps });
+      }
+      const def = readDefs().find((d) => d.name === name);
+      if (!def) {
         return res.status(404).json({ ok: false, error: 'profile not found' });
       }
       res.json({
         ok: true,
-        aggregate: aggregateProfile(req.params.name, reps),
-        reps,
+        aggregate: { ...aggregateProfile(name, []), benchmark: def.benchmark },
+        reps: [],
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });

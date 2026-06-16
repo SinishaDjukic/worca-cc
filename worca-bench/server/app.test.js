@@ -123,6 +123,30 @@ describe('createApp API', () => {
     });
   });
 
+  it('GET /api/profiles/:name opens a def-only profile (no results yet)', async () => {
+    mkdirSync(join(dir, 'profiles'), { recursive: true });
+    writeFileSync(
+      join(dir, 'profiles', 'fresh.yaml'),
+      'name: fresh\nbenchmark: swe-bench-verified\n',
+    );
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/fresh`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.aggregate.name).toBe('fresh');
+      expect(body.aggregate.benchmark).toBe('swe-bench-verified');
+      expect(body.aggregate.reps).toBe(0);
+      expect(body.reps).toEqual([]);
+    });
+  });
+
+  it('GET /api/profiles/:name 404s when neither results nor a def exist', async () => {
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/ghost`);
+      expect(res.status).toBe(404);
+    });
+  });
+
   it('POST /api/run launches the runner and returns pid', async () => {
     let captured = null;
     const fakeRun = async (opts) => {
