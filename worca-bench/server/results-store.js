@@ -7,8 +7,18 @@
 // `readResults` is the only function that touches the filesystem, and the
 // aggregation functions operate on a plain rows array.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+
+/**
+ * Stable short id for a result dir, so same-named profiles from different dirs
+ * are distinct and individually navigable (`#/profile?name=X&src=<hash>`).
+ */
+export function srcHash(dir) {
+  if (!dir) return 'na';
+  return createHash('sha256').update(String(dir)).digest('hex').slice(0, 8);
+}
 
 /**
  * Read and parse `<targetDir>/results.jsonl` into an array of row objects.
@@ -199,8 +209,12 @@ export function aggregateProfile(name, allRows) {
     return latest;
   }, null);
 
+  const sourceDir = first._source_dir || null;
   return {
     name,
+    src: srcHash(sourceDir),
+    source_dir: sourceDir,
+    source_label: sourceDir ? basename(sourceDir) : null,
     benchmark: first.benchmark || null,
     worca_ref: first.worca_ref || null,
     worca_version: first.worca_version || null,
@@ -227,35 +241,44 @@ export function aggregateProfile(name, allRows) {
  * @returns {object[]} array of aggregate summaries, one per profile
  */
 export function aggregateByProfile(rows) {
-  const byProfile = new Map();
+  // Group by (source dir, name) so a profile named X in two different result
+  // dirs yields two distinct aggregates rather than silently merging.
+  const byKey = new Map();
   for (const row of rows) {
-    const key = row.profile || '(unknown)';
-    if (!byProfile.has(key)) byProfile.set(key, []);
-    byProfile.get(key).push(row);
+    const name = row.profile || '(unknown)';
+    const key = `${srcHash(row._source_dir)}::${name}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(row);
   }
   const out = [];
-  for (const [name, group] of byProfile) {
-    out.push(aggregateProfile(name, group));
+  for (const group of byKey.values()) {
+    out.push(aggregateProfile(group[0].profile || '(unknown)', group));
   }
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  out.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.src.localeCompare(b.src),
+  );
   return out;
 }
 
 /**
- * Build a side-by-side comparison for the named profiles. Profiles with no
- * matching rows are returned with `reps: 0` so the compare table can still show
- * the requested column (rather than silently dropping it).
+ * Build a side-by-side comparison for the requested profiles. Each ref is
+ * `name` or `name@src` (src scopes to a specific result dir). Refs with no
+ * matching rows return `reps: 0` so the compare column still shows.
  *
  * @param {object[]} rows
- * @param {string[]} names
- * @returns {object[]} aggregates in the same order as `names`
+ * @param {string[]} refs   each "name" or "name@src"
+ * @returns {object[]} aggregates in the same order as `refs`
  */
-export function compareProfiles(rows, names) {
-  const byProfile = new Map();
-  for (const row of rows) {
-    const key = row.profile || '(unknown)';
-    if (!byProfile.has(key)) byProfile.set(key, []);
-    byProfile.get(key).push(row);
-  }
-  return names.map((name) => aggregateProfile(name, byProfile.get(name) || []));
+export function compareProfiles(rows, refs) {
+  return refs.map((ref) => {
+    const at = ref.lastIndexOf('@');
+    const name = at >= 0 ? ref.slice(0, at) : ref;
+    const src = at >= 0 ? ref.slice(at + 1) : null;
+    const group = rows.filter(
+      (r) =>
+        (r.profile || '(unknown)') === name &&
+        (src === null || srcHash(r._source_dir) === src),
+    );
+    return aggregateProfile(name, group);
+  });
 }

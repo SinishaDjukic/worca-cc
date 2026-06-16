@@ -154,13 +154,16 @@ describe('discoverActive', () => {
 });
 
 describe('activeByProfile', () => {
-  it('keeps the most recently updated run per profile', () => {
+  it('keeps the most recently updated run per (src, profile)', () => {
     const map = activeByProfile([
-      { profile: 'a', stage: 'plan', _mtime: 1 },
-      { profile: 'a', stage: 'test', _mtime: 5 },
-      { profile: 'b', stage: 'review', _mtime: 2 },
+      { profile: 'a', src: 's1', stage: 'plan', _mtime: 1 },
+      { profile: 'a', src: 's1', stage: 'test', _mtime: 5 },
+      { profile: 'b', src: 's1', stage: 'review', _mtime: 2 },
+      // same name, different src — tracked separately
+      { profile: 'a', src: 's2', stage: 'implement', _mtime: 9 },
     ]);
-    expect(map.get('a').stage).toBe('test');
-    expect(map.get('b').stage).toBe('review');
+    expect(map.get('s1::a').stage).toBe('test');
+    expect(map.get('s1::b').stage).toBe('review');
+    expect(map.get('s2::a').stage).toBe('implement');
   });
 });

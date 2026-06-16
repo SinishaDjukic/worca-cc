@@ -12,6 +12,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { srcHash } from './results-store.js';
 
 const STATUS_SEG = `${'.worca'}/runs`; // status.json lives at .worca/runs/<id>/status.json
 
@@ -149,6 +150,7 @@ export function discoverActive(dir) {
       const { instance, rep } = instanceRep(profileWorkDir, file);
       out.push({
         profile,
+        src: srcHash(dir),
         instance,
         rep,
         run_id: runId,
@@ -185,13 +187,14 @@ export function discoverActiveMulti(dirs) {
   return out;
 }
 
-/** Map profile name -> its most-recently-updated active run (for card badges). */
+/** Map `<src>::<profile>` -> its most-recently-updated active run (card badges). */
 export function activeByProfile(active) {
   const map = new Map();
   for (const run of active) {
-    const cur = map.get(run.profile);
+    const key = `${run.src}::${run.profile}`;
+    const cur = map.get(key);
     if (!cur || (run._mtime || 0) > (cur._mtime || 0)) {
-      map.set(run.profile, run);
+      map.set(key, run);
     }
   }
   return map;

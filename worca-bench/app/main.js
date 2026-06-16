@@ -149,13 +149,16 @@ function toastView() {
   </div>`;
 }
 
-// Profile names checked for comparison on the dashboard (persists across renders).
+// Profiles checked for comparison (keyed `name@src` so same-named profiles from
+// different result dirs are tracked separately). Persists across renders.
 const selected = new Set();
-function toggleSelect(name) {
-  if (selected.has(name)) {
-    selected.delete(name);
+const profileKey = (agg) => `${agg.name}@${agg.src}`;
+function toggleSelect(agg) {
+  const key = profileKey(agg);
+  if (selected.has(key)) {
+    selected.delete(key);
   } else {
-    selected.add(name);
+    selected.add(key);
   }
   rerender();
 }
@@ -249,8 +252,8 @@ function buildHeader(path, view) {
     action = html`<button
       class="action-btn"
       @click=${() => {
-        const names = profiles.map((p) => p.name).join(',');
-        navigate(`#/compare?profiles=${encodeURIComponent(names)}`);
+        const refs = profiles.map((p) => `${p.name}@${p.src}`).join(',');
+        navigate(`#/compare?profiles=${encodeURIComponent(refs)}`);
       }}
     >Compare all</button>`;
   }
@@ -320,8 +323,10 @@ function renderView(view) {
   switch (view.kind) {
     case 'dashboard':
       return dashboardView(view.data, {
-        onOpen: (name) =>
-          navigate(`#/profile?name=${encodeURIComponent(name)}`),
+        onOpen: (agg) =>
+          navigate(
+            `#/profile?name=${encodeURIComponent(agg.name)}&src=${encodeURIComponent(agg.src)}`,
+          ),
         onRun: (name) => runProfile(name),
         selected,
         onToggleSelect: toggleSelect,
@@ -360,7 +365,9 @@ async function loadView(path, params) {
   }
   if (path === '/profile') {
     const name = params.get('name');
-    const data = await getJSON(`/api/profiles/${encodeURIComponent(name)}`);
+    const src = params.get('src');
+    const q = src ? `?src=${encodeURIComponent(src)}` : '';
+    const data = await getJSON(`/api/profiles/${encodeURIComponent(name)}${q}`);
     return { kind: 'detail', data };
   }
   if (path === '/compare') {

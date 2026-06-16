@@ -25,6 +25,7 @@ function renderToString(template) {
 function agg(overrides = {}) {
   return {
     name: 'smoke-feature-opus',
+    src: 'srchash1',
     benchmark: 'swe-bench-verified',
     worca_ref: 'local',
     template: 'builtin:feature',
@@ -105,14 +106,25 @@ describe('profileCardView', () => {
     expect(out).toContain('run-card-select');
   });
 
-  it('marks the card selected when its name is in the selected set', () => {
+  it('marks the card selected when its name@src key is in the selected set', () => {
     const out = renderToString(
       profileCardView(agg(), {
-        selected: new Set(['smoke-feature-opus']),
+        selected: new Set(['smoke-feature-opus@srchash1']),
         onToggleSelect: () => {},
       }),
     );
     expect(out).toContain('run-card--selected');
+  });
+
+  it('shows the source label only when a name is duplicated (showSource)', () => {
+    expect(renderToString(profileCardView(agg()))).not.toContain('Source:');
+    const out = renderToString(profileCardView(agg(), { showSource: true }));
+    expect(out).not.toContain('Source:'); // no source_label on the fixture
+    const out2 = renderToString(
+      profileCardView(agg({ source_label: 'results-b' }), { showSource: true }),
+    );
+    expect(out2).toContain('Source:');
+    expect(out2).toContain('results-b');
   });
 
   it('shows a running badge with the current stage when active', () => {

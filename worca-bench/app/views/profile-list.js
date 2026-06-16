@@ -16,9 +16,15 @@ export function profileListView(profiles, handlers = {}) {
       </div>
     `;
   }
+  // Show the source dir only when a profile name appears in >1 result dir,
+  // so the duplicates are distinguishable without cluttering the common case.
+  const counts = new Map();
+  for (const p of profiles) counts.set(p.name, (counts.get(p.name) || 0) + 1);
   return html`
     <div class="profile-grid">
-      ${profiles.map((p) => profileCardView(p, handlers))}
+      ${profiles.map((p) =>
+        profileCardView(p, { ...handlers, showSource: counts.get(p.name) > 1 }),
+      )}
     </div>
   `;
 }

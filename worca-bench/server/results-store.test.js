@@ -8,6 +8,7 @@ import {
   compareProfiles,
   readProfileDefs,
   readResults,
+  srcHash,
 } from './results-store.js';
 
 function row(overrides = {}) {
@@ -234,6 +235,48 @@ describe('readProfileDefs', () => {
       'name: c\nbenchmark: swe-bench-verified\ngrade:\n  mode: local-docker    # needs Docker\n',
     );
     expect(readProfileDefs(dir)[0].grade_mode).toBe('local-docker');
+  });
+});
+
+describe('src scoping (same name across result dirs)', () => {
+  it('keeps same-named profiles from different dirs distinct', () => {
+    const out = aggregateByProfile([
+      row({ profile: 'x', _source_dir: '/data/a', resolved: true }),
+      row({ profile: 'x', _source_dir: '/data/b', resolved: false }),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out.every((o) => o.name === 'x')).toBe(true);
+    expect(out[0].src).not.toBe(out[1].src);
+    expect(new Set(out.map((o) => o.source_dir))).toEqual(
+      new Set(['/data/a', '/data/b']),
+    );
+    expect(new Set(out.map((o) => o.source_label))).toEqual(
+      new Set(['a', 'b']),
+    );
+  });
+
+  it('compareProfiles scopes a ref by name@src', () => {
+    const rows = [
+      row({
+        profile: 'x',
+        instance_id: 'a',
+        _source_dir: '/data/a',
+        resolved: true,
+        cost_usd: 1,
+      }),
+      row({
+        profile: 'x',
+        instance_id: 'b',
+        _source_dir: '/data/b',
+        resolved: false,
+        cost_usd: 5,
+      }),
+    ];
+    const [a] = compareProfiles(rows, [`x@${srcHash('/data/a')}`]);
+    expect(a.resolved_rate).toBe(1); // only the /data/a row
+    expect(a.mean_cost_usd).toBe(1);
+    // a bare name (no @src) still matches across dirs
+    expect(compareProfiles(rows, ['x'])[0].reps).toBe(2);
   });
 });
 

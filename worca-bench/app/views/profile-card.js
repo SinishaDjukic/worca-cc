@@ -35,17 +35,18 @@ function _activeLabel(agg) {
 
 export function profileCardView(
   agg,
-  { onOpen, onRun, selected, onToggleSelect } = {},
+  { onOpen, onRun, selected, onToggleSelect, showSource } = {},
 ) {
   const outcome = profileOutcome(agg);
   const variant = variantFor(outcome);
   const cost = formatCost(agg.mean_cost_usd);
-  const isSelected = selected?.has(agg.name) ?? false;
+  const selKey = `${agg.name}@${agg.src}`;
+  const isSelected = selected?.has(selKey) ?? false;
 
   return html`
     <div
       class="run-card ${outcomeClass(outcome)} ${isSelected ? 'run-card--selected' : ''}"
-      @click=${onOpen ? () => onOpen(agg.name) : null}
+      @click=${onOpen ? () => onOpen(agg) : null}
     >
       <div class="run-card-top">
         ${
@@ -58,7 +59,7 @@ export function profileCardView(
                 @click=${(e) => e.stopPropagation()}
                 @change=${(e) => {
                   e.stopPropagation();
-                  onToggleSelect(agg.name);
+                  onToggleSelect(agg);
                 }}
               />`
             : nothing
@@ -88,6 +89,11 @@ export function profileCardView(
         ${
           agg.template
             ? html`<span class="run-card-meta-item"><span class="meta-label">Template:</span> <span class="meta-value">${agg.template}</span></span>`
+            : nothing
+        }
+        ${
+          showSource && agg.source_label
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Source:</span> <span class="meta-value">${agg.source_label}</span></span>`
             : nothing
         }
       </div>
@@ -121,7 +127,7 @@ export function profileCardView(
           onOpen
             ? html`<button class="action-btn" @click=${(e) => {
                 e.stopPropagation();
-                onOpen(agg.name);
+                onOpen(agg);
               }}>View</button>`
             : nothing
         }

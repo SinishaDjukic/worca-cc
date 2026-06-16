@@ -1,4 +1,4 @@
-import { html } from 'lit-html';
+import { html, nothing } from 'lit-html';
 import { profileOutcome, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 
@@ -19,10 +19,21 @@ export function compareView(rows) {
           <thead>
             <tr>
               <th>Metric</th>
-              ${rows.map(
-                (r) =>
-                  html`<th><span class="compare-col-name">${r.name}</span></th>`,
-              )}
+              ${(() => {
+                const counts = new Map();
+                for (const r of rows)
+                  counts.set(r.name, (counts.get(r.name) || 0) + 1);
+                return rows.map(
+                  (r) => html`<th>
+                    <span class="compare-col-name">${r.name}</span>
+                    ${
+                      counts.get(r.name) > 1 && r.source_label
+                        ? html`<span class="compare-col-src">${r.source_label}</span>`
+                        : nothing
+                    }
+                  </th>`,
+                );
+              })()}
             </tr>
           </thead>
           <tbody>

@@ -8,7 +8,7 @@
 
 import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { activeByProfile, discoverActiveMulti } from './active-runs.js';
@@ -25,6 +25,7 @@ import {
   dedupeReps,
   readProfileDefsMulti,
   readResultsMulti,
+  srcHash,
 } from './results-store.js';
 import { clearProfileResults, stopProfileRuns } from './run-control.js';
 import {
@@ -89,11 +90,18 @@ export function createApp(options = {}) {
     try {
       const rows = readRows();
       const aggregates = aggregateByProfile(rows);
-      const known = new Set(aggregates.map((a) => a.name));
+      const known = new Set(aggregates.map((a) => `${a.src}::${a.name}`));
       for (const def of readDefs()) {
-        if (known.has(def.name)) continue;
+        // def._source_dir is <dir>/profiles; the result-dir src is its parent.
+        const dir = dirname(def._source_dir);
+        const src = srcHash(dir);
+        if (known.has(`${src}::${def.name}`)) continue;
+        known.add(`${src}::${def.name}`);
         aggregates.push({
           name: def.name,
+          src,
+          source_dir: dir,
+          source_label: basename(dir),
           benchmark: def.benchmark,
           worca_ref: null,
           worca_version: null,
@@ -114,7 +122,7 @@ export function createApp(options = {}) {
       // a current stage before any results.jsonl row exists).
       const active = activeByProfile(readActive());
       for (const agg of aggregates) {
-        const run = active.get(agg.name);
+        const run = active.get(`${agg.src}::${agg.name}`);
         if (run) {
           agg.active = true;
           agg.stage = run.stage;
@@ -137,25 +145,37 @@ export function createApp(options = {}) {
   app.get('/api/profiles/:name', (req, res) => {
     try {
       const name = req.params.name;
-      const rows = readRows();
-      const reps = rows.filter((r) => (r.profile || '(unknown)') === name);
-      const active = readActive().filter((r) => r.profile === name);
-      if (reps.length > 0) {
+      // Optional src scopes to one result dir (same name can exist in several).
+      const src = req.query.src ? String(req.query.src) : null;
+      const matchSrc = (dir) => !src || srcHash(dir) === src;
+      const rows = readRows().filter(
+        (r) => (r.profile || '(unknown)') === name && matchSrc(r._source_dir),
+      );
+      const active = readActive().filter(
+        (r) => r.profile === name && (!src || r.src === src),
+      );
+      if (rows.length > 0) {
         return res.json({
           ok: true,
-          aggregate: aggregateProfile(name, reps),
-          reps: dedupeReps(reps), // collapse re-runs in the per-rep table
+          aggregate: aggregateProfile(name, rows),
+          reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
         });
       }
-      const def = readDefs().find((d) => d.name === name);
+      const def = readDefs().find(
+        (d) => d.name === name && matchSrc(dirname(d._source_dir)),
+      );
       if (!def && active.length === 0) {
         return res.status(404).json({ ok: false, error: 'profile not found' });
       }
+      const defDir = def ? dirname(def._source_dir) : null;
       res.json({
         ok: true,
         aggregate: {
           ...aggregateProfile(name, []),
+          src: def ? srcHash(defDir) : src,
+          source_dir: defDir,
+          source_label: defDir ? basename(defDir) : null,
           benchmark: def?.benchmark || null,
           template: def?.template || null,
           grade_mode: def?.grade_mode || null,
