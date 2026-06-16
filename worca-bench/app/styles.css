@@ -613,3 +613,16 @@ code {
   font-size: 13px;
   margin-top: 8px;
 }
+
+/* ─── Profile selection (Compare) ──────────────────────────────────────── */
+.run-card-select {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.run-card--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}

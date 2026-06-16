@@ -87,6 +87,17 @@ const state = {
   view: null, // { kind, data }
 };
 
+// Profile names checked for comparison on the dashboard (persists across renders).
+const selected = new Set();
+function toggleSelect(name) {
+  if (selected.has(name)) {
+    selected.delete(name);
+  } else {
+    selected.add(name);
+  }
+  rerender();
+}
+
 function loadingView() {
   return html`<section class="page loading-state"><sl-spinner></sl-spinner> <span>Loading…</span></section>`;
 }
@@ -144,19 +155,35 @@ function buildHeader(path, view) {
   // Dashboard (home) — no back button.
   const profiles = view?.kind === 'dashboard' ? view.data : null;
   const canCompare = Array.isArray(profiles) && profiles.length > 1;
-  return {
-    showBack: false,
-    title: 'Benchmark Profiles',
-    action: canCompare
-      ? html`<button
-          class="action-btn"
-          @click=${() => {
-            const names = profiles.map((p) => p.name).join(',');
-            navigate(`#/compare?profiles=${encodeURIComponent(names)}`);
-          }}
-        >Compare all</button>`
-      : null,
-  };
+
+  let action = null;
+  if (selected.size > 0) {
+    const names = [...selected].join(',');
+    action = html`
+      <button
+        class="action-btn"
+        @click=${() => {
+          selected.clear();
+          rerender();
+        }}
+      >Clear</button>
+      <button
+        class="action-btn action-btn--primary"
+        @click=${() =>
+          navigate(`#/compare?profiles=${encodeURIComponent(names)}`)}
+      >Compare selected (${selected.size})</button>
+    `;
+  } else if (canCompare) {
+    action = html`<button
+      class="action-btn"
+      @click=${() => {
+        const names = profiles.map((p) => p.name).join(',');
+        navigate(`#/compare?profiles=${encodeURIComponent(names)}`);
+      }}
+    >Compare all</button>`;
+  }
+
+  return { showBack: false, title: 'Benchmark Profiles', action };
 }
 
 function contentHeaderView({ showBack, onBack, title, badge, action }) {
@@ -221,6 +248,8 @@ function renderView(view) {
         onOpen: (name) =>
           navigate(`#/profile?name=${encodeURIComponent(name)}`),
         onRun: (name) => runProfile(name),
+        selected,
+        onToggleSelect: toggleSelect,
       });
     case 'detail':
       return profileDetailView(view.data);

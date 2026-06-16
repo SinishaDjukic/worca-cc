@@ -23,15 +23,39 @@ import {
  * @param {object} [handlers]
  * @param {(name: string) => void} [handlers.onOpen]
  * @param {(name: string) => void} [handlers.onRun]
+ * @param {Set<string>} [handlers.selected]  names currently selected to compare
+ * @param {(name: string) => void} [handlers.onToggleSelect]
  */
-export function profileCardView(agg, { onOpen, onRun } = {}) {
+export function profileCardView(
+  agg,
+  { onOpen, onRun, selected, onToggleSelect } = {},
+) {
   const outcome = profileOutcome(agg);
   const variant = variantFor(outcome);
   const cost = formatCost(agg.mean_cost_usd);
+  const isSelected = selected?.has(agg.name) ?? false;
 
   return html`
-    <div class="run-card ${outcomeClass(outcome)}" @click=${onOpen ? () => onOpen(agg.name) : null}>
+    <div
+      class="run-card ${outcomeClass(outcome)} ${isSelected ? 'run-card--selected' : ''}"
+      @click=${onOpen ? () => onOpen(agg.name) : null}
+    >
       <div class="run-card-top">
+        ${
+          onToggleSelect
+            ? html`<input
+                class="run-card-select"
+                type="checkbox"
+                aria-label=${`Select ${agg.name} to compare`}
+                .checked=${isSelected}
+                @click=${(e) => e.stopPropagation()}
+                @change=${(e) => {
+                  e.stopPropagation();
+                  onToggleSelect(agg.name);
+                }}
+              />`
+            : nothing
+        }
         <span class="run-card-status">${unsafeHTML(outcomeIcon(outcome, 16))}</span>
         <span class="run-card-title">${agg.name}</span>
         <sl-badge variant="${variant}" pill class="status-badge-${outcome}">${outcome}</sl-badge>

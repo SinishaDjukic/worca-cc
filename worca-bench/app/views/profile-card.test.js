@@ -94,4 +94,24 @@ describe('profileCardView', () => {
     expect(out).toContain('smoke-feature-opus');
     expect(out).toContain('swe-bench-verified');
   });
+
+  it('renders a compare checkbox only when selection is enabled', () => {
+    expect(renderToString(profileCardView(agg()))).not.toContain(
+      'run-card-select',
+    );
+    const out = renderToString(
+      profileCardView(agg(), { onToggleSelect: () => {} }),
+    );
+    expect(out).toContain('run-card-select');
+  });
+
+  it('marks the card selected when its name is in the selected set', () => {
+    const out = renderToString(
+      profileCardView(agg(), {
+        selected: new Set(['smoke-feature-opus']),
+        onToggleSelect: () => {},
+      }),
+    );
+    expect(out).toContain('run-card--selected');
+  });
 });

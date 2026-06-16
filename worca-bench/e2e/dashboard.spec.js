@@ -87,6 +87,18 @@ test('sub-pages render a back button that returns to the dashboard', async ({
   await expect(page.locator('.profile-grid')).toBeVisible();
 });
 
+test('select profiles and compare the chosen subset', async ({ page }) => {
+  await page.goto(srv.url);
+  const checks = page.locator('.run-card-select');
+  await expect(checks).toHaveCount(2);
+  await checks.nth(0).check();
+  await checks.nth(1).check();
+  await page.getByRole('button', { name: /Compare selected/ }).click();
+  await expect(page.locator('.compare-table')).toBeVisible();
+  // Metric column + 2 profile columns.
+  await expect(page.locator('.compare-table thead th')).toHaveCount(3);
+});
+
 test('settings page lists result directories from the sidebar', async ({
   page,
 }) => {
