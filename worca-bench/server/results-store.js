@@ -84,8 +84,12 @@ export function readProfileDefsMulti(dirs) {
  * scan — no YAML dependency, and results.jsonl remains the source of truth for
  * everything else.
  *
+ * Each def is tagged with `_source_dir` (the `profiles/` dir it was read from)
+ * so the launcher can pass `--profiles-dir` and find a YAML authored in a
+ * configured, non-primary result dir.
+ *
  * @param {string} targetDir
- * @returns {Array<{name: string, benchmark: string|null}>}
+ * @returns {Array<{name: string, benchmark: string|null, _source_dir: string}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -102,7 +106,7 @@ export function readProfileDefs(targetDir) {
     } catch {
       // Unreadable profile file — surface the name only.
     }
-    defs.push({ name, benchmark });
+    defs.push({ name, benchmark, _source_dir: dir });
   }
   return defs;
 }

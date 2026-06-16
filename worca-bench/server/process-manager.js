@@ -18,11 +18,18 @@ const HARD_CAP_MS = 180000;
  * @param {object} opts
  * @param {string} opts.profile     profile name to run
  * @param {string} opts.targetDir   results target directory
+ * @param {string} [opts.profilesDir]  extra dir to search for the profile YAML
+ *        (so a profile authored in a configured, non-primary dir is findable)
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
  * @returns {Promise<{pid: number}>}
  */
-export function runBenchmark({ profile, targetDir, _spawn = spawn } = {}) {
+export function runBenchmark({
+  profile,
+  targetDir,
+  profilesDir,
+  _spawn = spawn,
+} = {}) {
   if (!profile) {
     return Promise.reject(new Error('profile is required'));
   }
@@ -35,6 +42,9 @@ export function runBenchmark({ profile, targetDir, _spawn = spawn } = {}) {
     '--target-dir',
     targetDir,
   ];
+  if (profilesDir) {
+    args.push('--profiles-dir', profilesDir);
+  }
 
   return new Promise((resolve, reject) => {
     let child;

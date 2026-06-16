@@ -121,6 +121,19 @@ test('select profiles and compare the chosen subset', async ({ page }) => {
   await expect(page.locator('.compare-table thead th')).toHaveCount(3);
 });
 
+test('clicking Run surfaces a launch toast with the pid', async ({ page }) => {
+  await page.goto(srv.url);
+  await expect(page.locator('.run-card').first()).toBeVisible();
+  // The stubbed launcher returns pid 1 (see fixtures.js).
+  await page
+    .locator('.run-card', { hasText: 'smoke-feature-opus' })
+    .getByRole('button', { name: 'Run' })
+    .click();
+  const toast = page.locator('.launch-toast--success');
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText('pid 1');
+});
+
 test('settings page lists result directories from the sidebar', async ({
   page,
 }) => {

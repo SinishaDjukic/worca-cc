@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,7 +26,13 @@ function row(overrides = {}) {
 }
 
 async function withServer(targetDir, opts, fn) {
-  const app = createApp({ targetDir, ...opts });
+  // Isolate settings under the per-test temp dir so the suite never reads (or
+  // is perturbed by) the developer's real ~/.worca-bench/settings.json.
+  const app = createApp({
+    targetDir,
+    settingsHome: join(targetDir, '.worca-bench-home'),
+    ...opts,
+  });
   const server = createServer(app);
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   const { port } = server.address();
@@ -133,6 +139,31 @@ describe('createApp API', () => {
       expect(await res.json()).toEqual({ ok: true, pid: 4242 });
       expect(captured.profile).toBe('p1');
       expect(captured.targetDir).toBe(dir);
+    });
+  });
+
+  it('POST /api/run passes --profiles-dir for a YAML-defined profile', async () => {
+    // A profile authored as a YAML def (no results yet) must be findable by the
+    // runner via its source dir.
+    mkdirSync(join(dir, 'profiles'), { recursive: true });
+    writeFileSync(
+      join(dir, 'profiles', 'authored.yaml'),
+      'name: authored\nbenchmark: swe-bench-verified\n',
+    );
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 7 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      const res = await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'authored' }),
+      });
+      expect(res.status).toBe(200);
+      expect(captured.profile).toBe('authored');
+      expect(captured.profilesDir).toBe(join(dir, 'profiles'));
     });
   });
 

@@ -626,3 +626,43 @@ code {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
+
+/* ─── Launch toast (run feedback) ──────────────────────────────────────── */
+.launch-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border-left: 4px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+.launch-toast--success {
+  border-left-color: var(--status-completed);
+}
+.launch-toast--danger {
+  border-left-color: var(--status-failed);
+}
+.launch-toast-msg {
+  flex: 1;
+}
+.launch-toast-close {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.launch-toast-close:hover {
+  color: var(--fg);
+}

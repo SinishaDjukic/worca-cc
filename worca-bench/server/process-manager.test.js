@@ -43,6 +43,31 @@ describe('runBenchmark', () => {
     ]);
   });
 
+  it('appends --profiles-dir when given (and omits it otherwise)', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(7);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      profilesDir: '/authored/profiles',
+      _spawn,
+    });
+    expect(capturedArgs).toEqual([
+      '-m',
+      'worca_bench.cli',
+      'run',
+      '--profile',
+      'smoke',
+      '--target-dir',
+      '/tmp/out',
+      '--profiles-dir',
+      '/authored/profiles',
+    ]);
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

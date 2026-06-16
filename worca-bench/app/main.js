@@ -85,7 +85,42 @@ const state = {
   loading: false,
   error: null,
   view: null, // { kind, data }
+  toast: null, // { variant: 'success'|'danger', message }
 };
+
+// Transient launch feedback. Auto-dismisses; a new toast replaces the old.
+let toastTimer = null;
+function showToast(variant, message) {
+  state.toast = { variant, message };
+  rerender();
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    state.toast = null;
+    toastTimer = null;
+    rerender();
+  }, 6000);
+}
+
+function toastView() {
+  if (!state.toast) return '';
+  const { variant, message } = state.toast;
+  return html`<div
+    class="launch-toast launch-toast--${variant}"
+    role="status"
+    aria-live="polite"
+  >
+    <span class="launch-toast-msg">${message}</span>
+    <button
+      class="launch-toast-close"
+      aria-label="Dismiss"
+      @click=${() => {
+        state.toast = null;
+        if (toastTimer) clearTimeout(toastTimer);
+        rerender();
+      }}
+    >×</button>
+  </div>`;
+}
 
 // Profile names checked for comparison on the dashboard (persists across renders).
 const selected = new Set();
@@ -214,6 +249,7 @@ function shell(activeKey, header, body) {
         ${header}
         ${body}
       </main>
+      ${toastView()}
     </div>
   `;
 }
@@ -312,13 +348,19 @@ async function route() {
 
 async function runProfile(name) {
   try {
-    await fetch('/api/run', {
+    const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile: name }),
     });
-  } catch {
-    // Fire-and-forget; surface nothing beyond console for now.
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      showToast('success', `Launched ${name} — pid ${data.pid}`);
+    } else {
+      showToast('danger', `Launch failed: ${data.error || res.statusText}`);
+    }
+  } catch (err) {
+    showToast('danger', `Launch failed: ${err.message}`);
   }
 }
 

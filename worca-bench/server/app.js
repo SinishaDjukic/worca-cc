@@ -167,7 +167,14 @@ export function createApp(options = {}) {
       return res.status(400).json({ ok: false, error: 'profile is required' });
     }
     try {
-      const { pid } = await launch({ profile, targetDir });
+      // Find where this profile's YAML lives so a profile authored in a
+      // configured (non-primary) dir is still findable by the runner.
+      const def = readDefs().find((d) => d.name === profile);
+      const { pid } = await launch({
+        profile,
+        targetDir,
+        profilesDir: def?._source_dir,
+      });
       res.json({ ok: true, pid });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
