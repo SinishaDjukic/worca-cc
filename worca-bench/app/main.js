@@ -1,25 +1,37 @@
 // app/main.js — worca-bench dashboard entry point.
 //
 // Hash-router dispatch (#/, #/profile?name=X, #/compare, #/leaderboard),
-// data fetch, and lit-html render. Mirrors worca-ui's functional-template
-// approach: views are pure functions of data; main.js owns fetch + routing.
+// data fetch, and lit-html render. Mirrors worca-ui's app shell: a left
+// `.sidebar` for section nav + a `.main-content` area whose every view is
+// rendered under a shared `.content-header` (title, optional back button,
+// optional per-page actions). Views are pure functions of data; main.js
+// owns fetch, routing, and the header/shell composition.
 
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
 import { html, render } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 
+import { outcomeIcon, profileOutcome, variantFor } from './utils/badge.js';
 import { compareView } from './views/compare.js';
 import { leaderboardView } from './views/leaderboard.js';
 import { profileDetailView } from './views/profile-detail.js';
 import { dashboardView } from './views/profile-list.js';
+import { settingsView } from './views/settings.js';
+import { sidebarView } from './views/sidebar.js';
 
 // Shoelace ships its icon assets relative to a base path; point it at the
 // bundled copy location (we don't use sl-icon, but the lib still resolves it).
 setBasePath('/vendor');
 
 const root = document.getElementById('app');
+
+// Lucide ArrowLeft — the content-header back button (parity with worca-ui's
+// `iconSvg(ArrowLeft)`). Inlined to keep worca-bench dependency-light.
+const BACK_ARROW =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>';
 
 // ─── Routing ────────────────────────────────────────────────────────────
 
@@ -37,6 +49,26 @@ function navigate(hash) {
   } else {
     location.hash = hash;
   }
+}
+
+/** Sidebar nav callback: section key → hash route. */
+function onNavigate(key) {
+  if (key === 'compare') navigate('#/compare');
+  else if (key === 'leaderboard') navigate('#/leaderboard');
+  else if (key === 'settings') navigate('#/settings');
+  else navigate('#/');
+}
+
+/**
+ * Which sidebar item is highlighted for a given route path. Profile detail
+ * is reached from the dashboard, so it highlights Dashboard (parity with
+ * worca-ui, where detail views light up their parent section).
+ */
+function activeKeyForPath(path) {
+  if (path === '/compare') return 'compare';
+  if (path === '/leaderboard') return 'leaderboard';
+  if (path === '/settings') return 'settings';
+  return 'dashboard';
 }
 
 // ─── Fetch helpers ──────────────────────────────────────────────────────
@@ -63,31 +95,107 @@ function errorView(message) {
   return html`<section class="page"><p class="error-state">Error: ${message}</p></section>`;
 }
 
-function headerView(activePath) {
-  const link = (hash, label, key) => html`<a
-    class="nav-link ${activePath === key ? 'nav-link--active' : ''}"
-    href=${hash}
-  >${label}</a>`;
-  return html`
-    <header class="app-header">
-      <div class="app-brand"><span class="app-logo">⬡</span> worca-bench</div>
-      <nav class="app-nav">
-        ${link('#/', 'Dashboard', '/')}
-        ${link('#/compare', 'Compare', '/compare')}
-        ${link('#/leaderboard', 'Leaderboard', '/leaderboard')}
-      </nav>
-    </header>
-  `;
+// ─── Content header ─────────────────────────────────────────────────────
+
+/**
+ * Build the content-header spec for a route. Data-dependent bits (the
+ * profile name/badge/Run button, the dashboard "Compare all" action) read
+ * from `view` and are omitted while a fetch is in flight.
+ *
+ * @returns {{ showBack:boolean, onBack?:Function, title:any, badge?:any, action?:any }}
+ */
+function buildHeader(path, view) {
+  const backToDashboard = () => navigate('#/');
+
+  if (path === '/profile') {
+    const agg = view?.kind === 'detail' ? view.data?.aggregate : null;
+    const outcome = agg ? profileOutcome(agg) : null;
+    return {
+      showBack: true,
+      onBack: backToDashboard,
+      title: agg
+        ? html`<span class="content-header-status">${unsafeHTML(outcomeIcon(outcome, 18))}</span>${agg.name}`
+        : 'Profile',
+      badge: outcome
+        ? html`<sl-badge variant="${variantFor(outcome)}" pill>${outcome}</sl-badge>`
+        : null,
+      action: agg
+        ? html`<button class="action-btn action-btn--primary" @click=${() => runProfile(agg.name)}>Run profile</button>`
+        : null,
+    };
+  }
+
+  if (path === '/compare') {
+    return {
+      showBack: true,
+      onBack: backToDashboard,
+      title: 'Compare Profiles',
+    };
+  }
+
+  if (path === '/leaderboard') {
+    return { showBack: true, onBack: backToDashboard, title: 'Leaderboard' };
+  }
+
+  if (path === '/settings') {
+    return { showBack: true, onBack: backToDashboard, title: 'Settings' };
+  }
+
+  // Dashboard (home) — no back button.
+  const profiles = view?.kind === 'dashboard' ? view.data : null;
+  const canCompare = Array.isArray(profiles) && profiles.length > 1;
+  return {
+    showBack: false,
+    title: 'Benchmark Profiles',
+    action: canCompare
+      ? html`<button
+          class="action-btn"
+          @click=${() => {
+            const names = profiles.map((p) => p.name).join(',');
+            navigate(`#/compare?profiles=${encodeURIComponent(names)}`);
+          }}
+        >Compare all</button>`
+      : null,
+  };
 }
 
-function shell(activePath, body) {
-  return html`${headerView(activePath)}<main class="app-main">${body}</main>`;
+function contentHeaderView({ showBack, onBack, title, badge, action }) {
+  return html`
+    <div class="content-header">
+      ${
+        showBack
+          ? html`<button
+              class="content-header-back"
+              aria-label="Back to dashboard"
+              @click=${onBack}
+            >${unsafeHTML(BACK_ARROW)}</button>`
+          : ''
+      }
+      <h1 class="content-header-title">${title}</h1>
+      ${badge || ''}
+      ${action ? html`<div class="content-header-actions">${action}</div>` : ''}
+    </div>
+  `;
 }
 
 // ─── Render ─────────────────────────────────────────────────────────────
 
+function shell(activeKey, header, body) {
+  return html`
+    <div class="app-shell">
+      ${sidebarView(activeKey, { onNavigate })}
+      <main class="main-content">
+        ${header}
+        ${body}
+      </main>
+    </div>
+  `;
+}
+
 function rerender() {
   const { path } = parseHash(location.hash);
+  const activeKey = activeKeyForPath(path);
+
   let body;
   if (state.loading) {
     body = loadingView();
@@ -98,7 +206,12 @@ function rerender() {
   } else {
     body = loadingView();
   }
-  render(shell(path, body), root);
+
+  // Suppress data-dependent header bits while loading so a stale view's
+  // title/actions don't flash during a fetch.
+  const headerView = state.loading ? null : state.view;
+  const header = contentHeaderView(buildHeader(path, headerView));
+  render(shell(activeKey, header, body), root);
 }
 
 function renderView(view) {
@@ -108,23 +221,20 @@ function renderView(view) {
         onOpen: (name) =>
           navigate(`#/profile?name=${encodeURIComponent(name)}`),
         onRun: (name) => runProfile(name),
-        onCompare: () => {
-          const names = view.data.map((p) => p.name).join(',');
-          navigate(`#/compare?profiles=${encodeURIComponent(names)}`);
-        },
       });
     case 'detail':
-      return profileDetailView(view.data, {
-        onBack: () => navigate('#/'),
-        onRun: (name) => runProfile(name),
-      });
+      return profileDetailView(view.data);
     case 'compare':
-      return compareView(view.data, { onBack: () => navigate('#/') });
+      return compareView(view.data);
     case 'leaderboard':
       return leaderboardView(view.data, {
-        onBack: () => navigate('#/'),
         onSelectBenchmark: (b) =>
           navigate(`#/leaderboard?benchmark=${encodeURIComponent(b)}`),
+      });
+    case 'settings':
+      return settingsView(view.data, {
+        onAddDir: addDir,
+        onRemoveDir: removeDir,
       });
     default:
       return errorView('Unknown view');
@@ -158,6 +268,9 @@ async function route() {
         `/api/leaderboard?benchmark=${encodeURIComponent(benchmark)}`,
       );
       state.view = { kind: 'leaderboard', data };
+    } else if (path === '/settings') {
+      const data = await getJSON('/api/settings');
+      state.view = { kind: 'settings', data };
     } else {
       state.error = `No such route: ${path}`;
     }
@@ -180,6 +293,37 @@ async function runProfile(name) {
     // Fire-and-forget; surface nothing beyond console for now.
   }
 }
+
+async function mutateSettingsDir(method, dir) {
+  try {
+    const res = await fetch('/api/settings/dirs', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      state.view = {
+        kind: 'settings',
+        data: {
+          ...(state.view?.data || {}),
+          error: data.error || 'request failed',
+        },
+      };
+    } else {
+      state.view = { kind: 'settings', data };
+    }
+  } catch (err) {
+    state.view = {
+      kind: 'settings',
+      data: { ...(state.view?.data || {}), error: err.message },
+    };
+  }
+  rerender();
+}
+
+const addDir = (dir) => mutateSettingsDir('POST', dir);
+const removeDir = (dir) => mutateSettingsDir('DELETE', dir);
 
 window.addEventListener('hashchange', route);
 route();

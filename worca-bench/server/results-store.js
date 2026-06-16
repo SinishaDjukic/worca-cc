@@ -36,6 +36,49 @@ export function readResults(targetDir) {
 }
 
 /**
+ * Read results from several dirs and concatenate, tagging each row with the
+ * `_source_dir` it came from (so artifact drill-down can resolve against the
+ * owning dir). Dirs are deduped.
+ *
+ * @param {string[]} dirs
+ * @returns {object[]} parsed rows across all dirs
+ */
+export function readResultsMulti(dirs) {
+  const out = [];
+  const seen = new Set();
+  for (const dir of dirs) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    for (const row of readResults(dir)) {
+      out.push({ ...row, _source_dir: dir });
+    }
+  }
+  return out;
+}
+
+/**
+ * Read profile defs across several dirs, deduped by name (first dir wins).
+ *
+ * @param {string[]} dirs
+ * @returns {Array<{name: string, benchmark: string|null}>}
+ */
+export function readProfileDefsMulti(dirs) {
+  const out = [];
+  const names = new Set();
+  const seen = new Set();
+  for (const dir of dirs) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    for (const def of readProfileDefs(dir)) {
+      if (names.has(def.name)) continue;
+      names.add(def.name);
+      out.push(def);
+    }
+  }
+  return out;
+}
+
+/**
  * Read experiment definitions from `<targetDir>/profiles/*.yaml`. We surface
  * only the cheap fields (name + benchmark) with a minimal line-oriented YAML
  * scan — no YAML dependency, and results.jsonl remains the source of truth for

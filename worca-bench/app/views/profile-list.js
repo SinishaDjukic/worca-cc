@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit-html';
+import { html } from 'lit-html';
 import { profileCardView } from './profile-card.js';
 
 /**
@@ -24,24 +24,12 @@ export function profileListView(profiles, handlers = {}) {
 }
 
 /**
- * The dashboard section header with a compare shortcut.
+ * The dashboard body — the profile card grid. The page title and the
+ * "Compare all" action now live in main.js's shared content header.
  *
  * @param {object[]} profiles
- * @param {object} [handlers]
- * @param {() => void} [handlers.onCompare]
+ * @param {object} [handlers]  forwarded to each profile card (onOpen, onRun)
  */
 export function dashboardView(profiles, handlers = {}) {
-  return html`
-    <section class="page">
-      <div class="page-head">
-        <h1>Benchmark Profiles</h1>
-        ${
-          profiles && profiles.length > 1 && handlers.onCompare
-            ? html`<button class="action-btn" @click=${handlers.onCompare}>Compare all</button>`
-            : nothing
-        }
-      </div>
-      ${profileListView(profiles, handlers)}
-    </section>
-  `;
+  return html`<section class="page">${profileListView(profiles, handlers)}</section>`;
 }

@@ -104,8 +104,8 @@ describe('createApp API', () => {
     });
   });
 
-  it('GET /api/leaderboard returns static fixture rows', async () => {
-    await withServer(dir, {}, async (base) => {
+  it('GET /api/leaderboard returns rows (offline fallback, hermetic)', async () => {
+    await withServer(dir, { leaderboardOffline: true }, async (base) => {
       const { ok, rows, benchmark } = await (
         await fetch(`${base}/api/leaderboard?benchmark=swe-bench-verified`)
       ).json();

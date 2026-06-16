@@ -16,9 +16,15 @@ import {
   aggregateByProfile,
   aggregateProfile,
   compareProfiles,
-  readProfileDefs,
-  readResults,
+  readProfileDefsMulti,
+  readResultsMulti,
 } from './results-store.js';
+import {
+  addResultDir,
+  loadSettings,
+  removeResultDir,
+  resolveResultDirs,
+} from './settings-store.js';
 
 /**
  * @param {object} options
@@ -31,6 +37,12 @@ export function createApp(options = {}) {
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
   const targetDir = options.targetDir || process.cwd();
   const launch = options._runBenchmark || runBenchmark;
+  const settingsHome = options.settingsHome;
+
+  // Effective read set = launch dir (always) + configured dirs (settings.json).
+  const effectiveDirs = () => resolveResultDirs(targetDir, settingsHome).dirs;
+  const readRows = () => readResultsMulti(effectiveDirs());
+  const readDefs = () => readProfileDefsMulti(effectiveDirs());
 
   app.use(express.json());
 
@@ -51,10 +63,10 @@ export function createApp(options = {}) {
   // (benchmark) for profiles that have a YAML definition but no results yet.
   app.get('/api/profiles', (_req, res) => {
     try {
-      const rows = readResults(targetDir);
+      const rows = readRows();
       const aggregates = aggregateByProfile(rows);
       const known = new Set(aggregates.map((a) => a.name));
-      for (const def of readProfileDefs(targetDir)) {
+      for (const def of readDefs()) {
         if (known.has(def.name)) continue;
         aggregates.push({
           name: def.name,
@@ -82,7 +94,7 @@ export function createApp(options = {}) {
   // One profile: aggregate + the individual reps for the detail table.
   app.get('/api/profiles/:name', (req, res) => {
     try {
-      const rows = readResults(targetDir);
+      const rows = readRows();
       const reps = rows.filter(
         (r) => (r.profile || '(unknown)') === req.params.name,
       );
@@ -102,7 +114,7 @@ export function createApp(options = {}) {
   // Raw rows — escape hatch for ad-hoc inspection.
   app.get('/api/results', (_req, res) => {
     try {
-      res.json({ ok: true, results: readResults(targetDir) });
+      res.json({ ok: true, results: readRows() });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -115,21 +127,23 @@ export function createApp(options = {}) {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      const rows = readResults(targetDir);
+      const rows = readRows();
       res.json({ ok: true, compare: compareProfiles(rows, names) });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
   });
 
-  // Public cross-agent leaderboard (static fixture for now — see leaderboard.js).
-  app.get('/api/leaderboard', (req, res) => {
+  // Public cross-agent leaderboard — live fetch + cache + offline fallback (leaderboard.js).
+  app.get('/api/leaderboard', async (req, res) => {
     try {
       const benchmark = String(req.query.benchmark || 'swe-bench-verified');
       res.json({
         ok: true,
         benchmark,
-        rows: getLeaderboard(benchmark),
+        rows: await getLeaderboard(benchmark, {
+          offline: options.leaderboardOffline,
+        }),
         benchmarks: leaderboardBenchmarks(),
       });
     } catch (err) {
@@ -146,6 +160,52 @@ export function createApp(options = {}) {
     try {
       const { pid } = await launch({ profile, targetDir });
       res.json({ ok: true, pid });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Settings: result-dir management (~/.worca-bench/settings.json) ──────
+
+  const settingsPayload = () => {
+    const resolved = resolveResultDirs(targetDir, settingsHome);
+    return {
+      ok: true,
+      primary: resolved.primary, // launch --target-dir, always included
+      configured: loadSettings(settingsHome).result_dirs,
+      effective: resolved.dirs, // what the dashboard actually reads
+    };
+  };
+
+  app.get('/api/settings', (_req, res) => {
+    try {
+      res.json(settingsPayload());
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/settings/dirs', (req, res) => {
+    const dir = req.body?.dir;
+    if (!dir) {
+      return res.status(400).json({ ok: false, error: 'dir is required' });
+    }
+    try {
+      addResultDir(dir, settingsHome);
+      res.json(settingsPayload());
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.delete('/api/settings/dirs', (req, res) => {
+    const dir = req.body?.dir;
+    if (!dir) {
+      return res.status(400).json({ ok: false, error: 'dir is required' });
+    }
+    try {
+      removeResultDir(dir, settingsHome);
+      res.json(settingsPayload());
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

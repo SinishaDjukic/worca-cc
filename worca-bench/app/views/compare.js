@@ -1,21 +1,16 @@
-import { html, nothing } from 'lit-html';
+import { html } from 'lit-html';
 import { profileOutcome, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 
 /**
- * Config-vs-config comparison table. Each requested profile is a column.
+ * Config-vs-config comparison table body. Each requested profile is a column.
+ * The page title and back button live in main.js's shared content header.
  *
  * @param {object[]} rows  aggregate summaries from /api/compare
- * @param {object} [handlers]
- * @param {() => void} [handlers.onBack]
  */
-export function compareView(rows, { onBack } = {}) {
+export function compareView(rows) {
   return html`
     <section class="page">
-      <div class="page-head">
-        <h1>Compare Profiles</h1>
-        ${onBack ? html`<button class="action-btn" @click=${onBack}>Back</button>` : nothing}
-      </div>
       ${
         !rows || rows.length === 0
           ? html`<p class="empty-state">No profiles selected to compare.</p>`

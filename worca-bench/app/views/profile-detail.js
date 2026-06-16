@@ -1,11 +1,5 @@
-import { html, nothing } from 'lit-html';
-import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import {
-  outcomeIcon,
-  outcomeOf,
-  profileOutcome,
-  variantFor,
-} from '../utils/badge.js';
+import { html } from 'lit-html';
+import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 
 function _median(values) {
@@ -34,20 +28,18 @@ function _statRow(label, value) {
 }
 
 /**
- * Detail view for one profile: aggregate stat tiles + a per-rep table.
+ * Detail view body for one profile: aggregate stat tiles + a per-rep table.
+ * The profile name, outcome badge, back button, and "Run profile" action now
+ * live in main.js's shared content header.
  *
  * @param {object} data  { aggregate, reps }
- * @param {object} [handlers]
- * @param {() => void} [handlers.onBack]
- * @param {(name: string) => void} [handlers.onRun]
  */
-export function profileDetailView(data, { onBack, onRun } = {}) {
+export function profileDetailView(data) {
   if (!data?.aggregate) {
     return html`<section class="page"><p class="empty-state">Profile not found.</p></section>`;
   }
   const agg = data.aggregate;
   const reps = data.reps || [];
-  const outcome = profileOutcome(agg);
 
   const costs = reps
     .map((r) => r.cost_usd)
@@ -56,18 +48,6 @@ export function profileDetailView(data, { onBack, onRun } = {}) {
 
   return html`
     <section class="page">
-      <div class="page-head">
-        <div class="page-head-title">
-          <span class="run-card-status">${unsafeHTML(outcomeIcon(outcome, 18))}</span>
-          <h1>${agg.name}</h1>
-          <sl-badge variant="${variantFor(outcome)}" pill>${outcome}</sl-badge>
-        </div>
-        <div class="page-head-actions">
-          ${onBack ? html`<button class="action-btn" @click=${onBack}>Back</button>` : nothing}
-          ${onRun ? html`<button class="action-btn action-btn--primary" @click=${() => onRun(agg.name)}>Run</button>` : nothing}
-        </div>
-      </div>
-
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
         ${_statRow('Reps', String(agg.reps))}

@@ -63,6 +63,10 @@ export async function startServer(rows = FIXTURE_ROWS) {
     targetDir,
     // Don't actually spawn python in e2e — stub the launcher.
     _runBenchmark: async () => ({ pid: 1 }),
+    // Keep the leaderboard hermetic (no live network fetch) in e2e.
+    leaderboardOffline: true,
+    // Isolate settings under the temp target dir (never the real ~/.worca-bench).
+    settingsHome: join(targetDir, '.worca-bench-home'),
   });
   const server = createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

@@ -52,9 +52,48 @@ test('compare view renders a side-by-side table', async ({ page }) => {
   ]);
 });
 
-test('navigates from dashboard to leaderboard', async ({ page }) => {
+test('sidebar nav highlights the active section', async ({ page }) => {
   await page.goto(srv.url);
-  await page.locator('.nav-link', { hasText: 'Leaderboard' }).click();
+  // Dashboard is the home item and starts active.
+  await expect(
+    page.locator('.sidebar-item', { hasText: 'Dashboard' }),
+  ).toHaveClass(/active/);
+});
+
+test('navigates from dashboard to leaderboard via the sidebar', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  await page.locator('.sidebar-item', { hasText: 'Leaderboard' }).click();
   await expect(page.locator('.leaderboard-table')).toBeVisible();
-  await expect(page.locator('h1')).toContainText('Leaderboard');
+  await expect(page.locator('.content-header-title')).toContainText(
+    'Leaderboard',
+  );
+  await expect(
+    page.locator('.sidebar-item', { hasText: 'Leaderboard' }),
+  ).toHaveClass(/active/);
+});
+
+test('sub-pages render a back button that returns to the dashboard', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  await page
+    .locator('.run-card-title', { hasText: 'smoke-feature-opus' })
+    .click();
+  await expect(page.locator('.reps-table')).toBeVisible();
+  await expect(page.locator('.content-header-back')).toBeVisible();
+  await page.locator('.content-header-back').click();
+  await expect(page.locator('.profile-grid')).toBeVisible();
+});
+
+test('settings page lists result directories from the sidebar', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  await page.locator('.sidebar-item', { hasText: 'Settings' }).click();
+  await expect(page.locator('.content-header-title')).toContainText('Settings');
+  await expect(page.locator('.settings-dirs')).toBeVisible();
+  // the launch dir is always shown as primary
+  await expect(page.locator('.settings-dir--primary')).toBeVisible();
 });
