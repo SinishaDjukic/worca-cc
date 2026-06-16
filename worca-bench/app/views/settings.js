@@ -1,11 +1,19 @@
-// app/views/settings.js — manage the result directories the dashboard reads.
+// app/views/settings.js — workspace settings (result dirs + benchmark cache).
 //
-// The dashboard aggregates results.jsonl from the launch --target-dir (always
-// included) plus any directories configured in ~/.worca-bench/settings.json.
-// This page lists them and lets you add/remove the configured ones. The page
-// title + back button live in main.js's shared content header.
+// Card-based layout: each concern is a card with a header/description, a list of
+// current values (path + status badge + inline remove), and an inline add/set
+// form. The page title + back button live in main.js's shared content header.
 
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+
+// Lucide icons, inlined to keep worca-bench dependency-light.
+const FOLDER =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const DATABASE =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>';
+const TRASH =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 
 /**
  * @param {object} data  { primary, configured, effective, cache?, error? }
@@ -13,14 +21,19 @@ import { html, nothing } from 'lit-html';
  * @param {(dir: string) => void} [handlers.onAddDir]
  * @param {(dir: string) => void} [handlers.onRemoveDir]
  * @param {(dir: string) => void} [handlers.onSetCache]
+ * @param {() => void} [handlers.onBrowseAdd]
+ * @param {() => void} [handlers.onBrowseCache]
  */
-export function settingsView(data, { onAddDir, onRemoveDir, onSetCache } = {}) {
+export function settingsView(
+  data,
+  { onAddDir, onRemoveDir, onSetCache, onBrowseAdd, onBrowseCache } = {},
+) {
   const primary = data?.primary || null;
   const configured = data?.configured || [];
   const effective = data?.effective || [];
   const cache = data?.cache || null;
 
-  const submit = (e) => {
+  const submitAdd = (e) => {
     e.preventDefault();
     const input = e.currentTarget.querySelector('.settings-add-input');
     const value = (input?.value || '').trim();
@@ -34,99 +47,120 @@ export function settingsView(data, { onAddDir, onRemoveDir, onSetCache } = {}) {
     e.preventDefault();
     const input = e.currentTarget.querySelector('.settings-cache-input');
     onSetCache?.((input?.value || '').trim());
+    if (input) input.value = '';
   };
 
   return html`
     <div class="settings-view">
-      <p class="settings-note">
-        The dashboard aggregates <code>results.jsonl</code> from the directories
-        below. The launch directory is always included; add more to view results
-        produced by other runs. Configuration is stored in
-        <code>~/.worca-bench/settings.json</code>.
-      </p>
+      ${
+        data?.error
+          ? html`<div class="settings-alert" role="alert">${data.error}</div>`
+          : nothing
+      }
 
-      <section class="settings-block">
-        <h3 class="settings-h">Result directories</h3>
-        <table class="settings-dirs">
-          <tbody>
-            ${
-              primary
-                ? html`<tr class="settings-dir settings-dir--primary">
-                    <td class="settings-dir-path">${primary}</td>
-                    <td class="settings-dir-tag">launch dir · always included</td>
-                    <td></td>
-                  </tr>`
-                : nothing
-            }
-            ${
-              configured.length === 0 && !primary
-                ? html`<tr>
-                    <td class="empty-state" colspan="3">
-                      No directories configured.
-                    </td>
-                  </tr>`
-                : nothing
-            }
-            ${configured.map(
-              (dir) => html`<tr class="settings-dir">
-                <td class="settings-dir-path">${dir}</td>
-                <td class="settings-dir-tag">
-                  ${effective.includes(dir) ? 'configured' : 'missing'}
-                </td>
-                <td>
-                  <button
-                    class="settings-remove"
-                    @click=${() => onRemoveDir?.(dir)}
-                  >
-                    Remove
-                  </button>
-                </td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
-      </section>
-
-      <section class="settings-block">
-        <h3 class="settings-h">Add a directory</h3>
-        <form class="settings-add" @submit=${submit}>
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <h2 class="settings-card-title">Result directories</h2>
+          <p class="settings-card-desc">
+            The dashboard aggregates <code>results.jsonl</code> from these
+            directories. The launch directory is always included; add more to
+            view results from other runs. Stored in
+            <code>~/.worca-bench/settings.json</code>.
+          </p>
+        </div>
+        <div class="settings-list settings-dirs">
+          ${
+            primary
+              ? html`<div class="settings-row settings-dir--primary">
+                  <span class="settings-row-icon">${unsafeHTML(FOLDER)}</span>
+                  <span class="settings-row-path">${primary}</span>
+                  <span class="settings-row-hint">always included</span>
+                </div>`
+              : nothing
+          }
+          ${configured.map((dir) => {
+            const present = effective.includes(dir);
+            return html`<div class="settings-row">
+              <span class="settings-row-icon">${unsafeHTML(FOLDER)}</span>
+              <span class="settings-row-path">${dir}</span>
+              ${
+                present
+                  ? nothing
+                  : html`<sl-badge variant="warning" pill>missing</sl-badge>`
+              }
+              <button
+                class="icon-btn icon-btn--danger settings-row-remove"
+                aria-label=${`Remove ${dir}`}
+                title="Remove"
+                @click=${() => onRemoveDir?.(dir)}
+              >
+                ${unsafeHTML(TRASH)}
+              </button>
+            </div>`;
+          })}
+          ${
+            configured.length === 0
+              ? html`<div class="settings-empty">
+                  No additional directories.
+                </div>`
+              : nothing
+          }
+        </div>
+        <form class="settings-inline-form" @submit=${submitAdd}>
           <input
-            class="settings-add-input"
+            class="settings-input settings-add-input"
             type="text"
-            placeholder="/absolute/path/to/target-dir"
+            placeholder="/absolute/path/to/results-dir"
+            aria-label="Directory path to add"
           />
-          <button class="settings-add-btn" type="submit">Add</button>
+          <button
+            class="action-btn settings-browse-btn"
+            type="button"
+            @click=${() => onBrowseAdd?.()}
+          >Browse…</button>
+          <button class="action-btn action-btn--primary" type="submit">Add</button>
         </form>
-        ${
-          data?.error
-            ? html`<p class="settings-error">${data.error}</p>`
-            : nothing
-        }
       </section>
 
-      <section class="settings-block">
-        <h3 class="settings-h">Benchmark cache directory</h3>
-        <p class="settings-note">
-          Large HuggingFace datasets and repo mirrors are stored here — keep it
-          off your home volume. Resolves from
-          <code>cache_dir</code> → <code>WORCA_BENCH_CACHE</code> →
-          <code>~/.worca-bench/cache</code>.
-        </p>
-        <table class="settings-dirs">
-          <tbody>
-            <tr class="settings-dir settings-dir--cache">
-              <td class="settings-dir-path">${cache?.dir || '—'}</td>
-              <td class="settings-dir-tag">${cache?.source || 'default'}</td>
-            </tr>
-          </tbody>
-        </table>
-        <form class="settings-add" @submit=${submitCache}>
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <h2 class="settings-card-title">Benchmark cache directory</h2>
+          <p class="settings-card-desc">
+            Large HuggingFace datasets and repo mirrors live here — keep it off
+            your home volume. Resolves <code>cache_dir</code> →
+            <code>WORCA_BENCH_CACHE</code> → <code>~/.worca-bench/cache</code>.
+          </p>
+        </div>
+        <div class="settings-list">
+          <div class="settings-row settings-dir--cache">
+            <span class="settings-row-icon">${unsafeHTML(DATABASE)}</span>
+            <span class="settings-row-path">${cache?.dir || '—'}</span>
+            ${
+              cache?.source && cache.source !== 'settings'
+                ? html`<span class="settings-row-hint">${cache.source}</span>`
+                : nothing
+            }
+          </div>
+        </div>
+        <form class="settings-inline-form" @submit=${submitCache}>
           <input
-            class="settings-cache-input settings-add-input"
+            class="settings-input settings-cache-input"
             type="text"
-            placeholder="/absolute/path/to/cache (blank to reset)"
+            placeholder="/absolute/path/to/cache"
+            aria-label="Cache directory path"
           />
-          <button class="settings-add-btn" type="submit">Set</button>
+          <button
+            class="action-btn"
+            type="button"
+            title="Reset to default"
+            @click=${() => onSetCache?.('')}
+          >Reset</button>
+          <button
+            class="action-btn settings-browse-btn"
+            type="button"
+            @click=${() => onBrowseCache?.()}
+          >Browse…</button>
+          <button class="action-btn action-btn--primary" type="submit">Set</button>
         </form>
       </section>
     </div>

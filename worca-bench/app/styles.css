@@ -165,6 +165,68 @@ code {
   opacity: 1;
 }
 
+/* Footer pinned to the bottom: connection indicator (left) + Settings gear (right). */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-settings-btn {
+  border: 1px solid var(--border);
+}
+.sidebar-settings-btn:hover {
+  color: var(--fg);
+}
+.sidebar-settings-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.connection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.connection-indicator.connected .conn-dot {
+  background: var(--status-completed);
+}
+
+.connection-indicator.disconnected .conn-dot {
+  background: var(--status-failed);
+}
+
+.connection-indicator.connecting .conn-dot {
+  background: #f59e0b;
+  animation: conn-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes conn-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 /* ─── Main content + content header ────────────────────────────────────── */
 
 .main-content {
@@ -544,89 +606,198 @@ code {
   text-decoration: underline;
 }
 
-/* ─── Settings page ─────────────────────────────────────────────────────── */
+/* ─── Settings page (card-based) ───────────────────────────────────────── */
 .settings-view {
-  max-width: 760px;
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
-.settings-note {
-  color: var(--muted);
+
+.settings-alert {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border-left: 4px solid var(--status-failed);
+  background: var(--bg-secondary);
+  color: var(--fg);
   font-size: 13px;
-  line-height: 1.5;
-  margin-bottom: 18px;
 }
-.settings-block {
-  margin-bottom: 24px;
+
+.settings-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
 }
-.settings-h {
-  font-size: 13px;
+
+.settings-card-head {
+  padding: 16px 18px 12px;
+}
+.settings-card-title {
+  margin: 0 0 4px;
+  font-size: 15px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--fg);
+}
+.settings-card-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--muted);
-  margin: 0 0 10px;
 }
-.settings-dirs {
-  width: 100%;
-  border-collapse: collapse;
+.settings-card-desc code {
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
 }
-.settings-dir td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
-  font-size: 13px;
-  vertical-align: middle;
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-subtle);
 }
-.settings-dir-path {
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-row-icon {
+  display: inline-flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.settings-row-path {
+  flex: 1;
+  min-width: 0;
   font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--fg);
   word-break: break-all;
 }
-.settings-dir-tag {
+.settings-empty {
+  padding: 14px 18px;
+  font-size: 13px;
   color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
 }
-.settings-dir--primary .settings-dir-path {
-  color: var(--text-secondary, var(--muted));
-}
-.settings-remove {
+
+/* Plain icon button (Lucide SVG) — used for row removal. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
   background: transparent;
-  border: 1px solid var(--status-error, #ef4444);
-  color: var(--status-error, #ef4444);
-  border-radius: var(--radius, 6px);
-  padding: 3px 10px;
-  font-size: 12px;
+  color: var(--muted);
   cursor: pointer;
+  flex-shrink: 0;
 }
-.settings-remove:hover {
-  background: var(--status-error, #ef4444);
-  color: #fff;
+.icon-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg);
 }
-.settings-add {
+.icon-btn--danger:hover {
+  color: var(--status-failed);
+}
+
+.settings-inline-form {
   display: flex;
   gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
 }
-.settings-add-input {
+.settings-input {
   flex: 1;
-  padding: 7px 10px;
-  border: 1px solid var(--border-subtle, #2a2a2a);
-  border-radius: var(--radius, 6px);
-  background: var(--surface, #1a1a1a);
-  color: var(--text-primary, #e5e5e5);
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
   font-size: 13px;
   font-family: var(--mono, ui-monospace, monospace);
 }
-.settings-add-btn {
-  background: var(--accent, #3b82f6);
-  color: #fff;
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.settings-row-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.settings-browse-btn {
+  flex-shrink: 0;
+}
+
+/* ─── Folder picker dialog ─────────────────────────────────────────────── */
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.folder-picker-path {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+}
+.folder-picker-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.folder-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
   border: none;
-  border-radius: var(--radius, 6px);
-  padding: 7px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg);
   font-size: 13px;
   cursor: pointer;
 }
-.settings-error {
-  color: var(--status-error, #ef4444);
+.folder-picker-item:last-child {
+  border-bottom: none;
+}
+.folder-picker-item:hover {
+  background: var(--bg-tertiary);
+}
+.folder-picker-icon {
+  display: inline-flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.folder-picker-up {
+  color: var(--muted);
+  font-weight: 600;
+}
+.folder-picker-empty {
+  padding: 12px;
   font-size: 13px;
-  margin-top: 8px;
+  color: var(--muted);
+  text-align: center;
 }
 
 /* ─── Profile selection (Compare) ──────────────────────────────────────── */

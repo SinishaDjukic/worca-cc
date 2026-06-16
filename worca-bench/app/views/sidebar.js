@@ -42,10 +42,6 @@ const NAV_ITEMS = Object.freeze([
   { key: 'leaderboard', label: 'Leaderboard', icon: 'leaderboard' },
 ]);
 
-const WORKSPACE_ITEMS = Object.freeze([
-  { key: 'settings', label: 'Settings', icon: 'settings' },
-]);
-
 function navItem(item, activeKey, onNavigate) {
   return html`
     <div
@@ -60,14 +56,37 @@ function navItem(item, activeKey, onNavigate) {
   `;
 }
 
+/** Backend connection indicator (mirrors worca-ui's conn-dot footer). */
+function connectionIndicator(connection) {
+  const cls =
+    connection === 'connected'
+      ? 'connected'
+      : connection === 'connecting'
+        ? 'connecting'
+        : 'disconnected';
+  const label =
+    connection === 'connected'
+      ? 'Connected'
+      : connection === 'connecting'
+        ? 'Connecting…'
+        : 'Disconnected';
+  return html`
+    <div class="connection-indicator ${cls}" title=${label}>
+      <span class="conn-dot"></span>
+      <span class="conn-label">${label}</span>
+    </div>
+  `;
+}
+
 /**
  * The left-rail navigation.
  *
- * @param {string} activeKey   one of 'dashboard' | 'compare' | 'leaderboard'
+ * @param {string} activeKey   one of 'dashboard' | 'compare' | 'leaderboard' | 'settings'
  * @param {object} [handlers]
  * @param {(key: string) => void} [handlers.onNavigate]
+ * @param {'connected'|'connecting'|'disconnected'} [handlers.connection]
  */
-export function sidebarView(activeKey, { onNavigate } = {}) {
+export function sidebarView(activeKey, { onNavigate, connection } = {}) {
   return html`
     <aside class="sidebar">
       <div class="sidebar-logo">
@@ -83,9 +102,16 @@ export function sidebarView(activeKey, { onNavigate } = {}) {
         ${NAV_ITEMS.map((item) => navItem(item, activeKey, onNavigate))}
       </div>
 
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">Workspace</div>
-        ${WORKSPACE_ITEMS.map((item) => navItem(item, activeKey, onNavigate))}
+      <div class="sidebar-footer">
+        ${connectionIndicator(connection)}
+        <button
+          class="icon-btn sidebar-settings-btn ${activeKey === 'settings' ? 'active' : ''}"
+          aria-label="Settings"
+          title="Settings"
+          @click=${() => onNavigate?.('settings')}
+        >
+          ${unsafeHTML(iconSvg('settings', 18))}
+        </button>
       </div>
     </aside>
   `;

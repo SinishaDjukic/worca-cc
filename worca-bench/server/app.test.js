@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 
@@ -281,6 +281,35 @@ describe('createApp API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  it('GET /api/fs/list lists subdirectories of a path', async () => {
+    mkdirSync(join(dir, 'sub-a'), { recursive: true });
+    mkdirSync(join(dir, 'sub-b'), { recursive: true });
+    mkdirSync(join(dir, '.hidden'), { recursive: true });
+    writeFileSync(join(dir, 'a-file.txt'), 'x');
+    await withServer(dir, {}, async (base) => {
+      const data = await (
+        await fetch(`${base}/api/fs/list?path=${encodeURIComponent(dir)}`)
+      ).json();
+      expect(data.ok).toBe(true);
+      expect(data.path).toBe(dir);
+      expect(data.parent).toBe(dirname(dir));
+      const names = data.dirs.map((d) => d.name);
+      expect(names).toContain('sub-a');
+      expect(names).toContain('sub-b');
+      expect(names).not.toContain('.hidden'); // dotfiles hidden
+      expect(names).not.toContain('a-file.txt'); // files excluded
+    });
+  });
+
+  it('GET /api/fs/list 400s on a non-existent path', async () => {
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(
+        `${base}/api/fs/list?path=${encodeURIComponent('/no/such/path/here')}`,
+      );
       expect(res.status).toBe(400);
     });
   });

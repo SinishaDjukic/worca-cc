@@ -180,13 +180,50 @@ test('dashboard auto-refreshes when new results land', async ({ page }) => {
   await expect(page.locator('.run-card')).toHaveCount(3);
 });
 
-test('settings page lists result directories from the sidebar', async ({
-  page,
-}) => {
+test('settings opens from the sidebar gear button', async ({ page }) => {
   await page.goto(srv.url);
-  await page.locator('.sidebar-item', { hasText: 'Settings' }).click();
+  await page.locator('.sidebar-settings-btn').click();
   await expect(page.locator('.content-header-title')).toContainText('Settings');
   await expect(page.locator('.settings-dirs')).toBeVisible();
   // the launch dir is always shown as primary
   await expect(page.locator('.settings-dir--primary')).toBeVisible();
+});
+
+test('sidebar footer shows the backend connection indicator', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  const conn = page.locator('.connection-indicator');
+  await expect(conn).toBeVisible();
+  await expect(conn).toHaveClass(/connected/, { timeout: 4000 });
+  await expect(conn).toContainText('Connected');
+});
+
+test('Browse opens the folder picker and lists directories', async ({
+  page,
+}) => {
+  await page.goto(srv.url);
+  await page.locator('.sidebar-settings-btn').click();
+  await page.locator('.settings-browse-btn').first().click();
+  await expect(page.locator('#folder-picker-dialog')).toBeVisible();
+  // The picker lists subfolders of the home dir (at least the "up" entry shows).
+  await expect(page.locator('.folder-picker-path')).toBeVisible();
+});
+
+test('removing a result dir requires confirmation', async ({ page }) => {
+  // Seed a configured dir so a removable row exists.
+  await page.request.post(`${srv.url}/api/settings/dirs`, {
+    data: { dir: srv.targetDir },
+  });
+  await page.goto(srv.url);
+  await page.locator('.sidebar-settings-btn').click();
+  const removeBtn = page.locator('.settings-row-remove').first();
+  await expect(removeBtn).toBeVisible();
+  await removeBtn.click();
+  // Confirm dialog appears; cancel leaves the row in place.
+  await expect(page.locator('#global-confirm-dialog')).toBeVisible();
+  await page
+    .locator('#global-confirm-dialog sl-button[variant="default"]')
+    .click();
+  await expect(page.locator('.settings-row-remove')).toHaveCount(1);
 });

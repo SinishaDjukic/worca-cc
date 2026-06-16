@@ -13,8 +13,15 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
 
 import { outcomeIcon, profileOutcome, variantFor } from './utils/badge.js';
+import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
+import {
+  folderPickerTemplate,
+  openFolderPicker,
+} from './utils/folder-picker.js';
 import { compareView } from './views/compare.js';
 import { leaderboardView } from './views/leaderboard.js';
 import { profileDetailView } from './views/profile-detail.js';
@@ -86,7 +93,25 @@ const state = {
   error: null,
   view: null, // { kind, data }
   toast: null, // { variant: 'success'|'danger', message }
+  connection: 'connecting', // 'connected' | 'connecting' | 'disconnected'
 };
+
+// Backend connection indicator (sidebar footer). worca-bench has no WS, so we
+// poll /api/health; the dot reflects reachability.
+function setConnection(next) {
+  if (state.connection !== next) {
+    state.connection = next;
+    rerender();
+  }
+}
+async function heartbeat() {
+  try {
+    const r = await fetch('/api/health');
+    setConnection(r.ok ? 'connected' : 'disconnected');
+  } catch {
+    setConnection('disconnected');
+  }
+}
 
 // Transient launch feedback. Auto-dismisses; a new toast replaces the old.
 let toastTimer = null;
@@ -244,12 +269,14 @@ function contentHeaderView({ showBack, onBack, title, badge, action }) {
 function shell(activeKey, header, body) {
   return html`
     <div class="app-shell">
-      ${sidebarView(activeKey, { onNavigate })}
+      ${sidebarView(activeKey, { onNavigate, connection: state.connection })}
       <main class="main-content">
         ${header}
         ${body}
       </main>
       ${toastView()}
+      ${confirmDialogTemplate()}
+      ${folderPickerTemplate()}
     </div>
   `;
 }
@@ -300,8 +327,10 @@ function renderView(view) {
     case 'settings':
       return settingsView(view.data, {
         onAddDir: addDir,
-        onRemoveDir: removeDir,
+        onRemoveDir: confirmRemoveDir,
         onSetCache: setCache,
+        onBrowseAdd: browseAdd,
+        onBrowseCache: browseCache,
       });
     default:
       return errorView('Unknown view');
@@ -461,6 +490,23 @@ async function mutateSettingsDir(method, dir) {
 const addDir = (dir) => mutateSettingsDir('POST', dir);
 const removeDir = (dir) => mutateSettingsDir('DELETE', dir);
 
+// Destructive: removing a result dir requires explicit confirmation.
+function confirmRemoveDir(dir) {
+  showConfirm(
+    {
+      label: 'Remove directory',
+      message: `Stop reading results from “${dir}”? This only removes it from the dashboard config — the files on disk are left untouched.`,
+      confirmLabel: 'Remove',
+      confirmVariant: 'danger',
+      onConfirm: () => removeDir(dir),
+    },
+    rerender,
+  );
+}
+
+const browseAdd = () => openFolderPicker({ onPick: addDir }, rerender);
+const browseCache = () => openFolderPicker({ onPick: setCache }, rerender);
+
 async function setCache(dir) {
   try {
     const res = await fetch('/api/settings/cache-dir', {
@@ -492,3 +538,7 @@ async function setCache(dir) {
 window.addEventListener('hashchange', route);
 route();
 startPolling();
+heartbeat();
+setInterval(() => {
+  if (!document.hidden) heartbeat();
+}, 5000);

@@ -6,7 +6,9 @@
 // catch-all. The app reads benchmark results from a target directory passed in
 // via options.targetDir (the runner's --target-dir / WORCA_BENCH_DIR).
 
-import { dirname, join } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
@@ -246,6 +248,30 @@ export function createApp(options = {}) {
       res.json(settingsPayload());
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Directory browser for the folder picker. Lists immediate subdirectories of
+  // ?path (default: home). Dirs only — a low-risk read for a localhost tool.
+  app.get('/api/fs/list', (req, res) => {
+    try {
+      const abs = resolve(req.query.path ? String(req.query.path) : homedir());
+      const dirs = readdirSync(abs, { withFileTypes: true })
+        .filter((e) => {
+          if (!e.name.startsWith('.')) return e.isDirectory();
+          return false;
+        })
+        .map((e) => ({ name: e.name, path: join(abs, e.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const parent = dirname(abs);
+      res.json({
+        ok: true,
+        path: abs,
+        parent: parent === abs ? null : parent,
+        dirs,
+      });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
     }
   });
 
