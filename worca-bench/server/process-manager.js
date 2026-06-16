@@ -22,6 +22,7 @@ const HARD_CAP_MS = 180000;
  *        (so a profile authored in a configured, non-primary dir is findable)
  * @param {number} [opts.reps]          per-run override of the profile's reps
  * @param {number} [opts.maxInstances]  cap the instance count for this run
+ * @param {number} [opts.maxParallel]   override pipeline parallelism (concurrency.worca)
  * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
  * @param {string} [opts.graphify]      enable graphify in this mode (structural|full)
  * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
@@ -35,6 +36,7 @@ export function runBenchmark({
   profilesDir,
   reps,
   maxInstances,
+  maxParallel,
   cacheDir,
   graphify,
   codeReviewGraph,
@@ -60,6 +62,9 @@ export function runBenchmark({
   }
   if (Number.isInteger(maxInstances) && maxInstances >= 1) {
     args.push('--max-instances', String(maxInstances));
+  }
+  if (Number.isInteger(maxParallel) && maxParallel >= 1) {
+    args.push('--max-parallel', String(maxParallel));
   }
   if (cacheDir) {
     args.push('--cache-dir', cacheDir);

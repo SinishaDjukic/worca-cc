@@ -51,6 +51,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("--reps must be >= 1", file=sys.stderr)
             return 2
         profile.reps = reps_override
+    # Per-run override of worca-pipeline parallelism (UI "Max parallel" control,
+    # maps to concurrency.worca — the ThreadPoolExecutor width in the runner).
+    parallel_override = getattr(args, "max_parallel", None)
+    if parallel_override is not None:
+        if parallel_override < 1:
+            print("--max-parallel must be >= 1", file=sys.stderr)
+            return 2
+        profile.concurrency.worca = parallel_override
     # Code-graph engines: a CLI flag enables the engine (and sets its mode),
     # overriding the profile. Absent flag => leave the profile's setting (off by
     # default). graphify mode is validated; CRG mode passes through.
@@ -129,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--dry-run", action="store_true", help="resolve + plan, do not run")
     p_run.add_argument("--no-canary", action="store_true", help="skip the per-template canary")
     p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
+    p_run.add_argument("--max-parallel", type=int,
+                       help="override pipeline parallelism for this run (concurrency.worca)")
     p_run.add_argument("--reps", type=int, help="override the profile's reps for this run")
     p_run.add_argument("--cache-dir", help="benchmark cache dir (HF datasets / repo mirrors)")
     p_run.add_argument(

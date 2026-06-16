@@ -453,6 +453,7 @@ async function runProfile(name, opts = {}) {
     if (Number.isInteger(opts.reps)) body.reps = opts.reps;
     if (Number.isInteger(opts.maxInstances))
       body.maxInstances = opts.maxInstances;
+    if (Number.isInteger(opts.maxParallel)) body.maxParallel = opts.maxParallel;
     if (opts.graphify) body.graphify = opts.graphify;
     if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
     const res = await fetch('/api/run', {
@@ -465,7 +466,10 @@ async function runProfile(name, opts = {}) {
       const extra = [
         Number.isInteger(opts.reps) ? `${opts.reps} reps` : null,
         Number.isInteger(opts.maxInstances)
-          ? `${opts.maxInstances} instances`
+          ? `${opts.maxInstances} tests`
+          : null,
+        Number.isInteger(opts.maxParallel)
+          ? `${opts.maxParallel}× parallel`
           : null,
       ].filter(Boolean);
       const suffix = extra.length ? ` (${extra.join(', ')})` : '';

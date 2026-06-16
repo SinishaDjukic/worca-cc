@@ -89,6 +89,31 @@ export function readProfileDefsMulti(dirs) {
 }
 
 /**
+ * Count the entries under a `selection.instance_ids:` YAML block. Returns the
+ * number of `- item` lines indented under that key, or `null` when the key is
+ * absent (no explicit selection → the benchmark runs its full instance set).
+ * A line-oriented scan, consistent with the rest of this dependency-free reader.
+ *
+ * @param {string} text  raw YAML
+ * @returns {number|null}
+ */
+export function countInstanceIds(text) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => /^\s*instance_ids\s*:/.test(l));
+  if (start < 0) return null;
+  const keyIndent = lines[start].match(/^\s*/)[0].length;
+  let count = 0;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || /^\s*#/.test(line)) continue; // blank / comment
+    const indent = line.match(/^\s*/)[0].length;
+    if (indent <= keyIndent) break; // dedented out of the block
+    if (/^\s*-\s*\S/.test(line)) count++;
+  }
+  return count;
+}
+
+/**
  * Read experiment definitions from `<targetDir>/profiles/*.yaml`. We surface
  * only the cheap fields (name + benchmark) with a minimal line-oriented YAML
  * scan — no YAML dependency, and results.jsonl remains the source of truth for
@@ -99,7 +124,7 @@ export function readProfileDefsMulti(dirs) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name, benchmark, template, grade_mode, _source_dir}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, instance_count, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -121,16 +146,27 @@ export function readProfileDefs(targetDir) {
     let benchmark = null;
     let template = null;
     let grade_mode = null;
+    let instance_count = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
       benchmark = scalar(text, 'benchmark');
       template = scalar(text, 'template');
       // grade: { mode: X } (nested) or `grade: X` (inline shorthand).
       grade_mode = scalar(text, 'mode') || scalar(text, 'grade');
+      // `selection.instance_ids` count — null when the key is absent (the
+      // benchmark runs its full instance set, surfaced as "All" in the UI).
+      instance_count = countInstanceIds(text);
     } catch {
       // Unreadable profile file — surface the name only.
     }
-    defs.push({ name, benchmark, template, grade_mode, _source_dir: dir });
+    defs.push({
+      name,
+      benchmark,
+      template,
+      grade_mode,
+      instance_count,
+      _source_dir: dir,
+    });
   }
   return defs;
 }

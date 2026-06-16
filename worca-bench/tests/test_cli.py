@@ -44,6 +44,7 @@ def _args(tmp_path, profiles_dir, **over):
         dry_run=False,
         no_canary=True,
         max_instances=None,
+        max_parallel=None,
         reps=None,
         cache_dir=None,
         keep_work=False,
@@ -88,6 +89,43 @@ def test_cmd_run_rejects_non_positive_reps(tmp_path, monkeypatch):
     profiles_dir = _write_profile(tmp_path)
     monkeypatch.setattr(cli, "run_profile", lambda *a, **k: None)
     rc = cli.cmd_run(_args(tmp_path, profiles_dir, reps=0))
+    assert rc == 2
+
+
+def test_cmd_run_max_parallel_override_reaches_concurrency(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["workers"] = profile.concurrency.worca
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, max_parallel=8))
+
+    assert rc == 0
+    assert captured["workers"] == 8  # overrode the profile/default concurrency
+
+
+def test_cmd_run_without_max_parallel_keeps_profile_default(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["workers"] = profile.concurrency.worca
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, max_parallel=None))
+
+    assert rc == 0
+    assert captured["workers"] == 4  # the dataclass default
+
+
+def test_cmd_run_rejects_non_positive_max_parallel(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    monkeypatch.setattr(cli, "run_profile", lambda *a, **k: None)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, max_parallel=0))
     assert rc == 2
 
 

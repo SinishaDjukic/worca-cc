@@ -79,12 +79,15 @@ describe('runBenchmark', () => {
       targetDir: '/tmp/out',
       reps: 3,
       maxInstances: 5,
+      maxParallel: 6,
       _spawn,
     });
     expect(capturedArgs).toContain('--reps');
     expect(capturedArgs[capturedArgs.indexOf('--reps') + 1]).toBe('3');
     expect(capturedArgs).toContain('--max-instances');
     expect(capturedArgs[capturedArgs.indexOf('--max-instances') + 1]).toBe('5');
+    expect(capturedArgs).toContain('--max-parallel');
+    expect(capturedArgs[capturedArgs.indexOf('--max-parallel') + 1]).toBe('6');
 
     // Non-positive / non-integer values are dropped entirely.
     await runBenchmark({
@@ -92,10 +95,12 @@ describe('runBenchmark', () => {
       targetDir: '/tmp/out',
       reps: 0,
       maxInstances: undefined,
+      maxParallel: 0,
       _spawn,
     });
     expect(capturedArgs).not.toContain('--reps');
     expect(capturedArgs).not.toContain('--max-instances');
+    expect(capturedArgs).not.toContain('--max-parallel');
   });
 
   it('appends --cache-dir when given', async () => {

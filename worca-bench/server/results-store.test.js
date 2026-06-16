@@ -6,6 +6,7 @@ import {
   aggregateByProfile,
   aggregateProfile,
   compareProfiles,
+  countInstanceIds,
   readProfileDefs,
   readResults,
   srcHash,
@@ -235,6 +236,52 @@ describe('readProfileDefs', () => {
       'name: c\nbenchmark: swe-bench-verified\ngrade:\n  mode: local-docker    # needs Docker\n',
     );
     expect(readProfileDefs(dir)[0].grade_mode).toBe('local-docker');
+  });
+
+  it('counts selected instance_ids, null when the selection is absent', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'sel.yaml'),
+      'name: sel\nbenchmark: swe-bench-verified\nselection:\n  instance_ids:\n    - a__a-1\n    - a__a-2\n    - a__a-3\ntemplate: builtin:bugfix\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'all.yaml'),
+      'name: all\nbenchmark: swe-bench-verified\ntemplate: builtin:bugfix\n',
+    );
+    const defs = readProfileDefs(dir);
+    expect(defs.find((d) => d.name === 'sel').instance_count).toBe(3);
+    expect(defs.find((d) => d.name === 'all').instance_count).toBeNull();
+  });
+});
+
+describe('countInstanceIds', () => {
+  it('returns null when there is no instance_ids key (run all)', () => {
+    expect(countInstanceIds('name: p\ntemplate: builtin:bugfix\n')).toBeNull();
+  });
+
+  it('counts the list items under instance_ids', () => {
+    const yaml =
+      'selection:\n  instance_ids:\n    - a__a-1\n    - a__a-2\n    - a__a-3\ntemplate: builtin:bugfix\n';
+    expect(countInstanceIds(yaml)).toBe(3);
+  });
+
+  it('stops at the next dedented key and skips blanks/comments', () => {
+    const yaml = [
+      'selection:',
+      '  instance_ids:',
+      '    - a__a-1',
+      '    # a comment, not an item',
+      '',
+      '    - a__a-2',
+      'template: builtin:bugfix', // dedented out of the block
+      '  - not__counted',
+    ].join('\n');
+    expect(countInstanceIds(yaml)).toBe(2);
+  });
+
+  it('returns 0 for an empty instance_ids block', () => {
+    expect(countInstanceIds('selection:\n  instance_ids:\ntemplate: x\n')).toBe(
+      0,
+    );
   });
 });
 

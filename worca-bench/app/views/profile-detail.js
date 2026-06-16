@@ -38,6 +38,7 @@ function _runOptionsView(agg, onRun) {
     const box = e.target.closest('.run-options');
     const reps = box.querySelector('.run-opt-reps').value.trim();
     const maxInstances = box.querySelector('.run-opt-instances').value.trim();
+    const maxParallel = box.querySelector('.run-opt-parallel').value.trim();
     const gfxVal = box.querySelector('.run-opt-graphify')?.value;
     const graphify = gfxVal && gfxVal !== 'off' ? gfxVal : undefined;
     const crgVal = box.querySelector('.run-opt-crg')?.value;
@@ -47,6 +48,7 @@ function _runOptionsView(agg, onRun) {
       maxInstances: maxInstances
         ? Number.parseInt(maxInstances, 10)
         : undefined,
+      maxParallel: maxParallel ? Number.parseInt(maxParallel, 10) : undefined,
       graphify,
       codeReviewGraph,
     });
@@ -63,12 +65,20 @@ function _runOptionsView(agg, onRun) {
           placeholder=${String(agg.reps || 1)}
       /></label>
       <label class="run-opt"
-        >Max instances
+        >Max tests
         <input
           class="run-opt-instances"
           type="number"
           min="1"
           placeholder="all"
+      /></label>
+      <label class="run-opt"
+        >Max parallel
+        <input
+          class="run-opt-parallel"
+          type="number"
+          min="1"
+          placeholder="default"
       /></label>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Graphify</span>
@@ -180,11 +190,15 @@ function _configView(agg) {
       ? `${agg.worca_version} (${agg.worca_ref})`
       : agg.worca_version
     : agg.worca_ref || '—';
+  // No explicit instance_ids selection → the benchmark runs its full set ("All").
+  const instances =
+    typeof agg.instance_count === 'number' ? String(agg.instance_count) : 'All';
   const items = [
     ['Worca', worca],
     ['Template', agg.template || '—'],
     ['Benchmark', agg.benchmark || '—'],
     ['Grade', agg.grade_mode || '—'],
+    ['Test Count', instances],
   ];
   return html`
     <div class="config-meta">

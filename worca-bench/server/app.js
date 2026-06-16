@@ -154,17 +154,23 @@ export function createApp(options = {}) {
       const active = readActive().filter(
         (r) => r.profile === name && (!src || r.src === src),
       );
+      // The selected-instance count lives in the YAML def, not in results rows;
+      // look it up regardless of whether the profile has run yet.
+      const def = readDefs().find(
+        (d) => d.name === name && matchSrc(dirname(d._source_dir)),
+      );
+      const instanceCount = def ? (def.instance_count ?? null) : null;
       if (rows.length > 0) {
         return res.json({
           ok: true,
-          aggregate: aggregateProfile(name, rows),
+          aggregate: {
+            ...aggregateProfile(name, rows),
+            instance_count: instanceCount,
+          },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
         });
       }
-      const def = readDefs().find(
-        (d) => d.name === name && matchSrc(dirname(d._source_dir)),
-      );
       if (!def && active.length === 0) {
         return res.status(404).json({ ok: false, error: 'profile not found' });
       }
@@ -179,6 +185,7 @@ export function createApp(options = {}) {
           benchmark: def?.benchmark || null,
           template: def?.template || null,
           grade_mode: def?.grade_mode || null,
+          instance_count: instanceCount,
           active: active.length > 0,
         },
         reps: [],
@@ -295,6 +302,7 @@ export function createApp(options = {}) {
         profilesDir: def?._source_dir,
         reps: _posInt(req.body?.reps),
         maxInstances: _posInt(req.body?.maxInstances),
+        maxParallel: _posInt(req.body?.maxParallel),
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),
