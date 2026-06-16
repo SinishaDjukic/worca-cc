@@ -1026,11 +1026,41 @@ code {
   color: var(--fg);
   font-size: 13px;
 }
-.run-opt-toggle {
-  flex-direction: row;
+.run-opt-engine {
+  gap: 4px;
+}
+.run-opt-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.run-opt-engine sl-radio-group::part(button-group) {
+  display: flex;
+}
+
+/* Engine value badges (reps table): graphify cyan, crg indigo, OFF gray —
+   matching worca-ui's access-engine-badge colors. */
+.engine-badge {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--fg);
-  padding-bottom: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.engine-badge--off {
+  background: var(--bg-tertiary);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.engine-badge--graphify {
+  background: rgba(8, 145, 178, 0.12);
+  color: #0e7490;
+  border-color: rgba(8, 145, 178, 0.3);
+}
+.engine-badge--crg {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4338ca;
+  border-color: rgba(99, 102, 241, 0.3);
 }

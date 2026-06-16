@@ -2,11 +2,12 @@ import { html, nothing } from 'lit-html';
 import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 
-function _median(values) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+/** Colored engine badge (graphify cyan / crg indigo) or a gray OFF. */
+function _engineBadge(value, kind) {
+  if (!value) {
+    return html`<span class="engine-badge engine-badge--off">OFF</span>`;
+  }
+  return html`<span class="engine-badge engine-badge--${kind}">${value}</span>`;
 }
 
 function _iterations(row) {
@@ -37,12 +38,10 @@ function _runOptionsView(agg, onRun) {
     const box = e.target.closest('.run-options');
     const reps = box.querySelector('.run-opt-reps').value.trim();
     const maxInstances = box.querySelector('.run-opt-instances').value.trim();
-    const graphify = box.querySelector('.run-opt-graphify')?.checked
-      ? 'structural'
-      : undefined;
-    const codeReviewGraph = box.querySelector('.run-opt-crg')?.checked
-      ? 'structural'
-      : undefined;
+    const gfxVal = box.querySelector('.run-opt-graphify')?.value;
+    const graphify = gfxVal && gfxVal !== 'off' ? gfxVal : undefined;
+    const crgVal = box.querySelector('.run-opt-crg')?.value;
+    const codeReviewGraph = crgVal && crgVal !== 'off' ? crgVal : undefined;
     onRun(agg.name, {
       reps: reps ? Number.parseInt(reps, 10) : undefined,
       maxInstances: maxInstances
@@ -71,14 +70,21 @@ function _runOptionsView(agg, onRun) {
           min="1"
           placeholder="all"
       /></label>
-      <label class="run-opt run-opt-toggle">
-        <sl-switch class="run-opt-graphify" size="small"></sl-switch>
-        <span>Graphify</span>
-      </label>
-      <label class="run-opt run-opt-toggle">
-        <sl-switch class="run-opt-crg" size="small"></sl-switch>
-        <span>Code Review Graph</span>
-      </label>
+      <div class="run-opt run-opt-engine">
+        <span class="run-opt-label">Graphify</span>
+        <sl-radio-group class="run-opt-graphify" size="small" value="off">
+          <sl-radio-button value="off">Off</sl-radio-button>
+          <sl-radio-button value="structural">Structural</sl-radio-button>
+          <sl-radio-button value="full">Full</sl-radio-button>
+        </sl-radio-group>
+      </div>
+      <div class="run-opt run-opt-engine">
+        <span class="run-opt-label">Code Review Graph</span>
+        <sl-radio-group class="run-opt-crg" size="small" value="off">
+          <sl-radio-button value="off">Off</sl-radio-button>
+          <sl-radio-button value="structural">Structural</sl-radio-button>
+        </sl-radio-group>
+      </div>
       <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
         Run
       </button>
@@ -213,11 +219,6 @@ export function profileDetailView(data, { onRun } = {}) {
   const agg = data.aggregate;
   const reps = data.reps || [];
 
-  const costs = reps
-    .map((r) => r.cost_usd)
-    .filter((c) => typeof c === 'number');
-  const medianCost = _median(costs);
-
   return html`
     <section class="page">
       ${_liveView(data.active)}
@@ -227,10 +228,9 @@ export function profileDetailView(data, { onRun } = {}) {
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
         ${_statRow('Reps', String(agg.reps))}
         ${_statRow('Resolved rate', pct(agg.resolved_rate))}
-        ${_statRow('Mean cost', formatCost(agg.mean_cost_usd) || 'N/A')}
-        ${_statRow('Median cost', formatCost(medianCost) || 'N/A')}
-        ${_statRow('Mean wall time', formatDuration(agg.mean_wall_s))}
-        ${_statRow('Mean iterations', num(agg.mean_iterations, 2))}
+        ${_statRow('Avg cost', formatCost(agg.mean_cost_usd) || 'N/A')}
+        ${_statRow('Avg duration', formatDuration(agg.mean_wall_s))}
+        ${_statRow('Avg iterations', num(agg.mean_iterations, 2))}
       </div>
 
       <table class="reps-table">
@@ -259,8 +259,8 @@ export function profileDetailView(data, { onRun } = {}) {
                 <td>${formatCost(r.cost_usd) || '—'}</td>
                 <td>${typeof r.wall_time_s === 'number' ? formatDuration(r.wall_time_s) : '—'}</td>
                 <td>${_iterations(r)}</td>
-                <td>${r.graphify || '—'}</td>
-                <td>${r.code_review_graph || '—'}</td>
+                <td>${_engineBadge(r.graphify, 'graphify')}</td>
+                <td>${_engineBadge(r.code_review_graph, 'crg')}</td>
               </tr>
             `;
           })}

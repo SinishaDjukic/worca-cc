@@ -15,7 +15,8 @@ import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
-import '@shoelace-style/shoelace/dist/components/switch/switch.js';
+import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
+import '@shoelace-style/shoelace/dist/components/radio-button/radio-button.js';
 
 import { outcomeIcon, profileOutcome } from './utils/badge.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';

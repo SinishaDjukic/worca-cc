@@ -12,3 +12,4 @@ __pycache__/
 # Default runner output / caches (the --target-dir)
 worca-bench-out/
 out/
+worca-bench.wb-*.json
