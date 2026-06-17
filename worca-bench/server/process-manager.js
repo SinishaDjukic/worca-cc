@@ -48,7 +48,8 @@ function sanitizeSecrets(secrets) {
  * @param {number} [opts.reps]          per-run override of the profile's reps
  * @param {number} [opts.maxInstances]  cap the instance count for this run
  * @param {number} [opts.maxParallel]   override pipeline parallelism (concurrency.worca)
- * @param {boolean} [opts.noCanary]     skip the per-template canary preflight
+ * @param {boolean} [opts.canary]       run the per-template canary (true) or skip it (false); overrides the profile's canary flag; omit to leave the profile default
+ * @param {boolean} [opts.noCanary]     back-compat one-way off (skip the canary); prefer `canary`
  * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
  * @param {string} [opts.graphify]      enable graphify in this mode (structural|full)
  * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
@@ -67,6 +68,7 @@ export function runBenchmark({
   reps,
   maxInstances,
   maxParallel,
+  canary,
   noCanary,
   cacheDir,
   graphify,
@@ -101,7 +103,11 @@ export function runBenchmark({
   if (Number.isInteger(maxParallel) && maxParallel >= 1) {
     args.push('--max-parallel', String(maxParallel));
   }
-  if (noCanary) {
+  // Canary override: an explicit boolean is authoritative (overrides the
+  // profile's canary flag); `noCanary` stays as a back-compat one-way off.
+  if (typeof canary === 'boolean') {
+    args.push('--canary', canary ? 'on' : 'off');
+  } else if (noCanary) {
     args.push('--no-canary');
   }
   if (cacheDir) {

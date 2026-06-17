@@ -551,28 +551,36 @@ describe('createApp API', () => {
     );
   });
 
-  it('POST /api/run maps canary:false to noCanary (default keeps canary on)', async () => {
+  it('POST /api/run forwards the canary toggle as an authoritative override', async () => {
     let captured = null;
     const fakeRun = async (opts) => {
       captured = opts;
       return { pid: 10 };
     };
     await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
-      // Explicit opt-out disables the canary.
+      // Explicit opt-out -> canary: false override.
       await fetch(`${base}/api/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profile: 'p1', canary: false }),
       });
-      expect(captured.noCanary).toBe(true);
+      expect(captured.canary).toBe(false);
 
-      // Omitted (or true) leaves the canary on.
+      // Explicit opt-in -> canary: true override (re-enables a canary:false profile).
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', canary: true }),
+      });
+      expect(captured.canary).toBe(true);
+
+      // Omitted -> undefined (leave the profile's own canary default).
       await fetch(`${base}/api/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profile: 'p1' }),
       });
-      expect(captured.noCanary).toBe(false);
+      expect(captured.canary).toBeUndefined();
     });
   });
 

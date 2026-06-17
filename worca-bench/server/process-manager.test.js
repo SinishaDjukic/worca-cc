@@ -129,6 +129,31 @@ describe('runBenchmark', () => {
     expect(capturedArgs).not.toContain('--no-canary');
   });
 
+  it('appends --canary on|off when an explicit boolean is given', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(12);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      canary: false,
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--canary');
+    expect(capturedArgs[capturedArgs.indexOf('--canary') + 1]).toBe('off');
+
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      canary: true,
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--canary') + 1]).toBe('on');
+    expect(capturedArgs).not.toContain('--no-canary');
+  });
+
   it('appends --cache-dir when given', async () => {
     let capturedArgs = null;
     const _spawn = (_cmd, args) => {

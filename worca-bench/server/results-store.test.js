@@ -238,6 +238,25 @@ describe('readProfileDefs', () => {
     expect(readProfileDefs(dir)[0].grade_mode).toBe('local-docker');
   });
 
+  it('parses the canary flag (true/false), null when unspecified', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'off.yaml'),
+      'name: off\nbenchmark: commit0\ncanary: false\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'on.yaml'),
+      'name: on\nbenchmark: commit0\ncanary: true\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'unset.yaml'),
+      'name: unset\nbenchmark: commit0\n',
+    );
+    const defs = readProfileDefs(dir);
+    expect(defs.find((d) => d.name === 'off').canary).toBe(false);
+    expect(defs.find((d) => d.name === 'on').canary).toBe(true);
+    expect(defs.find((d) => d.name === 'unset').canary).toBeNull();
+  });
+
   it('counts selected instance_ids, null when the selection is absent', () => {
     writeFileSync(
       join(dir, 'profiles', 'sel.yaml'),

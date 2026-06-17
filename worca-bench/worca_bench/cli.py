@@ -108,6 +108,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     cmm = getattr(args, "claude_md_mode", None)
     if cmm is not None:
         profile.claude_md_mode = cmm
+    # Canary on/off override (UI Run option). The profile's `canary` flag is the
+    # default; an explicit `--canary on|off` overrides it, and `--no-canary` is a
+    # back-compat alias for off. This is resolved into `canary_first` below.
+    canary = profile.canary
+    cf = getattr(args, "canary", None)
+    if cf is not None:
+        canary = (cf == "on")
+    if getattr(args, "no_canary", False):
+        canary = False
     # Grade backend override (UI Run options dropdown). Absent => profile default.
     # Validated against the benchmark's supported set (commit0 has no sb-cli).
     gm = getattr(args, "grade_mode", None)
@@ -128,7 +137,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     summary = run_profile(
         profile, target,
         dry_run=args.dry_run,
-        canary_first=not args.no_canary,
+        canary_first=canary,
         max_instances=args.max_instances,
         keep_work=args.keep_work,
         cache_dir=Path(cache_dir) if cache_dir else None,
@@ -346,7 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--target-dir", required=True, help="dir for clones/results/artifacts")
     p_run.add_argument("--profiles-dir", help="extra dir to search for profiles")
     p_run.add_argument("--dry-run", action="store_true", help="resolve + plan, do not run")
-    p_run.add_argument("--no-canary", action="store_true", help="skip the per-template canary")
+    p_run.add_argument(
+        "--canary", choices=["on", "off"],
+        help="run the per-template canary or skip it; overrides the profile's canary flag")
+    p_run.add_argument("--no-canary", action="store_true",
+                       help="back-compat alias for --canary off")
     p_run.add_argument("--max-instances", type=int, help="cap instances (smoke runs)")
     p_run.add_argument("--max-parallel", type=int,
                        help="override pipeline parallelism for this run (concurrency.worca)")

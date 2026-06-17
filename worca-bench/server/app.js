@@ -127,6 +127,7 @@ export function createApp(options = {}) {
           worca_version: null,
           template: def.template,
           grade_mode: def.grade_mode,
+          canary: def.canary,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -199,6 +200,8 @@ export function createApp(options = {}) {
           aggregate: {
             ...aggregateProfile(name, rows),
             instance_count: instanceCount,
+            // canary is a launch flag (never in results rows) — read from the def.
+            canary: def?.canary ?? null,
           },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
@@ -219,6 +222,7 @@ export function createApp(options = {}) {
           benchmark: def?.benchmark || null,
           template: def?.template || null,
           grade_mode: def?.grade_mode || null,
+          canary: def?.canary ?? null,
           instance_count: instanceCount,
           active: active.length > 0,
         },
@@ -338,8 +342,10 @@ export function createApp(options = {}) {
         reps: _posInt(req.body?.reps),
         maxInstances: _posInt(req.body?.maxInstances),
         maxParallel: _posInt(req.body?.maxParallel),
-        // Canary is on by default; only an explicit `false` disables it.
-        noCanary: req.body?.canary === false,
+        // Canary override: an explicit boolean from the UI toggle is authoritative
+        // (overrides the profile's canary flag); omit to leave the profile default.
+        canary:
+          typeof req.body?.canary === 'boolean' ? req.body.canary : undefined,
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),

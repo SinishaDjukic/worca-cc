@@ -93,6 +93,27 @@ describe('profileDetailView', () => {
     expect(without).not.toContain('run-opt-notes');
   });
 
+  it('defaults the Canary toggle to Off when the profile sets canary:false', () => {
+    // The first `value=` after the canary radio-group's class is its default.
+    const canaryVal = (out) =>
+      out.match(/run-opt-canary[\s\S]*?value=(\w+)/)[1];
+    const off = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate, canary: false }, reps: [] },
+        { onRun: () => {} },
+      ),
+    );
+    expect(canaryVal(off)).toBe('off');
+    // Unspecified (or true) => On.
+    const on = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate }, reps: [] },
+        { onRun: () => {} },
+      ),
+    );
+    expect(canaryVal(on)).toBe('on');
+  });
+
   it('shows the fine-grained test count beside the score for Commit0 reps', () => {
     const withCount = {
       aggregate: { ...data.aggregate, benchmark: 'commit0' },

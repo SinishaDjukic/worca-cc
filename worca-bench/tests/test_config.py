@@ -31,6 +31,12 @@ def test_minimal_profile_defaults():
     assert prof.grade.mode == "stub"
     assert prof.claude_md_mode == "none"
     assert prof.pr_defer is True
+    assert prof.canary is True  # serial canary on by default
+
+
+def test_canary_flag_parses():
+    assert profile_from_dict(_base(canary=False)).canary is False
+    assert profile_from_dict(_base(canary=True)).canary is True
 
 
 def test_engines_off_by_default():

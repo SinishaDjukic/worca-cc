@@ -104,6 +104,9 @@ function _runOptionsView(agg, onRun, onNotes) {
   // resolved default isn't valid for this benchmark, fall back to the first option.
   let grader = saved.grader || agg.grade_mode || 'modal';
   if (!graderOpts.some((m) => m.value === grader)) grader = graderOpts[0].value;
+  // Canary radio default: the user's saved pref wins; otherwise the profile's
+  // `canary` flag (only an explicit `false` means Off — unspecified => On).
+  const canaryDefault = saved.canary || (agg.canary === false ? 'off' : 'on');
   return html`
     <div class="run-options">
       <div class="run-options-title">Run options</div>
@@ -143,7 +146,7 @@ function _runOptionsView(agg, onRun, onNotes) {
         <sl-radio-group
           class="run-opt-canary"
           size="small"
-          value=${saved.canary || 'on'}
+          value=${canaryDefault}
           @sl-change=${persist}
         >
           <sl-radio-button value="off">Off</sl-radio-button>

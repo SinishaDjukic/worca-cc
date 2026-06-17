@@ -144,6 +144,11 @@ class Profile:
     claude_md_mode: str = "none"
     skip_preflight: bool = True
     pr_defer: bool = True
+    # Run a serial canary (one instance per template) before fanning out the
+    # full sweep. Default True (fail fast on a broken config); set False to
+    # launch every instance immediately. A `--no-canary` launch flag still
+    # forces it off regardless of this default.
+    canary: bool = True
     # Optional code-graph engines (off by default).
     graphify: EngineConfig = field(default_factory=EngineConfig)
     code_review_graph: EngineConfig = field(default_factory=EngineConfig)
@@ -259,6 +264,7 @@ def profile_from_dict(data: dict[str, Any]) -> Profile:
         claude_md_mode=data.get("claude_md_mode", "none"),
         skip_preflight=bool(data.get("skip_preflight", True)),
         pr_defer=bool(data.get("pr_defer", True)),
+        canary=bool(data.get("canary", True)),
         graphify=_coerce_engine(data.get("graphify")),
         code_review_graph=_coerce_engine(data.get("code_review_graph")),
     )

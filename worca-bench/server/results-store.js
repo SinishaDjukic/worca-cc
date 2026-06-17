@@ -124,7 +124,7 @@ export function countInstanceIds(text) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name, benchmark, template, grade_mode, instance_count, _source_dir}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -147,6 +147,7 @@ export function readProfileDefs(targetDir) {
     let template = null;
     let grade_mode = null;
     let instance_count = null;
+    let canary = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
       benchmark = scalar(text, 'benchmark');
@@ -156,6 +157,9 @@ export function readProfileDefs(targetDir) {
       // `selection.instance_ids` count — null when the key is absent (the
       // benchmark runs its full instance set, surfaced as "All" in the UI).
       instance_count = countInstanceIds(text);
+      // `canary: true|false` — null when unspecified (Python default is true).
+      const c = scalar(text, 'canary');
+      canary = c === 'true' ? true : c === 'false' ? false : null;
     } catch {
       // Unreadable profile file — surface the name only.
     }
@@ -165,6 +169,7 @@ export function readProfileDefs(targetDir) {
       template,
       grade_mode,
       instance_count,
+      canary,
       _source_dir: dir,
     });
   }
