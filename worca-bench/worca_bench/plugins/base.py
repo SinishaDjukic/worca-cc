@@ -46,6 +46,11 @@ class GradeResult:
     score: float | None = None
     report_path: str | None = None
     detail: str = ""
+    # Fine-grained test counts when the grader runs a real suite (Commit0:
+    # held-out tests passed / total). ``None`` for pass/fail-only graders
+    # (SWE-bench resolved boolean, stub). ``score`` == passed / total.
+    tests_passed: int | None = None
+    tests_total: int | None = None
 
 
 class BenchmarkPlugin:

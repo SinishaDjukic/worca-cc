@@ -180,7 +180,8 @@ class Commit0Plugin(BenchmarkPlugin):
                     detail=f"commit0 {backend}: no test results parsed (rc={proc.returncode}): {tail}")
             score = passed / total
             return GradeResult(status="graded", resolved=(passed == total),
-                               score=score, detail=f"commit0 {backend} {passed}/{total}")
+                               score=score, detail=f"commit0 {backend} {passed}/{total}",
+                               tests_passed=passed, tests_total=total)
         except (subprocess.CalledProcessError, OSError) as e:
             tail = getattr(e, "stderr", "") or ""
             return GradeResult(status="error", detail=f"commit0 grade failed: {e} {tail}".strip())

@@ -93,6 +93,43 @@ describe('profileDetailView', () => {
     expect(without).not.toContain('run-opt-notes');
   });
 
+  it('shows the fine-grained test count beside the score for Commit0 reps', () => {
+    const withCount = {
+      aggregate: { ...data.aggregate, benchmark: 'commit0' },
+      reps: [
+        {
+          instance_id: 'wcwidth',
+          rep: 1,
+          status: 'graded',
+          resolved: true,
+          score: 1,
+          tests_passed: 38,
+          tests_total: 38,
+          grade_mode: 'modal',
+        },
+      ],
+    };
+    const out = renderToString(profileDetailView(withCount, {}));
+    expect(out).toContain('reps-testcount');
+    expect(out).toContain('38/38');
+  });
+
+  it('shows score alone when no test counts are present', () => {
+    const noCount = {
+      aggregate: data.aggregate,
+      reps: [
+        {
+          instance_id: 'astropy__astropy-12907',
+          rep: 1,
+          status: 'graded',
+          score: 1,
+        },
+      ],
+    };
+    const out = renderToString(profileDetailView(noCount, {}));
+    expect(out).not.toContain('reps-testcount');
+  });
+
   it('renders a per-row regrade button when onRegrade is provided', () => {
     const withRep = {
       aggregate: data.aggregate,

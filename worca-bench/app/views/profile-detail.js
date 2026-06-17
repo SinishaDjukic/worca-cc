@@ -235,12 +235,35 @@ function _fmtTs(iso) {
   return `${new Date(t).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 }
 
+/**
+ * Score cell: the numeric score, plus the fine-grained test count when the
+ * grader ran a real suite (Commit0 held-out tests, e.g. "38/38"). Counts are
+ * null for pass/fail-only graders (SWE-bench, stub), which show score alone.
+ */
+function _scoreCell(r) {
+  if (typeof r.score !== 'number') return '—';
+  const score = num(r.score, 2);
+  if (typeof r.tests_passed === 'number' && typeof r.tests_total === 'number') {
+    return html`${score}
+      <span class="reps-testcount" title="held-out tests passed / total"
+        >${r.tests_passed}/${r.tests_total}</span
+      >`;
+  }
+  return score;
+}
+
 /** One-line grading-provenance string for the status-badge tooltip. */
 function _gradeTooltip(r) {
   const env = r.grade_mode ? ` via ${r.grade_mode}` : '';
   const parts = [];
   if (r.status === 'graded') {
     parts.push(`${r.resolved ? 'resolved' : 'unresolved'}${env}`);
+    if (
+      typeof r.tests_passed === 'number' &&
+      typeof r.tests_total === 'number'
+    ) {
+      parts.push(`${r.tests_passed}/${r.tests_total} tests`);
+    }
     if (typeof r.score === 'number') parts.push(`score ${num(r.score, 2)}`);
   } else if (r.status === 'error') {
     parts.push(`error${env}`);
@@ -482,7 +505,7 @@ export function profileDetailView(data, { onRun, onRegrade, onNotes } = {}) {
                     <sl-badge variant="${variantFor(ro)}" pill>${ro}</sl-badge>
                   </sl-tooltip>
                 </td>
-                <td>${typeof r.score === 'number' ? num(r.score, 2) : '—'}</td>
+                <td>${_scoreCell(r)}</td>
                 <td>${formatCost(r.cost_usd) || '—'}</td>
                 <td>${typeof r.wall_time_s === 'number' ? formatDuration(r.wall_time_s) : '—'}</td>
                 <td>${_iterations(r)}</td>

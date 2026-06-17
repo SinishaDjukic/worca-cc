@@ -29,6 +29,8 @@ def build_row(
     status: str,
     resolved: bool | None,
     score: float | None,
+    tests_passed: int | None = None,
+    tests_total: int | None = None,
     telemetry: Telemetry,
     diff: str,
     leaked: bool,
@@ -60,6 +62,10 @@ def build_row(
         "status": status,
         "resolved": resolved,
         "score": score,
+        # Fine-grained suite counts (Commit0 held-out tests). None for
+        # pass/fail-only graders; score == tests_passed / tests_total.
+        "tests_passed": tests_passed,
+        "tests_total": tests_total,
         # Grading provenance (which backend, when, where the report landed).
         "grade_detail": grade_detail,
         "graded_at": graded_at,

@@ -246,6 +246,8 @@ def _run_one_rep(
             worca_version=wenv.version, grade_mode=profile.grade.mode,
         graphify=profile.graphify.label, code_review_graph=profile.code_review_graph.label,
             rep=rep, run_id=run_id, status=status, resolved=resolved, score=score,
+            tests_passed=(grade.tests_passed if grade else None),
+            tests_total=(grade.tests_total if grade else None),
             telemetry=telemetry, diff=diff, leaked=leaked, error=error,
             started_at=started, completed_at=completed,
             artifacts_dir=_artifacts_rel(profile.name, inst.id, rep),

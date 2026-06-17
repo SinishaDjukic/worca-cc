@@ -50,6 +50,17 @@ def test_build_row_carries_config_metadata():
         assert base[k] is None
 
 
+def test_build_row_carries_test_counts():
+    # Commit0-style fine-grained counts ride alongside the numeric score.
+    row = _row(tests_passed=38, tests_total=38)
+    assert row["tests_passed"] == 38
+    assert row["tests_total"] == 38
+    # None for pass/fail-only graders (SWE-bench / stub).
+    base = _row()
+    assert base["tests_passed"] is None
+    assert base["tests_total"] is None
+
+
 def test_append_and_read_roundtrip(tmp_path: Path):
     append_row(tmp_path, _row(rep=1))
     append_row(tmp_path, _row(rep=2, resolved=False, score=0.0))
