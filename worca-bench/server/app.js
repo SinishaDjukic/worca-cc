@@ -11,7 +11,11 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { activeByProfile, discoverActiveMulti } from './active-runs.js';
+import {
+  activeByProfile,
+  discoverActiveMulti,
+  discoverRegradesMulti,
+} from './active-runs.js';
 import {
   getLeaderboard,
   leaderboardBenchmarks,
@@ -27,7 +31,11 @@ import {
   readResultsMulti,
   srcHash,
 } from './results-store.js';
-import { clearProfileResults, stopProfileRuns } from './run-control.js';
+import {
+  clearProfileResults,
+  stopProfileRuns,
+  stopRegrade,
+} from './run-control.js';
 import {
   addResultDir,
   loadSettings,
@@ -69,6 +77,11 @@ export function createApp(options = {}) {
   const readRows = () => readResultsMulti(effectiveDirs());
   const readDefs = () => readProfileDefsMulti(effectiveDirs());
   const readActive = () => discoverActiveMulti(effectiveDirs());
+  const readRegrades = () => discoverRegradesMulti(effectiveDirs());
+  // The latest regrade heartbeat for one profile (scoped by src when given).
+  const regradeFor = (name, src) =>
+    readRegrades().find((r) => r.profile === name && (!src || r.src === src)) ||
+    null;
 
   app.use(express.json());
 
@@ -122,6 +135,10 @@ export function createApp(options = {}) {
       // Fold in live status from in-flight work trees (running profiles surface
       // a current stage before any results.jsonl row exists).
       const active = activeByProfile(readActive());
+      const regradeMap = new Map();
+      for (const r of readRegrades()) {
+        if (r.active) regradeMap.set(`${r.src}::${r.profile}`, r);
+      }
       for (const agg of aggregates) {
         const run = active.get(`${agg.src}::${agg.name}`);
         if (run) {
@@ -130,6 +147,15 @@ export function createApp(options = {}) {
           agg.phase = run.phase;
           agg.pipeline_status = run.pipeline_status;
           agg.active_kind = run.kind;
+        }
+        const rg = regradeMap.get(`${agg.src}::${agg.name}`);
+        if (rg) {
+          agg.regrade = {
+            done: rg.done,
+            total: rg.total,
+            mode: rg.mode,
+            current: rg.current,
+          };
         }
       }
       aggregates.sort((a, b) => a.name.localeCompare(b.name));
@@ -170,6 +196,7 @@ export function createApp(options = {}) {
           },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
+          regrade: regradeFor(name, src),
         });
       }
       if (!def && active.length === 0) {
@@ -191,6 +218,7 @@ export function createApp(options = {}) {
         },
         reps: [],
         active,
+        regrade: regradeFor(name, src),
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -339,6 +367,14 @@ export function createApp(options = {}) {
     ) {
       return res.status(400).json({ ok: false, error: 'invalid grade mode' });
     }
+    // Refuse a second sweep while one is live — two processes racing the same
+    // results.jsonl would clobber each other's verdicts.
+    if (readRegrades().some((r) => r.profile === profile && r.active)) {
+      return res.status(409).json({
+        ok: false,
+        error: 'a regrade is already running for this profile',
+      });
+    }
     try {
       const def = readDefs().find((d) => d.name === profile);
       const { pid } = await regrade({
@@ -348,9 +384,24 @@ export function createApp(options = {}) {
         instance: instance || undefined,
         mode: mode || undefined,
         onlyErrors: req.body?.onlyErrors === true,
+        sequential: req.body?.sequential === true,
+        logPath: join(targetDir, 'runs', profile, 'regrade.log'),
         secrets: req.body?.secrets,
       });
       res.json({ ok: true, pid });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Stop an in-flight regrade sweep for a profile (kills the runner tree).
+  app.post('/api/profiles/:name/regrade/stop', async (req, res) => {
+    if (_badName(req.params.name)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
+    try {
+      const stopped = await stopRegrade(req.params.name, effectiveDirs());
+      res.json({ ok: true, stopped });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

@@ -58,12 +58,12 @@ let _pending = null;
  * Open the regrade-backend dialog.
  *
  * @param {object} opts
- * @param {string} opts.instanceId            instance being regraded (for the title)
+ * @param {string} opts.title                 dialog title (e.g. one instance, or "all of <profile>")
  * @param {(mode: string) => void} opts.onConfirm  called with the chosen backend
  * @param {() => void} rerender
  */
-export function showRegradeDialog({ instanceId, onConfirm }, rerender) {
-  _pending = { instanceId, onConfirm, mode: loadRegradeMode() };
+export function showRegradeDialog({ title, onConfirm }, rerender) {
+  _pending = { title, onConfirm, mode: loadRegradeMode() };
   rerender();
   requestAnimationFrame(() => {
     document.getElementById('regrade-dialog')?.show();
@@ -89,11 +89,11 @@ function dismiss(confirmed) {
 /** The dialog template — render once in the app shell. Renders nothing when idle. */
 export function regradeDialogTemplate() {
   if (!_pending) return nothing;
-  const { instanceId, mode } = _pending;
+  const { title, mode } = _pending;
   return html`
     <sl-dialog
       id="regrade-dialog"
-      label="Re-grade ${instanceId}"
+      label=${title}
       @sl-after-hide=${() => {
         // Closing via the X / backdrop counts as cancel (clear pending once).
         if (_pending) {
@@ -102,8 +102,8 @@ export function regradeDialogTemplate() {
       }}
     >
       <p class="regrade-dialog-intro">
-        Re-grade this instance from its saved diff — no pipeline re-run. Pick the
-        grading backend:
+        Re-grade from the saved diff(s) — no pipeline re-run. Pick the grading
+        backend:
       </p>
       <sl-radio-group id="regrade-mode-group" value=${mode}>
         ${REGRADE_MODES.map(

@@ -167,6 +167,67 @@ describe('profileDetailView', () => {
     expect(out).toContain('structural'); // crg value
   });
 
+  it('renders the regrade progress block while a sweep is active', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: data.aggregate,
+        reps: [
+          { instance_id: 'astropy__astropy-14539', rep: 1, status: 'error' },
+        ],
+        regrade: {
+          active: true,
+          mode: 'modal',
+          total: 20,
+          done: 7,
+          current: 'astropy__astropy-14539',
+          counts: { graded: 7, resolved: 4, error: 0 },
+          started_at: '2026-06-17T06:00:00Z',
+        },
+      }),
+    );
+    expect(out).toContain('regrade-progress');
+    expect(out).toContain('Regrading 7/20 via modal');
+    expect(out).toContain('astropy__astropy-14539');
+    expect(out).toContain('4 resolved');
+    expect(out).toContain('reps-row--grading'); // the in-flight row is highlighted
+  });
+
+  it('omits the regrade progress block when no sweep is active', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: data.aggregate,
+        reps: [],
+        regrade: { active: false, status: 'done' },
+      }),
+    );
+    expect(out).not.toContain('regrade-progress');
+  });
+
+  it('wraps the status badge in a tooltip carrying grade provenance', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: data.aggregate,
+        reps: [
+          {
+            instance_id: 'astropy__astropy-12907',
+            rep: 1,
+            status: 'graded',
+            resolved: true,
+            score: 1,
+            grade_mode: 'modal',
+            regraded_at: '2026-06-17T06:12:00Z',
+            report_path: '/logs/run/report.json',
+          },
+        ],
+      }),
+    );
+    // The status cell is now tooltip-wrapped with a one-line provenance string.
+    expect(out).toContain('resolved via modal');
+    expect(out).toContain('score 1');
+    expect(out).toContain('regraded 2026-06-17 06:12 UTC');
+    expect(out).toContain('report: /logs/run/report.json');
+  });
+
   it('renders a Configuration block with worca/template/benchmark/grade', () => {
     const out = renderToString(
       profileDetailView({

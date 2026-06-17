@@ -180,6 +180,40 @@ function errorView(message) {
 
 // ─── Content header ─────────────────────────────────────────────────────
 
+/** Top-right actions for the profile header (mutually exclusive states). */
+function _profileActions(agg, isActive, view) {
+  if (isActive) {
+    return html`<button
+      class="action-btn action-btn--danger"
+      @click=${() => stopRuns(agg.name)}
+    >Stop Runs</button>`;
+  }
+  const rg = view?.data?.regrade;
+  if (rg?.active) {
+    return html`<button
+        class="action-btn"
+        disabled
+        title="Regrade in progress"
+      >Regrading ${rg.done ?? 0}/${rg.total ?? 0}…</button
+      ><button
+        class="action-btn action-btn--danger"
+        @click=${() => stopRegradeSweep(agg.name)}
+      >Stop Regrade</button>`;
+  }
+  const hasReps = (view?.data?.reps || []).length > 0;
+  return html`<button
+      class="action-btn"
+      @click=${() => clearResults(agg.name)}
+    >Clear Results</button>${
+      hasReps
+        ? html`<button
+            class="action-btn"
+            @click=${() => regradeAll(agg.name)}
+          >Regrade All</button>`
+        : ''
+    }`;
+}
+
 /**
  * Build the content-header spec for a route. Data-dependent bits (the
  * profile name/badge/Run button, the dashboard "Compare all" action) read
@@ -209,13 +243,11 @@ function buildHeader(path, view) {
       // (running / graded / skipped). State lives in the live block, the
       // resolved-rate stat, and the per-rep table instead.
       badge: null,
-      // Run lives in Run options. Top-right is Stop Runs (when active) or
-      // Clear Results (when idle) — never both.
-      action: !agg
-        ? null
-        : isActive
-          ? html`<button class="action-btn action-btn--danger" @click=${() => stopRuns(agg.name)}>Stop Runs</button>`
-          : html`<button class="action-btn" @click=${() => clearResults(agg.name)}>Clear Results</button>`,
+      // Run lives in Run options. Top-right: Stop Runs while a pipeline run is
+      // active; a "Regrading X/N…" + Stop Regrade pair while a sweep runs;
+      // otherwise Clear Results with Regrade All to its right (only when there
+      // are reps to re-grade).
+      action: !agg ? null : _profileActions(agg, isActive, view),
     };
   }
 
@@ -402,6 +434,24 @@ async function loadView(path, params) {
   return null;
 }
 
+// Detect a regrade sweep finishing (active → not active for the same profile)
+// across fetches and raise a one-shot completion toast with the verdict counts.
+let _prevRegrade = { profile: null, active: false };
+function _noteRegradeCompletion(view) {
+  if (view?.kind !== 'detail') return;
+  const name = view.data?.aggregate?.name || null;
+  const rg = view.data?.regrade;
+  const active = !!rg?.active;
+  if (_prevRegrade.active && _prevRegrade.profile === name && !active) {
+    const c = rg?.counts || {};
+    showToast(
+      'success',
+      `Regrade complete for ${name}: ${c.resolved ?? 0} resolved · ${c.graded ?? 0} graded · ${c.error ?? 0} error`,
+    );
+  }
+  _prevRegrade = { profile: name, active };
+}
+
 async function route() {
   const { path, params } = parseHash(location.hash);
   state.loading = true;
@@ -409,8 +459,12 @@ async function route() {
   rerender();
   try {
     const view = await loadView(path, params);
-    if (view) state.view = view;
-    else state.error = `No such route: ${path}`;
+    if (view) {
+      state.view = view;
+      _noteRegradeCompletion(view);
+    } else {
+      state.error = `No such route: ${path}`;
+    }
   } catch (err) {
     state.error = err.message;
   } finally {
@@ -442,6 +496,7 @@ async function refreshCurrent() {
   if (path === '/settings') return;
   try {
     const next = await loadView(path, params);
+    if (next) _noteRegradeCompletion(next);
     if (next && JSON.stringify(next) !== JSON.stringify(state.view)) {
       state.view = next;
       rerender();
@@ -507,14 +562,61 @@ async function runProfile(name, opts = {}) {
 // / SWE-bench cloud / Modal); the choice is remembered for next time.
 function regradeInstance(name, instanceId) {
   showRegradeDialog(
-    { instanceId, onConfirm: (mode) => doRegrade(name, instanceId, mode) },
+    {
+      title: `Re-grade ${instanceId}`,
+      onConfirm: (mode) => doRegrade(name, { instance: instanceId, mode }),
+    },
     rerender,
   );
 }
 
-async function doRegrade(name, instanceId, mode) {
+// Whole-profile regrade (header "Regrade All"): same backend dialog, then a
+// single sequential sweep over every saved diff for the profile.
+function regradeAll(name) {
+  showRegradeDialog(
+    {
+      title: `Re-grade all of ${name}`,
+      onConfirm: (mode) => doRegrade(name, { mode, sequential: true }),
+    },
+    rerender,
+  );
+}
+
+// Stop an in-flight regrade sweep (kills the runner tree). Confirmed because it
+// abandons in-progress (paid) Modal/Docker evals.
+function stopRegradeSweep(name) {
+  showConfirm(
+    {
+      label: 'Stop regrade',
+      message: `Stop the in-flight regrade sweep for “${name}”? The instance currently grading is abandoned; rows already graded are kept.`,
+      confirmLabel: 'Stop regrade',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/profiles/${encodeURIComponent(name)}/regrade/stop`,
+            { method: 'POST' },
+          );
+          const data = await res.json();
+          showToast(
+            data.ok ? 'success' : 'danger',
+            data.ok ? 'Regrade stopped' : `Stop failed: ${data.error}`,
+          );
+          setTimeout(refreshCurrent, 1200);
+        } catch (err) {
+          showToast('danger', `Stop failed: ${err.message}`);
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function doRegrade(name, { instance, mode, sequential } = {}) {
   try {
-    const body = { profile: name, instance: instanceId, mode };
+    const body = { profile: name, mode };
+    if (instance) body.instance = instance;
+    if (sequential) body.sequential = true;
     // Cloud (sb-cli) / Modal graders need credentials — forward from the browser.
     const secrets = launchSecrets();
     if (secrets) body.secrets = secrets;
@@ -525,10 +627,8 @@ async function doRegrade(name, instanceId, mode) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
-      showToast(
-        'success',
-        `Re-grading ${instanceId} via ${mode} — pid ${data.pid}`,
-      );
+      const what = instance ? instance : `all of ${name}`;
+      showToast('success', `Re-grading ${what} via ${mode} — pid ${data.pid}`);
       // Results land after the eval completes; nudge a refresh.
       setTimeout(refreshCurrent, 2000);
     } else {

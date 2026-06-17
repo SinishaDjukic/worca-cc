@@ -938,6 +938,58 @@ code {
   gap: 10px;
   margin-bottom: 16px;
 }
+
+/* ─── Regrade sweep progress ───────────────────────────────────────────── */
+.regrade-progress {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.regrade-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent);
+}
+.regrade-progress-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.regrade-progress-current {
+  font-size: 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--fg);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+.regrade-progress-eta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.regrade-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.regrade-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.regrade-progress-counts {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.reps-row--grading {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .live-run {
   border: 1px solid var(--accent);
   border-radius: var(--radius);

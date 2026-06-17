@@ -367,6 +367,100 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/regrade supports a whole-profile sequential sweep (no instance)', async () => {
+    let captured = null;
+    const fakeRegrade = async (opts) => {
+      captured = opts;
+      return { pid: 88 };
+    };
+    await withServer(dir, { _runRegrade: fakeRegrade }, async (base) => {
+      const res = await fetch(`${base}/api/regrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: 'p1',
+          mode: 'modal',
+          sequential: true,
+          secrets: { MODAL_TOKEN_ID: 'mid', MODAL_TOKEN_SECRET: 'msec' },
+        }),
+      });
+      expect((await res.json()).ok).toBe(true);
+      expect(captured.instance).toBeUndefined();
+      expect(captured.mode).toBe('modal');
+      expect(captured.sequential).toBe(true);
+      expect(captured.secrets.MODAL_TOKEN_ID).toBe('mid');
+    });
+  });
+
+  // Write a regrade heartbeat under <dir>/runs/<profile>/regrade-status.json.
+  function seedRegradeHeartbeat(targetDir, profile, hb) {
+    const d = join(targetDir, 'runs', profile);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'regrade-status.json'), JSON.stringify(hb));
+  }
+
+  it('GET /api/profiles/:name includes a live regrade heartbeat', async () => {
+    writeFileSync(join(dir, 'results.jsonl'), `${JSON.stringify(row())}\n`);
+    seedRegradeHeartbeat(dir, 'p1', {
+      profile: 'p1',
+      mode: 'modal',
+      pid: process.pid,
+      total: 20,
+      done: 7,
+      current: 'astropy__astropy-14539',
+      counts: { graded: 7, resolved: 4, error: 0 },
+      status: 'running',
+    });
+    await withServer(dir, {}, async (base) => {
+      const data = await (await fetch(`${base}/api/profiles/p1`)).json();
+      expect(data.regrade.active).toBe(true);
+      expect(data.regrade.done).toBe(7);
+      expect(data.regrade.current).toBe('astropy__astropy-14539');
+    });
+  });
+
+  it('POST /api/regrade returns 409 when a sweep is already running', async () => {
+    let launched = false;
+    const fakeRegrade = async () => {
+      launched = true;
+      return { pid: 1 };
+    };
+    seedRegradeHeartbeat(dir, 'p1', {
+      profile: 'p1',
+      pid: process.pid,
+      status: 'running',
+      total: 20,
+      done: 1,
+    });
+    await withServer(dir, { _runRegrade: fakeRegrade }, async (base) => {
+      const res = await fetch(`${base}/api/regrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', mode: 'modal' }),
+      });
+      expect(res.status).toBe(409);
+      expect(launched).toBe(false); // never spawned a second sweep
+    });
+  });
+
+  it('POST /api/profiles/:name/regrade/stop stops a tracked sweep', async () => {
+    // Implausible pid → stopRegrade finds the heartbeat but kills nothing real.
+    seedRegradeHeartbeat(dir, 'p1', {
+      profile: 'p1',
+      pid: 2147483000,
+      status: 'running',
+    });
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/p1/regrade/stop`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.ok).toBe(true);
+      expect(data.stopped).toBe(1);
+    });
+  });
+
   it('POST /api/regrade rejects a bad instance id and bad mode', async () => {
     await withServer(
       dir,

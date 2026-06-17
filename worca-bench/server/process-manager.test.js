@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runBenchmark, runRegrade } from './process-manager.js';
 
@@ -291,6 +294,47 @@ describe('runRegrade', () => {
       '/authored/profiles',
     );
     expect(capturedArgs).toContain('--only-errors');
+  });
+
+  it('appends --sequential and omits --instance for a whole-profile sweep', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(13);
+    };
+    await runRegrade({
+      profile: 'demo',
+      targetDir: '/tmp/out',
+      mode: 'modal',
+      sequential: true,
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--sequential');
+    expect(capturedArgs).not.toContain('--instance');
+    expect(capturedArgs[capturedArgs.indexOf('--mode') + 1]).toBe('modal');
+
+    // No --sequential unless asked.
+    await runRegrade({ profile: 'demo', targetDir: '/tmp/out', _spawn });
+    expect(capturedArgs).not.toContain('--sequential');
+  });
+
+  it('redirects stdout/stderr to a log file when logPath is given', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'bench-pm-'));
+    try {
+      const logPath = join(tmp, 'sub', 'regrade.log'); // dir created on demand
+      let capturedOpts = null;
+      const _spawn = (_cmd, _args, opts) => {
+        capturedOpts = opts;
+        return fakeChild(99);
+      };
+      await runRegrade({ profile: 'p', targetDir: '/tmp', logPath, _spawn });
+      // stdout+stderr both point at the same opened fd (a number, not 'pipe').
+      expect(typeof capturedOpts.stdio[1]).toBe('number');
+      expect(capturedOpts.stdio[2]).toBe(capturedOpts.stdio[1]);
+      expect(existsSync(logPath)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('rejects with a regrade-labelled message on spawn error', async () => {

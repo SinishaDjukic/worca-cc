@@ -239,6 +239,7 @@ def _run_one_rep(
             )
 
         archive_artifacts(outcome.run_dir, diff, artifacts)
+        completed = _now()
         row = build_row(
             profile_name=profile.name, benchmark=profile.benchmark,
             instance_id=inst.id, worca_ref=wenv.describe(), template=template,
@@ -246,8 +247,11 @@ def _run_one_rep(
         graphify=profile.graphify.label, code_review_graph=profile.code_review_graph.label,
             rep=rep, run_id=run_id, status=status, resolved=resolved, score=score,
             telemetry=telemetry, diff=diff, leaked=leaked, error=error,
-            started_at=started, completed_at=_now(),
+            started_at=started, completed_at=completed,
             artifacts_dir=_artifacts_rel(profile.name, inst.id, rep),
+            report_path=(grade.report_path if grade else None),
+            grade_detail=(grade.detail if grade else None),
+            graded_at=(completed if grade else None),
         )
         append_row(target_dir, row)
         return RepResult(inst.id, rep, status, resolved, score, error)

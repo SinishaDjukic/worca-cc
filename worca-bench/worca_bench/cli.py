@@ -161,6 +161,7 @@ def cmd_regrade(args: argparse.Namespace) -> int:
 
     from .plugins import get_plugin
     from .plugins.base import GradeResult, Instance, Prepared
+    from .regrade_status import write_status
     from .worca_install import collect_secret_env
 
     target = Path(args.target_dir)
@@ -198,40 +199,88 @@ def cmd_regrade(args: argparse.Namespace) -> int:
             gr = GradeResult(status="error", detail=f"regrade error: {e}")
         return iid, rep, gr
 
-    workers = max(1, profile.concurrency.grade)
-    verdicts: dict[tuple, GradeResult] = {}
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(_regrade_one, r) for r in sel]
-        for fut in as_completed(futs):
-            iid, rep, gr = fut.result()
-            verdicts[(iid, rep)] = gr
-    for (iid, rep), gr in sorted(verdicts.items(), key=lambda kv: str(kv[0])):
+    # Sequential mode grades one rep at a time — used by the dashboard "Regrade
+    # All" so a 20-instance Modal sweep doesn't fire 20 harness builds at once.
+    workers = 1 if getattr(args, "sequential", False) else max(1, profile.concurrency.grade)
+    total = len(sel)
+    counts = {"graded": 0, "resolved": 0, "error": 0}
+    started = _now()
+
+    def _hb(done: int, current: str | None, status: str = "running") -> None:
+        # Best-effort progress heartbeat — never let a status-write failure abort
+        # an in-flight (expensive) grade.
+        try:
+            write_status(target, profile.name, mode=mode, total=total, done=done,
+                         current=current, counts=counts, status=status,
+                         started_at=started, updated_at=_now())
+        except OSError:
+            pass
+
+    def _record(gr: GradeResult) -> None:
         if gr.status == "graded":
-            print(f"  {iid} rep{rep}: graded resolved={gr.resolved}")
+            counts["graded"] += 1
+            if gr.resolved:
+                counts["resolved"] += 1
         else:
-            print(f"  {iid} rep{rep}: {gr.status} ({gr.detail[:80]})")
+            counts["error"] += 1
 
-    now = _now()
+    def _print_one(iid: str, rep, gr: GradeResult) -> None:
+        if gr.status == "graded":
+            print(f"  {iid} rep{rep}: graded resolved={gr.resolved}", flush=True)
+        else:
+            print(f"  {iid} rep{rep}: {gr.status} ({(gr.detail or '')[:80]})", flush=True)
 
-    def _mutate(row: dict) -> bool:
-        if row.get("profile") != profile.name:
-            return False
-        gr = verdicts.get((row.get("instance_id"), row.get("rep")))
-        if gr is None:
-            return False
-        row["status"] = gr.status
-        row["resolved"] = gr.resolved
-        row["score"] = gr.score
-        row["error"] = gr.detail if gr.status == "error" else None
-        row["grade_mode"] = mode
-        row["regraded_at"] = now
-        return True
+    def _apply(iid: str, rep, gr: GradeResult) -> None:
+        # Write THIS row immediately so the dashboard reflects progress as it
+        # happens (and a mid-sweep crash never loses completed verdicts).
+        when = _now()
 
-    n = rewrite_rows(target, _mutate)
-    graded = sum(1 for gr in verdicts.values() if gr.status == "graded")
-    resolved = sum(1 for gr in verdicts.values() if gr.resolved)
-    print(f"\nregraded {n} rows via {mode}: {graded} graded "
-          f"({resolved} resolved), {len(verdicts) - graded} error")
+        def _m(row: dict) -> bool:
+            if (row.get("profile") != profile.name
+                    or row.get("instance_id") != iid or row.get("rep") != rep):
+                return False
+            row["status"] = gr.status
+            row["resolved"] = gr.resolved
+            row["score"] = gr.score
+            row["error"] = gr.detail if gr.status == "error" else None
+            row["grade_mode"] = mode
+            row["grade_detail"] = gr.detail
+            row["report_path"] = gr.report_path
+            row["regraded_at"] = when
+            row["graded_at"] = when
+            return True
+
+        rewrite_rows(target, _m)
+
+    try:
+        if workers == 1:
+            _hb(0, sel[0]["instance_id"])
+            for i, row in enumerate(sel):
+                iid, rep = row["instance_id"], row.get("rep")
+                _hb(i, iid)  # i completed; now grading iid
+                _iid, _rep, gr = _regrade_one(row)
+                _record(gr)
+                _apply(iid, rep, gr)
+                _print_one(iid, rep, gr)
+        else:
+            _hb(0, None)
+            done = 0
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futs = [ex.submit(_regrade_one, r) for r in sel]
+                for fut in as_completed(futs):
+                    iid, rep, gr = fut.result()
+                    _record(gr)
+                    _apply(iid, rep, gr)
+                    done += 1
+                    _hb(done, None)
+                    _print_one(iid, rep, gr)
+        _hb(total, None, status="done")
+    except BaseException:
+        _hb(counts["graded"] + counts["error"], None, status="error")
+        raise
+
+    print(f"\nregraded {total} rows via {mode}: {counts['graded']} graded "
+          f"({counts['resolved']} resolved), {counts['error']} error")
     return 0
 
 
@@ -291,6 +340,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_regrade.add_argument(
         "--instance", action="append", metavar="ID",
         help="limit to specific instance id(s); repeatable")
+    p_regrade.add_argument(
+        "--sequential", action="store_true",
+        help="grade one rep at a time (ignore concurrency.grade) — e.g. a whole-profile Modal sweep")
     _add_secret_flags(p_regrade)
     p_regrade.set_defaults(func=cmd_regrade)
 

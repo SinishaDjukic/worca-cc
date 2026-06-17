@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { activeByProfile, discoverActive } from './active-runs.js';
+import {
+  activeByProfile,
+  discoverActive,
+  discoverRegrades,
+} from './active-runs.js';
 
 let dir;
 beforeEach(() => {
@@ -24,6 +28,51 @@ function seedStatus(profile, inst, rep, runId, status) {
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
 }
+
+function seedRegrade(profile, hb) {
+  const d = join(dir, 'runs', profile);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'regrade-status.json'), JSON.stringify(hb));
+}
+
+describe('discoverRegrades', () => {
+  it('surfaces a running heartbeat with a live pid as active', () => {
+    seedRegrade('demo', {
+      profile: 'demo',
+      mode: 'modal',
+      pid: process.pid, // this test process is alive
+      total: 20,
+      done: 7,
+      current: 'astropy__astropy-14539',
+      counts: { graded: 7, resolved: 4, error: 0 },
+      status: 'running',
+    });
+    const [r] = discoverRegrades(dir);
+    expect(r.active).toBe(true);
+    expect(r.done).toBe(7);
+    expect(r.current).toBe('astropy__astropy-14539');
+    expect(typeof r.src).toBe('string');
+  });
+
+  it('reclassifies a running heartbeat with a dead pid as ended (not active)', () => {
+    seedRegrade('demo', {
+      profile: 'demo',
+      pid: 2147483000, // implausible pid → not alive
+      status: 'running',
+      total: 20,
+      done: 13,
+    });
+    const [r] = discoverRegrades(dir);
+    expect(r.status).toBe('ended');
+    expect(r.active).toBe(false);
+  });
+
+  it('keeps a done heartbeat inactive', () => {
+    seedRegrade('demo', { profile: 'demo', pid: process.pid, status: 'done' });
+    const [r] = discoverRegrades(dir);
+    expect(r.active).toBe(false);
+  });
+});
 
 function seedTemplate(profile, inst, rep, id, stagesCfg) {
   const tdir = join(

@@ -40,6 +40,9 @@ def build_row(
     grade_mode: str | None = None,
     graphify: str | None = None,
     code_review_graph: str | None = None,
+    report_path: str | None = None,
+    grade_detail: str | None = None,
+    graded_at: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": RESULTS_SCHEMA_VERSION,
@@ -57,6 +60,10 @@ def build_row(
         "status": status,
         "resolved": resolved,
         "score": score,
+        # Grading provenance (which backend, when, where the report landed).
+        "grade_detail": grade_detail,
+        "graded_at": graded_at,
+        "report_path": report_path,
         "cost_usd": round(telemetry.cost_usd, 6),
         "tokens": telemetry.tokens,
         "wall_time_s": round(telemetry.wall_time_s, 3),

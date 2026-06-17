@@ -43,7 +43,7 @@ def _seed(tmp_path, *, diff_text="+added line\n"):
 def _args(tmp_path, profiles, **over):
     base = dict(
         target_dir=str(tmp_path), profile="demo", profiles_dir=str(profiles),
-        mode="stub", only_errors=False, instance=None,
+        mode="stub", only_errors=False, instance=None, sequential=False,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -109,3 +109,45 @@ def test_regrade_no_matches_returns_1(tmp_path: Path):
     profiles = _seed(tmp_path)
     rc = cli.cmd_regrade(_args(tmp_path, profiles, instance=["nonexistent__x-1"]))
     assert rc == 1
+
+
+def test_regrade_sequential_skips_the_thread_pool(tmp_path: Path, monkeypatch):
+    profiles = _seed(tmp_path)
+    import concurrent.futures as cf
+
+    used = {"pool": False}
+    real = cf.ThreadPoolExecutor
+
+    def spy(*a, **k):
+        used["pool"] = True
+        return real(*a, **k)
+
+    monkeypatch.setattr(cf, "ThreadPoolExecutor", spy)
+    # --sequential grades in a plain in-order loop, no executor at all.
+    rc = cli.cmd_regrade(_args(tmp_path, profiles, sequential=True))
+    assert rc == 0
+    assert used["pool"] is False
+    assert read_rows(tmp_path)[0]["status"] == "graded"
+
+
+def test_regrade_writes_heartbeat_and_increments(tmp_path: Path):
+    profiles = _seed(tmp_path)
+    rc = cli.cmd_regrade(_args(tmp_path, profiles, sequential=True))
+    assert rc == 0
+    import json as _json
+
+    hb = _json.loads(
+        (tmp_path / "runs" / "demo" / "regrade-status.json").read_text()
+    )
+    assert hb["status"] == "done"
+    assert hb["total"] == 1 and hb["done"] == 1
+    assert hb["counts"]["graded"] == 1 and hb["counts"]["resolved"] == 1
+    assert hb["mode"] == "stub" and isinstance(hb["pid"], int)
+
+
+def test_regrade_persists_grade_provenance(tmp_path: Path):
+    profiles = _seed(tmp_path)
+    cli.cmd_regrade(_args(tmp_path, profiles, sequential=True))
+    row = read_rows(tmp_path)[0]
+    assert row["grade_detail"]  # stub grade carries a detail string
+    assert row["graded_at"] and row["regraded_at"]

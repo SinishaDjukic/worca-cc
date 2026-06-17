@@ -156,6 +156,83 @@ function _runOptionsView(agg, onRun) {
   `;
 }
 
+/** Compact UTC timestamp: "2026-06-17 06:12 UTC" (guarded). */
+function _fmtTs(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return `${new Date(t).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+}
+
+/** One-line grading-provenance string for the status-badge tooltip. */
+function _gradeTooltip(r) {
+  const env = r.grade_mode ? ` via ${r.grade_mode}` : '';
+  const parts = [];
+  if (r.status === 'graded') {
+    parts.push(`${r.resolved ? 'resolved' : 'unresolved'}${env}`);
+    if (typeof r.score === 'number') parts.push(`score ${num(r.score, 2)}`);
+  } else if (r.status === 'error') {
+    parts.push(`error${env}`);
+    if (r.error || r.grade_detail) {
+      parts.push(String(r.error || r.grade_detail).slice(0, 160));
+    }
+  } else {
+    parts.push(`${r.status}${env}`);
+  }
+  const ts = r.regraded_at || r.graded_at || r.completed_at;
+  if (ts) parts.push(`${r.regraded_at ? 'regraded' : 'graded'} ${_fmtTs(ts)}`);
+  if (r.report_path) parts.push(`report: ${r.report_path}`);
+  return parts.join(' · ');
+}
+
+/** Rough "time left" for a running sweep from elapsed ÷ done × remaining. */
+function _regradeEta(rg) {
+  if (!rg?.started_at || !rg.done || !rg.total) return null;
+  const start = Date.parse(rg.started_at);
+  if (Number.isNaN(start) || rg.done <= 0) return null;
+  const per = (Date.now() - start) / 1000 / rg.done;
+  return formatDuration(Math.round(per * Math.max(0, rg.total - rg.done)));
+}
+
+/**
+ * Live regrade-sweep progress (from the heartbeat the runner writes). Renders
+ * nothing unless a sweep is active. The dashboard auto-refresh keeps it current.
+ */
+function _regradeProgressView(rg) {
+  if (!rg || !rg.active) return '';
+  const total = rg.total || 0;
+  const done = rg.done || 0;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const c = rg.counts || {};
+  const eta = _regradeEta(rg);
+  return html`
+    <div class="regrade-progress">
+      <div class="regrade-progress-head">
+        <span class="running-dot"></span>
+        <span class="regrade-progress-label"
+          >Regrading ${done}/${total} via ${rg.mode || '—'}</span
+        >
+        ${
+          rg.current
+            ? html`<span class="regrade-progress-current">${rg.current}</span>`
+            : nothing
+        }
+        ${
+          eta
+            ? html`<span class="regrade-progress-eta">~${eta} left</span>`
+            : nothing
+        }
+      </div>
+      <div class="regrade-progress-bar">
+        <div class="regrade-progress-fill" style="width:${pct}%"></div>
+      </div>
+      <div class="regrade-progress-counts">
+        ${c.resolved ?? 0} resolved · ${c.graded ?? 0} graded · ${c.error ?? 0} error
+      </div>
+    </div>
+  `;
+}
+
 const _STAGE_CLASS = {
   completed: 'stage-chip--done',
   in_progress: 'stage-chip--active',
@@ -287,9 +364,13 @@ export function profileDetailView(data, { onRun, onRegrade } = {}) {
   const agg = data.aggregate;
   const reps = data.reps || [];
 
+  const regrade = data.regrade;
+  const grading = regrade?.active ? regrade.current : null;
+
   return html`
     <section class="page">
       ${_liveView(data.active)}
+      ${_regradeProgressView(regrade)}
       ${onRun ? _runOptionsView(agg, onRun) : ''}
       ${_configView(agg)}
       <div class="stat-grid">
@@ -320,11 +401,16 @@ export function profileDetailView(data, { onRun, onRegrade } = {}) {
         <tbody>
           ${reps.map((r) => {
             const ro = outcomeOf(r);
+            const isGrading = grading && r.instance_id === grading;
             return html`
-              <tr>
+              <tr class=${isGrading ? 'reps-row--grading' : nothing}>
                 <td class="reps-instance" title=${r.instance_id || ''}>${r.instance_id || '—'}</td>
                 <td>${r.rep ?? '—'}</td>
-                <td><sl-badge variant="${variantFor(ro)}" pill>${ro}</sl-badge></td>
+                <td>
+                  <sl-tooltip content=${_gradeTooltip(r)}>
+                    <sl-badge variant="${variantFor(ro)}" pill>${ro}</sl-badge>
+                  </sl-tooltip>
+                </td>
                 <td>${typeof r.score === 'number' ? num(r.score, 2) : '—'}</td>
                 <td>${formatCost(r.cost_usd) || '—'}</td>
                 <td>${typeof r.wall_time_s === 'number' ? formatDuration(r.wall_time_s) : '—'}</td>

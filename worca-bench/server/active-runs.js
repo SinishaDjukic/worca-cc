@@ -187,6 +187,58 @@ export function discoverActiveMulti(dirs) {
   return out;
 }
 
+/** True if `pid` names a live process we can see (EPERM = alive but not ours). */
+function pidAlive(pid) {
+  if (!Number.isInteger(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+/**
+ * Discover regrade sweeps under one target dir from their heartbeat files
+ * (<dir>/runs/<profile>/regrade-status.json). A `running` heartbeat whose pid is
+ * gone is reclassified `ended` so a crashed sweep never shows as live forever.
+ *
+ * @returns {Array<{profile, src, mode, total, done, current, counts, status, active, started_at, updated_at, pid}>}
+ */
+export function discoverRegrades(dir) {
+  const runsRoot = join(dir, 'runs');
+  if (!existsSync(runsRoot)) return [];
+  const out = [];
+  for (const p of safeReaddir(runsRoot)) {
+    if (!p.isDirectory()) continue;
+    const f = join(runsRoot, p.name, 'regrade-status.json');
+    if (!existsSync(f)) continue;
+    let s;
+    try {
+      s = JSON.parse(readFileSync(f, 'utf8'));
+    } catch {
+      continue;
+    }
+    s.src = srcHash(dir);
+    if (s.status === 'running' && !pidAlive(s.pid)) s.status = 'ended';
+    s.active = s.status === 'running';
+    out.push(s);
+  }
+  return out;
+}
+
+/** Discover regrade sweeps across several dirs (deduped by dir). */
+export function discoverRegradesMulti(dirs) {
+  const out = [];
+  const seen = new Set();
+  for (const dir of dirs) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    out.push(...discoverRegrades(dir));
+  }
+  return out;
+}
+
 /** Map `<src>::<profile>` -> its most-recently-updated active run (card badges). */
 export function activeByProfile(active) {
   const map = new Map();

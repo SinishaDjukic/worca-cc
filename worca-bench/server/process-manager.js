@@ -7,6 +7,8 @@
 // forever. The benchmark run itself is long-lived — this only kicks it off.
 
 import { spawn } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const HARD_CAP_MS = 180000;
 
@@ -124,6 +126,8 @@ export function runBenchmark({
  * @param {string} [opts.instance]   limit to a single instance id
  * @param {string} [opts.mode]       grade backend (sb-cli|local-docker|modal|stub)
  * @param {boolean} [opts.onlyErrors]  re-grade only rows currently marked error
+ * @param {boolean} [opts.sequential]  grade one rep at a time (whole-profile sweeps)
+ * @param {string} [opts.logPath]     redirect the runner's stdout/stderr to this file
  * @param {object} [opts.secrets]     grader credentials (allowlisted) merged into the child env
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  * @returns {Promise<{pid: number}>}
@@ -135,6 +139,8 @@ export function runRegrade({
   instance,
   mode,
   onlyErrors,
+  sequential,
+  logPath,
   secrets,
   _spawn = spawn,
 } = {}) {
@@ -162,10 +168,14 @@ export function runRegrade({
   if (onlyErrors) {
     args.push('--only-errors');
   }
+  if (sequential) {
+    args.push('--sequential');
+  }
   return _launchDetached(args, {
     _spawn,
     label: 'regrade',
     secrets: sanitizeSecrets(secrets),
+    logPath,
   });
 }
 
@@ -176,21 +186,38 @@ export function runRegrade({
  */
 function _launchDetached(
   args,
-  { _spawn = spawn, label = 'process', secrets } = {},
+  { _spawn = spawn, label = 'process', secrets, logPath } = {},
 ) {
   return new Promise((resolve, reject) => {
+    // When a log file is requested, redirect the child's stdout+stderr into it
+    // so a long detached sweep is diagnosable (otherwise its output is lost).
+    let logFd = null;
+    if (logPath) {
+      try {
+        mkdirSync(dirname(logPath), { recursive: true });
+        logFd = openSync(logPath, 'a');
+      } catch {
+        logFd = null; // best-effort: fall back to discarding output
+      }
+    }
+    const stdio =
+      logFd !== null ? ['ignore', logFd, logFd] : ['ignore', 'ignore', 'pipe'];
+
     let child;
     try {
       child = _spawn('python3', args, {
         detached: true,
-        stdio: ['ignore', 'ignore', 'pipe'],
+        stdio,
         // Browser-forwarded grader secrets ride in the env, never argv.
         env: { ...process.env, ...(secrets || {}) },
       });
     } catch (err) {
+      if (logFd !== null) closeSync(logFd);
       reject(new Error(`Failed to start ${label}: ${err.message}`));
       return;
     }
+    // The child has inherited the fd; the parent can close its copy.
+    if (logFd !== null) closeSync(logFd);
 
     let settled = false;
     let stderr = '';

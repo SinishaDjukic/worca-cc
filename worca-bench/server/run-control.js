@@ -80,6 +80,47 @@ export async function stopProfileRuns(name) {
 }
 
 /**
+ * Stop an in-flight regrade sweep for a profile: SIGTERM→SIGKILL the regrade CLI
+ * tree (so its swebench/modal child goes too). The runner pid is read from the
+ * profile's regrade heartbeat.
+ * @returns {Promise<number>} number of regrade processes stopped
+ */
+export async function stopRegrade(name, dirs) {
+  assertValidProfileName(name);
+  const roots = new Set();
+  for (const dir of dirs) {
+    const f = join(dir, 'runs', name, 'regrade-status.json');
+    if (!existsSync(f)) continue;
+    try {
+      const s = JSON.parse(readFileSync(f, 'utf8'));
+      if (Number.isInteger(s.pid) && s.status === 'running') roots.add(s.pid);
+    } catch {
+      /* ignore unreadable heartbeat */
+    }
+  }
+  if (roots.size === 0) return 0;
+  const acc = new Set();
+  for (const r of roots) collectTree(r, acc);
+  const pids = [...acc];
+  for (const p of pids) {
+    try {
+      process.kill(p, 'SIGTERM');
+    } catch {
+      /* already gone / not ours */
+    }
+  }
+  await _delay(1500);
+  for (const p of pids) {
+    try {
+      process.kill(p, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+  }
+  return roots.size;
+}
+
+/**
  * Clear a profile's recorded results across the given dirs: drop its rows from
  * each results.jsonl and remove its runs/<name> + work/<name> trees.
  * @returns {number} rows removed
