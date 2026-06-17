@@ -335,7 +335,7 @@ export function profileDetailView(data, { onRun, onRegrade } = {}) {
                   ${
                     onRegrade && r.instance_id
                       ? html`<sl-tooltip
-                          content="Re-grade this instance from its saved diff via the hosted SWE-bench grader (sb-cli) — no pipeline re-run"
+                          content="Re-grade this instance from its saved diff — pick the backend (local Docker / SWE-bench cloud / Modal). No pipeline re-run."
                         >
                           <button
                             class="icon-btn reps-regrade-btn"

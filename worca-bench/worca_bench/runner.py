@@ -100,6 +100,7 @@ def run_profile(
     max_instances: int | None = None,
     keep_work: bool = False,
     cache_dir: Path | None = None,
+    secret_env: dict[str, str] | None = None,
 ) -> RunSummary:
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +121,11 @@ def run_profile(
         return summary
 
     overlay = load_overlay(wenv.resolved_sha)
-    secret_env = collect_secret_env()
+    # Secrets reach grading two ways: the ambient environment (collected here) or
+    # explicitly threaded in by the caller (CLI flags / browser-supplied values
+    # forwarded by the dashboard server). An explicit set wins outright.
+    if secret_env is None:
+        secret_env = collect_secret_env()
     templates = {profile.template_for(i.id) for i in instances}
 
     if canary_first and instances:

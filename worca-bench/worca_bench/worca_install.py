@@ -113,10 +113,24 @@ def seed_settings(
         )
 
 
-def collect_secret_env(environ: dict[str, str] | None = None) -> dict[str, str]:
-    """Pull known secret keys from the environment for settings.local.json."""
+def collect_secret_env(
+    environ: dict[str, str] | None = None,
+    *,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Pull known secret keys from the environment for settings.local.json.
+
+    ``extra`` overlays explicitly-supplied secrets (e.g. CLI flags or values
+    passed down from the browser) *on top of* the environment-collected set.
+    Both are filtered through ``SECRET_ENV_KEYS`` so an unknown key can never be
+    injected into the subprocess env, and empty values never shadow a real one.
+    """
     environ = environ if environ is not None else dict(os.environ)
-    return {k: environ[k] for k in SECRET_ENV_KEYS if environ.get(k)}
+    out = {k: environ[k] for k in SECRET_ENV_KEYS if environ.get(k)}
+    for k, v in (extra or {}).items():
+        if k in SECRET_ENV_KEYS and v:
+            out[k] = v
+    return out
 
 
 def _merge_json_file(path: Path, patch: dict[str, Any]) -> None:

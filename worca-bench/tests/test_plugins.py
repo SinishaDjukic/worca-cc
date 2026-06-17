@@ -238,6 +238,61 @@ def test_sb_cli_errors_when_no_report(monkeypatch, tmp_path: Path):
     assert "auth failed" in res.detail
 
 
+def test_grade_unsupported_mode_errors(tmp_path: Path):
+    plugin = SwebenchPlugin()
+    grade = GradeConfig(mode="bogus", options={})
+    res = plugin.grade(Instance(id="x__y-1", prompt=""), "+p\n", tmp_path, tmp_path,
+                       grade, prepared=Prepared(base_commit=""))
+    assert res.status == "error"
+    assert "unsupported grade mode bogus" in res.detail
+
+
+def test_grade_modal_requires_tokens(monkeypatch, tmp_path: Path):
+    """Modal grading fails fast (no subprocess) when its tokens are absent."""
+    for k in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    called = {"n": 0}
+
+    def fake_run(*a, **kw):
+        called["n"] += 1
+        return _Proc(returncode=0)
+
+    monkeypatch.setattr("worca_bench.plugins.swebench.subprocess.run", fake_run)
+    plugin = SwebenchPlugin()
+    grade = GradeConfig(mode="modal", options={})
+    res = plugin.grade(Instance(id="x__y-1", prompt=""), "+p\n", tmp_path, tmp_path,
+                       grade, prepared=Prepared(base_commit=""))
+    assert res.status == "error"
+    assert "MODAL_TOKEN_ID" in res.detail and "MODAL_TOKEN_SECRET" in res.detail
+    assert called["n"] == 0  # never reached the harness
+
+
+def test_grade_modal_dispatches_to_harness_with_tokens(monkeypatch, tmp_path: Path):
+    """With tokens present, modal routes through the harness grader (registry),
+    passes --modal true, threads the tokens into the env, and reads the report."""
+    monkeypatch.chdir(tmp_path)
+    iid = "astropy__astropy-12907"
+    captured = {}
+
+    def fake_run(cmd, *a, **kw):
+        captured["cmd"] = cmd
+        captured["env"] = kw.get("env") or {}
+        rep = harness_report_path(f"wb-{iid}", iid)
+        _write_instance_report(rep, iid, resolved=True)
+        return _Proc(returncode=0)
+
+    monkeypatch.setattr("worca_bench.plugins.swebench.subprocess.run", fake_run)
+    plugin = SwebenchPlugin()
+    grade = GradeConfig(mode="modal", options={})
+    res = plugin.grade(Instance(id=iid, prompt=""), "+patch\n", tmp_path, tmp_path,
+                       grade, prepared=Prepared(base_commit=""),
+                       secret_env={"MODAL_TOKEN_ID": "mid", "MODAL_TOKEN_SECRET": "msec"})
+    assert res.status == "graded" and res.resolved is True
+    assert "--modal" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--modal") + 1] == "true"
+    assert captured["env"]["MODAL_TOKEN_ID"] == "mid"
+
+
 def test_commit0_prepare_stashes_and_restores_gold_tests(tmp_path: Path):
     repo = tmp_path / "lib"
     make_git_repo(repo, {

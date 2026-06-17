@@ -29,6 +29,34 @@ def _default_profile_dirs(target_dir: Path | None) -> list[Path]:
     return [d for d in dirs if d.exists()]
 
 
+# CLI flag → secret env-var name. These let an operator pass grader credentials
+# at launch instead of exporting them; the dashboard server forwards the same
+# values (held only in the browser) via the subprocess env, never argv.
+_SECRET_FLAGS = {
+    "swebench_api_key": "SWEBENCH_API_KEY",
+    "modal_token_id": "MODAL_TOKEN_ID",
+    "modal_token_secret": "MODAL_TOKEN_SECRET",
+}
+
+
+def _add_secret_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--swebench-api-key", metavar="KEY",
+                   help="sb-cli (hosted SWE-bench) API key; overrides $SWEBENCH_API_KEY")
+    p.add_argument("--modal-token-id", metavar="ID",
+                   help="Modal token id; overrides $MODAL_TOKEN_ID")
+    p.add_argument("--modal-token-secret", metavar="SECRET",
+                   help="Modal token secret; overrides $MODAL_TOKEN_SECRET")
+
+
+def _cli_secret_env(args: argparse.Namespace) -> dict[str, str]:
+    """Secrets supplied as CLI flags (None when absent), keyed by env-var name."""
+    return {
+        env: getattr(args, attr)
+        for attr, env in _SECRET_FLAGS.items()
+        if getattr(args, attr, None)
+    }
+
+
 def _resolve_profile(name_or_path: str, target_dir: Path | None,
                      profiles_dir: str | None) -> Profile:
     p = Path(name_or_path)
@@ -73,6 +101,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         profile.code_review_graph = EngineConfig(enabled=True, mode=crg)
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
+    # Grader credentials: environment + CLI-flag overlay (allowlist-enforced).
+    from .worca_install import collect_secret_env
+    secret_env = collect_secret_env(extra=_cli_secret_env(args))
     summary = run_profile(
         profile, target,
         dry_run=args.dry_run,
@@ -80,6 +111,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         max_instances=args.max_instances,
         keep_work=args.keep_work,
         cache_dir=Path(cache_dir) if cache_dir else None,
+        secret_env=secret_env,
     )
     if args.dry_run:
         print(f"[dry-run] profile={summary.profile} worca={summary.worca_ref} "
@@ -136,7 +168,7 @@ def cmd_regrade(args: argparse.Namespace) -> int:
     mode = args.mode or profile.grade.mode
     grade_cfg = GradeConfig(mode=mode, options=dict(profile.grade.options))
     plugin = get_plugin(profile)
-    secret_env = collect_secret_env()
+    secret_env = collect_secret_env(extra=_cli_secret_env(args))
 
     rows = read_rows(target)
     sel = [r for r in rows if r.get("profile") == profile.name]
@@ -238,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="enable code-review-graph (mode passthrough; default structural)",
     )
     p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
+    _add_secret_flags(p_run)
     p_run.set_defaults(func=cmd_run)
 
     p_list = sub.add_parser("list", help="list available profiles")
@@ -258,6 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_regrade.add_argument(
         "--instance", action="append", metavar="ID",
         help="limit to specific instance id(s); repeatable")
+    _add_secret_flags(p_regrade)
     p_regrade.set_defaults(func=cmd_regrade)
 
     p_stats = sub.add_parser("stats", help="aggregate results.jsonl")

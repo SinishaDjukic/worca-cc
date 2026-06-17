@@ -71,3 +71,21 @@ def test_collect_secret_env_includes_grader_credentials():
     got = collect_secret_env(env)
     assert got == {"SWEBENCH_API_KEY": "swb", "MODAL_TOKEN_ID": "mid",
                    "MODAL_TOKEN_SECRET": "msec"}
+
+
+def test_collect_secret_env_extra_overlays_environment():
+    env = {"SWEBENCH_API_KEY": "from-env"}
+    # An explicit extra (CLI flag / browser-forwarded) wins over the environment.
+    got = collect_secret_env(env, extra={"SWEBENCH_API_KEY": "from-flag",
+                                         "MODAL_TOKEN_ID": "mid"})
+    assert got == {"SWEBENCH_API_KEY": "from-flag", "MODAL_TOKEN_ID": "mid"}
+
+
+def test_collect_secret_env_extra_is_allowlisted_and_ignores_blanks():
+    env = {"SWEBENCH_API_KEY": "real"}
+    got = collect_secret_env(
+        env,
+        # Unknown key dropped; blank value must not shadow the env value.
+        extra={"NOT_A_SECRET": "x", "SWEBENCH_API_KEY": ""},
+    )
+    assert got == {"SWEBENCH_API_KEY": "real"}

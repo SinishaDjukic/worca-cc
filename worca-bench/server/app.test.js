@@ -320,6 +320,53 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run forwards browser secrets to the launcher', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 21 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: 'p1',
+          secrets: { SWEBENCH_API_KEY: 'swb', MODAL_TOKEN_ID: 'mid' },
+        }),
+      });
+      expect(captured.secrets).toEqual({
+        SWEBENCH_API_KEY: 'swb',
+        MODAL_TOKEN_ID: 'mid',
+      });
+    });
+  });
+
+  it('POST /api/regrade forwards mode + secrets to the regrader', async () => {
+    let captured = null;
+    const fakeRegrade = async (opts) => {
+      captured = opts;
+      return { pid: 22 };
+    };
+    await withServer(dir, { _runRegrade: fakeRegrade }, async (base) => {
+      await fetch(`${base}/api/regrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: 'p1',
+          instance: 'astropy__astropy-12907',
+          mode: 'modal',
+          secrets: { MODAL_TOKEN_ID: 'mid', MODAL_TOKEN_SECRET: 'msec' },
+        }),
+      });
+      expect(captured.mode).toBe('modal');
+      expect(captured.secrets).toEqual({
+        MODAL_TOKEN_ID: 'mid',
+        MODAL_TOKEN_SECRET: 'msec',
+      });
+    });
+  });
+
   it('POST /api/regrade rejects a bad instance id and bad mode', async () => {
     await withServer(
       dir,

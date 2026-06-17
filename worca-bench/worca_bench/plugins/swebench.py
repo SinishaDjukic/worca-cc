@@ -116,6 +116,17 @@ class SwebenchPlugin(BenchmarkPlugin):
         return _git(["rev-parse", "HEAD"], dest)
 
     # ---- grade ----------------------------------------------------------- #
+    # Grade-backend registry: ``grade.mode`` → bound-method name. Adding a backend
+    # is a one-liner here plus a ``_grade_<x>(prediction, target_dir, grade,
+    # secret_env)`` method — the dispatch in ``grade()`` stays closed. ``stub`` is
+    # handled before the registry (it needs no prediction); ``local-docker`` and
+    # ``modal`` share the harness grader (``modal`` only flips ``--modal true``).
+    GRADERS = {
+        "sb-cli": "_grade_sb_cli",
+        "local-docker": "_grade_harness",
+        "modal": "_grade_harness",
+    }
+
     def grade(self, instance, diff, tree, target_dir, grade, *, prepared,
               secret_env=None) -> GradeResult:
         if grade.mode == "stub":
@@ -125,11 +136,11 @@ class SwebenchPlugin(BenchmarkPlugin):
             "model_name_or_path": MODEL_NAME,
             "model_patch": diff,
         }
-        if grade.mode == "sb-cli":
-            return self._grade_sb_cli(prediction, target_dir, grade, secret_env)
-        if grade.mode in ("local-docker", "modal"):
-            return self._grade_harness(prediction, grade, secret_env)
-        return GradeResult(status="error", detail=f"unsupported grade mode {grade.mode}")
+        method = self.GRADERS.get(grade.mode)
+        if method is None:
+            return GradeResult(status="error",
+                               detail=f"unsupported grade mode {grade.mode}")
+        return getattr(self, method)(prediction, target_dir, grade, secret_env)
 
     # Real graders below are best-effort shell-outs (require sb-cli / Docker / network);
     # they are not exercised by unit tests, which use grade.mode == 'stub'.
@@ -172,9 +183,21 @@ class SwebenchPlugin(BenchmarkPlugin):
             detail=f"sb-cli failed (submit rc={submit.returncode}, "
                    f"get rc={get.returncode}): {tail}")
 
-    def _grade_harness(self, prediction, grade, secret_env=None) -> GradeResult:  # pragma: no cover
+    def _grade_harness(self, prediction, _target_dir, grade, secret_env=None) -> GradeResult:
         env = grade_env(secret_env)
-        with tempfile.TemporaryDirectory() as td:
+        # Modal runs the harness on hosted x86 workers (the way to grade SWE-bench
+        # from an Apple-Silicon host). It authenticates from MODAL_TOKEN_ID/SECRET
+        # in the env — fail fast with an actionable message if they're absent
+        # rather than letting the harness die deep inside the modal client.
+        if grade.mode == "modal" and not (
+            env.get("MODAL_TOKEN_ID") and env.get("MODAL_TOKEN_SECRET")
+        ):
+            return GradeResult(
+                status="error",
+                detail="modal grading needs MODAL_TOKEN_ID + MODAL_TOKEN_SECRET "
+                       "(set them in the dashboard Settings, pass "
+                       "--modal-token-id/--modal-token-secret, or export them)")
+        with tempfile.TemporaryDirectory() as td:  # pragma: no cover - needs the real harness
             preds = Path(td) / "predictions.jsonl"
             preds.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
             run_id = grade.options.get("run_id", f"wb-{prediction['instance_id']}")

@@ -163,6 +163,53 @@ describe('runBenchmark', () => {
     );
   });
 
+  it('merges only allowlisted, non-empty secrets into the child env', async () => {
+    let capturedOpts = null;
+    const _spawn = (_cmd, _args, opts) => {
+      capturedOpts = opts;
+      return fakeChild(55);
+    };
+    await runBenchmark({
+      profile: 'p',
+      targetDir: '/tmp',
+      secrets: {
+        SWEBENCH_API_KEY: 'swb',
+        MODAL_TOKEN_ID: 'mid',
+        MODAL_TOKEN_SECRET: '   ', // blank → dropped
+        EVIL: 'rm -rf', // not allowlisted → dropped
+      },
+      _spawn,
+    });
+    expect(capturedOpts.env.SWEBENCH_API_KEY).toBe('swb');
+    expect(capturedOpts.env.MODAL_TOKEN_ID).toBe('mid');
+    expect(capturedOpts.env.MODAL_TOKEN_SECRET).toBeUndefined();
+    expect(capturedOpts.env.EVIL).toBeUndefined();
+    // Ambient env is still inherited.
+    expect(capturedOpts.env.PATH).toBe(process.env.PATH);
+  });
+
+  it('passes secrets through regrade too (allowlisted, in env not argv)', async () => {
+    let capturedOpts = null;
+    let capturedArgs = null;
+    const _spawn = (_cmd, args, opts) => {
+      capturedArgs = args;
+      capturedOpts = opts;
+      return fakeChild(56);
+    };
+    await runRegrade({
+      profile: 'p',
+      targetDir: '/tmp',
+      mode: 'modal',
+      secrets: { MODAL_TOKEN_ID: 'mid', MODAL_TOKEN_SECRET: 'msec' },
+      _spawn,
+    });
+    expect(capturedOpts.env.MODAL_TOKEN_ID).toBe('mid');
+    expect(capturedOpts.env.MODAL_TOKEN_SECRET).toBe('msec');
+    // Never leaked onto the command line.
+    expect(capturedArgs.join(' ')).not.toContain('mid');
+    expect(capturedArgs.join(' ')).not.toContain('msec');
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

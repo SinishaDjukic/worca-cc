@@ -17,6 +17,7 @@ import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
 import '@shoelace-style/shoelace/dist/components/radio-button/radio-button.js';
+import '@shoelace-style/shoelace/dist/components/radio/radio.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
 import { outcomeIcon, profileOutcome } from './utils/badge.js';
@@ -25,6 +26,11 @@ import {
   folderPickerTemplate,
   openFolderPicker,
 } from './utils/folder-picker.js';
+import {
+  regradeDialogTemplate,
+  showRegradeDialog,
+} from './utils/regrade-dialog.js';
+import { clearSecret, launchSecrets, saveSecrets } from './utils/secrets.js';
 import { compareView } from './views/compare.js';
 import { leaderboardView } from './views/leaderboard.js';
 import { profileDetailView } from './views/profile-detail.js';
@@ -294,6 +300,7 @@ function shell(activeKey, header, body) {
       ${toastView()}
       ${confirmDialogTemplate()}
       ${folderPickerTemplate()}
+      ${regradeDialogTemplate()}
     </div>
   `;
 }
@@ -351,6 +358,8 @@ function renderView(view) {
         onSetCache: setCache,
         onBrowseAdd: browseAdd,
         onBrowseCache: browseCache,
+        onSaveSecrets: saveGraderSecrets,
+        onClearSecret: clearGraderSecret,
       });
     default:
       return errorView('Unknown view');
@@ -460,6 +469,10 @@ async function runProfile(name, opts = {}) {
     if (opts.canary === false) body.canary = false;
     if (opts.graphify) body.graphify = opts.graphify;
     if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
+    // Forward browser-held grader credentials so the run can grade (sb-cli /
+    // Modal). Omitted when none are stored.
+    const secrets = launchSecrets();
+    if (secrets) body.secrets = secrets;
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -490,24 +503,33 @@ async function runProfile(name, opts = {}) {
   }
 }
 
-async function regradeInstance(name, instanceId) {
+// Regrade flows through a dialog so the operator picks the backend (local Docker
+// / SWE-bench cloud / Modal); the choice is remembered for next time.
+function regradeInstance(name, instanceId) {
+  showRegradeDialog(
+    { instanceId, onConfirm: (mode) => doRegrade(name, instanceId, mode) },
+    rerender,
+  );
+}
+
+async function doRegrade(name, instanceId, mode) {
   try {
+    const body = { profile: name, instance: instanceId, mode };
+    // Cloud (sb-cli) / Modal graders need credentials — forward from the browser.
+    const secrets = launchSecrets();
+    if (secrets) body.secrets = secrets;
     const res = await fetch('/api/regrade', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        profile: name,
-        instance: instanceId,
-        mode: 'sb-cli',
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
       showToast(
         'success',
-        `Re-grading ${instanceId} via sb-cli — pid ${data.pid}`,
+        `Re-grading ${instanceId} via ${mode} — pid ${data.pid}`,
       );
-      // Results land after the hosted eval completes; nudge a few refreshes.
+      // Results land after the eval completes; nudge a refresh.
       setTimeout(refreshCurrent, 2000);
     } else {
       showToast('danger', `Regrade failed: ${data.error || res.statusText}`);
@@ -564,6 +586,18 @@ function confirmRemoveDir(dir) {
 
 const browseAdd = () => openFolderPicker({ onPick: addDir }, rerender);
 const browseCache = () => openFolderPicker({ onPick: setCache }, rerender);
+
+// Grader credentials live only in the browser; persist + re-render so the
+// "Set"/"Not set" status updates. No server round-trip.
+function saveGraderSecrets(patch) {
+  saveSecrets(patch);
+  showToast('success', 'Saved grader credentials (this browser only)');
+  rerender();
+}
+function clearGraderSecret(name) {
+  clearSecret(name);
+  rerender();
+}
 
 // Destructive: stop a profile's active runs (kills the runner trees).
 function stopRuns(name) {

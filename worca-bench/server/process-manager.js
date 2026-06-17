@@ -10,6 +10,29 @@ import { spawn } from 'node:child_process';
 
 const HARD_CAP_MS = 180000;
 
+// Grader credentials the dashboard may forward from the browser. The browser is
+// the only at-rest store for these — they reach the runner through the spawned
+// subprocess's *environment* (never argv, so they stay out of `ps`), where the
+// Python side's collect_secret_env() picks them up. Strictly allowlisted so a
+// crafted request can't inject an arbitrary env var into the child.
+export const GRADER_SECRET_KEYS = [
+  'SWEBENCH_API_KEY',
+  'MODAL_TOKEN_ID',
+  'MODAL_TOKEN_SECRET',
+];
+
+/** Keep only allowlisted, non-empty string secrets — safe to merge into env. */
+function sanitizeSecrets(secrets) {
+  const out = {};
+  if (secrets && typeof secrets === 'object') {
+    for (const k of GRADER_SECRET_KEYS) {
+      const v = secrets[k];
+      if (typeof v === 'string' && v.trim()) out[k] = v;
+    }
+  }
+  return out;
+}
+
 /**
  * Spawn `python3 -m worca_bench.cli run --profile <name> --target-dir <dir>`
  * detached and return its pid. The grandchild owns its own stdio/logging; we
@@ -27,6 +50,7 @@ const HARD_CAP_MS = 180000;
  * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
  * @param {string} [opts.graphify]      enable graphify in this mode (structural|full)
  * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
+ * @param {object} [opts.secrets]       grader credentials (allowlisted) merged into the child env
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
  * @returns {Promise<{pid: number}>}
@@ -42,6 +66,7 @@ export function runBenchmark({
   cacheDir,
   graphify,
   codeReviewGraph,
+  secrets,
   _spawn = spawn,
 } = {}) {
   if (!profile) {
@@ -81,7 +106,11 @@ export function runBenchmark({
     args.push('--code-review-graph', String(codeReviewGraph));
   }
 
-  return _launchDetached(args, { _spawn, label: 'benchmark' });
+  return _launchDetached(args, {
+    _spawn,
+    label: 'benchmark',
+    secrets: sanitizeSecrets(secrets),
+  });
 }
 
 /**
@@ -95,6 +124,7 @@ export function runBenchmark({
  * @param {string} [opts.instance]   limit to a single instance id
  * @param {string} [opts.mode]       grade backend (sb-cli|local-docker|modal|stub)
  * @param {boolean} [opts.onlyErrors]  re-grade only rows currently marked error
+ * @param {object} [opts.secrets]     grader credentials (allowlisted) merged into the child env
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  * @returns {Promise<{pid: number}>}
  */
@@ -105,6 +135,7 @@ export function runRegrade({
   instance,
   mode,
   onlyErrors,
+  secrets,
   _spawn = spawn,
 } = {}) {
   if (!profile) {
@@ -131,7 +162,11 @@ export function runRegrade({
   if (onlyErrors) {
     args.push('--only-errors');
   }
-  return _launchDetached(args, { _spawn, label: 'regrade' });
+  return _launchDetached(args, {
+    _spawn,
+    label: 'regrade',
+    secrets: sanitizeSecrets(secrets),
+  });
 }
 
 /**
@@ -139,14 +174,18 @@ export function runRegrade({
  * resolve `{pid}` as soon as the child is handed off (do NOT wait for exit), and
  * reject on an early spawn error/exit or the hard-cap timeout.
  */
-function _launchDetached(args, { _spawn = spawn, label = 'process' } = {}) {
+function _launchDetached(
+  args,
+  { _spawn = spawn, label = 'process', secrets } = {},
+) {
   return new Promise((resolve, reject) => {
     let child;
     try {
       child = _spawn('python3', args, {
         detached: true,
         stdio: ['ignore', 'ignore', 'pipe'],
-        env: { ...process.env },
+        // Browser-forwarded grader secrets ride in the env, never argv.
+        env: { ...process.env, ...(secrets || {}) },
       });
     } catch (err) {
       reject(new Error(`Failed to start ${label}: ${err.message}`));

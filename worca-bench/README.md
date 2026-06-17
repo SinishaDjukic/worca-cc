@@ -61,6 +61,24 @@ A **canary** runs each template once before the sweep and skips configs a worca 
 rejects (fail-fast). The **Commit0 leakage guard** fails any rep whose diff touches a
 gold-test path.
 
+## Grader credentials (sb-cli / Modal)
+
+The cloud (`sb-cli` → `SWEBENCH_API_KEY`) and Modal (`modal` → `MODAL_TOKEN_ID` +
+`MODAL_TOKEN_SECRET`) graders need credentials. They are never stored in the repo. Three
+ways to supply them, in precedence order:
+
+- **CLI flags** — `worca-bench run|regrade … --swebench-api-key … --modal-token-id … --modal-token-secret …` (override the environment).
+- **Environment** — export the vars before launching; `collect_secret_env()` picks them up.
+- **Dashboard (browser)** — Settings → *Grader credentials* stores them in this browser's
+  `localStorage` only. On Run/Regrade the browser forwards them in the request body; the
+  server merges them into the runner subprocess's **environment** (never argv, never disk).
+
+The grade backend is pluggable: `SwebenchPlugin.GRADERS` maps `grade.mode` → a
+`_grade_<x>(prediction, target_dir, grade, secret_env)` method. The dashboard's per-row
+**Re-grade** action opens a dialog to pick the backend (local Docker / SWE-bench cloud /
+Modal); the last choice is remembered. Modal fails fast with an actionable message when its
+tokens are absent.
+
 ## `--target-dir` contract (CLI writes, dashboard reads)
 
 ```

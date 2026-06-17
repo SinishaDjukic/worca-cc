@@ -309,6 +309,9 @@ export function createApp(options = {}) {
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),
+        // Grader credentials forwarded from the browser; the launcher allowlists
+        // and merges them into the runner's env (never persisted server-side).
+        secrets: req.body?.secrets,
       });
       res.json({ ok: true, pid });
     } catch (err) {
@@ -345,6 +348,7 @@ export function createApp(options = {}) {
         instance: instance || undefined,
         mode: mode || undefined,
         onlyErrors: req.body?.onlyErrors === true,
+        secrets: req.body?.secrets,
       });
       res.json({ ok: true, pid });
     } catch (err) {

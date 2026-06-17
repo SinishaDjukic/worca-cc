@@ -48,6 +48,9 @@ def _args(tmp_path, profiles_dir, **over):
         reps=None,
         cache_dir=None,
         keep_work=False,
+        swebench_api_key=None,
+        modal_token_id=None,
+        modal_token_secret=None,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -142,6 +145,40 @@ def test_cmd_run_threads_cache_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_profile", fake_run_profile)
     cli.cmd_run(_args(tmp_path, profiles_dir, cache_dir=str(cache)))
     assert str(captured["cache_dir"]) == str(cache)
+
+
+def test_cmd_run_secret_flags_thread_into_secret_env(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    # Clear ambient grader creds so the flag value is unambiguous.
+    for k in ("SWEBENCH_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["secret_env"] = kw.get("secret_env")
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir,
+                           swebench_api_key="swb_flag", modal_token_id="mid_flag"))
+    assert rc == 0
+    assert captured["secret_env"]["SWEBENCH_API_KEY"] == "swb_flag"
+    assert captured["secret_env"]["MODAL_TOKEN_ID"] == "mid_flag"
+    assert "MODAL_TOKEN_SECRET" not in captured["secret_env"]
+
+
+def test_cmd_run_secret_flag_overrides_environment(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    monkeypatch.setenv("SWEBENCH_API_KEY", "from_env")
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["secret_env"] = kw.get("secret_env")
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    cli.cmd_run(_args(tmp_path, profiles_dir, swebench_api_key="from_flag"))
+    assert captured["secret_env"]["SWEBENCH_API_KEY"] == "from_flag"
 
 
 def test_cmd_run_cache_dir_falls_back_to_env(tmp_path, monkeypatch):

@@ -6,6 +6,7 @@
 
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { SECRET_FIELDS, secretStatus } from '../utils/secrets.js';
 
 // Lucide icons, inlined to keep worca-bench dependency-light.
 const FOLDER =
@@ -23,15 +24,41 @@ const TRASH =
  * @param {(dir: string) => void} [handlers.onSetCache]
  * @param {() => void} [handlers.onBrowseAdd]
  * @param {() => void} [handlers.onBrowseCache]
+ * @param {(patch: object) => void} [handlers.onSaveSecrets]  browser-only credentials
+ * @param {(name: string) => void} [handlers.onClearSecret]
  */
 export function settingsView(
   data,
-  { onAddDir, onRemoveDir, onSetCache, onBrowseAdd, onBrowseCache } = {},
+  {
+    onAddDir,
+    onRemoveDir,
+    onSetCache,
+    onBrowseAdd,
+    onBrowseCache,
+    onSaveSecrets,
+    onClearSecret,
+  } = {},
 ) {
   const primary = data?.primary || null;
   const configured = data?.configured || [];
   const effective = data?.effective || [];
   const cache = data?.cache || null;
+  const secretsSet = secretStatus();
+
+  // Collect non-empty credential inputs into a patch and hand off to the
+  // browser-only store. Inputs are cleared after save (we never echo a secret).
+  const submitSecrets = (e) => {
+    e.preventDefault();
+    const patch = {};
+    for (const input of e.currentTarget.querySelectorAll(
+      '.settings-secret-input',
+    )) {
+      const v = (input.value || '').trim();
+      if (v) patch[input.dataset.key] = v;
+      input.value = '';
+    }
+    if (Object.keys(patch).length) onSaveSecrets?.(patch);
+  };
 
   const submitAdd = (e) => {
     e.preventDefault();
@@ -161,6 +188,62 @@ export function settingsView(
             @click=${() => onBrowseCache?.()}
           >Browse…</button>
           <button class="action-btn action-btn--primary" type="submit">Set</button>
+        </form>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <h2 class="settings-card-title">Grader credentials</h2>
+          <p class="settings-card-desc">
+            Keys for the SWE-bench cloud (<code>sb-cli</code>) and Modal graders.
+            Stored <strong>only in this browser</strong> (never in the repo or on
+            the server) and forwarded into the runner's environment on launch and
+            regrade. Leave a field blank to keep its current value.
+          </p>
+        </div>
+        <form class="settings-secrets-form" @submit=${submitSecrets}>
+          ${SECRET_FIELDS.map(
+            (f) => html`<div class="settings-secret-row">
+              <label class="settings-secret-label" for=${`secret-${f.key}`}>
+                ${f.label}
+                ${
+                  secretsSet[f.key]
+                    ? html`<sl-badge variant="success" pill>Set</sl-badge>`
+                    : html`<sl-badge variant="neutral" pill>Not set</sl-badge>`
+                }
+              </label>
+              <div class="settings-secret-controls">
+                <input
+                  id=${`secret-${f.key}`}
+                  class="settings-input settings-secret-input"
+                  type="password"
+                  autocomplete="off"
+                  data-key=${f.key}
+                  placeholder=${secretsSet[f.key] ? '•••••••• (set)' : 'not set'}
+                  aria-label=${f.label}
+                />
+                ${
+                  secretsSet[f.key]
+                    ? html`<button
+                        class="icon-btn icon-btn--danger"
+                        type="button"
+                        aria-label=${`Clear ${f.label}`}
+                        title="Clear"
+                        @click=${() => onClearSecret?.(f.key)}
+                      >
+                        ${unsafeHTML(TRASH)}
+                      </button>`
+                    : nothing
+                }
+              </div>
+              <p class="settings-secret-hint">${f.hint}</p>
+            </div>`,
+          )}
+          <div class="settings-secrets-actions">
+            <button class="action-btn action-btn--primary" type="submit">
+              Save credentials
+            </button>
+          </div>
         </form>
       </section>
     </div>

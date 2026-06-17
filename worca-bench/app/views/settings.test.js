@@ -54,4 +54,17 @@ describe('settingsView', () => {
     );
     expect(out).toContain('boom');
   });
+
+  it('renders the grader credentials card with all three fields', () => {
+    const out = renderToString(
+      settingsView({ primary: '/p', configured: [], effective: ['/p'] }),
+    );
+    expect(out).toContain('Grader credentials');
+    expect(out).toContain('SWE-bench API key');
+    expect(out).toContain('Modal token ID');
+    expect(out).toContain('Modal token secret');
+    // Browser-only with no secrets stored → all show "Not set".
+    expect(out).toContain('Not set');
+    expect(out).toContain('only in this browser');
+  });
 });

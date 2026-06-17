@@ -747,6 +747,64 @@ code {
   flex-shrink: 0;
 }
 
+/* ─── Grader credentials (browser-only secrets) ────────────────────────── */
+.settings-secrets-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+.settings-secret-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-secret-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.settings-secret-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-secret-input {
+  flex: 1;
+  min-width: 0;
+}
+.settings-secret-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.settings-secrets-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ─── Regrade backend dialog ───────────────────────────────────────────── */
+.regrade-dialog-intro {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.regrade-mode-label {
+  display: block;
+  font-weight: 600;
+}
+.regrade-mode-hint {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 /* ─── Folder picker dialog ─────────────────────────────────────────────── */
 .folder-picker {
   display: flex;
