@@ -213,6 +213,38 @@ describe('runBenchmark', () => {
     expect(capturedArgs.join(' ')).not.toContain('msec');
   });
 
+  it('appends --preflight on/off and --claude-md-mode', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(31);
+    };
+    await runBenchmark({
+      profile: 'p',
+      targetDir: '/tmp',
+      preflight: true,
+      claudeMdMode: 'project',
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--preflight') + 1]).toBe('on');
+    expect(capturedArgs[capturedArgs.indexOf('--claude-md-mode') + 1]).toBe(
+      'project',
+    );
+
+    await runBenchmark({
+      profile: 'p',
+      targetDir: '/tmp',
+      preflight: false,
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--preflight') + 1]).toBe('off');
+
+    // Omitted preflight (undefined) => no flag.
+    await runBenchmark({ profile: 'p', targetDir: '/tmp', _spawn });
+    expect(capturedArgs).not.toContain('--preflight');
+    expect(capturedArgs).not.toContain('--claude-md-mode');
+  });
+
   it('detaches and ignores stdin/stdout, pipes stderr', async () => {
     let capturedOpts = null;
     const _spawn = (_cmd, _args, opts) => {

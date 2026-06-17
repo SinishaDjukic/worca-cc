@@ -320,6 +320,60 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run forwards preflight + claudeMdMode (validated)', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 31 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: 'p1',
+          preflight: true,
+          claudeMdMode: 'project',
+        }),
+      });
+      expect(captured.preflight).toBe(true);
+      expect(captured.claudeMdMode).toBe('project');
+
+      // An invalid claude-md mode is dropped (not forwarded).
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', claudeMdMode: 'evil' }),
+      });
+      expect(captured.claudeMdMode).toBeUndefined();
+    });
+  });
+
+  it('GET/PUT /api/profiles/:name/notes round-trips', async () => {
+    await withServer(dir, {}, async (base) => {
+      // Empty before anything is written.
+      let r = await (await fetch(`${base}/api/profiles/p1/notes`)).json();
+      expect(r).toEqual({ ok: true, notes: '' });
+
+      const put = await fetch(`${base}/api/profiles/p1/notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: 'ran with opus, effort high' }),
+      });
+      expect((await put.json()).ok).toBe(true);
+
+      r = await (await fetch(`${base}/api/profiles/p1/notes`)).json();
+      expect(r.notes).toBe('ran with opus, effort high');
+    });
+  });
+
+  it('rejects notes for a bad profile name', async () => {
+    await withServer(dir, {}, async (base) => {
+      const r = await fetch(`${base}/api/profiles/..%2Fetc/notes`);
+      expect([400, 404]).toContain(r.status);
+    });
+  });
+
   it('POST /api/run forwards browser secrets to the launcher', async () => {
     let captured = null;
     const fakeRun = async (opts) => {

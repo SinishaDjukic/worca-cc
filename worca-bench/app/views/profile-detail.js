@@ -43,6 +43,8 @@ function _readControls(box) {
     canary: box.querySelector('.run-opt-canary')?.value ?? 'on',
     graphify: box.querySelector('.run-opt-graphify')?.value ?? 'off',
     codeReviewGraph: box.querySelector('.run-opt-crg')?.value ?? 'off',
+    preflight: box.querySelector('.run-opt-preflight')?.value ?? 'on',
+    claudeMd: box.querySelector('.run-opt-claudemd')?.value ?? 'project',
   };
 }
 
@@ -53,7 +55,7 @@ function _readControls(box) {
  * persists them per-profile to localStorage so a page reload restores the last
  * set values instead of snapping back to the profile defaults.
  */
-function _runOptionsView(agg, onRun) {
+function _runOptionsView(agg, onRun, onNotes) {
   const saved = loadRunPrefs(agg.name);
   const persist = (e) => {
     const box = e.target.closest('.run-options');
@@ -77,6 +79,8 @@ function _runOptionsView(agg, onRun) {
       canary: c.canary !== 'off',
       graphify,
       codeReviewGraph,
+      preflight: c.preflight !== 'off',
+      claudeMdMode: c.claudeMd,
     });
   };
   return html`
@@ -125,6 +129,31 @@ function _runOptionsView(agg, onRun) {
         </sl-radio-group>
       </div>
       <div class="run-opt run-opt-engine">
+        <span class="run-opt-label">Preflight</span>
+        <sl-radio-group
+          class="run-opt-preflight"
+          size="small"
+          value=${saved.preflight || 'on'}
+          @sl-change=${persist}
+        >
+          <sl-radio-button value="off">Off</sl-radio-button>
+          <sl-radio-button value="on">On</sl-radio-button>
+        </sl-radio-group>
+      </div>
+      <label class="run-opt"
+        >CLAUDE.md
+        <select
+          class="run-opt-claudemd run-opt-select"
+          .value=${saved.claudeMd || 'project'}
+          @change=${persist}
+        >
+          <option value="none">none</option>
+          <option value="project">project</option>
+          <option value="project+local">project+local</option>
+          <option value="all">all</option>
+        </select>
+      </label>
+      <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Graphify</span>
         <sl-radio-group
           class="run-opt-graphify"
@@ -149,6 +178,14 @@ function _runOptionsView(agg, onRun) {
           <sl-radio-button value="structural">Structural</sl-radio-button>
         </sl-radio-group>
       </div>
+      ${
+        onNotes
+          ? html`<button
+              class="action-btn run-opt-notes"
+              @click=${() => onNotes(agg.name)}
+            >Notes</button>`
+          : ''
+      }
       <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
         Run
       </button>
@@ -357,7 +394,7 @@ function _configView(agg) {
  * @param {object} [handlers]
  * @param {(name: string, opts: {reps?: number, maxInstances?: number}) => void} [handlers.onRun]
  */
-export function profileDetailView(data, { onRun, onRegrade } = {}) {
+export function profileDetailView(data, { onRun, onRegrade, onNotes } = {}) {
   if (!data?.aggregate) {
     return html`<section class="page"><p class="empty-state">Profile not found.</p></section>`;
   }
@@ -371,7 +408,7 @@ export function profileDetailView(data, { onRun, onRegrade } = {}) {
     <section class="page">
       ${_liveView(data.active)}
       ${_regradeProgressView(regrade)}
-      ${onRun ? _runOptionsView(agg, onRun) : ''}
+      ${onRun ? _runOptionsView(agg, onRun, onNotes) : ''}
       ${_configView(agg)}
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}

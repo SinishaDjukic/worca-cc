@@ -52,6 +52,8 @@ function sanitizeSecrets(secrets) {
  * @param {string} [opts.cacheDir]      benchmark cache dir (HF datasets / mirrors)
  * @param {string} [opts.graphify]      enable graphify in this mode (structural|full)
  * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
+ * @param {boolean} [opts.preflight]    run preflight (true) or skip it (false); omit to leave the profile default
+ * @param {string} [opts.claudeMdMode]  CLAUDE.md load mode (none|project|project+local|all)
  * @param {object} [opts.secrets]       grader credentials (allowlisted) merged into the child env
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
@@ -68,6 +70,8 @@ export function runBenchmark({
   cacheDir,
   graphify,
   codeReviewGraph,
+  preflight,
+  claudeMdMode,
   secrets,
   _spawn = spawn,
 } = {}) {
@@ -106,6 +110,12 @@ export function runBenchmark({
   }
   if (codeReviewGraph) {
     args.push('--code-review-graph', String(codeReviewGraph));
+  }
+  if (typeof preflight === 'boolean') {
+    args.push('--preflight', preflight ? 'on' : 'off');
+  }
+  if (claudeMdMode) {
+    args.push('--claude-md-mode', String(claudeMdMode));
   }
 
   return _launchDetached(args, {

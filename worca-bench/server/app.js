@@ -6,7 +6,13 @@
 // catch-all. The app reads benchmark results from a target directory passed in
 // via options.targetDir (the runner's --target-dir / WORCA_BENCH_DIR).
 
-import { readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -337,6 +343,17 @@ export function createApp(options = {}) {
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),
+        // Preflight on/off (only when an explicit boolean is sent) + CLAUDE.md
+        // load mode (allowlisted; ignored otherwise).
+        preflight:
+          typeof req.body?.preflight === 'boolean'
+            ? req.body.preflight
+            : undefined,
+        claudeMdMode: ['none', 'project', 'project+local', 'all'].includes(
+          req.body?.claudeMdMode,
+        )
+          ? req.body.claudeMdMode
+          : undefined,
         // Grader credentials forwarded from the browser; the launcher allowlists
         // and merges them into the runner's env (never persisted server-side).
         secrets: req.body?.secrets,
@@ -389,6 +406,42 @@ export function createApp(options = {}) {
         secrets: req.body?.secrets,
       });
       res.json({ ok: true, pid });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Per-profile human notes (stored alongside results) ─────────────────
+  // Free-text notes saved at <targetDir>/notes/<profile>.md so they persist with
+  // the run data and survive reloads. Capped to keep a localhost tool sane.
+  const NOTES_CAP = 200_000;
+  const notesPath = (name) => join(targetDir, 'notes', `${name}.md`);
+
+  app.get('/api/profiles/:name/notes', (req, res) => {
+    if (_badName(req.params.name)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
+    try {
+      const f = notesPath(req.params.name);
+      const notes = existsSync(f) ? readFileSync(f, 'utf8') : '';
+      res.json({ ok: true, notes });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put('/api/profiles/:name/notes', (req, res) => {
+    if (_badName(req.params.name)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
+    const notes = typeof req.body?.notes === 'string' ? req.body.notes : '';
+    if (notes.length > NOTES_CAP) {
+      return res.status(413).json({ ok: false, error: 'notes too large' });
+    }
+    try {
+      mkdirSync(join(targetDir, 'notes'), { recursive: true });
+      writeFileSync(notesPath(req.params.name), notes);
+      res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

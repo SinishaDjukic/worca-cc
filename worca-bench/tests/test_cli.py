@@ -51,6 +51,8 @@ def _args(tmp_path, profiles_dir, **over):
         swebench_api_key=None,
         modal_token_id=None,
         modal_token_secret=None,
+        preflight=None,
+        claude_md_mode=None,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -130,6 +132,41 @@ def test_cmd_run_rejects_non_positive_max_parallel(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_profile", lambda *a, **k: None)
     rc = cli.cmd_run(_args(tmp_path, profiles_dir, max_parallel=0))
     assert rc == 2
+
+
+def test_cmd_run_preflight_override(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["skip_preflight"] = profile.skip_preflight
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    # --preflight on => run preflight => skip_preflight False.
+    cli.cmd_run(_args(tmp_path, profiles_dir, preflight="on"))
+    assert captured["skip_preflight"] is False
+    # --preflight off => skip it.
+    cli.cmd_run(_args(tmp_path, profiles_dir, preflight="off"))
+    assert captured["skip_preflight"] is True
+    # Absent => profile default (True).
+    cli.cmd_run(_args(tmp_path, profiles_dir, preflight=None))
+    assert captured["skip_preflight"] is True
+
+
+def test_cmd_run_claude_md_mode_override(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["mode"] = profile.claude_md_mode
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    cli.cmd_run(_args(tmp_path, profiles_dir, claude_md_mode="project"))
+    assert captured["mode"] == "project"
+    cli.cmd_run(_args(tmp_path, profiles_dir, claude_md_mode=None))
+    assert captured["mode"] == "none"  # profile default
 
 
 def test_cmd_run_threads_cache_dir(tmp_path, monkeypatch):

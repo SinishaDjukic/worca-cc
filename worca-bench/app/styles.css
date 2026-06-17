@@ -990,6 +990,39 @@ code {
 .reps-row--grading {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+
+/* Run-options native select (CLAUDE.md mode) — match the number inputs. */
+.run-opt-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 13px;
+}
+.run-opt-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Notes dialog textarea. */
+.notes-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.notes-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .live-run {
   border: 1px solid var(--accent);
   border-radius: var(--radius);

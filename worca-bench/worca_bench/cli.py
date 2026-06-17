@@ -99,6 +99,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     crg = getattr(args, "code_review_graph", None)
     if crg is not None:
         profile.code_review_graph = EngineConfig(enabled=True, mode=crg)
+    # Preflight on/off override (UI Run option). Preflight is where graphify/CRG
+    # graphs build, so an engine sweep needs it ON; the hermetic default is OFF.
+    pf = getattr(args, "preflight", None)
+    if pf is not None:
+        profile.skip_preflight = (pf == "off")
+    # CLAUDE.md load mode override (UI dropdown; default hermetic 'none').
+    cmm = getattr(args, "claude_md_mode", None)
+    if cmm is not None:
+        profile.claude_md_mode = cmm
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
     # Grader credentials: environment + CLI-flag overlay (allowlist-enforced).
@@ -319,6 +328,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="enable code-review-graph (mode passthrough; default structural)",
     )
     p_run.add_argument("--keep-work", action="store_true", help="keep per-rep worktrees")
+    p_run.add_argument(
+        "--preflight", choices=["on", "off"],
+        help="run preflight (builds graphify/CRG graphs) or skip it; overrides the profile")
+    p_run.add_argument(
+        "--claude-md-mode", dest="claude_md_mode",
+        choices=["none", "project", "project+local", "all"],
+        help="CLAUDE.md load mode for the run; overrides the profile")
     _add_secret_flags(p_run)
     p_run.set_defaults(func=cmd_run)
 

@@ -49,10 +49,24 @@ describe('profileDetailView', () => {
     expect(out).toContain('run-opt-canary'); // canary toggle (on by default)
     expect(out).toContain('run-opt-graphify'); // graphify toggle
     expect(out).toContain('run-opt-crg'); // code-review-graph toggle
+    expect(out).toContain('run-opt-preflight'); // preflight toggle (on by default)
+    expect(out).toContain('run-opt-claudemd'); // CLAUDE.md dropdown
+    expect(out).toContain('project+local'); // a CLAUDE.md option
     // reps input is seeded with the profile's default as a placeholder
     // (unquoted lit attribute binding -> `placeholder=4`)
     expect(out).toContain('placeholder=4');
     expect(out).toContain('placeholder="all"');
+  });
+
+  it('shows the Notes button only when onNotes is provided', () => {
+    const withNotes = renderToString(
+      profileDetailView(data, { onRun: () => {}, onNotes: () => {} }),
+    );
+    expect(withNotes).toContain('run-opt-notes');
+    const without = renderToString(
+      profileDetailView(data, { onRun: () => {} }),
+    );
+    expect(without).not.toContain('run-opt-notes');
   });
 
   it('renders a per-row regrade button when onRegrade is provided', () => {

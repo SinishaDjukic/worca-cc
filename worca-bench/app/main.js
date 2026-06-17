@@ -26,6 +26,7 @@ import {
   folderPickerTemplate,
   openFolderPicker,
 } from './utils/folder-picker.js';
+import { notesDialogTemplate, showNotesDialog } from './utils/notes-dialog.js';
 import {
   regradeDialogTemplate,
   showRegradeDialog,
@@ -333,6 +334,7 @@ function shell(activeKey, header, body) {
       ${confirmDialogTemplate()}
       ${folderPickerTemplate()}
       ${regradeDialogTemplate()}
+      ${notesDialogTemplate()}
     </div>
   `;
 }
@@ -375,6 +377,7 @@ function renderView(view) {
       return profileDetailView(view.data, {
         onRun: (name, opts) => runProfile(name, opts),
         onRegrade: (name, instanceId) => regradeInstance(name, instanceId),
+        onNotes: (name) => openNotes(name),
       });
     case 'compare':
       return compareView(view.data);
@@ -524,6 +527,8 @@ async function runProfile(name, opts = {}) {
     if (opts.canary === false) body.canary = false;
     if (opts.graphify) body.graphify = opts.graphify;
     if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
+    if (typeof opts.preflight === 'boolean') body.preflight = opts.preflight;
+    if (opts.claudeMdMode) body.claudeMdMode = opts.claudeMdMode;
     // Forward browser-held grader credentials so the run can grade (sb-cli /
     // Modal). Omitted when none are stored.
     const secrets = launchSecrets();
@@ -580,6 +585,41 @@ function regradeAll(name) {
     },
     rerender,
   );
+}
+
+// Per-profile human notes: fetch current notes, open the editor, PUT on save.
+async function openNotes(name) {
+  let notes = '';
+  try {
+    const res = await fetch(`/api/profiles/${encodeURIComponent(name)}/notes`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) notes = data.notes || '';
+  } catch {
+    // Open the editor empty; saving will surface any write error.
+  }
+  showNotesDialog(
+    { profile: name, notes, onSave: (text) => saveNotes(name, text) },
+    rerender,
+  );
+}
+
+async function saveNotes(name, text) {
+  try {
+    const res = await fetch(`/api/profiles/${encodeURIComponent(name)}/notes`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    showToast(
+      res.ok && data.ok ? 'success' : 'danger',
+      res.ok && data.ok
+        ? 'Notes saved'
+        : `Save failed: ${data.error || res.statusText}`,
+    );
+  } catch (err) {
+    showToast('danger', `Save failed: ${err.message}`);
+  }
 }
 
 // Stop an in-flight regrade sweep (kills the runner tree). Confirmed because it
