@@ -74,11 +74,24 @@ class BenchmarkPlugin:
         grade: GradeConfig,
         *,
         prepared: Prepared,
+        secret_env: dict[str, str] | None = None,
     ) -> GradeResult:
         raise NotImplementedError
 
 
 # ----------------------------- shared helpers ------------------------------ #
+
+def grade_env(secret_env: dict[str, str] | None) -> dict[str, str]:
+    """Subprocess environment for grader shell-outs: os.environ + grader secrets.
+
+    sb-cli (``SWEBENCH_API_KEY``) and Modal (``MODAL_TOKEN_*``) credentials live
+    in worca-bench's secret env, not the ambient shell — merge them in so the
+    grader subprocess can authenticate.
+    """
+    import os
+
+    return {**os.environ, **(secret_env or {})}
+
 
 def _git(cmd: list[str], cwd: Path) -> str:
     return subprocess.run(["git", "-C", str(cwd), *cmd],

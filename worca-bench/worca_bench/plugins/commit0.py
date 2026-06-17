@@ -23,6 +23,7 @@ from .base import (
     Prepared,
     _git,
     _git_head,
+    grade_env,
     init_repo_from_local,
     stub_grade,
 )
@@ -90,14 +91,16 @@ class Commit0Plugin(BenchmarkPlugin):
             gold_test_paths=gold,
         )
 
-    def grade(self, instance, diff, tree, target_dir, grade, *, prepared) -> GradeResult:
+    def grade(self, instance, diff, tree, target_dir, grade, *, prepared,
+              secret_env=None) -> GradeResult:
         if grade.mode == "stub":
             return stub_grade(diff, instance)
         # Real grading: apply the source-only diff onto a pristine skeleton that has
         # the gold tests, then run commit0 test. Best-effort (needs commit0 + Docker).
-        return self._grade_on_pristine(instance, diff, target_dir, grade, prepared)  # pragma: no cover
+        return self._grade_on_pristine(instance, diff, target_dir, grade, prepared, secret_env)  # pragma: no cover
 
-    def _grade_on_pristine(self, instance, diff, target_dir, grade, prepared) -> GradeResult:  # pragma: no cover
+    def _grade_on_pristine(self, instance, diff, target_dir, grade, prepared,
+                           secret_env=None) -> GradeResult:  # pragma: no cover
         pristine = target_dir / "cache" / "commit0" / "pristine" / instance.id
         try:
             init_repo_from_local(instance.local_repo, pristine, instance.base_commit)
@@ -113,6 +116,7 @@ class Commit0Plugin(BenchmarkPlugin):
             proc = subprocess.run(
                 ["commit0", "test", lib, "--branch", "HEAD"],
                 cwd=str(pristine), capture_output=True, text=True,
+                env=grade_env(secret_env),
             )
             passed, total = _parse_pytest_counts(proc.stdout + proc.stderr)
             score = (passed / total) if total else 0.0

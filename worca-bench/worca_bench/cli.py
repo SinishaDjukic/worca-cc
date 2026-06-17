@@ -13,9 +13,9 @@ import os
 import sys
 from pathlib import Path
 
-from .config import EngineConfig, Profile, find_profile, load_profile
-from .normalize import read_rows
-from .runner import run_profile
+from .config import EngineConfig, GradeConfig, Profile, find_profile, load_profile
+from .normalize import read_rows, rewrite_rows
+from .runner import _artifacts_rel, _now, run_profile
 from .stats import aggregate, aggregate_by_profile
 
 
@@ -116,6 +116,93 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_regrade(args: argparse.Namespace) -> int:
+    """Re-grade saved diffs for a profile without re-running the pipeline.
+
+    Reads each rep's persisted ``diff.patch`` from its artifacts dir, grades it
+    with the chosen backend (``--mode``, default = the profile's grade mode), and
+    rewrites the matching ``results.jsonl`` rows in place. Decouples grading from
+    the expensive agent run so a grading-env failure (or a backend switch, e.g.
+    local-docker → sb-cli) never costs another pipeline.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from .plugins import get_plugin
+    from .plugins.base import GradeResult, Instance, Prepared
+    from .worca_install import collect_secret_env
+
+    target = Path(args.target_dir)
+    profile = _resolve_profile(args.profile, target, args.profiles_dir)
+    mode = args.mode or profile.grade.mode
+    grade_cfg = GradeConfig(mode=mode, options=dict(profile.grade.options))
+    plugin = get_plugin(profile)
+    secret_env = collect_secret_env()
+
+    rows = read_rows(target)
+    sel = [r for r in rows if r.get("profile") == profile.name]
+    if args.only_errors:
+        sel = [r for r in sel if r.get("status") == "error"]
+    if args.instance:
+        want = set(args.instance)
+        sel = [r for r in sel if r.get("instance_id") in want]
+    if not sel:
+        print("no matching rows to regrade", file=sys.stderr)
+        return 1
+
+    def _regrade_one(row: dict):
+        iid = row["instance_id"]
+        rep = row.get("rep")
+        art = row.get("artifacts_dir") or _artifacts_rel(profile.name, iid, rep)
+        diff_path = target / art / "diff.patch"
+        if not diff_path.exists():
+            return iid, rep, GradeResult(status="error",
+                                         detail=f"no diff.patch at {diff_path}")
+        diff = diff_path.read_text(encoding="utf-8")
+        inst = Instance(id=iid, prompt="")
+        try:
+            gr = plugin.grade(inst, diff, target, target, grade_cfg,
+                              prepared=Prepared(base_commit=""), secret_env=secret_env)
+        except Exception as e:  # noqa: BLE001 - one rep failing must not kill regrade
+            gr = GradeResult(status="error", detail=f"regrade error: {e}")
+        return iid, rep, gr
+
+    workers = max(1, profile.concurrency.grade)
+    verdicts: dict[tuple, GradeResult] = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_regrade_one, r) for r in sel]
+        for fut in as_completed(futs):
+            iid, rep, gr = fut.result()
+            verdicts[(iid, rep)] = gr
+    for (iid, rep), gr in sorted(verdicts.items(), key=lambda kv: str(kv[0])):
+        if gr.status == "graded":
+            print(f"  {iid} rep{rep}: graded resolved={gr.resolved}")
+        else:
+            print(f"  {iid} rep{rep}: {gr.status} ({gr.detail[:80]})")
+
+    now = _now()
+
+    def _mutate(row: dict) -> bool:
+        if row.get("profile") != profile.name:
+            return False
+        gr = verdicts.get((row.get("instance_id"), row.get("rep")))
+        if gr is None:
+            return False
+        row["status"] = gr.status
+        row["resolved"] = gr.resolved
+        row["score"] = gr.score
+        row["error"] = gr.detail if gr.status == "error" else None
+        row["grade_mode"] = mode
+        row["regraded_at"] = now
+        return True
+
+    n = rewrite_rows(target, _mutate)
+    graded = sum(1 for gr in verdicts.values() if gr.status == "graded")
+    resolved = sum(1 for gr in verdicts.values() if gr.resolved)
+    print(f"\nregraded {n} rows via {mode}: {graded} graded "
+          f"({resolved} resolved), {len(verdicts) - graded} error")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     rows = read_rows(Path(args.target_dir))
     if args.profile:
@@ -156,6 +243,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_list = sub.add_parser("list", help="list available profiles")
     p_list.add_argument("--profiles-dir", help="extra dir to search for profiles")
     p_list.set_defaults(func=cmd_list)
+
+    p_regrade = sub.add_parser(
+        "regrade", help="re-grade saved diffs for a profile (no pipeline re-run)")
+    p_regrade.add_argument("--profile", required=True, help="profile name or path")
+    p_regrade.add_argument("--target-dir", required=True, help="dir holding results/runs")
+    p_regrade.add_argument("--profiles-dir", help="extra dir to search for profiles")
+    p_regrade.add_argument(
+        "--mode", choices=["sb-cli", "local-docker", "modal", "stub"],
+        help="grade backend (default: the profile's grade mode)")
+    p_regrade.add_argument(
+        "--only-errors", action="store_true",
+        help="re-grade only rows currently marked error (e.g. stranded by a grading-env failure)")
+    p_regrade.add_argument(
+        "--instance", action="append", metavar="ID",
+        help="limit to specific instance id(s); repeatable")
+    p_regrade.set_defaults(func=cmd_regrade)
 
     p_stats = sub.add_parser("stats", help="aggregate results.jsonl")
     p_stats.add_argument("--target-dir", required=True)

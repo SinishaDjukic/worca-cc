@@ -20,6 +20,7 @@ from .base import (
     GradeResult,
     Instance,
     _git,
+    grade_env,
     init_repo_from_local,
     stub_grade,
 )
@@ -115,7 +116,8 @@ class SwebenchPlugin(BenchmarkPlugin):
         return _git(["rev-parse", "HEAD"], dest)
 
     # ---- grade ----------------------------------------------------------- #
-    def grade(self, instance, diff, tree, target_dir, grade, *, prepared) -> GradeResult:
+    def grade(self, instance, diff, tree, target_dir, grade, *, prepared,
+              secret_env=None) -> GradeResult:
         if grade.mode == "stub":
             return stub_grade(diff, instance)
         prediction = {
@@ -124,42 +126,58 @@ class SwebenchPlugin(BenchmarkPlugin):
             "model_patch": diff,
         }
         if grade.mode == "sb-cli":
-            return self._grade_sb_cli(prediction, target_dir, grade)
+            return self._grade_sb_cli(prediction, target_dir, grade, secret_env)
         if grade.mode in ("local-docker", "modal"):
-            return self._grade_harness(prediction, grade)
+            return self._grade_harness(prediction, grade, secret_env)
         return GradeResult(status="error", detail=f"unsupported grade mode {grade.mode}")
 
     # Real graders below are best-effort shell-outs (require sb-cli / Docker / network);
     # they are not exercised by unit tests, which use grade.mode == 'stub'.
-    def _grade_sb_cli(self, prediction, target_dir, grade) -> GradeResult:  # pragma: no cover
+    def _grade_sb_cli(self, prediction, target_dir, grade, secret_env=None) -> GradeResult:  # pragma: no cover
+        iid = prediction["instance_id"]
+        env = grade_env(secret_env)
         preds_dir = target_dir / "predictions"
         preds_dir.mkdir(parents=True, exist_ok=True)
-        preds = preds_dir / f"{prediction['instance_id']}.jsonl"
+        preds = preds_dir / f"{iid}.jsonl"
         preds.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
-        run_id = grade.options.get("run_id", f"wb-{prediction['instance_id']}")
+        run_id = grade.options.get("run_id", f"wb-{iid}")
         subset = grade.options.get("subset", "swe-bench_verified")
+        out_dir = target_dir / "sb-reports" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
         try:
-            subprocess.run(
+            submit = subprocess.run(
                 ["sb-cli", "submit", subset, "test",
                  "--predictions_path", str(preds), "--run_id", run_id],
-                check=True, capture_output=True, text=True,
+                capture_output=True, text=True, env=env,
             )
-            out_dir = target_dir / "sb-reports" / run_id
-            out_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
+            get = subprocess.run(
                 ["sb-cli", "get-report", subset, "test", run_id, "-o", str(out_dir)],
-                check=True, capture_output=True, text=True,
+                capture_output=True, text=True, env=env,
             )
-            report = next(out_dir.glob("*.json"), None)
-            resolved = _resolved_from_report(report, prediction["instance_id"]) if report else None
+        except OSError as e:
+            return GradeResult(status="error", detail=f"sb-cli not available: {e}")
+        # The report is authoritative; read it regardless of the CLI exit codes
+        # (sb-cli can exit non-zero on benign warnings). Only hard-error when no
+        # report came back at all.
+        report = next(out_dir.glob("*.json"), None)
+        resolved = _resolved_from_instance_report(report, iid)
+        if resolved is None:
+            resolved = _resolved_from_report(report, iid)
+        if resolved is not None:
+            detail = "sb-cli"
+            if submit.returncode or get.returncode:
+                detail = f"sb-cli (submit rc={submit.returncode}, get rc={get.returncode})"
             return GradeResult(status="graded", resolved=resolved,
                                score=1.0 if resolved else 0.0,
-                               report_path=str(report) if report else None,
-                               detail="sb-cli")
-        except (subprocess.CalledProcessError, OSError) as e:
-            return GradeResult(status="error", detail=f"sb-cli failed: {e}")
+                               report_path=str(report), detail=detail)
+        tail = (get.stderr or get.stdout or submit.stderr or submit.stdout or "").strip()[-1000:]
+        return GradeResult(
+            status="error",
+            detail=f"sb-cli failed (submit rc={submit.returncode}, "
+                   f"get rc={get.returncode}): {tail}")
 
-    def _grade_harness(self, prediction, grade) -> GradeResult:  # pragma: no cover
+    def _grade_harness(self, prediction, grade, secret_env=None) -> GradeResult:  # pragma: no cover
+        env = grade_env(secret_env)
         with tempfile.TemporaryDirectory() as td:
             preds = Path(td) / "predictions.jsonl"
             preds.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
@@ -172,14 +190,32 @@ class SwebenchPlugin(BenchmarkPlugin):
             if grade.mode == "modal":
                 cmd += ["--modal", "true"]
             try:
-                subprocess.run(cmd, check=True, capture_output=True, text=True)
-                report = Path.cwd() / f"{MODEL_NAME}.{run_id}.json"
-                resolved = _resolved_from_report(report, prediction["instance_id"])
+                proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            except OSError as e:
+                return GradeResult(status="error", detail=f"harness failed: {e}")
+            # The harness's per-instance report.json is authoritative and is
+            # written even when the process exits non-zero (e.g. image cleanup
+            # noise, or other instances in a batch erroring). Read it regardless
+            # of the return code; only fall back to a hard error when no report
+            # was produced at all (genuine grading failure — image build, etc.).
+            inst_report = harness_report_path(run_id, prediction["instance_id"])
+            resolved = _resolved_from_instance_report(
+                inst_report, prediction["instance_id"])
+            if resolved is None:
+                summary = Path.cwd() / f"{MODEL_NAME}.{run_id}.json"
+                resolved = _resolved_from_report(summary, prediction["instance_id"])
+                inst_report = summary if resolved is not None else inst_report
+            if resolved is not None:
+                detail = grade.mode if proc.returncode == 0 else (
+                    f"{grade.mode} (harness rc={proc.returncode})")
                 return GradeResult(status="graded", resolved=resolved,
                                    score=1.0 if resolved else 0.0,
-                                   report_path=str(report), detail=grade.mode)
-            except (subprocess.CalledProcessError, OSError) as e:
-                return GradeResult(status="error", detail=f"harness failed: {e}")
+                                   report_path=str(inst_report), detail=detail)
+            tail = (proc.stderr or proc.stdout or "").strip()[-1000:]
+            return GradeResult(
+                status="error",
+                detail=f"harness failed (rc={proc.returncode}); "
+                       f"no report at {inst_report}: {tail}")
 
 
 def _sample(records, sample):  # pragma: no cover - integration-only
@@ -199,6 +235,30 @@ def _sample(records, sample):  # pragma: no cover - integration-only
     pool = list(records)
     rng.shuffle(pool)
     return pool[: sample.n]
+
+
+def harness_report_path(run_id: str, instance_id: str) -> Path:
+    """Where ``run_evaluation`` writes the per-instance report (cwd-relative)."""
+    return (Path.cwd() / "logs" / "run_evaluation" / run_id / MODEL_NAME
+            / instance_id / "report.json")
+
+
+def _resolved_from_instance_report(report: Path | None, instance_id: str) -> bool | None:
+    """Read ``resolved`` from a per-instance ``report.json``.
+
+    The harness writes ``{<instance_id>: {"resolved": bool, ...}}``. Returns
+    None when the report is absent or unparseable (treated as "no result").
+    """
+    if not report or not report.exists():
+        return None
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    entry = data.get(instance_id)
+    if isinstance(entry, dict) and "resolved" in entry:
+        return bool(entry["resolved"])
+    return None
 
 
 def _resolved_from_report(report: Path | None, instance_id: str) -> bool | None:  # pragma: no cover

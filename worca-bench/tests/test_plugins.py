@@ -7,11 +7,16 @@ from conftest import make_git_repo
 
 from worca_bench.config import GradeConfig, profile_from_dict
 from worca_bench.plugins import get_plugin
-from worca_bench.plugins.base import Instance, stub_grade
+from worca_bench.plugins.base import Instance, Prepared, grade_env, stub_grade
 from worca_bench.plugins.commit0 import Commit0Plugin
 import pytest
 
-from worca_bench.plugins.swebench import SwebenchPlugin, _load_dataset_with_retry
+from worca_bench.plugins.swebench import (
+    SwebenchPlugin,
+    _load_dataset_with_retry,
+    _resolved_from_instance_report,
+    harness_report_path,
+)
 
 
 def test_load_dataset_with_retry_recovers(monkeypatch):
@@ -87,6 +92,100 @@ def test_stub_grade_respects_expect_override():
     r = stub_grade("+lots of changes\n", inst)
     assert r.resolved is False
     assert r.score == 0.0
+
+
+def _write_instance_report(path: Path, instance_id: str, *, resolved: bool):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({instance_id: {"resolved": resolved, "patch_exists": True}}),
+        encoding="utf-8",
+    )
+
+
+def test_resolved_from_instance_report_reads_resolved(tmp_path: Path):
+    rep = tmp_path / "report.json"
+    _write_instance_report(rep, "astropy__astropy-12907", resolved=True)
+    assert _resolved_from_instance_report(rep, "astropy__astropy-12907") is True
+
+    _write_instance_report(rep, "astropy__astropy-13033", resolved=False)
+    assert _resolved_from_instance_report(rep, "astropy__astropy-13033") is False
+
+
+def test_resolved_from_instance_report_handles_missing_and_corrupt(tmp_path: Path):
+    assert _resolved_from_instance_report(None, "x") is None
+    assert _resolved_from_instance_report(tmp_path / "nope.json", "x") is None
+    corrupt = tmp_path / "bad.json"
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert _resolved_from_instance_report(corrupt, "x") is None
+    # Present file but the instance isn't in it → no result.
+    other = tmp_path / "other.json"
+    _write_instance_report(other, "some__other-1", resolved=True)
+    assert _resolved_from_instance_report(other, "astropy__astropy-1") is None
+
+
+def test_harness_report_path_layout(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    p = harness_report_path("wb-astropy__astropy-12907", "astropy__astropy-12907")
+    assert p == (
+        tmp_path / "logs" / "run_evaluation" / "wb-astropy__astropy-12907"
+        / "worca-bench" / "astropy__astropy-12907" / "report.json"
+    )
+
+
+def test_grade_env_merges_secrets_over_os_environ(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = grade_env({"SWEBENCH_API_KEY": "swb_test"})
+    assert env["SWEBENCH_API_KEY"] == "swb_test"
+    assert env["PATH"] == "/usr/bin"  # ambient env preserved
+    assert grade_env(None).get("SWEBENCH_API_KEY") is None
+
+
+class _Proc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_sb_cli_reads_report_and_threads_secret(monkeypatch, tmp_path: Path):
+    """sb-cli grading: report is authoritative even when the CLI exits non-zero,
+    and the SWEBENCH_API_KEY secret reaches the subprocess env."""
+    iid = "astropy__astropy-12907"
+    captured_envs = []
+
+    def fake_run(cmd, *a, **kw):
+        captured_envs.append(kw.get("env") or {})
+        if cmd[:2] == ["sb-cli", "get-report"]:
+            out = Path(cmd[cmd.index("-o") + 1])
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "report.json").write_text(
+                json.dumps({iid: {"resolved": True}}), encoding="utf-8")
+        # Non-zero exit must NOT discard the written report.
+        return _Proc(returncode=1, stderr="benign warning")
+
+    monkeypatch.setattr("worca_bench.plugins.swebench.subprocess.run", fake_run)
+    plugin = SwebenchPlugin()
+    grade = GradeConfig(mode="sb-cli", options={})
+    res = plugin.grade(Instance(id=iid, prompt=""), "+patch\n", tmp_path, tmp_path,
+                       grade, prepared=Prepared(base_commit=""),
+                       secret_env={"SWEBENCH_API_KEY": "swb_test"})
+    assert res.status == "graded"
+    assert res.resolved is True
+    assert res.score == 1.0
+    assert all(e.get("SWEBENCH_API_KEY") == "swb_test" for e in captured_envs)
+
+
+def test_sb_cli_errors_when_no_report(monkeypatch, tmp_path: Path):
+    def fake_run(cmd, *a, **kw):
+        return _Proc(returncode=2, stderr="auth failed")
+
+    monkeypatch.setattr("worca_bench.plugins.swebench.subprocess.run", fake_run)
+    plugin = SwebenchPlugin()
+    grade = GradeConfig(mode="sb-cli", options={})
+    res = plugin.grade(Instance(id="x__y-1", prompt=""), "+p\n", tmp_path, tmp_path,
+                       grade, prepared=Prepared(base_commit=""))
+    assert res.status == "error"
+    assert "auth failed" in res.detail
 
 
 def test_commit0_prepare_stashes_and_restores_gold_tests(tmp_path: Path):

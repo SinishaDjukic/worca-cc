@@ -227,7 +227,7 @@ def _run_one_rep(
             grade = None
         else:
             grade = plugin.grade(inst, diff, work, target_dir, profile.grade,
-                                 prepared=prepared)
+                                 prepared=prepared, secret_env=secret_env)
             status = grade.status
             resolved, score, error = grade.resolved, grade.score, (
                 grade.detail if grade.status == "error" else None

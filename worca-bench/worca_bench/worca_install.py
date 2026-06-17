@@ -28,7 +28,13 @@ LEAKY_ENV = (
     "GRAPHIFY_OUT",
 )
 # Secrets to materialize into settings.local.json env when present in the environment.
-SECRET_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN")
+SECRET_ENV_KEYS = (
+    # Pipeline (worca / Claude) credentials.
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+    # Grader credentials: sb-cli (hosted SWE-bench eval) and Modal (serverless
+    # x86 harness). Collected so they reach plugin.grade() via secret_env.
+    "SWEBENCH_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET",
+)
 
 
 class InstallError(RuntimeError):

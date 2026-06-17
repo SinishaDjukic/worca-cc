@@ -84,6 +84,31 @@ def append_row(target_dir: Path, row: dict[str, Any]) -> None:
             fh.write(line)
 
 
+def rewrite_rows(target_dir: Path, mutate) -> int:
+    """Rewrite ``results.jsonl`` in place, applying ``mutate(row)`` to each row.
+
+    ``mutate`` may edit the row dict in place and returns truthy when it changed
+    it. Returns the number of rows changed. The file is rewritten atomically
+    (temp + replace) under the same lock as :func:`append_row`. This is the only
+    sanctioned way to mutate the otherwise append-only log — used by regrade.
+    """
+    path = target_dir / "results.jsonl"
+    if not path.exists():
+        return 0
+    changed = 0
+    with _WRITE_LOCK:
+        rows = read_rows(target_dir)
+        for row in rows:
+            if mutate(row):
+                changed += 1
+        tmp = path.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        tmp.replace(path)
+    return changed
+
+
 def read_rows(target_dir: Path) -> list[dict[str, Any]]:
     """Read all rows from ``results.jsonl`` (tolerant of partial last lines)."""
     path = target_dir / "results.jsonl"

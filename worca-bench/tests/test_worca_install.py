@@ -63,3 +63,11 @@ def test_collect_secret_env_picks_known_keys():
     env = {"ANTHROPIC_API_KEY": "k", "RANDOM": "v", "ANTHROPIC_BASE_URL": "u"}
     got = collect_secret_env(env)
     assert got == {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": "u"}
+
+
+def test_collect_secret_env_includes_grader_credentials():
+    env = {"SWEBENCH_API_KEY": "swb", "MODAL_TOKEN_ID": "mid",
+           "MODAL_TOKEN_SECRET": "msec", "RANDOM": "v"}
+    got = collect_secret_env(env)
+    assert got == {"SWEBENCH_API_KEY": "swb", "MODAL_TOKEN_ID": "mid",
+                   "MODAL_TOKEN_SECRET": "msec"}
