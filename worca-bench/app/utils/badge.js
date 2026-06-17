@@ -46,12 +46,12 @@ const HIGH_SCORE = 0.999;
 export function outcomeOf(row) {
   if (!row) return 'unknown';
   const status = row.status;
+  // A results.jsonl row is always a COMPLETED rep (in-flight reps surface via
+  // /api/active, not as rows). So a terminal grade verdict wins outright — even
+  // if the row carries a stale `pipeline_status: 'running'` from the agent run's
+  // telemetry (regrade updates the verdict, not the original pipeline_status).
   if (status === 'error') return 'error';
   if (status === 'skipped') return 'skipped';
-  if (row.pipeline_status === 'running' || status === 'running') {
-    return 'running';
-  }
-  if (status === 'ran') return 'pending'; // ran but not yet graded
   if (status === 'graded') {
     if (row.resolved === true) return 'resolved';
     if (typeof row.score === 'number') {
@@ -59,6 +59,12 @@ export function outcomeOf(row) {
       if (row.score > 0) return 'partial';
     }
     return 'unresolved';
+  }
+  if (status === 'ran') return 'pending'; // ran but not yet graded
+  // Only a non-terminal row falls through to "running" (defensive — a persisted
+  // row normally shouldn't be here).
+  if (row.pipeline_status === 'running' || status === 'running') {
+    return 'running';
   }
   return 'unknown';
 }
