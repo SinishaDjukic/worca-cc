@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from worca_bench.commit0_gen import (
+    _sanitize_spec_text,
     _short_lib,
     assemble_prompt,
     build_instance_record,
@@ -20,6 +21,17 @@ ROW = {
     "test": {"test_cmd": "pytest", "test_dir": "tests/"},
     "src_dir": "wcwidth/",
 }
+
+
+def test_sanitize_spec_text_strips_nul_and_c0_controls():
+    # NUL is the one that makes the runner raise "embedded null byte" pre-pipeline.
+    dirty = "Hello\x00 world\x07\x1b keep\ttab\nnewline\rcr"
+    clean = _sanitize_spec_text(dirty)
+    assert "\x00" not in clean
+    assert "\x07" not in clean and "\x1b" not in clean
+    # tab / newline / carriage-return survive.
+    assert "\ttab" in clean and "\nnewline" in clean and "\rcr" in clean
+    assert clean.startswith("Hello world")
 
 
 def test_short_lib_takes_last_path_segment():

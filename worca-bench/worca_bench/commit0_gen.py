@@ -64,9 +64,22 @@ def extract_spec_text(repo_dir: Path) -> str:
             parts.append(page.extract_text() or "")
             if sum(len(p) for p in parts) > _SPEC_TEXT_LIMIT:
                 break
-        return "\n".join(parts).strip()[:_SPEC_TEXT_LIMIT]
+        return _sanitize_spec_text("\n".join(parts))[:_SPEC_TEXT_LIMIT]
     except Exception:  # noqa: BLE001 - spec text is best-effort; never fail the gen
         return ""
+
+
+def _sanitize_spec_text(text: str) -> str:
+    """Strip control characters PDF extraction can emit (notably NUL).
+
+    pypdf occasionally yields embedded NUL (``\\x00``) and other C0 control bytes.
+    A NUL in the agent prompt makes the runner raise ``ValueError: embedded null
+    byte`` the moment it touches a path/syscall — failing the instance before the
+    pipeline even starts. Drop all C0 controls except tab/newline/carriage-return.
+    """
+    return "".join(
+        ch for ch in text if ch in "\t\n\r" or ord(ch) >= 0x20
+    ).strip()
 
 
 def assemble_prompt(row: dict[str, Any], lib: str, spec_text: str) -> str:
