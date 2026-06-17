@@ -20,7 +20,7 @@ from typing import Any
 # `.gitignore`/`.gitattributes` are scaffolding — leaving them in pollutes the
 # diff and makes `git apply` fail on a pristine SWE-bench eval container.
 DEFAULT_EXCLUDES = (
-    ".claude", ".worca", ".worktrees", ".beads",
+    ".claude", ".worca", ".worktrees", ".beads", ".wb_scratch",
     "MASTER_PLAN.md", "AGENTS.md", ".gitignore", ".gitattributes",
 )
 

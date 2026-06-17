@@ -5,13 +5,16 @@ import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 import { REGRADE_MODES } from '../utils/regrade-dialog.js';
 import { loadRunPrefs, saveRunPrefs } from '../utils/run-prefs.js';
 
-// Grader backends offered in the Run options dropdown. Reuses the regrade
-// backends (local-docker / sb-cli / modal) plus `stub` (record diff, no grade)
-// so any profile's own grade.mode is representable as the default selection.
-const GRADER_OPTIONS = [
-  ...REGRADE_MODES.map((m) => ({ value: m.value, label: m.label })),
-  { value: 'stub', label: 'Stub (no grade)' },
-];
+// Grader backends offered in the Run options dropdown, per benchmark. Reuses the
+// regrade backends (local-docker / sb-cli / modal) plus `stub` (record diff, no
+// grade). Commit0 has no hosted (`sb-cli`) backend — it grades via `commit0 test`
+// on local Docker or Modal — so that option is dropped for commit0 profiles.
+function graderOptions(benchmark) {
+  const base = REGRADE_MODES.filter(
+    (m) => benchmark !== 'commit0' || m.value !== 'sb-cli',
+  ).map((m) => ({ value: m.value, label: m.label }));
+  return [...base, { value: 'stub', label: 'Stub (no grade)' }];
+}
 
 // Lucide "refresh-cw" — the regrade action icon.
 const REGRADE_ICON =
@@ -94,9 +97,13 @@ function _runOptionsView(agg, onRun, onNotes) {
       gradeMode: c.grader || undefined,
     });
   };
+  // Grader options depend on the benchmark (commit0 has no sb-cli backend).
+  const graderOpts = graderOptions(agg.benchmark);
   // Grader dropdown defaults to the profile's own grade.mode (falling back to
-  // modal), unless the user has picked one before (persisted per profile).
-  const grader = saved.grader || agg.grade_mode || 'modal';
+  // modal), unless the user has picked one before (persisted per profile). If the
+  // resolved default isn't valid for this benchmark, fall back to the first option.
+  let grader = saved.grader || agg.grade_mode || 'modal';
+  if (!graderOpts.some((m) => m.value === grader)) grader = graderOpts[0].value;
   return html`
     <div class="run-options">
       <div class="run-options-title">Run options</div>
@@ -171,7 +178,7 @@ function _runOptionsView(agg, onRun, onNotes) {
       <label class="run-opt"
         >Grader
         <select class="run-opt-grader run-opt-select" @change=${persist}>
-          ${GRADER_OPTIONS.map(
+          ${graderOpts.map(
             (m) => html`<option
               value=${m.value}
               ?selected=${m.value === grader}

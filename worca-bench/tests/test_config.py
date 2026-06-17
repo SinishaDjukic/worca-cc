@@ -8,6 +8,7 @@ from worca_bench.config import (
     ProfileError,
     load_profile,
     profile_from_dict,
+    valid_grade_modes,
 )
 
 
@@ -65,6 +66,32 @@ def test_unknown_benchmark_rejected():
 def test_unknown_grade_mode_rejected():
     with pytest.raises(ProfileError):
         profile_from_dict(_base(grade={"mode": "wat"}))
+
+
+def test_valid_grade_modes_per_benchmark():
+    assert valid_grade_modes("swe-bench-verified") == {
+        "stub", "sb-cli", "local-docker", "modal"}
+    assert valid_grade_modes("commit0") == {"stub", "local-docker", "modal"}
+
+
+def test_commit0_rejects_sb_cli_grade_mode():
+    """sb-cli is SWE-bench-only — a commit0 profile asking for it must fail loud."""
+    with pytest.raises(ProfileError, match="not valid for benchmark 'commit0'"):
+        profile_from_dict({
+            "name": "c0", "benchmark": "commit0",
+            "selection": {"instances_file": "x.json"},
+            "grade": {"mode": "sb-cli"},
+        })
+
+
+def test_commit0_accepts_modal_and_local_docker():
+    for mode in ("modal", "local-docker", "stub"):
+        prof = profile_from_dict({
+            "name": "c0", "benchmark": "commit0",
+            "selection": {"instances_file": "x.json"},
+            "grade": {"mode": mode},
+        })
+        assert prof.grade.mode == mode
 
 
 def test_selection_required():

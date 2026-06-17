@@ -7,7 +7,13 @@ from conftest import make_git_repo
 
 from worca_bench.config import GradeConfig, profile_from_dict
 from worca_bench.plugins import get_plugin
-from worca_bench.plugins.base import Instance, Prepared, grade_env, stub_grade
+from worca_bench.plugins.base import (
+    GradeResult,
+    Instance,
+    Prepared,
+    grade_env,
+    stub_grade,
+)
 from worca_bench.plugins.commit0 import Commit0Plugin
 import pytest
 
@@ -320,3 +326,71 @@ def test_commit0_grade_stub(tmp_path: Path):
                               prepared=Prepared(base_commit="x"))
     assert r.status == "graded"
     assert r.resolved is True
+
+
+def test_commit0_load_instances_sets_lib(tmp_path: Path):
+    """The library name `commit0 test` needs is carried in extra['lib'] — defaulting
+    to the instance id but honoring an explicit per-record override."""
+    f = tmp_path / "instances.json"
+    f.write_text(json.dumps([
+        {"instance_id": "tinydb", "spec": "build it", "local_repo": "/x",
+         "gold_test_paths": ["tests/"]},
+        {"instance_id": "foo__1", "lib": "foolib", "prompt": "p"},
+    ]), encoding="utf-8")
+    profile = profile_from_dict(
+        {"name": "p", "benchmark": "commit0", "selection": {"instances_file": str(f)}})
+    insts = Commit0Plugin().load_instances(profile)
+    assert insts[0].extra["lib"] == "tinydb"          # defaults to instance id
+    assert insts[0].extra["gold_test_paths"] == ("tests/",)
+    assert insts[1].extra["lib"] == "foolib"          # explicit override wins
+
+
+def test_commit0_grade_unsupported_mode_errors(tmp_path: Path):
+    """sb-cli is SWE-bench-only; commit0 must reject it with an actionable error."""
+    r = Commit0Plugin().grade(Instance(id="tinydb", prompt=""), "+x\n", tmp_path,
+                              tmp_path, GradeConfig(mode="sb-cli"),
+                              prepared=Prepared(base_commit=""))
+    assert r.status == "error"
+    assert "unsupported grade mode" in r.detail
+
+
+def test_commit0_grade_modal_without_tokens_errors(tmp_path: Path):
+    """Modal grading fails fast (before any shell-out) when tokens are absent."""
+    r = Commit0Plugin().grade(Instance(id="tinydb", prompt=""), "+x\n", tmp_path,
+                              tmp_path, GradeConfig(mode="modal"),
+                              prepared=Prepared(base_commit=""), secret_env={})
+    assert r.status == "error"
+    assert "MODAL_TOKEN_ID" in r.detail and "MODAL_TOKEN_SECRET" in r.detail
+
+
+def test_commit0_grade_modal_with_tokens_dispatches_backend(monkeypatch, tmp_path: Path):
+    """With tokens present, modal dispatches to the pristine grader with backend=modal."""
+    captured = {}
+    plugin = Commit0Plugin()
+
+    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend):
+        captured["backend"] = backend
+        return GradeResult(status="graded", resolved=True, score=1.0)
+
+    monkeypatch.setattr(plugin, "_grade_on_pristine", fake_pristine)
+    r = plugin.grade(Instance(id="tinydb", prompt=""), "+x\n", tmp_path, tmp_path,
+                     GradeConfig(mode="modal"), prepared=Prepared(base_commit=""),
+                     secret_env={"MODAL_TOKEN_ID": "i", "MODAL_TOKEN_SECRET": "s"})
+    assert captured["backend"] == "modal"
+    assert r.status == "graded" and r.resolved is True
+
+
+def test_commit0_grade_local_docker_dispatches_backend(monkeypatch, tmp_path: Path):
+    """local-docker dispatches to the pristine grader with backend=local (no token check)."""
+    captured = {}
+    plugin = Commit0Plugin()
+
+    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend):
+        captured["backend"] = backend
+        return GradeResult(status="graded", resolved=False, score=0.0)
+
+    monkeypatch.setattr(plugin, "_grade_on_pristine", fake_pristine)
+    r = plugin.grade(Instance(id="tinydb", prompt=""), "+x\n", tmp_path, tmp_path,
+                     GradeConfig(mode="local-docker"), prepared=Prepared(base_commit=""))
+    assert captured["backend"] == "local"
+    assert r.status == "graded"

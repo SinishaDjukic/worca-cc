@@ -61,12 +61,25 @@ describe('profileDetailView', () => {
     expect(out).toContain('placeholder="all"');
   });
 
-  it('offers every grader backend in the grader dropdown', () => {
+  it('offers every grader backend in the grader dropdown (SWE-bench)', () => {
     const out = renderToString(profileDetailView(data, { onRun: () => {} }));
     expect(out).toContain('Local (Docker)');
     expect(out).toContain('SWE-bench Cloud (sb-cli)');
     expect(out).toContain('Modal (serverless x86)');
     expect(out).toContain('Stub (no grade)');
+  });
+
+  it('drops the sb-cli grader option for commit0 profiles', () => {
+    const c0 = {
+      aggregate: { ...data.aggregate, benchmark: 'commit0' },
+      reps: [],
+    };
+    const out = renderToString(profileDetailView(c0, { onRun: () => {} }));
+    // commit0 grades via `commit0 test` on local Docker or Modal — no hosted backend.
+    expect(out).toContain('Local (Docker)');
+    expect(out).toContain('Modal (serverless x86)');
+    expect(out).toContain('Stub (no grade)');
+    expect(out).not.toContain('SWE-bench Cloud (sb-cli)');
   });
 
   it('shows the Notes button only when onNotes is provided', () => {

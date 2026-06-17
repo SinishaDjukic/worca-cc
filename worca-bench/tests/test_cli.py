@@ -186,6 +186,30 @@ def test_cmd_run_grade_mode_override(tmp_path, monkeypatch):
     assert captured["mode"] == "stub"
 
 
+def test_cmd_run_grade_mode_rejected_for_benchmark(tmp_path, monkeypatch):
+    """sb-cli is SWE-bench-only — overriding a commit0 profile to it fails (rc=2)
+    before the runner is ever called."""
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "c0.yaml").write_text(
+        "name: c0\n"
+        "benchmark: commit0\n"
+        "selection:\n  instances_file: x.json\n"
+        "grade:\n  mode: stub\n",
+        encoding="utf-8",
+    )
+    called = {"n": 0}
+
+    def fake_run_profile(profile, target, **kw):
+        called["n"] += 1
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, profile="c0", grade_mode="sb-cli"))
+    assert rc == 2
+    assert called["n"] == 0  # never reached the runner
+
+
 def test_cmd_run_threads_cache_dir(tmp_path, monkeypatch):
     profiles_dir = _write_profile(tmp_path)
     cache = tmp_path / "cache"

@@ -109,8 +109,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     if cmm is not None:
         profile.claude_md_mode = cmm
     # Grade backend override (UI Run options dropdown). Absent => profile default.
+    # Validated against the benchmark's supported set (commit0 has no sb-cli).
     gm = getattr(args, "grade_mode", None)
     if gm is not None:
+        from .config import valid_grade_modes
+        allowed = valid_grade_modes(profile.benchmark)
+        if gm not in allowed:
+            print(f"--grade-mode {gm!r} is not valid for benchmark "
+                  f"{profile.benchmark!r}; use one of {sorted(allowed)}",
+                  file=sys.stderr)
+            return 2
         profile.grade.mode = gm
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
@@ -297,6 +305,28 @@ def cmd_regrade(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_commit0_gen(args: argparse.Namespace) -> int:
+    """Set up a Commit0 split and write its instances file (the input a commit0
+    profile's ``selection.instances_file`` points at)."""
+    from .commit0_gen import generate_instances
+
+    base_dir = Path(args.base_dir)
+    out_path = Path(args.out)
+    records = generate_instances(
+        args.split,
+        base_dir=base_dir,
+        out_path=out_path,
+        config_file=Path(args.config_file) if args.config_file else None,
+        dataset_name=args.dataset_name,
+        dataset_split=args.dataset_split,
+        base_branch=args.base_branch,
+        run_setup=not args.skip_setup,
+    )
+    print(json.dumps({"instances": len(records), "out": str(out_path),
+                      "libs": [r["lib"] for r in records]}, indent=2))
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     rows = read_rows(Path(args.target_dir))
     if args.profile:
@@ -369,6 +399,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="grade one rep at a time (ignore concurrency.grade) — e.g. a whole-profile Modal sweep")
     _add_secret_flags(p_regrade)
     p_regrade.set_defaults(func=cmd_regrade)
+
+    p_c0 = sub.add_parser(
+        "commit0-gen",
+        help="set up a Commit0 split and write its instances file (for a commit0 profile)")
+    p_c0.add_argument("split", help="Commit0 split or single library name (e.g. wcwidth, lite, all)")
+    p_c0.add_argument("--base-dir", required=True, help="dir to clone Commit0 repos into")
+    p_c0.add_argument("--out", required=True, help="path to write the instances JSON")
+    p_c0.add_argument("--config-file", help="commit0 dot-file path (default: <base-dir>/../.commit0.yaml)")
+    p_c0.add_argument("--dataset-name", default="wentingzhao/commit0_combined",
+                      help="HuggingFace dataset name")
+    p_c0.add_argument("--dataset-split", default="test", help="HuggingFace dataset split")
+    p_c0.add_argument("--base-branch", default="commit0",
+                      help="skeleton branch commit0 setup checks out (default: commit0)")
+    p_c0.add_argument("--skip-setup", action="store_true",
+                      help="skip `commit0 setup` (repos already cloned under --base-dir)")
+    p_c0.set_defaults(func=cmd_commit0_gen)
 
     p_stats = sub.add_parser("stats", help="aggregate results.jsonl")
     p_stats.add_argument("--target-dir", required=True)

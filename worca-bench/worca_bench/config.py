@@ -21,6 +21,21 @@ except ImportError:  # pragma: no cover - PyYAML is a hard dep, guard for clarit
 VALID_BENCHMARKS = {"swe-bench-verified", "commit0"}
 VALID_GRADE_MODES = {"stub", "sb-cli", "modal", "local-docker"}
 
+# Which grade backends each benchmark actually supports. SWE-bench can grade via
+# the hosted sb-cli API, a local Docker harness, or Modal serverless. Commit0 has
+# no hosted equivalent — it runs its own tests via ``commit0 test`` on a local
+# Docker (``local-docker``) or Modal (``modal``) backend. ``stub`` (plumbing-only,
+# no real grade) is valid everywhere.
+BENCHMARK_GRADE_MODES = {
+    "swe-bench-verified": {"stub", "sb-cli", "local-docker", "modal"},
+    "commit0": {"stub", "local-docker", "modal"},
+}
+
+
+def valid_grade_modes(benchmark: str) -> set[str]:
+    """Grade modes valid for a benchmark (falls back to the full set if unknown)."""
+    return BENCHMARK_GRADE_MODES.get(benchmark, VALID_GRADE_MODES)
+
 
 class ProfileError(ValueError):
     """Raised when a profile is malformed or references unknown values."""
@@ -156,10 +171,11 @@ class Profile:
                 f"unknown benchmark {self.benchmark!r}; expected one of "
                 f"{sorted(VALID_BENCHMARKS)}"
             )
-        if self.grade.mode not in VALID_GRADE_MODES:
+        allowed = valid_grade_modes(self.benchmark)
+        if self.grade.mode not in allowed:
             raise ProfileError(
-                f"unknown grade.mode {self.grade.mode!r}; expected one of "
-                f"{sorted(VALID_GRADE_MODES)}"
+                f"grade.mode {self.grade.mode!r} is not valid for benchmark "
+                f"{self.benchmark!r}; expected one of {sorted(allowed)}"
             )
         if self.reps < 1:
             raise ProfileError(f"reps must be >= 1, got {self.reps}")
