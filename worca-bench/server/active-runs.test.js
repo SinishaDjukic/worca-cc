@@ -126,6 +126,32 @@ describe('discoverActive', () => {
     expect(run.stages[1].model).toBe('opus'); // model_alias preferred
   });
 
+  it('excludes terminal runs (interrupted/failed) whose work tree lingers', () => {
+    // A stopped run leaves an `interrupted` status.json on disk until cleanup;
+    // it must NOT surface as an active run (no stale "running" live card).
+    seedStatus('p1', 'astropy__astropy-stopped', 1, 'p1__stopped__rep1', {
+      run_id: 'p1__stopped__rep1',
+      pipeline_status: 'interrupted',
+      stages: { plan: { status: 'interrupted' } },
+    });
+    seedStatus('p1', 'astropy__astropy-broke', 1, 'p1__broke__rep1', {
+      run_id: 'p1__broke__rep1',
+      pipeline_status: 'failed',
+      stages: {
+        plan: { status: 'completed' },
+        implement: { status: 'failed' },
+      },
+    });
+    // A genuinely running one alongside them is still reported.
+    seedStatus('p1', 'astropy__astropy-live', 1, 'p1__live__rep1', {
+      run_id: 'p1__live__rep1',
+      pipeline_status: 'running',
+      stages: { plan: { status: 'in_progress' } },
+    });
+    const runs = discoverActive(dir);
+    expect(runs.map((r) => r.instance)).toEqual(['astropy__astropy-live']);
+  });
+
   it('reports the grading phase when the pipeline is completed but still active', () => {
     seedStatus('p1', 'i', 1, 'p1__i__rep1', {
       run_id: 'p1__i__rep1',

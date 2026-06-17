@@ -120,6 +120,21 @@ function filterEnabledStages(stages, enabledMap) {
   );
 }
 
+// Pipeline statuses that mean a run is genuinely in-flight — or, for `completed`,
+// that worca-bench is still grading it (the work tree lingers until the grader
+// finishes, then it's removed). Anything else is terminal: interrupted/cancelled
+// (stopped), failed/setup_failed/unrecoverable (errored). A terminal run's work
+// tree can persist until cleanup, but it must NOT be reported as active — else a
+// stopped/crashed run leaves a stale "running" card in the live block. Mirrors
+// the dead-run reconciliation discoverRegrades() does via pidAlive().
+const ACTIVE_PIPELINE_STATUS = new Set([
+  'pending',
+  'running',
+  'resuming',
+  'paused',
+  'completed',
+]);
+
 /**
  * Discover active (in-flight) runs under one target dir.
  *
@@ -141,12 +156,15 @@ export function discoverActive(dir) {
       } catch {
         continue;
       }
+      const pipelineStatus = s.pipeline_status || 'running';
+      // Skip terminal runs (stopped/failed) whose work tree lingers — they are
+      // not active and would otherwise render as a stale live card.
+      if (!ACTIVE_PIPELINE_STATUS.has(pipelineStatus)) continue;
       const runId = s.run_id || basename(join(file, '..'));
       const stages = filterEnabledStages(
         summarizeStages(s.stages),
         enabledStageMap(file, s.pipeline_template),
       );
-      const pipelineStatus = s.pipeline_status || 'running';
       const { instance, rep } = instanceRep(profileWorkDir, file);
       out.push({
         profile,
