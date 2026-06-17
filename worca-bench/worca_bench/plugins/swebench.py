@@ -147,7 +147,8 @@ class SwebenchPlugin(BenchmarkPlugin):
         try:
             submit = subprocess.run(
                 ["sb-cli", "submit", subset, "test",
-                 "--predictions_path", str(preds), "--run_id", run_id],
+                 "--predictions_path", str(preds), "--run_id", run_id,
+                 "-o", str(out_dir)],  # keep sb-cli's report out of the cwd
                 capture_output=True, text=True, env=env,
             )
             get = subprocess.run(
@@ -157,19 +158,14 @@ class SwebenchPlugin(BenchmarkPlugin):
         except OSError as e:
             return GradeResult(status="error", detail=f"sb-cli not available: {e}")
         # The report is authoritative; read it regardless of the CLI exit codes
-        # (sb-cli can exit non-zero on benign warnings). Only hard-error when no
-        # report came back at all.
+        # (sb-cli can exit non-zero on benign warnings). Classify by the report's
+        # explicit id buckets — a remote eval *failure* (failed_ids/error_ids) is
+        # an error, NOT a graded-as-unresolved verdict. Only hard-error when no
+        # usable report came back at all.
         report = next(out_dir.glob("*.json"), None)
-        resolved = _resolved_from_instance_report(report, iid)
-        if resolved is None:
-            resolved = _resolved_from_report(report, iid)
-        if resolved is not None:
-            detail = "sb-cli"
-            if submit.returncode or get.returncode:
-                detail = f"sb-cli (submit rc={submit.returncode}, get rc={get.returncode})"
-            return GradeResult(status="graded", resolved=resolved,
-                               score=1.0 if resolved else 0.0,
-                               report_path=str(report), detail=detail)
+        verdict = _classify_sb_report(report, iid)
+        if verdict is not None:
+            return verdict
         tail = (get.stderr or get.stdout or submit.stderr or submit.stdout or "").strip()[-1000:]
         return GradeResult(
             status="error",
@@ -235,6 +231,47 @@ def _sample(records, sample):  # pragma: no cover - integration-only
     pool = list(records)
     rng.shuffle(pool)
     return pool[: sample.n]
+
+
+def _classify_sb_report(report: Path | None, instance_id: str) -> GradeResult | None:
+    """Map an sb-cli summary report's id buckets to a GradeResult for one instance.
+
+    sb-cli reports carry disjoint id lists (``resolved_ids``, ``unresolved_ids``,
+    ``failed_ids``, ``error_ids``, ``pending_ids``). A *resolved/unresolved* verdict
+    is a real grade; ``failed``/``error`` mean the hosted harness could not
+    evaluate the instance (e.g. the patch failed to apply) — that is an error, not
+    a "graded as unresolved". Returns None when the report is missing/unparseable
+    or the instance appears in no bucket (caller treats as no result).
+    """
+    if not report or not report.exists():
+        return None
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    def _in(bucket: str) -> bool:
+        v = data.get(bucket)
+        return isinstance(v, list) and instance_id in v
+
+    rp = str(report)
+    if _in("resolved_ids"):
+        return GradeResult(status="graded", resolved=True, score=1.0,
+                           report_path=rp, detail="sb-cli")
+    if _in("unresolved_ids"):
+        return GradeResult(status="graded", resolved=False, score=0.0,
+                           report_path=rp, detail="sb-cli")
+    if _in("failed_ids"):
+        return GradeResult(status="error", report_path=rp,
+                           detail="sb-cli: instance failed to evaluate "
+                                  "(patch did not apply / harness error)")
+    if _in("error_ids"):
+        return GradeResult(status="error", report_path=rp,
+                           detail="sb-cli: evaluation error")
+    if _in("pending_ids"):
+        return GradeResult(status="error", report_path=rp,
+                           detail="sb-cli: evaluation still pending")
+    return None
 
 
 def harness_report_path(run_id: str, instance_id: str) -> Path:

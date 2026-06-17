@@ -38,6 +38,26 @@ def test_extract_diff_excludes_worca_scaffolding(tmp_path):
         assert ex not in diff
 
 
+def test_extract_diff_excludes_beads_agents_and_git_meta(tmp_path):
+    """Regression: bead/agent scaffolding and worca's .gitignore/.gitattributes
+    rewrites must not leak into the graded patch (they break apply on a pristine
+    SWE-bench eval container)."""
+    repo = tmp_path / "r"
+    base = make_git_repo(repo, {"astropy/separable.py": "x = 1\n"})
+    (repo / ".beads").mkdir()
+    (repo / ".beads" / "issues.jsonl").write_text("{}\n", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("# agents", encoding="utf-8")
+    (repo / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+    (repo / ".gitignore").write_text(".worca/\nlogs/\n", encoding="utf-8")
+    (repo / "astropy" / "separable.py").write_text("x = 2\n", encoding="utf-8")
+    diff = extract_diff(repo, base)
+    assert "astropy/separable.py" in diff
+    assert ".beads" not in diff
+    assert "AGENTS.md" not in diff
+    assert ".gitattributes" not in diff
+    assert ".gitignore" not in diff
+
+
 def test_extract_diff_includes_untracked_new_file(tmp_path):
     repo = tmp_path / "r"
     base = make_git_repo(repo, {"README.md": "hi\n"})

@@ -13,6 +13,7 @@ import pytest
 
 from worca_bench.plugins.swebench import (
     SwebenchPlugin,
+    _classify_sb_report,
     _load_dataset_with_retry,
     _resolved_from_instance_report,
     harness_report_path,
@@ -132,6 +133,53 @@ def test_harness_report_path_layout(monkeypatch, tmp_path: Path):
     )
 
 
+def _write_sb_report(path: Path, **buckets):
+    """Write an sb-cli-shaped summary report with the given id buckets."""
+    data = {
+        "resolved_ids": [], "unresolved_ids": [], "failed_ids": [],
+        "error_ids": [], "pending_ids": [], "completed_ids": [],
+    }
+    data.update(buckets)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_classify_sb_report_buckets(tmp_path: Path):
+    iid = "astropy__astropy-12907"
+    rep = tmp_path / "r.json"
+
+    _write_sb_report(rep, resolved_ids=[iid])
+    v = _classify_sb_report(rep, iid)
+    assert v.status == "graded" and v.resolved is True and v.score == 1.0
+
+    _write_sb_report(rep, unresolved_ids=[iid])
+    v = _classify_sb_report(rep, iid)
+    assert v.status == "graded" and v.resolved is False and v.score == 0.0
+
+    # A remote failure is an ERROR, not a graded-as-unresolved verdict.
+    _write_sb_report(rep, failed_ids=[iid])
+    v = _classify_sb_report(rep, iid)
+    assert v.status == "error" and v.resolved is None
+    assert "failed to evaluate" in v.detail
+
+    _write_sb_report(rep, error_ids=[iid])
+    assert _classify_sb_report(rep, iid).status == "error"
+
+    _write_sb_report(rep, pending_ids=[iid])
+    assert _classify_sb_report(rep, iid).status == "error"
+
+
+def test_classify_sb_report_absent_and_missing(tmp_path: Path):
+    assert _classify_sb_report(None, "x") is None
+    assert _classify_sb_report(tmp_path / "nope.json", "x") is None
+    rep = tmp_path / "r.json"
+    # Report exists but the instance is in no bucket → no result.
+    _write_sb_report(rep, resolved_ids=["some__other-1"])
+    assert _classify_sb_report(rep, "astropy__astropy-12907") is None
+    # Corrupt report → no result.
+    rep.write_text("{not json", encoding="utf-8")
+    assert _classify_sb_report(rep, "x") is None
+
+
 def test_grade_env_merges_secrets_over_os_environ(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     env = grade_env({"SWEBENCH_API_KEY": "swb_test"})
@@ -158,8 +206,10 @@ def test_sb_cli_reads_report_and_threads_secret(monkeypatch, tmp_path: Path):
         if cmd[:2] == ["sb-cli", "get-report"]:
             out = Path(cmd[cmd.index("-o") + 1])
             out.mkdir(parents=True, exist_ok=True)
+            # sb-cli summary report format: disjoint id buckets.
             (out / "report.json").write_text(
-                json.dumps({iid: {"resolved": True}}), encoding="utf-8")
+                json.dumps({"resolved_ids": [iid], "unresolved_ids": [],
+                            "failed_ids": []}), encoding="utf-8")
         # Non-zero exit must NOT discard the written report.
         return _Proc(returncode=1, stderr="benign warning")
 

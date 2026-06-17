@@ -13,3 +13,6 @@ __pycache__/
 worca-bench-out/
 out/
 worca-bench.wb-*.json
+
+# sb-cli default report output (grader artifact)
+sb-cli-reports/

@@ -1,9 +1,10 @@
 """Extract a source-only diff + parse worca telemetry from a completed run (W-075 §2 step 5, §6).
 
 The agent's patch is *source-only*: worca's own scaffolding (``.claude/``, ``.worca/``,
+``.beads/``, ``AGENTS.md``, the ``.gitignore``/``.gitattributes`` worca rewrites,
 ``MASTER_PLAN.md``) and any benchmark test paths are excluded, so the diff matches what
-the grader expects (the harness supplies the tests). Telemetry is read from the run's
-``status.json``.
+the grader expects (the harness supplies the tests) and applies cleanly on a pristine
+eval container. Telemetry is read from the run's ``status.json``.
 """
 
 from __future__ import annotations
@@ -14,8 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# worca writes these into the target tree; they must never leak into the patch.
-DEFAULT_EXCLUDES = (".claude", ".worca", ".worktrees", "MASTER_PLAN.md")
+# worca / its tooling write these into the target tree during a run; they must
+# never leak into the graded patch. `.beads`, `AGENTS.md`, and the rewritten
+# `.gitignore`/`.gitattributes` are scaffolding — leaving them in pollutes the
+# diff and makes `git apply` fail on a pristine SWE-bench eval container.
+DEFAULT_EXCLUDES = (
+    ".claude", ".worca", ".worktrees", ".beads",
+    "MASTER_PLAN.md", "AGENTS.md", ".gitignore", ".gitattributes",
+)
 
 
 def extract_diff(
