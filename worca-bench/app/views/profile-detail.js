@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
+import { loadRunPrefs, saveRunPrefs } from '../utils/run-prefs.js';
 
 /** Colored engine badge (graphify cyan / crg indigo) or a gray OFF. */
 function _engineBadge(value, kind) {
@@ -28,30 +29,47 @@ function _statRow(label, value) {
   `;
 }
 
+/** Read the raw control values from the `.run-options` container. */
+function _readControls(box) {
+  return {
+    reps: box.querySelector('.run-opt-reps').value.trim(),
+    maxInstances: box.querySelector('.run-opt-instances').value.trim(),
+    maxParallel: box.querySelector('.run-opt-parallel').value.trim(),
+    canary: box.querySelector('.run-opt-canary')?.value ?? 'on',
+    graphify: box.querySelector('.run-opt-graphify')?.value ?? 'off',
+    codeReviewGraph: box.querySelector('.run-opt-crg')?.value ?? 'off',
+  };
+}
+
 /**
- * "Run options" launcher: per-run overrides for reps and instance cap. Empty
- * inputs fall back to the profile's defaults. Reads input values at click time
- * (lit-html is stateless) from the enclosing `.run-options` container.
+ * "Run options" launcher: per-run overrides for reps, caps, parallelism, the
+ * canary preflight, and the engine modes. Reads control values at click time
+ * (lit-html is stateless) from the enclosing `.run-options` container, and
+ * persists them per-profile to localStorage so a page reload restores the last
+ * set values instead of snapping back to the profile defaults.
  */
 function _runOptionsView(agg, onRun) {
+  const saved = loadRunPrefs(agg.name);
+  const persist = (e) => {
+    const box = e.target.closest('.run-options');
+    if (box) saveRunPrefs(agg.name, _readControls(box));
+  };
   const launch = (e) => {
     const box = e.target.closest('.run-options');
-    const reps = box.querySelector('.run-opt-reps').value.trim();
-    const maxInstances = box.querySelector('.run-opt-instances').value.trim();
-    const maxParallel = box.querySelector('.run-opt-parallel').value.trim();
-    const canaryVal = box.querySelector('.run-opt-canary')?.value;
-    const canary = canaryVal !== 'off';
-    const gfxVal = box.querySelector('.run-opt-graphify')?.value;
-    const graphify = gfxVal && gfxVal !== 'off' ? gfxVal : undefined;
-    const crgVal = box.querySelector('.run-opt-crg')?.value;
-    const codeReviewGraph = crgVal && crgVal !== 'off' ? crgVal : undefined;
+    const c = _readControls(box);
+    saveRunPrefs(agg.name, c);
+    const graphify = c.graphify !== 'off' ? c.graphify : undefined;
+    const codeReviewGraph =
+      c.codeReviewGraph !== 'off' ? c.codeReviewGraph : undefined;
     onRun(agg.name, {
-      reps: reps ? Number.parseInt(reps, 10) : undefined,
-      maxInstances: maxInstances
-        ? Number.parseInt(maxInstances, 10)
+      reps: c.reps ? Number.parseInt(c.reps, 10) : undefined,
+      maxInstances: c.maxInstances
+        ? Number.parseInt(c.maxInstances, 10)
         : undefined,
-      maxParallel: maxParallel ? Number.parseInt(maxParallel, 10) : undefined,
-      canary,
+      maxParallel: c.maxParallel
+        ? Number.parseInt(c.maxParallel, 10)
+        : undefined,
+      canary: c.canary !== 'off',
       graphify,
       codeReviewGraph,
     });
@@ -66,6 +84,8 @@ function _runOptionsView(agg, onRun) {
           type="number"
           min="1"
           placeholder=${String(agg.reps || 1)}
+          .value=${saved.reps ?? ''}
+          @input=${persist}
       /></label>
       <label class="run-opt"
         >Max tests
@@ -74,6 +94,8 @@ function _runOptionsView(agg, onRun) {
           type="number"
           min="1"
           placeholder="all"
+          .value=${saved.maxInstances ?? ''}
+          @input=${persist}
       /></label>
       <label class="run-opt"
         >Max parallel
@@ -82,17 +104,29 @@ function _runOptionsView(agg, onRun) {
           type="number"
           min="1"
           placeholder="default"
+          .value=${saved.maxParallel ?? ''}
+          @input=${persist}
       /></label>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Canary</span>
-        <sl-radio-group class="run-opt-canary" size="small" value="on">
+        <sl-radio-group
+          class="run-opt-canary"
+          size="small"
+          value=${saved.canary || 'on'}
+          @sl-change=${persist}
+        >
           <sl-radio-button value="off">Off</sl-radio-button>
           <sl-radio-button value="on">On</sl-radio-button>
         </sl-radio-group>
       </div>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Graphify</span>
-        <sl-radio-group class="run-opt-graphify" size="small" value="off">
+        <sl-radio-group
+          class="run-opt-graphify"
+          size="small"
+          value=${saved.graphify || 'off'}
+          @sl-change=${persist}
+        >
           <sl-radio-button value="off">Off</sl-radio-button>
           <sl-radio-button value="structural">Structural</sl-radio-button>
           <sl-radio-button value="full">Full</sl-radio-button>
@@ -100,7 +134,12 @@ function _runOptionsView(agg, onRun) {
       </div>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Code Review Graph</span>
-        <sl-radio-group class="run-opt-crg" size="small" value="off">
+        <sl-radio-group
+          class="run-opt-crg"
+          size="small"
+          value=${saved.codeReviewGraph || 'off'}
+          @sl-change=${persist}
+        >
           <sl-radio-button value="off">Off</sl-radio-button>
           <sl-radio-button value="structural">Structural</sl-radio-button>
         </sl-radio-group>
