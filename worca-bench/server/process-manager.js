@@ -54,6 +54,7 @@ function sanitizeSecrets(secrets) {
  * @param {string} [opts.codeReviewGraph]  enable code-review-graph in this mode
  * @param {boolean} [opts.preflight]    run preflight (true) or skip it (false); omit to leave the profile default
  * @param {string} [opts.claudeMdMode]  CLAUDE.md load mode (none|project|project+local|all)
+ * @param {string} [opts.gradeMode]     grade backend override (stub|sb-cli|local-docker|modal); omit to keep the profile's
  * @param {object} [opts.secrets]       grader credentials (allowlisted) merged into the child env
  * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
  *        injectable spawn for tests
@@ -72,6 +73,7 @@ export function runBenchmark({
   codeReviewGraph,
   preflight,
   claudeMdMode,
+  gradeMode,
   secrets,
   _spawn = spawn,
 } = {}) {
@@ -116,6 +118,9 @@ export function runBenchmark({
   }
   if (claudeMdMode) {
     args.push('--claude-md-mode', String(claudeMdMode));
+  }
+  if (gradeMode) {
+    args.push('--grade-mode', String(gradeMode));
   }
 
   return _launchDetached(args, {

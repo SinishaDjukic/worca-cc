@@ -2,7 +2,16 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
+import { REGRADE_MODES } from '../utils/regrade-dialog.js';
 import { loadRunPrefs, saveRunPrefs } from '../utils/run-prefs.js';
+
+// Grader backends offered in the Run options dropdown. Reuses the regrade
+// backends (local-docker / sb-cli / modal) plus `stub` (record diff, no grade)
+// so any profile's own grade.mode is representable as the default selection.
+const GRADER_OPTIONS = [
+  ...REGRADE_MODES.map((m) => ({ value: m.value, label: m.label })),
+  { value: 'stub', label: 'Stub (no grade)' },
+];
 
 // Lucide "refresh-cw" — the regrade action icon.
 const REGRADE_ICON =
@@ -45,6 +54,7 @@ function _readControls(box) {
     codeReviewGraph: box.querySelector('.run-opt-crg')?.value ?? 'off',
     preflight: box.querySelector('.run-opt-preflight')?.value ?? 'on',
     claudeMd: box.querySelector('.run-opt-claudemd')?.value ?? 'project',
+    grader: box.querySelector('.run-opt-grader')?.value ?? '',
   };
 }
 
@@ -81,11 +91,16 @@ function _runOptionsView(agg, onRun, onNotes) {
       codeReviewGraph,
       preflight: c.preflight !== 'off',
       claudeMdMode: c.claudeMd,
+      gradeMode: c.grader || undefined,
     });
   };
+  // Grader dropdown defaults to the profile's own grade.mode (falling back to
+  // modal), unless the user has picked one before (persisted per profile).
+  const grader = saved.grader || agg.grade_mode || 'modal';
   return html`
     <div class="run-options">
-      <span class="run-options-title">Run options</span>
+      <div class="run-options-title">Run options</div>
+      <div class="run-options-row">
       <label class="run-opt"
         >Reps
         <input
@@ -153,6 +168,17 @@ function _runOptionsView(agg, onRun, onNotes) {
           <option value="all">all</option>
         </select>
       </label>
+      <label class="run-opt"
+        >Grader
+        <select class="run-opt-grader run-opt-select" @change=${persist}>
+          ${GRADER_OPTIONS.map(
+            (m) => html`<option
+              value=${m.value}
+              ?selected=${m.value === grader}
+            >${m.label}</option>`,
+          )}
+        </select>
+      </label>
       <div class="run-opt run-opt-engine">
         <span class="run-opt-label">Graphify</span>
         <sl-radio-group
@@ -189,6 +215,7 @@ function _runOptionsView(agg, onRun, onNotes) {
       <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
         Run
       </button>
+      </div>
     </div>
   `;
 }

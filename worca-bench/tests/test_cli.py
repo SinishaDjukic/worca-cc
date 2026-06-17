@@ -53,6 +53,7 @@ def _args(tmp_path, profiles_dir, **over):
         modal_token_secret=None,
         preflight=None,
         claude_md_mode=None,
+        grade_mode=None,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -167,6 +168,22 @@ def test_cmd_run_claude_md_mode_override(tmp_path, monkeypatch):
     assert captured["mode"] == "project"
     cli.cmd_run(_args(tmp_path, profiles_dir, claude_md_mode=None))
     assert captured["mode"] == "none"  # profile default
+
+
+def test_cmd_run_grade_mode_override(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["mode"] = profile.grade.mode
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    cli.cmd_run(_args(tmp_path, profiles_dir, grade_mode="modal"))
+    assert captured["mode"] == "modal"
+    # Absent => profile default (stub, from _write_profile).
+    cli.cmd_run(_args(tmp_path, profiles_dir, grade_mode=None))
+    assert captured["mode"] == "stub"
 
 
 def test_cmd_run_threads_cache_dir(tmp_path, monkeypatch):

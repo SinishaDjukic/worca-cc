@@ -529,6 +529,7 @@ async function runProfile(name, opts = {}) {
     if (opts.codeReviewGraph) body.codeReviewGraph = opts.codeReviewGraph;
     if (typeof opts.preflight === 'boolean') body.preflight = opts.preflight;
     if (opts.claudeMdMode) body.claudeMdMode = opts.claudeMdMode;
+    if (opts.gradeMode) body.gradeMode = opts.gradeMode;
     // Forward browser-held grader credentials so the run can grade (sb-cli /
     // Modal). Omitted when none are stored.
     const secrets = launchSecrets();

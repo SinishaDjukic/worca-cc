@@ -52,10 +52,21 @@ describe('profileDetailView', () => {
     expect(out).toContain('run-opt-preflight'); // preflight toggle (on by default)
     expect(out).toContain('run-opt-claudemd'); // CLAUDE.md dropdown
     expect(out).toContain('project+local'); // a CLAUDE.md option
+    expect(out).toContain('run-opt-grader'); // grader dropdown
+    expect(out).toContain('run-options-title'); // card-style header
+    expect(out).toContain('run-options-row'); // controls row wrapper
     // reps input is seeded with the profile's default as a placeholder
     // (unquoted lit attribute binding -> `placeholder=4`)
     expect(out).toContain('placeholder=4');
     expect(out).toContain('placeholder="all"');
+  });
+
+  it('offers every grader backend in the grader dropdown', () => {
+    const out = renderToString(profileDetailView(data, { onRun: () => {} }));
+    expect(out).toContain('Local (Docker)');
+    expect(out).toContain('SWE-bench Cloud (sb-cli)');
+    expect(out).toContain('Modal (serverless x86)');
+    expect(out).toContain('Stub (no grade)');
   });
 
   it('shows the Notes button only when onNotes is provided', () => {

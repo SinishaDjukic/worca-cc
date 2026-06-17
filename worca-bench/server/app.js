@@ -354,6 +354,13 @@ export function createApp(options = {}) {
         )
           ? req.body.claudeMdMode
           : undefined,
+        // Grader backend override (allowlisted; ignored otherwise). Defaults to
+        // the profile's own grade.mode when omitted.
+        gradeMode: ['stub', 'sb-cli', 'local-docker', 'modal'].includes(
+          req.body?.gradeMode,
+        )
+          ? req.body.gradeMode
+          : undefined,
         // Grader credentials forwarded from the browser; the launcher allowlists
         // and merges them into the runner's env (never persisted server-side).
         secrets: req.body?.secrets,

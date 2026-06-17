@@ -108,6 +108,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     cmm = getattr(args, "claude_md_mode", None)
     if cmm is not None:
         profile.claude_md_mode = cmm
+    # Grade backend override (UI Run options dropdown). Absent => profile default.
+    gm = getattr(args, "grade_mode", None)
+    if gm is not None:
+        profile.grade.mode = gm
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
     # Grader credentials: environment + CLI-flag overlay (allowlist-enforced).
@@ -335,6 +339,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--claude-md-mode", dest="claude_md_mode",
         choices=["none", "project", "project+local", "all"],
         help="CLAUDE.md load mode for the run; overrides the profile")
+    p_run.add_argument(
+        "--grade-mode", dest="grade_mode",
+        choices=["stub", "sb-cli", "local-docker", "modal"],
+        help="grade backend for the run; overrides the profile's grade.mode")
     _add_secret_flags(p_run)
     p_run.set_defaults(func=cmd_run)
 
