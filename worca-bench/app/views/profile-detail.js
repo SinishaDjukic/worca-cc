@@ -107,6 +107,10 @@ function _runOptionsView(agg, onRun, onNotes) {
   // Canary radio default: the user's saved pref wins; otherwise the profile's
   // `canary` flag (only an explicit `false` means Off — unspecified => On).
   const canaryDefault = saved.canary || (agg.canary === false ? 'off' : 'on');
+  // Max-parallel placeholder shows the profile's own concurrency.worca when set,
+  // so the field reflects what the run will actually use (else the runner default).
+  const maxParallelPlaceholder =
+    agg.max_parallel != null ? String(agg.max_parallel) : 'default';
   return html`
     <div class="run-options">
       <div class="run-options-title">Run options</div>
@@ -137,7 +141,7 @@ function _runOptionsView(agg, onRun, onNotes) {
           class="run-opt-parallel"
           type="number"
           min="1"
-          placeholder="default"
+          placeholder=${maxParallelPlaceholder}
           .value=${saved.maxParallel ?? ''}
           @input=${persist}
       /></label>

@@ -128,6 +128,7 @@ export function createApp(options = {}) {
           template: def.template,
           grade_mode: def.grade_mode,
           canary: def.canary,
+          max_parallel: def.max_parallel,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -200,8 +201,9 @@ export function createApp(options = {}) {
           aggregate: {
             ...aggregateProfile(name, rows),
             instance_count: instanceCount,
-            // canary is a launch flag (never in results rows) — read from the def.
+            // canary + max_parallel are config (never in results rows) — read from the def.
             canary: def?.canary ?? null,
+            max_parallel: def?.max_parallel ?? null,
           },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
@@ -223,6 +225,7 @@ export function createApp(options = {}) {
           template: def?.template || null,
           grade_mode: def?.grade_mode || null,
           canary: def?.canary ?? null,
+          max_parallel: def?.max_parallel ?? null,
           instance_count: instanceCount,
           active: active.length > 0,
         },

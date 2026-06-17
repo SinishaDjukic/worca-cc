@@ -257,6 +257,20 @@ describe('readProfileDefs', () => {
     expect(defs.find((d) => d.name === 'unset').canary).toBeNull();
   });
 
+  it('parses concurrency.worca as max_parallel, ignoring the top-level worca block', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'mp.yaml'),
+      'name: mp\nbenchmark: commit0\nworca:\n  ref: local\nconcurrency:\n  worca: 1\n  grade: 2\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'nomp.yaml'),
+      'name: nomp\nbenchmark: commit0\nworca:\n  ref: local\n',
+    );
+    const defs = readProfileDefs(dir);
+    expect(defs.find((d) => d.name === 'mp').max_parallel).toBe(1);
+    expect(defs.find((d) => d.name === 'nomp').max_parallel).toBeNull();
+  });
+
   it('counts selected instance_ids, null when the selection is absent', () => {
     writeFileSync(
       join(dir, 'profiles', 'sel.yaml'),

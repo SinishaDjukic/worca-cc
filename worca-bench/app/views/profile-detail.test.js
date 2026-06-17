@@ -93,6 +93,25 @@ describe('profileDetailView', () => {
     expect(without).not.toContain('run-opt-notes');
   });
 
+  it("shows the profile's concurrency.worca as the Max parallel placeholder", () => {
+    const withMp = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate, max_parallel: 1 }, reps: [] },
+        { onRun: () => {} },
+      ),
+    );
+    // unquoted lit attribute binding -> `placeholder=1`
+    expect(withMp).toMatch(/run-opt-parallel[\s\S]*?placeholder=1/);
+    // Unspecified => generic "default".
+    const noMp = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate }, reps: [] },
+        { onRun: () => {} },
+      ),
+    );
+    expect(noMp).toMatch(/run-opt-parallel[\s\S]*?placeholder=default/);
+  });
+
   it('defaults the Canary toggle to Off when the profile sets canary:false', () => {
     // The first `value=` after the canary radio-group's class is its default.
     const canaryVal = (out) =>

@@ -124,7 +124,7 @@ export function countInstanceIds(text) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, _source_dir}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, max_parallel, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -148,6 +148,7 @@ export function readProfileDefs(targetDir) {
     let grade_mode = null;
     let instance_count = null;
     let canary = null;
+    let max_parallel = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
       benchmark = scalar(text, 'benchmark');
@@ -160,6 +161,12 @@ export function readProfileDefs(targetDir) {
       // `canary: true|false` — null when unspecified (Python default is true).
       const c = scalar(text, 'canary');
       canary = c === 'true' ? true : c === 'false' ? false : null;
+      // `concurrency.worca` — the pipeline parallelism ("Max parallel"). Matched
+      // as an *indented* numeric `worca:` so the top-level `worca:` block (a
+      // mapping with no inline value) is never picked up. Null when unspecified
+      // (the runner default applies).
+      const mp = text.match(/^\s+worca:\s*(\d+)\s*$/m);
+      max_parallel = mp ? Number(mp[1]) : null;
     } catch {
       // Unreadable profile file — surface the name only.
     }
@@ -170,6 +177,7 @@ export function readProfileDefs(targetDir) {
       grade_mode,
       instance_count,
       canary,
+      max_parallel,
       _source_dir: dir,
     });
   }
