@@ -1,7 +1,12 @@
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 import { loadRunPrefs, saveRunPrefs } from '../utils/run-prefs.js';
+
+// Lucide "refresh-cw" — the regrade action icon.
+const REGRADE_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
 
 /** Colored engine badge (graphify cyan / crg indigo) or a gray OFF. */
 function _engineBadge(value, kind) {
@@ -275,7 +280,7 @@ function _configView(agg) {
  * @param {object} [handlers]
  * @param {(name: string, opts: {reps?: number, maxInstances?: number}) => void} [handlers.onRun]
  */
-export function profileDetailView(data, { onRun } = {}) {
+export function profileDetailView(data, { onRun, onRegrade } = {}) {
   if (!data?.aggregate) {
     return html`<section class="page"><p class="empty-state">Profile not found.</p></section>`;
   }
@@ -309,6 +314,7 @@ export function profileDetailView(data, { onRun } = {}) {
             <th>Iters</th>
             <th>Graphify</th>
             <th>CRG</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -325,6 +331,23 @@ export function profileDetailView(data, { onRun } = {}) {
                 <td>${_iterations(r)}</td>
                 <td>${_engineBadge(r.graphify, 'graphify')}</td>
                 <td>${_engineBadge(r.code_review_graph, 'crg')}</td>
+                <td class="reps-action">
+                  ${
+                    onRegrade && r.instance_id
+                      ? html`<sl-tooltip
+                          content="Re-grade this instance from its saved diff via the hosted SWE-bench grader (sb-cli) — no pipeline re-run"
+                        >
+                          <button
+                            class="icon-btn reps-regrade-btn"
+                            aria-label="Re-grade ${r.instance_id}"
+                            @click=${() => onRegrade(agg.name, r.instance_id)}
+                          >
+                            ${unsafeHTML(REGRADE_ICON)}
+                          </button>
+                        </sl-tooltip>`
+                      : nothing
+                  }
+                </td>
               </tr>
             `;
           })}

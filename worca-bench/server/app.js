@@ -17,7 +17,7 @@ import {
   leaderboardBenchmarks,
   localLeaderboardRows,
 } from './leaderboard.js';
-import { runBenchmark } from './process-manager.js';
+import { runBenchmark, runRegrade } from './process-manager.js';
 import {
   aggregateByProfile,
   aggregateProfile,
@@ -48,6 +48,7 @@ export function createApp(options = {}) {
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
   const targetDir = options.targetDir || process.cwd();
   const launch = options._runBenchmark || runBenchmark;
+  const regrade = options._runRegrade || runRegrade;
   const settingsHome = options.settingsHome;
 
   // Coerce a request value to a positive integer, else undefined (use default).
@@ -308,6 +309,42 @@ export function createApp(options = {}) {
         cacheDir: resolveCacheDir(settingsHome).dir,
         graphify: _engineMode(req.body?.graphify),
         codeReviewGraph: _engineMode(req.body?.codeReviewGraph),
+      });
+      res.json({ ok: true, pid });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Fire-and-forget: re-grade a profile's saved diffs (no pipeline re-run).
+  app.post('/api/regrade', async (req, res) => {
+    const profile = req.body?.profile;
+    if (!profile) {
+      return res.status(400).json({ ok: false, error: 'profile is required' });
+    }
+    if (_badName(profile)) {
+      return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    }
+    const instance = req.body?.instance;
+    if (instance != null && _badName(instance)) {
+      return res.status(400).json({ ok: false, error: 'invalid instance id' });
+    }
+    const mode = req.body?.mode;
+    if (
+      mode != null &&
+      !['sb-cli', 'local-docker', 'modal', 'stub'].includes(mode)
+    ) {
+      return res.status(400).json({ ok: false, error: 'invalid grade mode' });
+    }
+    try {
+      const def = readDefs().find((d) => d.name === profile);
+      const { pid } = await regrade({
+        profile,
+        targetDir,
+        profilesDir: def?._source_dir,
+        instance: instance || undefined,
+        mode: mode || undefined,
+        onlyErrors: req.body?.onlyErrors === true,
       });
       res.json({ ok: true, pid });
     } catch (err) {

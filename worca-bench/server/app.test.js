@@ -296,6 +296,66 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/regrade forwards profile/instance/mode to the regrader', async () => {
+    let captured = null;
+    const fakeRegrade = async (opts) => {
+      captured = opts;
+      return { pid: 77 };
+    };
+    await withServer(dir, { _runRegrade: fakeRegrade }, async (base) => {
+      const res = await fetch(`${base}/api/regrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: 'p1',
+          instance: 'astropy__astropy-12907',
+          mode: 'sb-cli',
+        }),
+      });
+      const data = await res.json();
+      expect(data).toEqual({ ok: true, pid: 77 });
+      expect(captured.profile).toBe('p1');
+      expect(captured.instance).toBe('astropy__astropy-12907');
+      expect(captured.mode).toBe('sb-cli');
+    });
+  });
+
+  it('POST /api/regrade rejects a bad instance id and bad mode', async () => {
+    await withServer(
+      dir,
+      { _runRegrade: async () => ({ pid: 1 }) },
+      async (base) => {
+        const bad = await fetch(`${base}/api/regrade`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: 'p1', instance: 'a; rm -rf /' }),
+        });
+        expect(bad.status).toBe(400);
+        const badMode = await fetch(`${base}/api/regrade`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: 'p1', mode: 'evil' }),
+        });
+        expect(badMode.status).toBe(400);
+      },
+    );
+  });
+
+  it('POST /api/regrade requires a profile', async () => {
+    await withServer(
+      dir,
+      { _runRegrade: async () => ({ pid: 1 }) },
+      async (base) => {
+        const res = await fetch(`${base}/api/regrade`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        expect(res.status).toBe(400);
+      },
+    );
+  });
+
   it('POST /api/run maps canary:false to noCanary (default keeps canary on)', async () => {
     let captured = null;
     const fakeRun = async (opts) => {

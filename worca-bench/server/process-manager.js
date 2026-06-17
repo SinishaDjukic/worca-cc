@@ -81,6 +81,65 @@ export function runBenchmark({
     args.push('--code-review-graph', String(codeReviewGraph));
   }
 
+  return _launchDetached(args, { _spawn, label: 'benchmark' });
+}
+
+/**
+ * Spawn `python3 -m worca_bench.cli regrade …` detached and return its pid.
+ * Re-grades a profile's saved diffs without re-running the pipeline.
+ *
+ * @param {object} opts
+ * @param {string} opts.profile      profile name to re-grade
+ * @param {string} opts.targetDir    results target directory
+ * @param {string} [opts.profilesDir]  extra dir to search for the profile YAML
+ * @param {string} [opts.instance]   limit to a single instance id
+ * @param {string} [opts.mode]       grade backend (sb-cli|local-docker|modal|stub)
+ * @param {boolean} [opts.onlyErrors]  re-grade only rows currently marked error
+ * @param {(args: string[], options: object) => import('node:child_process').ChildProcess} [opts._spawn]
+ * @returns {Promise<{pid: number}>}
+ */
+export function runRegrade({
+  profile,
+  targetDir,
+  profilesDir,
+  instance,
+  mode,
+  onlyErrors,
+  _spawn = spawn,
+} = {}) {
+  if (!profile) {
+    return Promise.reject(new Error('profile is required'));
+  }
+  const args = [
+    '-m',
+    'worca_bench.cli',
+    'regrade',
+    '--profile',
+    profile,
+    '--target-dir',
+    targetDir,
+  ];
+  if (profilesDir) {
+    args.push('--profiles-dir', profilesDir);
+  }
+  if (mode) {
+    args.push('--mode', String(mode));
+  }
+  if (instance) {
+    args.push('--instance', String(instance));
+  }
+  if (onlyErrors) {
+    args.push('--only-errors');
+  }
+  return _launchDetached(args, { _spawn, label: 'regrade' });
+}
+
+/**
+ * Shared detached-spawn for the long-lived CLI runners: spawn `python3 <args>`,
+ * resolve `{pid}` as soon as the child is handed off (do NOT wait for exit), and
+ * reject on an early spawn error/exit or the hard-cap timeout.
+ */
+function _launchDetached(args, { _spawn = spawn, label = 'process' } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -90,7 +149,7 @@ export function runBenchmark({
         env: { ...process.env },
       });
     } catch (err) {
-      reject(new Error(`Failed to start benchmark: ${err.message}`));
+      reject(new Error(`Failed to start ${label}: ${err.message}`));
       return;
     }
 
@@ -104,7 +163,7 @@ export function runBenchmark({
       child.removeAllListeners?.('error');
       child.removeAllListeners?.('exit');
       const err = new Error(
-        'Benchmark launcher did not finish within 180s — aborting launch',
+        `${label} launcher did not finish within 180s — aborting launch`,
       );
       err.code = 'spawn_timeout';
       reject(err);
@@ -121,7 +180,7 @@ export function runBenchmark({
       if (settled) return;
       settled = true;
       clearTimeout(hardCap);
-      const err = new Error(`Failed to start benchmark: ${spawnErr.message}`);
+      const err = new Error(`Failed to start ${label}: ${spawnErr.message}`);
       err.code = 'spawn_error';
       reject(err);
     });
@@ -140,7 +199,7 @@ export function runBenchmark({
         settled = true;
         clearTimeout(hardCap);
         const err = new Error(
-          `Benchmark failed to start (exit code ${code})${stderr.trim() ? `:\n${stderr.trim()}` : ''}`,
+          `${label} failed to start (exit code ${code})${stderr.trim() ? `:\n${stderr.trim()}` : ''}`,
         );
         err.code = 'spawn_error';
         reject(err);

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { runBenchmark } from './process-manager.js';
+import { runBenchmark, runRegrade } from './process-manager.js';
 
 function fakeChild(pid) {
   const child = new EventEmitter();
@@ -185,5 +185,77 @@ describe('runBenchmark', () => {
     await expect(
       runBenchmark({ profile: 'p', targetDir: '/tmp', _spawn }),
     ).rejects.toThrow(/Failed to start benchmark/);
+  });
+});
+
+describe('runRegrade', () => {
+  it('rejects when profile is missing', async () => {
+    await expect(runRegrade({ targetDir: '/tmp' })).rejects.toThrow(
+      /profile is required/,
+    );
+  });
+
+  it('spawns the regrade subcommand with base args and resolves {pid}', async () => {
+    let capturedCmd = null;
+    let capturedArgs = null;
+    const _spawn = (cmd, args) => {
+      capturedCmd = cmd;
+      capturedArgs = args;
+      return fakeChild(4242);
+    };
+    const res = await runRegrade({
+      profile: 'demo',
+      targetDir: '/tmp/out',
+      _spawn,
+    });
+    expect(res).toEqual({ pid: 4242 });
+    expect(capturedCmd).toBe('python3');
+    expect(capturedArgs).toEqual([
+      '-m',
+      'worca_bench.cli',
+      'regrade',
+      '--profile',
+      'demo',
+      '--target-dir',
+      '/tmp/out',
+    ]);
+  });
+
+  it('appends --mode, --instance, --profiles-dir, --only-errors when given', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(7);
+    };
+    await runRegrade({
+      profile: 'demo',
+      targetDir: '/tmp/out',
+      profilesDir: '/authored/profiles',
+      mode: 'sb-cli',
+      instance: 'astropy__astropy-12907',
+      onlyErrors: true,
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--mode') + 1]).toBe('sb-cli');
+    expect(capturedArgs[capturedArgs.indexOf('--instance') + 1]).toBe(
+      'astropy__astropy-12907',
+    );
+    expect(capturedArgs[capturedArgs.indexOf('--profiles-dir') + 1]).toBe(
+      '/authored/profiles',
+    );
+    expect(capturedArgs).toContain('--only-errors');
+  });
+
+  it('rejects with a regrade-labelled message on spawn error', async () => {
+    const _spawn = () => {
+      const child = new EventEmitter();
+      child.pid = undefined;
+      child.stderr = new EventEmitter();
+      queueMicrotask(() => child.emit('error', new Error('ENOENT')));
+      return child;
+    };
+    await expect(
+      runRegrade({ profile: 'p', targetDir: '/tmp', _spawn }),
+    ).rejects.toThrow(/Failed to start regrade/);
   });
 });

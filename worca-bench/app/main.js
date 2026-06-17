@@ -17,6 +17,7 @@ import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
 import '@shoelace-style/shoelace/dist/components/radio-button/radio-button.js';
+import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
 import { outcomeIcon, profileOutcome } from './utils/badge.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
@@ -334,6 +335,7 @@ function renderView(view) {
     case 'detail':
       return profileDetailView(view.data, {
         onRun: (name, opts) => runProfile(name, opts),
+        onRegrade: (name, instanceId) => regradeInstance(name, instanceId),
       });
     case 'compare':
       return compareView(view.data);
@@ -485,6 +487,33 @@ async function runProfile(name, opts = {}) {
     }
   } catch (err) {
     showToast('danger', `Launch failed: ${err.message}`);
+  }
+}
+
+async function regradeInstance(name, instanceId) {
+  try {
+    const res = await fetch('/api/regrade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile: name,
+        instance: instanceId,
+        mode: 'sb-cli',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      showToast(
+        'success',
+        `Re-grading ${instanceId} via sb-cli — pid ${data.pid}`,
+      );
+      // Results land after the hosted eval completes; nudge a few refreshes.
+      setTimeout(refreshCurrent, 2000);
+    } else {
+      showToast('danger', `Regrade failed: ${data.error || res.statusText}`);
+    }
+  } catch (err) {
+    showToast('danger', `Regrade failed: ${err.message}`);
   }
 }
 

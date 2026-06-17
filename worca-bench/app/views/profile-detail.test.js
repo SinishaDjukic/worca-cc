@@ -55,6 +55,33 @@ describe('profileDetailView', () => {
     expect(out).toContain('placeholder="all"');
   });
 
+  it('renders a per-row regrade button when onRegrade is provided', () => {
+    const withRep = {
+      aggregate: data.aggregate,
+      reps: [
+        { instance_id: 'astropy__astropy-12907', rep: 1, status: 'error' },
+      ],
+    };
+    const out = renderToString(
+      profileDetailView(withRep, { onRegrade: () => {} }),
+    );
+    expect(out).toContain('<th>Action</th>');
+    expect(out).toContain('reps-regrade-btn');
+    expect(out).toContain('sl-tooltip');
+  });
+
+  it('omits the regrade button when no onRegrade handler is given', () => {
+    const withRep = {
+      aggregate: data.aggregate,
+      reps: [
+        { instance_id: 'astropy__astropy-12907', rep: 1, status: 'error' },
+      ],
+    };
+    const out = renderToString(profileDetailView(withRep, {}));
+    expect(out).toContain('<th>Action</th>'); // column header always present
+    expect(out).not.toContain('reps-regrade-btn');
+  });
+
   it('renders live stage chips for active runs', () => {
     const out = renderToString(
       profileDetailView({
