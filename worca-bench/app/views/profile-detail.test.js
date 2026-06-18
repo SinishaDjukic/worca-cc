@@ -133,6 +133,40 @@ describe('profileDetailView', () => {
     expect(canaryVal(on)).toBe('on');
   });
 
+  it('seeds the Graphify/CRG/Preflight run-option defaults from the profile', () => {
+    const valAfter = (out, cls) =>
+      out.match(new RegExp(`${cls}[\\s\\S]*?value=(\\w+)`))[1];
+    const out = renderToString(
+      profileDetailView(
+        {
+          aggregate: {
+            ...data.aggregate,
+            graphify: 'structural',
+            code_review_graph: 'structural',
+            preflight: 'off',
+          },
+          reps: [],
+        },
+        { onRun: () => {} },
+      ),
+    );
+    expect(valAfter(out, 'run-opt-graphify')).toBe('structural');
+    expect(valAfter(out, 'run-opt-crg')).toBe('structural');
+    expect(valAfter(out, 'run-opt-preflight')).toBe('off');
+    // Unspecified in the profile => the prior hardcoded fallbacks.
+    const bare = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate }, reps: [] },
+        {
+          onRun: () => {},
+        },
+      ),
+    );
+    expect(valAfter(bare, 'run-opt-graphify')).toBe('off');
+    expect(valAfter(bare, 'run-opt-crg')).toBe('off');
+    expect(valAfter(bare, 'run-opt-preflight')).toBe('on');
+  });
+
   it('shows the fine-grained test count beside the score for Commit0 reps', () => {
     const withCount = {
       aggregate: { ...data.aggregate, benchmark: 'commit0' },

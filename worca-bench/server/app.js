@@ -129,6 +129,9 @@ export function createApp(options = {}) {
           grade_mode: def.grade_mode,
           canary: def.canary,
           max_parallel: def.max_parallel,
+          graphify: def.graphify,
+          code_review_graph: def.code_review_graph,
+          preflight: def.preflight,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -201,9 +204,13 @@ export function createApp(options = {}) {
           aggregate: {
             ...aggregateProfile(name, rows),
             instance_count: instanceCount,
-            // canary + max_parallel are config (never in results rows) — read from the def.
+            // config-only fields (never in results rows) — read from the profile def
+            // so the run-options panel can seed its defaults from the profile.
             canary: def?.canary ?? null,
             max_parallel: def?.max_parallel ?? null,
+            graphify: def?.graphify ?? null,
+            code_review_graph: def?.code_review_graph ?? null,
+            preflight: def?.preflight ?? null,
           },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
@@ -226,6 +233,9 @@ export function createApp(options = {}) {
           grade_mode: def?.grade_mode || null,
           canary: def?.canary ?? null,
           max_parallel: def?.max_parallel ?? null,
+          graphify: def?.graphify ?? null,
+          code_review_graph: def?.code_review_graph ?? null,
+          preflight: def?.preflight ?? null,
           instance_count: instanceCount,
           active: active.length > 0,
         },

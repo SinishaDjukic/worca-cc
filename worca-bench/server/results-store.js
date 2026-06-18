@@ -124,7 +124,7 @@ export function countInstanceIds(text) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, max_parallel, _source_dir}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, max_parallel, graphify, code_review_graph, preflight, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -139,6 +139,35 @@ export function readProfileDefs(targetDir) {
       .replace(/^["']|["']$/g, '');
     return v || null;
   };
+  // Parse a top-level graphify / code_review_graph engine block into the UI radio
+  // value ('off' | 'structural' | 'full'), or null when the key is absent. Mirrors
+  // _coerce_engine in config.py: a bare bool, a bare mode string, or an
+  // { enabled, mode } block where `enabled` defaults to FALSE.
+  const engine = (text, key) => {
+    // Shorthand: `key: value` on one line (a non-empty value => not a block header).
+    const inline = text.match(
+      new RegExp(`^${key}[ \\t]*:[ \\t]*([^\\n#]+?)[ \\t]*(?:#.*)?$`, 'm'),
+    );
+    if (inline) {
+      const v = inline[1].trim().replace(/^["']|["']$/g, '');
+      if (v === 'false') return 'off';
+      if (v === 'true') return 'structural';
+      return v;
+    }
+    // Block: `key:` then indented lines. `enabled` defaults false (config.py).
+    const block = text.match(
+      new RegExp(
+        `^${key}[ \\t]*:[ \\t]*(?:#.*)?\\n((?:[ \\t]+\\S[^\\n]*\\n?)+)`,
+        'm',
+      ),
+    );
+    if (!block) return null;
+    const en = block[1].match(/^[ \t]+enabled[ \t]*:[ \t]*(true|false)\b/m);
+    if (!(en && en[1] === 'true')) return 'off';
+    const md = block[1].match(/^[ \t]+mode[ \t]*:[ \t]*([^\s#]+)/m);
+    const mode = md ? md[1].replace(/^["']|["']$/g, '') : null;
+    return mode || 'structural';
+  };
   const defs = [];
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith('.yaml') && !entry.endsWith('.yml')) continue;
@@ -149,6 +178,9 @@ export function readProfileDefs(targetDir) {
     let instance_count = null;
     let canary = null;
     let max_parallel = null;
+    let graphify = null;
+    let code_review_graph = null;
+    let preflight = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
       benchmark = scalar(text, 'benchmark');
@@ -167,6 +199,13 @@ export function readProfileDefs(targetDir) {
       // (the runner default applies).
       const mp = text.match(/^\s+worca:\s*(\d+)\s*$/m);
       max_parallel = mp ? Number(mp[1]) : null;
+      // Engine modes + preflight — the run-options panel seeds its defaults from
+      // these so the controls mirror the profile (like canary/max_parallel do).
+      graphify = engine(text, 'graphify');
+      code_review_graph = engine(text, 'code_review_graph');
+      // `skip_preflight: true|false` -> preflight off/on; null when unspecified.
+      const sp = scalar(text, 'skip_preflight');
+      preflight = sp === 'true' ? 'off' : sp === 'false' ? 'on' : null;
     } catch {
       // Unreadable profile file — surface the name only.
     }
@@ -178,6 +217,9 @@ export function readProfileDefs(targetDir) {
       instance_count,
       canary,
       max_parallel,
+      graphify,
+      code_review_graph,
+      preflight,
       _source_dir: dir,
     });
   }

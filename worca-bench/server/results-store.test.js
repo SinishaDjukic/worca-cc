@@ -271,6 +271,61 @@ describe('readProfileDefs', () => {
     expect(defs.find((d) => d.name === 'nomp').max_parallel).toBeNull();
   });
 
+  it('parses graphify/code_review_graph engine blocks into radio values', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'eng.yaml'),
+      'name: eng\nbenchmark: commit0\n' +
+        'graphify:\n  enabled: true\n  mode: structural\n' +
+        'code_review_graph:\n  enabled: true\n  mode: structural\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'engfull.yaml'),
+      'name: engfull\nbenchmark: commit0\ngraphify:\n  enabled: true\n  mode: full\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'engoff.yaml'),
+      // present-but-disabled (enabled defaults false in block form)
+      'name: engoff\nbenchmark: commit0\ngraphify:\n  mode: structural\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'engshort.yaml'),
+      'name: engshort\nbenchmark: commit0\ngraphify: structural\ncode_review_graph: false\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'engnone.yaml'),
+      'name: engnone\nbenchmark: commit0\n',
+    );
+    const defs = readProfileDefs(dir);
+    const get = (n) => defs.find((d) => d.name === n);
+    expect(get('eng').graphify).toBe('structural');
+    expect(get('eng').code_review_graph).toBe('structural');
+    expect(get('engfull').graphify).toBe('full');
+    expect(get('engoff').graphify).toBe('off'); // enabled defaults false
+    expect(get('engshort').graphify).toBe('structural'); // bare mode shorthand
+    expect(get('engshort').code_review_graph).toBe('off'); // bare false
+    expect(get('engnone').graphify).toBeNull();
+    expect(get('engnone').code_review_graph).toBeNull();
+  });
+
+  it('parses skip_preflight into the preflight radio value', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'pfoff.yaml'),
+      'name: pfoff\nbenchmark: commit0\nskip_preflight: true\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'pfon.yaml'),
+      'name: pfon\nbenchmark: commit0\nskip_preflight: false\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'pfunset.yaml'),
+      'name: pfunset\nbenchmark: commit0\n',
+    );
+    const defs = readProfileDefs(dir);
+    expect(defs.find((d) => d.name === 'pfoff').preflight).toBe('off');
+    expect(defs.find((d) => d.name === 'pfon').preflight).toBe('on');
+    expect(defs.find((d) => d.name === 'pfunset').preflight).toBeNull();
+  });
+
   it('counts selected instance_ids, null when the selection is absent', () => {
     writeFileSync(
       join(dir, 'profiles', 'sel.yaml'),

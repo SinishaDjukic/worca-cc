@@ -162,7 +162,7 @@ function _runOptionsView(agg, onRun, onNotes) {
         <sl-radio-group
           class="run-opt-preflight"
           size="small"
-          value=${saved.preflight || 'on'}
+          value=${saved.preflight || agg.preflight || 'on'}
           @sl-change=${persist}
         >
           <sl-radio-button value="off">Off</sl-radio-button>
@@ -198,7 +198,7 @@ function _runOptionsView(agg, onRun, onNotes) {
         <sl-radio-group
           class="run-opt-graphify"
           size="small"
-          value=${saved.graphify || 'off'}
+          value=${saved.graphify || agg.graphify || 'off'}
           @sl-change=${persist}
         >
           <sl-radio-button value="off">Off</sl-radio-button>
@@ -211,7 +211,7 @@ function _runOptionsView(agg, onRun, onNotes) {
         <sl-radio-group
           class="run-opt-crg"
           size="small"
-          value=${saved.codeReviewGraph || 'off'}
+          value=${saved.codeReviewGraph || agg.code_review_graph || 'off'}
           @sl-change=${persist}
         >
           <sl-radio-button value="off">Off</sl-radio-button>
