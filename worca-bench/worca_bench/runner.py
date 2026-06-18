@@ -52,6 +52,9 @@ class RunSummary:
     reps_skipped: int = 0
     reps_error: int = 0
     incompatible_templates: dict[str, str] = field(default_factory=dict)
+    # instance_id -> reason for instances skipped by the grade preflight (we can't
+    # grade them later, so they were never built — no tokens spent).
+    ungradeable: dict[str, str] = field(default_factory=dict)
     results: list[RepResult] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -63,6 +66,7 @@ class RunSummary:
             "reps_skipped": self.reps_skipped,
             "reps_error": self.reps_error,
             "incompatible_templates": self.incompatible_templates,
+            "ungradeable": self.ungradeable,
         }
 
 
@@ -129,10 +133,26 @@ def run_profile(
         secret_env = collect_secret_env()
     templates = {profile.template_for(i.id) for i in instances}
 
-    if canary_first and instances:
+    # Grade preflight: definitively un-gradeable instances (missing image / docker
+    # down / no modal creds) are skipped BEFORE any token-burning build. On by
+    # default for real grading; opt out with `grade.options.preflight: false`.
+    if profile.grade.mode != "stub" and bool(
+        (profile.grade.options or {}).get("preflight", True)
+    ):
+        for inst in instances:
+            ok, reason = plugin.grade_preflight(
+                inst, profile.grade, secret_env=secret_env
+            )
+            if not ok:
+                summary.ungradeable[inst.id] = reason
+
+    # The canary validates each template by building one instance — use the first
+    # *gradeable* one so the canary build isn't itself wasted on a skipped instance.
+    canary_pool = [i for i in instances if i.id not in summary.ungradeable]
+    if canary_first and canary_pool:
         for tmpl in sorted(templates):
             ok, reason = _canary_template(
-                profile, wenv, plugin, instances[0], tmpl, target_dir, overlay, secret_env,
+                profile, wenv, plugin, canary_pool[0], tmpl, target_dir, overlay, secret_env,
             )
             if not ok:
                 summary.incompatible_templates[tmpl] = reason
@@ -140,6 +160,11 @@ def run_profile(
     def _task(item: tuple[Instance, int]) -> RepResult:
         inst, rep = item
         tmpl = profile.template_for(inst.id)
+        if inst.id in summary.ungradeable:
+            row = _skip_row(profile, inst, rep, wenv, tmpl,
+                            f"grade preflight: {summary.ungradeable[inst.id]}")
+            append_row(target_dir, row)
+            return RepResult(inst.id, rep, "skipped", error=row["error"])
         if tmpl in summary.incompatible_templates:
             row = _skip_row(profile, inst, rep, wenv, tmpl,
                             summary.incompatible_templates[tmpl])

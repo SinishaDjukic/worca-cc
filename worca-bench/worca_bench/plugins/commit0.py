@@ -42,6 +42,41 @@ def _coerce_pos_int(raw):
     return v if v > 0 else None
 
 
+def _docker_running() -> bool:
+    """True if the local Docker daemon answers — needed for local-docker grading."""
+    try:
+        return subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=15,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _image_published(image: str) -> bool | None:
+    """Registry existence of a grade image without pulling it.
+
+    ``True`` if the manifest exists, ``False`` only when the registry *definitively*
+    reports it missing, ``None`` when the check can't run (docker absent) or is
+    inconclusive (auth/network) — a preflight must never block on an inconclusive
+    signal.
+    """
+    try:
+        p = subprocess.run(
+            ["docker", "manifest", "inspect", image],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode == 0:
+        return True
+    err = (p.stderr or "").lower()
+    if any(s in err for s in (
+        "no such manifest", "not found", "manifest unknown", "manifest for",
+    )):
+        return False
+    return None  # auth / network / unknown — inconclusive, don't block
+
+
 class Commit0Plugin(BenchmarkPlugin):
     name = "commit0"
 
@@ -165,6 +200,44 @@ class Commit0Plugin(BenchmarkPlugin):
             instance, diff, target_dir, prepared, secret_env, backend, grade_timeout,
             rebuild,
         )  # pragma: no cover
+
+    def _grade_image_name(self, instance) -> str:
+        """The Docker Hub image `commit0 test` pulls for this library (see commit0
+        harness/spec.py: ``wentingzhao/<repo>:v0``)."""
+        lib = instance.extra.get("lib", instance.id)
+        return f"wentingzhao/{lib}:v0".lower()
+
+    def grade_preflight(self, instance, grade, *, secret_env=None) -> tuple[bool, str]:
+        """Pre-build check that this library can be graded later — so a real (token-
+        burning) pipeline build isn't wasted on something commit0 can't grade.
+
+        Catches the deterministic blockers: missing Modal creds, an unreachable
+        Docker daemon (local-docker), and a grade image that the registry reports as
+        genuinely unpublished. Environmental/transient failures (disk space mid-run,
+        a test suite that hangs the sandbox) are NOT predictable here and fall back
+        to the build/grade timeouts.
+        """
+        if grade.mode == "stub":
+            return True, ""
+        backend = self.BACKENDS.get(grade.mode)
+        if backend is None:
+            return True, ""  # unknown mode — grade() reports it
+        if backend == "modal":
+            env = grade_env(secret_env)
+            if not (env.get("MODAL_TOKEN_ID") and env.get("MODAL_TOKEN_SECRET")):
+                return False, (
+                    "modal grading needs MODAL_TOKEN_ID + MODAL_TOKEN_SECRET — set "
+                    "them before launching, or the build can't be graded"
+                )
+        if backend == "local" and not _docker_running():
+            return False, "docker daemon not reachable (needed for local-docker grading)"
+        img = self._grade_image_name(instance)
+        if _image_published(img) is False:
+            return False, (
+                f"commit0 grade image {img} is not published — this library cannot "
+                "be graded by this commit0 release"
+            )
+        return True, ""
 
     def _grade_on_pristine(self, instance, diff, target_dir, prepared, secret_env,
                            backend, grade_timeout=None, rebuild=False) -> GradeResult:  # pragma: no cover

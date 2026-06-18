@@ -379,6 +379,42 @@ def test_commit0_grade_threads_timeout_from_options(tmp_path: Path, monkeypatch)
     assert captured["rebuild"] is False
 
 
+def test_commit0_grade_preflight(monkeypatch):
+    import worca_bench.plugins.commit0 as c0
+    plugin = Commit0Plugin()
+    inst = Instance(id="simpy", prompt="", extra={"lib": "simpy"})
+
+    assert plugin._grade_image_name(inst) == "wentingzhao/simpy:v0"
+
+    # stub never blocks.
+    assert plugin.grade_preflight(inst, GradeConfig(mode="stub"))[0] is True
+
+    # modal without creds -> definitively not gradeable.
+    ok, reason = plugin.grade_preflight(inst, GradeConfig(mode="modal"), secret_env={})
+    assert ok is False and "MODAL_TOKEN" in reason
+
+    tokens = {"MODAL_TOKEN_ID": "a", "MODAL_TOKEN_SECRET": "b"}
+    # modal + creds + published image -> ok.
+    monkeypatch.setattr(c0, "_image_published", lambda img: True)
+    assert plugin.grade_preflight(inst, GradeConfig(mode="modal"), secret_env=tokens)[0] is True
+
+    # image the registry says is genuinely missing -> not gradeable.
+    monkeypatch.setattr(c0, "_image_published", lambda img: False)
+    ok, reason = plugin.grade_preflight(inst, GradeConfig(mode="modal"), secret_env=tokens)
+    assert ok is False and "not published" in reason
+
+    # local-docker with the daemon down -> not gradeable.
+    monkeypatch.setattr(c0, "_docker_running", lambda: False)
+    monkeypatch.setattr(c0, "_image_published", lambda img: True)
+    ok, reason = plugin.grade_preflight(inst, GradeConfig(mode="local-docker"))
+    assert ok is False and "docker daemon" in reason
+
+    # inconclusive image check (None) must NOT block.
+    monkeypatch.setattr(c0, "_docker_running", lambda: True)
+    monkeypatch.setattr(c0, "_image_published", lambda img: None)
+    assert plugin.grade_preflight(inst, GradeConfig(mode="local-docker"))[0] is True
+
+
 def test_commit0_load_instances_sets_lib(tmp_path: Path):
     """The library name `commit0 test` needs is carried in extra['lib'] — defaulting
     to the instance id but honoring an explicit per-record override."""

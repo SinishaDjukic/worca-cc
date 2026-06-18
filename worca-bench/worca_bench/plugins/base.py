@@ -83,6 +83,22 @@ class BenchmarkPlugin:
     ) -> GradeResult:
         raise NotImplementedError
 
+    def grade_preflight(
+        self,
+        instance: Instance,
+        grade: GradeConfig,
+        *,
+        secret_env: dict[str, str] | None = None,
+    ) -> tuple[bool, str]:
+        """Cheap, pre-build check that grading this instance is *possible* later, so
+        a token-burning build isn't wasted on something we can't grade.
+
+        Returns ``(ok, reason)``. Default: assume gradeable (no cheap signal). It is
+        best-effort — a check that can't run (missing tooling) must NOT block the
+        run; only a *definitive* "cannot grade" should return ``False``.
+        """
+        return True, ""
+
 
 # ----------------------------- shared helpers ------------------------------ #
 
