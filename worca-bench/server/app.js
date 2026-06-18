@@ -139,10 +139,14 @@ export function createApp(options = {}) {
       const rows = readRows();
       const aggregates = aggregateByProfile(rows);
       const known = new Set(aggregates.map((a) => `${a.src}::${a.name}`));
+      // Keyed defs so we can attach the configured test count (instance_count)
+      // to results-based aggregates too, not just def-only ones.
+      const defByKey = new Map();
       for (const def of readDefs()) {
         // def._source_dir is <dir>/profiles; the result-dir src is its parent.
         const dir = dirname(def._source_dir);
         const src = srcHash(dir);
+        defByKey.set(`${src}::${def.name}`, def);
         if (known.has(`${src}::${def.name}`)) continue;
         known.add(`${src}::${def.name}`);
         aggregates.push({
@@ -161,6 +165,7 @@ export function createApp(options = {}) {
           code_review_graph: def.code_review_graph,
           preflight: def.preflight,
           timeout: def.timeout,
+          instance_count: def.instance_count ?? null,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -180,6 +185,11 @@ export function createApp(options = {}) {
         if (r.active) regradeMap.set(`${r.src}::${r.profile}`, r);
       }
       for (const agg of aggregates) {
+        // Configured test count from the YAML def (null = full benchmark set).
+        if (agg.instance_count == null) {
+          const def = defByKey.get(`${agg.src}::${agg.name}`);
+          agg.instance_count = def?.instance_count ?? null;
+        }
         const run = active.get(`${agg.src}::${agg.name}`);
         if (run) {
           agg.active = true;

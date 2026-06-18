@@ -460,6 +460,9 @@ code {
   flex-wrap: wrap;
   gap: 8px;
   padding-left: 26px;
+  /* Pin to the card's bottom-right so Run stays in one place regardless of how
+     much meta/stage content sits above it (grid stretches cards to equal height). */
+  margin-top: auto;
 }
 
 .run-card-actions:empty {

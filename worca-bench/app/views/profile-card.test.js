@@ -161,6 +161,27 @@ describe('profileCardView', () => {
     expect(out).toContain('7');
   });
 
+  it('shows the configured test count (instance_count), "all" when unset', () => {
+    expect(renderToString(profileCardView(agg({ instance_count: 9 })))).toMatch(
+      /Tests:<\/span>\s*<span class="meta-value">9/,
+    );
+    expect(
+      renderToString(profileCardView(agg({ instance_count: null }))),
+    ).toMatch(/Tests:<\/span>\s*<span class="meta-value">all/);
+  });
+
+  it('drops the worca ref line from the card', () => {
+    expect(renderToString(profileCardView(agg()))).not.toContain('worca:');
+  });
+
+  it('has a Run action but no View button (card click opens the detail)', () => {
+    const out = renderToString(
+      profileCardView(agg(), { onOpen: () => {}, onRun: () => {} }),
+    );
+    expect(out).toContain('>Run</button>');
+    expect(out).not.toContain('>View</button>');
+  });
+
   it('marks an archived profile with run-card--archived', () => {
     expect(renderToString(profileCardView(agg()))).not.toContain(
       'run-card--archived',

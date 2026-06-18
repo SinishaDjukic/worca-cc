@@ -231,6 +231,27 @@ describe('createApp API', () => {
     });
   });
 
+  it('GET /api/profiles exposes the configured test count (instance_count)', async () => {
+    mkdirSync(join(dir, 'profiles'), { recursive: true });
+    // def-only profile with an explicit 3-instance selection.
+    writeFileSync(
+      join(dir, 'profiles', 'sel.yaml'),
+      'name: sel\nbenchmark: commit0\nselection:\n  instance_ids:\n    - a\n    - b\n    - c\n',
+    );
+    // a profile that has results AND a def — instance_count must still attach.
+    writeFileSync(
+      join(dir, 'profiles', 'p1.yaml'),
+      'name: p1\nbenchmark: swe-bench-verified\nselection:\n  instance_ids:\n    - x\n',
+    );
+    writeFileSync(join(dir, 'results.jsonl'), JSON.stringify(row()));
+    await withServer(dir, {}, async (base) => {
+      const { profiles } = await (await fetch(`${base}/api/profiles`)).json();
+      const byName = Object.fromEntries(profiles.map((p) => [p.name, p]));
+      expect(byName.sel.instance_count).toBe(3);
+      expect(byName.p1.instance_count).toBe(1); // results-based agg, def-joined
+    });
+  });
+
   it('GET /api/profiles/:name 404s when neither results nor a def exist', async () => {
     await withServer(dir, {}, async (base) => {
       const res = await fetch(`${base}/api/profiles/ghost`);

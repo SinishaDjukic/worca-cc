@@ -82,11 +82,6 @@ export function profileCardView(
             : nothing
         }
         ${
-          agg.worca_ref
-            ? html`<span class="run-card-meta-item"><span class="meta-label">worca:</span> <span class="meta-value">${agg.worca_ref}</span></span>`
-            : nothing
-        }
-        ${
           agg.template
             ? html`<span class="run-card-meta-item"><span class="meta-label">Template:</span> <span class="meta-value">${agg.template}</span></span>`
             : nothing
@@ -99,6 +94,7 @@ export function profileCardView(
       </div>
 
       <div class="run-card-meta">
+        <span class="run-card-meta-item"><span class="meta-label">Tests:</span> <span class="meta-value">${agg.instance_count ?? 'all'}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Runs:</span> <span class="meta-value">${agg.reps}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Last run:</span> <span class="meta-value">${formatTimestamp(agg.last_run)}</span></span>
       </div>
@@ -123,14 +119,6 @@ export function profileCardView(
       </div>
 
       <div class="run-card-actions">
-        ${
-          onOpen
-            ? html`<button class="action-btn" @click=${(e) => {
-                e.stopPropagation();
-                onOpen(agg);
-              }}>View</button>`
-            : nothing
-        }
         ${
           onRun
             ? html`<button class="action-btn action-btn--primary" @click=${(
