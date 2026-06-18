@@ -150,6 +150,12 @@ class Commit0Plugin(BenchmarkPlugin):
         # SandboxTimeout surfaces as "no test results parsed"). Raise it via the
         # profile's `grade.options.timeout`.
         grade_timeout = _coerce_pos_int((grade.options or {}).get("timeout"))
+        # Optional `grade.options.rebuild` → `commit0 test --rebuild`. commit0 pulls a
+        # prebuilt per-library image (`wentingzhao/<lib>:v0`); some libraries have no
+        # published image (404 on Docker Hub, or the Modal pull hangs). --rebuild
+        # builds the image locally from the repo instead — the only way to grade a
+        # library whose prebuilt image is missing.
+        rebuild = bool((grade.options or {}).get("rebuild"))
         # Real grading: apply the source-only diff onto the live Commit0 setup
         # checkout (which carries the held-out tests + the .commit0.yaml config that
         # `commit0 test` resolves repo/dataset/image state from) on a throwaway
@@ -157,10 +163,11 @@ class Commit0Plugin(BenchmarkPlugin):
         # commit0 + Docker for local; Modal credentials for modal).
         return self._grade_on_pristine(
             instance, diff, target_dir, prepared, secret_env, backend, grade_timeout,
+            rebuild,
         )  # pragma: no cover
 
-    def _grade_on_pristine(self, instance, diff, target_dir, prepared,
-                           secret_env, backend, grade_timeout=None) -> GradeResult:  # pragma: no cover
+    def _grade_on_pristine(self, instance, diff, target_dir, prepared, secret_env,
+                           backend, grade_timeout=None, rebuild=False) -> GradeResult:  # pragma: no cover
         lib = instance.extra.get("lib", instance.id)
         cfg = instance.extra.get("commit0") or {}
         base_dir = cfg.get("base_dir")
@@ -195,6 +202,8 @@ class Commit0Plugin(BenchmarkPlugin):
                    "--backend", backend, "--commit0-config-file", str(config_file)]
             if grade_timeout:
                 cmd += ["--timeout", str(grade_timeout)]
+            if rebuild:
+                cmd += ["--rebuild"]
             proc = subprocess.run(
                 cmd, cwd=str(Path(config_file).parent), capture_output=True, text=True,
                 env=grade_env(secret_env),

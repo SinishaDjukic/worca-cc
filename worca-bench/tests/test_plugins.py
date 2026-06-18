@@ -349,9 +349,10 @@ def test_commit0_grade_threads_timeout_from_options(tmp_path: Path, monkeypatch)
     captured = {}
 
     def fake_pristine(self, instance, diff, target_dir, prepared, secret_env,
-                      backend, grade_timeout=None):
+                      backend, grade_timeout=None, rebuild=False):
         captured["timeout"] = grade_timeout
         captured["backend"] = backend
+        captured["rebuild"] = rebuild
         return GradeResult(status="graded", resolved=True, score=1.0)
 
     monkeypatch.setattr(Commit0Plugin, "_grade_on_pristine", fake_pristine)
@@ -361,19 +362,21 @@ def test_commit0_grade_threads_timeout_from_options(tmp_path: Path, monkeypatch)
 
     Commit0Plugin().grade(
         inst, "+d\n", tmp_path, tmp_path,
-        GradeConfig(mode="modal", options={"timeout": 5400}),
+        GradeConfig(mode="modal", options={"timeout": 5400, "rebuild": True}),
         prepared=Prepared(base_commit=""), secret_env=tokens,
     )
     assert captured["timeout"] == 5400
     assert captured["backend"] == "modal"
+    assert captured["rebuild"] is True
 
-    # No timeout in options => None (commit0's own default applies).
+    # No timeout/rebuild in options => defaults (None / False).
     Commit0Plugin().grade(
         inst, "+d\n", tmp_path, tmp_path,
         GradeConfig(mode="modal", options={}),
         prepared=Prepared(base_commit=""), secret_env=tokens,
     )
     assert captured["timeout"] is None
+    assert captured["rebuild"] is False
 
 
 def test_commit0_load_instances_sets_lib(tmp_path: Path):
@@ -417,7 +420,7 @@ def test_commit0_grade_modal_with_tokens_dispatches_backend(monkeypatch, tmp_pat
     plugin = Commit0Plugin()
 
     def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend,
-                      grade_timeout=None):
+                      grade_timeout=None, rebuild=False):
         captured["backend"] = backend
         return GradeResult(status="graded", resolved=True, score=1.0)
 
@@ -435,7 +438,7 @@ def test_commit0_grade_local_docker_dispatches_backend(monkeypatch, tmp_path: Pa
     plugin = Commit0Plugin()
 
     def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend,
-                      grade_timeout=None):
+                      grade_timeout=None, rebuild=False):
         captured["backend"] = backend
         return GradeResult(status="graded", resolved=False, score=0.0)
 
