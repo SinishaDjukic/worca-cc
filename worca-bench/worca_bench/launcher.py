@@ -140,9 +140,15 @@ def launch(
     template: str,
     run_id: str,
     run_scratch: Path,
-    timeout: int = 1800,
+    timeout: int | None = None,
 ) -> RunOutcome:
-    """Run the pipeline in ``tree`` and return its outcome + parsed status.json."""
+    """Run the pipeline in ``tree`` and return its outcome + parsed status.json.
+
+    ``timeout`` is the per-build wall-clock cap in seconds; ``None`` (the default)
+    means no limit — ``subprocess.run`` waits for the pipeline to finish. A positive
+    value caps the build and, on expiry, returns rc=124 with the partial tree intact
+    (the caller still harvests + grades whatever was built).
+    """
     run_scratch.mkdir(parents=True, exist_ok=True)
     env = build_launch_env(profile, wenv, run_scratch=run_scratch)
 

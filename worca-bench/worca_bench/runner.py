@@ -211,6 +211,7 @@ def _run_one_rep(
             profile, wenv, work,
             prompt=plugin.prompt_for(inst), template=bare_template,
             run_id=run_id, run_scratch=work / ".wb_scratch",
+            timeout=profile.timeout,
         )
         diff = extract_diff(work, prepared.base_commit,
                             extra_excludes=prepared.extra_excludes)

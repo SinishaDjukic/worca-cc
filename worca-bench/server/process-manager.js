@@ -76,6 +76,7 @@ export function runBenchmark({
   preflight,
   claudeMdMode,
   gradeMode,
+  timeout,
   secrets,
   _spawn = spawn,
 } = {}) {
@@ -127,6 +128,11 @@ export function runBenchmark({
   }
   if (gradeMode) {
     args.push('--grade-mode', String(gradeMode));
+  }
+  // Per-build timeout (seconds). 0 is a valid explicit override (no limit), so
+  // accept any non-negative integer; omit to fall back to the profile's value.
+  if (Number.isInteger(timeout) && timeout >= 0) {
+    args.push('--timeout', String(timeout));
   }
 
   return _launchDetached(args, {

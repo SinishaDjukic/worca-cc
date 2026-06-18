@@ -10,13 +10,49 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import worca_bench.launcher as launcher_mod
 from worca_bench.config import Profile
-from worca_bench.launcher import _as_text, build_launch_env
+from worca_bench.launcher import _as_text, build_launch_env, launch
 from worca_bench.venvs import WorcaEnv
 
 
 def _wenv() -> WorcaEnv:
     return WorcaEnv(ref="local", python="python3")
+
+
+class _FakeProc:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
+def test_launch_default_timeout_is_unbounded(tmp_path: Path, monkeypatch):
+    # The hardcoded 1800s cap is gone — default timeout is None (no limit).
+    captured = {}
+
+    def fake_run(args, **kw):
+        captured["timeout"] = kw.get("timeout", "MISSING")
+        return _FakeProc()
+
+    monkeypatch.setattr(launcher_mod.subprocess, "run", fake_run)
+    profile = Profile(name="p", benchmark="swe-bench-verified")
+    launch(profile, _wenv(), tmp_path, prompt="x", template="builtin:feature",
+           run_id="r1", run_scratch=tmp_path / "s")
+    assert captured["timeout"] is None
+
+
+def test_launch_forwards_explicit_timeout(tmp_path: Path, monkeypatch):
+    captured = {}
+
+    def fake_run(args, **kw):
+        captured["timeout"] = kw.get("timeout")
+        return _FakeProc()
+
+    monkeypatch.setattr(launcher_mod.subprocess, "run", fake_run)
+    profile = Profile(name="p", benchmark="swe-bench-verified")
+    launch(profile, _wenv(), tmp_path, prompt="x", template="builtin:feature",
+           run_id="r2", run_scratch=tmp_path / "s", timeout=42)
+    assert captured["timeout"] == 42
 
 
 def test_pr_defer_sets_env_signal(tmp_path: Path):

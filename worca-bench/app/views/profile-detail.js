@@ -58,6 +58,7 @@ function _readControls(box) {
     preflight: box.querySelector('.run-opt-preflight')?.value ?? 'on',
     claudeMd: box.querySelector('.run-opt-claudemd')?.value ?? 'project',
     grader: box.querySelector('.run-opt-grader')?.value ?? '',
+    timeout: box.querySelector('.run-opt-timeout')?.value.trim() ?? '',
   };
 }
 
@@ -95,6 +96,9 @@ function _runOptionsView(agg, onRun, onNotes) {
       preflight: c.preflight !== 'off',
       claudeMdMode: c.claudeMd,
       gradeMode: c.grader || undefined,
+      // Empty => no override (use the profile's timeout). A number (incl. 0,
+      // which means no limit) is sent through as an explicit per-run override.
+      timeout: c.timeout === '' ? undefined : Number.parseInt(c.timeout, 10),
     });
   };
   // Grader options depend on the benchmark (commit0 has no sb-cli backend).
@@ -111,6 +115,9 @@ function _runOptionsView(agg, onRun, onNotes) {
   // so the field reflects what the run will actually use (else the runner default).
   const maxParallelPlaceholder =
     agg.max_parallel != null ? String(agg.max_parallel) : 'default';
+  // Timeout field prefills with the profile's own timeout (seconds) when defined,
+  // else an empty placeholder. Empty = use the profile; 0 = no limit.
+  const timeoutPlaceholder = agg.timeout != null ? String(agg.timeout) : '';
   return html`
     <div class="run-options">
       <div class="run-options-title">Run options</div>
@@ -218,6 +225,21 @@ function _runOptionsView(agg, onRun, onNotes) {
           <sl-radio-button value="structural">Structural</sl-radio-button>
         </sl-radio-group>
       </div>
+      </div>
+      <div class="run-options-row">
+      <label class="run-opt"
+        ><sl-tooltip
+          content="Max build seconds per instance. Empty = use the profile's value; 0 = no limit; otherwise the cap in seconds."
+          ><span class="run-opt-label-inline">Timeout (s)</span></sl-tooltip
+        >
+        <input
+          class="run-opt-timeout"
+          type="number"
+          min="0"
+          placeholder=${timeoutPlaceholder}
+          .value=${saved.timeout ?? ''}
+          @input=${persist}
+      /></label>
       ${
         onNotes
           ? html`<button

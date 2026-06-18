@@ -152,6 +152,9 @@ class Profile:
     # Optional code-graph engines (off by default).
     graphify: EngineConfig = field(default_factory=EngineConfig)
     code_review_graph: EngineConfig = field(default_factory=EngineConfig)
+    # Optional per-instance build timeout in seconds. None = no limit (default).
+    # Absent / null / 0 all mean unbounded; a positive int caps each pipeline build.
+    timeout: int | None = None
 
     def engine_settings(self) -> dict[str, Any]:
         """worca.* overlay for any enabled code-graph engine (empty when off)."""
@@ -212,6 +215,18 @@ def _coerce_engine(raw: Any) -> EngineConfig:
     return EngineConfig(enabled=enabled, mode=mode, options=options)
 
 
+def _coerce_timeout(raw: Any) -> int | None:
+    """Per-instance build timeout in seconds. Absent/None/0/non-positive => None
+    (no limit); a positive int caps the build."""
+    if raw is None:
+        return None
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 def _coerce_selection(raw: Any) -> Selection:
     raw = raw or {}
     sample = None
@@ -267,6 +282,7 @@ def profile_from_dict(data: dict[str, Any]) -> Profile:
         canary=bool(data.get("canary", True)),
         graphify=_coerce_engine(data.get("graphify")),
         code_review_graph=_coerce_engine(data.get("code_review_graph")),
+        timeout=_coerce_timeout(data.get("timeout")),
     )
     profile.validate()
     return profile

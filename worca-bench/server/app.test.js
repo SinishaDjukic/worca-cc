@@ -274,6 +274,38 @@ describe('createApp API', () => {
     });
   });
 
+  it('POST /api/run forwards the timeout override (incl. 0 = no limit)', async () => {
+    let captured = null;
+    const fakeRun = async (opts) => {
+      captured = opts;
+      return { pid: 11 };
+    };
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', timeout: 3600 }),
+      });
+      expect(captured.timeout).toBe(3600);
+
+      // 0 is a valid explicit override (no limit), not dropped.
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', timeout: 0 }),
+      });
+      expect(captured.timeout).toBe(0);
+
+      // Non-integer / negative => dropped (use profile default).
+      await fetch(`${base}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: 'p1', timeout: -5 }),
+      });
+      expect(captured.timeout).toBeUndefined();
+    });
+  });
+
   it('POST /api/run forwards graphify + code-review-graph engine modes', async () => {
     let captured = null;
     const fakeRun = async (opts) => {

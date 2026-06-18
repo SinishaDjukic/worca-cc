@@ -124,7 +124,7 @@ export function countInstanceIds(text) {
  * configured, non-primary result dir.
  *
  * @param {string} targetDir
- * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, max_parallel, graphify, code_review_graph, preflight, _source_dir}>}
+ * @returns {Array<{name, benchmark, template, grade_mode, instance_count, canary, max_parallel, graphify, code_review_graph, preflight, timeout, _source_dir}>}
  */
 export function readProfileDefs(targetDir) {
   const dir = join(targetDir, 'profiles');
@@ -181,6 +181,7 @@ export function readProfileDefs(targetDir) {
     let graphify = null;
     let code_review_graph = null;
     let preflight = null;
+    let timeout = null;
     try {
       const text = readFileSync(join(dir, entry), 'utf8');
       benchmark = scalar(text, 'benchmark');
@@ -206,6 +207,11 @@ export function readProfileDefs(targetDir) {
       // `skip_preflight: true|false` -> preflight off/on; null when unspecified.
       const sp = scalar(text, 'skip_preflight');
       preflight = sp === 'true' ? 'off' : sp === 'false' ? 'on' : null;
+      // `timeout: <seconds>` — per-instance build cap. Null when unspecified or
+      // <= 0 (no limit), matching the Python _coerce_timeout semantics.
+      const to = scalar(text, 'timeout');
+      timeout =
+        to != null && /^\d+$/.test(to) && Number(to) > 0 ? Number(to) : null;
     } catch {
       // Unreadable profile file — surface the name only.
     }
@@ -220,6 +226,7 @@ export function readProfileDefs(targetDir) {
       graphify,
       code_review_graph,
       preflight,
+      timeout,
       _source_dir: dir,
     });
   }

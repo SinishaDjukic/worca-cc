@@ -106,6 +106,35 @@ describe('runBenchmark', () => {
     expect(capturedArgs).not.toContain('--max-parallel');
   });
 
+  it('appends --timeout for any non-negative integer (incl. 0 = no limit)', async () => {
+    let capturedArgs = null;
+    const _spawn = (_cmd, args) => {
+      capturedArgs = args;
+      return fakeChild(12);
+    };
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      timeout: 3600,
+      _spawn,
+    });
+    expect(capturedArgs).toContain('--timeout');
+    expect(capturedArgs[capturedArgs.indexOf('--timeout') + 1]).toBe('3600');
+
+    // 0 is a valid explicit override (no limit) and must be passed through.
+    await runBenchmark({
+      profile: 'smoke',
+      targetDir: '/tmp/out',
+      timeout: 0,
+      _spawn,
+    });
+    expect(capturedArgs[capturedArgs.indexOf('--timeout') + 1]).toBe('0');
+
+    // Omitted => no flag (use the profile's value).
+    await runBenchmark({ profile: 'smoke', targetDir: '/tmp/out', _spawn });
+    expect(capturedArgs).not.toContain('--timeout');
+  });
+
   it('appends --no-canary only when noCanary is truthy', async () => {
     let capturedArgs = null;
     const _spawn = (_cmd, args) => {

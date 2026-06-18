@@ -132,6 +132,7 @@ export function createApp(options = {}) {
           graphify: def.graphify,
           code_review_graph: def.code_review_graph,
           preflight: def.preflight,
+          timeout: def.timeout,
           reps: 0,
           graded: 0,
           resolved: 0,
@@ -211,6 +212,7 @@ export function createApp(options = {}) {
             graphify: def?.graphify ?? null,
             code_review_graph: def?.code_review_graph ?? null,
             preflight: def?.preflight ?? null,
+            timeout: def?.timeout ?? null,
           },
           reps: dedupeReps(rows), // collapse re-runs in the per-rep table
           active,
@@ -236,6 +238,7 @@ export function createApp(options = {}) {
           graphify: def?.graphify ?? null,
           code_review_graph: def?.code_review_graph ?? null,
           preflight: def?.preflight ?? null,
+          timeout: def?.timeout ?? null,
           instance_count: instanceCount,
           active: active.length > 0,
         },
@@ -380,6 +383,14 @@ export function createApp(options = {}) {
         )
           ? req.body.gradeMode
           : undefined,
+        // Per-build timeout override (seconds). A non-negative integer is
+        // authoritative (0 = no limit); omit to use the profile's own value.
+        timeout:
+          typeof req.body?.timeout === 'number' &&
+          Number.isInteger(req.body.timeout) &&
+          req.body.timeout >= 0
+            ? req.body.timeout
+            : undefined,
         // Grader credentials forwarded from the browser; the launcher allowlists
         // and merges them into the runner's env (never persisted server-side).
         secrets: req.body?.secrets,

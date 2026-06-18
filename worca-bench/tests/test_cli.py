@@ -54,6 +54,7 @@ def _args(tmp_path, profiles_dir, **over):
         preflight=None,
         claude_md_mode=None,
         grade_mode=None,
+        timeout=None,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -126,6 +127,48 @@ def test_cmd_run_without_max_parallel_keeps_profile_default(tmp_path, monkeypatc
 
     assert rc == 0
     assert captured["workers"] == 4  # the dataclass default
+
+
+def test_cmd_run_timeout_override_reaches_profile(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["timeout"] = profile.timeout
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, timeout=3600))
+    assert rc == 0
+    assert captured["timeout"] == 3600
+
+
+def test_cmd_run_timeout_zero_means_no_limit(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["timeout"] = profile.timeout
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, timeout=0))
+    assert rc == 0
+    assert captured["timeout"] is None  # 0 => unbounded
+
+
+def test_cmd_run_without_timeout_keeps_profile_default(tmp_path, monkeypatch):
+    profiles_dir = _write_profile(tmp_path)
+    captured = {}
+
+    def fake_run_profile(profile, target, **kw):
+        captured["timeout"] = profile.timeout
+        return _FakeSummary(profile)
+
+    monkeypatch.setattr(cli, "run_profile", fake_run_profile)
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir, timeout=None))
+    assert rc == 0
+    assert captured["timeout"] is None  # profile default (unset)
 
 
 def test_cmd_run_rejects_non_positive_max_parallel(tmp_path, monkeypatch):

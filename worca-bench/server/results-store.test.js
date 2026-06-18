@@ -307,6 +307,25 @@ describe('readProfileDefs', () => {
     expect(get('engnone').code_review_graph).toBeNull();
   });
 
+  it('parses timeout (seconds), null when unset or <= 0', () => {
+    writeFileSync(
+      join(dir, 'profiles', 'to.yaml'),
+      'name: to\nbenchmark: commit0\ntimeout: 3600\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'tozero.yaml'),
+      'name: tozero\nbenchmark: commit0\ntimeout: 0\n',
+    );
+    writeFileSync(
+      join(dir, 'profiles', 'tonone.yaml'),
+      'name: tonone\nbenchmark: commit0\n',
+    );
+    const defs = readProfileDefs(dir);
+    expect(defs.find((d) => d.name === 'to').timeout).toBe(3600);
+    expect(defs.find((d) => d.name === 'tozero').timeout).toBeNull(); // 0 = no limit
+    expect(defs.find((d) => d.name === 'tonone').timeout).toBeNull();
+  });
+
   it('parses skip_preflight into the preflight radio value', () => {
     writeFileSync(
       join(dir, 'profiles', 'pfoff.yaml'),

@@ -129,6 +129,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                   file=sys.stderr)
             return 2
         profile.grade.mode = gm
+    # Per-build timeout override (UI Run option / CLI). A non-negative int wins over
+    # the profile; 0 (or any non-positive) means no limit (unbounded build).
+    to = getattr(args, "timeout", None)
+    if to is not None:
+        profile.timeout = to if to > 0 else None
     # Benchmark cache (HF datasets / repo mirrors): flag wins, else env, else None.
     cache_dir = getattr(args, "cache_dir", None) or os.environ.get("WORCA_BENCH_CACHE")
     # Grader credentials: environment + CLI-flag overlay (allowlist-enforced).
@@ -364,6 +369,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-parallel", type=int,
                        help="override pipeline parallelism for this run (concurrency.worca)")
     p_run.add_argument("--reps", type=int, help="override the profile's reps for this run")
+    p_run.add_argument(
+        "--timeout", type=int, metavar="SECONDS",
+        help="per-instance build timeout in seconds (0 = no limit); overrides the profile")
     p_run.add_argument("--cache-dir", help="benchmark cache dir (HF datasets / repo mirrors)")
     p_run.add_argument(
         "--graphify", nargs="?", const="structural", metavar="MODE",

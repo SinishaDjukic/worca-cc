@@ -53,6 +53,7 @@ describe('profileDetailView', () => {
     expect(out).toContain('run-opt-claudemd'); // CLAUDE.md dropdown
     expect(out).toContain('project+local'); // a CLAUDE.md option
     expect(out).toContain('run-opt-grader'); // grader dropdown
+    expect(out).toContain('run-opt-timeout'); // per-build timeout field
     expect(out).toContain('run-options-title'); // card-style header
     expect(out).toContain('run-options-row'); // controls row wrapper
     // reps input is seeded with the profile's default as a placeholder
@@ -165,6 +166,22 @@ describe('profileDetailView', () => {
     expect(valAfter(bare, 'run-opt-graphify')).toBe('off');
     expect(valAfter(bare, 'run-opt-crg')).toBe('off');
     expect(valAfter(bare, 'run-opt-preflight')).toBe('on');
+  });
+
+  it('seeds the Timeout field from the profile and tooltip-wraps the label', () => {
+    const withTo = renderToString(
+      profileDetailView(
+        { aggregate: { ...data.aggregate, timeout: 1800 }, reps: [] },
+        { onRun: () => {} },
+      ),
+    );
+    expect(withTo).toContain('run-opt-timeout');
+    // unquoted lit attribute binding -> `placeholder=1800` (prefilled from profile)
+    expect(withTo).toMatch(/run-opt-timeout[\s\S]*?placeholder=1800/);
+    // label carries an sl-tooltip explaining the value semantics
+    expect(withTo).toContain('sl-tooltip');
+    expect(withTo).toContain('Timeout (s)');
+    expect(withTo).toContain('0 = no limit');
   });
 
   it('shows the fine-grained test count beside the score for Commit0 reps', () => {

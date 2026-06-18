@@ -39,6 +39,20 @@ def test_canary_flag_parses():
     assert profile_from_dict(_base(canary=True)).canary is True
 
 
+def test_timeout_parses():
+    # Unset => no limit (None).
+    assert profile_from_dict(_base()).timeout is None
+    # Positive int => that cap in seconds.
+    assert profile_from_dict(_base(timeout=3600)).timeout == 3600
+    # 0 / negative / null => no limit.
+    assert profile_from_dict(_base(timeout=0)).timeout is None
+    assert profile_from_dict(_base(timeout=-5)).timeout is None
+    assert profile_from_dict(_base(timeout=None)).timeout is None
+    # String-but-numeric coerces; non-numeric => None.
+    assert profile_from_dict(_base(timeout="900")).timeout == 900
+    assert profile_from_dict(_base(timeout="nope")).timeout is None
+
+
 def test_engines_off_by_default():
     prof = profile_from_dict(_base())
     assert prof.graphify.enabled is False

@@ -1188,6 +1188,12 @@ code {
   font-size: 12px;
   color: var(--muted);
 }
+/* Tooltip-bearing inline label (e.g. Timeout) — dotted underline + help cursor
+   signal that hovering reveals the value semantics. */
+.run-opt-label-inline {
+  cursor: help;
+  border-bottom: 1px dotted var(--muted);
+}
 .run-opt-engine sl-radio-group::part(button-group) {
   display: flex;
 }
