@@ -34,16 +34,17 @@ function settingsFile(home) {
 export function loadSettings(home) {
   const file = settingsFile(home);
   if (!existsSync(file)) {
-    return { result_dirs: [] };
+    return { result_dirs: [], archived: [] };
   }
   try {
     const data = JSON.parse(readFileSync(file, 'utf8'));
     return {
       ...data,
       result_dirs: Array.isArray(data.result_dirs) ? data.result_dirs : [],
+      archived: Array.isArray(data.archived) ? data.archived : [],
     };
   } catch {
-    return { result_dirs: [] };
+    return { result_dirs: [], archived: [] };
   }
 }
 
@@ -61,6 +62,37 @@ function isDir(p) {
   } catch {
     return false;
   }
+}
+
+// ─── Archived profiles ──────────────────────────────────────────────────────
+//
+// Profiles the operator has hidden from the dashboard. Stored as a flat list of
+// stable profile keys (`name@src`, where src is the result-dir source hash), so
+// the same-named profile in two result dirs archives independently. Visibility
+// is a dashboard-wide preference (not per-browser) — kept server-side alongside
+// the result-dir config so it survives reloads and is shared across clients.
+
+/** The set of archived profile keys (`name@src`). */
+export function loadArchived(home) {
+  return new Set(loadSettings(home).archived);
+}
+
+/**
+ * Archive or un-archive a batch of profile keys. `keys` are `name@src` strings;
+ * `archived: true` adds them, `false` removes them. Returns the updated key list.
+ */
+export function setArchived(keys, archived, home) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  const settings = loadSettings(home);
+  const set = new Set(settings.archived);
+  for (const k of list) {
+    if (!k || typeof k !== 'string') continue;
+    if (archived) set.add(k);
+    else set.delete(k);
+  }
+  settings.archived = [...set].sort();
+  saveSettings(settings, home);
+  return settings.archived;
 }
 
 /**

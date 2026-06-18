@@ -45,7 +45,7 @@ export function profileCardView(
 
   return html`
     <div
-      class="run-card ${outcomeClass(outcome)} ${isSelected ? 'run-card--selected' : ''}"
+      class="run-card ${outcomeClass(outcome)} ${isSelected ? 'run-card--selected' : ''} ${agg.archived ? 'run-card--archived' : ''}"
       @click=${onOpen ? () => onOpen(agg) : null}
     >
       <div class="run-card-top">
@@ -99,7 +99,7 @@ export function profileCardView(
       </div>
 
       <div class="run-card-meta">
-        <span class="run-card-meta-item"><span class="meta-label">Reps:</span> <span class="meta-value">${agg.reps}</span></span>
+        <span class="run-card-meta-item"><span class="meta-label">Runs:</span> <span class="meta-value">${agg.reps}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Last run:</span> <span class="meta-value">${formatTimestamp(agg.last_run)}</span></span>
       </div>
 

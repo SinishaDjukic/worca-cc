@@ -154,4 +154,18 @@ describe('profileCardView', () => {
     );
     expect(out).toContain('canary');
   });
+
+  it('shows the run count under a "Runs:" label', () => {
+    const out = renderToString(profileCardView(agg({ reps: 7 })));
+    expect(out).toContain('Runs:');
+    expect(out).toContain('7');
+  });
+
+  it('marks an archived profile with run-card--archived', () => {
+    expect(renderToString(profileCardView(agg()))).not.toContain(
+      'run-card--archived',
+    );
+    const out = renderToString(profileCardView(agg({ archived: true })));
+    expect(out).toContain('run-card--archived');
+  });
 });

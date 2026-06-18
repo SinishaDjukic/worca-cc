@@ -80,6 +80,48 @@ describe('createApp API', () => {
     });
   });
 
+  it('GET /api/profiles tags archived (default false) and POST archive flips it', async () => {
+    writeFileSync(join(dir, 'results.jsonl'), JSON.stringify(row()));
+    await withServer(dir, {}, async (base) => {
+      // Default: not archived.
+      let { profiles } = await (await fetch(`${base}/api/profiles`)).json();
+      expect(profiles[0].archived).toBe(false);
+      const key = `${profiles[0].name}@${profiles[0].src}`;
+
+      // Archive it.
+      const arch = await fetch(`${base}/api/profiles/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: [key], archived: true }),
+      });
+      expect(arch.status).toBe(200);
+      expect((await arch.json()).archived).toEqual([key]);
+
+      ({ profiles } = await (await fetch(`${base}/api/profiles`)).json());
+      expect(profiles[0].archived).toBe(true);
+
+      // Un-archive it.
+      await fetch(`${base}/api/profiles/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: [key], archived: false }),
+      });
+      ({ profiles } = await (await fetch(`${base}/api/profiles`)).json());
+      expect(profiles[0].archived).toBe(false);
+    });
+  });
+
+  it('POST /api/profiles/archive 400s when keys is missing', async () => {
+    await withServer(dir, {}, async (base) => {
+      const res = await fetch(`${base}/api/profiles/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
   it('GET /api/profiles/:name returns aggregate + reps, 404 for unknown', async () => {
     writeFileSync(join(dir, 'results.jsonl'), JSON.stringify(row()));
     await withServer(dir, {}, async (base) => {

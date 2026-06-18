@@ -51,10 +51,12 @@ import {
 } from './run-control.js';
 import {
   addResultDir,
+  loadArchived,
   loadSettings,
   removeResultDir,
   resolveCacheDir,
   resolveResultDirs,
+  setArchived,
   setCacheDir,
 } from './settings-store.js';
 
@@ -196,8 +198,30 @@ export function createApp(options = {}) {
           };
         }
       }
+      // Tag visibility: archived profiles are hidden by default on the dashboard
+      // (the operator manages them via the filter pills + Archive action).
+      const archivedSet = loadArchived(settingsHome);
+      for (const agg of aggregates) {
+        agg.archived = archivedSet.has(`${agg.name}@${agg.src}`);
+      }
       aggregates.sort((a, b) => a.name.localeCompare(b.name));
       res.json({ ok: true, profiles: aggregates });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Archive / un-archive a batch of profiles. Body: { keys: ["name@src", …],
+  // archived: bool }. Visibility is persisted dashboard-wide (settings.json).
+  app.post('/api/profiles/archive', (req, res) => {
+    try {
+      const { keys, archived } = req.body || {};
+      const list = Array.isArray(keys) ? keys : keys ? [keys] : [];
+      if (list.length === 0) {
+        return res.status(400).json({ ok: false, error: 'keys is required' });
+      }
+      const updated = setArchived(list, archived !== false, settingsHome);
+      res.json({ ok: true, archived: updated });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

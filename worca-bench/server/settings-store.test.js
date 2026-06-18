@@ -4,11 +4,13 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addResultDir,
+  loadArchived,
   loadSettings,
   removeResultDir,
   resolveCacheDir,
   resolveResultDirs,
   saveSettings,
+  setArchived,
   setCacheDir,
 } from './settings-store.js';
 
@@ -44,6 +46,44 @@ describe('settings-store', () => {
     addResultDir(dirB, home);
     removeResultDir(dirA, home);
     expect(loadSettings(home).result_dirs).toEqual([resolve(dirB)]);
+  });
+
+  describe('archived profiles', () => {
+    it('defaults to an empty archived set', () => {
+      expect(loadSettings(home).archived).toEqual([]);
+      expect([...loadArchived(home)]).toEqual([]);
+    });
+
+    it('archives keys (deduped, sorted) and reloads them', () => {
+      setArchived(['b@2', 'a@1'], true, home);
+      setArchived(['a@1'], true, home); // dedupe
+      expect(loadSettings(home).archived).toEqual(['a@1', 'b@2']);
+      expect(loadArchived(home).has('a@1')).toBe(true);
+    });
+
+    it('accepts a single key (not just an array)', () => {
+      setArchived('solo@9', true, home);
+      expect([...loadArchived(home)]).toEqual(['solo@9']);
+    });
+
+    it('un-archives keys with archived=false', () => {
+      setArchived(['a@1', 'b@2'], true, home);
+      const remaining = setArchived(['a@1'], false, home);
+      expect(remaining).toEqual(['b@2']);
+      expect(loadArchived(home).has('a@1')).toBe(false);
+    });
+
+    it('ignores empty/non-string keys', () => {
+      setArchived(['', null, 'real@1', undefined], true, home);
+      expect(loadSettings(home).archived).toEqual(['real@1']);
+    });
+
+    it('preserves archived across an unrelated result_dirs write', () => {
+      setArchived(['a@1'], true, home);
+      addResultDir(dirA, home);
+      expect(loadSettings(home).archived).toEqual(['a@1']);
+      expect(loadSettings(home).result_dirs).toEqual([resolve(dirA)]);
+    });
   });
 
   it('resolves the union of primary + configured (existing, deduped)', () => {

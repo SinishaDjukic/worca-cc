@@ -884,6 +884,69 @@ code {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
+/* Archived cards: visible (in the All/Archived tabs) but visually de-emphasised. */
+.run-card--archived {
+  opacity: 0.62;
+}
+.run-card--archived:hover {
+  opacity: 1;
+}
+
+/* ─── Dashboard filter bar (pills + search) ────────────────────────────── */
+.profile-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.filter-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.filter-pill:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+.filter-pill--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.filter-pill-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.filter-search {
+  width: 100%;
+  max-width: 480px;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--fg);
+  font-size: 14px;
+}
+.filter-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 
 /* ─── Launch toast (run feedback) ──────────────────────────────────────── */
 .launch-toast {

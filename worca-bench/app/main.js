@@ -112,6 +112,11 @@ const state = {
   actionsDismissed: new Set(
     JSON.parse(localStorage.getItem('wb.activity.dismissed') || '[]'),
   ),
+  // Dashboard visibility filter: 'active' (non-archived, default) | 'all' |
+  // 'archived'. The pill choice is a UI nicety persisted per-browser; the
+  // archived state itself is server-side (see /api/profiles/archive).
+  dashFilter: localStorage.getItem('wb.dash.filter') || 'active',
+  dashSearch: '',
 };
 
 // Backend connection indicator (sidebar footer). worca-bench has no WS, so we
@@ -177,6 +182,44 @@ function toggleSelect(agg) {
     selected.add(key);
   }
   rerender();
+}
+
+function setDashFilter(key) {
+  state.dashFilter = key;
+  localStorage.setItem('wb.dash.filter', key);
+  rerender();
+}
+function setDashSearch(q) {
+  state.dashSearch = q;
+  rerender();
+}
+
+// Archive / un-archive the checked profiles (server-persisted). After it lands,
+// clear the selection and refresh so the cards move between filter tabs.
+async function archiveSelected(archived) {
+  const keys = [...selected];
+  if (keys.length === 0) return;
+  try {
+    const res = await fetch('/api/profiles/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys, archived }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      const verb = archived ? 'Archived' : 'Unarchived';
+      showToast(
+        'success',
+        `${verb} ${keys.length} profile${keys.length === 1 ? '' : 's'}`,
+      );
+      selected.clear();
+      refreshCurrent();
+    } else {
+      showToast('danger', `Archive failed: ${data.error || res.statusText}`);
+    }
+  } catch (err) {
+    showToast('danger', `Archive failed: ${err.message}`);
+  }
 }
 
 function loadingView() {
@@ -282,7 +325,14 @@ function buildHeader(path, view) {
   let action = null;
   if (selected.size > 0) {
     const names = [...selected].join(',');
+    // On the Archived tab the selected cards are already archived, so the
+    // action restores them; everywhere else it archives.
+    const unarchiving = state.dashFilter === 'archived';
     action = html`
+      <button
+        class="action-btn"
+        @click=${() => archiveSelected(!unarchiving)}
+      >${unarchiving ? 'Unarchive' : 'Archive'} (${selected.size})</button>
       <button
         class="action-btn"
         @click=${() => {
@@ -435,6 +485,10 @@ function renderView(view) {
         onRun: (name) => runProfile(name),
         selected,
         onToggleSelect: toggleSelect,
+        filter: state.dashFilter,
+        search: state.dashSearch,
+        onFilter: setDashFilter,
+        onSearch: setDashSearch,
       });
     case 'detail': {
       // Disable Run while this profile already has a live run action — the
