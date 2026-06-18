@@ -1120,13 +1120,11 @@ code {
   font-weight: 600;
   font-size: 13px;
 }
-.live-run-stage {
-  font-size: 12px;
-  font-family: var(--mono, ui-monospace, monospace);
+.live-run-instance {
+  font-size: 14px;
+  font-weight: 700;
   color: var(--fg);
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
+  letter-spacing: -0.01em;
 }
 .live-run-meta {
   margin-left: auto;

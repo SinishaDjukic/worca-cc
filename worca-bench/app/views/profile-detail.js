@@ -396,8 +396,10 @@ function _liveView(active) {
   return html`
     <div class="live-runs">
       ${active.map((run) => {
+        // The instance (test) name is the run's primary identifier, so it sits
+        // prominently next to the status. The active pipeline stage is already
+        // highlighted in the stage-chips row below, so we don't repeat it here.
         const meta = [
-          run.instance,
           run.rep != null ? `rep ${run.rep}` : null,
           _elapsedSince(run.started_at),
         ]
@@ -410,8 +412,8 @@ function _liveView(active) {
               <span class="running-dot"></span>
               <span class="live-run-label">${_phaseLabel(run)}</span>
               ${
-                run.stage && !grading
-                  ? html`<span class="live-run-stage">${stageLabel(run.stage)}</span>`
+                run.instance
+                  ? html`<span class="live-run-instance">${run.instance}</span>`
                   : nothing
               }
               ${meta ? html`<span class="live-run-meta">${meta}</span>` : nothing}
