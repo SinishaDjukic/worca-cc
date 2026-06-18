@@ -209,7 +209,8 @@ describe('createApp API', () => {
         body: JSON.stringify({ profile: 'p1' }),
       });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, pid: 4242 });
+      // Response also carries the recorded `action` now; match the core fields.
+      expect(await res.json()).toMatchObject({ ok: true, pid: 4242 });
       expect(captured.profile).toBe('p1');
       expect(captured.targetDir).toBe(dir);
     });
@@ -271,6 +272,51 @@ describe('createApp API', () => {
       });
       expect(captured.reps).toBeUndefined();
       expect(captured.maxInstances).toBeUndefined();
+    });
+  });
+
+  it('POST /api/run records a running action surfaced by GET /api/actions', async () => {
+    // A live pid keeps the action 'running' through the read-time reconciliation.
+    const fakeRun = async () => ({ pid: process.pid });
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      const launched = await (
+        await fetch(`${base}/api/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: 'p1', reps: 2 }),
+        })
+      ).json();
+      expect(launched.ok).toBe(true);
+      expect(launched.action.type).toBe('run');
+      expect(launched.action.profile).toBe('p1');
+
+      const list = await (await fetch(`${base}/api/actions`)).json();
+      const a = list.actions.find((x) => x.id === launched.action.id);
+      expect(a).toBeTruthy();
+      expect(a.status).toBe('running');
+      expect(a.progress.unit).toBe('instances');
+    });
+  });
+
+  it('POST /api/actions/:id/stop marks the action stopped', async () => {
+    const fakeRun = async () => ({ pid: 999999 }); // dead pid: stop is a no-op kill
+    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
+      const launched = await (
+        await fetch(`${base}/api/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: 'p1' }),
+        })
+      ).json();
+      const stop = await (
+        await fetch(`${base}/api/actions/${launched.action.id}/stop`, {
+          method: 'POST',
+        })
+      ).json();
+      expect(stop.ok).toBe(true);
+      const list = await (await fetch(`${base}/api/actions`)).json();
+      const a = list.actions.find((x) => x.id === launched.action.id);
+      expect(a.status).toBe('stopped');
     });
   });
 
@@ -345,7 +391,7 @@ describe('createApp API', () => {
         }),
       });
       const data = await res.json();
-      expect(data).toEqual({ ok: true, pid: 77 });
+      expect(data).toMatchObject({ ok: true, pid: 77 });
       expect(captured.profile).toBe('p1');
       expect(captured.instance).toBe('astropy__astropy-12907');
       expect(captured.mode).toBe('sb-cli');

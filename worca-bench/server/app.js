@@ -18,6 +18,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import {
+  findAction,
+  patchAction,
+  readActions,
+  recordAction,
+} from './actions-store.js';
+import {
   activeByProfile,
   discoverActiveMulti,
   discoverRegradesMulti,
@@ -39,6 +45,7 @@ import {
 } from './results-store.js';
 import {
   clearProfileResults,
+  stopPidTree,
   stopProfileRuns,
   stopRegrade,
 } from './run-control.js';
@@ -395,7 +402,26 @@ export function createApp(options = {}) {
         // and merges them into the runner's env (never persisted server-side).
         secrets: req.body?.secrets,
       });
-      res.json({ ok: true, pid });
+      // Record the launch in the actions ledger so the Activity dock shows it
+      // immediately (closing the gap before the first status.json appears) and
+      // survives a page reload. Best-effort — a ledger write must never fail a run.
+      let action = null;
+      try {
+        action = recordAction(targetDir, {
+          type: 'run',
+          profile,
+          src: def ? srcHash(dirname(def._source_dir)) : undefined,
+          pid,
+          params: {
+            reps: _posInt(req.body?.reps),
+            maxInstances: _posInt(req.body?.maxInstances),
+            timeout: req.body?.timeout,
+          },
+        });
+      } catch {
+        /* ledger write failed — the run still launched */
+      }
+      res.json({ ok: true, pid, action });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -442,7 +468,93 @@ export function createApp(options = {}) {
         logPath: join(targetDir, 'runs', profile, 'regrade.log'),
         secrets: req.body?.secrets,
       });
-      res.json({ ok: true, pid });
+      let action = null;
+      try {
+        action = recordAction(targetDir, {
+          type: 'regrade',
+          profile,
+          src: def ? srcHash(dirname(def._source_dir)) : undefined,
+          pid,
+          params: {
+            mode: mode || undefined,
+            instance: instance || undefined,
+            onlyErrors: req.body?.onlyErrors === true,
+          },
+        });
+      } catch {
+        /* ledger write failed — the regrade still launched */
+      }
+      res.json({ ok: true, pid, action });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Actions ledger (Activity dock) ─────────────────────────────────────
+  // Persistent, reload-surviving list of Run/Regrade launches with lifecycle +
+  // derived progress. Reconciles dead pids to a terminal state on read.
+  app.get('/api/actions', (_req, res) => {
+    try {
+      const actions = readActions(targetDir);
+      const rows = readRows();
+      const regrades = readRegrades();
+      const defs = readDefs();
+      const enriched = actions.map((a) => {
+        if (a.type === 'run') {
+          // done = terminal result rows for this profile produced since launch;
+          // total = the profile's selected instance count (null => "all").
+          const since = a.started_at || '';
+          const mine = rows.filter(
+            (r) => r.profile === a.profile && (r.completed_at || '') >= since,
+          );
+          const done = mine.filter((r) =>
+            ['graded', 'error', 'skipped'].includes(r.status),
+          ).length;
+          const errors = mine.filter((r) => r.status === 'error').length;
+          const def = defs.find((d) => d.name === a.profile);
+          return {
+            ...a,
+            progress: {
+              unit: 'instances',
+              done,
+              errors,
+              total: def?.instance_count ?? null,
+            },
+          };
+        }
+        // regrade: pull live counts from the heartbeat when present.
+        const rg = regrades.find((r) => r.profile === a.profile);
+        if (rg) {
+          return {
+            ...a,
+            progress: {
+              unit: 'regraded',
+              done: rg.done,
+              total: rg.total,
+              errors: rg.counts?.error ?? 0,
+            },
+          };
+        }
+        return { ...a, progress: null };
+      });
+      res.json({ ok: true, actions: enriched });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Stop one action by id: SIGTERM→SIGKILL its runner tree, mark it stopped.
+  app.post('/api/actions/:id/stop', async (req, res) => {
+    try {
+      const a = findAction(targetDir, req.params.id);
+      if (!a)
+        return res.status(404).json({ ok: false, error: 'action not found' });
+      const stopped = await stopPidTree(a.pid);
+      patchAction(targetDir, a.id, {
+        status: 'stopped',
+        ended_at: new Date().toISOString(),
+      });
+      res.json({ ok: true, stopped });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

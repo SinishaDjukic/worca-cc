@@ -48,6 +48,41 @@ function collectTree(pid, acc) {
 const _delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Stop a single action by the pid of its runner CLI: SIGTERM then SIGKILL the
+ * whole process tree (so run_pipeline / regrade children go too). Used by the
+ * Activity dock's per-row Stop. Returns true if a live root was found.
+ * @param {number} pid
+ * @returns {Promise<boolean>}
+ */
+export async function stopPidTree(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0); // alive? (throws if gone)
+  } catch {
+    return false;
+  }
+  const acc = new Set();
+  collectTree(pid, acc);
+  const pids = [...acc];
+  for (const p of pids) {
+    try {
+      process.kill(p, 'SIGTERM');
+    } catch {
+      /* gone / not ours */
+    }
+  }
+  await _delay(1500);
+  for (const p of pids) {
+    try {
+      process.kill(p, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+  }
+  return true;
+}
+
+/**
  * Stop active runs for a profile: SIGTERM then SIGKILL the runner CLI tree(s).
  * @returns {Promise<number>} number of runner roots stopped
  */

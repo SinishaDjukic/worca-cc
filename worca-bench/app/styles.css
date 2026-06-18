@@ -1225,3 +1225,176 @@ code {
   color: #4338ca;
   border-color: rgba(99, 102, 241, 0.3);
 }
+
+/* ─── Activity dock (persistent Run/Regrade ledger) ─────────────────────────
+   Fixed to the bottom of the content area (right of the sidebar); a slim bar
+   that expands into a table. Visible on every page, reflects the server ledger. */
+.activity-dock {
+  position: fixed;
+  left: var(--sidebar-width);
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+}
+.activity-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border: none;
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+}
+.activity-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.activity-caret {
+  color: var(--muted);
+}
+.activity-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.act-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.act-chip--running {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+.act-chip--failed {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+.act-chip--done {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+.act-chip--stopped {
+  color: var(--muted);
+  background: rgba(148, 163, 184, 0.15);
+}
+.act-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: act-pulse 1.4s ease-in-out infinite;
+}
+@keyframes act-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.activity-panel {
+  max-height: 38vh;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+.activity-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.activity-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: var(--surface);
+}
+.activity-table td {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.activity-row--running {
+  background: rgba(37, 99, 235, 0.05);
+}
+.act-type {
+  font-weight: 600;
+}
+.act-profile {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.act-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.act-status--running {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+.act-status--done {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+.act-status--failed {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+.act-status--stopped {
+  color: var(--muted);
+  background: rgba(148, 163, 184, 0.15);
+}
+.act-progress,
+.act-time,
+.act-dur {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.act-actions {
+  display: flex;
+  gap: 6px;
+}
+.act-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+}
+.act-btn:hover {
+  background: var(--bg-tertiary);
+}
+.act-btn--stop {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.4);
+}
+.act-btn--dismiss {
+  color: var(--muted);
+}
+/* Reserve room so page content never hides behind the collapsed dock bar. */
+.main-content {
+  padding-bottom: 46px;
+}

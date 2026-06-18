@@ -32,6 +32,7 @@ import {
   showRegradeDialog,
 } from './utils/regrade-dialog.js';
 import { clearSecret, launchSecrets, saveSecrets } from './utils/secrets.js';
+import { activityDock } from './views/activity-dock.js';
 import { compareView } from './views/compare.js';
 import { leaderboardView } from './views/leaderboard.js';
 import { profileDetailView } from './views/profile-detail.js';
@@ -104,6 +105,13 @@ const state = {
   view: null, // { kind, data }
   toast: null, // { variant: 'success'|'danger', message }
   connection: 'connecting', // 'connected' | 'connecting' | 'disconnected'
+  // Activity dock: the actions ledger (Run/Regrade launches), refreshed from
+  // /api/actions so it's visible on every page and survives a reload.
+  actions: [],
+  actionsCollapsed: localStorage.getItem('wb.activity.collapsed') !== 'false', // default collapsed
+  actionsDismissed: new Set(
+    JSON.parse(localStorage.getItem('wb.activity.dismissed') || '[]'),
+  ),
 };
 
 // Backend connection indicator (sidebar footer). worca-bench has no WS, so we
@@ -330,6 +338,14 @@ function shell(activeKey, header, body) {
         ${header}
         ${body}
       </main>
+      ${activityDock(state.actions, {
+        collapsed: state.actionsCollapsed,
+        dismissed: state.actionsDismissed,
+        onToggle: toggleActivity,
+        onStop: stopAction,
+        onView: viewAction,
+        onDismiss: dismissAction,
+      })}
       ${toastView()}
       ${confirmDialogTemplate()}
       ${folderPickerTemplate()}
@@ -337,6 +353,53 @@ function shell(activeKey, header, body) {
       ${notesDialogTemplate()}
     </div>
   `;
+}
+
+// ─── Activity dock: refresh + controls ──────────────────────────────────────
+
+async function refreshActions() {
+  try {
+    const data = await getJSON('/api/actions');
+    const next = data.actions || [];
+    if (JSON.stringify(next) !== JSON.stringify(state.actions)) {
+      state.actions = next;
+      rerender();
+    }
+  } catch {
+    // Silent — the next poll tick retries.
+  }
+}
+
+function toggleActivity() {
+  state.actionsCollapsed = !state.actionsCollapsed;
+  localStorage.setItem('wb.activity.collapsed', String(state.actionsCollapsed));
+  rerender();
+}
+
+async function stopAction(a) {
+  try {
+    await fetch(`/api/actions/${encodeURIComponent(a.id)}/stop`, {
+      method: 'POST',
+    });
+    showToast('success', `Stopping ${a.type} ${a.profile}…`);
+    setTimeout(refreshActions, 800);
+  } catch (err) {
+    showToast('danger', `Stop failed: ${err.message}`);
+  }
+}
+
+function viewAction(a) {
+  const src = a.src ? `&src=${encodeURIComponent(a.src)}` : '';
+  navigate(`#/profile?name=${encodeURIComponent(a.profile)}${src}`);
+}
+
+function dismissAction(a) {
+  state.actionsDismissed.add(a.id);
+  localStorage.setItem(
+    'wb.activity.dismissed',
+    JSON.stringify([...state.actionsDismissed]),
+  );
+  rerender();
 }
 
 function rerender() {
@@ -512,7 +575,10 @@ async function refreshCurrent() {
 function startPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    if (!document.hidden) refreshCurrent();
+    if (!document.hidden) {
+      refreshCurrent();
+      refreshActions(); // keep the Activity dock live on every page
+    }
   }, POLL_MS);
 }
 
@@ -553,8 +619,9 @@ async function runProfile(name, opts = {}) {
       ].filter(Boolean);
       const suffix = extra.length ? ` (${extra.join(', ')})` : '';
       showToast('success', `Launched ${name}${suffix} — pid ${data.pid}`);
-      // Nudge a refresh so the run's first results surface without waiting a
-      // full poll tick (results land in seconds under mock).
+      // Surface the new action in the dock immediately (server recorded it on
+      // launch), and nudge a results refresh for the run's first rows.
+      refreshActions();
       setTimeout(refreshCurrent, 1500);
     } else {
       showToast('danger', `Launch failed: ${data.error || res.statusText}`);
@@ -670,7 +737,8 @@ async function doRegrade(name, { instance, mode, sequential } = {}) {
     if (res.ok && data.ok) {
       const what = instance ? instance : `all of ${name}`;
       showToast('success', `Re-grading ${what} via ${mode} — pid ${data.pid}`);
-      // Results land after the eval completes; nudge a refresh.
+      // Surface the regrade action in the dock now; results land after the eval.
+      refreshActions();
       setTimeout(refreshCurrent, 2000);
     } else {
       showToast('danger', `Regrade failed: ${data.error || res.statusText}`);
@@ -833,6 +901,7 @@ window.addEventListener('hashchange', route);
 route();
 startPolling();
 heartbeat();
+refreshActions(); // populate the Activity dock on first paint (survives reload)
 setInterval(() => {
   if (!document.hidden) heartbeat();
 }, 5000);
