@@ -33,6 +33,15 @@ from .base import (
 _SPEC_ARTIFACTS = ("spec.pdf", "spec.pdf.bz2")
 
 
+def _coerce_pos_int(raw):
+    """A positive int (seconds), else None. Mirrors the build-timeout coercion."""
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 class Commit0Plugin(BenchmarkPlugin):
     name = "commit0"
 
@@ -135,15 +144,23 @@ class Commit0Plugin(BenchmarkPlugin):
                     detail="modal grading needs MODAL_TOKEN_ID + MODAL_TOKEN_SECRET "
                            "(set them in the dashboard Settings, pass "
                            "--modal-token-id/--modal-token-secret, or export them)")
+        # Optional per-grade timeout (seconds) → `commit0 test --timeout`. This is
+        # the test-run cap AND the Modal sandbox timeout (modal.Sandbox.create
+        # timeout=); commit0's default is 1800s, which large suites exceed (a
+        # SandboxTimeout surfaces as "no test results parsed"). Raise it via the
+        # profile's `grade.options.timeout`.
+        grade_timeout = _coerce_pos_int((grade.options or {}).get("timeout"))
         # Real grading: apply the source-only diff onto the live Commit0 setup
         # checkout (which carries the held-out tests + the .commit0.yaml config that
         # `commit0 test` resolves repo/dataset/image state from) on a throwaway
         # branch, then `commit0 test <lib> --branch <scratch>`. Best-effort (needs
         # commit0 + Docker for local; Modal credentials for modal).
-        return self._grade_on_pristine(instance, diff, target_dir, prepared, secret_env, backend)  # pragma: no cover
+        return self._grade_on_pristine(
+            instance, diff, target_dir, prepared, secret_env, backend, grade_timeout,
+        )  # pragma: no cover
 
     def _grade_on_pristine(self, instance, diff, target_dir, prepared,
-                           secret_env, backend) -> GradeResult:  # pragma: no cover
+                           secret_env, backend, grade_timeout=None) -> GradeResult:  # pragma: no cover
         lib = instance.extra.get("lib", instance.id)
         cfg = instance.extra.get("commit0") or {}
         base_dir = cfg.get("base_dir")
@@ -174,10 +191,12 @@ class Commit0Plugin(BenchmarkPlugin):
             # held-out suite is the gold test dir(s) — exactly what the harness hides
             # during the run and grades against here.
             test_ids = " ".join(instance.extra.get("gold_test_paths", ())) or "tests/"
+            cmd = ["commit0", "test", lib, test_ids, "--branch", scratch,
+                   "--backend", backend, "--commit0-config-file", str(config_file)]
+            if grade_timeout:
+                cmd += ["--timeout", str(grade_timeout)]
             proc = subprocess.run(
-                ["commit0", "test", lib, test_ids, "--branch", scratch,
-                 "--backend", backend, "--commit0-config-file", str(config_file)],
-                cwd=str(Path(config_file).parent), capture_output=True, text=True,
+                cmd, cwd=str(Path(config_file).parent), capture_output=True, text=True,
                 env=grade_env(secret_env),
             )
             passed, total = _parse_pytest_counts(proc.stdout + proc.stderr)

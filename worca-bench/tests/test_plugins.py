@@ -342,6 +342,40 @@ def test_commit0_grade_stub(tmp_path: Path):
     assert r.resolved is True
 
 
+def test_commit0_grade_threads_timeout_from_options(tmp_path: Path, monkeypatch):
+    """grade.options.timeout flows to _grade_on_pristine (→ `commit0 test --timeout`,
+    which is the Modal sandbox timeout). Raising it unblocks slow suites that
+    otherwise SandboxTimeout."""
+    captured = {}
+
+    def fake_pristine(self, instance, diff, target_dir, prepared, secret_env,
+                      backend, grade_timeout=None):
+        captured["timeout"] = grade_timeout
+        captured["backend"] = backend
+        return GradeResult(status="graded", resolved=True, score=1.0)
+
+    monkeypatch.setattr(Commit0Plugin, "_grade_on_pristine", fake_pristine)
+    inst = Instance(id="lib", prompt="",
+                    extra={"commit0": {"base_dir": "b", "config_file": "c"}})
+    tokens = {"MODAL_TOKEN_ID": "a", "MODAL_TOKEN_SECRET": "b"}
+
+    Commit0Plugin().grade(
+        inst, "+d\n", tmp_path, tmp_path,
+        GradeConfig(mode="modal", options={"timeout": 5400}),
+        prepared=Prepared(base_commit=""), secret_env=tokens,
+    )
+    assert captured["timeout"] == 5400
+    assert captured["backend"] == "modal"
+
+    # No timeout in options => None (commit0's own default applies).
+    Commit0Plugin().grade(
+        inst, "+d\n", tmp_path, tmp_path,
+        GradeConfig(mode="modal", options={}),
+        prepared=Prepared(base_commit=""), secret_env=tokens,
+    )
+    assert captured["timeout"] is None
+
+
 def test_commit0_load_instances_sets_lib(tmp_path: Path):
     """The library name `commit0 test` needs is carried in extra['lib'] — defaulting
     to the instance id but honoring an explicit per-record override."""
@@ -382,7 +416,8 @@ def test_commit0_grade_modal_with_tokens_dispatches_backend(monkeypatch, tmp_pat
     captured = {}
     plugin = Commit0Plugin()
 
-    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend):
+    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend,
+                      grade_timeout=None):
         captured["backend"] = backend
         return GradeResult(status="graded", resolved=True, score=1.0)
 
@@ -399,7 +434,8 @@ def test_commit0_grade_local_docker_dispatches_backend(monkeypatch, tmp_path: Pa
     captured = {}
     plugin = Commit0Plugin()
 
-    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend):
+    def fake_pristine(instance, diff, target_dir, prepared, secret_env, backend,
+                      grade_timeout=None):
         captured["backend"] = backend
         return GradeResult(status="graded", resolved=False, score=0.0)
 
