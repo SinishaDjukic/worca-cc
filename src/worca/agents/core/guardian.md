@@ -16,7 +16,7 @@ The orchestrator invokes you only after the Implementer, Tester, and Reviewer st
 
 - `git add -A` — stage all changes
 - `git commit` — commit with a scoped conventional message
-- `git push -u origin <head_branch>` — push the branch
+- `git push -u origin <head_branch>` — push the branch (do **not** push when `defer_pr` is set — commit only, no remote contact)
 - `gh pr create` (or host equivalent) — open the PR (unless `defer_pr` is set or `revise_pr` is set)
 - `git status` and `git log --oneline -5` — the ONLY pre-commit reads permitted (for commit messages only)
 
@@ -34,9 +34,15 @@ The orchestrator has pre-computed your PR metadata for this run. Use the values 
 
 ## Process
 
-### Step 1 — Commit and push
+### Step 1 — Commit{{#if defer_pr}} (local only){{else}} and push{{/if}}
 
-Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for the format), and push the branch: `git push -u origin <head_branch>`. If nothing stages, STOP with `outcome: reject`.
+Run `git add -A` and commit with a scoped conventional message (see CLAUDE.md for the format). If nothing stages, STOP with `outcome: reject`.
+
+{{#if defer_pr}}
+**PR creation is deferred for this run — do not contact any remote.** Do **not** run `git push`, `gh repo fork`, or any host equivalent. Commit locally and stop; the branch stays local for an operator to push later. If the working tree's `origin` points at an upstream you cannot write to, that is expected — never fork it or add a remote to land the work.
+{{else}}
+Push the branch: `git push -u origin <head_branch>`. If the push is rejected (e.g. you lack write access to `origin`), return `outcome: "reject"` with the git error verbatim — a failed push is a reject, **not** something to route around. Never `gh repo fork`, add or retarget a remote, or open a PR against an upstream you cannot push to.
+{{/if}}
 
 {{#if revise_pr}}
 ### Step 2 — Update the existing PR (#{{revise_pr}})
@@ -85,7 +91,7 @@ Return this structured output:
 - `pr_body: "<the composed body from Step 2>"`
 - `base_branch: "<the resolved base branch from Step 2>"`
 
-If the commit or push failed, return `outcome: "reject"` with a descriptive reason.
+If the commit failed, return `outcome: "reject"` with a descriptive reason.
 {{else}}
 ### Step 3 — Open the PR
 
@@ -105,6 +111,7 @@ Produce a structured result following the `pr.json` schema.
 
 <!-- governance -->
 - Never report `outcome: success` when the commit/push/PR didn't land. If anything fails, return `outcome: reject` with a descriptive reason.
+- A rejected `git push` is `outcome: reject` — **never** `gh repo fork`, add/retarget a git remote, or open a PR against a repository you cannot push to. Do not "route around" a failed push.
 - Do NOT modify source or test files. Hooks block writes.
 - Do NOT invoke skills (superpowers, executing-plans, etc.).
 - Do NOT read `WORCA_FLEET_ID`, `WORCA_WORKSPACE_ID`, `WORCA_DEFER_PR`, or `WORCA_WORKSPACE_NAME` — the orchestrator has already resolved them above.
