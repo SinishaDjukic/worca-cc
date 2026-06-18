@@ -4,6 +4,7 @@ import { outcomeOf, variantFor } from '../utils/badge.js';
 import { formatCost, formatDuration, num, pct } from '../utils/format.js';
 import { REGRADE_MODES } from '../utils/regrade-dialog.js';
 import { loadRunPrefs, saveRunPrefs } from '../utils/run-prefs.js';
+import { sortStagesByOrder, stageLabel } from '../utils/stages.js';
 
 // Grader backends offered in the Run options dropdown, per benchmark. Reuses the
 // regrade backends (local-docker / sb-cli / modal) plus `stub` (record diff, no
@@ -410,13 +411,13 @@ function _liveView(active) {
               <span class="live-run-label">${_phaseLabel(run)}</span>
               ${
                 run.stage && !grading
-                  ? html`<span class="live-run-stage">${run.stage}</span>`
+                  ? html`<span class="live-run-stage">${stageLabel(run.stage)}</span>`
                   : nothing
               }
               ${meta ? html`<span class="live-run-meta">${meta}</span>` : nothing}
             </div>
             <div class="stage-chips">
-              ${(run.stages || []).map((s) => {
+              ${sortStagesByOrder(run.stages).map((s) => {
                 const cls = s.skipped
                   ? 'stage-chip--skipped'
                   : _STAGE_CLASS[s.status] || 'stage-chip--pending';
@@ -424,14 +425,19 @@ function _liveView(active) {
                 return html`<span
                   class="stage-chip ${cls}"
                   title=${title || s.status}
-                  >${s.name}</span
+                  >${stageLabel(s.name)}</span
                 >`;
               })}
-              <!-- Grading is a worca-bench step after the pipeline, not a worca stage. -->
+              <!-- Grading is a worca-bench step AFTER the pipeline, not a worca
+                   stage — set it apart with a spacer. While the run is live it's
+                   either pending (grey) or, once the pipeline finishes, active
+                   (blue, phase=grading); a finished "done" grade only shows in
+                   the per-rep table, not here. -->
+              <span class="stage-chip-sep" aria-hidden="true"></span>
               <span
-                class="stage-chip ${grading ? 'stage-chip--active' : 'stage-chip--done'}"
-                title="benchmark grading"
-                >grade</span
+                class="stage-chip ${grading ? 'stage-chip--active' : 'stage-chip--pending'}"
+                title="benchmark grading (not a pipeline stage)"
+                >Grade</span
               >
             </div>
           </div>

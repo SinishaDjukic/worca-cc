@@ -1159,13 +1159,21 @@ code {
   color: var(--status-completed);
 }
 .stage-chip--active {
-  border-color: var(--accent);
+  /* in-progress = worca-ui "primary" blue (same hue as --accent). */
+  border-color: var(--status-running);
   color: #fff;
-  background: var(--accent);
+  background: var(--status-running);
 }
 .stage-chip--failed {
   border-color: var(--status-failed);
   color: var(--status-failed);
+}
+/* Spacer that sets the post-pipeline "Grade" chip apart from the worca stages. */
+.stage-chip-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 6px;
+  background: var(--border);
 }
 
 /* ─── Configuration metadata (profile detail) ──────────────────────────── */

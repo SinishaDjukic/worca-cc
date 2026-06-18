@@ -288,10 +288,51 @@ describe('profileDetailView', () => {
     expect(out).toContain('stage-chip--active'); // coordinate
     expect(out).toContain('stage-chip--pending'); // implement
     expect(out).toContain('stage-chip--skipped'); // test
-    expect(out).toContain('coordinate');
+    expect(out).toContain('Coordinate'); // human label (worca-ui parity)
     expect(out).toContain('astropy__astropy-12907'); // instance shown
     expect(out).toContain('rep 1');
-    expect(out).toContain('grade'); // grading pseudo-chip
+    expect(out).toContain('Grade'); // grading pseudo-chip, set-apart
+    expect(out).toContain('stage-chip-sep'); // spacer before Grade
+  });
+
+  it('orders live stage chips by canonical worca order, not status.json order', () => {
+    const out = renderToString(
+      profileDetailView({
+        aggregate: { ...data.aggregate, active: true },
+        reps: [],
+        active: [
+          {
+            kind: 'rep',
+            phase: 'running',
+            stage: 'plan_review',
+            instance: 'x',
+            rep: 1,
+            // Deliberately scrambled (plan_review last, like the raw payload).
+            stages: [
+              { name: 'pr', status: 'pending' },
+              { name: 'preflight', status: 'completed' },
+              { name: 'plan_review', status: 'in_progress' },
+              { name: 'plan', status: 'completed' },
+            ],
+          },
+        ],
+      }),
+    );
+    // Scope to the chips container so the "Running Plan Review" head label
+    // doesn't confound the index comparison.
+    const chips = out.slice(out.indexOf('stage-chips'));
+    // Canonical order: Preflight < Plan < Plan Review < PR.
+    const iPreflight = chips.indexOf('>Preflight<');
+    const iPlan = chips.indexOf('>Plan<');
+    const iPlanReview = chips.indexOf('>Plan Review<');
+    const iPr = chips.indexOf('>PR<');
+    expect(iPreflight).toBeGreaterThanOrEqual(0);
+    expect(iPreflight).toBeLessThan(iPlan);
+    expect(iPlan).toBeLessThan(iPlanReview);
+    expect(iPlanReview).toBeLessThan(iPr);
+    // The "Running <stage>" label is humanized too, never the raw key.
+    expect(out).toContain('Plan Review');
+    expect(out).not.toMatch(/>plan_review</); // raw key never shown
   });
 
   it('labels the grading phase and marks the grade chip active', () => {
@@ -311,7 +352,7 @@ describe('profileDetailView', () => {
       }),
     );
     expect(out).toContain('Grading');
-    expect(out).toContain('grade');
+    expect(out).toContain('Grade');
   });
 
   it('renders no live section when there are no active runs', () => {
