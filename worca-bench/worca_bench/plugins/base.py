@@ -123,6 +123,32 @@ def _git_head(tree: Path) -> str:
     return _git(["rev-parse", "HEAD"], tree)
 
 
+def neutralize_remotes(dest: Path) -> list[str]:
+    """Strip every git remote from a materialized bench tree.
+
+    The bench never legitimately pushes (PR creation is always deferred) and
+    grades from the local working tree, so a real ``origin`` is pure liability:
+    a misbehaving guardian that discovers the upstream there can ``gh repo
+    fork`` + ``gh pr create`` against it — real PRs were opened against
+    astropy/astropy this way despite ``pr_defer``. Removing all remotes makes
+    push / fork / pr-create fail to resolve a repo, a defense-in-depth backstop
+    under the guardian prompt's defer-mode "no remote contact" rule. Best-effort:
+    never raises (a tree with no remotes is a no-op). Returns the names removed.
+    """
+    try:
+        names = _git(["remote"], dest).split()
+    except subprocess.CalledProcessError:
+        return []
+    removed: list[str] = []
+    for name in names:
+        try:
+            _git(["remote", "remove", name], dest)
+            removed.append(name)
+        except subprocess.CalledProcessError:
+            pass
+    return removed
+
+
 def init_repo_from_local(src: str | Path, dest: Path, base_commit: str | None) -> str:
     """Copy a local source repo into ``dest`` as a git repo at ``base_commit`` (or HEAD).
 
@@ -141,6 +167,9 @@ def init_repo_from_local(src: str | Path, dest: Path, base_commit: str | None) -
               "commit", "-m", "base"], dest)
     if base_commit:
         _git(["checkout", base_commit], dest)
+    # Defense-in-depth: a copied source tree can carry a real origin in its
+    # .git/config. Strip every remote so no pipeline stage can reach upstream.
+    neutralize_remotes(dest)
     return _git_head(dest)
 
 

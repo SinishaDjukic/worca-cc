@@ -22,6 +22,7 @@ from .base import (
     _git,
     grade_env,
     init_repo_from_local,
+    neutralize_remotes,
     stub_grade,
 )
 
@@ -113,6 +114,10 @@ class SwebenchPlugin(BenchmarkPlugin):
         subprocess.run(["git", "clone", url, str(dest)], check=True,
                        capture_output=True, text=True)
         _git(["checkout", instance.base_commit], dest)
+        # A fresh clone leaves origin = the real upstream (e.g. astropy/astropy).
+        # The bench never pushes and grades locally, so strip it — otherwise a
+        # misbehaving guardian can fork + open a PR against upstream.
+        neutralize_remotes(dest)
         return _git(["rev-parse", "HEAD"], dest)
 
     # ---- grade ----------------------------------------------------------- #

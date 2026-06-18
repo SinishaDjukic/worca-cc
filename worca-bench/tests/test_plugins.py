@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from conftest import make_git_repo
+from conftest import git, make_git_repo
 
 from worca_bench.config import GradeConfig, profile_from_dict
 from worca_bench.plugins import get_plugin
@@ -12,6 +12,7 @@ from worca_bench.plugins.base import (
     Instance,
     Prepared,
     grade_env,
+    neutralize_remotes,
     stub_grade,
 )
 from worca_bench.plugins.commit0 import Commit0Plugin
@@ -86,6 +87,35 @@ def test_swebench_materialize_from_local_repo(tmp_path: Path):
     got_base = SwebenchPlugin().materialize(inst, dest)
     assert got_base == base
     assert (dest / "main.py").exists()
+
+
+def test_neutralize_remotes_strips_all_remotes(tmp_path: Path):
+    repo = tmp_path / "repo"
+    make_git_repo(repo, {"main.py": "x = 1\n"})
+    git(["remote", "add", "origin", "https://github.com/astropy/astropy.git"], repo)
+    git(["remote", "add", "upstream", "https://github.com/other/other.git"], repo)
+    removed = neutralize_remotes(repo)
+    assert set(removed) == {"origin", "upstream"}
+    assert git(["remote"], repo) == ""
+
+
+def test_neutralize_remotes_no_remotes_is_noop(tmp_path: Path):
+    repo = tmp_path / "repo"
+    make_git_repo(repo)
+    assert neutralize_remotes(repo) == []
+
+
+def test_materialize_from_local_strips_carried_origin(tmp_path: Path):
+    # A copied source tree can carry a real origin in .git/config; materialize
+    # must strip it so no pipeline stage (e.g. a misbehaving guardian) can
+    # `gh repo fork` / `gh pr create` against the real upstream.
+    src = tmp_path / "src"
+    base = make_git_repo(src, {"main.py": "x = 1\n"})
+    git(["remote", "add", "origin", "https://github.com/astropy/astropy.git"], src)
+    dest = tmp_path / "work"
+    inst = Instance(id="a__b-1", prompt="p", local_repo=str(src), base_commit=base)
+    SwebenchPlugin().materialize(inst, dest)
+    assert git(["remote"], dest) == ""
 
 
 def test_stub_grade_resolves_on_nonempty_diff():
