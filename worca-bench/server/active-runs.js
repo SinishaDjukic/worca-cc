@@ -10,11 +10,50 @@
 // status). The work tree is removed when the rep finishes, so "a status.json under
 // work/" IS the live window.
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { srcHash } from './results-store.js';
 
 const STATUS_SEG = `${'.worca'}/runs`; // status.json lives at .worca/runs/<id>/status.json
+
+// Authoritative bead progress comes from the run's own beads DB (the coordinator
+// creates ALL beads up front; status.json iterations only ever show the ones the
+// implementer has *dispatched*). We shell out to `bd stats --json` in the run
+// worktree. Cached briefly per worktree so the dashboard's overlapping polls
+// (/api/active + /api/profiles) don't spawn `bd` twice per tick.
+const _BEAD_TTL_MS = 4000;
+const _beadCache = new Map(); // repRoot -> { ts, value }
+
+/**
+ * { done, total } beads for the run rooted at `repRoot` (the dir holding
+ * `.beads/`), or null when there's no beads DB, `bd` is unavailable, or the DB
+ * is empty. `done` = closed issues, `total` = all issues.
+ */
+function beadCounts(repRoot, now = Date.now()) {
+  const cached = _beadCache.get(repRoot);
+  if (cached && now - cached.ts < _BEAD_TTL_MS) return cached.value;
+  let value = null;
+  if (existsSync(join(repRoot, '.beads', 'beads.db'))) {
+    try {
+      const out = execFileSync('bd', ['stats', '--json'], {
+        cwd: repRoot,
+        timeout: 2500,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const sum = JSON.parse(out)?.summary;
+      const total = Number(sum?.total_issues);
+      if (Number.isInteger(total) && total > 0) {
+        value = { done: Number(sum?.closed_issues) || 0, total };
+      }
+    } catch {
+      value = null; // bd missing / errored / timed out — show no count, not a wrong one
+    }
+  }
+  _beadCache.set(repRoot, { ts: now, value });
+  return value;
+}
 
 function safeReaddir(dir) {
   try {
@@ -46,26 +85,6 @@ function findStatusFiles(root, maxDepth = 7) {
   return found;
 }
 
-/**
- * Bead progress for a stage that dispatches beads (the implementer): completed /
- * dispatched. Derived from the stage's per-bead `iterations` — the latest
- * iteration status per `bead_id` wins (the implementer retries the same bead on
- * test failures). `total` is beads dispatched so far, NOT the coordinator's full
- * count (that lives only in the bead DB, which worca-bench doesn't read). Returns
- * null when the stage has no bead iterations yet.
- */
-function beadProgress(s) {
-  const its = Array.isArray(s?.iterations) ? s.iterations : [];
-  const latest = new Map(); // bead_id -> latest iteration status (insertion order)
-  for (const it of its) {
-    if (it?.bead_id) latest.set(it.bead_id, it?.status || 'pending');
-  }
-  if (latest.size === 0) return null;
-  let done = 0;
-  for (const st of latest.values()) if (st === 'completed') done += 1;
-  return { done, total: latest.size };
-}
-
 /** Ordered per-stage summary. status.json `stages` preserves insertion order. */
 function summarizeStages(stages) {
   if (!stages || typeof stages !== 'object') return [];
@@ -77,8 +96,6 @@ function summarizeStages(stages) {
       model: s?.model_alias || s?.model || null,
       skipped: !!s?.skipped,
     };
-    const beads = beadProgress(s);
-    if (beads) entry.beads = beads;
     // How many times the stage ran (a loop-back re-runs the stage). Prefer the
     // explicit `iteration` counter, else the iterations array length. Surfaced
     // only when > 1 so single-pass stages stay clean.
@@ -200,6 +217,14 @@ export function discoverActive(dir) {
         summarizeStages(s.stages),
         enabledStageMap(file, s.pipeline_template),
       );
+      // Authoritative bead progress (closed/total) from the run's beads DB,
+      // surfaced on the implementer chip. repRoot is <.../rep<N>/...> holding
+      // .beads/ — the dir 4 levels up from .worca/runs/<id>/status.json.
+      const implementStage = stages.find((x) => x.name === 'implement');
+      if (implementStage) {
+        const beads = beadCounts(dirname(dirname(dirname(dirname(file)))));
+        if (beads) implementStage.beads = beads;
+      }
       const { instance, rep } = instanceRep(profileWorkDir, file);
       out.push({
         profile,

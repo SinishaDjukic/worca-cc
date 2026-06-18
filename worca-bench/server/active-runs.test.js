@@ -1,7 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// `bd stats --json` is shelled out for authoritative bead counts; mock it so the
+// suite is hermetic (no bd binary, no real beads DB needed).
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
+
+import { execFileSync } from 'node:child_process';
 import {
   activeByProfile,
   discoverActive,
@@ -126,54 +132,66 @@ describe('discoverActive', () => {
     expect(run.stages[1].model).toBe('opus'); // model_alias preferred
   });
 
-  it('derives bead progress + loop-back counts from stage iterations', () => {
+  it('derives loop-back counts (×N) from the stage iteration counter', () => {
     seedStatus('p1', 'lib', 1, 'p1__lib__rep1', {
       run_id: 'p1__lib__rep1',
       pipeline_status: 'running',
       stages: {
         plan: { status: 'completed', iteration: 1 },
-        implement: {
-          status: 'in_progress',
-          iteration: 4,
-          iterations: [
-            {
-              number: 1,
-              bead_id: 'b1',
-              status: 'completed',
-              trigger: 'initial',
-            },
-            {
-              number: 2,
-              bead_id: 'b2',
-              status: 'completed',
-              trigger: 'initial',
-            },
-            {
-              number: 3,
-              bead_id: 'b3',
-              status: 'in_progress',
-              trigger: 'initial',
-            },
-            {
-              number: 4,
-              bead_id: 'b3',
-              status: 'in_progress',
-              trigger: 'test_failure',
-            },
-          ],
-        },
+        implement: { status: 'in_progress', iteration: 4 },
         test: { status: 'completed', iteration: 3 },
       },
     });
     const [run] = discoverActive(dir);
     const byName = Object.fromEntries(run.stages.map((s) => [s.name, s]));
-    // 3 distinct beads dispatched (b1,b2,b3); b1+b2 done, b3 in progress → 2/3.
-    expect(byName.implement.beads).toEqual({ done: 2, total: 3 });
     expect(byName.implement.iters).toBe(4); // ran 4 times (loop-backs)
     expect(byName.test.iters).toBe(3);
-    // Single-pass stages carry neither field.
-    expect(byName.plan.iters).toBeUndefined();
-    expect(byName.plan.beads).toBeUndefined();
+    expect(byName.plan.iters).toBeUndefined(); // single-pass → no suffix
+    // No beads DB seeded → no bead count attached.
+    expect(byName.implement.beads).toBeUndefined();
+  });
+
+  it('attaches authoritative bead counts from `bd stats` (closed/total)', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify({ summary: { total_issues: 5, closed_issues: 1 } }),
+    );
+    seedStatus('p2', 'lib2', 1, 'p2__lib2__rep1', {
+      run_id: 'p2__lib2__rep1',
+      pipeline_status: 'running',
+      stages: { implement: { status: 'in_progress' } },
+    });
+    // Seed a beads DB so the existsSync guard passes and bd is consulted.
+    const beadsDir = join(dir, 'work', 'p2', 'lib2', 'rep1', '.beads');
+    mkdirSync(beadsDir, { recursive: true });
+    writeFileSync(join(beadsDir, 'beads.db'), 'x');
+
+    const [run] = discoverActive(dir);
+    const imp = run.stages.find((s) => s.name === 'implement');
+    expect(imp.beads).toEqual({ done: 1, total: 5 });
+    expect(execFileSync).toHaveBeenCalledWith(
+      'bd',
+      ['stats', '--json'],
+      expect.objectContaining({ cwd: expect.stringContaining('rep1') }),
+    );
+  });
+
+  it('shows no bead count when `bd` fails (never a wrong number)', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('bd not found');
+    });
+    seedStatus('p3', 'lib3', 1, 'p3__lib3__rep1', {
+      run_id: 'p3__lib3__rep1',
+      pipeline_status: 'running',
+      stages: { implement: { status: 'in_progress' } },
+    });
+    const beadsDir = join(dir, 'work', 'p3', 'lib3', 'rep1', '.beads');
+    mkdirSync(beadsDir, { recursive: true });
+    writeFileSync(join(beadsDir, 'beads.db'), 'x');
+
+    const [run] = discoverActive(dir);
+    expect(
+      run.stages.find((s) => s.name === 'implement').beads,
+    ).toBeUndefined();
   });
 
   it('excludes terminal runs (interrupted/failed) whose work tree lingers', () => {
