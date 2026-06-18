@@ -20,7 +20,12 @@ function _fmtClock(iso) {
   if (!iso) return '—';
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '—';
-  return new Date(t).toISOString().slice(11, 16); // HH:MM (UTC)
+  // Local browser time (HH:MM), honoring the user's locale 12h/24h preference —
+  // the timestamps in `started_at` are UTC ISO strings.
+  return new Date(t).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function _fmtDur(start, end) {
