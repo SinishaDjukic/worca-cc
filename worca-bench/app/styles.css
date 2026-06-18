@@ -1168,6 +1168,16 @@ code {
   border-color: var(--status-failed);
   color: var(--status-failed);
 }
+/* Bead progress (completed/dispatched) + loop-back count inside a stage chip. */
+.stage-chip-beads,
+.stage-chip-iters {
+  margin-left: 5px;
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
 /* Spacer that sets the post-pipeline "Grade" chip apart from the worca stages. */
 .stage-chip-sep {
   align-self: stretch;

@@ -46,16 +46,51 @@ function findStatusFiles(root, maxDepth = 7) {
   return found;
 }
 
+/**
+ * Bead progress for a stage that dispatches beads (the implementer): completed /
+ * dispatched. Derived from the stage's per-bead `iterations` — the latest
+ * iteration status per `bead_id` wins (the implementer retries the same bead on
+ * test failures). `total` is beads dispatched so far, NOT the coordinator's full
+ * count (that lives only in the bead DB, which worca-bench doesn't read). Returns
+ * null when the stage has no bead iterations yet.
+ */
+function beadProgress(s) {
+  const its = Array.isArray(s?.iterations) ? s.iterations : [];
+  const latest = new Map(); // bead_id -> latest iteration status (insertion order)
+  for (const it of its) {
+    if (it?.bead_id) latest.set(it.bead_id, it?.status || 'pending');
+  }
+  if (latest.size === 0) return null;
+  let done = 0;
+  for (const st of latest.values()) if (st === 'completed') done += 1;
+  return { done, total: latest.size };
+}
+
 /** Ordered per-stage summary. status.json `stages` preserves insertion order. */
 function summarizeStages(stages) {
   if (!stages || typeof stages !== 'object') return [];
-  return Object.entries(stages).map(([name, s]) => ({
-    name,
-    status: s?.status || 'pending',
-    agent: s?.agent || null,
-    model: s?.model_alias || s?.model || null,
-    skipped: !!s?.skipped,
-  }));
+  return Object.entries(stages).map(([name, s]) => {
+    const entry = {
+      name,
+      status: s?.status || 'pending',
+      agent: s?.agent || null,
+      model: s?.model_alias || s?.model || null,
+      skipped: !!s?.skipped,
+    };
+    const beads = beadProgress(s);
+    if (beads) entry.beads = beads;
+    // How many times the stage ran (a loop-back re-runs the stage). Prefer the
+    // explicit `iteration` counter, else the iterations array length. Surfaced
+    // only when > 1 so single-pass stages stay clean.
+    const iters =
+      Number.isInteger(s?.iteration) && s.iteration > 0
+        ? s.iteration
+        : Array.isArray(s?.iterations)
+          ? s.iterations.length
+          : 0;
+    if (iters > 1) entry.iters = iters;
+    return entry;
+  });
 }
 
 /** The stage currently in progress, else the last completed one. */

@@ -422,10 +422,21 @@ function _liveView(active) {
                   ? 'stage-chip--skipped'
                   : _STAGE_CLASS[s.status] || 'stage-chip--pending';
                 const title = [s.agent, s.model].filter(Boolean).join(' · ');
+                // Bead progress (completed/dispatched) rides inside the chip for
+                // the implementer, e.g. "Implement 1/3"; the loop-back count is
+                // appended as "×N" when a stage ran more than once.
+                const beads = s.beads
+                  ? html`<span class="stage-chip-beads"
+                      >${s.beads.done}/${s.beads.total}</span
+                    >`
+                  : nothing;
+                const iters = s.iters
+                  ? html`<span class="stage-chip-iters">×${s.iters}</span>`
+                  : nothing;
                 return html`<span
                   class="stage-chip ${cls}"
                   title=${title || s.status}
-                  >${stageLabel(s.name)}</span
+                  >${stageLabel(s.name)}${beads}${iters}</span
                 >`;
               })}
               <!-- Grading is a worca-bench step AFTER the pipeline, not a worca

@@ -276,7 +276,12 @@ describe('profileDetailView', () => {
             stages: [
               { name: 'plan', status: 'completed' },
               { name: 'coordinate', status: 'in_progress' },
-              { name: 'implement', status: 'pending' },
+              {
+                name: 'implement',
+                status: 'pending',
+                beads: { done: 1, total: 3 },
+                iters: 6,
+              },
               { name: 'test', status: 'completed', skipped: true },
             ],
           },
@@ -293,6 +298,8 @@ describe('profileDetailView', () => {
     expect(out).toContain('rep 1');
     expect(out).toContain('Grade'); // grading pseudo-chip, set-apart
     expect(out).toContain('stage-chip-sep'); // spacer before Grade
+    expect(out).toContain('1/3'); // bead progress inside the Implement chip
+    expect(out).toContain('×6'); // loop-back count
   });
 
   it('orders live stage chips by canonical worca order, not status.json order', () => {

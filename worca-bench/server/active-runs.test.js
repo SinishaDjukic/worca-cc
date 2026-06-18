@@ -126,6 +126,56 @@ describe('discoverActive', () => {
     expect(run.stages[1].model).toBe('opus'); // model_alias preferred
   });
 
+  it('derives bead progress + loop-back counts from stage iterations', () => {
+    seedStatus('p1', 'lib', 1, 'p1__lib__rep1', {
+      run_id: 'p1__lib__rep1',
+      pipeline_status: 'running',
+      stages: {
+        plan: { status: 'completed', iteration: 1 },
+        implement: {
+          status: 'in_progress',
+          iteration: 4,
+          iterations: [
+            {
+              number: 1,
+              bead_id: 'b1',
+              status: 'completed',
+              trigger: 'initial',
+            },
+            {
+              number: 2,
+              bead_id: 'b2',
+              status: 'completed',
+              trigger: 'initial',
+            },
+            {
+              number: 3,
+              bead_id: 'b3',
+              status: 'in_progress',
+              trigger: 'initial',
+            },
+            {
+              number: 4,
+              bead_id: 'b3',
+              status: 'in_progress',
+              trigger: 'test_failure',
+            },
+          ],
+        },
+        test: { status: 'completed', iteration: 3 },
+      },
+    });
+    const [run] = discoverActive(dir);
+    const byName = Object.fromEntries(run.stages.map((s) => [s.name, s]));
+    // 3 distinct beads dispatched (b1,b2,b3); b1+b2 done, b3 in progress → 2/3.
+    expect(byName.implement.beads).toEqual({ done: 2, total: 3 });
+    expect(byName.implement.iters).toBe(4); // ran 4 times (loop-backs)
+    expect(byName.test.iters).toBe(3);
+    // Single-pass stages carry neither field.
+    expect(byName.plan.iters).toBeUndefined();
+    expect(byName.plan.beads).toBeUndefined();
+  });
+
   it('excludes terminal runs (interrupted/failed) whose work tree lingers', () => {
     // A stopped run leaves an `interrupted` status.json on disk until cleanup;
     // it must NOT surface as an active run (no stale "running" live card).
