@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -9,7 +10,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearProfileResults, stopProfileRuns } from './run-control.js';
+import {
+  clearProfileResults,
+  killTrackedGroups,
+  stopProfileRuns,
+} from './run-control.js';
 
 let dir;
 beforeEach(() => {
@@ -55,6 +60,67 @@ describe('stopProfileRuns', () => {
   it('returns 0 when no runner process matches', async () => {
     expect(await stopProfileRuns('definitely-not-a-running-profile-xyz')).toBe(
       0,
+    );
+  });
+});
+
+// Write a worca proc-registry entry: <dir>/work/<name>/<inst>/rep1/.worca/runs/<id>/procs/<pgid>.json
+function seedProcEntry(name, inst, runId, { pgid, pid }) {
+  const procsDir = join(
+    dir,
+    'work',
+    name,
+    inst,
+    'rep1',
+    '.worca',
+    'runs',
+    runId,
+    'procs',
+  );
+  mkdirSync(procsDir, { recursive: true });
+  writeFileSync(
+    join(procsDir, `${pgid}.json`),
+    JSON.stringify({ pgid, pid, stage: 'implement', iteration: 1 }),
+  );
+}
+
+const posix = process.platform !== 'win32';
+
+describe('killTrackedGroups (orphan reap)', () => {
+  it('SIGKILLs a tracked agent process group (detached session leader)', async () => {
+    if (!posix) return; // negative-pid group signal is POSIX-only
+    // A detached child is its own session/group leader: pgid === child.pid —
+    // exactly the shape worca records for a start_new_session agent.
+    const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(child.pid, 0)).not.toThrow(); // alive
+
+    seedProcEntry('p1', 'lib', 'p1__lib__rep1', {
+      pgid: child.pid,
+      pid: child.pid,
+    });
+    const reaped = await killTrackedGroups([dir], 'p1');
+    expect(reaped).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(child.pid, 0)).toThrow(); // gone
+  });
+
+  it('skips stale entries whose leader pid is no longer alive', async () => {
+    seedProcEntry('p1', 'lib', 'p1__lib__rep1', {
+      pgid: 2147483000, // implausible pid → not alive
+      pid: 2147483000,
+    });
+    expect(await killTrackedGroups([dir], 'p1')).toBe(0);
+  });
+
+  it('is a no-op (0) when the profile has no procs registry', async () => {
+    expect(await killTrackedGroups([dir], 'nope')).toBe(0);
+  });
+
+  it('rejects unsafe profile names', async () => {
+    await expect(killTrackedGroups([dir], '../../x')).rejects.toThrow(
+      /invalid profile name/,
     );
   });
 });

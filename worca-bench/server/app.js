@@ -45,6 +45,7 @@ import {
 } from './results-store.js';
 import {
   clearProfileResults,
+  killTrackedGroups,
   stopPidTree,
   stopProfileRuns,
   stopRegrade,
@@ -320,7 +321,7 @@ export function createApp(options = {}) {
       return res.status(400).json({ ok: false, error: 'invalid profile name' });
     }
     try {
-      const stopped = await stopProfileRuns(req.params.name);
+      const stopped = await stopProfileRuns(req.params.name, effectiveDirs());
       res.json({ ok: true, stopped });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -618,6 +619,15 @@ export function createApp(options = {}) {
       const a = findAction(targetDir, req.params.id);
       if (a) {
         const stopped = await stopPidTree(a.pid);
+        // A pipeline run also has session-detached agent groups the pid tree
+        // can't reach — reap them via worca's procs/ registry so none orphan.
+        if (a.type === 'run' && a.profile) {
+          try {
+            await killTrackedGroups(effectiveDirs(), a.profile);
+          } catch {
+            /* best-effort orphan reap */
+          }
+        }
         patchAction(targetDir, a.id, {
           status: 'stopped',
           ended_at: new Date().toISOString(),
