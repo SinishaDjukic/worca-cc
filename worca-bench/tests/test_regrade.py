@@ -130,6 +130,60 @@ def test_regrade_sequential_skips_the_thread_pool(tmp_path: Path, monkeypatch):
     assert read_rows(tmp_path)[0]["status"] == "graded"
 
 
+def test_regrade_commit0_enriches_instance_with_config_block(tmp_path: Path, monkeypatch):
+    """Regression: a commit0 regrade must rebuild the FULL instance from the
+    instances_file so the grader gets the `commit0` config block + local_repo.
+    A bare Instance(id=) made the grader error: "needs the 'commit0' config block"."""
+    import json
+
+    import worca_bench.plugins.commit0 as c0mod
+    from worca_bench.plugins.base import GradeResult
+
+    inst_file = tmp_path / "instances.json"
+    inst_file.write_text(
+        json.dumps([{
+            "instance_id": "tinydb", "lib": "tinydb",
+            "local_repo": str(tmp_path / "repos" / "tinydb"),
+            "base_commit": "abc", "reference_commit": "def",
+            "gold_test_paths": ["tests/"], "spec": "build it",
+            "commit0": {
+                "base_dir": str(tmp_path / "repos"),
+                "config_file": str(tmp_path / ".commit0.yaml"),
+                "base_branch": "commit0", "dataset_name": "ds", "dataset_split": "test",
+            },
+        }]),
+        encoding="utf-8",
+    )
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "c0.yaml").write_text(
+        "name: c0\nbenchmark: commit0\n"
+        f"selection:\n  instances_file: {inst_file}\n  instance_ids: [tinydb]\n"
+        "template: builtin:feature\ngrade:\n  mode: modal\n",
+        encoding="utf-8",
+    )
+    append_row(tmp_path, _row("tinydb", status="error", profile="c0"))
+    art = tmp_path / "runs" / "c0" / "tinydb" / "rep1"
+    art.mkdir(parents=True)
+    (art / "diff.patch").write_text("+x\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_grade(self, instance, diff, work, target_dir, grade, *, prepared, secret_env=None):
+        captured["inst"] = instance
+        return GradeResult(status="graded", resolved=True, score=1.0, detail="ok")
+
+    monkeypatch.setattr(c0mod.Commit0Plugin, "grade", fake_grade)
+    rc = cli.cmd_regrade(_args(tmp_path, profiles, profile="c0", mode="modal"))
+    assert rc == 0
+    inst = captured["inst"]
+    # The enriched instance carries everything the commit0 grader needs.
+    assert inst.extra.get("commit0", {}).get("base_dir")  # config block reached grade()
+    assert inst.extra.get("commit0", {}).get("config_file")
+    assert inst.local_repo  # skeleton path present
+    assert inst.extra.get("gold_test_paths") == ("tests/",)
+
+
 def test_regrade_writes_heartbeat_and_increments(tmp_path: Path):
     profiles = _seed(tmp_path)
     rc = cli.cmd_regrade(_args(tmp_path, profiles, sequential=True))

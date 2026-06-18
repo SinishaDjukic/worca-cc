@@ -217,6 +217,19 @@ def cmd_regrade(args: argparse.Namespace) -> int:
         print("no matching rows to regrade", file=sys.stderr)
         return 1
 
+    # Full instances carry the per-benchmark grading metadata a bare Instance(id=)
+    # lacks — notably the commit0 config block (base_dir/config_file), local_repo, and
+    # gold_test_paths, without which commit0 grading errors ("needs the 'commit0'
+    # config block"). Enrich from the instances_file when the profile has one (commit0
+    # always does; SWE-bench may). No file => bare instance, since id-keyed graders
+    # (SWE-bench sb-cli/docker) need only the id.
+    instances_by_id: dict[str, Instance] = {}
+    if profile.selection.instances_file:
+        try:
+            instances_by_id = {i.id: i for i in plugin.load_instances(profile)}
+        except Exception:  # noqa: BLE001 - never let instance-load failure abort regrade
+            instances_by_id = {}
+
     def _regrade_one(row: dict):
         iid = row["instance_id"]
         rep = row.get("rep")
@@ -226,7 +239,7 @@ def cmd_regrade(args: argparse.Namespace) -> int:
             return iid, rep, GradeResult(status="error",
                                          detail=f"no diff.patch at {diff_path}")
         diff = diff_path.read_text(encoding="utf-8")
-        inst = Instance(id=iid, prompt="")
+        inst = instances_by_id.get(iid) or Instance(id=iid, prompt="")
         try:
             gr = plugin.grade(inst, diff, target, target, grade_cfg,
                               prepared=Prepared(base_commit=""), secret_env=secret_env)
