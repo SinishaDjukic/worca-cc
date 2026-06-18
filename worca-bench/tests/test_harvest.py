@@ -77,6 +77,22 @@ def test_extra_excludes_drops_gold_tests(tmp_path):
     assert "test_lib.py" not in diff
 
 
+def test_extra_excludes_drops_binary_spec_pdf(tmp_path):
+    """Regression (Commit0): a binary spec.pdf materializing in the tree otherwise
+    lands in the prediction patch as an incomplete binary diff
+    (``Binary files ... differ`` with no full index), which `git apply` rejects at
+    grade time. Excluding it keeps the patch clean and applyable."""
+    repo = tmp_path / "r"
+    base = make_git_repo(repo, {"lib.py": "def f(): pass\n"})
+    (repo / "lib.py").write_text("def f(): return 1\n", encoding="utf-8")
+    # a NEW binary file appears in the repo root (as Commit0's spec.pdf does)
+    (repo / "spec.pdf").write_bytes(b"%PDF-1.4\x00\x01\x02 binary payload \xff\xfe")
+    diff = extract_diff(repo, base, extra_excludes=("spec.pdf", "spec.pdf.bz2"))
+    assert "lib.py" in diff
+    assert "spec.pdf" not in diff
+    assert "Binary files" not in diff
+
+
 def test_diff_line_count_ignores_headers():
     diff = (
         "diff --git a/x b/x\n"

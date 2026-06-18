@@ -28,6 +28,10 @@ from .base import (
     stub_grade,
 )
 
+# Per-library spec files Commit0 ships in every repo root. They are not source and
+# (notably spec.pdf, which is binary) must never leak into the graded prediction diff.
+_SPEC_ARTIFACTS = ("spec.pdf", "spec.pdf.bz2")
+
 
 class Commit0Plugin(BenchmarkPlugin):
     name = "commit0"
@@ -96,7 +100,11 @@ class Commit0Plugin(BenchmarkPlugin):
 
         return Prepared(
             base_commit=base,
-            extra_excludes=gold,
+            # Exclude the gold tests AND the spec artifacts every Commit0 repo ships in
+            # its root: spec.pdf is binary, so if it materializes in the tree it lands in
+            # the prediction patch as an incomplete binary diff that `git apply` rejects
+            # at grade time ("cannot apply binary patch ... without full index line").
+            extra_excludes=gold + _SPEC_ARTIFACTS,
             restore=restore,
             gold_test_paths=gold,
         )

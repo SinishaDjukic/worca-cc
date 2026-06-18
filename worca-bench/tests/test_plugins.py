@@ -311,10 +311,24 @@ def test_commit0_prepare_stashes_and_restores_gold_tests(tmp_path: Path):
     # gold test hidden during the run
     assert not (repo / "tests" / "test_lib.py").exists()
     assert prepared.gold_test_paths == ("tests/test_lib.py",)
-    assert prepared.extra_excludes == ("tests/test_lib.py",)
+    # gold tests + the Commit0 spec artifacts are all excluded from the graded diff
+    assert prepared.extra_excludes == (
+        "tests/test_lib.py", "spec.pdf", "spec.pdf.bz2",
+    )
     # restore brings it back
     prepared.restore()
     assert (repo / "tests" / "test_lib.py").exists()
+
+
+def test_commit0_prepare_excludes_spec_artifacts_without_gold(tmp_path: Path):
+    # Even with no gold tests, the spec.pdf / spec.pdf.bz2 that ship in every Commit0
+    # repo root must be excluded — they materialize in the tree and otherwise leak into
+    # the prediction patch as a binary diff that breaks `git apply` at grade time.
+    repo = tmp_path / "lib"
+    make_git_repo(repo, {"lib.py": "def f(): pass\n"})
+    inst = Instance(id="lib", prompt="spec", local_repo=str(repo), extra={})
+    prepared = Commit0Plugin().prepare(inst, repo)
+    assert prepared.extra_excludes == ("spec.pdf", "spec.pdf.bz2")
 
 
 def test_commit0_grade_stub(tmp_path: Path):
