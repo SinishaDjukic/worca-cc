@@ -168,6 +168,19 @@ describe('profileDetailView', () => {
     expect(valAfter(bare, 'run-opt-preflight')).toBe('on');
   });
 
+  it('disables the Run button (label + title) when a run is already in progress', () => {
+    const disabled = renderToString(
+      profileDetailView(data, { onRun: () => {}, runDisabled: true }),
+    );
+    expect(disabled).toContain('Running…');
+    expect(disabled).toContain('A run is already in progress');
+    const enabled = renderToString(
+      profileDetailView(data, { onRun: () => {} }),
+    );
+    expect(enabled).not.toContain('Running…');
+    expect(enabled).toContain('Launch a run'); // enabled title
+  });
+
   it('seeds the Timeout field from the profile and tooltip-wraps the label', () => {
     const withTo = renderToString(
       profileDetailView(

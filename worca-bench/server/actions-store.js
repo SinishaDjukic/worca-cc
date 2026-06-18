@@ -43,16 +43,23 @@ export function appendAction(targetDir, rec) {
   appendFileSync(_file(targetDir), `${JSON.stringify(rec)}\n`, 'utf8');
 }
 
-/** Record a freshly-spawned action as `running`. Returns the stored record. */
+/**
+ * Record a freshly-spawned action as `running`. Returns the stored record.
+ *
+ * The real CLI (worca_bench/actions.py) is the production writer; this mirrors its
+ * schema (incl. `source_dir`, from which the server backfills `src`). Kept here
+ * for tests + as a JS reference of the on-disk format.
+ */
 export function recordAction(
   targetDir,
-  { type, profile, src, pid, params, startedAt },
+  { type, profile, src, source_dir, pid, params, startedAt },
 ) {
   const started = startedAt || new Date().toISOString();
   const rec = {
     id: `${type}-${profile}-${pid}-${Date.parse(started)}`,
     type,
     profile,
+    source_dir: source_dir ?? null,
     src: src ?? null,
     pid: pid ?? null,
     params: params ?? {},

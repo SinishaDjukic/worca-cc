@@ -69,7 +69,7 @@ function _readControls(box) {
  * persists them per-profile to localStorage so a page reload restores the last
  * set values instead of snapping back to the profile defaults.
  */
-function _runOptionsView(agg, onRun, onNotes) {
+function _runOptionsView(agg, onRun, onNotes, runDisabled = false) {
   const saved = loadRunPrefs(agg.name);
   const persist = (e) => {
     const box = e.target.closest('.run-options');
@@ -248,8 +248,13 @@ function _runOptionsView(agg, onRun, onNotes) {
             >Notes</button>`
           : ''
       }
-      <button class="action-btn action-btn--primary run-opt-launch" @click=${launch}>
-        Run
+      <button
+        class="action-btn action-btn--primary run-opt-launch"
+        ?disabled=${runDisabled}
+        title=${runDisabled ? 'A run is already in progress for this profile' : 'Launch a run'}
+        @click=${runDisabled ? () => {} : launch}
+      >
+        ${runDisabled ? 'Running…' : 'Run'}
       </button>
       </div>
     </div>
@@ -480,7 +485,10 @@ function _configView(agg) {
  * @param {object} [handlers]
  * @param {(name: string, opts: {reps?: number, maxInstances?: number}) => void} [handlers.onRun]
  */
-export function profileDetailView(data, { onRun, onRegrade, onNotes } = {}) {
+export function profileDetailView(
+  data,
+  { onRun, onRegrade, onNotes, runDisabled = false } = {},
+) {
   if (!data?.aggregate) {
     return html`<section class="page"><p class="empty-state">Profile not found.</p></section>`;
   }
@@ -494,7 +502,7 @@ export function profileDetailView(data, { onRun, onRegrade, onNotes } = {}) {
     <section class="page">
       ${_liveView(data.active)}
       ${_regradeProgressView(regrade)}
-      ${onRun ? _runOptionsView(agg, onRun, onNotes) : ''}
+      ${onRun ? _runOptionsView(agg, onRun, onNotes, runDisabled) : ''}
       ${_configView(agg)}
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}

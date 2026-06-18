@@ -209,7 +209,6 @@ describe('createApp API', () => {
         body: JSON.stringify({ profile: 'p1' }),
       });
       expect(res.status).toBe(200);
-      // Response also carries the recorded `action` now; match the core fields.
       expect(await res.json()).toMatchObject({ ok: true, pid: 4242 });
       expect(captured.profile).toBe('p1');
       expect(captured.targetDir).toBe(dir);
@@ -275,8 +274,9 @@ describe('createApp API', () => {
     });
   });
 
-  it('POST /api/run records a running action surfaced by GET /api/actions', async () => {
-    // A live pid keeps the action 'running' through the read-time reconciliation.
+  it('POST /api/run shows an instant pending action (boot-window overlay)', async () => {
+    // The CLI records the ledger itself; during its boot window the server
+    // overlays a synthetic 'running' row keyed by the spawned (live) pid.
     const fakeRun = async () => ({ pid: process.pid });
     await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
       const launched = await (
@@ -287,36 +287,60 @@ describe('createApp API', () => {
         })
       ).json();
       expect(launched.ok).toBe(true);
-      expect(launched.action.type).toBe('run');
-      expect(launched.action.profile).toBe('p1');
+      expect(launched.action).toBeUndefined(); // server no longer records
 
       const list = await (await fetch(`${base}/api/actions`)).json();
-      const a = list.actions.find((x) => x.id === launched.action.id);
+      const a = list.actions.find((x) => x.profile === 'p1');
       expect(a).toBeTruthy();
       expect(a.status).toBe('running');
-      expect(a.progress.unit).toBe('instances');
+      expect(a.id).toBe(`pending-${process.pid}`);
     });
   });
 
-  it('POST /api/actions/:id/stop marks the action stopped', async () => {
-    const fakeRun = async () => ({ pid: 999999 }); // dead pid: stop is a no-op kill
-    await withServer(dir, { _runBenchmark: fakeRun }, async (base) => {
-      const launched = await (
-        await fetch(`${base}/api/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ profile: 'p1' }),
-        })
-      ).json();
+  it('GET /api/actions surfaces a CLI-written ledger record and backfills src', async () => {
+    const { recordAction } = await import('./actions-store.js');
+    await withServer(dir, {}, async (base) => {
+      // CLI-written running record (live pid → read-only; never stopped here, so
+      // the test runner is never signalled).
+      const rec = recordAction(dir, {
+        type: 'run',
+        profile: 'p1',
+        source_dir: dir,
+        pid: process.pid,
+      });
+      const list = await (await fetch(`${base}/api/actions`)).json();
+      const a = list.actions.find((x) => x.id === rec.id);
+      expect(a.status).toBe('running');
+      expect(a.src).toBeTruthy(); // backfilled from source_dir via srcHash
+    });
+  });
+
+  it('POST /api/actions/:id/stop marks a ledger action stopped (dead pid, no real kill)', async () => {
+    const { recordAction } = await import('./actions-store.js');
+    await withServer(dir, {}, async (base) => {
+      const rec = recordAction(dir, {
+        type: 'run',
+        profile: 'p1',
+        source_dir: dir,
+        pid: 999999, // dead → stopPidTree is a no-op, kills nothing real
+      });
       const stop = await (
-        await fetch(`${base}/api/actions/${launched.action.id}/stop`, {
-          method: 'POST',
-        })
+        await fetch(`${base}/api/actions/${rec.id}/stop`, { method: 'POST' })
       ).json();
       expect(stop.ok).toBe(true);
-      const list = await (await fetch(`${base}/api/actions`)).json();
-      const a = list.actions.find((x) => x.id === launched.action.id);
-      expect(a.status).toBe('stopped');
+      const after = await (await fetch(`${base}/api/actions`)).json();
+      expect(after.actions.find((x) => x.id === rec.id).status).toBe('stopped');
+    });
+  });
+
+  it('POST /api/actions/pending-<pid>/stop stops a still-booting action by pid', async () => {
+    await withServer(dir, {}, async (base) => {
+      const stop = await (
+        await fetch(`${base}/api/actions/pending-999999/stop`, {
+          method: 'POST',
+        })
+      ).json();
+      expect(stop.ok).toBe(true); // dead pid -> no-op kill, still ok
     });
   });
 

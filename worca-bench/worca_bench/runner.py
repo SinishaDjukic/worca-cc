@@ -101,6 +101,7 @@ def run_profile(
     keep_work: bool = False,
     cache_dir: Path | None = None,
     secret_env: dict[str, str] | None = None,
+    progress_cb=None,
 ) -> RunSummary:
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +161,17 @@ def run_profile(
                 summary.reps_error += 1
             else:
                 summary.reps_run += 1
+            if progress_cb is not None:
+                # Best-effort live progress for the Activity dock — never let a
+                # ledger write abort the sweep.
+                try:
+                    progress_cb(
+                        done=len(summary.results),
+                        total=summary.reps_total,
+                        errors=summary.reps_error,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
     return summary
 
 

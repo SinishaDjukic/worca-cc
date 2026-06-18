@@ -139,15 +139,49 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Grader credentials: environment + CLI-flag overlay (allowlist-enforced).
     from .worca_install import collect_secret_env
     secret_env = collect_secret_env(extra=_cli_secret_env(args))
-    summary = run_profile(
-        profile, target,
-        dry_run=args.dry_run,
-        canary_first=canary,
-        max_instances=args.max_instances,
-        keep_work=args.keep_work,
-        cache_dir=Path(cache_dir) if cache_dir else None,
-        secret_env=secret_env,
-    )
+
+    # Activity-dock ledger: the CLI owns its own lifecycle so a run launched from
+    # the CLI / cron / CI shows up in the dock just like a UI-launched one. The
+    # source dir (= the result dir) lets the server backfill `src`. Skipped for
+    # dry-run (nothing actually executes).
+    from . import actions
+    action_id = None
+    if not args.dry_run:
+        action_id = actions.start(
+            target, kind="run", profile=profile.name, source_dir=target,
+            params={
+                "reps": profile.reps,
+                "max_instances": args.max_instances,
+                "timeout": profile.timeout,
+            },
+        )
+
+    def _progress(*, done, total, errors):
+        actions.progress(target, action_id, done=done, total=total, errors=errors)
+
+    try:
+        summary = run_profile(
+            profile, target,
+            dry_run=args.dry_run,
+            canary_first=canary,
+            max_instances=args.max_instances,
+            keep_work=args.keep_work,
+            cache_dir=Path(cache_dir) if cache_dir else None,
+            secret_env=secret_env,
+            progress_cb=(_progress if action_id else None),
+        )
+    except BaseException as e:  # noqa: BLE001 - record terminal state then re-raise
+        if action_id:
+            actions.finish(target, action_id, status="failed", error=str(e))
+        raise
+    if action_id:
+        actions.finish(
+            target, action_id, status="completed",
+            progress={
+                "unit": "instances", "done": len(summary.results),
+                "total": summary.reps_total, "errors": summary.reps_error,
+            },
+        )
     if args.dry_run:
         print(f"[dry-run] profile={summary.profile} worca={summary.worca_ref} "
               f"reps={summary.reps_total}")
@@ -254,6 +288,16 @@ def cmd_regrade(args: argparse.Namespace) -> int:
     counts = {"graded": 0, "resolved": 0, "error": 0}
     started = _now()
 
+    # Activity-dock ledger (CLI-first): the regrade records its own lifecycle so a
+    # CLI/cron-launched sweep shows up in the dock too. The regrade-status.json
+    # heartbeat below still powers the per-profile detail block.
+    from . import actions
+    action_id = actions.start(
+        target, kind="regrade", profile=profile.name, source_dir=target,
+        params={"mode": mode, "instance": getattr(args, "instance", None),
+                "only_errors": bool(getattr(args, "only_errors", False))},
+    )
+
     def _hb(done: int, current: str | None, status: str = "running") -> None:
         # Best-effort progress heartbeat — never let a status-write failure abort
         # an in-flight (expensive) grade.
@@ -263,6 +307,9 @@ def cmd_regrade(args: argparse.Namespace) -> int:
                          started_at=started, updated_at=_now())
         except OSError:
             pass
+        if status == "running":
+            actions.progress(target, action_id, done=done, total=total,
+                             errors=counts["error"], unit="regraded")
 
     def _record(gr: GradeResult) -> None:
         if gr.status == "graded":
@@ -323,9 +370,15 @@ def cmd_regrade(args: argparse.Namespace) -> int:
                     _hb(done, None)
                     _print_one(iid, rep, gr)
         _hb(total, None, status="done")
-    except BaseException:
+    except BaseException as e:  # noqa: BLE001 - record terminal state then re-raise
         _hb(counts["graded"] + counts["error"], None, status="error")
+        actions.finish(target, action_id, status="failed", error=str(e))
         raise
+    actions.finish(
+        target, action_id, status="completed",
+        progress={"unit": "regraded", "done": total, "total": total,
+                  "errors": counts["error"]},
+    )
 
     print(f"\nregraded {total} rows via {mode}: {counts['graded']} graded "
           f"({counts['resolved']} resolved), {counts['error']} error")

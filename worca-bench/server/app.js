@@ -20,8 +20,8 @@ import express from 'express';
 import {
   findAction,
   patchAction,
+  pidAlive,
   readActions,
-  recordAction,
 } from './actions-store.js';
 import {
   activeByProfile,
@@ -83,6 +83,25 @@ export function createApp(options = {}) {
   const _engineMode = (v) => {
     if (v === true) return 'structural';
     return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  };
+
+  // In-memory spawn overlay for the Activity dock. The CLI is the authoritative
+  // ledger writer (it records its own lifecycle to actions.jsonl), but it takes
+  // ~1s to boot before it can write — so on spawn we remember the pid here to (a)
+  // show an instant 'starting' row and (b) catch a crash-on-boot (pid dies before
+  // the CLI records anything). Pruned once the CLI's record appears (matched by
+  // pid) or it ages out. Not persisted — it only covers the brief boot window.
+  const pendingSpawns = new Map();
+  const SPAWN_GRACE_MS = 30_000;
+  const notePendingSpawn = (pid, kind, profile) => {
+    if (Number.isInteger(pid)) {
+      pendingSpawns.set(pid, {
+        type: kind,
+        profile,
+        source_dir: targetDir,
+        started_at: new Date().toISOString(),
+      });
+    }
   };
 
   // Effective read set = launch dir (always) + configured dirs (settings.json).
@@ -402,26 +421,10 @@ export function createApp(options = {}) {
         // and merges them into the runner's env (never persisted server-side).
         secrets: req.body?.secrets,
       });
-      // Record the launch in the actions ledger so the Activity dock shows it
-      // immediately (closing the gap before the first status.json appears) and
-      // survives a page reload. Best-effort — a ledger write must never fail a run.
-      let action = null;
-      try {
-        action = recordAction(targetDir, {
-          type: 'run',
-          profile,
-          src: def ? srcHash(dirname(def._source_dir)) : undefined,
-          pid,
-          params: {
-            reps: _posInt(req.body?.reps),
-            maxInstances: _posInt(req.body?.maxInstances),
-            timeout: req.body?.timeout,
-          },
-        });
-      } catch {
-        /* ledger write failed — the run still launched */
-      }
-      res.json({ ok: true, pid, action });
+      // The spawned CLI records its own lifecycle to actions.jsonl; note the pid
+      // so the dock shows an instant 'starting' row during the CLI's boot window.
+      notePendingSpawn(pid, 'run', profile);
+      res.json({ ok: true, pid });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -468,23 +471,10 @@ export function createApp(options = {}) {
         logPath: join(targetDir, 'runs', profile, 'regrade.log'),
         secrets: req.body?.secrets,
       });
-      let action = null;
-      try {
-        action = recordAction(targetDir, {
-          type: 'regrade',
-          profile,
-          src: def ? srcHash(dirname(def._source_dir)) : undefined,
-          pid,
-          params: {
-            mode: mode || undefined,
-            instance: instance || undefined,
-            onlyErrors: req.body?.onlyErrors === true,
-          },
-        });
-      } catch {
-        /* ledger write failed — the regrade still launched */
-      }
-      res.json({ ok: true, pid, action });
+      // The spawned regrade CLI records its own lifecycle; note the pid for the
+      // instant 'starting' row during boot.
+      notePendingSpawn(pid, 'regrade', profile);
+      res.json({ ok: true, pid });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -495,14 +485,17 @@ export function createApp(options = {}) {
   // derived progress. Reconciles dead pids to a terminal state on read.
   app.get('/api/actions', (_req, res) => {
     try {
-      const actions = readActions(targetDir);
+      const actions = readActions(targetDir); // dead pids reconciled to terminal
       const rows = readRows();
       const regrades = readRegrades();
       const defs = readDefs();
+      // src is backfilled here (the CLI records source_dir, not src, to avoid a
+      // JS/Python hash mismatch). Progress is whatever the CLI wrote; only when a
+      // record predates progress-writing do we derive it from results/heartbeats.
       const enriched = actions.map((a) => {
+        const src = a.src ?? (a.source_dir ? srcHash(a.source_dir) : null);
+        if (a.progress) return { ...a, src };
         if (a.type === 'run') {
-          // done = terminal result rows for this profile produced since launch;
-          // total = the profile's selected instance count (null => "all").
           const since = a.started_at || '';
           const mine = rows.filter(
             (r) => r.profile === a.profile && (r.completed_at || '') >= since,
@@ -514,6 +507,7 @@ export function createApp(options = {}) {
           const def = defs.find((d) => d.name === a.profile);
           return {
             ...a,
+            src,
             progress: {
               unit: 'instances',
               done,
@@ -522,11 +516,11 @@ export function createApp(options = {}) {
             },
           };
         }
-        // regrade: pull live counts from the heartbeat when present.
         const rg = regrades.find((r) => r.profile === a.profile);
         if (rg) {
           return {
             ...a,
+            src,
             progress: {
               unit: 'regraded',
               done: rg.done,
@@ -535,8 +529,49 @@ export function createApp(options = {}) {
             },
           };
         }
-        return { ...a, progress: null };
+        return { ...a, src, progress: null };
       });
+
+      // Overlay the spawn map for the boot window: a pid not yet in the ledger is
+      // either still booting (→ instant 'starting' row) or crashed before
+      // recording (→ synthetic 'failed'). Prune once the CLI takes over (its
+      // record carries the same pid) or after the grace window.
+      const ledgerPids = new Set(actions.map((a) => a.pid).filter(Boolean));
+      const now = Date.now();
+      for (const [pid, sp] of pendingSpawns) {
+        if (ledgerPids.has(pid)) {
+          pendingSpawns.delete(pid); // CLI recorded it — drop the placeholder
+          continue;
+        }
+        const ageMs = now - Date.parse(sp.started_at);
+        const alive = pidAlive(pid);
+        const base = {
+          id: `pending-${pid}`,
+          type: sp.type,
+          profile: sp.profile,
+          src: srcHash(sp.source_dir),
+          pid,
+          started_at: sp.started_at,
+        };
+        if (alive) {
+          enriched.unshift({ ...base, status: 'running', progress: null });
+          if (ageMs > SPAWN_GRACE_MS) pendingSpawns.delete(pid); // CLI never recorded
+        } else {
+          if (ageMs < SPAWN_GRACE_MS) {
+            enriched.unshift({
+              ...base,
+              status: 'failed',
+              error: 'launch failed — process exited before recording',
+              ended_at: new Date().toISOString(),
+              progress: null,
+            });
+          }
+          pendingSpawns.delete(pid);
+        }
+      }
+      enriched.sort((x, y) =>
+        (y.started_at || '').localeCompare(x.started_at || ''),
+      );
       res.json({ ok: true, actions: enriched });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -547,14 +582,24 @@ export function createApp(options = {}) {
   app.post('/api/actions/:id/stop', async (req, res) => {
     try {
       const a = findAction(targetDir, req.params.id);
-      if (!a)
-        return res.status(404).json({ ok: false, error: 'action not found' });
-      const stopped = await stopPidTree(a.pid);
-      patchAction(targetDir, a.id, {
-        status: 'stopped',
-        ended_at: new Date().toISOString(),
-      });
-      res.json({ ok: true, stopped });
+      if (a) {
+        const stopped = await stopPidTree(a.pid);
+        patchAction(targetDir, a.id, {
+          status: 'stopped',
+          ended_at: new Date().toISOString(),
+        });
+        return res.json({ ok: true, stopped });
+      }
+      // A still-booting action exists only as a `pending-<pid>` overlay row (the
+      // CLI hasn't written its ledger record yet) — stop it by pid directly.
+      const m = /^pending-(\d+)$/.exec(req.params.id);
+      if (m) {
+        const pid = Number(m[1]);
+        const stopped = await stopPidTree(pid);
+        pendingSpawns.delete(pid);
+        return res.json({ ok: true, stopped });
+      }
+      return res.status(404).json({ ok: false, error: 'action not found' });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

@@ -436,12 +436,22 @@ function renderView(view) {
         selected,
         onToggleSelect: toggleSelect,
       });
-    case 'detail':
+    case 'detail': {
+      // Disable Run while this profile already has a live run action — the
+      // anti-double-click guard (the dock shows the in-flight one).
+      const runningRun = state.actions.some(
+        (a) =>
+          a.type === 'run' &&
+          a.status === 'running' &&
+          a.profile === view.data?.aggregate?.name,
+      );
       return profileDetailView(view.data, {
         onRun: (name, opts) => runProfile(name, opts),
         onRegrade: (name, instanceId) => regradeInstance(name, instanceId),
         onNotes: (name) => openNotes(name),
+        runDisabled: runningRun,
       });
+    }
     case 'compare':
       return compareView(view.data);
     case 'leaderboard':

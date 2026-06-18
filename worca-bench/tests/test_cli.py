@@ -16,6 +16,8 @@ class _FakeSummary:
         self.profile = profile.name
         self.worca_ref = "local"
         self.reps_total = profile.reps
+        self.results: list = []
+        self.reps_error = 0
         self.incompatible_templates: dict = {}
 
     def as_dict(self):
@@ -169,6 +171,46 @@ def test_cmd_run_without_timeout_keeps_profile_default(tmp_path, monkeypatch):
     rc = cli.cmd_run(_args(tmp_path, profiles_dir, timeout=None))
     assert rc == 0
     assert captured["timeout"] is None  # profile default (unset)
+
+
+def test_cmd_run_records_actions_ledger(tmp_path, monkeypatch):
+    import json
+    profiles_dir = _write_profile(tmp_path)
+    monkeypatch.setattr(
+        cli, "run_profile", lambda profile, target, **kw: _FakeSummary(profile)
+    )
+    rc = cli.cmd_run(_args(tmp_path, profiles_dir))
+    assert rc == 0
+    recs = [
+        json.loads(line)
+        for line in (tmp_path / "actions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert recs[0]["type"] == "run"
+    assert recs[0]["status"] == "running"
+    assert recs[0]["profile"] == "demo"
+    assert recs[-1]["status"] == "completed"  # CLI wrote its own terminal state
+
+
+def test_cmd_run_records_failed_on_exception(tmp_path, monkeypatch):
+    import json
+
+    def boom(profile, target, **kw):
+        raise RuntimeError("kaboom")
+
+    profiles_dir = _write_profile(tmp_path)
+    monkeypatch.setattr(cli, "run_profile", boom)
+    try:
+        cli.cmd_run(_args(tmp_path, profiles_dir))
+    except RuntimeError:
+        pass
+    recs = [
+        json.loads(line)
+        for line in (tmp_path / "actions.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert recs[-1]["status"] == "failed"
+    assert "kaboom" in (recs[-1].get("error") or "")
 
 
 def test_cmd_run_rejects_non_positive_max_parallel(tmp_path, monkeypatch):
