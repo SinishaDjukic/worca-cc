@@ -123,7 +123,10 @@ function _runOptionsView(agg, onRun, onNotes, runDisabled = false) {
       <div class="run-options-title">Run options</div>
       <div class="run-options-row">
       <label class="run-opt"
-        >Reps
+        ><sl-tooltip
+          content="How many times each instance is run. Total runs = instances × this. Empty = use the profile's value."
+          ><span class="run-opt-label-inline">Reps / instance</span></sl-tooltip
+        >
         <input
           class="run-opt-reps"
           type="number"
@@ -494,6 +497,9 @@ export function profileDetailView(
   }
   const agg = data.aggregate;
   const reps = data.reps || [];
+  // True planned reps-per-instance = the highest rep index across rows (NOT
+  // agg.reps, which is the total row count). Only used to annotate "Rep #".
+  const repsPlanned = reps.reduce((m, r) => Math.max(m, r.rep || 0), 0);
 
   const regrade = data.regrade;
   const grading = regrade?.active ? regrade.current : null;
@@ -506,7 +512,7 @@ export function profileDetailView(
       ${_configView(agg)}
       <div class="stat-grid">
         ${_statRow('Benchmark', agg.benchmark || 'N/A')}
-        ${_statRow('Reps', String(agg.reps))}
+        ${_statRow('Runs', String(agg.reps))}
         ${_statRow('Resolved rate', pct(agg.resolved_rate))}
         ${_statRow('Avg score', typeof agg.mean_score === 'number' ? num(agg.mean_score, 2) : 'N/A')}
         ${_statRow('Avg cost', formatCost(agg.mean_cost_usd) || 'N/A')}
@@ -518,7 +524,7 @@ export function profileDetailView(
         <thead>
           <tr>
             <th>Instance</th>
-            <th>Rep</th>
+            <th>Rep #</th>
             <th>Status</th>
             <th>Score</th>
             <th>Cost</th>
@@ -536,7 +542,7 @@ export function profileDetailView(
             return html`
               <tr class=${isGrading ? 'reps-row--grading' : nothing}>
                 <td class="reps-instance" title=${r.instance_id || ''}>${r.instance_id || '—'}</td>
-                <td>${r.rep ?? '—'}</td>
+                <td>${r.rep ? (repsPlanned > 1 ? `${r.rep} / ${repsPlanned}` : r.rep) : '—'}</td>
                 <td>
                   <sl-tooltip content=${_gradeTooltip(r)}>
                     <sl-badge variant="${variantFor(ro)}" pill>${ro}</sl-badge>
