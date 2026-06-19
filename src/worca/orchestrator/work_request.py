@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -15,6 +16,13 @@ _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
 _GH_ISSUE_URL_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/issues/(\d+)$")
 # Matches any HTTP(S) URL — used to detect URL inputs before routing to parse_pr_url()
 _ANY_URL_RE = re.compile(r"https?://")
+# Matches Jira ticket URLs:
+#   https://rb-tracker.bosch.com/tracker01/browse/BIRM-594
+# group(1) → base_url (host + first path segment, e.g. "https://rb-tracker.bosch.com/tracker01")
+# group(2) → ticket key (uppercase project + digits, e.g. "BIRM-594")
+_JIRA_URL_RE = re.compile(
+    r"^(https?://[^/]+/[^/]+)/browse/([A-Z][A-Z0-9_]*-\d+)/?$"
+)
 
 
 def _plan_prefix_from_template(template: Optional[str]) -> str:
@@ -278,6 +286,115 @@ def normalize_beads_task(ref: str) -> WorkRequest:
     )
 
 
+def _ensure_jtr_config(url: str, project_root: str) -> None:
+    """If ``./.jtr/`` doesn't exist under project_root, run ``jtr init <url>``.
+
+    ``jtr init`` parses base_url + project key out of the URL and writes them
+    into ``./.jtr/.env`` (mode 0700) plus appends ``.jtr/`` to .gitignore. Safe
+    to skip if ``./.jtr/`` already exists — treat that as "user has set this up".
+    """
+    if os.path.isdir(os.path.join(project_root, ".jtr")):
+        return
+    result = subprocess.run(
+        ["jtr", "init", url],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+        cwd=project_root,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"`jtr init {url}` failed: {result.stderr.strip() or result.stdout.strip()}\n"
+            "Hint: install jtr with "
+            "`uv tool install git+https://github.com/BD-AI-SDLC/jtr.git`."
+        )
+    print(
+        f"[worca] Initialised Jira config at {os.path.join(project_root, '.jtr')} from {url}",
+        file=sys.stderr,
+    )
+
+
+def _check_jtr_auth(project_root: str) -> None:
+    """Pre-flight: surface auth state via ``jtr auth status --json`` before fetch."""
+    result = subprocess.run(
+        ["jtr", "auth", "status", "--json"],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+        cwd=project_root,
+    )
+    if result.returncode == 0:
+        return
+    fix = "jtr auth pat"
+    try:
+        err = json.loads(result.stdout)
+        if isinstance(err, dict) and err.get("fix"):
+            fix = err["fix"]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    raise RuntimeError(
+        f"Jira authentication missing or expired in {project_root}/.jtr/\n"
+        f"Run `{fix}` from this directory and retry."
+    )
+
+
+def normalize_jira_ticket(ref: str) -> WorkRequest:
+    """Create a WorkRequest from a Jira ticket reference like 'jtr:BIRM-594'.
+
+    Shells out to the ``jtr`` CLI (Bosch Track and Release) for fetch. Auth,
+    Jira instance routing, and project access live in jtr — worca trusts the
+    CLI to be authenticated. Failures with a structured ``--json`` envelope
+    surface the ``fix:`` field; others fall back to a generic auth-status hint.
+    """
+    ticket_key = ref.split(":", 1)[-1]
+    if not ticket_key or "-" not in ticket_key:
+        raise ValueError(
+            f"Invalid Jira ref {ref!r}: expected 'jtr:PROJECT-NUMBER'"
+        )
+    result = subprocess.run(
+        ["jtr", "view", ticket_key, "--json"],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+    )
+    if result.returncode != 0:
+        msg = result.stderr.strip() or result.stdout.strip()
+        hint = ""
+        try:
+            err = json.loads(result.stdout)
+            if isinstance(err, dict) and "error" in err:
+                msg = err.get("message") or err["error"]
+                if err.get("fix"):
+                    hint = f"\nHint: {err['fix']}"
+        except (json.JSONDecodeError, ValueError):
+            pass
+        if not hint:
+            hint = (
+                "\nHint: verify 'jtr' is installed and authenticated "
+                "(try `jtr auth status`)."
+            )
+        raise RuntimeError(
+            f"Failed to fetch Jira ticket {ticket_key}: {msg}{hint}"
+        )
+    data = json.loads(result.stdout)
+    ticket = data["ticket"]
+    body = (ticket.get("description") or "").strip()
+    comments = data.get("comments") or []
+    if comments:
+        body += "\n\n## Comments\n"
+        for c in comments:
+            author = c.get("author", {}).get("display_name", "unknown")
+            created = (c.get("created") or "")[:10]
+            comment_body = (c.get("body") or "").strip()
+            body += f"\n---\n\n**{author} ({created}):**\n\n{comment_body}\n"
+    return WorkRequest(
+        source_type="jira",
+        title=ticket["summary"],
+        description=body,
+        source_ref=f"jtr:{ticket_key}",
+    )
+
+
 GUIDE_MAX_BYTES_DEFAULT = 131072  # 128 KiB — see W-040 §9
 
 
@@ -506,7 +623,7 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
                 repo_nwo=parsed.get("repo_path") or None,
             )
         raise ValueError(f"PR source not yet supported: {source_value}")
-    elif source_type == "source" or source_value.startswith(("gh:", "bd:")):
+    elif source_type == "source" or source_value.startswith(("gh:", "bd:", "jtr:")):
         # Detect full PR URLs before issue-URL conversion
         if _ANY_URL_RE.match(source_value):
             parsed = parse_pr_url(source_value)
@@ -515,6 +632,10 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
                 return normalize_github_pr(
                     ref, repo_nwo=parsed.get("repo_path") or None
                 )
+            # Jira ticket URLs are provider="other" from parse_pr_url — they
+            # get rewritten to jtr:KEY below. Any other non-github provider
+            # (gitlab, bitbucket, azure_devops, gitea) is a PR URL we don't
+            # yet support; surface that explicitly.
             if parsed["provider"] != "other":
                 raise ValueError(
                     f"PR source '{parsed['provider']}' not yet supported: {source_value}"
@@ -523,6 +644,11 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
         gh_url_match = _GH_ISSUE_URL_RE.match(source_value)
         if gh_url_match:
             source_value = f"gh:issue:{gh_url_match.group(1)}"
+        # Convert Jira ticket URLs to jtr:KEY format (with auto-init of ./.jtr/)
+        jira_url_match = _JIRA_URL_RE.match(source_value)
+        if jira_url_match:
+            _ensure_jtr_config(source_value, os.getcwd())
+            source_value = f"jtr:{jira_url_match.group(2)}"
         if source_value.startswith("gh:pr:"):
             return normalize_github_pr(source_value)
         elif source_value.startswith("gh:issue:"):
@@ -531,6 +657,9 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
             )
         elif source_value.startswith("bd:"):
             return normalize_beads_task(source_value)
+        elif source_value.startswith("jtr:"):
+            _check_jtr_auth(os.getcwd())
+            return normalize_jira_ticket(source_value)
         else:
             raise ValueError(f"Unknown source reference format: {source_value}")
     elif _ANY_URL_RE.match(source_value):

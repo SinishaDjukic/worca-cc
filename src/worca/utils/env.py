@@ -13,7 +13,7 @@ import shutil
 
 
 # Tools the pipeline needs available in agent subprocesses.
-_TOOLS = ("bd", "claude", "uv", "python3", "node", "git")
+_TOOLS = ("bd", "claude", "uv", "python3", "node", "git", "jtr")
 
 # Discover tool directories once at import time.
 _extra_dirs: list[str] = []

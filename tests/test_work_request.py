@@ -6,6 +6,9 @@ import pytest
 
 from worca.orchestrator.work_request import (
     WorkRequest,
+    _JIRA_URL_RE,
+    _check_jtr_auth,
+    _ensure_jtr_config,
     _extract_plan_path,
     generate_smart_title,
     normalize_plan_file,
@@ -13,6 +16,7 @@ from worca.orchestrator.work_request import (
     normalize_spec_file,
     normalize_github_issue,
     normalize_beads_task,
+    normalize_jira_ticket,
     normalize_github_pr,
     normalize,
 )
@@ -508,6 +512,226 @@ class TestNormalizeBeadsTask:
         assert wr.title == "bd-zz99"
 
 
+# --- _JIRA_URL_RE ---
+
+class TestJiraUrlRegex:
+    def test_matches_canonical_url(self):
+        url = "https://rb-tracker.bosch.com/tracker01/browse/BIRM-594"
+        m = _JIRA_URL_RE.match(url)
+        assert m is not None
+        assert m.group(1) == "https://rb-tracker.bosch.com/tracker01"
+        assert m.group(2) == "BIRM-594"
+
+    def test_matches_http_url(self):
+        url = "http://jira.example.com/jira/browse/EXPFAM-13727"
+        m = _JIRA_URL_RE.match(url)
+        assert m is not None
+        assert m.group(2) == "EXPFAM-13727"
+
+    def test_matches_trailing_slash(self):
+        url = "https://rb-tracker.bosch.com/tracker01/browse/BIRM-1/"
+        m = _JIRA_URL_RE.match(url)
+        assert m is not None
+        assert m.group(2) == "BIRM-1"
+
+    def test_matches_key_with_digits_and_underscore(self):
+        url = "https://jira/proj/browse/PROJ_X1-42"
+        m = _JIRA_URL_RE.match(url)
+        assert m is not None
+        assert m.group(2) == "PROJ_X1-42"
+
+    def test_does_not_match_url_without_browse(self):
+        assert _JIRA_URL_RE.match("https://jira.example.com/tracker01/issues/BIRM-594") is None
+
+    def test_does_not_match_random_url(self):
+        assert _JIRA_URL_RE.match("https://example.com/page") is None
+
+    def test_does_not_match_github_url(self):
+        assert _JIRA_URL_RE.match("https://github.com/owner/repo/issues/42") is None
+
+    def test_does_not_match_lowercase_project(self):
+        assert _JIRA_URL_RE.match("https://jira/p/browse/abc-1") is None
+
+
+# --- _ensure_jtr_config ---
+
+class TestEnsureJtrConfig:
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_existing_dir_is_noop(self, mock_subprocess, tmp_path):
+        (tmp_path / ".jtr").mkdir()
+        _ensure_jtr_config("https://jira/p/browse/X-1", str(tmp_path))
+        mock_subprocess.run.assert_not_called()
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_runs_jtr_init_when_missing(self, mock_subprocess, tmp_path):
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        url = "https://jira/p/browse/X-1"
+        _ensure_jtr_config(url, str(tmp_path))
+        mock_subprocess.run.assert_called_once_with(
+            ["jtr", "init", url],
+            capture_output=True,
+            text=True,
+            env=ANY,
+            cwd=str(tmp_path),
+        )
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_init_failure_raises_with_install_hint(self, mock_subprocess, tmp_path):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="command not found"
+        )
+        with pytest.raises(RuntimeError, match="uv tool install"):
+            _ensure_jtr_config("https://jira/p/browse/X-1", str(tmp_path))
+
+
+# --- _check_jtr_auth ---
+
+class TestCheckJtrAuth:
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_success_is_silent(self, mock_subprocess, tmp_path):
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+        _check_jtr_auth(str(tmp_path))
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_failure_surfaces_fix_hint(self, mock_subprocess, tmp_path):
+        envelope = json.dumps({
+            "error": "not_authenticated",
+            "message": "WebSEAL intercepted",
+            "fix": "jtr auth sso --force",
+        })
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=2, stdout=envelope, stderr=""
+        )
+        with pytest.raises(RuntimeError, match="jtr auth sso --force"):
+            _check_jtr_auth(str(tmp_path))
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_failure_without_structured_envelope_uses_default_hint(
+        self, mock_subprocess, tmp_path
+    ):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=2, stdout="not json", stderr=""
+        )
+        with pytest.raises(RuntimeError, match="jtr auth pat"):
+            _check_jtr_auth(str(tmp_path))
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_uses_project_root_cwd(self, mock_subprocess, tmp_path):
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+        _check_jtr_auth(str(tmp_path))
+        assert mock_subprocess.run.call_args.kwargs["cwd"] == str(tmp_path)
+
+
+# --- normalize_jira_ticket ---
+
+_SAMPLE_JIRA_VIEW = {
+    "ticket": {
+        "key": "BIRM-594",
+        "summary": "Implement OAuth flow",
+        "status": "Open",
+        "priority": "Medium",
+        "issue_type": "Task",
+        "description": "Body of the ticket\r\n\r\nWith *bold* and +highlight+.",
+    },
+    "comments": [
+        {
+            "id": "1",
+            "author": {"display_name": "Alice Smith"},
+            "body": "Looked into this; needs more thought.",
+            "created": "2026-06-09T10:38:15.578+0200",
+        },
+        {
+            "id": "2",
+            "author": {"display_name": "Bob Lee"},
+            "body": "+1",
+            "created": "2026-06-10T11:00:00.000+0200",
+        },
+    ],
+}
+
+
+class TestNormalizeJiraTicket:
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_happy_path(self, mock_subprocess):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(_SAMPLE_JIRA_VIEW), stderr=""
+        )
+        wr = normalize_jira_ticket("jtr:BIRM-594")
+        assert wr.source_type == "jira"
+        assert wr.title == "Implement OAuth flow"
+        assert wr.source_ref == "jtr:BIRM-594"
+        assert "Body of the ticket" in wr.description
+        assert "## Comments" in wr.description
+        assert "Alice Smith" in wr.description
+        assert "Bob Lee" in wr.description
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_no_comments_omits_section(self, mock_subprocess):
+        payload = {"ticket": dict(_SAMPLE_JIRA_VIEW["ticket"]), "comments": []}
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(payload), stderr=""
+        )
+        wr = normalize_jira_ticket("jtr:BIRM-594")
+        assert "## Comments" not in wr.description
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_missing_description_handled(self, mock_subprocess):
+        payload = {
+            "ticket": {"key": "BIRM-1", "summary": "No body"},
+            "comments": [],
+        }
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(payload), stderr=""
+        )
+        wr = normalize_jira_ticket("jtr:BIRM-1")
+        assert wr.title == "No body"
+        assert wr.description == ""
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_subprocess_failure_uses_structured_error(self, mock_subprocess):
+        envelope = json.dumps({
+            "error": "not_found",
+            "message": "Issue does not exist",
+            "fix": "Check the ticket key",
+        })
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=1, stdout=envelope, stderr=""
+        )
+        with pytest.raises(RuntimeError, match="Check the ticket key"):
+            normalize_jira_ticket("jtr:GONE-1")
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_subprocess_failure_without_envelope_uses_default_hint(
+        self, mock_subprocess
+    ):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="jtr: command not found"
+        )
+        with pytest.raises(RuntimeError, match="jtr auth status"):
+            normalize_jira_ticket("jtr:GONE-1")
+
+    def test_invalid_ref_empty(self):
+        with pytest.raises(ValueError, match="Invalid Jira ref"):
+            normalize_jira_ticket("jtr:")
+
+    def test_invalid_ref_no_hyphen(self):
+        with pytest.raises(ValueError, match="Invalid Jira ref"):
+            normalize_jira_ticket("jtr:NOHYPHEN")
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_argv_matches_jtr_view(self, mock_subprocess):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(_SAMPLE_JIRA_VIEW), stderr=""
+        )
+        normalize_jira_ticket("jtr:BIRM-594")
+        mock_subprocess.run.assert_called_once_with(
+            ["jtr", "view", "BIRM-594", "--json"],
+            capture_output=True,
+            text=True,
+            env=ANY,
+        )
+
+
 # --- normalize dispatcher ---
 
 class TestNormalize:
@@ -571,6 +795,51 @@ class TestNormalize:
             assert False, "Should have raised ValueError"
         except ValueError as e:
             assert "Unknown source" in str(e)
+
+    @patch("worca.orchestrator.work_request._check_jtr_auth")
+    @patch("worca.orchestrator.work_request._ensure_jtr_config")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_dispatches_jira_url(
+        self, mock_subprocess, mock_ensure, mock_check
+    ):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(_SAMPLE_JIRA_VIEW), stderr=""
+        )
+        url = "https://rb-tracker.bosch.com/tracker01/browse/BIRM-594"
+        wr = normalize("source", url)
+        assert wr.source_type == "jira"
+        assert wr.source_ref == "jtr:BIRM-594"
+        mock_ensure.assert_called_once()
+        mock_check.assert_called_once()
+        assert mock_ensure.call_args.args[0] == url
+
+    @patch("worca.orchestrator.work_request._check_jtr_auth")
+    @patch("worca.orchestrator.work_request._ensure_jtr_config")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_dispatches_jtr_canonical_ref(
+        self, mock_subprocess, mock_ensure, mock_check
+    ):
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(_SAMPLE_JIRA_VIEW), stderr=""
+        )
+        wr = normalize("source", "jtr:BIRM-594")
+        assert wr.source_type == "jira"
+        assert wr.source_ref == "jtr:BIRM-594"
+        mock_ensure.assert_not_called()
+        mock_check.assert_called_once()
+
+    @patch("worca.orchestrator.work_request._check_jtr_auth")
+    @patch("worca.orchestrator.work_request._ensure_jtr_config")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_jira_url_does_not_trigger_github_path(
+        self, mock_subprocess, mock_ensure, mock_check
+    ):
+        # Negative: a Jira URL must NOT be misrouted to normalize_github_issue
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps(_SAMPLE_JIRA_VIEW), stderr=""
+        )
+        wr = normalize("source", "https://rb-tracker.bosch.com/tracker01/browse/BIRM-1")
+        assert wr.source_type == "jira"  # not "github_issue"
 
 
 # --- _extract_plan_path ---
