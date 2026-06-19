@@ -11,7 +11,8 @@
     "WORCA_TARGET_BRANCH",
     "WORCA_COVERAGE",
     "WORCA_SKIP_BEADS",
-    "WORCA_CLAUDE_BIN"
+    "WORCA_CLAUDE_BIN",
+    "WORCA_JIRA_DISABLED"
   ],
   "prefixes": [
     "WORCA_"

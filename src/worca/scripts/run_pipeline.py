@@ -69,6 +69,12 @@ def create_parser():
                         default=None,
                         help="CLAUDE.md load mode: none, project, project+local, or all (default). "
                              "Allowed on --resume; CLI value wins over persisted value.")
+    parser.add_argument("--no-jira", action="store_true",
+                        help="Mute Jira write-back (`jtr comment` posts) for this run only. "
+                             "Sets WORCA_JIRA_DISABLED=1 in the env so the "
+                             "worca.sources.jira.hook short-circuits. Overrides "
+                             "worca.sources.jira.write_back. The local "
+                             "$WORCA_RUN_DIR/jira-report.md is still written.")
     return parser
 
 
@@ -168,6 +174,12 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     _ensure_bd_daemon_at_cwd()
+
+    # --no-jira: hard mute for the Jira write-back hook (read in
+    # worca.sources.jira.hook._write_back_enabled). Set before any subprocess
+    # inheriting the env is spawned.
+    if args.no_jira:
+        os.environ["WORCA_JIRA_DISABLED"] = "1"
 
     # --prompt-file: read prompt from file and delete it
     if args.prompt_file:

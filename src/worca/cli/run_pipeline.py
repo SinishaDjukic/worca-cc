@@ -93,6 +93,8 @@ def cmd_run(args: Namespace) -> None:
 
     for g in args.guide or []:
         cmd.extend(["--guide", g])
+    if getattr(args, "no_jira", False):
+        cmd.append("--no-jira")
     if use_worktree:
         if args.branch:
             cmd.extend(["--branch", args.branch])

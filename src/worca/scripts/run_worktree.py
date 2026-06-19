@@ -281,6 +281,16 @@ def create_parser() -> argparse.ArgumentParser:
         default=".claude/settings.json",
         help="Path to settings.json",
     )
+    parser.add_argument(
+        "--no-jira",
+        action="store_true",
+        help=(
+            "Mute Jira write-back (`jtr comment` posts) for this run only. "
+            "Sets WORCA_JIRA_DISABLED=1 in the env; inherited by the worktree's "
+            "run_pipeline.py subprocess and by the worca.sources.jira.hook. "
+            "Overrides worca.sources.jira.write_back."
+        ),
+    )
     return parser
 
 
@@ -288,6 +298,11 @@ def main(argv=None) -> int:
     """Entry point. Returns exit code (0 = launched, 1 = worktree failed, 2 = bad args)."""
     parser = create_parser()
     args = parser.parse_args(argv)
+
+    # --no-jira: hard mute for the Jira write-back hook in this run + every
+    # subprocess it spawns (the worktree's run_pipeline.py inherits the env).
+    if args.no_jira:
+        os.environ["WORCA_JIRA_DISABLED"] = "1"
 
     if not args.prompt and not args.source:
         print("error: one of --prompt or --source is required", file=sys.stderr)

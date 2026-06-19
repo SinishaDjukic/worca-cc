@@ -215,6 +215,14 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to a reference guide injected into the plan prompt (repeatable)",
     )
+    run_parser.add_argument(
+        "--no-jira",
+        action="store_true",
+        help="Mute Jira write-back (jtr comment posts) for this run only — "
+             "sets WORCA_JIRA_DISABLED=1 so worca.sources.jira.hook short-circuits. "
+             "Overrides worca.sources.jira.write_back. Useful for dry runs against "
+             "a real ticket.",
+    )
 
     # lifecycle commands: pause, stop, resume, status
     for name in ("pause", "stop", "resume", "status"):
