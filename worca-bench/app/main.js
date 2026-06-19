@@ -636,12 +636,38 @@ async function refreshCurrent() {
   }
 }
 
+// Live elapsed time, sweep ETA, and dock duration are derived from `Date.now()`
+// at render time (see `_elapsedSince` / `_etaForSweep` in profile-detail.js and
+// `_fmtDur` in activity-dock.js). When a run/grading is in flight but its server
+// payload is byte-identical between polls, the diff-guarded refreshes above skip
+// the re-render — and those clocks visibly freeze until a manual reload. This
+// returns true when such a wall-clock value is on screen so the poll can force a
+// tick. Pure in (view, actions) so it stays trivially correct.
+function _hasLiveClock(view, actions) {
+  const d = view?.data;
+  const viewLive = Array.isArray(d)
+    ? d.some((p) => p?.active || p?.regrade) // dashboard: per-profile aggregates
+    : !!(d?.active?.length || d?.regrade?.active); // detail: live runs / sweep
+  const dockLive = Array.isArray(actions)
+    ? actions.some((a) => a?.status === 'running')
+    : false;
+  return viewLive || dockLive;
+}
+
 function startPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    if (!document.hidden) {
-      refreshCurrent();
-      refreshActions(); // keep the Activity dock live on every page
+    if (document.hidden) return;
+    refreshCurrent();
+    refreshActions(); // keep the Activity dock live on every page
+    // Advance the wall-clock-derived values even when the server payload hasn't
+    // changed. Settings is excluded (matching refreshCurrent) so a forced
+    // re-render never clobbers the add-dir form mid-edit.
+    if (
+      parseHash(location.hash).path !== '/settings' &&
+      _hasLiveClock(state.view, state.actions)
+    ) {
+      rerender();
     }
   }, POLL_MS);
 }
