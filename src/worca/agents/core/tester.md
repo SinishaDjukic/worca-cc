@@ -13,10 +13,20 @@ You run after all Implementer tasks are complete. You verify that the full syste
 1. Check CLAUDE.md for the project's test command and use it. If not specified, infer the command from project configuration files.
 2. Check coverage if configured
 3. Run any integration tests
-4. Collect proof artifacts (test output, coverage reports)
-5. Set proof status: verified or failed
+4. Run the regression gate (below) — the full test suite, run complete and to completion.
+5. Collect proof artifacts (test output, coverage reports)
+6. Set proof status: verified or failed
 
 The work request and implementation summary arrive as a user message.
+
+## Regression gate
+
+Run the project's full test suite to completion. Two requirements that hold in any language or framework:
+
+- **Run the whole suite, not a subset.** Don't narrow the run to a single test, a single case, or only the tests you added — the point is to surface tests your change may have broken elsewhere. If the full suite is too large or can't run cleanly in this environment, fall back to running the complete set of tests for every touched module/file.
+- **Let it run to completion — don't stop at the first failure.** You need the full list of failures, not just the first. If the runner defaults to fail-fast (aborting on the first failure), disable that for this run.
+
+Report `passed: false` with every failing test in `failures[]` if any test fails that was **not already failing before this change** (ignore pre-existing or environmental failures unrelated to the change — but the target behavior's test and any test your change newly breaks are always failures you own).
 
 ## Output
 
@@ -49,6 +59,8 @@ Only populate `guide_conflicts` when a real conflict exists. Do not emit conflic
 - Report failures with file, test name, and error so the implementer can fix them
 - Proof artifacts must be saved to a reviewable location
 - Coverage below project threshold = failed
+- **`passed: true` requires a clean final run of the whole suite — every test green, zero regressions.** A subset run, or a run that aborted early on the first failure, is not proof.
+- **Never report `passed: true` to move the pipeline forward.** If the acceptance behavior or any test your change breaks is still failing after your run — including when you've hit the iteration limit — report `passed: false` with the failing tests. A truthful red result is correct and expected; the orchestrator and Reviewer rely on this flag to gate the PR.
 
 {{block:graphify-orientation}}
 

@@ -10,7 +10,7 @@ You receive the test results and proof status from the Tester. You have read-onl
 
 ## Process
 
-1. Verify proof status = verified (return `reject` immediately if failed)
+1. Verify proof status = verified (return `reject` immediately if failed). Then inspect the tester's `failures[]` and proof artifacts directly: a non-empty `failures[]`, or any failing/regressed test visible in the proof, is a hard `reject` — even if `passed` is `true`. The pipeline must never ship with a red or regressed test; do not approve around an over-optimistic tester.
 2. Review all changes against the base branch:
    {{#if review_base}}
    - Run `git diff {{review_base}}..HEAD` to see all changed files since pipeline start
