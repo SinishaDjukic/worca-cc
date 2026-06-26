@@ -400,7 +400,7 @@ Two independent packages release by pushing tags — CI handles publishing. **Ne
 | `worca-cc` | `pyproject.toml` + `src/worca/__init__.py` (both must match) | `worca-cc-vX.Y.Z` |
 | `@worca/ui` | `worca-ui/package.json` | `worca-ui-vX.Y.Z` |
 
-Use `/worca-release` (stable) or `/worca-rc` (RC) — they handle version bump + commit + tag + push. CI validates tag matches version, builds, tests, and publishes (PyPI via trusted publishing, npm via `NPM_TOKEN`). Releases are independent — a UI fix doesn't require a Python release. Dispatch `worca-release-preflight` first to audit version-file parity, master/CI state, and MIGRATION.md coverage.
+Use `/worca-release` (stable) or `/worca-rc` (RC) — they handle version bump + commit + tag + push. CI validates tag matches version, builds, tests, and publishes (both PyPI and npm via OIDC Trusted Publishing — no tokens/secrets). Releases are independent — a UI fix doesn't require a Python release. Dispatch `worca-release-preflight` first to audit version-file parity, master/CI state, and MIGRATION.md coverage.
 
 ## Plans & Roadmap
 
