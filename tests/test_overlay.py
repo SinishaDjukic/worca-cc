@@ -14,7 +14,30 @@ from worca.orchestrator.overlay import (
     _parse_sections,
     _parse_overrides,
     _heading_matches,
+    _strip_frontmatter,
 )
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter stripping (GH #343 — defensive, for Claude-native overlays)
+# ---------------------------------------------------------------------------
+
+
+def test_strip_frontmatter_noop_for_shipped_agents():
+    """Shipped core templates have no frontmatter — must pass through verbatim."""
+    body = "# Planner Agent\n\n## Role\n\nYou are the Planner.\n"
+    assert _strip_frontmatter(body) == body
+
+
+def test_strip_frontmatter_removes_leading_yaml_block():
+    text = "---\nname: planner\ndescription: x\n---\n# Planner Agent\n\nBody.\n"
+    assert _strip_frontmatter(text) == "# Planner Agent\n\nBody.\n"
+
+
+def test_strip_frontmatter_only_strips_leading_block():
+    """A --- horizontal rule later in the doc must be preserved."""
+    text = "# Title\n\nIntro.\n\n---\n\n## Next\n"
+    assert _strip_frontmatter(text) == text
 
 
 # ---------------------------------------------------------------------------

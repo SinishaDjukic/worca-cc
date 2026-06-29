@@ -1752,9 +1752,10 @@ def run_stage(
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
         prompt_override: When provided, used instead of context["prompt"].
-        agent_override: When provided, used as the --agent path instead of the
-            default _agent_path(). Allows per-stage resolved templates to be
-            passed directly to the claude CLI.
+        agent_override: When provided, used as the resolved agent .md path
+            instead of the default _agent_path(). Delivered to the claude CLI as
+            the system prompt via --append-system-prompt-file (GH #343). Allows
+            per-stage resolved templates to be passed directly.
         env_overrides: Extra env vars merged into model_env before passing to
             run_agent(). Used for CLAUDE_CODE_EFFORT_LEVEL injection.
         graphify_out: When set, exported as GRAPHIFY_OUT in the agent

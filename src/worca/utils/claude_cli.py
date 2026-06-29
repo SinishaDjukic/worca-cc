@@ -253,7 +253,10 @@ def build_command(
 
     Args:
         prompt: The prompt to send to the agent.
-        agent: Path to the agent .md file (e.g. ".claude/agents/core/planner.md").
+        agent: Path to the rendered agent .md file (e.g.
+            ".claude/agents/core/planner.md"). Delivered to the CLI as the
+            system prompt via --append-system-prompt-file (GH #343), and its
+            filename stem is used to resolve per-agent tool grants.
         output_format: Output format ("text", "json", "stream-json").
         json_schema: Inline JSON schema string for structured output, or path
                      to a .json file (will be read and inlined).
@@ -287,7 +290,17 @@ def build_command(
         *_claude_bin,
         "-p",
         cli_prompt,
-        "--agent",
+        # The rendered agent .md is the agent's system prompt. We deliver it via
+        # --append-system-prompt-file (a path-taking flag), NOT --agent: as of
+        # Claude Code 2.1.190/2.1.191 the --agent flag resolves a *registered
+        # agent name* only (from .claude/agents/, plugins, builtins) and rejects
+        # a filesystem path with "not found", exiting without a result event.
+        # Older versions silently ignored the path and ran the DEFAULT agent, so
+        # --agent <path> never actually loaded these prompts on any tested CLI.
+        # See GH #343. The role is appended on top of Claude Code's base harness
+        # prompt; --model/--tools/--disallowedTools/effort are passed explicitly
+        # below, so no agent-frontmatter capabilities are lost by dropping --agent.
+        "--append-system-prompt-file",
         agent,
         "--output-format",
         output_format,

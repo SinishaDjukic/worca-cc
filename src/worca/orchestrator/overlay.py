@@ -490,4 +490,23 @@ def resolve_agent(
     result = resolve_blocks(content, context, resolver, core_dir, template_agents_dir)
     result = resolve_placeholders(result, context)
     result = re.sub(r"\n{3,}", "\n\n", result)
-    return result
+    return _strip_frontmatter(result)
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Drop a leading YAML frontmatter block, if present.
+
+    Shipped core agent templates carry no frontmatter (they begin at
+    ``# <Agent> Agent``), so this is a no-op for them. It only fires when a
+    project/user overlay (``.claude/agents/<agent>.md``) was authored in
+    Claude-native agent format (``---\\nname: …\\n---``). The resolved file is
+    delivered to the CLI via ``--append-system-prompt-file``, which injects the
+    file verbatim as system-prompt text — leaking a raw ``--- name: … ---``
+    header into the prompt. Stripping a single leading block keeps the system
+    prompt clean. See GH #343.
+    """
+    if not text.startswith("---"):
+        return text
+    # Match an opening fence on its own line through the next closing fence.
+    m = re.match(r"^---[ \t]*\n.*?\n---[ \t]*\n?", text, re.DOTALL)
+    return text[m.end():].lstrip("\n") if m else text
