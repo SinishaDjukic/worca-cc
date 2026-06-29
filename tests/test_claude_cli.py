@@ -71,8 +71,24 @@ def test_build_command_basic():
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "do stuff" in cmd
-    assert "--agent" in cmd
-    assert "planner" in cmd
+    # GH #343: the rendered agent .md is delivered as the system prompt via
+    # --append-system-prompt-file, NOT --agent (which now resolves a registered
+    # agent *name* and rejects a path).
+    assert "--append-system-prompt-file" in cmd
+    assert "--agent" not in cmd
+    idx = cmd.index("--append-system-prompt-file")
+    assert cmd[idx + 1] == "planner"
+
+
+def test_build_command_does_not_use_agent_flag():
+    """Regression for GH #343: --agent <path> is rejected by Claude Code
+    >=2.1.190 (name-only resolution). worca must use --append-system-prompt-file
+    so the agent role is actually loaded as a system prompt."""
+    cmd, _ = build_command("prompt", agent=".worca/runs/x/agents/resolved/plan-planner-iter-1.md")
+    assert "--agent" not in cmd
+    assert "--append-system-prompt-file" in cmd
+    idx = cmd.index("--append-system-prompt-file")
+    assert cmd[idx + 1] == ".worca/runs/x/agents/resolved/plan-planner-iter-1.md"
 
 
 def test_build_command_default_output_format():
@@ -203,7 +219,8 @@ def test_run_agent_passes_correct_command():
         run_agent("my prompt", agent="implementer", max_turns=20, json_schema='{"type":"object"}', settings={})
     args = mock_popen.call_args[0][0]
     assert args[0] == "claude"
-    assert "--agent" in args
+    assert "--append-system-prompt-file" in args
+    assert "--agent" not in args
     assert "implementer" in args
     assert "--json-schema" in args
 

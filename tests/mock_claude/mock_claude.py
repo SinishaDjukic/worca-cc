@@ -2,7 +2,8 @@
 """Mock Claude CLI for integration testing.
 
 Reads MOCK_CLAUDE_SCENARIO env var for a path to a JSON scenario file.
-Parses --agent from argv to select a per-agent directive.
+Parses --append-system-prompt-file (or legacy --agent) from argv to select a
+per-agent directive.
 Emits stream-JSON events matching Claude CLI output format, then exits.
 
 Directive resolution order (per scenario):
@@ -136,9 +137,12 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
+    # worca delivers the agent's rendered .md via --append-system-prompt-file
+    # (GH #343); the path basename still identifies the agent/iteration. We also
+    # accept the legacy --agent flag so this mock's own unit tests keep working.
     agent_raw = None
     for i, arg in enumerate(sys.argv):
-        if arg == "--agent" and i + 1 < len(sys.argv):
+        if arg in ("--append-system-prompt-file", "--agent") and i + 1 < len(sys.argv):
             agent_raw = sys.argv[i + 1]
             break
 
