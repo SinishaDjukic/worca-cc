@@ -1633,7 +1633,12 @@ function _iterationDetailView(
   const iterPrompt = iterPrompts.find((ip) => ip.iteration === iterNum);
   const userPrompt = iterPrompt?.prompt || promptData?.userPrompt || null;
   const iterPromptData = userPrompt
-    ? { agentInstructions: promptData?.agentInstructions, userPrompt }
+    ? {
+        agentInstructions: promptData?.agentInstructions,
+        agentInstructionsIsRawTemplate:
+          promptData?.agentInstructionsIsRawTemplate,
+        userPrompt,
+      }
     : promptData;
   const iterDur = iter.started_at
     ? formatDuration(elapsed(iter.started_at, iter.completed_at || null))
@@ -1689,8 +1694,12 @@ function _copyToClipboard(text, btn) {
 
 function _agentPromptSection(_stageKey, promptData) {
   if (!promptData) return nothing;
-  const { agentInstructions, userPrompt } = promptData;
+  const { agentInstructions, agentInstructionsIsRawTemplate, userPrompt } =
+    promptData;
   if (!agentInstructions && !userPrompt) return nothing;
+  const promptLabel = agentInstructionsIsRawTemplate
+    ? 'Agent Prompt (unresolved template — not the delivered prompt)'
+    : 'Agent Prompt (resolved)';
   return html`
     <sl-details class="agent-prompt-section" @sl-after-show=${scrollOnExpand}>
       <div slot="summary" class="agent-prompt-header">
@@ -1703,7 +1712,7 @@ function _agentPromptSection(_stageKey, promptData) {
           ? html`
         <div class="agent-prompt-block">
           <div class="agent-prompt-label-row">
-            <span class="agent-prompt-label">Agent Prompt (resolved)</span>
+            <span class="agent-prompt-label">${promptLabel}</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(agentInstructions, e.currentTarget)}>
               ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
             </button>

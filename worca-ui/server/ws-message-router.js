@@ -6,7 +6,7 @@
  * via resolveProject() before accessing watchers or filesystem paths.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isRequest, makeError, makeOk } from '../app/protocol.js';
 import {
@@ -37,6 +37,47 @@ import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
 import { discoverRunsAsync, findRun } from './watcher.js';
 import { resolveBeadsCounts } from './ws-beads-watcher.js';
+
+/**
+ * Read a resolved agent prompt by stage prefix (#347).
+ *
+ * The pipeline writes resolved prompts as `{stage}-{executed_agent}-iter-{N}.md`.
+ * When a stage runs with a runtime agent swap (e.g. plan_review edit mode swaps
+ * plan_reviewer -> plan_editor), status.json records the original agent but the
+ * file on disk is named for the executed one, so an exact `{stage}-{agent}` match
+ * misses. Scan the resolved/ dir for any `{stage}-*-iter-{N}.md` and return its
+ * content. Returns null when no match (or the dir is absent/unreadable).
+ *
+ * @param {string} worcaDir
+ * @param {string} runId
+ * @param {string} stage
+ * @param {number} iterNum
+ * @returns {string|null}
+ */
+function _readResolvedByStagePrefix(worcaDir, runId, stage, iterNum) {
+  const suffix = `-iter-${iterNum}.md`;
+  const prefix = `${stage}-`;
+  for (const base of ['runs', 'results']) {
+    const dir = join(worcaDir, base, runId, 'agents', 'resolved');
+    let entries;
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    const match = entries.find(
+      (name) => name.startsWith(prefix) && name.endsWith(suffix),
+    );
+    if (match) {
+      try {
+        return readFileSync(join(dir, match), 'utf8');
+      } catch {
+        /* ignore and keep scanning other bases */
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * @param {{
@@ -253,11 +294,29 @@ export function createMessageRouter({
             break;
           }
         }
+        // Stage-prefix fallback (#347): when a stage runs with a runtime agent
+        // swap (e.g. plan_review edit mode swaps plan_reviewer -> plan_editor),
+        // status.json records the original agent but the resolved file on disk
+        // is named for the executed agent. The exact-match candidates above all
+        // miss, so scan resolved/ for any {stage}-*-iter-{N}.md and use it
+        // before falling through to the raw, unresolved template.
+        if (content == null) {
+          content = _readResolvedByStagePrefix(
+            effectiveWorcaDir,
+            effectiveRunId,
+            stage,
+            iterNum,
+          );
+        }
         resolvedIterationPrompts.push({ iteration: iterNum, prompt: content });
         if (!resolvedPrompt && content) resolvedPrompt = content;
       }
 
-      // Fall back to unresolved agent template (pre-W-037 runs)
+      // Fall back to unresolved agent template (pre-W-037 runs). This renders
+      // the raw template — literal {{block:...}} / {{#if ...}} / {{placeholder}}
+      // syntax survives — so flag it (#347) and let the UI label it as such
+      // rather than letting it pass for the actual delivered system prompt.
+      let agentInstructionsIsRawTemplate = false;
       if (!resolvedPrompt) {
         const templateCandidates = [
           join(
@@ -279,6 +338,7 @@ export function createMessageRouter({
           if (existsSync(p)) {
             try {
               resolvedPrompt = readFileSync(p, 'utf8');
+              agentInstructionsIsRawTemplate = true;
             } catch {
               /* ignore */
             }
@@ -291,6 +351,7 @@ export function createMessageRouter({
         JSON.stringify(
           makeOk(req, {
             agentInstructions: resolvedPrompt,
+            agentInstructionsIsRawTemplate,
             userPrompt,
             iterationPrompts,
             resolvedIterationPrompts,
