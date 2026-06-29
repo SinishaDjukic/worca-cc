@@ -45,6 +45,18 @@ class TestCoordinatorRoleBoundaries:
         ]
         assert any(re.search(p, source) for p in patterns), "bd create must include --silent"
 
+    def test_description_flag_documented(self):
+        """coordinator.md must populate --description on bd create from the plan
+        slice, so beads carry a body (read by the implementer via `bd show`),
+        not a title only. Includes inline shell-safety guidance."""
+        source = COORDINATOR_PATH.read_text()
+        assert re.search(r"bd create.*--description", source), \
+            "bd create template must include --description"
+        assert "`--description`" in source, "must explain the --description param"
+        assert "source of truth" in source.lower() or "authority order" in source.lower(), \
+            "must frame the description as subordinate to the plan"
+        assert "sanitize" in source.lower(), "must include inline shell-safety guidance"
+
     def test_bead_merging_rules_present(self):
         """coordinator.md must include bead-merging / test-ownership rules."""
         source = COORDINATOR_PATH.read_text()

@@ -53,9 +53,10 @@ You will use the Beads CLI (`bd`) to create tasks and set dependencies. The runn
 
 **Create a task:**
 ```bash
-bd create --title="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent
+bd create --title="..." --description="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent
 ```
 - `--title`: Required. Descriptive task title (100 chars or fewer).
+- `--description`: Required. The slice of the approved plan that applies to THIS bead — what to build and which files/modules it touches — plus the bead's acceptance criteria / definition of done **only when the plan states them for this slice**. Write a focused extract, NOT a re-spec: the plan stays the source of truth (authority order: guide > plan > graph > description), so never contradict it or restate the whole plan. The implementer reads this via `bd show <id>`. **Inline shell-safety — sanitize before issuing the command:** the value sits inside a double-quoted shell argument, so keep it on a single line (no raw newlines) and strip or replace backticks, dollar signs, and embedded double quotes — they trigger shell command/variable substitution or break quoting. Name files in plain text (openapi.json, not wrapped in backticks).
 - `--type`: `task` or `bug` (always `task` for decomposition).
 - `--labels`: Required. `"run:{{run_id}},worca-effort:<level>"` — mandatory on every `bd create`.
 - `--silent`: Required. Prints only the bead ID on stdout (e.g., `beads-abc123`).
@@ -78,7 +79,7 @@ bd list
 1. Read `{{plan_file}}`
 2. Identify the distinct user-facing capabilities in the plan (not layers — capabilities)
 3. Create one bead per capability (or two when a genuine blocking sub-dependency exists) — see Granularity Calibration above
-4. Create Beads tasks: `bd create --title="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent` — the `--labels "run:{{run_id}}"` flag is **required** on every `bd create` call
+4. Create Beads tasks: `bd create --title="..." --description="..." --type=task --labels "run:{{run_id}},worca-effort:<level>" --silent` — both `--description` (the plan slice for this bead) and the `--labels "run:{{run_id}}"` flag are **required** on every `bd create` call
 5. Set dependencies: `bd dep add <downstream> <upstream>`
 6. Identify parallel execution groups
 7. Output the coordination result
