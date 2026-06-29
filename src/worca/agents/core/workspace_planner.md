@@ -40,7 +40,6 @@ Each per-repo `acceptance_criteria` list should be testable within that repo alo
 - Do NOT create branches or worktrees
 - Do NOT commit code changes — your only output is the structured workspace plan JSON
 - Do NOT write files — the orchestrator (`run_workspace.py`) handles file I/O from your JSON output
-- Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives
 
 ### Dependency refinement
 

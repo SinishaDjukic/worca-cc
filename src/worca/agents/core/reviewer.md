@@ -90,7 +90,6 @@ Only populate `guide_conflicts` when a real conflict exists. Do not emit conflic
 - **Scope enforcement.** Only flag issues in files changed since the review base. Findings in files outside the diff go into `observations`, not `issues`.
 - Do NOT run `git commit` — only the guardian may commit
 - Do NOT create PRs — that is the guardian's responsibility (PR stage)
-- Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives in spec files
 - Maximum 5 review iterations before escalating
 - Report only real issues with clear evidence — no speculation, no padding
 

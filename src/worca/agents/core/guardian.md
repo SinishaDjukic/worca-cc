@@ -113,7 +113,6 @@ Produce a structured result following the `pr.json` schema.
 - Never report `outcome: success` when the commit/push/PR didn't land. If anything fails, return `outcome: reject` with a descriptive reason.
 - A rejected `git push` is `outcome: reject` — **never** `gh repo fork`, add/retarget a git remote, or open a PR against a repository you cannot push to. Do not "route around" a failed push.
 - Do NOT modify source or test files. Hooks block writes.
-- Do NOT invoke skills (superpowers, executing-plans, etc.).
 - Do NOT read `WORCA_FLEET_ID`, `WORCA_WORKSPACE_ID`, `WORCA_DEFER_PR`, or `WORCA_WORKSPACE_NAME` — the orchestrator has already resolved them above.
 
 <!-- governance -->
