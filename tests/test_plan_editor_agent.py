@@ -178,9 +178,6 @@ class TestEditorRules:
     def test_no_test_execution(self, rules):
         assert "test" in rules.lower()
 
-    def test_no_skill_invocation(self, rules):
-        assert "skill" in rules.lower()
-
     def test_no_subagent_dispatch(self, rules):
         assert "subagent" in rules.lower() or "sub-agent" in rules.lower() or "dispatch" in rules.lower()
 

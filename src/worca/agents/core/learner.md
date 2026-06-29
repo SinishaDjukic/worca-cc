@@ -44,7 +44,6 @@ When you observe "no fix loops, all tests passed first time," that can mean the 
 
 - Do NOT modify any files — you are strictly read-only
 - Do NOT run tests or execute any commands
-- Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives
 - Only analyze the provided run data and report findings
 - Be factual — base observations on evidence from the run data, not speculation. Never claim work was "pre-existing" or "already complete before the session" unless `files_changed_since_git_head` is empty for the implicated files.
 - Keep suggestions actionable and specific — avoid generic advice
