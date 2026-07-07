@@ -124,19 +124,23 @@ def build_work_request(args):
 
     # Normalize: source/spec/plan take priority, prompt-only is fallback
     has_primary = args.source or args.spec or args.plan
-    if args.source:
-        plan_template = load_settings(args.settings).get("worca", {}).get(
-            "plan_path_template"
-        )
-        work_request = normalize(
-            "source", args.source, plan_path_template=plan_template
-        )
-    elif args.spec:
-        work_request = normalize("spec", args.spec)
-    elif args.plan:
-        work_request = normalize("plan", args.plan)
-    else:
-        work_request = normalize("prompt", args.prompt)
+    try:
+        if args.source:
+            plan_template = load_settings(args.settings).get("worca", {}).get(
+                "plan_path_template"
+            )
+            work_request = normalize(
+                "source", args.source, plan_path_template=plan_template
+            )
+        elif args.spec:
+            work_request = normalize("spec", args.spec)
+        elif args.plan:
+            work_request = normalize("plan", args.plan)
+        else:
+            work_request = normalize("prompt", args.prompt)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2)
 
     # Prompt merging: append as Additional Instructions when prompt
     # accompanies a primary source

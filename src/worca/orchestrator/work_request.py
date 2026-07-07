@@ -131,6 +131,8 @@ def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
     generate_smart_title() → first # heading fallback → filename fallback.
     """
     if content is None:
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"plan file not found: {path}")
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
@@ -173,6 +175,8 @@ def normalize_spec_file(path: str) -> WorkRequest:
 
     Title priority: generate_smart_title() → first # heading fallback → filename fallback.
     """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"spec file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
