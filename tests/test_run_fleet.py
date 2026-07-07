@@ -57,6 +57,14 @@ class TestCreateParser:
         args = self._parse(["--projects", "/repo/a"])
         assert args.source is None
 
+    def test_spec_flag(self):
+        args = self._parse(["--projects", "/repo/a", "--spec", "docs/spec.md"])
+        assert args.spec == "docs/spec.md"
+
+    def test_spec_absent_by_default(self):
+        args = self._parse(["--projects", "/repo/a"])
+        assert args.spec is None
+
     # --- branch flags (§4 semantics) ---
 
     def test_head_template_flag(self):
@@ -1037,3 +1045,50 @@ class TestClaudeMdModeFleet:
         mock_dispatch.assert_called_once()
         call_kwargs = mock_dispatch.call_args[1]
         assert call_kwargs["claude_md_mode"] is None
+
+
+# ---- --spec passthrough -------------------------------------------------------
+
+class TestSpecFleet:
+    """--spec is parsed, validated, and forwarded to build_child_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_fleet import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_build_child_cmd_includes_spec(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            spec="docs/spec.md",
+        )
+        assert "--spec" in cmd and "docs/spec.md" in cmd
+        assert "--source" not in cmd
+        assert "--prompt" not in cmd
+
+    def test_build_child_cmd_spec_with_prompt(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            spec="docs/spec.md",
+            prompt="focus on auth",
+        )
+        assert "--spec" in cmd and "docs/spec.md" in cmd
+        assert "--prompt" in cmd and "focus on auth" in cmd
+
+    def test_build_child_cmd_omits_spec_when_none(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            spec=None,
+        )
+        assert "--spec" not in cmd
+
+    def test_spec_and_source_rejected(self):
+        from worca.scripts.run_fleet import main
+        rc = main(["--projects", "/repo/a", "--spec", "s.md", "--source", "gh:issue:1"])
+        assert rc == 2

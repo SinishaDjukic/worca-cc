@@ -197,6 +197,7 @@ def build_child_cmd(
     fleet_id: str,
     prompt: str | None = None,
     source: str | None = None,
+    spec: str | None = None,
     base: str | None = None,
     guide: list | None = None,
     plan: str | None = None,
@@ -213,8 +214,11 @@ def build_child_cmd(
 
     if source:
         cmd.extend(["--source", source])
-    else:
-        cmd.extend(["--prompt", prompt or ""])
+    elif spec:
+        cmd.extend(["--spec", spec])
+
+    if prompt:
+        cmd.extend(["--prompt", prompt])
 
     cmd.extend(["--fleet-id", fleet_id])
 
@@ -262,6 +266,7 @@ def run_plan_first(
     fleet_runs_base: str | None = None,
     max_beads: int | None = None,
     claude_md_mode: str | None = None,
+    spec: str | None = None,
 ) -> str | None:
     """Run the reference child (blocking) and wait for its Planner to produce a plan.
 
@@ -279,6 +284,7 @@ def run_plan_first(
         fleet_id=fleet_id,
         prompt=prompt,
         source=source,
+        spec=spec,
         base=base,
         guide=guide,
         plan=None,  # reference child generates the plan
@@ -375,6 +381,7 @@ def dispatch_fleet(
     fleet_failure_threshold: float,
     max_beads: int | None = None,
     claude_md_mode: str | None = None,
+    spec: str | None = None,
 ) -> dict:
     """Run fleet children in parallel with a semaphore-gated dispatch loop.
 
@@ -419,6 +426,7 @@ def dispatch_fleet(
                 fleet_id=fleet_id,
                 prompt=prompt,
                 source=source,
+                spec=spec,
                 base=base,
                 guide=guide,
                 plan=plan,
@@ -516,6 +524,7 @@ def resume_fleet(fleet_id: str) -> int:
     children = manifest.get("children", [])
     prompt = manifest.get("work_request", {}).get("description") or ""
     source = manifest.get("work_request", {}).get("source")
+    spec = manifest.get("work_request", {}).get("spec")
     base = manifest.get("base_branch")
     guide = manifest.get("guide", {}).get("paths") or []
     plan = manifest.get("plan", {}).get("path")
@@ -617,6 +626,7 @@ def resume_fleet(fleet_id: str) -> int:
             max_parallel=max_parallel,
             fleet_failure_threshold=threshold,
             claude_md_mode=claude_md_mode,
+            spec=spec,
         )
 
     return 0
@@ -658,12 +668,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to a file listing project paths (one per line)",
     )
 
-    # Work request source — mutually exclusive
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--prompt", help="Text prompt for work request")
-    group.add_argument(
+    # Work request source
+    parser.add_argument("--prompt", help="Text prompt for work request")
+    parser.add_argument(
         "--source", help="Source reference (gh:issue:42, bd:bd-abc)"
     )
+    parser.add_argument("--spec", help="Path to spec file")
 
     # Branch naming (§4 — two separate concepts)
     parser.add_argument(
@@ -794,11 +804,15 @@ def main(argv=None) -> int:
         return 2
 
     # Require a work request source unless acting on an existing fleet
-    if not _lifecycle_actions and not args.prompt and not args.source:
+    if not _lifecycle_actions and not any([args.prompt, args.source, args.spec]):
         print(
-            "error: one of --prompt, --source, --resume, --pause or --stop is required",
+            "error: one of --prompt, --source, --spec, --resume, --pause or --stop is required",
             file=sys.stderr,
         )
+        return 2
+
+    if args.source and args.spec:
+        print("error: --source and --spec are mutually exclusive", file=sys.stderr)
         return 2
 
     # --plan and --plan-first are mutually exclusive (§6)
@@ -935,6 +949,7 @@ def main(argv=None) -> int:
                 "title": "",
                 "description": args.prompt or "",
                 "source": args.source,
+                "spec": args.spec,
             },
             "guide": {
                 "paths": guide_paths,
@@ -976,6 +991,7 @@ def main(argv=None) -> int:
                 fleet_id=fleet_id,
                 prompt=args.prompt,
                 source=args.source,
+                spec=args.spec,
                 base=args.base,
                 guide=guide_abs_ref,
                 max_beads=args.max_beads,
@@ -1024,6 +1040,7 @@ def main(argv=None) -> int:
             fleet_failure_threshold=args.fleet_failure_threshold,
             max_beads=args.max_beads,
             claude_md_mode=args.claude_md_mode,
+            spec=args.spec,
         )
 
         # Fire fleet.launched once dispatch returns — children may still be

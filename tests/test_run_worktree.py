@@ -71,6 +71,29 @@ class TestCreateParser:
         args = create_parser().parse_args(["--prompt", "x", "--plan", "docs/plans/W-048.md"])
         assert args.plan == "docs/plans/W-048.md"
 
+    def test_spec_flag(self):
+        from worca.scripts.run_worktree import create_parser
+        args = create_parser().parse_args(["--spec", "docs/spec.md"])
+        assert args.spec == "docs/spec.md"
+
+    def test_spec_with_prompt(self):
+        from worca.scripts.run_worktree import create_parser
+        args = create_parser().parse_args(["--spec", "docs/spec.md", "--prompt", "focus on auth"])
+        assert args.spec == "docs/spec.md"
+        assert args.prompt == "focus on auth"
+
+    def test_requires_at_least_one_input(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--plan", "p.md"]) == 2
+
+    def test_spec_file_not_found(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--spec", "/nonexistent/spec.md"]) == 2
+
+    def test_plan_file_not_found(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--plan", "/nonexistent/plan.md", "--prompt", "x"]) == 2
+
 
 class TestBuildPipelineCmd:
     """Direct tests for _build_pipeline_cmd — pure-function, no Popen mock."""
@@ -129,6 +152,29 @@ class TestBuildPipelineCmd:
         from worca.scripts.run_worktree import _build_pipeline_cmd
         cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
         assert "--run-id" not in cmd
+
+    def test_spec_forwarded(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--spec", "docs/spec.md"]))
+        assert "--spec" in cmd and "docs/spec.md" in cmd
+        assert "--source" not in cmd
+        assert "--prompt" not in cmd
+
+    def test_spec_with_prompt_forwards_both(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--spec", "docs/spec.md", "--prompt", "focus"]))
+        assert "--spec" in cmd and "docs/spec.md" in cmd
+        assert "--prompt" in cmd and "focus" in cmd
+
+    def test_spec_with_plan_forwards_both(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--spec", "docs/spec.md", "--plan", "p.md"]))
+        assert "--spec" in cmd and "docs/spec.md" in cmd
+        assert "--plan" in cmd and "p.md" in cmd
+
+    def test_spec_and_source_rejected(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--spec", "docs/spec.md", "--source", "gh:issue:42"]) == 2
 
 
 class TestHelpers:

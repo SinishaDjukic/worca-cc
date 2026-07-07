@@ -176,7 +176,10 @@ def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
 
     if args.source:
         cmd.extend(["--source", args.source])
-    else:
+    elif args.spec:
+        cmd.extend(["--spec", args.spec])
+
+    if args.prompt:
         cmd.extend(["--prompt", args.prompt])
 
     if args.plan:
@@ -219,9 +222,9 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch a single worca-cc pipeline in an isolated git worktree"
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--prompt", help="Text prompt for work request")
-    group.add_argument("--source", help="Source reference (gh:issue:42, bd:bd-abc)")
+    parser.add_argument("--prompt", help="Text prompt for work request")
+    parser.add_argument("--source", help="Source reference (gh:issue:42, bd:bd-abc)")
+    parser.add_argument("--spec", help="Path to spec file")
 
     parser.add_argument(
         "--branch",
@@ -289,18 +292,32 @@ def main(argv=None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    if not args.prompt and not args.source:
-        print("error: one of --prompt or --source is required", file=sys.stderr)
+    if not any([args.prompt, args.source, args.spec]):
+        print("error: one of --prompt, --source, or --spec is required", file=sys.stderr)
+        return 2
+
+    if args.source and args.spec:
+        print("error: --source and --spec are mutually exclusive", file=sys.stderr)
+        return 2
+
+    if args.plan and not os.path.isfile(args.plan):
+        print(f"error: plan file not found: {args.plan}", file=sys.stderr)
         return 2
 
     # Normalize work request to get a title for the slug and registry entry
-    if args.source:
-        plan_template = load_settings(args.settings).get("worca", {}).get(
-            "plan_path_template"
-        )
-        wr = normalize("source", args.source, plan_path_template=plan_template)
-    else:
-        wr = normalize("prompt", args.prompt)
+    try:
+        if args.source:
+            plan_template = load_settings(args.settings).get("worca", {}).get(
+                "plan_path_template"
+            )
+            wr = normalize("source", args.source, plan_path_template=plan_template)
+        elif args.spec:
+            wr = normalize("spec", args.spec)
+        else:
+            wr = normalize("prompt", args.prompt)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     # Reject --branch for github_pr source: the head branch is fixed by the PR
     # (L2 — drift creates duplicate PRs). Precedent: fleet rejects --branch too.
