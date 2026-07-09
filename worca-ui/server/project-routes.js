@@ -38,6 +38,7 @@ import {
   getMaxProjects,
   readProjects,
   removeProject,
+  slugify,
   SLUG_RE,
   synthesizeDefaultProject,
   validateProjectEntry,
@@ -138,24 +139,48 @@ export function projectResolver({ prefsDir, projectRoot }) {
 
     const worcaDir = project.worcaDir || join(project.path, '.worca');
     const projRoot = project.path;
+    const resolvedSettingsPath =
+      (project.worcaConfigPath && existsSync(project.worcaConfigPath)
+        ? project.worcaConfigPath
+        : null) ||
+      project.settingsPath ||
+      join(project.path, '.claude', 'settings.json');
     req.project = {
       name: project.name,
       path: project.path,
       worcaDir,
-      settingsPath:
-        project.settingsPath || join(project.path, '.claude', 'settings.json'),
+      settingsPath: resolvedSettingsPath,
+      worcaConfigPath: project.worcaConfigPath || null,
+      worcaPkgVersion: project.worcaPkgVersion || null,
       projectRoot: projRoot,
       pm: new ProcessManager({
         worcaDir,
         projectRoot: projRoot,
-        settingsPath:
-          project.settingsPath ||
-          join(project.path, '.claude', 'settings.json'),
+        settingsPath: resolvedSettingsPath,
         prefsDir,
       }),
     };
     next();
   };
+}
+
+/**
+ * Enrich a project entry with worcaConfigPath (and related fields) when
+ * ~/.worca/projects/<slug>/config.json exists.  Mutates the entry in place.
+ */
+function enrichProjectEntry(prefsDir, entry) {
+  if (entry.worcaConfigPath) return;
+  const slug = slugify(entry.name);
+  const configPath = join(prefsDir, 'projects', slug, 'config.json');
+  if (existsSync(configPath)) {
+    entry.worcaConfigPath = configPath;
+  }
+  if (!entry.worcaDir) {
+    entry.worcaDir = join(entry.path, '.worca');
+  }
+  if (!entry.settingsPath) {
+    entry.settingsPath = join(entry.path, '.claude', 'settings.json');
+  }
 }
 
 /**
@@ -175,11 +200,15 @@ export function createProjectRoutes({
     if (projects.length === 0) {
       projects = [synthesizeDefaultProject(projectRoot)];
     }
+    // Backfill worcaConfigPath on entries that predate the init ↔ UI unification.
+    for (const p of projects) {
+      enrichProjectEntry(prefsDir, p);
+    }
     // Enrich each project with its worca-cc version and whether its path still
     // exists on disk (a deleted project can't be configured or run).
     const enriched = projects.map((p) => ({
       ...p,
-      worcaVersion: readProjectWorcaVersion(p.path),
+      worcaVersion: readProjectWorcaVersion(p.path, p.worcaPkgVersion),
       exists: existsSync(p.path),
     }));
     res.json({ ok: true, projects: enriched });
@@ -198,6 +227,7 @@ export function createProjectRoutes({
         .json({ ok: false, error: `directory does not exist: ${entry.path}` });
     }
     try {
+      enrichProjectEntry(prefsDir, entry);
       writeProject(prefsDir, entry);
       // Auto-configure webhook so pipeline events reach this UI server
       if (serverHost && serverPort) {
@@ -306,6 +336,7 @@ export function createProjectRoutes({
     const written = [];
     try {
       for (const entry of batch) {
+        enrichProjectEntry(prefsDir, entry);
         writeProject(prefsDir, entry);
         written.push(entry.name);
         if (serverHost && serverPort) {
@@ -490,6 +521,7 @@ export function createProjectScopedRoutes({
       const payload = await buildProjectPreflight({
         projectRoot,
         settingsPath,
+        worcaConfigPath: req.project.worcaConfigPath,
         graphifyStatus: req.app.locals.graphifyStatus || null,
         crgStatus: req.app.locals.crgStatus || null,
       });
@@ -1756,7 +1788,7 @@ export function createProjectScopedRoutes({
   // strictly behind the active (dev-path or globally-installed) worca-cc.
   router.get('/worca-status', async (req, res) => {
     const { projectRoot } = req.project;
-    const installed = checkWorcaInstalled(projectRoot);
+    const installed = checkWorcaInstalled(projectRoot, req.project.worcaConfigPath);
     if (!installed) {
       return res.json({
         ok: true,
@@ -1765,7 +1797,7 @@ export function createProjectScopedRoutes({
         outdated: false,
       });
     }
-    const version = readProjectWorcaVersion(projectRoot);
+    const version = readProjectWorcaVersion(projectRoot, req.project.worcaPkgVersion);
     let outdated = false;
     if (version != null) {
       try {

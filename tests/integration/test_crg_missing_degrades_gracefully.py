@@ -52,7 +52,7 @@ def _setup_global_crg(pipeline_env) -> Path:
 
 
 def _enable_crg_settings(pipeline_env) -> None:
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["code_review_graph"] = {
         "enabled": True,
@@ -114,6 +114,9 @@ def _run_pipeline(pipeline_env, scenario: dict, prompt: str,
         "MOCK_CLAUDE_SCENARIO": str(scenario_path),
         "WORCA_HOME": str(worca_home),
         "PYTHONPATH": str(REPO_ROOT / "src"),
+        # W-077: pin config path so pipeline reads from the same file that
+        # _enable_crg_settings wrote to.
+        "WORCA_CONFIG_PATH": str(pipeline_env.worca_config_path),
     }
     if path_override is not None:
         env["PATH"] = path_override

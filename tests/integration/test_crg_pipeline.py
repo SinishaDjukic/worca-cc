@@ -58,7 +58,7 @@ def _setup_global_crg(pipeline_env) -> Path:
 
 def _enable_crg_settings(pipeline_env) -> None:
     """Enable CRG in project settings with base_sha freshness."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["code_review_graph"] = {
         "enabled": True,
@@ -92,6 +92,9 @@ def _run_pipeline_with_crg(pipeline_env, scenario: dict, prompt: str,
         "PATH": mock_path,
         "MOCK_CRG_LOG": str(crg_log_path),
         "WORCA_HOME": str(worca_home),
+        # W-077: pin config path to the fixture's config so _enable_crg_settings
+        # writes and the pipeline reads from the same file.
+        "WORCA_CONFIG_PATH": str(pipeline_env.worca_config_path),
         "PYTHONPATH": str(REPO_ROOT / "src"),
     }
     for key in ("WORCA_PLAN_FILE", "WORCA_PROJECT_ROOT", "WORCA_RUN_ID", "WORCA_RUN_DIR"):

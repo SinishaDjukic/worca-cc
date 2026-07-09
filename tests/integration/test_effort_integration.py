@@ -21,7 +21,7 @@ BEAD_ID = "bd-test-effort-1"
 def _configure_effort(pipeline_env, *, auto_mode="adaptive", auto_cap="xhigh",
                        agents=None, models=None):
     """Patch worca.effort and optionally worca.agents / worca.models."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["effort"] = {"auto_mode": auto_mode, "auto_cap": auto_cap}
     if agents:

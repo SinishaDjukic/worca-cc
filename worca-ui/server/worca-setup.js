@@ -15,7 +15,8 @@ import { join } from 'node:path';
 /**
  * Check whether worca is installed in the given project path.
  */
-export function checkWorcaInstalled(projectPath) {
+export function checkWorcaInstalled(projectPath, worcaConfigPath) {
+  if (worcaConfigPath && existsSync(worcaConfigPath)) return true;
   return existsSync(join(projectPath, '.claude', 'worca'));
 }
 
@@ -24,8 +25,8 @@ export function checkWorcaInstalled(projectPath) {
  * Tries .claude/worca/version.json first, then falls back to __init__.py.
  * Returns the version string or null if not found.
  */
-export function readProjectWorcaVersion(projectPath) {
-  // Try version.json first (preferred format)
+export function readProjectWorcaVersion(projectPath, worcaPkgVersion) {
+  if (worcaPkgVersion) return worcaPkgVersion.replace(/-[0-9a-f]{7,}$/, '');
   try {
     const versionJson = JSON.parse(
       readFileSync(
@@ -37,7 +38,6 @@ export function readProjectWorcaVersion(projectPath) {
   } catch {
     // fall through to __init__.py
   }
-  // Fall back to __init__.py
   try {
     const initPy = readFileSync(
       join(projectPath, '.claude', 'worca', '__init__.py'),

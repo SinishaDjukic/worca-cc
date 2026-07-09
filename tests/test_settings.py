@@ -643,6 +643,63 @@ class TestEffortSettings:
         assert result["worca"]["fleet"]["max_parallel"] == 5
 
 
+class TestLoadSettingsReadsWorcaConfigPath:
+    """test_load_settings_reads_worca_config_path: WORCA_CONFIG_PATH env var respected."""
+
+    def test_worca_config_path_merged_as_base(self, tmp_path, monkeypatch):
+        """When WORCA_CONFIG_PATH is set, its content is the base layer for worca.*."""
+        from worca.utils.settings import load_settings
+
+        worca_config = tmp_path / "config.json"
+        worca_config.write_text(json.dumps({"worca": {"stages": {"plan": {"enabled": False}}}}))
+
+        project_settings = tmp_path / "settings.json"
+        project_settings.write_text(json.dumps({"worca": {"agents": {"planner": {"model": "sonnet"}}}}))
+
+        monkeypatch.setenv("WORCA_CONFIG_PATH", str(worca_config))
+
+        result = load_settings(str(project_settings))
+        assert result["worca"]["stages"]["plan"]["enabled"] is False
+        assert result["worca"]["agents"]["planner"]["model"] == "sonnet"
+
+    def test_worca_config_path_overridden_by_project_settings(self, tmp_path, monkeypatch):
+        """Project settings worca.* values override WORCA_CONFIG_PATH values."""
+        from worca.utils.settings import load_settings
+
+        worca_config = tmp_path / "config.json"
+        worca_config.write_text(json.dumps({"worca": {"loops": {"implement_test": 3}}}))
+
+        project_settings = tmp_path / "settings.json"
+        project_settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 7}}}))
+
+        monkeypatch.setenv("WORCA_CONFIG_PATH", str(worca_config))
+
+        result = load_settings(str(project_settings))
+        assert result["worca"]["loops"]["implement_test"] == 7
+
+    def test_no_worca_config_path_unchanged(self, tmp_path, monkeypatch):
+        """Without WORCA_CONFIG_PATH, load_settings behaves as before."""
+        from worca.utils.settings import load_settings
+
+        monkeypatch.delenv("WORCA_CONFIG_PATH", raising=False)
+        project_settings = tmp_path / "settings.json"
+        project_settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 5}}}))
+
+        result = load_settings(str(project_settings))
+        assert result["worca"]["loops"]["implement_test"] == 5
+
+    def test_missing_worca_config_file_tolerated(self, tmp_path, monkeypatch):
+        """If WORCA_CONFIG_PATH points to a non-existent file, load_settings falls back gracefully."""
+        from worca.utils.settings import load_settings
+
+        monkeypatch.setenv("WORCA_CONFIG_PATH", str(tmp_path / "nonexistent.json"))
+        project_settings = tmp_path / "settings.json"
+        project_settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 5}}}))
+
+        result = load_settings(str(project_settings))
+        assert result["worca"]["loops"]["implement_test"] == 5
+
+
 class TestNormalizeModelEntryColonRejection:
     """Colon-in-alias guard on normalize_model_entry."""
 

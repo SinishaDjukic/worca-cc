@@ -74,6 +74,8 @@ class PipelineEnv:
     stubs_dir: Optional[Path] = None
     stub_log_path: Optional[Path] = None
     stub_response_files: dict = field(default_factory=dict)
+    # W-077: path to ~/.worca/projects/<slug>/config.json (worca config, not Claude settings)
+    worca_config_path: Optional[Path] = None
 
 
 @dataclass

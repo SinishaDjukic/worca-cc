@@ -360,21 +360,61 @@ class ConfigUnreadable(Exception):
     """
 
 
-def _load_settings() -> dict:
-    """Load settings.json from the project root.
+def _load_worca_config_base() -> dict:
+    """Load base worca config from WORCA_CONFIG_PATH if set.
 
-    Returns ``{}`` when no settings file exists (defaults apply).
-    Raises ``ConfigUnreadable`` when the file exists but is not valid JSON
-    — callers MUST treat this as a fail-closed condition.
+    Returns {} if unset or file absent.
+    Raises ConfigUnreadable when the file exists but contains invalid JSON —
+    callers MUST exit 2 rather than fall back to defaults (which are
+    effectively wildcard-allow for dispatch).
     """
-    path = _settings_path()
-    if not path or not os.path.exists(path):
+    config_path = os.environ.get("WORCA_CONFIG_PATH")
+    if not config_path:
         return {}
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        raise ConfigUnreadable(f"{config_path}: invalid JSON ({e})") from e
+
+
+def _load_settings() -> dict:
+    """Load settings.json from the project root, merged over WORCA_CONFIG_PATH base.
+
+    Config loading precedence (lowest to highest):
+    1. WORCA_CONFIG_PATH → ~/.worca/projects/<slug>/config.json (worca base config)
+    2. WORCA_SETTINGS_PATH or .claude/settings.json (effective project settings)
+
+    Returns ``{}`` when no settings file exists (defaults apply).
+    Raises ``ConfigUnreadable`` when the settings file exists but is not valid JSON
+    — callers MUST treat this as a fail-closed condition.
+    """
+    worca_base = _load_worca_config_base()
+
+    path = _settings_path()
+    if not path or not os.path.exists(path):
+        return worca_base
+    try:
+        with open(path, encoding="utf-8") as f:
+            project = json.load(f)
     except json.JSONDecodeError as e:
         raise ConfigUnreadable(f"{path}: invalid JSON ({e})") from e
+
+    if not worca_base:
+        return project
+
+    # Merge: worca_base is the base layer, project settings override
+    result = dict(worca_base)
+    for key, val in project.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            merged_val = dict(result[key])
+            merged_val.update(val)
+            result[key] = merged_val
+        else:
+            result[key] = val
+    return result
 
 
 def _settings_mtime() -> float | None:

@@ -4,8 +4,24 @@ import os
 import pytest
 
 
-def test_validate_runtime_success(tmp_path, monkeypatch):
-    """validate_runtime is a no-op when .claude/worca/ exists."""
+def test_validate_runtime_success_via_pkg_store(tmp_path, monkeypatch):
+    """validate_runtime passes when the shared pkg store worca/ dir exists (W-077)."""
+    monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+    monkeypatch.chdir(tmp_path)
+    from worca.utils.paths import pkg_dir
+    from pathlib import Path
+
+    pkg_worca = Path(pkg_dir()) / "worca"
+    pkg_worca.mkdir(parents=True)
+
+    from worca.utils.runtime import validate_runtime
+
+    validate_runtime()  # must not raise
+
+
+def test_validate_runtime_success_legacy_claude_worca(tmp_path, monkeypatch):
+    """validate_runtime still passes when the legacy .claude/worca/ dir exists."""
+    monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))  # empty pkg store
     (tmp_path / ".claude" / "worca").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
 
@@ -15,7 +31,8 @@ def test_validate_runtime_success(tmp_path, monkeypatch):
 
 
 def test_validate_runtime_missing_raises_systemexit(tmp_path, monkeypatch):
-    """validate_runtime raises SystemExit(1) when .claude/worca/ is absent."""
+    """validate_runtime raises SystemExit(1) when neither pkg store nor .claude/worca/ exists."""
+    monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))  # empty pkg store
     monkeypatch.chdir(tmp_path)
 
     from worca.utils.runtime import validate_runtime
@@ -27,6 +44,7 @@ def test_validate_runtime_missing_raises_systemexit(tmp_path, monkeypatch):
 
 def test_validate_runtime_error_message_on_stderr(tmp_path, monkeypatch, capsys):
     """The error message names the missing path and the fix command."""
+    monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))  # empty pkg store
     monkeypatch.chdir(tmp_path)
 
     from worca.utils.runtime import validate_runtime

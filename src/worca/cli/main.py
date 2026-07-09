@@ -36,15 +36,17 @@ def _find_git_root() -> Path:
 
 
 def _require_project_worca(git_root: Path) -> Path:
-    """Verify .claude/worca/ exists in the project. Returns the path."""
-    worca_dir = git_root / ".claude" / "worca"
-    if not worca_dir.is_dir():
+    """Verify the worca pkg path exists. Returns the pkg worca/ path."""
+    from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+
+    pkg_worca = Path(_pkg_dir()) / "worca"
+    if not pkg_worca.is_dir():
         print(
-            "error: .claude/worca/ not found. Run 'worca init' first.",
+            f"error: worca package not found at {pkg_worca}. Run 'worca init' first.",
             file=sys.stderr,
         )
         raise SystemExit(1)
-    return worca_dir
+    return pkg_worca
 
 
 def _inject_project_path(git_root: Path) -> None:

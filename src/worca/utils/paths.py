@@ -72,3 +72,24 @@ def workspace_runs_dir(override: str | None = None) -> str:
     if override:
         return override
     return os.path.join(worca_home(), "workspace-runs")
+
+
+def pkg_dir(version_key: str | None = None) -> str:
+    """Return the versioned package directory: ``<worca_home>/pkg/<version_key>/``.
+
+    If ``version_key`` is None, it is computed via
+    ``worca.utils.pkg_store.version_key()`` on each call (lazy import to avoid
+    circular imports and to keep the hot-path cost deferred).
+    """
+    if version_key is None:
+        from worca.utils.pkg_store import version_key as _vk  # noqa: PLC0415
+        version_key = _vk()
+    return os.path.join(worca_home(), "pkg", version_key)
+
+
+def project_config_dir(slug: str) -> str:
+    """Return the per-project config directory: ``<worca_home>/projects/<slug>/``.
+
+    Resolved on every call so tests can override ``$WORCA_HOME`` after import.
+    """
+    return os.path.join(worca_home(), "projects", slug)

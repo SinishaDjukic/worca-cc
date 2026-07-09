@@ -18,6 +18,26 @@ from worca.utils.gh_issues import gh_issue_fail
 from worca.utils.settings import load_settings
 
 
+def _resolve_runtime_dir_for_provenance(settings_path: str) -> str:
+    """Return the directory that contains provenance.json.
+
+    W-077: provenance.json moved from .claude/worca/ to the pkg store
+    (~/.worca/pkg/<ver>/). Fall back to the legacy .claude/worca/ path
+    when the pkg store location is unavailable (pre-W-077 installs).
+    """
+    legacy = os.path.join(os.path.dirname(os.path.abspath(settings_path)), "worca")
+    if os.path.exists(os.path.join(legacy, "provenance.json")):
+        return legacy
+    try:
+        from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+        pkg_prov = _pkg_dir()
+        if os.path.exists(os.path.join(pkg_prov, "provenance.json")):
+            return pkg_prov
+    except Exception:
+        pass
+    return legacy
+
+
 def create_parser():
     """Create the argument parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(description="Run worca-cc pipeline")
@@ -295,6 +315,20 @@ def main():
     _resolver = None
     _pipeline_template = None
 
+    # Pin WORCA_CONFIG_PATH early so load_settings() below picks up the per-project
+    # worca config from ~/.worca/projects/<slug>/config.json (W-077).  Skip when
+    # WORCA_CONFIG_PATH is already set — run_worktree.py (and fleet/workspace child
+    # launchers) pre-set it to the parent project's config path before invoking us,
+    # and re-deriving from args.settings would resolve to the worktree root (whose
+    # slug has no matching config.json), silently dropping every worca.* value.
+    if not os.environ.get("WORCA_CONFIG_PATH"):
+        try:
+            from worca.orchestrator.runner import _pin_worca_config_path as _early_pin  # noqa: PLC0415
+            _early_project_root = str(Path(args.settings).resolve().parent.parent)
+            _early_pin(_early_project_root)
+        except Exception:
+            pass
+
     # Load project settings once — used to (a) fall back to worca.default_template
     # when --template wasn't passed, and (b) form the merge base when applying
     # the resolved template.
@@ -401,9 +435,8 @@ def main():
             # Always derive the runtime dir from the REAL settings path, never
             # effective_settings_path — for templated runs the latter is a tempfile
             # whose parent has no provenance.json (would record runtime_source: null).
-            runtime_dir=os.path.join(
-                os.path.dirname(os.path.abspath(args.settings)), "worca"
-            ),
+            # W-077: provenance.json lives in the pkg store, not .claude/worca/.
+            runtime_dir=_resolve_runtime_dir_for_provenance(args.settings),
         )
 
         # Snapshot template to run dir and write merged settings for traceability.

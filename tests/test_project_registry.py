@@ -5,6 +5,7 @@ import os
 from unittest.mock import patch
 
 from worca.utils.project_registry import auto_register_project, slugify
+from worca.utils.paths import worca_home
 
 
 # ---------------------------------------------------------------------------
@@ -109,3 +110,22 @@ class TestAutoRegisterProject:
             assert final_dst.endswith("my-app.json")
             # The source should have been a .tmp file in the same directory
             assert tmp_src.endswith(".tmp")
+
+    def test_registry_extended_fields(self, tmp_path):
+        """Registry entries include worcaConfigPath and worcaPkgVersion."""
+        prefs = tmp_path / "prefs"
+        project = tmp_path / "my-app"
+        project.mkdir()
+
+        fake_version = "0.59.0-abc1234"
+        with patch("worca.utils.project_registry._get_pkg_version", return_value=fake_version):
+            auto_register_project(str(project), prefs_dir=str(prefs))
+
+        entry_path = prefs / "projects.d" / "my-app.json"
+        data = json.loads(entry_path.read_text())
+        abs_project = str(project.resolve())
+        slug = "my-app"
+
+        expected_config_path = os.path.join(str(prefs), "projects", slug, "config.json")
+        assert data["worcaConfigPath"] == expected_config_path
+        assert data["worcaPkgVersion"] == fake_version

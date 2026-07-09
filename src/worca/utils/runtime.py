@@ -153,15 +153,31 @@ def copy_claude_config(src_dir: str, dst_dir: str) -> None:
     propagate_runtime_local_keys(src_dir, dst_dir)
 
 
-def validate_runtime(runtime_dir: str = os.path.join(".claude", "worca")) -> None:
-    """Verify the worca runtime directory exists in the current project.
+def validate_runtime(runtime_dir: str | None = None) -> None:
+    """Verify the worca runtime exists — either the shared pkg store or the legacy
+    project-local directory.
 
-    Raises SystemExit(1) with the canonical error message when the directory
-    is absent so callers get a clear diagnostic before any side effects.
+    W-077: the canonical runtime location is now ``~/.worca/pkg/<ver>/worca/``
+    (shared pkg store).  The ``runtime_dir`` parameter is kept for backward-compat
+    but defaults to None, which triggers the pkg-store check.  If the pkg store
+    directory is present the check passes.  Only when neither the pkg store nor the
+    explicit ``runtime_dir`` exists does it raise SystemExit(1).
+
+    Raises SystemExit(1) with a clear diagnostic when the runtime is absent.
     """
-    if not os.path.isdir(runtime_dir):
+    try:
+        from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+        pkg_worca = os.path.join(_pkg_dir(), "worca")
+        if os.path.isdir(pkg_worca):
+            return
+    except Exception:
+        pass
+
+    # Fall back to explicit runtime_dir or legacy default.
+    legacy = runtime_dir if runtime_dir is not None else os.path.join(".claude", "worca")
+    if not os.path.isdir(legacy):
         print(
-            f"error: worca runtime not found at {runtime_dir}/ — run `worca init .` first",
+            f"error: worca runtime not found at {legacy}/ — run `worca init .` first",
             file=sys.stderr,
         )
         raise SystemExit(1)

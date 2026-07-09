@@ -178,23 +178,49 @@ def pipeline_env(tmp_path):
     # 2. Run worca init to copy full runtime (agents, schemas, hooks, scripts).
     #    PYTHONPATH ensures init copies from the worktree source tree (not a
     #    stale site-packages install) — mirrors pyproject.toml pythonpath=["src"].
-    _init_env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+    #    WORCA_HOME is isolated per-test so pkg store and project config do not
+    #    collide across tests in the same session (each test gets its own
+    #    ~/.worca/ equivalent under tmp_path/worca_home/).
+    _worca_home = tmp_path / "worca_home"
+    _init_env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+        "WORCA_HOME": str(_worca_home),
+    }
     subprocess.run(
         [sys.executable, "-m", "worca.cli.main", "init"],
         cwd=str(project), check=True, capture_output=True, env=_init_env,
     )
 
+    # 3. Override settings for fast test execution.
+    #    Worca config (worca.*) now lives in ~/.worca/projects/<slug>/config.json
+    #    (W-077). Write overrides there so pipeline runs pick them up via
+    #    WORCA_CONFIG_PATH, which runner.py resolves from the project slug.
+    from worca.utils.paths import project_config_dir as _project_config_dir  # noqa: PLC0415
+    from worca.utils.project_registry import slugify as _slugify  # noqa: PLC0415
 
-    # 3. Override settings for fast test execution
-    settings_path = project / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text())
-    settings.setdefault("worca", {})
-    settings["worca"]["stages"] = {
+    _slug = _slugify(project.name)
+    _config_path = Path(_project_config_dir(_slug))
+    # _project_config_dir uses WORCA_HOME — set it temporarily for the resolution
+    import os as _os  # noqa: PLC0415
+    _prev_worca_home = _os.environ.get("WORCA_HOME")
+    _os.environ["WORCA_HOME"] = str(_worca_home)
+    _config_path = Path(_project_config_dir(_slug)) / "config.json"
+    if _prev_worca_home is not None:
+        _os.environ["WORCA_HOME"] = _prev_worca_home
+    else:
+        _os.environ.pop("WORCA_HOME", None)
+
+    worca_config: dict = {}
+    if _config_path.exists():
+        worca_config = json.loads(_config_path.read_text())
+    worca_config.setdefault("worca", {})
+    worca_config["worca"]["stages"] = {
         "preflight": {"enabled": False},
         "plan_review": {"enabled": False},
         "learn": {"enabled": False},
     }
-    settings["worca"]["agents"] = {
+    worca_config["worca"]["agents"] = {
         "planner": {"max_turns": 5},
         "coordinator": {"max_turns": 5},
         "implementer": {"max_turns": 5},
@@ -202,8 +228,8 @@ def pipeline_env(tmp_path):
         "reviewer": {"max_turns": 5},
         "guardian": {"max_turns": 5},
     }
-    settings["worca"]["effort"] = {"auto_mode": "disabled"}
-    settings_path.write_text(json.dumps(settings, indent=2))
+    worca_config["worca"]["effort"] = {"auto_mode": "disabled"}
+    _config_path.write_text(json.dumps(worca_config, indent=2))
 
     worca_dir = project / ".worca"
     _scenario_counter = [0]
@@ -232,6 +258,9 @@ def pipeline_env(tmp_path):
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
             "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
             "PYTHONPATH": str(REPO_ROOT / "src"),
+            # W-077: propagate per-test WORCA_HOME so runner.py's _pin_worca_config_path
+            # resolves to the isolated ~/.worca/projects/<slug>/config.json for this test.
+            "WORCA_HOME": str(_worca_home),
         }
         # Strip pipeline-specific WORCA_* vars that leak from the parent shell.
         # WORCA_PLAN_FILE and WORCA_PROJECT_ROOT in particular cause plan_check
@@ -242,6 +271,9 @@ def pipeline_env(tmp_path):
         env.pop("WORCA_RUN_ID", None)
         env.pop("WORCA_RUN_DIR", None)
         env.pop("GRAPHIFY_OUT", None)
+        # Do not inherit parent's WORCA_CONFIG_PATH — runner.py re-derives it from
+        # the project slug + WORCA_HOME for each child pipeline.
+        env.pop("WORCA_CONFIG_PATH", None)
         if _coverage_enabled():
             # Coverage subprocesses write .coverage.<host>.<pid>.<rand> next to
             # CWD by default. Force them into REPO_ROOT so `coverage combine`
@@ -512,27 +544,29 @@ def pipeline_env(tmp_path):
         )
 
     def add_webhook(url: str) -> None:
-        """Add a webhook URL to settings for event dispatch testing.
+        """Add a webhook URL to worca config for event dispatch testing.
 
         emitter.py _validate_webhook only accepts https:// or http://localhost
         prefixes — so the webhook_server fixture must bind to localhost.
+        Writes to config.json (W-077: worca.* lives in the project config dir).
         """
-        s = json.loads(settings_path.read_text())
+        s = json.loads(_config_path.read_text())
         s.setdefault("worca", {})
         s["worca"]["webhooks"] = [{"url": url}]
-        settings_path.write_text(json.dumps(s, indent=2))
+        _config_path.write_text(json.dumps(s, indent=2))
 
     def enable_stages(*names: str) -> None:
         """Flip ``worca.stages.<name>.enabled`` to True for each stage name.
 
         Tests that need preflight, plan_review, or learn to actually run call
         this *after* fixture setup (which disables them by default for speed).
+        Writes to config.json (W-077: worca.* lives in the project config dir).
         """
-        s = json.loads(settings_path.read_text())
+        s = json.loads(_config_path.read_text())
         s.setdefault("worca", {}).setdefault("stages", {})
         for name in names:
             s["worca"]["stages"].setdefault(name, {})["enabled"] = True
-        settings_path.write_text(json.dumps(s, indent=2))
+        _config_path.write_text(json.dumps(s, indent=2))
 
     def set_governance_agent(name: str) -> None:
         """Set ``WORCA_AGENT`` for the next run so live hooks see a real agent.
@@ -589,6 +623,7 @@ def pipeline_env(tmp_path):
         stubs_dir=STUBS_DIR,
         stub_log_path=_stub_log_path,
         stub_response_files=_stub_response_files,
+        worca_config_path=_config_path,
     )
 
     _stop_beads_daemons(project, _created_worktrees)

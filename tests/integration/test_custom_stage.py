@@ -83,7 +83,7 @@ def _install_custom_stage(pipeline_env, flow_doc=_CUSTOM_STAGE_FLOW,
         json.dumps(schema, indent=2), encoding="utf-8",
     )
 
-    settings_path = project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["flow"] = flow_doc
     settings_path.write_text(json.dumps(settings, indent=2))

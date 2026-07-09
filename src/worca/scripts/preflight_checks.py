@@ -70,27 +70,44 @@ def check_bd_cli():
 
 
 def check_settings_json(settings_path=".claude/settings.json"):
-    """.claude/settings.json exists, is valid JSON, and has a 'worca' key."""
+    """.claude/settings.json exists and is valid JSON.
+
+    After W-077, worca config lives in ~/.worca/projects/<slug>/config.json
+    so the 'worca' key may be absent from settings.json. Any valid JSON file
+    passes this check.
+    """
     if not os.path.exists(settings_path):
         return "fail", f"{settings_path} not found"
     try:
-        with open(settings_path, encoding="utf-8") as f:
-            data = json.load(f)
-        if "worca" not in data:
-            return "fail", f"{settings_path} missing 'worca' key"
-        return "pass", f"{settings_path} is valid"
+        json.load(open(settings_path, encoding="utf-8"))
+        return "pass", f"{settings_path} is valid JSON"
     except json.JSONDecodeError as exc:
         return "fail", f"{settings_path} invalid JSON: {exc}"
 
 
+def _resolve_agent_core_dir_preflight(default: str) -> str:
+    """Resolve agent core dir — check pkg store if default path missing."""
+    if os.path.isdir(default):
+        return default
+    worca_home = os.environ.get("WORCA_HOME", os.path.join(os.path.expanduser("~"), ".worca"))
+    pkg_dir_root = os.path.join(worca_home, "pkg")
+    if os.path.isdir(pkg_dir_root):
+        for entry in sorted(os.listdir(pkg_dir_root), reverse=True):
+            candidate = os.path.join(pkg_dir_root, entry, "worca", "agents", "core")
+            if os.path.isdir(candidate):
+                return candidate
+    return default
+
+
 def check_agent_templates(core_dir=".claude/worca/agents/core"):
     """All 5 core agent .md files are present."""
+    resolved = _resolve_agent_core_dir_preflight(core_dir)
     missing = [
         name for name in CORE_AGENT_TEMPLATES
-        if not os.path.exists(os.path.join(core_dir, name))
+        if not os.path.exists(os.path.join(resolved, name))
     ]
     if missing:
-        return "fail", f"missing agent templates in {core_dir}: {', '.join(missing)}"
+        return "fail", f"missing agent templates in {resolved}: {', '.join(missing)}"
     return "pass", f"all {len(CORE_AGENT_TEMPLATES)} core agent templates present"
 
 

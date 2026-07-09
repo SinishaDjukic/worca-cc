@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { atomicWriteSync } from './atomic-write.js';
 import { getDefaultBranch } from './git-helpers.js';
 import { deepMerge } from './settings-merge.js';
+import { checkWorcaInstalled } from './worca-setup.js';
 
 /**
  * Translate a wizard patch into the `worca.*` settings shape.
@@ -130,16 +131,16 @@ export function applySetupPatch(settingsPath, patch) {
 export async function buildProjectPreflight({
   projectRoot,
   settingsPath,
+  worcaConfigPath = null,
   graphifyStatus = null,
   crgStatus = null,
 }) {
   const isGitRepo =
     Boolean(projectRoot) && existsSync(join(projectRoot, '.git'));
-  // worca is "installed" in a project when its runtime copy exists. Built-in
-  // pipeline templates live under .claude/worca/templates/, so without this
-  // the template step has nothing to offer.
+  // worca is "installed" when the project has a config — either the legacy
+  // .claude/worca/ dir or the home-dir layout config.json.
   const worcaInstalled =
-    Boolean(projectRoot) && existsSync(join(projectRoot, '.claude', 'worca'));
+    Boolean(projectRoot) && checkWorcaInstalled(projectRoot, worcaConfigPath);
   const baseBranch = projectRoot ? getDefaultBranch(projectRoot) : 'main';
 
   let graphifyInstalled = false;

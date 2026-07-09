@@ -36,7 +36,7 @@ def test_breaker_halts_after_single_failure_when_threshold_is_one(pipeline_env):
     failure must trip the breaker immediately. ``should_halt`` returns True
     once consecutive_failures >= threshold; the runner emits a halt and the
     final pipeline_status is ``failed``."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings.setdefault("worca", {})["circuit_breaker"] = {
         "max_consecutive_failures": 1,
@@ -69,7 +69,7 @@ def test_malformed_settings_json_does_not_crash_pipeline(pipeline_env):
     so a typo in the file doesn't take the pipeline down. Without this
     guarantee, a stray trailing comma during local edits would brick every
     pipeline launch on the repo."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings_path.write_text('{"worca": { invalid json }}')  # malformed
 
     result = pipeline_env.run(_HAPPY, timeout=30)

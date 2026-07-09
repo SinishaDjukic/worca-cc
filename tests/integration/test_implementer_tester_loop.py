@@ -105,7 +105,7 @@ def test_tester_always_fails_exhausts_loop(pipeline_env):
     """All tester iterations fail → loop exhausted, run still completes."""
     # Tighten the cap so the test is fast: implement_test=2 → at most 2 fixes.
     import json
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"].setdefault("loops", {})["implement_test"] = 2
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -140,7 +140,7 @@ def test_tester_always_fails_exhausts_loop(pipeline_env):
 def test_implement_test_loops_setting_respected(pipeline_env):
     """Setting worca.loops.implement_test=1 caps fixes at 1."""
     import json
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"].setdefault("loops", {})["implement_test"] = 1
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -248,7 +248,7 @@ def test_failures_threaded_to_next_implementer_via_resolved_template(pipeline_en
 def test_mloops_multiplier_doubles_cap(pipeline_env):
     """``--mloops 2`` doubles worca.loops.implement_test for the run."""
     import json
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"].setdefault("loops", {})["implement_test"] = 1
     settings_path.write_text(json.dumps(settings, indent=2))

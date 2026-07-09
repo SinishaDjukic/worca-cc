@@ -153,7 +153,22 @@ def _generate_run_id() -> str:
     return f"{now.strftime('%Y%m%d-%H%M%S')}-{millis:03d}-{suffix}"
 
 
-def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
+def _resolve_pipeline_script() -> str:
+    """Return the absolute path to run_pipeline.py from the shared pkg store.
+
+    Falls back to the legacy project-local path if pkg_dir() is unavailable.
+    Separated from _build_pipeline_cmd so callers that have already resolved
+    validate_runtime can pass the path directly without re-computing.
+    """
+    try:
+        from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+        return os.path.join(_pkg_dir(), "worca", "scripts", "run_pipeline.py")
+    except Exception:
+        return os.path.join(".claude", "worca", "scripts", "run_pipeline.py")
+
+
+def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "",
+                        pipeline_script: str | None = None) -> list:
     """Build the run_pipeline.py argv to spawn inside the worktree.
 
     Pure function over parsed args — no filesystem or env side effects — so
@@ -163,10 +178,14 @@ def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
     so the runner uses the same key as the multi-pipeline registry entry
     written by register_pipeline(). When empty, --run-id is omitted and the
     runner falls back to generating one (legacy in-place callers).
+
+    ``pipeline_script`` is the path to run_pipeline.py; when None, resolved
+    via ``_resolve_pipeline_script()`` (shared pkg store, with fallback).
     """
+    script = pipeline_script or _resolve_pipeline_script()
     cmd = [
         sys.executable,
-        os.path.join(".claude", "worca", "scripts", "run_pipeline.py"),
+        script,
         "--worktree",
         "--registry-base",
         os.path.abspath(".worca"),
@@ -415,7 +434,10 @@ def main(argv=None) -> int:
     )
 
     # Step 7: build and spawn run_pipeline.py --worktree (detached, fire-and-forget)
-    cmd = _build_pipeline_cmd(args, run_id=run_id)
+    # Resolve the pipeline script path here (after validate_runtime has confirmed the
+    # runtime exists) so _build_pipeline_cmd stays a pure function over parsed args.
+    pipeline_script = _resolve_pipeline_script()
+    cmd = _build_pipeline_cmd(args, run_id=run_id, pipeline_script=pipeline_script)
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)

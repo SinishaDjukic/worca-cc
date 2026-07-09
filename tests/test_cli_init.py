@@ -79,19 +79,23 @@ class TestCopyWorcaSource:
         assert not (target / "cli").exists()
         assert not (target / "__pycache__").exists()
 
-    def test_overwrites_existing_target(self, tmp_path):
+    def test_skips_when_target_exists(self, tmp_path, capsys):
+        """_copy_worca_source is idempotent: skips copy and prints 'Package already exists'."""
         src = tmp_path / "source"
         src.mkdir()
         (src / "__init__.py").write_text('__version__ = "0.6.0"')
 
         target = tmp_path / "target"
         target.mkdir()
-        (target / "old_file.py").write_text("old")
+        sentinel = target / "old_file.py"
+        sentinel.write_text("old")
 
         _copy_worca_source(src, target)
 
-        assert (target / "__init__.py").exists()
-        assert not (target / "old_file.py").exists()
+        captured = capsys.readouterr()
+        assert "Package already exists" in captured.out
+        # Sentinel untouched — no copy occurred
+        assert sentinel.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +114,7 @@ class TestEnsureGitignore:
 
     def test_no_duplicates(self, tmp_path):
         gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n")
+        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n.beads/\n")
         changes = _ensure_gitignore(tmp_path)
         assert changes == []
 
@@ -391,8 +395,9 @@ class TestGetWorcaSource:
 
 class TestRunInit:
     def test_init_fresh_project(self, tmp_path, monkeypatch):
-        """worca init on a fresh git repo scaffolds .claude/worca/."""
+        """worca init on a fresh git repo copies source to ~/.worca/pkg/<ver>/worca/."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
 
         # Create a mock source
@@ -408,16 +413,30 @@ class TestRunInit:
         with patch("worca.cli.init._init_beads", return_value=False):
             run_init(source=str(tmp_path / "worca-src"))
 
-        assert (tmp_path / ".claude" / "worca" / "__init__.py").exists()
-        assert (tmp_path / ".claude" / "worca" / "orchestrator" / "runner.py").exists()
-        assert not (tmp_path / ".claude" / "worca" / "cli").exists()
+        from worca.utils.paths import pkg_dir
+        pkg_worca = Path(pkg_dir()) / "worca"
+        assert (pkg_worca / "__init__.py").exists()
+        assert (pkg_worca / "orchestrator" / "runner.py").exists()
+        assert not (pkg_worca / "cli").exists()
         assert (tmp_path / ".claude" / "settings.json").exists()
 
     def test_init_refuses_without_upgrade(self, tmp_path, monkeypatch):
-        """worca init fails if .claude/worca/ exists and --upgrade not passed."""
+        """worca init fails if pkg/worca/ and project config already exist and --upgrade not passed."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
-        (tmp_path / ".claude" / "worca").mkdir(parents=True)
+
+        # Pre-create the pkg worca dir to simulate an existing install
+        from worca.utils.paths import pkg_dir
+        pkg_worca = Path(pkg_dir()) / "worca"
+        pkg_worca.mkdir(parents=True)
+
+        # Pre-create the project config to simulate a fully-initialized project
+        from worca.utils.project_registry import slugify
+        slug = slugify(tmp_path.name)
+        config_dir = tmp_path / "wh" / "projects" / slug
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.json").write_text("{}")
 
         src = tmp_path / "worca-src" / "src" / "worca"
         src.mkdir(parents=True)
@@ -426,16 +445,14 @@ class TestRunInit:
         with pytest.raises(SystemExit):
             run_init(source=str(tmp_path / "worca-src"))
 
-    def test_init_upgrade_overwrites(self, tmp_path, monkeypatch):
-        """worca init --upgrade overwrites .claude/worca/."""
+    def test_init_upgrade_copies_to_pkg_dir(self, tmp_path, monkeypatch):
+        """worca init --upgrade copies source to ~/.worca/pkg/<ver>/worca/."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
 
-        target = tmp_path / ".claude" / "worca"
-        target.mkdir(parents=True)
-        (target / "old.py").write_text("old")
-
         settings = tmp_path / ".claude" / "settings.json"
+        (tmp_path / ".claude").mkdir()
         settings.write_text(json.dumps({"worca": {"stages": {}}}))
 
         src = tmp_path / "worca-src" / "src" / "worca"
@@ -446,8 +463,9 @@ class TestRunInit:
         with patch("worca.cli.init._init_beads", return_value=False):
             run_init(upgrade=True, source=str(tmp_path / "worca-src"))
 
-        assert not (target / "old.py").exists()
-        assert (target / "__init__.py").exists()
+        from worca.utils.paths import pkg_dir
+        pkg_worca = Path(pkg_dir()) / "worca"
+        assert (pkg_worca / "__init__.py").exists()
 
     def test_init_not_in_git_repo(self, tmp_path, monkeypatch):
         """worca init fails outside a git repo."""
@@ -696,17 +714,21 @@ class TestRunInitTemplates:
         return base / "worca-src"
 
     def test_init_copies_builtin_templates_to_runtime(self, tmp_path, monkeypatch):
-        """worca init copies src/worca/templates/ to .claude/worca/templates/."""
+        """worca init copies src/worca/templates/ to ~/.worca/pkg/<ver>/worca/templates/."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
         src_root = self._make_src(tmp_path)
         with patch("worca.cli.init._init_beads", return_value=False):
             run_init(source=str(src_root))
-        assert (tmp_path / ".claude" / "worca" / "templates" / "bugfix" / "template.json").exists()
+        from worca.utils.paths import pkg_dir
+        pkg_worca = Path(pkg_dir()) / "worca"
+        assert (pkg_worca / "templates" / "bugfix" / "template.json").exists()
 
     def test_init_creates_project_templates_dir(self, tmp_path, monkeypatch):
         """worca init creates .claude/templates/ for project templates."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
         src_root = self._make_src(tmp_path)
         with patch("worca.cli.init._init_beads", return_value=False):
@@ -716,6 +738,7 @@ class TestRunInitTemplates:
     def test_upgrade_refreshes_builtin_templates(self, tmp_path, monkeypatch):
         """worca init --upgrade refreshes built-in templates from package source."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
         src_root = self._make_src(tmp_path)
         with patch("worca.cli.init._init_beads", return_value=False):
@@ -727,11 +750,14 @@ class TestRunInitTemplates:
         with patch("worca.cli.init._init_beads", return_value=False):
             with patch("worca.cli.init._upgrade_beads", return_value=False):
                 run_init(upgrade=True, source=str(src_root))
-        assert (tmp_path / ".claude" / "worca" / "templates" / "feature" / "template.json").exists()
+        from worca.utils.paths import pkg_dir
+        pkg_worca = Path(pkg_dir()) / "worca"
+        assert (pkg_worca / "templates" / "feature" / "template.json").exists()
 
     def test_upgrade_preserves_project_templates_dir(self, tmp_path, monkeypatch):
         """worca init --upgrade does not delete .claude/templates/ (project templates)."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
         src_root = self._make_src(tmp_path)
         with patch("worca.cli.init._init_beads", return_value=False):
@@ -905,8 +931,9 @@ class TestWriteProvenanceManifest:
         assert block["worca_version"] == "old"
 
     def test_run_init_writes_provenance(self, tmp_path, monkeypatch):
-        """Integration: run_init creates provenance.json."""
+        """Integration: run_init creates provenance.json in ~/.worca/pkg/<ver>/."""
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
         src = tmp_path / "worca-src" / "src" / "worca"
         src.mkdir(parents=True)
@@ -920,7 +947,223 @@ class TestWriteProvenanceManifest:
             with patch("worca.cli.init.subprocess.run", side_effect=git_fails):
                 run_init(source=str(tmp_path / "worca-src"))
 
-        manifest = tmp_path / ".claude" / "worca" / "provenance.json"
+        from worca.utils.paths import pkg_dir
+        manifest = Path(pkg_dir()) / "provenance.json"
         assert manifest.exists()
         block = json.loads(manifest.read_text(encoding="utf-8"))
         assert block["worca_version"] == "0.5.0"
+
+
+class TestConfigCreatedInProjectsDir:
+    """test_config_created_in_projects_dir: config.json created at ~/.worca/projects/<slug>/."""
+
+    def _make_src(self, tmp_path, worca_config=None):
+        src = tmp_path / "worca-src" / "src" / "worca"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text('__version__ = "0.5.0"')
+        worca_section = worca_config or {"stages": {}, "agents": {"planner": {"model": "opus"}}}
+        settings_data = {
+            "hooks": {"PreToolUse": []},
+            "permissions": {"allow": []},
+            "worca": worca_section,
+        }
+        (src / "settings.json").write_text(json.dumps(settings_data))
+        return src
+
+    def test_config_json_created_at_projects_slug(self, tmp_path, monkeypatch):
+        """run_init creates ~/.worca/projects/<slug>/config.json with worca.* keys."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+        self._make_src(tmp_path)
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(tmp_path / "worca-src"))
+
+        from worca.utils.paths import project_config_dir
+        slug = tmp_path.name.lower()
+        config_path = Path(project_config_dir(slug)) / "config.json"
+        assert config_path.exists(), f"Expected {config_path} to exist"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert "worca" in data
+
+    def test_config_json_contains_worca_keys_not_hooks(self, tmp_path, monkeypatch):
+        """config.json contains worca.* keys; .claude/settings.json retains hooks."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+        self._make_src(tmp_path, worca_config={"stages": {"plan": {"enabled": True}}, "loops": {"implement_test": 3}})
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(tmp_path / "worca-src"))
+
+        from worca.utils.paths import project_config_dir
+        slug = tmp_path.name.lower()
+        config_path = Path(project_config_dir(slug)) / "config.json"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert data.get("worca", {}).get("stages", {}).get("plan", {}).get("enabled") is True
+
+        settings_data = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert "hooks" in settings_data or "permissions" in settings_data
+
+    def test_settings_json_strips_worca_keys(self, tmp_path, monkeypatch):
+        """.claude/settings.json does not contain worca.* after init."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+        self._make_src(tmp_path)
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            run_init(source=str(tmp_path / "worca-src"))
+
+        settings_data = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert "worca" not in settings_data
+
+
+# ---------------------------------------------------------------------------
+# Old layout migration (Phase 4a)
+# ---------------------------------------------------------------------------
+
+
+class TestUpgradeMigratesOldLayout:
+    """test_upgrade_migrates_old_layout: detect .claude/worca/, relocate, delete, update registry."""
+
+    def _make_src(self, tmp_path, version="0.6.0"):
+        src = tmp_path / "worca-src" / "src" / "worca"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text(f'__version__ = "{version}"')
+        (src / "settings.json").write_text(json.dumps({
+            "hooks": {"PreToolUse": []},
+            "permissions": {"allow": []},
+            "worca": {"stages": {"plan": {"enabled": True}}},
+        }))
+        return src
+
+    def _make_old_layout(self, tmp_path, version="0.5.0"):
+        """Create the old .claude/worca/ project-local layout."""
+        old_worca = tmp_path / ".claude" / "worca"
+        old_worca.mkdir(parents=True)
+        (old_worca / "__init__.py").write_text(f'__version__ = "{version}"')
+        (old_worca / "claude_hooks").mkdir()
+        (old_worca / "claude_hooks" / "pre_tool_use.py").write_text("# hook")
+        return old_worca
+
+    def test_old_claude_worca_deleted_on_upgrade(self, tmp_path, monkeypatch):
+        """After --upgrade, .claude/worca/ is removed."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+
+        old_worca = self._make_old_layout(tmp_path)
+        self._make_src(tmp_path)
+
+        # settings.json with old shell-subshell hook pattern
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "hooks": {
+                "PreToolUse": [{"hooks": [{"type": "command",
+                    "command": 'python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/.claude/worca/claude_hooks/pre_tool_use.py"'}]}]
+            },
+            "worca": {"stages": {"plan": {"enabled": True}}},
+        }))
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                run_init(upgrade=True, source=str(tmp_path / "worca-src"))
+
+        assert not old_worca.exists(), ".claude/worca/ must be deleted after upgrade"
+
+    def test_hooks_rewritten_to_absolute_pkg_path(self, tmp_path, monkeypatch):
+        """After --upgrade from old layout, hook commands use absolute pkg paths."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+
+        self._make_old_layout(tmp_path)
+        self._make_src(tmp_path)
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "hooks": {
+                "PreToolUse": [{"hooks": [{"type": "command",
+                    "command": 'python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/.claude/worca/claude_hooks/pre_tool_use.py"'}]}]
+            },
+            "worca": {"stages": {}},
+        }))
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                run_init(upgrade=True, source=str(tmp_path / "worca-src"))
+
+        final = json.loads(settings.read_text(encoding="utf-8"))
+        raw = json.dumps(final)
+        assert ".claude/worca/" not in raw, "Old .claude/worca/ path must not remain in hook commands"
+        # Absolute path must point into the pkg dir
+        from worca.utils.paths import pkg_dir
+        pkg_hook_base = str(Path(pkg_dir()) / "worca" / "claude_hooks")
+        assert pkg_hook_base in raw, f"Expected absolute pkg path {pkg_hook_base!r} in settings"
+
+    def test_worca_config_extracted_to_projects_dir(self, tmp_path, monkeypatch):
+        """worca.* keys move to ~/.worca/projects/<slug>/config.json on --upgrade."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+
+        self._make_old_layout(tmp_path)
+        self._make_src(tmp_path)
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "hooks": {},
+            "worca": {"stages": {"plan": {"enabled": True}}},
+        }))
+
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                run_init(upgrade=True, source=str(tmp_path / "worca-src"))
+
+        from worca.utils.paths import project_config_dir
+        slug = tmp_path.name.lower()
+        config_path = Path(project_config_dir(slug)) / "config.json"
+        assert config_path.exists(), f"Expected {config_path} to exist"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        assert "worca" in data
+
+        # worca.* must be stripped from .claude/settings.json
+        final_settings = json.loads(settings.read_text(encoding="utf-8"))
+        assert "worca" not in final_settings
+
+    def test_registry_updated_with_new_fields(self, tmp_path, monkeypatch):
+        """Registry entry gains worcaConfigPath and worcaPkgVersion on --upgrade."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        (tmp_path / ".git").mkdir()
+
+        self._make_old_layout(tmp_path)
+        self._make_src(tmp_path)
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"hooks": {}, "worca": {"stages": {}}}))
+
+        # Pre-populate registry with old entry (missing worcaConfigPath / worcaPkgVersion)
+        projects_d = tmp_path / "wh" / "projects.d"
+        projects_d.mkdir(parents=True)
+        slug = tmp_path.name.lower()
+        old_entry = {
+            "name": slug,
+            "path": str(tmp_path),
+            "worcaDir": str(tmp_path / ".worca"),
+            "settingsPath": str(settings),
+        }
+        (projects_d / f"{slug}.json").write_text(json.dumps(old_entry))
+
+        fake_version = "0.6.0-abc1234"
+        with patch("worca.cli.init._init_beads", return_value=False):
+            with patch("worca.cli.init._upgrade_beads", return_value=False):
+                with patch("worca.utils.project_registry._get_pkg_version", return_value=fake_version):
+                    run_init(upgrade=True, source=str(tmp_path / "worca-src"))
+
+        entry = json.loads((projects_d / f"{slug}.json").read_text(encoding="utf-8"))
+        assert "worcaConfigPath" in entry, "Registry must have worcaConfigPath after upgrade"
+        assert "worcaPkgVersion" in entry, "Registry must have worcaPkgVersion after upgrade"
+        assert entry["worcaPkgVersion"] == fake_version

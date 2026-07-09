@@ -690,7 +690,7 @@ export function createApp(options = {}) {
         .json({ ok: false, error: `directory does not exist: ${dirPath}` });
     }
     try {
-      const subfolders = await scanDirectory(dirPath);
+      const subfolders = await scanDirectory(dirPath, prefsDir);
       res.json({ ok: true, subfolders });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -1236,11 +1236,28 @@ export function createApp(options = {}) {
       const proj = readProjects(prefsDir).find((p) => p.name === projectId);
       if (proj) {
         projectSettingsPath =
-          proj.settingsPath || join(proj.path, '.claude', 'settings.json');
+          proj.worcaConfigPath ||
+          proj.settingsPath ||
+          join(proj.path, '.claude', 'settings.json');
         root = proj.path;
       }
-    } else if (!projectSettingsPath && projectRoot) {
-      projectSettingsPath = join(projectRoot, '.claude', 'settings.json');
+    } else if (projectRoot) {
+      const slug = basename(projectRoot)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64);
+      const configPath = join(
+        homedir(),
+        '.worca',
+        'projects',
+        slug,
+        'config.json',
+      );
+      projectSettingsPath = existsSync(configPath)
+        ? configPath
+        : settingsPath || join(projectRoot, '.claude', 'settings.json');
     }
 
     return {
@@ -1379,11 +1396,28 @@ export function createApp(options = {}) {
       const proj = readProjects(prefsDir).find((p) => p.name === projectId);
       if (proj) {
         projectSettingsPath =
-          proj.settingsPath || join(proj.path, '.claude', 'settings.json');
+          proj.worcaConfigPath ||
+          proj.settingsPath ||
+          join(proj.path, '.claude', 'settings.json');
         root = proj.path;
       }
-    } else if (!projectSettingsPath && projectRoot) {
-      projectSettingsPath = join(projectRoot, '.claude', 'settings.json');
+    } else if (projectRoot) {
+      const slug = basename(projectRoot)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64);
+      const configPath = join(
+        homedir(),
+        '.worca',
+        'projects',
+        slug,
+        'config.json',
+      );
+      projectSettingsPath = existsSync(configPath)
+        ? configPath
+        : settingsPath || join(projectRoot, '.claude', 'settings.json');
     }
 
     return {

@@ -41,7 +41,7 @@ _CUSTOM_FLOW = {
 
 
 def _set_flow(pipeline_env, flow_doc):
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["flow"] = flow_doc
     settings_path.write_text(json.dumps(settings, indent=2))

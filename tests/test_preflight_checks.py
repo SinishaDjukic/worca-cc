@@ -97,12 +97,13 @@ class TestCheckSettingsJson:
         assert status == "fail"
         assert "invalid" in msg.lower()
 
-    def test_fail_when_missing_worca_key(self, tmp_path):
+    def test_pass_when_missing_worca_key(self, tmp_path):
+        # W-077: worca config moved to ~/.worca/projects/<slug>/config.json,
+        # so settings.json without 'worca' key is now valid.
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps({"other": "data"}))
-        status, msg = preflight_checks.check_settings_json(settings_path=str(settings_file))
-        assert status == "fail"
-        assert "worca" in msg.lower()
+        status, _ = preflight_checks.check_settings_json(settings_path=str(settings_file))
+        assert status == "pass"
 
 
 # --- check_agent_templates ---

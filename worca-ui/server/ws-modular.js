@@ -184,7 +184,7 @@ export function attachWsServer(httpServer, config) {
     // the WS event clobbers the enriched REST response on add/remove)
     const projectList = freshProjects.map((p) => ({
       ...p,
-      worcaVersion: readProjectWorcaVersion(p.path),
+      worcaVersion: readProjectWorcaVersion(p.path, p.worcaPkgVersion),
     }));
     broadcaster.broadcast('projects-updated', { projects: projectList });
   }

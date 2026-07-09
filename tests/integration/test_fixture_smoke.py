@@ -37,7 +37,14 @@ def test_pipeline_env_project_exists(pipeline_env):
 
 
 def test_pipeline_env_worca_runtime_installed(pipeline_env):
-    assert (pipeline_env.project / ".claude" / "worca").exists()
+    # W-077: runtime now lives in ~/.worca/pkg/<ver>/worca/, not .claude/worca/
+    assert pipeline_env.worca_config_path is not None
+    assert pipeline_env.worca_config_path.exists(), (
+        f"Project config not found at {pipeline_env.worca_config_path}"
+    )
+    assert not (pipeline_env.project / ".claude" / "worca").exists(), (
+        ".claude/worca/ must not exist — runtime is in the shared pkg store"
+    )
 
 
 def test_pipeline_env_git_repo_initialized(pipeline_env):
@@ -46,18 +53,19 @@ def test_pipeline_env_git_repo_initialized(pipeline_env):
 
 def test_pipeline_env_settings_overridden(pipeline_env):
     import json
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text())
-    stages = settings.get("worca", {}).get("stages", {})
+    # W-077: worca.* config lives in config.json, not .claude/settings.json
+    config = json.loads(pipeline_env.worca_config_path.read_text())
+    stages = config.get("worca", {}).get("stages", {})
     assert stages.get("preflight", {}).get("enabled") is False
     assert stages.get("plan_review", {}).get("enabled") is False
     assert stages.get("learn", {}).get("enabled") is False
 
 
 def test_pipeline_env_effort_pinned_disabled(pipeline_env):
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text())
-    effort = settings.get("worca", {}).get("effort", {})
+    import json
+    # W-077: worca.* config lives in config.json, not .claude/settings.json
+    config = json.loads(pipeline_env.worca_config_path.read_text())
+    effort = config.get("worca", {}).get("effort", {})
     assert effort.get("auto_mode") == "disabled"
 
 
@@ -98,9 +106,9 @@ def test_webhook_server_is_dataclass_type(webhook_server):
 
 def test_enable_stages_flips_settings(pipeline_env):
     pipeline_env.enable_stages("preflight", "learn")
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text())
-    stages = settings["worca"]["stages"]
+    # W-077: worca.stages lives in config.json, not .claude/settings.json
+    config = json.loads(pipeline_env.worca_config_path.read_text())
+    stages = config["worca"]["stages"]
     assert stages["preflight"]["enabled"] is True
     assert stages["learn"]["enabled"] is True
     # plan_review was not enabled — must remain False from fixture defaults.
