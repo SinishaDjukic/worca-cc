@@ -179,6 +179,98 @@ describe('GET /api/projects/:id/worca-status — version + outdated extension', 
     expect(body.outdated).toBe(true);
   });
 
+  // Home-dir layout: worcaConfigPath + worcaPkgVersion → installed + hash-stripped version
+  it('returns installed:true and hash-stripped version for home-dir layout', async () => {
+    const configDir = join(prefsDir, 'projects', 'my-proj');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), '{}');
+
+    writeProject(prefsDir, {
+      name: 'my-proj',
+      path: projectRoot,
+      worcaConfigPath: join(configDir, 'config.json'),
+      worcaPkgVersion: '0.6.0-33ad2a9',
+    });
+    const app = await createTestApp(prefsDir, projectRoot);
+    const { status, body } = await request(
+      app,
+      'GET',
+      '/api/projects/my-proj/worca-status',
+    );
+
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.installed).toBe(true);
+    expect(body.version).toBe(ACTIVE_WORCA_CC);
+    expect(body.outdated).toBe(false);
+  });
+
+  // Home-dir layout: worcaConfigPath only (no worcaPkgVersion)
+  it('returns installed:true and version:null for home-dir layout without worcaPkgVersion', async () => {
+    const configDir = join(prefsDir, 'projects', 'my-proj');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), '{}');
+
+    writeProject(prefsDir, {
+      name: 'my-proj',
+      path: projectRoot,
+      worcaConfigPath: join(configDir, 'config.json'),
+    });
+    const app = await createTestApp(prefsDir, projectRoot);
+    const { status, body } = await request(
+      app,
+      'GET',
+      '/api/projects/my-proj/worca-status',
+    );
+
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.installed).toBe(true);
+    expect(body.version).toBeNull();
+    expect(body.outdated).toBe(false);
+  });
+
+  // No legacy dir + no worcaConfigPath → not installed
+  it('returns installed:false when no legacy dir and no worcaConfigPath', async () => {
+    writeProject(prefsDir, { name: 'my-proj', path: projectRoot });
+    const app = await createTestApp(prefsDir, projectRoot);
+    const { status, body } = await request(
+      app,
+      'GET',
+      '/api/projects/my-proj/worca-status',
+    );
+
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.installed).toBe(false);
+    expect(body.version).toBeNull();
+    expect(body.outdated).toBe(false);
+  });
+
+  // Hash stripping preserves RC suffix
+  it('strips git hash but preserves RC suffix in version', async () => {
+    const configDir = join(prefsDir, 'projects', 'my-proj');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), '{}');
+
+    writeProject(prefsDir, {
+      name: 'my-proj',
+      path: projectRoot,
+      worcaConfigPath: join(configDir, 'config.json'),
+      worcaPkgVersion: '0.7.0rc3-abcdef1',
+    });
+    const app = await createTestApp(prefsDir, projectRoot);
+    const { status, body } = await request(
+      app,
+      'GET',
+      '/api/projects/my-proj/worca-status',
+    );
+
+    expect(status).toBe(200);
+    expect(body.version).toBe('0.7.0rc3');
+    expect(body.outdated).toBe(false);
+  });
+
   // RC vs stable: "0.6.0rc3" is behind "0.6.0"
   it('returns outdated:true when installed is an RC of the current stable', async () => {
     mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });

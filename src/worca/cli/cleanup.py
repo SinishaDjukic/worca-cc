@@ -487,6 +487,10 @@ def _build_sources(base: str) -> list:
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
     """Handle the `worca cleanup` subcommand."""
+    if getattr(args, "gc", False):
+        cmd_gc(args)
+        return
+
     git_root = _find_git_root()
     base = str(git_root / ".worca")
 
@@ -550,6 +554,43 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
         print(f"  {errors} removal error(s) — see warnings above.", file=sys.stderr)
 
 
+def cmd_gc(args: argparse.Namespace) -> None:
+    """Handle the `worca cleanup --gc` subcommand."""
+    from worca.utils.pkg_store import gc_pkg_store  # noqa: PLC0415
+
+    dry_run = getattr(args, "dry_run", False)
+    keep_latest = getattr(args, "keep_latest", 0) or 0
+
+    result = gc_pkg_store(dry_run=dry_run, keep_latest=keep_latest)
+
+    if dry_run:
+        orphans = result["would_remove"]
+        if not orphans:
+            print("No orphan pkg versions found.")
+        else:
+            print(f"Would remove {len(orphans)} orphan pkg version(s):")
+            for ver in orphans:
+                print(f"  {ver}")
+        skipped = result["skipped_live"]
+        if skipped:
+            print(f"Would skip {len(skipped)} version(s) referenced by running pipelines:")
+            for ver in skipped:
+                print(f"  {ver} (live)")
+    else:
+        removed = result["removed"]
+        skipped = result["skipped_live"]
+        if removed:
+            print(f"Removed {len(removed)} orphan pkg version(s):")
+            for ver in removed:
+                print(f"  {ver}")
+        else:
+            print("No orphan pkg versions to remove.")
+        if skipped:
+            print(f"Skipped {len(skipped)} version(s) referenced by running pipelines:")
+            for ver in skipped:
+                print(f"  {ver} (live)")
+
+
 def register_subcommand(sub) -> None:
     """Register the `cleanup` subparser on the provided subparsers action."""
     p = sub.add_parser("cleanup", help="Remove completed pipeline worktrees")
@@ -587,4 +628,16 @@ def register_subcommand(sub) -> None:
         default=None,
         metavar="DURATION",
         help="Only remove worktrees started more than this long ago (e.g. 7d, 24h, 30m)",
+    )
+    p.add_argument(
+        "--gc",
+        action="store_true",
+        help="Run mark-and-sweep GC on orphan pkg versions in ~/.worca/pkg/",
+    )
+    p.add_argument(
+        "--keep-latest",
+        type=int,
+        default=0,
+        metavar="N",
+        help="With --gc: preserve the N most recent pkg versions regardless of references",
     )

@@ -189,6 +189,26 @@ describe('buildProjectPreflight', () => {
     expect(pf.graphifyInstalled).toBe(false);
   });
 
+  it('reports worcaInstalled true via home-dir layout worcaConfigPath', async () => {
+    const configPath = join(dir, 'worca-config.json');
+    writeFileSync(configPath, '{}');
+    const pf = await buildProjectPreflight({
+      projectRoot: dir,
+      settingsPath,
+      worcaConfigPath: configPath,
+    });
+    expect(pf.worcaInstalled).toBe(true);
+  });
+
+  it('reports worcaInstalled false when neither layout present', async () => {
+    const pf = await buildProjectPreflight({
+      projectRoot: dir,
+      settingsPath,
+      worcaConfigPath: '/nonexistent/config.json',
+    });
+    expect(pf.worcaInstalled).toBe(false);
+  });
+
   it('pre-populates currentSettings from existing settings.json', async () => {
     writeFileSync(
       settingsPath,

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/pre_tool_use.py\""
+            "command": "python3 .claude/worca/claude_hooks/pre_tool_use.py"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/skill_use.py\""
+            "command": "python3 .claude/worca/claude_hooks/skill_use.py"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/post_tool_use.py\""
+            "command": "python3 .claude/worca/claude_hooks/post_tool_use.py"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/user_prompt_submit.py\""
+            "command": "python3 .claude/worca/claude_hooks/user_prompt_submit.py"
           }
         ]
       }
@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/subagent_start.py\""
+            "command": "python3 .claude/worca/claude_hooks/subagent_start.py"
           }
         ]
       }
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/subagent_stop.py\""
+            "command": "python3 .claude/worca/claude_hooks/subagent_stop.py"
           }
         ]
       }

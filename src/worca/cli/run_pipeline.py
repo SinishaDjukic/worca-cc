@@ -55,7 +55,7 @@ def cmd_run(args: Namespace) -> None:
     _warn_version_mismatch(project_worca_dir)
     _inject_project_path(git_root)
 
-    scripts_dir = git_root / ".claude" / "worca" / "scripts"
+    scripts_dir = project_worca_dir / "scripts"
     pipeline_script = scripts_dir / "run_pipeline.py"
     worktree_script = scripts_dir / "run_worktree.py"
 

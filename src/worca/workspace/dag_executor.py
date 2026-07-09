@@ -75,11 +75,27 @@ _SCRUB_KEYS = frozenset({
 _SCRUB_PREFIXES = ("WORCA_",)
 
 
+def _derive_config_path(project_dir: str | None) -> str | None:
+    """Return the absolute path to config.json for *project_dir*, or None if absent."""
+    if not project_dir:
+        return None
+    try:
+        from worca.utils.paths import project_config_dir  # noqa: PLC0415
+        from worca.utils.project_registry import slugify  # noqa: PLC0415
+
+        slug = slugify(os.path.basename(project_dir))
+        config_path = os.path.join(project_config_dir(slug), "config.json")
+        return config_path if os.path.exists(config_path) else None
+    except Exception:
+        return None
+
+
 def _build_child_env(
     base_env: dict,
     *,
     workspace_id: str,
     workspace_name: str,
+    project_dir: str | None = None,
 ) -> dict:
     # Strip-then-inject: first drop every WORCA_* var the parent inherited
     # (stage-scoped state from any outer pipeline must not leak into child
@@ -97,6 +113,11 @@ def _build_child_env(
     result["WORCA_WORKSPACE_ID"] = workspace_id
     result["WORCA_WORKSPACE_NAME"] = workspace_name
     result["WORCA_DEFER_PR"] = "1"
+
+    config_path = _derive_config_path(project_dir)
+    if config_path:
+        result["WORCA_CONFIG_PATH"] = config_path
+
     return result
 
 
@@ -683,10 +704,14 @@ class DagExecutor:
             self._context_paths[project] = path
 
     def _run_child(self, project: str) -> dict:
+        project_path = self._projects_by_name.get(project, project)
+        cwd = self._project_abs_path(project_path)
+
         env = _build_child_env(
             os.environ.copy(),
             workspace_id=self._workspace_id,
             workspace_name=self._workspace_name,
+            project_dir=cwd,
         )
 
         deps = self._dependency_graph.get(project, [])
@@ -703,9 +728,6 @@ class DagExecutor:
             max_beads=self._max_beads,
             claude_md_mode=self._claude_md_mode,
         )
-
-        project_path = self._projects_by_name.get(project, project)
-        cwd = self._project_abs_path(project_path)
 
         proc = subprocess.run(
             cmd,

@@ -545,6 +545,15 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
                 os.path.join(project_root, ".claude", "agents",
                              f"{entry.agent}.md"),
             ]
+            # W-077: also search pkg store (canonical location after relocation)
+            try:
+                from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+                agent_candidates.append(
+                    os.path.join(_pkg_dir(), "worca", "agents", "core",
+                                 f"{entry.agent}.md")
+                )
+            except Exception:
+                pass
             if not any(os.path.exists(p) for p in agent_candidates):
                 raise FlowError(
                     f"stage {entry.name!r}: agent template not found for "
@@ -557,6 +566,14 @@ def _validate_flow(entries: list, project_root: str = ".") -> None:
                 os.path.join(project_root, ".claude", "worca", "schemas",
                              entry.schema),
             ]
+            # W-077: also search pkg store schemas
+            try:
+                from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+                schema_candidates.append(
+                    os.path.join(_pkg_dir(), "worca", "schemas", entry.schema)
+                )
+            except Exception:
+                pass
             schema_path = next(
                 (p for p in schema_candidates if os.path.exists(p)), None
             )

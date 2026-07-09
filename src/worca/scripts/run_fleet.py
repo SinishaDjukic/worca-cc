@@ -164,7 +164,27 @@ def detect_child_crg_status(project_dir: str) -> str:
     return GRAPH_STATUS_READY
 
 
-def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
+def _derive_config_path(project_dir: str | None) -> str | None:
+    """Return the absolute path to config.json for *project_dir*, or None if absent."""
+    if not project_dir:
+        return None
+    try:
+        from worca.utils.paths import project_config_dir  # noqa: PLC0415
+        from worca.utils.project_registry import slugify  # noqa: PLC0415
+
+        slug = slugify(os.path.basename(project_dir))
+        config_path = os.path.join(project_config_dir(slug), "config.json")
+        return config_path if os.path.exists(config_path) else None
+    except Exception:
+        return None
+
+
+def build_child_env(
+    base_env: dict,
+    *,
+    fleet_id: str | None = None,
+    project_dir: str | None = None,
+) -> dict:
     """Return a copy of *base_env* with fleet-internal keys stripped.
 
     Scrubs the W-040 §5 list: ``WORCA_AGENT``, ``WORCA_STAGE``, ``WORCA_RUN_ID``,
@@ -177,6 +197,9 @@ def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
     When *fleet_id* is supplied, ``WORCA_FLEET_ID`` is re-injected AFTER the
     scrub so the Guardian agent in the child pipeline can detect fleet
     membership and apply the ``[fleet:<short>]`` PR-title prefix (W-040 §11).
+
+    When *project_dir* is supplied, ``WORCA_CONFIG_PATH`` is derived from the
+    child project's slug and re-injected after the scrub (Phase 5).
     """
     result = {}
     for key, value in base_env.items():
@@ -188,6 +211,10 @@ def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
 
     if fleet_id:
         result["WORCA_FLEET_ID"] = fleet_id
+
+    config_path = _derive_config_path(project_dir)
+    if config_path:
+        result["WORCA_CONFIG_PATH"] = config_path
 
     return result
 
@@ -278,7 +305,7 @@ def run_plan_first(
     The reference child runs its full pipeline independently; only the plan file
     is extracted early to unblock the remaining N-1 children (§6).
     """
-    child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id)
+    child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id, project_dir=reference_project)
     cmd = build_child_cmd(
         project_dir=reference_project,
         fleet_id=fleet_id,
@@ -420,7 +447,7 @@ def dispatch_fleet(
         # Spawn up to max_parallel children. Stops adding new ones once halted.
         while pending and len(in_flight) < max_parallel and not halted:
             project_dir = pending.pop(0)
-            child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id)
+            child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id, project_dir=project_dir)
             cmd = build_child_cmd(
                 project_dir=project_dir,
                 fleet_id=fleet_id,

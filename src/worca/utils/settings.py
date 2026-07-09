@@ -76,18 +76,58 @@ def _local_path_for(settings_path: str) -> str:
     return root + ".local" + ext
 
 
+def _load_worca_config() -> dict:
+    """Load base worca config from WORCA_CONFIG_PATH if set.
+
+    Returns {} if the env var is unset or the file is absent.
+    On JSON error, emits a stderr warning and returns {} — pipeline-side
+    callers tolerate degraded config rather than hard-failing the way
+    hook-side callers do (see tracking.py::_load_worca_config_base).
+    """
+    config_path = os.environ.get("WORCA_CONFIG_PATH")
+    if not config_path:
+        return {}
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(
+            f"worca: warning: WORCA_CONFIG_PATH={config_path}: file not found",
+            file=sys.stderr,
+        )
+        return {}
+    except json.JSONDecodeError as e:
+        import sys  # noqa: PLC0415
+        print(
+            f"worca: warning: WORCA_CONFIG_PATH={config_path}: invalid JSON ({e}); "
+            "worca config ignored",
+            file=sys.stderr,
+        )
+        return {}
+
+
 def load_settings(settings_path: str) -> dict:
     """Load base settings and deep-merge any sibling .local.json over them.
+
+    Config loading precedence (lowest to highest):
+    1. WORCA_CONFIG_PATH → ~/.worca/projects/<slug>/config.json (base worca config)
+    2. settings_path (the project .claude/settings.json or template-merged overlay)
+    3. .local.json sibling of settings_path (secrets merge)
 
     - If settings_path does not exist, returns {}.
     - If the .local.json sibling does not exist, returns the base as-is.
     - If .local.json has invalid JSON, logs a warning and returns the base.
     """
+    worca_config_base = _load_worca_config()
+
     try:
         with open(settings_path, encoding="utf-8") as f:
             base = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        return worca_config_base
+
+    if worca_config_base:
+        base = deep_merge(worca_config_base, base)
 
     local_path = _local_path_for(settings_path)
     if not os.path.exists(local_path):

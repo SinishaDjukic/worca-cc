@@ -28,6 +28,7 @@ from worca.utils.log_lines import write_log_line
 
 from worca.hooks.agent_role import role_from_worca_agent
 from worca.hooks.tracking import (
+    ConfigUnreadable,
     _load_dispatch_section,
     is_lockdown,
     resolve_per_agent_entry,
@@ -199,7 +200,18 @@ def _resolve_tool_args(
         fire and dispatch governance is silently disabled. Auto-inclusion
         keeps the hooks in the loop.
     """
-    cfg = _load_dispatch_section("tools", settings)
+    try:
+        cfg = _load_dispatch_section("tools", settings)
+    except ConfigUnreadable as exc:
+        # Malformed worca config — degrade to defaults rather than crashing the
+        # pipeline. Emit a visible warning so the silent path is observable; the
+        # pre-launch preflight check will surface the full error to the user.
+        print(
+            f"[worca] WARNING: malformed settings.json — falling back to default tool"
+            f" policy for agent '{agent_name}': {exc}",
+            file=sys.stderr,
+        )
+        return [], "default"
     # Filter both meta-tools symmetrically: if either lands in
     # --disallowedTools, the corresponding governance hook never fires
     # and dispatch is silently bypassed at the CLI layer.

@@ -808,6 +808,29 @@ def test_resolve_tool_args_drops_skill_from_disallows():
     assert "EnterPlanMode" in disallows
 
 
+def test_resolve_tool_args_config_unreadable_degrades_to_default(monkeypatch, capsys):
+    """Malformed settings.json degrades to ([], 'default') with an observable warning.
+
+    The alternative — silently returning defaults without a warning — would
+    launch the agent with '--tools default' and no '--disallowedTools' whenever
+    settings.json is malformed, making governance bypass invisible.  The
+    fail-open is intentional (crashing mid-run is worse than degrading), but
+    it must be visible via a stderr warning so the silent path is detectable.
+    """
+    from worca.hooks.tracking import ConfigUnreadable
+
+    monkeypatch.setattr(
+        "worca.utils.claude_cli._load_dispatch_section",
+        lambda *_a, **_kw: (_ for _ in ()).throw(ConfigUnreadable("bad json")),
+    )
+    disallows, tools_arg = _resolve_tool_args("planner", settings={})
+    assert disallows == []
+    assert tools_arg == "default"
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "planner" in captured.err
+
+
 # ---------------------------------------------------------------------------
 # build_command: --tools + --disallowedTools wiring (PR C)
 # ---------------------------------------------------------------------------

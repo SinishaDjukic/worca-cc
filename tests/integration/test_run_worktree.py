@@ -147,18 +147,22 @@ def test_run_worktree_guide_argument_accepted(pipeline_env, tmp_path):
 
 
 def test_run_worktree_errors_when_runtime_missing(pipeline_env):
-    """run_worktree.py validates ``.claude/worca/`` exists before any side
+    """run_worktree.py validates the worca runtime exists before any side
     effect (worktree create, registry write, Popen). Without it the spawned
-    pipeline crashes silently and the user sees only "started"."""
-    runtime_dir = pipeline_env.project / ".claude" / "worca"
-    assert runtime_dir.is_dir(), "fixture should have installed the runtime"
-    shutil.rmtree(runtime_dir)
+    pipeline crashes silently and the user sees only "started".
+
+    W-077: the canonical runtime is now in ~/.worca/pkg/<ver>/worca/ (pkg store).
+    Simulate a missing runtime by pointing WORCA_HOME at an empty directory so
+    neither the pkg store nor the legacy .claude/worca/ path is present.
+    """
+    empty_home = pipeline_env.tmp_path / "empty_worca_home"
+    empty_home.mkdir()
 
     cmd = [sys.executable, "-m", "worca.scripts.run_worktree",
            "--prompt", "no runtime"]
     proc = subprocess.run(
         cmd, cwd=str(pipeline_env.project),
-        env={**os.environ, "WORCA_SKIP_BEADS": "1"},
+        env={**os.environ, "WORCA_SKIP_BEADS": "1", "WORCA_HOME": str(empty_home)},
         capture_output=True, text=True, timeout=15,
     )
     assert proc.returncode == 1, (

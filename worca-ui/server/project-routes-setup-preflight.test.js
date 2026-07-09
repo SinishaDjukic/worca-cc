@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const { createProjectRoutes, createProjectScopedRoutes, projectResolver } =
   await import('./project-routes.js');
+const { writeProject } = await import('./project-registry.js');
 
 function makeApp(prefsDir, projectRoot, locals = {}) {
   const app = express();
@@ -92,6 +93,25 @@ describe('GET /setup/preflight', () => {
     expect(body.crgInstalled).toBe(false);
     expect(body.worcaInstalled).toBe(false);
     expect(body.currentSettings).toBeDefined();
+  });
+
+  it('reports worcaInstalled true via home-dir worcaConfigPath', async () => {
+    const configDir = join(prefsDir, 'projects', 'test-project');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'config.json');
+    writeFileSync(configPath, '{}');
+    writeProject(prefsDir, {
+      name: 'test-project',
+      path: projectRoot,
+      worcaConfigPath: configPath,
+    });
+    const app = makeApp(prefsDir, projectRoot);
+    const { body } = await request(
+      app,
+      'GET',
+      '/api/projects/test-project/setup/preflight',
+    );
+    expect(body.worcaInstalled).toBe(true);
   });
 
   it('reports worcaInstalled true when .claude/worca exists', async () => {

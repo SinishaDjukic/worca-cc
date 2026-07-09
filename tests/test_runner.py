@@ -429,7 +429,11 @@ def test_schema_path_project_tier(tmp_path, monkeypatch):
         ".claude", "schemas", "docs_audit.json"
     )
     # names with no project-tier file keep resolving to the shipped dir
-    assert _schema_path("plan.json") == ".claude/worca/schemas/plan.json"
+    # W-077: shipped dir may be in pkg store or legacy .claude/worca/
+    plan_path = _schema_path("plan.json")
+    assert plan_path.endswith(os.path.join("schemas", "plan.json")), (
+        f"plan.json should resolve to a schemas/ dir: {plan_path!r}"
+    )
 
 
 # --- plan_file support ---

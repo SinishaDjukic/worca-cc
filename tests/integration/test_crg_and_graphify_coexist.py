@@ -58,7 +58,7 @@ def _setup_global_both(pipeline_env) -> Path:
 
 def _enable_both_settings(pipeline_env) -> None:
     """Enable both graphify and CRG in project settings."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["graphify"] = {
         "enabled": True,
@@ -103,6 +103,9 @@ def _run_pipeline_with_both(pipeline_env, scenario: dict, prompt: str,
         "MOCK_CRG_LOG": str(crg_log),
         "WORCA_HOME": str(worca_home),
         "PYTHONPATH": str(REPO_ROOT / "src"),
+        # W-077: pin config path so pipeline reads from the same file that
+        # _enable_both_settings wrote to.
+        "WORCA_CONFIG_PATH": str(pipeline_env.worca_config_path),
     }
     for key in ("WORCA_PLAN_FILE", "WORCA_PROJECT_ROOT", "WORCA_RUN_ID", "WORCA_RUN_DIR"):
         env.pop(key, None)

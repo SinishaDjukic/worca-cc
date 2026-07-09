@@ -359,10 +359,12 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     # scripts have existed since the initial W-038 landing but were never
     # wired into settings.json — making dispatch tracking dead code.
     hooks = migrated.setdefault("hooks", {})
-    _hook_cmd_tpl = (
-        'python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)'
-        '/.claude/worca/claude_hooks/{script}"'
-    )
+    # Resolve the absolute path to the pkg claude_hooks dir at init time.
+    # Using os.path.expanduser("~") produces a plain absolute path with no
+    # shell variables or subshells — works on Linux, macOS, and WSL2.
+    from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+    _hook_base = os.path.join(_pkg_dir(), "worca", "claude_hooks")
+    _hook_cmd_tpl = f"python3 {_hook_base}/{{script}}"
     for hook_type, script in [
         ("SubagentStart", "subagent_start.py"),
         ("SubagentStop", "subagent_stop.py"),
@@ -453,6 +455,34 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     return migrated, changes
 
 
+def _migrate_old_layout(git_root: Path) -> list[str]:
+    """Detect and migrate old project-local .claude/worca/ layout during --upgrade.
+
+    When a project still has .claude/worca/ (the old per-project code copy), this
+    function relocates by:
+      1. Deleting .claude/worca/ (the new source is already copied to
+         ~/.worca/pkg/<ver>/worca/ by the caller).
+      2. Updating the project registry entry with worcaConfigPath and worcaPkgVersion.
+
+    The worca.* config extraction and hook rewrite are handled by the caller
+    (_create_project_config and _rewrite_absolute_hook_cmds) after this runs.
+
+    Returns list of change descriptions.
+    """
+    changes: list[str] = []
+    old_worca = git_root / ".claude" / "worca"
+    if not old_worca.is_dir():
+        return changes
+
+    shutil.rmtree(old_worca)
+    changes.append("  Removed .claude/worca/ (relocated to ~/.worca/pkg/)")
+
+    from worca.utils.project_registry import update_registry_entry  # noqa: PLC0415
+    update_registry_entry(str(git_root))
+
+    return changes
+
+
 def _migrate_agent_overrides(git_root: Path) -> list[str]:
     """Move .claude/agents/overrides/*.md to .claude/agents/*.md."""
     changes = []
@@ -480,6 +510,49 @@ def _migrate_agent_overrides(git_root: Path) -> list[str]:
         changes.append("  Removed empty .claude/agents/overrides/")
     except OSError:
         pass  # Directory not empty, leave it
+
+    return changes
+
+
+def _rewrite_absolute_hook_cmds(settings: dict) -> list[str]:
+    """Rewrite hook commands that reference .claude/worca/ to absolute pkg paths.
+
+    Replaces shell-subshell patterns like
+      python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/.claude/worca/claude_hooks/<script>"
+    with fully resolved absolute paths:
+      python3 /home/user/.worca/pkg/0.59.0-a1b2c3d/worca/claude_hooks/<script>
+
+    Mutates settings in place. Returns list of change descriptions.
+    """
+    from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+
+    changes: list[str] = []
+    hook_base = os.path.join(_pkg_dir(), "worca", "claude_hooks")
+
+    _OLD_PATTERN = ".claude/worca/claude_hooks/"
+
+    hooks = settings.get("hooks", {})
+    for hook_type, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            hook_list = entry.get("hooks", [])
+            if not isinstance(hook_list, list):
+                continue
+            for h in hook_list:
+                cmd = h.get("command", "")
+                if _OLD_PATTERN not in cmd:
+                    continue
+                # Extract the script filename from the old command
+                idx = cmd.index(_OLD_PATTERN)
+                script = cmd[idx + len(_OLD_PATTERN):]
+                # Strip any trailing quote or shell suffix
+                for sep in ('"', "'", " ", "\n"):
+                    if sep in script:
+                        script = script[: script.index(sep)]
+                new_cmd = f"python3 {hook_base}/{script}"
+                h["command"] = new_cmd
+                changes.append(f"  hooks.{hook_type}: rewrote {script} to absolute path")
 
     return changes
 
@@ -524,6 +597,50 @@ def _migrate_global_keys_to_preferences(
     _atomic_write_json(project_settings_path, project)
 
     return extracted
+
+
+def _create_project_config(git_root: Path, settings_path: Path) -> str | None:
+    """Create ~/.worca/projects/<slug>/config.json with worca.* keys from settings.
+
+    Extracts the ``worca`` section from settings_path into the project config dir,
+    then strips ``worca`` from settings_path (leaving only hooks + permissions).
+
+    Returns the config path created, or None if settings had no worca section.
+    Idempotent: if config.json already exists, it is updated via deep_merge
+    (existing user values in config.json win, new template keys added).
+    """
+    if not settings_path.exists():
+        return None
+
+    with open(settings_path, encoding="utf-8") as f:
+        project = json.load(f)
+
+    worca_section = project.get("worca")
+    if not worca_section:
+        return None
+
+    from worca.utils.paths import project_config_dir as _project_config_dir  # noqa: PLC0415
+    from worca.utils.project_registry import slugify  # noqa: PLC0415
+
+    slug = slugify(git_root.name)
+    config_dir = Path(_project_config_dir(slug))
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.json"
+
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            existing = json.load(f)
+        merged = _deep_merge(existing, {"worca": worca_section})
+    else:
+        merged = {"worca": worca_section}
+
+    _atomic_write_json(str(config_path), merged)
+
+    # Strip worca.* from .claude/settings.json
+    project_stripped = {k: v for k, v in project.items() if k != "worca"}
+    _atomic_write_json(str(settings_path), project_stripped)
+
+    return str(config_path)
 
 
 def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
@@ -834,9 +951,13 @@ def _copy_worca_source(source: Path, target: Path) -> None:
     skills/ ships in the wheel as package data but is installed separately
     into the project's top-level .claude/skills/ (not under .claude/worca/),
     since Claude Code only auto-discovers skills at .claude/skills/.
+
+    Idempotent: if the target directory already exists, skip the copy and
+    print 'Package already exists'.
     """
     if target.exists():
-        shutil.rmtree(target)
+        print("Package already exists")
+        return
 
     def ignore_patterns(directory, contents):
         ignored = set()
@@ -970,7 +1091,7 @@ def _ensure_gitignore(git_root: Path) -> list[str]:
     (``$WORCA_CACHE/ast/<repo-id>/<commit-sha>/``), never in the repo tree.
     """
     gitignore = git_root / ".gitignore"
-    entries_needed = [".worca/", "logs/", ".claude/settings.local.json"]
+    entries_needed = [".worca/", "logs/", ".claude/settings.local.json", ".beads/"]
     changes = []
 
     existing = ""
@@ -1154,24 +1275,33 @@ def run_init(
     git_root = _find_git_root()
     worca_source = _get_worca_source(source, git_root)
 
+    from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+
+    pkg_version_dir = Path(_pkg_dir())
+    target = pkg_version_dir / "worca"
+
     print(f"Source: {worca_source}")
-    print(f"Target: {git_root / '.claude' / 'worca'}")
+    print(f"Target: {target}")
 
     # --check: dry-run mode
     if check:
         _show_check(worca_source, git_root)
         return
 
-    target = git_root / ".claude" / "worca"
     settings_path = git_root / ".claude" / "settings.json"
     source_settings = worca_source / "settings.json"
 
     # Ensure .claude/ exists
     (git_root / ".claude").mkdir(exist_ok=True)
 
-    if not upgrade and not force and target.exists():
+    from worca.utils.paths import project_config_dir as _project_config_dir  # noqa: PLC0415
+    from worca.utils.project_registry import slugify as _slugify  # noqa: PLC0415
+    _project_slug = _slugify(git_root.name)
+    _project_config = Path(_project_config_dir(_project_slug)) / "config.json"
+
+    if not upgrade and not force and target.exists() and _project_config.exists():
         print(
-            ".claude/worca/ already exists. Use --upgrade to update or --force to overwrite.",
+            "Project already initialized. Use --upgrade to update or --force to overwrite.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -1198,6 +1328,14 @@ def run_init(
             for change in legacy_changes:
                 print(change)
 
+    # --- Old layout migration (only on --upgrade): detect .claude/worca/, relocate ---
+    if upgrade:
+        old_layout_changes = _migrate_old_layout(git_root)
+        if old_layout_changes:
+            print("Old layout migration:")
+            for change in old_layout_changes:
+                print(change)
+
     # --- Agent override migration (only on --upgrade) ---
     if upgrade:
         override_changes = _migrate_agent_overrides(git_root)
@@ -1206,10 +1344,15 @@ def run_init(
             for change in override_changes:
                 print(change)
 
-    # --- Copy worca source ---
+    # --- Copy worca source to ~/.worca/pkg/<ver>/worca/ ---
+    pkg_version_dir.mkdir(parents=True, exist_ok=True)
+    if (upgrade or force) and target.exists():
+        shutil.rmtree(target)
+    pkg_copied = not target.exists()
     _copy_worca_source(worca_source, target)
-    _write_provenance_manifest(worca_source, target, git_root, settings_path)
-    print("Copied worca to .claude/worca/")
+    _write_provenance_manifest(worca_source, pkg_version_dir, git_root, settings_path)
+    if pkg_copied:
+        print(f"Copied worca to {target}")
 
     # --- Install worca-owned skills into .claude/skills/ ---
     skill_changes = _install_skills(worca_source, git_root)
@@ -1282,16 +1425,42 @@ def run_init(
                 f"delete the template and clear default_template from settings.json."
             )
 
-    # --- Graphify hook integration (after settings merge) ---
+    # --- Rewrite hook commands to absolute pkg paths (after settings merge) ---
     if settings_path.exists():
         with open(settings_path, encoding="utf-8") as f:
             final_settings = json.load(f)
+        hook_rewrite_changes = _rewrite_absolute_hook_cmds(final_settings)
+        if hook_rewrite_changes:
+            _atomic_write_json(str(settings_path), final_settings)
+            print("Hook commands rewritten to absolute paths:")
+            for change in hook_rewrite_changes:
+                print(change)
+        # --- Graphify hook integration (after hook rewrite) ---
         graphify_changes = _merge_graphify_hooks(final_settings)
         if graphify_changes:
             _atomic_write_json(str(settings_path), final_settings)
             print("Graphify integration:")
             for change in graphify_changes:
                 print(change)
+    else:
+        final_settings = {}
+
+    # --- Create ~/.worca/projects/<slug>/config.json with worca.* keys ---
+    # Must run after all migrations/merges so config.json captures the final state.
+    # Strips worca.* from .claude/settings.json leaving only hooks + permissions.
+    config_created = _create_project_config(git_root, settings_path)
+    if config_created:
+        print(f"Project config: created {config_created}")
+        print("Settings: stripped worca.* keys (hooks + permissions remain)")
+
+    # --- Register / update project in ~/.worca/projects.d/ ---
+    # Runs on both fresh init and upgrade so the project is immediately
+    # visible in the UI without a separate "create project" step.
+    try:
+        from worca.utils.project_registry import update_registry_entry  # noqa: PLC0415
+        update_registry_entry(str(git_root))
+    except Exception:
+        pass
 
     # --- .gitignore ---
     gitignore_changes = _ensure_gitignore(git_root)
@@ -1305,6 +1474,17 @@ def run_init(
         print("Initialized beads (.beads/)")
     elif upgrade and _upgrade_beads(git_root):
         print("Beads: updated repo fingerprint")
+
+    # --- Auto-GC orphan pkg versions after upgrade ---
+    if upgrade:
+        try:
+            from worca.utils.pkg_store import gc_pkg_store  # noqa: PLC0415
+            gc_result = gc_pkg_store(dry_run=False)
+            removed = gc_result.get("removed", [])
+            if removed:
+                print(f"GC: removed {len(removed)} orphan pkg version(s): {', '.join(removed)}")
+        except Exception:
+            pass
 
     version = read_version(target)
     print(f"\nworca {version or 'unknown'} initialized successfully.")

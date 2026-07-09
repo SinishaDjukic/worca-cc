@@ -7,10 +7,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 import { checkWorcaInstalled, readProjectWorcaVersion } from './worca-setup.js';
 
@@ -108,7 +110,7 @@ export function writeProject(prefsDir, entry) {
 }
 
 /**
- * Remove a project entry. No-op if missing.
+ * Remove a project entry and its config directory. No-op if missing.
  */
 export function removeProject(prefsDir, name) {
   const filePath = join(prefsDir, 'projects.d', `${name}.json`);
@@ -116,6 +118,12 @@ export function removeProject(prefsDir, name) {
     unlinkSync(filePath);
   } catch {
     // no-op if missing
+  }
+  const configDir = join(prefsDir, 'projects', name);
+  try {
+    rmSync(configDir, { recursive: true, force: true });
+  } catch {
+    // best-effort
   }
 }
 
@@ -125,11 +133,14 @@ export function removeProject(prefsDir, name) {
  */
 export function synthesizeDefaultProject(projectRoot) {
   const name = basename(projectRoot);
+  const slug = slugify(name);
   return {
     name,
     path: projectRoot,
     worcaDir: join(projectRoot, '.worca'),
     settingsPath: join(projectRoot, '.claude', 'settings.json'),
+    worcaConfigPath: join(homedir(), '.worca', 'projects', slug, 'config.json'),
+    worcaPkgVersion: null,
   };
 }
 
@@ -143,7 +154,7 @@ const SCAN_MAX_RESULTS = 200;
  * @param {string} dirPath - Absolute path to the parent directory
  * @returns {Promise<{ name: string, path: string }[]>}
  */
-export async function scanDirectory(dirPath) {
+export async function scanDirectory(dirPath, prefsDir) {
   const entries = await readdir(dirPath, { withFileTypes: true });
   const results = [];
   for (const entry of entries) {
@@ -151,7 +162,11 @@ export async function scanDirectory(dirPath) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     const childPath = join(dirPath, entry.name);
     if (existsSync(join(childPath, '.git'))) {
-      const installed = checkWorcaInstalled(childPath);
+      const slug = slugify(entry.name);
+      const worcaConfigPath = prefsDir
+        ? join(prefsDir, 'projects', slug, 'config.json')
+        : undefined;
+      const installed = checkWorcaInstalled(childPath, worcaConfigPath);
       const worcaVersion = installed
         ? readProjectWorcaVersion(childPath)
         : null;

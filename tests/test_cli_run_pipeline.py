@@ -26,24 +26,32 @@ class TestFindGitRoot:
 
 
 class TestRequireProjectWorca:
-    def test_returns_path_when_exists(self, tmp_path):
-        worca_dir = tmp_path / ".claude" / "worca"
-        worca_dir.mkdir(parents=True)
+    def test_returns_path_when_exists(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        from worca.utils.paths import pkg_dir
+        from pathlib import Path
+        pkg_worca = Path(pkg_dir()) / "worca"
+        pkg_worca.mkdir(parents=True)
         result = _require_project_worca(tmp_path)
-        assert result == worca_dir
+        assert result == pkg_worca
 
-    def test_fails_when_missing(self, tmp_path):
+    def test_fails_when_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         with pytest.raises(SystemExit):
             _require_project_worca(tmp_path)
 
 
 class TestCmdRun:
     def test_run_builds_correct_command(self, tmp_path, monkeypatch):
-        """worca run delegates to project's run_pipeline.py."""
+        """worca run delegates to pkg scripts/run_pipeline.py in the shared pkg dir."""
         (tmp_path / ".git").mkdir()
-        (tmp_path / ".claude" / "worca" / "scripts").mkdir(parents=True)
-        (tmp_path / ".claude" / "worca" / "scripts" / "run_pipeline.py").write_text("")
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         monkeypatch.chdir(tmp_path)
+        from worca.utils.paths import pkg_dir
+        from pathlib import Path
+        pkg_scripts = Path(pkg_dir()) / "worca" / "scripts"
+        pkg_scripts.mkdir(parents=True)
+        (pkg_scripts / "run_pipeline.py").write_text("")
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -54,12 +62,19 @@ class TestCmdRun:
             assert exc_info.value.code == 0
             call_args = mock_run.call_args[0][0]
             assert "run_pipeline.py" in call_args[1]
+            assert str(pkg_scripts) in call_args[1], (
+                f"Script path {call_args[1]!r} should be under pkg dir {pkg_scripts}"
+            )
+            assert ".claude" not in call_args[1], (
+                "Script path must not reference old .claude/worca/scripts layout"
+            )
             assert "--prompt" in call_args
             assert "hello" in call_args
 
     def test_run_fails_without_worca(self, tmp_path, monkeypatch):
-        """worca run fails if .claude/worca/ doesn't exist."""
+        """worca run fails if pkg worca dir doesn't exist."""
         (tmp_path / ".git").mkdir()
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         monkeypatch.chdir(tmp_path)
         from worca.cli.main import main
         with pytest.raises(SystemExit):
@@ -71,12 +86,15 @@ class TestCmdRunWorktree:
 
     def _scaffold(self, tmp_path, monkeypatch, *, with_worktree_script: bool = True):
         (tmp_path / ".git").mkdir()
-        scripts = tmp_path / ".claude" / "worca" / "scripts"
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        monkeypatch.chdir(tmp_path)
+        from worca.utils.paths import pkg_dir
+        from pathlib import Path
+        scripts = Path(pkg_dir()) / "worca" / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "run_pipeline.py").write_text("")
         if with_worktree_script:
             (scripts / "run_worktree.py").write_text("")
-        monkeypatch.chdir(tmp_path)
 
     def test_worktree_dispatches_to_run_worktree_script(self, tmp_path, monkeypatch):
         """--worktree picks run_worktree.py when present and forwards core args."""
@@ -189,10 +207,13 @@ class TestForceTemplateChangeFlag:
 
     def _scaffold(self, tmp_path, monkeypatch):
         (tmp_path / ".git").mkdir()
-        scripts = tmp_path / ".claude" / "worca" / "scripts"
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
+        monkeypatch.chdir(tmp_path)
+        from worca.utils.paths import pkg_dir
+        from pathlib import Path
+        scripts = Path(pkg_dir()) / "worca" / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "run_pipeline.py").write_text("")
-        monkeypatch.chdir(tmp_path)
 
     def test_force_template_change_accepted_by_parser(self):
         from worca.cli.main import create_parser

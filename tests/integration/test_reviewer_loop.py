@@ -105,7 +105,7 @@ def test_reviewer_revise_then_approve_emits_events(pipeline_env):
 # ===========================================================================
 
 def test_reviewer_always_revises_exhausts_pr_changes_loop(pipeline_env):
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"].setdefault("loops", {})["pr_changes"] = 2
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -188,7 +188,7 @@ def test_review_feedback_differs_across_iterations(pipeline_env):
 # ===========================================================================
 
 def test_mloops_multiplier_doubles_pr_changes_cap(pipeline_env):
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"].setdefault("loops", {})["pr_changes"] = 1
     settings_path.write_text(json.dumps(settings, indent=2))

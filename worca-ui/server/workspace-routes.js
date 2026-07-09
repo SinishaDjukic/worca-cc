@@ -24,9 +24,11 @@ import { basename, join } from 'node:path';
 import { Router } from 'express';
 import { WORKSPACE_TERMINAL } from '../app/utils/status-constants.js';
 import {
+  worcaHome,
   workspaceRunsDir as resolveWorkspaceRunsDir,
   workspacesDir as resolveWorkspacesDir,
 } from './paths.js';
+import { slugify } from './project-registry.js';
 import { listTemplatesFlat } from './templates-routes.js';
 import {
   applySetupPatch,
@@ -866,9 +868,13 @@ export function createWorkspaceRouter({
       for (const p of ws.projects ?? []) {
         const projectRoot = join(reg.path, p.path);
         const settingsPath = join(projectRoot, '.claude', 'settings.json');
+        const worcaConfigPath = join(
+          worcaHome(), 'projects', slugify(basename(projectRoot)), 'config.json',
+        );
         const pf = await buildProjectPreflight({
           projectRoot,
           settingsPath,
+          worcaConfigPath,
           graphifyStatus,
           crgStatus,
         });

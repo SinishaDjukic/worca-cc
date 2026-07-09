@@ -80,6 +80,9 @@ def _run_pipeline_with_graphify(pipeline_env, scenario: dict, prompt: str,
         "PATH": mock_path,
         "MOCK_GRAPHIFY_LOG": str(graphify_log_path),
         "WORCA_HOME": str(worca_home),
+        # W-077: pin config path so pipeline reads from the same file that
+        # _enable_graphify_settings wrote to.
+        "WORCA_CONFIG_PATH": str(pipeline_env.worca_config_path),
     }
     for key in ("WORCA_PLAN_FILE", "WORCA_PROJECT_ROOT", "WORCA_RUN_ID", "WORCA_RUN_DIR"):
         env.pop(key, None)
@@ -96,7 +99,7 @@ def _enable_graphify_settings(pipeline_env, mode: str = "structural") -> None:
     Uses freshness=base_sha so the per-commit snapshot is built deterministically
     regardless of the working-tree state during the run.
     """
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["graphify"] = {
         "enabled": True,

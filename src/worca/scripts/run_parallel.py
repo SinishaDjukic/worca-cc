@@ -62,7 +62,10 @@ def _run_pipeline_in_worktree(
 ) -> dict:
     """Run a pipeline in a worktree subprocess. Returns result dict."""
     prompt_file = None
-    cmd = [sys.executable, ".claude/worca/scripts/run_pipeline.py"]
+    # W-077: runtime moved from .claude/worca/ to ~/.worca/pkg/<ver>/worca/.
+    # Use the module form so Python resolves it via PYTHONPATH / site-packages
+    # regardless of which runtime layout is active.
+    cmd = [sys.executable, "-m", "worca.scripts.run_pipeline"]
 
     if len(prompt.encode("utf-8", errors="replace")) > _ARG_INLINE_LIMIT:
         fd, prompt_file = tempfile.mkstemp(prefix="worca_prompt_", suffix=".md")

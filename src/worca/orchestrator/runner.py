@@ -622,7 +622,7 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
     tier are skipped (flow validation already failed the launch for enabled
     stages, so this only happens for disabled ones).
     """
-    src_dir = ".claude/worca/agents/core"
+    src_dir = _resolve_agent_core_dir()
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
     if not os.path.isdir(src_dir):
@@ -695,6 +695,47 @@ def _warn_custom_agents_locked_down(flow, settings_path: str) -> None:
             )
 
 
+def _resolve_worca_runtime_dir() -> str:
+    """Return the path to the shipped worca runtime root.
+
+    W-077: the canonical location is now ``~/.worca/pkg/<ver>/worca/``
+    (pkg store). Falls back to the legacy ``.claude/worca/`` when the
+    pkg store path doesn't exist.
+    """
+    legacy = os.path.join(".claude", "worca")
+    if os.path.isdir(legacy):
+        return legacy
+    try:
+        from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+        pkg_root = os.path.join(_pkg_dir(), "worca")
+        if os.path.isdir(pkg_root):
+            return pkg_root
+    except Exception:
+        pass
+    return legacy  # fall through — caller checks existence
+
+
+def _resolve_agent_core_dir() -> str:
+    """Return the path to the shipped agent core templates.
+
+    W-077: the canonical location is now ``~/.worca/pkg/<ver>/worca/agents/core``
+    (pkg store). Falls back to the legacy ```.claude/worca/agents/core`` when
+    the pkg store path doesn't exist (e.g. a developer running from a pre-W-077
+    local install).
+    """
+    legacy = os.path.join(".claude", "worca", "agents", "core")
+    if os.path.isdir(legacy):
+        return legacy
+    try:
+        from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+        pkg_core = os.path.join(_pkg_dir(), "worca", "agents", "core")
+        if os.path.isdir(pkg_core):
+            return pkg_core
+    except Exception:
+        pass
+    return legacy  # fall through — caller checks existence
+
+
 def _agent_path(agent_name: str, run_dir: str = None) -> str:
     """Resolve agent name to the .md definition file path.
 
@@ -709,7 +750,7 @@ def _agent_path(agent_name: str, run_dir: str = None) -> str:
         rendered = os.path.join(run_dir, "agents", f"{agent_name}.md")
         if os.path.exists(rendered):
             return rendered
-    core = f".claude/worca/agents/core/{agent_name}.md"
+    core = os.path.join(_resolve_agent_core_dir(), f"{agent_name}.md")
     if not os.path.exists(core):
         project = os.path.join(".claude", "agents", f"{agent_name}.md")
         if os.path.exists(project):
@@ -721,12 +762,12 @@ def _schema_path(schema_name: str) -> str:
     """Resolve schema filename to full path.
 
     Resolution order (W-071): project tier (``.claude/schemas/``, the home of
-    custom-stage schemas) → shipped ``.claude/worca/schemas/``. First hit wins.
+    custom-stage schemas) → shipped runtime schemas. First hit wins.
     """
     project = os.path.join(".claude", "schemas", schema_name)
     if os.path.exists(project):
         return project
-    return f".claude/worca/schemas/{schema_name}"
+    return os.path.join(_resolve_worca_runtime_dir(), "schemas", schema_name)
 
 
 def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
@@ -2298,7 +2339,9 @@ def run_preflight(
     """
     settings = load_settings(settings_path)
 
-    default_script = ".claude/worca/scripts/preflight_checks.py"
+    default_script = os.path.join(
+        _resolve_worca_runtime_dir(), "scripts", "preflight_checks.py"
+    )
     script_path = (
         settings.get("worca", {})
         .get("stages", {})
@@ -2549,6 +2592,29 @@ def _pin_effective_settings_path(settings_path: Optional[str]) -> None:
         os.environ["WORCA_SETTINGS_PATH"] = os.path.abspath(settings_path)
 
 
+def _pin_worca_config_path(project_root: Optional[str]) -> None:
+    """Export ``WORCA_CONFIG_PATH`` so hooks and load_settings() read the project config.
+
+    Resolves ``~/.worca/projects/<slug>/config.json`` from ``project_root``.
+    No-ops if already set (allows callers like run_worktree.py to pre-set it),
+    or if ``project_root`` is None or the config file doesn't exist yet.
+    """
+    if os.environ.get("WORCA_CONFIG_PATH"):
+        return
+    if not project_root:
+        return
+    try:
+        from worca.utils.paths import project_config_dir  # noqa: PLC0415
+        from worca.utils.project_registry import slugify  # noqa: PLC0415
+
+        slug = slugify(os.path.basename(project_root))
+        config_path = os.path.join(project_config_dir(slug), "config.json")
+        if os.path.exists(config_path):
+            os.environ["WORCA_CONFIG_PATH"] = config_path
+    except Exception:
+        pass
+
+
 def launch_param_status(
     max_beads_override: Optional[int], msize: int, mloops: int,
     claude_md_mode: Optional[str] = None,
@@ -2706,13 +2772,25 @@ def run_pipeline(
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
 
-    # The provenance manifest lives in the real runtime dir (<project>/.claude/worca).
+    # The provenance manifest lives in the real runtime dir (<project>/.claude/worca
+    # for legacy installs; pkg_dir() for W-077+ pkg-store installs).
     # Resolve it from the caller-supplied runtime_dir when given: for templated runs
     # run_pipeline.py writes the merged settings to a tempfile and passes its path as
     # settings_path, whose parent has no provenance.json — deriving the runtime dir
     # from it would degrade runtime_source to null. Fall back to the settings-relative
-    # derivation for non-templated / direct callers.
-    _provenance_dir = Path(runtime_dir) if runtime_dir else Path(settings_path).parent / "worca"
+    # derivation for non-templated / direct callers, then try the pkg store.
+    if runtime_dir:
+        _provenance_dir = Path(runtime_dir)
+    else:
+        _legacy_prov = Path(settings_path).parent / "worca"
+        if (_legacy_prov / "provenance.json").exists():
+            _provenance_dir = _legacy_prov
+        else:
+            try:
+                from worca.utils.paths import pkg_dir as _pkg_dir  # noqa: PLC0415
+                _provenance_dir = Path(_pkg_dir())
+            except Exception:
+                _provenance_dir = _legacy_prov
 
     # Auto-register project for global worca-ui discovery (non-fatal).
     # See _resolve_project_root_for_registration for why worktree mode needs
@@ -2726,6 +2804,10 @@ def run_pipeline(
         auto_register_project(project_root)
     except Exception:
         pass
+
+    # Export WORCA_CONFIG_PATH so hooks and load_settings() read the per-project
+    # worca config from ~/.worca/projects/<slug>/config.json (non-fatal).
+    _pin_worca_config_path(project_root)
 
     # Signal handlers (PID file written after run_id is known)
     _install_signal_handlers()
@@ -3061,7 +3143,7 @@ def run_pipeline(
         _pb_worca = _pb_settings.get("worca", {})
         _pb_overrides_dir = _pb_worca.get("agent_overrides_dir", ".claude/agents")
         _pb_template_agents_dir = _pb_worca.get("_template_agents_dir")
-        _pb_core_dir = ".claude/worca/agents/core"
+        _pb_core_dir = _resolve_agent_core_dir()
         prompt_builder = PromptBuilder(
             work_request.title,
             work_request.description,

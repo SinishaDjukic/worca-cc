@@ -16,6 +16,7 @@ import pytest
 from tests.integration.helpers import _find_latest_status
 
 
+REPO_ROOT = Path(__file__).parent.parent.parent
 MOCK_CLAUDE_BIN = Path(__file__).parent.parent / "mock_claude" / "mock_claude.py"
 
 pytestmark = [pytest.mark.timeout(180), pytest.mark.allow_worca_writes]
@@ -67,6 +68,10 @@ def _run_pipeline(pipeline_env, scenario: dict, prompt: str,
         "WORCA_SKIP_BEADS": "1",
         "MOCK_CLAUDE_SCENARIO": str(scenario_path),
         "WORCA_HOME": str(worca_home),
+        # W-077: pin config path so pipeline reads from the same file that
+        # _enable_graphify_settings wrote to.
+        "WORCA_CONFIG_PATH": str(pipeline_env.worca_config_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
     }
     if path_override is not None:
         env["PATH"] = path_override
@@ -81,7 +86,7 @@ def _run_pipeline(pipeline_env, scenario: dict, prompt: str,
 
 def _enable_graphify_settings(pipeline_env) -> None:
     """Enable graphify in project settings."""
-    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings_path = pipeline_env.worca_config_path
     settings = json.loads(settings_path.read_text())
     settings["worca"]["graphify"] = {
         "enabled": True,
