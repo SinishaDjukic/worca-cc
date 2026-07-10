@@ -1,11 +1,12 @@
 {
   "name": "worca",
+  "description": "Autonomous multi-agent software development pipeline with governance enforcement.",
   "plugins": [
     {
       "name": "worca-cc",
       "source": "./",
-      "description": "Autonomous multi-agent software development pipeline with governance enforcement. Plans, coordinates, implements, tests, and reviews code changes.",
-      "version": "0.5.0"
+      "description": "Autonomous pipeline that plans, coordinates, implements, tests, and reviews code changes. Skills: run, status, cleanup.",
+      "version": "0.59.0"
     }
   ],
   "owner": {
