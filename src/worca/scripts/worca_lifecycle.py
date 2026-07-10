@@ -241,6 +241,9 @@ def cmd_multi_status(base: str = _DEFAULT_BASE) -> list[dict]:
         try:
             status = load_status(status_path)
             entry["stage"] = status.get("stage", "—")
+            live_status = status.get("pipeline_status")
+            if live_status:
+                entry["status"] = live_status
         except Exception:
             entry.setdefault("stage", "—")
 
