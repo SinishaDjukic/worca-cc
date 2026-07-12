@@ -232,6 +232,15 @@ class TestGenerateSmartTitle:
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "fallback-haiku-id"
 
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    def test_passes_bare_flag(self, mock_run):
+        """--bare suppresses CLAUDE.md, hooks, and auto-memory in the subprocess."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="Title\n")
+        generate_smart_title("some content")
+        cmd = mock_run.call_args[0][0]
+        assert "--bare" in cmd
+
+
 
 # --- normalize_plan_file ---
 
