@@ -32,7 +32,7 @@ Then use `--plan /tmp/worca-plan-<timestamp>.md`.
 The `--plan` flag bypasses the Planner stage — worca goes straight to coordinating and implementing.
 
 After identifying the plan, ask only what's still missing:
-- Spec file — if the user mentions a "spec" or specification file, pass it as `--spec PATH`. A spec feeds into the Planner as structured input. Do NOT ask proactively — only if the user mentions one.
+- Spec file — if the user mentions a "spec" or specification file, pass it as `--spec PATH`. Do NOT ask proactively — only if the user mentions one. **Even when `--plan` is also present, pass `--spec` as-is — do NOT silently convert to `--guide`.** worca handles spec+plan coexistence internally.
 - Guide files — only if the user explicitly says "guide" or "reference guide". Pass as `--guide PATH` (repeatable). Guides carry highest authority (guide > plan > spec). When the user says "spec", always use `--spec`, never `--guide`. When ambiguous (e.g. "attach this doc"), ask: "Should this be a spec (--spec, feeds into planning) or a guide (--guide, highest authority reference)?"
 - Template (if not specified) — suggest one or let the user name it
 - Branch (if not specified) — default current
@@ -106,6 +106,8 @@ The user might also say "current branch" or "in-place" — that means no worktre
 **Guide (`--guide`):** Only when the user explicitly says "guide" or "reference guide". Guides carry highest authority (guide > plan > spec) and are used as normative references throughout the pipeline. This flag is repeatable.
 
 **Rule:** "spec" → `--spec`. "guide" → `--guide`. When the user provides a file without naming it either way, ask: "Is this a spec (feeds into planning) or a guide (highest-authority reference)?" Don't conflate the two.
+
+**CRITICAL — do NOT silently convert `--spec` to `--guide`.** When the user says "spec", always pass `--spec`, even when `--plan` is also present. `--spec` and `--plan` can coexist — worca handles the semantics internally. Do not reason that "spec feeds planner, plan bypasses planner, therefore spec is useless" and upgrade to `--guide`. That changes the authority level and pipeline behavior. If you genuinely believe the user might want `--guide` instead, **ask** — never convert silently.
 
 ## Launch
 
