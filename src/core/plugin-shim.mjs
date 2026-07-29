@@ -1,0 +1,192 @@
+// src/core/plugin-shim.mjs
+// Ephemeral child-process shim for task-source connector operations (spec §7.2).
+// One spawn per op: the child (plugin-shim-child.mjs) imports the connector
+// through <plugin>/current/, runs ONE op, writes ONE JSON frame to stdout, exits.
+//   stdin  : { apiVersion, module, op, config, state, args }
+//   stdout : { ok:true, result, stateDelta, logs }
+//          | { ok:false, error:{ kind, message }, logs }
+// Config+secrets+state travel via STDIN — never argv (visible in `ps`), never env
+// (inherited by grandchildren). The child env is scrubbed to {PATH, HOME} only, so
+// plugin X can never read plugin Y's secrets or the host environment. stateDelta
+// is applied HOST-side via writePluginState (the child has no WORCA_HOME and
+// never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
+// per-op responses so smoke/tests run offline with zero plugins installed.
+
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { normalizeManifest } from './plugin-manifest.mjs';
+import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
+import { readPluginConfig, readPluginState, writePluginState } from './plugin-config.mjs';
+
+const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
+
+/** Error kinds an op can surface (spec §11); anything else normalizes to 'plugin'. */
+const KINDS = new Set(['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol']);
+
+export class PluginOpError extends Error {
+  /**
+   * @param {'auth'|'rate-limit'|'network'|'plugin'|'timeout'|'protocol'} kind
+   * @param {string} message
+   */
+  constructor(kind, message) {
+    super(message);
+    this.name = 'PluginOpError';
+    this.kind = KINDS.has(kind) ? kind : 'plugin';
+  }
+}
+
+// ── WORCA_MOCK=1: canned responses, never spawns ─────────────────────────────
+
+let _mockResponses = null; // op -> value | (args) => value; null = defaults only
+
+/** Tests: override/extend the canned per-op responses. Pass null to reset. */
+export function setMockSourceResponses(map) {
+  _mockResponses = map && typeof map === 'object' ? map : null;
+}
+
+const MOCK_TASKS = [
+  { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
+  { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
+];
+const MOCK_DEFAULTS = {
+  listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
+  getTask: (args) => ({
+    ...MOCK_TASKS[0],
+    id: args?.id || MOCK_TASKS[0].id,
+    body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
+    meta: { mock: true },
+  }),
+  reportResult: () => ({ ok: true }),
+  validateConfig: () => ({ ok: true }),
+};
+
+/** Same env-flag semantics as claude-runner.mjs#mockEnabled (claude-runner.mjs:100-104). */
+function mockMode() {
+  const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
+  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+async function mockCall(op, args) {
+  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : MOCK_DEFAULTS[op];
+  if (entry === undefined) {
+    // Mirror the real child's answer for an unimplemented op — Task 13's
+    // capabilities tolerant-default keys on exactly this kind.
+    throw new PluginOpError('plugin', `mock: no canned response for op "${op}"`);
+  }
+  try {
+    return await (typeof entry === 'function' ? entry(args) : entry);
+  } catch (err) {
+    if (err instanceof PluginOpError) throw err;
+    throw new PluginOpError(err?.kind || 'plugin', err?.message || String(err));
+  }
+}
+
+// ── real path ──────────────────────────────────────────────────────────────────
+
+/** Resolve lock entry + manifest task-source, mapping every failure to kind 'plugin'. */
+function loadSource(plugin, sourceId) {
+  const lock = readPluginsLock();
+  const entry = lock[plugin];
+  if (!entry) throw new PluginOpError('plugin', `plugin "${plugin}" is not installed`);
+  if (entry.enabled === false) throw new PluginOpError('plugin', `plugin "${plugin}" is disabled — enable it in the Plugins view`);
+  const dir = pluginCurrentDir(plugin);
+  let manifest;
+  try {
+    const norm = normalizeManifest(JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8')), { dir });
+    if (!norm.ok) throw new Error(norm.errors.join('; '));
+    manifest = norm.manifest;
+  } catch (err) {
+    throw new PluginOpError('plugin', `plugin "${plugin}": cannot read manifest — ${err.message}`);
+  }
+  const source = (manifest.taskSources || []).find((s) => s.id === sourceId);
+  if (!source) throw new PluginOpError('plugin', `plugin "${plugin}" has no task source "${sourceId}"`);
+  return { dir, source };
+}
+
+/** Child env: PATH + HOME ONLY (spec §7.2). Notably NOT WORCA_*, tokens, npm_*. */
+function scrubbedEnv() {
+  const env = {};
+  if (process.env.PATH) env.PATH = process.env.PATH;
+  if (process.env.HOME) env.HOME = process.env.HOME;
+  return env;
+}
+
+/**
+ * Run ONE connector op in an ephemeral child. Resolves with the op result;
+ * rejects with PluginOpError. `logger(level, msg)` is optional — connector
+ * ctx.log lines route there (default: console.error, since stdout is the UI's).
+ * @returns {Promise<any>}
+ */
+export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 30000, logger } = {}) {
+  const log = typeof logger === 'function'
+    ? logger
+    : (level, msg) => console.error(`[plugin:${plugin}] ${level}: ${msg}`);
+
+  if (mockMode()) {
+    // Canned responses, no spawn, no plugin needed. reportResult additionally
+    // records its args into the plugin state — mirroring the real-child
+    // stateDelta path — so the offline smoke (Task 19) can assert write-back ran.
+    const r = await mockCall(op, args);
+    if (op === 'reportResult') writePluginState(plugin, { lastReport: JSON.stringify(args) });
+    return r;
+  }
+
+  const { dir, source } = loadSource(plugin, sourceId);
+  const payload = JSON.stringify({
+    apiVersion: WORCA_PLUGIN_API,
+    module: resolve(dir, source.module), // './'-relative, '..'-free (normalizeManifest)
+    op,
+    config: readPluginConfig(plugin, source.configSchema),
+    state: readPluginState(plugin),
+    args,
+  });
+
+  const frame = await new Promise((resolveFrame, rejectFrame) => {
+    // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child
+    // (`worca plugin exec --inspect` sets it; spec §7.2 debuggability).
+    const child = spawn(process.execPath,
+      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH], {
+      env: scrubbedEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(killTimer); fn(v); } };
+    child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
+    child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });
+    child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
+    child.on('close', (code) => {
+      if (timedOut) {
+        return settle(rejectFrame, new PluginOpError('timeout', `plugin "${plugin}" op "${op}" exceeded ${timeoutMs}ms (child killed)`));
+      }
+      if (code !== 0) {
+        return settle(rejectFrame, new PluginOpError('protocol',
+          `plugin "${plugin}" op "${op}": child exited ${code}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
+      }
+      try {
+        settle(resolveFrame, JSON.parse(stdout));
+      } catch {
+        settle(rejectFrame, new PluginOpError('protocol',
+          `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
+      }
+    });
+    child.stdin.end(payload); // config/secrets/state via stdin only
+  });
+
+  for (const l of Array.isArray(frame.logs) ? frame.logs : []) {
+    log(l?.level || 'info', String(l?.msg ?? ''));
+  }
+  if (!frame.ok) {
+    throw new PluginOpError(frame.error?.kind || 'plugin', frame.error?.message || `plugin "${plugin}" op "${op}" failed`);
+  }
+  if (frame.stateDelta && typeof frame.stateDelta === 'object' && Object.keys(frame.stateDelta).length) {
+    writePluginState(plugin, frame.stateDelta); // host-side persist; child never touches the store
+  }
+  return frame.result;
+}

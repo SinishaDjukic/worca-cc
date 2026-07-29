@@ -1,71 +1,11 @@
-.idea/
-logs/
-.beads/
-__pycache__/
-*.pyc
-.env
+node_modules
 .DS_Store
-*.egg-info/
-dist/
-build/
-.worktrees/
-.worca/
-node_modules/
-
-# Local overrides (machine-specific, never committed)
-.claude/settings.local.json
-.claude/agents/overrides/
-# Personal project-tier templates created via `worca templates create` /
-# `worca templates import --scope project`. Built-in templates that ship to
-# consumer projects live in `src/worca/templates/`; this directory is for
-# personal experiments only.
-.claude/templates/
-
-# Runtime copy created by `worca init .` — not tracked (source of truth is src/worca/)
-.claude/worca
-.claude/settings.json
-# Skills installed by `worca init` from src/worca/skills/ (source of truth lives there)
-.claude/skills/worca-analyze/
-.claude/skills/worca-template/
-.claude/skills/worca-notify/
-
-# Test artifacts
-test-results/
-worca-ui/test-results/
-.pytest_cache/
-
-# Pipeline runtime artifacts
-MASTER_PLAN.md
-
-# Runtime / tooling
-.claude/worktrees/
-.claude/scheduled_tasks.lock
+examples/sandbox
+ai-artifacts/
+*.log
+graphify-out/
+.worca-cc/
+.worca-cc-smoke/
+.worca-cc-test/
 .playwright-mcp/
-
-# Debug scripts
-worca-ui/capture-console.mjs
-worca-ui/debug-capture.mjs
-
-# Build artifacts
-worca-ui/app/main.bundle.js
-worca-ui/app/main.bundle.js.map
-worca-ui/server/schemas/
-
-# Coverage artifacts
-.coverage
-.coverage.*
-coverage.xml
-coverage.json
-coverage-out/
-htmlcov/
-worca-ui/app/utils/status-constants.js
-worca-ui/app/utils/event-constants.js
-.playwright-mcp/
-watch-page-live.png
-
-# Local screenshots from Playwright debugging
-collision-dialog.png
-collision-dialog-fixed.png
-dual-collision-dialog.png
-import-complete.png
-legacy-settings-picker-with-aliases.png
+/*.png

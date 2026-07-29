@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Worca CC</title>
+    <link rel="stylesheet" href="/style.css" />
+    <meta name="theme-color" content="#ffffff" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>%E2%9A%99%EF%B8%8F</text></svg>"
+    />
+  </head>
+  <body>
+    <div class="app">
+      <!-- ===================== Sidebar ===================== -->
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark"><span></span></div>
+          <div class="name">worca-cc</div>
+        </div>
+
+        <nav class="nav" aria-label="Primary">
+          <button type="button" class="active" data-nav="new">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>New pipeline</span>
+          </button>
+          <button type="button" data-nav="running">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
+            <span>Running</span>
+            <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
+            <span class="nav-count n-run" id="nav-running-count">0</span>
+            <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
+          </button>
+          <div class="nav-children" id="nav-running-children"></div>
+          <button type="button" data-nav="history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
+            <span>History</span>
+            <span class="nav-count n-grey" id="nav-history-count">0</span>
+          </button>
+          <button type="button" data-nav="workspaces">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
+            <span>Workspaces</span>
+            <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
+          </button>
+          <button type="button" data-nav="agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
+            <span>Agents</span>
+          </button>
+          <button type="button" data-nav="plugins">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8Z"></path><path d="M12 17v4"></path></svg>
+            <span>Plugins</span>
+          </button>
+          <button type="button" data-nav="projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+            <span>Projects</span>
+            <span class="nav-count n-grey" id="nav-projects-count">0</span>
+          </button>
+          <button type="button" data-nav="composer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+            <span>Pipeline Composer</span>
+          </button>
+          <button type="button" data-nav="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
+            <span>Settings</span>
+          </button>
+        </nav>
+
+        <div class="side-foot">
+          <div class="conn">
+            <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
+            <span id="ws-label">disconnected</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ===================== Main ===================== -->
+      <main class="main">
+        <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
+        <nav class="topnav" aria-label="Primary compact">
+          <button type="button" class="active" data-nav="new">New</button>
+          <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+          <button type="button" data-nav="history">History</button>
+          <button type="button" data-nav="workspaces">Workspaces</button>
+          <button type="button" data-nav="agents">Agents</button>
+          <button type="button" data-nav="plugins">Plugins</button>
+          <button type="button" data-nav="projects">Projects</button>
+          <button type="button" data-nav="composer">Composer</button>
+          <button type="button" data-nav="settings">Settings</button>
+        </nav>
+
+        <!-- ===== VIEW: NEW PIPELINE ===== -->
+        <section class="view" data-view="new">
+          <div class="topbar">
+            <div>
+              <h1>New pipeline</h1>
+              <div class="sub">Pick a workflow, configure each agent, and run · default: Plan &rarr; Refine &rarr; Implement &rarr; Review</div>
+            </div>
+          </div>
+
+          <div class="grid single">
+            <section class="card">
+              <form id="run-form" autocomplete="off">
+                <!-- Target: single project vs workspace -->
+                <div class="field">
+                  <label>Target</label>
+                  <div class="seg" id="target-seg">
+                    <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
+                    <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                  </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="target" value="project" checked hidden />
+                  <input type="radio" name="target" value="workspace" hidden />
+                </div>
+
+                <!-- Project (target = project) -->
+                <div class="field target-pane" id="target-project-pane">
+                  <label for="projectSelect">Project</label>
+                  <div class="row-2">
+                    <div class="select-wrap with-x">
+                      <select id="projectSelect" name="projectSelect">
+                        <option value="" disabled selected>No projects yet</option>
+                        <option value="__add__">+ Add project&hellip;</option>
+                      </select>
+                    </div>
+                    <button type="button" id="project-delete" class="icon-btn" title="Remove the selected project from the list" disabled>&#10005;</button>
+                  </div>
+                  <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+
+                  <div id="add-project" class="add-project hidden">
+                    <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
+                    <div class="path-row">
+                      <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                      <button type="button" id="newProjectBrowse" class="btn btn-ghost btn-mini" title="Pick the project folder">Browse&hellip;</button>
+                    </div>
+                    <div class="add-project-actions">
+                      <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
+                      <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
+                    </div>
+                    <small class="hint" id="addProjectMsg"></small>
+                  </div>
+                </div>
+
+                <!-- Workspace (target = workspace) -->
+                <div class="field target-pane hidden" id="target-workspace-pane">
+                  <label for="workspaceSelect">Workspace</label>
+                  <div class="select-wrap">
+                    <select id="workspaceSelect" name="workspaceSelect">
+                      <option value="" disabled selected>No workspaces yet</option>
+                    </select>
+                  </div>
+                  <div class="ws-members" id="ws-members"></div>
+                  <small class="hint">A run fans out across the workspace's member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
+                  <small class="hint" id="workspaceHintConfig">Per-agent models resolve per project from each project's own config.</small>
+                </div>
+
+                <!-- Title -->
+                <div class="field">
+                  <label for="title">Title <span class="opt">(optional)</span></label>
+                  <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                </div>
+
+                <!-- Branch fields -->
+                <div class="field">
+                  <label for="sourceBranch">Source branch</label>
+                  <div class="select-wrap" id="sourceBranchWrap">
+                    <select id="sourceBranch" class="select"></select>
+                  </div>
+                  <!-- Workspace mode: one source-branch dropdown per member project. -->
+                  <div class="ws-source-branches hidden" id="ws-source-branches"></div>
+                  <small class="hint" id="sourceBranchHint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
+                </div>
+
+                <div class="field">
+                  <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
+                  <input id="featureBranch" class="input" type="text" placeholder="leave empty — Claude will propose a name" spellcheck="false" />
+                </div>
+
+                <!-- Task source -->
+                <div class="field">
+                  <label>Task source</label>
+                  <div class="seg" id="source-seg">
+                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                  </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="source" value="prompt" checked hidden />
+                  <input type="radio" name="source" value="markdown" hidden />
+
+                  <div id="prompt-pane" class="source-pane">
+                    <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
+                  </div>
+
+                  <div id="markdown-pane" class="source-pane hidden">
+                    <textarea id="promptMarkdown" name="promptMarkdown" class="textarea" rows="6" style="margin-top:11px" placeholder="Paste a markdown spec, or load a .md file below&hellip;"></textarea>
+                    <div class="file" style="margin-top:11px">
+                      <button type="button" class="pick" data-pick="md">Load .md file</button>
+                      <span id="mdFileName" class="state hint"></span>
+                      <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
+                    </div>
+                  </div>
+                  <div id="plugin-source-pane" class="source-pane hidden"></div>
+                </div>
+
+                <!-- Optional extra files -->
+                <div class="field">
+                  <label>Optional extra files</label>
+                  <div class="file">
+                    <button type="button" class="pick" data-pick="extras">Choose files</button>
+                    <span class="state" id="extrasNote">Reference files uploaded and copied into the pipeline's extras/ folder.</span>
+                    <input id="extras" type="file" multiple hidden />
+                  </div>
+                </div>
+
+                <!-- Pipeline configuration -->
+                <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
+                  <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
+                  <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
+                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it. -->
+                  <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
+
+                  <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- Default-workflow stages: Clarify + the original four rows, shown
+                       when the Default workflow is selected (backward-compat). -->
+                  <div id="wf-default-stages">
+                    <div class="stage-cfg">
+                      <div class="acc red"></div>
+                      <div class="meta"><b>Clarify</b><small>surface open decisions before planning</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="clarify" aria-label="Clarify fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="clarify" aria-label="Clarify questions"><span>Questions</span></label>
+                      </div>
+                      <small class="step-current" data-role="clarify"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc violet"></div>
+                      <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="planner" aria-label="Plan fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="planner" aria-label="Plan questions"><span>Questions</span></label>
+                      </div>
+                      <small class="step-current" data-role="planner"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc green"></div>
+                      <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="refiner" aria-label="Refine fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="refiner" aria-label="Refine questions"><span>Questions</span></label>
+                      </div>
+                      <small class="step-current" data-role="refiner"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc peach"></div>
+                      <div class="meta"><b>Implement</b><small>write the code</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="implementer" aria-label="Implement fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="implementer" aria-label="Implement questions"><span>Questions</span></label>
+                      </div>
+                      <small class="step-current" data-role="implementer"></small>
+                    </div>
+
+                    <div class="stage-cfg">
+                      <div class="acc blue"></div>
+                      <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
+                      <div class="picks">
+                        <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
+                        <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
+                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="reviewer" aria-label="Review fan-out"><span>Fan-out</span></label>
+                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="reviewer" aria-label="Review questions"><span>Questions</span></label>
+                      </div>
+                      <small class="step-current" data-role="reviewer"></small>
+                    </div>
+                  </div>
+
+                  <!-- Per-node pickers for a non-default (saved) workflow. app.js fills this. -->
+                  <div id="wf-node-config" class="hidden"></div>
+
+                  <!-- Per-feedback cycle-count inputs. app.js fills this. -->
+                  <div id="wf-feedback-config" class="hidden"></div>
+                </div>
+
+                <!-- Mock -->
+                <div class="switch-row" style="margin-top:22px">
+                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                  <span class="txt">Mock mode — no Claude calls, offline dry run</span>
+                </div>
+                <input id="mock" type="checkbox" hidden />
+
+                <!-- Actions -->
+                <div class="actions" style="justify-content:flex-end">
+                  <button type="submit" id="start-btn" class="btn-go">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                    Start run
+                  </button>
+                </div>
+                <p id="form-msg" class="form-msg" aria-live="polite"></p>
+              </form>
+            </section>
+          </div>
+        </section>
+        <!-- /view new -->
+
+        <!-- ===== VIEW: RUNNING ===== -->
+        <section class="view hidden" data-view="running">
+          <div class="topbar">
+            <div>
+              <h1>Running</h1>
+              <div class="sub" id="running-sub">0 pipelines executing · 0 need your input</div>
+            </div>
+            <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
+          </div>
+
+          <div class="run-list" id="run-list"></div>
+
+          <!-- clone target for one run card (Task 3 fills it) -->
+          <template id="run-card-tpl">
+            <section class="card run-card" data-run-id="">
+              <div class="run-top">
+                <div><div class="run-title"></div><div class="run-meta"><span class="rm-text"></span><span class="run-time mono"></span><span class="run-cost mono"></span></div></div>
+                <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
+              </div>
+              <div class="run-flow-wrap"><div class="run-flow"></div></div>
+              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="subs-bar" hidden>
+                <button type="button" class="btn-subs" aria-expanded="false">
+                  <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
+                  Agents
+                  <span class="sb-count grey"></span>
+                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <div class="subs-panel" hidden></div>
+              </div>
+              <div class="run-log">
+                <div class="run-log-head"><span class="ll-label">Live log</span><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                <div class="log"></div>
+              </div>
+              <div class="qpanel hidden"></div>
+            </section>
+          </template>
+        </section>
+        <!-- /view running -->
+
+        <!-- ===== VIEW: HISTORY ===== -->
+        <section class="view hidden" data-view="history">
+          <div class="topbar">
+            <div>
+              <h1>History</h1>
+              <div class="sub">Completed and stopped pipelines</div>
+            </div>
+            <button type="button" id="refresh-history" class="btn-ghost" style="padding:11px 20px">Refresh</button>
+          </div>
+
+          <!-- Project filter pills: "All Projects" + one per project that has history.
+               Built by renderHistoryPills() from the /api/history dataset. -->
+          <div class="hist-filter" id="historyFilter" aria-label="Filter history by project"></div>
+
+          <div class="run-list" id="history"></div>
+
+          <!-- clone target for one history card (Task 5 fills it) -->
+          <template id="hist-card-tpl">
+            <section class="card hist-card">
+              <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
+                <span class="badge"></span>
+                <div class="h-meta">
+                  <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
+                  <span class="hist-branch mono"></span>
+                </div>
+                <div class="hist-aside">
+                  <span class="hist-diff" aria-label="lines changed"></span>
+                  <span class="hist-merge" hidden></span>
+                  <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
+                  <button type="button" class="hist-resume btn-ghost" hidden>Resume</button>
+                </div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <div class="hist-detail" hidden>
+                <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
+                <div class="results-section"></div>
+                <!-- Diff dropdown (New/Changed files) — collapsed by default -->
+                <div class="diff-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
+                    Diff
+                    <span class="sb-count diff-changed grey"></span>
+                    <span class="sb-count diff-removed grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel diff-panel" hidden></div>
+                </div>
+                <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
+                <div class="overview-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Overview
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel overview-panel" hidden></div>
+                </div>
+                <div class="subs-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
+                    Agents
+                    <span class="sb-count grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel" hidden></div>
+                </div>
+                <!-- Clarify dropdown (Q&A) — under Sub-agents -->
+                <div class="clarify-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Clarify
+                    <span class="sb-count grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel clarify-panel" hidden></div>
+                </div>
+                <!-- Live logs dropdown — under Clarify -->
+                <div class="logs-bar" hidden>
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>
+                    Live logs
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel logs-panel" hidden></div>
+                </div>
+                <div class="hist-actions">
+                  <button type="button" class="hist-delete btn-danger" hidden>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                      <line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>
+                    </svg>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </section>
+          </template>
+        </section>
+        <!-- /view history -->
+
+        <!-- ===== VIEW: WORKSPACES ===== -->
+        <section class="view hidden" data-view="workspaces">
+          <div class="topbar">
+            <div>
+              <h1>Workspaces</h1>
+              <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description</div>
+            </div>
+            <button type="button" id="ws-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Create workspace
+            </button>
+          </div>
+
+          <p id="ws-msg" class="form-msg" aria-live="polite"></p>
+
+          <div class="run-list" id="ws-list"></div>
+
+          <!-- clone target for one workspace card -->
+          <template id="ws-card-tpl">
+            <section class="card ws-card">
+              <div class="ws-head" role="button" tabindex="0" aria-expanded="false">
+                <div class="ws-h-meta">
+                  <b class="ws-name"></b>
+                  <span class="ws-stale badge red" hidden>missing projects</span>
+                  <small class="ws-projects"></small>
+                </div>
+                <div class="ws-actions">
+                  <button type="button" class="ws-edit btn-ghost" title="Edit description">Edit description</button>
+                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
+                  <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
+                </div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <div class="ws-detail" hidden>
+                <pre class="ws-desc-view viewer"></pre>
+                <div class="ws-desc-edit" hidden>
+                  <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
+                  <div class="actions" style="justify-content:flex-end;margin-top:10px">
+                    <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
+                    <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+        </section>
+        <!-- /view workspaces -->
+
+        <!-- ===== VIEW: WORKSPACE CREATE (wizard) ===== -->
+        <section class="view hidden" data-view="workspace-create">
+          <div class="topbar">
+            <div>
+              <h1 id="wiz-title">Create workspace</h1>
+              <div class="sub">Pick 2+ projects, scan their interconnections, then save</div>
+            </div>
+            <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
+          </div>
+
+          <section class="card" style="max-width:820px">
+            <!-- Step 1: name + project multi-select -->
+            <div class="wiz-step" id="wiz-step-1">
+              <div class="field">
+                <label for="wiz-name">Workspace name</label>
+                <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
+              </div>
+              <div class="field">
+                <label>Projects <span class="opt">(select 2 or more)</span></label>
+                <div class="wiz-proj-list" id="wiz-projects"></div>
+                <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="wiz-start-scan" class="btn-go" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                  Scan interconnections
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 2: live scan loader -->
+            <div class="wiz-step hidden" id="wiz-step-2">
+              <div class="ws-loader" role="status" aria-live="polite">
+                <div class="spinner" aria-hidden="true"></div>
+                <div class="status-label" id="wiz-status">Starting scan&hellip;</div>
+                <div class="status-sub" id="wiz-progress"></div>
+              </div>
+              <div class="wiz-phase-track" id="wiz-phases">
+                <span data-phase="graph">Graph</span>
+                <span data-phase="investigate">Investigate</span>
+                <span data-phase="synthesize">Synthesize</span>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="wiz-abort" class="btn btn-ghost btn-mini">Abort scan</button>
+              </div>
+            </div>
+
+            <!-- Step 3: editable description -->
+            <div class="wiz-step hidden" id="wiz-step-3">
+              <div class="field">
+                <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
+                <small class="hint" id="wiz-graphify-note"></small>
+              </div>
+              <p id="wiz-msg" class="form-msg" aria-live="polite"></p>
+              <div class="actions" style="justify-content:space-between">
+                <button type="button" id="wiz-rescan" class="btn btn-ghost btn-mini">Re-scan</button>
+                <button type="button" id="wiz-save" class="btn-go">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  Save workspace
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
+        <!-- /view workspace-create -->
+
+        <!-- ===== VIEW: AGENTS ===== -->
+        <section class="view hidden" data-view="agents">
+          <div class="topbar">
+            <div>
+              <h1>Agents</h1>
+              <div class="sub">Built-in and custom agents — what each consumes and produces drives the Composer</div>
+            </div>
+            <button type="button" id="agent-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Create agent
+            </button>
+          </div>
+          <p id="agents-msg" class="form-msg" aria-live="polite"></p>
+          <div class="run-list" id="agents-list"></div>
+
+          <template id="agent-card-tpl">
+            <section class="card agent-card">
+              <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
+                <div class="agent-h-meta">
+                  <b class="agent-name"></b>
+                  <span class="agent-origin badge"></span>
+                  <small class="agent-sub"></small>
+                  <div class="agent-io">
+                    <div class="agent-io-row agent-io-in">
+                      <span class="agent-io-label">Input</span>
+                      <div class="agent-chips agent-chips-in"></div>
+                    </div>
+                    <div class="agent-io-row agent-io-out">
+                      <span class="agent-io-label">Output</span>
+                      <div class="agent-chips agent-chips-out"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="agent-actions">
+                  <button type="button" class="agent-edit btn-ghost" title="Edit this agent">Edit</button>
+                  <button type="button" class="agent-duplicate btn-ghost" title="Duplicate as a user agent">Duplicate</button>
+                  <button type="button" class="agent-delete btn-danger" title="Delete this agent">Delete</button>
+                </div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+              <div class="agent-detail" hidden>
+                <pre class="agent-md-view viewer"></pre>
+                <div class="agent-edit-pane" hidden>
+                  <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
+                  <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
+                  <div class="row-2">
+                    <div class="field"><label>Color</label>
+                      <div class="select-wrap"><select class="agent-f-color select">
+                        <option>green</option><option>peach</option><option>red</option>
+                        <option>blue</option><option>violet</option><option>amber</option>
+                      </select></div>
+                    </div>
+                    <div class="field"><label>Runner type</label>
+                      <div class="select-wrap"><select class="agent-f-runner select">
+                        <option>producer</option><option>verifier</option>
+                      </select></div>
+                    </div>
+                  </div>
+                  <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
+                  <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
+                  <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
+                  <div class="field"><label>Connects to</label>
+                    <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
+                    <div class="agent-f-connects chip-select"></div>
+                  </div>
+                  <div class="row-2">
+                    <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
+                    <div class="field"><label>Flags</label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
+                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label>
+                    </div>
+                  </div>
+                  <div class="field"><label>System prompt (markdown)</label>
+                    <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea>
+                  </div>
+                  <p class="agent-edit-msg form-msg" aria-live="polite"></p>
+                  <div class="actions" style="justify-content:flex-end">
+                    <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
+                    <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+        </section>
+        <!-- /view agents -->
+
+        <!-- ===== VIEW: PLUGINS ===== -->
+        <section class="view hidden" data-view="plugins">
+          <div class="topbar">
+            <div>
+              <h1>Plugins</h1>
+              <div class="sub">Task sources, agents, skills and workflow packs installed from GitHub repos</div>
+            </div>
+            <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Add repo
+            </button>
+          </div>
+          <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
+          <div class="card hidden" id="plugin-add-row" style="padding:16px 20px;margin-bottom:14px">
+            <div class="path-row">
+              <input id="plugin-repo-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+              <button type="button" id="plugin-repo-scan" class="btn btn-primary btn-mini">Scan</button>
+            </div>
+            <div id="plugin-discovered"></div>
+          </div>
+          <div class="run-list" id="plugins-list"></div>
+        </section>
+        <!-- /view plugins -->
+
+        <!-- ===== VIEW: PROJECTS ===== -->
+        <section class="view hidden" data-view="projects">
+          <div class="topbar">
+            <div>
+              <h1>Projects</h1>
+              <div class="sub">Registered projects. Add a folder or remove one from the list — files on disk and run history are never touched.</div>
+            </div>
+            <button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Add project
+            </button>
+          </div>
+          <p id="projects-msg" class="form-msg" aria-live="polite"></p>
+          <div class="run-list" id="projects-list"></div>
+        </section>
+        <!-- /view projects -->
+
+        <!-- ===== VIEW: AGENT CREATE (wizard) ===== -->
+        <section class="view hidden" data-view="agent-create">
+          <div class="topbar">
+            <div>
+              <h1>Create agent</h1>
+              <div class="sub">Describe the agent, let the builder draft it, then review and save</div>
+            </div>
+            <button type="button" id="agw-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
+          </div>
+
+          <section class="card" style="max-width:820px">
+            <!-- Step 1: brief -->
+            <div class="wiz-step" id="agw-step-1">
+              <div class="field"><label for="agw-name">Agent name</label>
+                <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
+              <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
+                <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
+              <div class="field"><label for="agw-details">Detailed description</label>
+                <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
+              <div class="row-2">
+                <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
+                  <div id="agw-before" class="chip-select"></div></div>
+                <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
+                  <div id="agw-after" class="chip-select"></div></div>
+              </div>
+              <div class="switch-row" style="margin-top:14px">
+                <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
+              </div>
+              <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
+                <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
+              </div>
+              <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="agw-start" class="btn-go" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                  Generate agent
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 2: live generation -->
+            <div class="wiz-step hidden" id="agw-step-2">
+              <div class="ws-loader" role="status" aria-live="polite">
+                <div class="spinner" aria-hidden="true"></div>
+                <div class="status-label" id="agw-status">Starting&hellip;</div>
+              </div>
+              <div class="actions" style="justify-content:flex-end">
+                <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
+              </div>
+            </div>
+
+            <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
+            <div class="wiz-step hidden" id="agw-step-3">
+              <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
+              <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
+              <div class="row-2">
+                <div class="field"><label>Color</label><div class="select-wrap"><select class="agent-f-color select"><option>green</option><option>peach</option><option>red</option><option>blue</option><option>violet</option><option>amber</option></select></div></div>
+                <div class="field"><label>Runner type</label><div class="select-wrap"><select class="agent-f-runner select"><option>producer</option><option>verifier</option></select></div></div>
+              </div>
+              <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
+              <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
+              <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
+              <div class="field"><label>Connects to</label>
+                <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
+                <div class="agent-f-connects chip-select"></div></div>
+              <div class="row-2">
+                <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
+                <div class="field"><label>Flags</label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
+                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label></div>
+              </div>
+              <div class="field"><label>System prompt (markdown)</label>
+                <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea></div>
+              <p id="agw-msg" class="form-msg" aria-live="polite"></p>
+              <div class="actions" style="justify-content:space-between">
+                <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
+                <button type="button" id="agw-save" class="btn-go">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  Save agent
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
+        <!-- /view agent-create -->
+
+        <!-- ===== VIEW: PIPELINE COMPOSER ===== -->
+        <section class="view hidden" data-view="composer">
+          <div class="topbar">
+            <div>
+              <h1>Pipeline Composer</h1>
+              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a pipeline</div>
+            </div>
+            <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">Reset to default</button>
+          </div>
+
+          <section class="card builder-card">
+            <div class="palette">
+              <span class="p-label">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+                Agents · drag onto the canvas to build your pipeline
+              </span>
+              <div id="composer-palette" style="display:contents"></div>
+            </div>
+
+            <div class="canvas-wrap" id="composer-canvas-wrap">
+              <div id="composer-decomposer-hint" class="composer-hint" hidden>
+                When a Decompose step is present, 1 implementer is started per task it produces — the count varies per run.
+              </div>
+              <div class="flow" id="composer-flow">
+                <svg class="wires" id="composer-wires"></svg>
+              </div>
+            </div>
+
+            <div class="builder-foot">
+              <div class="legend">
+                <span class="lg"><span class="ll"></span> sequential — runs in order</span>
+                <span class="lg"><span class="ll fb"></span> feedback loop</span>
+                <span class="lg"><span class="ll sl"></span> self loop</span>
+              </div>
+              <span class="link-banner" id="composer-link-banner" hidden>
+                <span id="composer-link-text">Click a target agent to draw a feedback loop</span>
+                <button type="button" id="composer-link-cancel">Cancel</button>
+              </span>
+              <span class="sp"></span>
+              <button type="button" class="btn-ghost" id="composer-clear" style="padding:10px 18px">Clear canvas</button>
+              <button type="button" class="btn-go" id="composer-save">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                Save pipeline
+              </button>
+            </div>
+          </section>
+
+          <section class="card saved-card">
+            <div class="saved-head">
+              <div><b>Saved pipelines</b><span class="cnt" id="composer-saved-count"></span></div>
+            </div>
+            <div class="saved-list" id="composer-saved-list"></div>
+          </section>
+        </section>
+        <!-- /view composer -->
+
+        <!-- ===== VIEW: SETTINGS ===== -->
+        <section class="view hidden" data-view="settings">
+          <div class="topbar">
+            <div>
+              <h1>Settings</h1>
+              <div class="sub">Machine-wide Worca CC preferences</div>
+            </div>
+          </div>
+
+          <section class="card" style="max-width:760px;padding:22px">
+            <div class="field">
+              <label for="settingsRoot">Worca CC root folder</label>
+              <input id="settingsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
+              <small class="hint">
+                The folder under which Worca CC keeps its data — a <code>.worca-cc/</code> directory holding the
+                history store, the project list, and saved workflows. Leave blank to use the default.
+                Changes apply to new runs immediately.
+              </small>
+              <small class="hint" id="settingsRootDefault"></small>
+              <small class="hint">
+                Note: changing the root does <b>not</b> move existing data. Worca CC starts a fresh
+                <code>.worca-cc/</code> under the new folder; history under the old root is left in place.
+              </small>
+            </div>
+            <div class="field">
+              <label for="settingsProjectsRoot">Projects root folder</label>
+              <div class="path-row">
+                <input id="settingsProjectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
+                <button type="button" id="settingsProjectsRootBrowse" class="btn btn-ghost btn-mini" title="Pick the projects root folder">Browse&hellip;</button>
+              </div>
+              <small class="hint">
+                The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
+                .mcp.json are made available to every pipeline agent. Leave blank to use your home folder.
+              </small>
+              <small class="hint" id="settingsProjectsRootDefault"></small>
+            </div>
+            <div class="add-project-actions" style="margin-top:14px">
+              <button type="button" id="settingsReset" class="btn btn-ghost btn-mini">Reset to default</button>
+              <button type="button" id="settingsSave" class="btn btn-primary btn-mini">Save</button>
+            </div>
+            <small class="hint" id="settingsMsg"></small>
+          </section>
+        </section>
+        <!-- /view settings -->
+      </main>
+    </div>
+
+    <!-- ===== Saved-markdown viewer (modal) ===== -->
+    <div id="viewer-card" class="viewer-modal hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="viewer-title">Saved pipeline</h2>
+          <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+        </div>
+        <pre id="viewer" class="viewer"></pre>
+      </div>
+    </div>
+
+    <!-- ===== Folder browser (fallback when no native dialog) ===== -->
+    <div id="folder-browser" class="viewer-modal folder-modal hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2>Select a folder</h2>
+          <button type="button" id="folderBrowserClose" class="btn btn-mini">Close</button>
+        </div>
+        <div class="folder-toolbar">
+          <button type="button" id="folderUp" class="btn btn-ghost btn-mini" title="Parent folder">&#8593; Up</button>
+          <button type="button" id="folderHome" class="btn btn-ghost btn-mini" title="Home folder">Home</button>
+          <code id="folderCurrent" class="folder-current"></code>
+        </div>
+        <ul id="folderList" class="folder-list"></ul>
+        <div class="add-project-actions">
+          <button type="button" id="folderSelect" class="btn btn-primary btn-mini">Select this folder</button>
+        </div>
+        <small class="hint" id="folderMsg"></small>
+      </div>
+    </div>
+
+    <!-- ===== Reusable confirmation modal ===== -->
+    <div id="confirm-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="confirm-title">Confirm</h2>
+        </div>
+        <p id="confirm-message" class="confirm-message"></p>
+        <label id="confirm-checkbox-wrap" class="confirm-checkbox hidden">
+          <input type="checkbox" id="confirm-checkbox" />
+          <span id="confirm-checkbox-label"></span>
+        </label>
+        <div class="confirm-actions">
+          <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
+          <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Add-project modal ===== -->
+    <div id="project-add-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-add-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="proj-add-title">Add project</h2>
+          <button type="button" id="proj-add-cancel" class="btn btn-mini">Close</button>
+        </div>
+        <div class="field">
+          <label for="proj-add-name">Name</label>
+          <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
+        </div>
+        <div class="field">
+          <label for="proj-add-path">Folder</label>
+          <div class="path-row">
+            <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
+            <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+          </div>
+        </div>
+        <small class="hint" id="proj-add-msg"></small>
+        <div class="confirm-actions">
+          <button type="button" id="proj-add-save" class="btn btn-primary btn-mini">Add project</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Plugin modal (install consent / update preview / settings / doctor / 409) ===== -->
+    <div id="plugin-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="plugin-modal-title">Plugin</h2>
+          <button type="button" id="plugin-modal-close" class="btn btn-mini">Close</button>
+        </div>
+        <div id="plugin-modal-body"></div>
+        <div class="confirm-actions" id="plugin-modal-actions"></div>
+      </div>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

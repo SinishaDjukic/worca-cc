@@ -1,0 +1,7 @@
+{
+  "name": "Mock Flow",
+  "version": 1,
+  "domain": "general",
+  "steps": [[{ "id": "s0_0", "key": "mockHelper" }]],
+  "feedbacks": []
+}

@@ -1,0 +1,18 @@
+{
+  "key": "manualTestsChecklist",
+  "domain": "coding",
+  "displayName": "Manual Tests Checklist",
+  "description": "draft manual test cases",
+  "color": "blue",
+  "icon": "<rect x=\"6\" y=\"4\" width=\"12\" height=\"17\" rx=\"2\"/><path d=\"M9.5 4V2.8h5V4\" stroke-linejoin=\"round\"/><path d=\"M8.8 12l1.6 1.6L13.4 10\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-manual-tests-checklist.md",
+  "runnerType": "producer",
+  "loopSource": false,
+  "produces": ["checklist"],
+  "consumes": ["plan","code"],
+  "connectsTo": ["manualWebUiTesting"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 5
+}

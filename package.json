@@ -1,14 +1,35 @@
 {
-  "private": true,
-  "devDependencies": {
-    "husky": "^9.1.7",
-    "jsdom": "^29.0.1",
-    "vitest": "^4.0.15"
+  "name": "worca-cc",
+  "version": "0.1.0",
+  "description": "Worca CC — deterministic multi-agent pipeline that drives Claude Code (headless) through Plan -> Refine -> Implement -> Review, with a CLI, an installable /worca skill, and a web UI.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/denislavprinov/maestro.git"
+  },
+  "homepage": "https://github.com/denislavprinov/maestro#readme",
+  "bin": {
+    "worca": "src/cli/worca-cc.mjs"
   },
   "scripts": {
-    "prepare": "husky",
-    "worca:ui": "cd worca-ui && npm run build && npm start -- --global",
-    "worca:ui:stop": "cd worca-ui && npm run stop -- --global",
-    "worca:ui:restart": "cd worca-ui && npm run build && npm run restart -- --global"
+    "start": "node --disable-warning=ExperimentalWarning ui/server.mjs",
+    "cli": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs",
+    "install:agents": "node scripts/install.mjs",
+    "smoke": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs --project examples/sandbox --prompt \"demo task\" --mock --yes",
+    "smoke:workspace": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning scripts/smoke-workspace.mjs",
+    "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning scripts/smoke-plugin.mjs",
+    "test": "rm -rf .worca-cc-test && WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/poppins": "^5.2.7",
+    "jsdom": "^29.1.1"
   }
 }

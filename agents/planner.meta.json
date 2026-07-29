@@ -1,0 +1,20 @@
+{
+  "key": "planner",
+  "domain": "coding",
+  "displayName": "Plan",
+  "description": "architecture & breakdown",
+  "color": "violet",
+  "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+  "agentFile": "worca-cc-planner.md",
+  "runnerType": "producer",
+  "loopSource": false,
+  "fanOut": true,
+  "produces": ["plan"],
+  "consumes": ["userPrompt", "clarify", "review"],
+  "optionalConsumes": ["clarify", "review"],
+  "connectsTo": ["refiner", "implementer", "planReviewer", "decomposer"],
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 1
+}

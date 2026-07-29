@@ -1,0 +1,12 @@
+{
+  "key": "mockHelper",
+  "displayName": "Mock Helper",
+  "description": "Minimal plugin producer used by plugin tests",
+  "color": "amber",
+  "agentFile": "mockHelper.md",
+  "runnerType": "producer",
+  "consumes": ["userPrompt"],
+  "produces": ["code"],
+  "requiresSkills": ["mock-skill"],
+  "order": 900
+}

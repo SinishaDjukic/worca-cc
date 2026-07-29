@@ -1,0 +1,20 @@
+{
+  "name": "mock-source",
+  "version": "0.1.0",
+  "description": "Deterministic offline task source + agent + skill + workflow (test fixture)",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=1 <2" },
+  "taskSources": [
+    {
+      "id": "mock",
+      "displayName": "Mock Tasks",
+      "module": "./connector/index.mjs",
+      "configSchema": [
+        { "key": "token", "type": "text", "secret": true, "required": false, "label": "Token", "help": "Unused by the connector; exercises the secrets path" }
+      ],
+      "inputs": [
+        { "key": "task", "type": "task-browser", "label": "Task" }
+      ]
+    }
+  ]
+}
