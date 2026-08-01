@@ -131,3 +131,101 @@ test('expanded state survives a full list re-render (WebSocket projects-changed 
   assert.ok(item.classList.contains('open'), 'row still open after rebuild');
   assert.ok(item.querySelector('.gr-preset'), 'panel re-rendered from grState, no refetch needed');
 });
+
+const setInput = (window, input, value) => {
+  input.value = value;
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+};
+
+async function openPanel(window) {
+  await openProjects(window);
+  const item = window.document.querySelector('#projects-list .pl-item[data-name="alpha"]');
+  click(window, item.querySelector('.pl-row'));
+  await tick(); await tick();
+  return item;
+}
+// Panel innerHTML is rebuilt on every mutation — always re-query inside the item.
+const q = (item, sel) => item.querySelector(sel);
+
+test('preset click seeds the editors; first edit flips the seg to Custom; edit-back flips it back', async () => {
+  const { window } = await boot();
+  const item = await openPanel(window);
+  click(window, q(item, '.gr-preset button[data-preset="normal"]'));
+  await tick();
+  assert.equal(q(item, '.gr-preset button.on').dataset.preset, 'normal');
+  let paths = [...item.querySelectorAll('.gr-paths .gr-row .mono')].map((n) => n.textContent);
+  assert.deepEqual(paths, ['.env*', '*.pem'], 'normal preset seeded the editors');
+  assert.equal(q(item, '.gr-save').disabled, false, 'level change alone is dirty');
+  // customize: remove a protected path -> Custom
+  click(window, q(item, '.gr-paths .gr-row .gr-rm'));
+  await tick();
+  assert.equal(q(item, '.gr-preset button.on').dataset.preset, 'custom', 'edit flipped seg to Custom');
+  // add the exact same path back -> matches Normal again -> seg flips back
+  const add = q(item, '.gr-add[data-list="gr-paths"]');
+  setInput(window, add.querySelector('input'), '.env*');
+  click(window, add.querySelector('.gr-add-btn'));
+  await tick();
+  assert.equal(q(item, '.gr-preset button.on').dataset.preset, 'normal', 'matching a preset detects it');
+});
+
+test('switch toggle flips to Custom; Save posts {level:custom, custom}; Discard reverts', async () => {
+  const posts = [];
+  const { window } = await boot({ posts });
+  const item = await openPanel(window);
+  click(window, q(item, '.gr-scrub'));
+  await tick();
+  assert.equal(q(item, '.gr-preset button.on').dataset.preset, 'custom');
+  assert.equal(q(item, '.gr-save').disabled, false);
+  click(window, q(item, '.gr-save'));
+  await tick(); await tick();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].projectDir, '/tmp/alpha');
+  assert.equal(posts[0].guardrails.level, 'custom');
+  assert.equal(posts[0].guardrails.custom.envScrub, true);
+  assert.equal(q(item, '.gr-save').disabled, true, 'clean after save');
+  // discard path: toggle again, then discard
+  click(window, q(item, '.gr-honor'));
+  await tick();
+  assert.equal(q(item, '.gr-save').disabled, false);
+  click(window, q(item, '.gr-discard'));
+  await tick();
+  assert.equal(q(item, '.gr-scrub').classList.contains('on'), true, 'saved scrub state kept');
+  assert.equal(q(item, '.gr-honor').classList.contains('on'), true, 'honor toggle reverted');
+  assert.equal(q(item, '.gr-save').disabled, true);
+});
+
+test('preset save posts NO custom payload (dormant custom preserved server-side)', async () => {
+  const posts = [];
+  const { window } = await boot({ posts });
+  const item = await openPanel(window);
+  click(window, q(item, '.gr-preset button[data-preset="secure"]'));
+  await tick();
+  click(window, q(item, '.gr-save'));
+  await tick(); await tick();
+  assert.deepEqual(posts[0].guardrails, { level: 'secure' });
+});
+
+test('add-row validates via the server on save: 400 shows in .gr-msg', async () => {
+  // Inject the 400 through the boot-time fetchHandler with a mutable flag —
+  // reassigning window.fetch after boot would NOT be seen by app.js's bare fetch.
+  let fail400 = false;
+  const { window } = await boot({
+    fetchHandler: (url, opts) => {
+      if (fail400 && String(url).includes('/api/config/guardrails') && opts?.method === 'POST') {
+        return Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'deny rule "rm -rf /" is not a valid permission rule' }) });
+      }
+      return undefined;   // fall through to boot's default stubs
+    },
+  });
+  const item = await openPanel(window);
+  // deny add: obviously-not-a-rule text is still ADDED locally (server is the validator)
+  const add = q(item, '.gr-add[data-list="gr-deny"]');
+  setInput(window, add.querySelector('input'), 'rm -rf /');
+  click(window, add.querySelector('.gr-add-btn'));
+  await tick();
+  fail400 = true;                                    // the NEXT POST 400s
+  click(window, q(item, '.gr-save'));
+  await tick(); await tick();
+  assert.match(q(item, '.gr-msg').textContent, /not a valid permission rule/);
+  assert.equal(q(item, '.gr-save').disabled, false, 'still dirty — user can fix and retry');
+});

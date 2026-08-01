@@ -4983,7 +4983,7 @@ function grToggleOpen(item, p) {
     grRenderPanel(item, p);                 // paints "Loading…" until the fetch lands
     grLoad(p).then(() => {
       // Row nodes may have been rebuilt while the fetch was in flight — requery.
-      // Use the repo's cssEscape() helper (app.js:6125-6128), NOT bare CSS.escape:
+      // Use the repo's cssEscape() helper, NOT bare CSS.escape:
       // jsdom 29.1.1 provides no window.CSS, so bare `CSS.escape` throws
       // ReferenceError under test and the panel never paints.
       const cur = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`);
@@ -5055,6 +5055,94 @@ function grRenderPanel(item, p) {
       <button type="button" class="btn btn-primary btn-mini gr-save" ${dirty ? '' : 'disabled'}>Save guardrails</button>
     </div>
   </div>`;
+}
+
+const GR_LIST_FIELDS = { 'gr-allow': 'envAllowlist', 'gr-paths': 'protectedPaths', 'gr-deny': 'deny' };
+
+function grRepaint(item, p) { grRenderPanel(item, p); }
+
+function grMutateSettings(item, p, fn) {
+  const st = grState.get(p.name);
+  if (!st?.loaded) return;
+  fn(st.draft.settings);
+  st.draft.level = grDetectPreset(st, st.draft.settings) ?? 'custom';
+  st.msg = ''; st.msgErr = false;
+  grRepaint(item, p);
+}
+
+function grApplyPreset(item, p, level) {
+  const st = grState.get(p.name);
+  if (!st?.loaded || !level) return;
+  st.draft.level = level;
+  if (level === 'custom') {
+    st.draft.settings = grClone(st.storedCustom || st.draft.settings);
+  } else if (st.presets[level]) {
+    st.draft.settings = grClone(st.presets[level]);
+  }
+  st.msg = ''; st.msgErr = false;
+  grRepaint(item, p);
+}
+
+function grToggleSwitch(item, p, sw) {
+  const field = sw.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
+  grMutateSettings(item, p, (s) => { s[field] = !s[field]; });
+}
+
+function grAddEntry(item, p, addRow) {
+  const cls = addRow.dataset.list;
+  const field = GR_LIST_FIELDS[cls];
+  const input = addRow.querySelector('input');
+  const v = (input?.value || '').trim();
+  if (!field || !v) return;
+  grMutateSettings(item, p, (s) => { if (!s[field].includes(v)) s[field] = [...s[field], v]; });
+  // grMutateSettings repaints the panel (innerHTML), destroying the add-input —
+  // restore focus to the same list's fresh input so consecutive adds flow.
+  item.querySelector(`.gr-add[data-list="${cls}"] input`)?.focus();
+}
+
+function grRemoveEntry(item, p, btn) {
+  const listEl = btn.closest('.gr-list');
+  const field = listEl && GR_LIST_FIELDS[[...listEl.classList].find((c) => GR_LIST_FIELDS[c])];
+  const v = btn.dataset.value;
+  if (!field) return;
+  grMutateSettings(item, p, (s) => { s[field] = s[field].filter((x) => x !== v); });
+}
+
+async function grSave(item, p) {
+  const st = grState.get(p.name);
+  if (!st?.loaded || !grDirty(st)) return;
+  const btn = item.querySelector('.gr-save');
+  if (btn) btn.disabled = true;
+  const guardrails = st.draft.level === 'custom'
+    ? { level: 'custom', custom: st.draft.settings }
+    : { level: st.draft.level };                       // preset: no payload — dormant custom kept
+  try {
+    const res = await fetch('/api/config/guardrails', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: p.path, guardrails }),
+    });
+    const data = await safeJson(res);
+    // The list may have rebuilt during the POST (WebSocket projects-changed) —
+    // repaint the LIVE row node, not the possibly-detached `item`.
+    const live = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`) || item;
+    if (!res.ok) { st.msg = data.error || `HTTP ${res.status}`; st.msgErr = true; grRepaint(live, p); return; }
+    st.storedCustom = data.guardrails.custom;
+    st.saved = { level: data.guardrails.level, settings: data.guardrails.effective };
+    st.draft = grClone(st.saved);
+    st.msg = 'Saved.'; st.msgErr = false;
+    grRepaint(live, p);
+  } catch (e) {
+    const live = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`) || item;
+    st.msg = e.message; st.msgErr = true; grRepaint(live, p);
+  }
+}
+
+function grDiscard(item, p) {
+  const st = grState.get(p.name);
+  if (!st?.loaded) return;
+  st.draft = grClone(st.saved);
+  st.msg = ''; st.msgErr = false;
+  grRepaint(item, p);
 }
 
 // Folder basename, tolerant of trailing slashes and either separator.
@@ -5283,8 +5371,30 @@ if (el.projectsList) {
     const p = state.projects.find((x) => x.name === item.dataset.name);
     if (!p) return;
     if (e.target.closest('.proj-del')) return deleteProject(p);
-    if (e.target.closest('.gr-body')) return;          // panel interactions: Task 11
+    const segBtn = e.target.closest('.gr-preset button');
+    if (segBtn) return grApplyPreset(item, p, segBtn.dataset.preset);
+    const sw = e.target.closest('.switch');
+    if (sw) return grToggleSwitch(item, p, sw);
+    const rm = e.target.closest('.gr-rm');
+    if (rm) return grRemoveEntry(item, p, rm);
+    const addBtn = e.target.closest('.gr-add-btn');
+    if (addBtn) return grAddEntry(item, p, addBtn.closest('.gr-add'));
+    if (e.target.closest('.gr-save')) return grSave(item, p);
+    if (e.target.closest('.gr-discard')) return grDiscard(item, p);
+    if (e.target.closest('.gr-body')) return;            // clicks inside the panel never toggle
     if (e.target.closest('.pl-row')) return grToggleOpen(item, p);
+  });
+  el.projectsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const item = e.target.closest && e.target.closest('.pl-item');
+    if (!item) return;
+    const p = state.projects.find((x) => x.name === item.dataset.name);
+    if (!p) return;
+    if (e.target.classList?.contains('switch')) { e.preventDefault(); return grToggleSwitch(item, p, e.target); }
+    if (e.key === 'Enter' && e.target.matches?.('.gr-add input')) {
+      e.preventDefault();
+      return grAddEntry(item, p, e.target.closest('.gr-add'));
+    }
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
@@ -5319,6 +5429,7 @@ if (typeof window !== 'undefined') {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
     confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd, updateProjectsCount,
     grToggleOpen, grRenderPanel, grOpen, grState,
+    grApplyPreset, grSave, grDiscard,
   };
 }
 
