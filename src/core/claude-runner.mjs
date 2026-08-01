@@ -148,6 +148,8 @@ function mockEnabled(opts) {
  * @param {boolean} [o.mock]             force mock mode
  * @param {string} [o.mcpConfigPath]     §5.5 generated <runRoot>/mcp.json (--mcp-config)
  * @param {string[]} [o.mcpServerGrants] §5.3 `mcp__<server>` grants unioned into --allowedTools
+ * @param {{deny?:string[],allow?:string[],ask?:string[]}} [o.permissionRules] guardrail permission
+ *   rules merged into the single `--settings` payload (absent => argv unchanged)
  * @param {string[]} [o.workspaceWriteTargets] §8.10 MOCK-ONLY member checkouts the mock
  *   implementer writes into instead of `cwd` (empty/absent => today's cwd behavior).
  *   Never reaches argv: `runReal` ignores it by construction.
@@ -171,6 +173,7 @@ export async function runClaude(o = {}) {
     signal,
     mcpConfigPath,
     mcpServerGrants,
+    permissionRules,
     workspaceWriteTargets,
     resumeSessionId,
     bin = DEFAULT_BIN,
@@ -204,6 +207,7 @@ export async function runClaude(o = {}) {
     resumeSessionId,
     mcpConfigPath,
     mcpServerGrants,
+    permissionRules,
   });
 }
 
@@ -257,11 +261,11 @@ export function buildClaudeArgs({
   return args;
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules }) {
   return new Promise((resolveP, rejectP) => {
     const args = buildClaudeArgs({
       prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
-      mcpConfigPath, mcpServerGrants,
+      mcpConfigPath, mcpServerGrants, permissionRules,
     });
 
     let child;

@@ -239,3 +239,34 @@ test('buildSettingsArgs: hooks off + no rules -> [] (baseline untouched)', () =>
   assert.deepEqual(buildSettingsArgs(null), []);
   assert.equal(buildHookSettings(), null);
 });
+
+test('runClaude FORWARDS permissionRules to runReal (drop-at-gate guard)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({
+      cwd: dir, bin, prompt: 'p', allowedTools: ['Read'],
+      permissionRules: { deny: ['Read(.env*)'] },
+    });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK;
+    else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--settings');
+  assert.ok(i > -1, `--settings reached the spawn: ${JSON.stringify(argv)}`);
+  assert.deepEqual(JSON.parse(argv[i + 1]).permissions, { deny: ['Read(.env*)'] });
+});
+
+test('runClaude mock path is unaffected by permissionRules (no spawn, no error)', async () => {
+  const dir = await tmp();
+  const r = await runClaude({
+    cwd: dir, mock: true, onEvent: () => {},
+    prompt: 'MOCK_ROLE: implementer\nMOCK_IN: /plan.md',
+    permissionRules: { deny: ['Read(.env*)'] },
+  });
+  assert.equal(r.exitCode, 0);
+});
