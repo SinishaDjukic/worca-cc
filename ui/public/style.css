@@ -1073,8 +1073,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .chip-select label { display:inline-flex; gap:6px; align-items:center; font-size:12.5px; border:1px solid var(--line); border-radius:999px; padding:4px 10px; cursor:pointer; }
 
 /* ===== Projects management view ===== */
-/* Static rows (no expand) — neutralize the pipeline row's pointer cursor. */
-#projects-list .pl-row{cursor:default;}
 .proj-path{
   font-family:var(--mono);font-size:12px;color:var(--ink-2);
   margin-top:4px;word-break:break-all;
@@ -1093,6 +1091,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .proj-del:hover{border-color:var(--ink-3);color:var(--ink);background:var(--field);}
 .proj-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .proj-del svg{width:16px;height:16px;stroke-width:1.9;}
+
+/* Projects-view guardrails panel */
+#projects-list .pl-caret{align-self:center;}
+.gr-body-inner{padding:18px 22px;}
+.gr-list{display:flex;flex-direction:column;margin-bottom:8px;}
+.gr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12.5px;}
+.gr-row:last-child{border-bottom:none;}
+.gr-rm{flex:0 0 auto;width:26px;height:26px;border-radius:8px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);font-size:11px;transition:.12s;}
+.gr-rm:hover{color:var(--red-ink);border-color:var(--red);background:var(--red-bg);}
+.gr-empty{color:var(--ink-3);font-size:12px;padding:6px 0;}
 
 /* ===== Confirm + add-project modals (reuse .viewer-modal shell) ===== */
 /* MUST come after .viewer-modal .card (style.css:514) — equal specificity, later wins. */
