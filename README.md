@@ -289,6 +289,11 @@ Honest limitations:
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` marker: on current CLIs setting it forces
   the child's permission mode back to `default`, overriding worca's
   `--permission-mode acceptEdits` and breaking scrubbed pipeline runs.
+- Not setting that marker is not the same as blocking it: if **your own shell**
+  exports `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, it survives the scrub (the
+  `CLAUDE_*` keep-rule passes it through) and inflicts exactly the breakage
+  above on every spawned `claude` — unset it before launching worca, or expect
+  degraded runs.
 - Secure++ denies `curl`, which the manual web-UI-testing agent uses to poll a
   dev server — it falls back to the `browser_*` MCP tools (not denied), so that
   flow degrades rather than breaks. `.env*` also matches `.env.example` /

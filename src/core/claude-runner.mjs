@@ -74,16 +74,16 @@ export function subagentHooksEnabled() {
   return !!v && v !== '0' && v.toLowerCase() !== 'false';
 }
 
-/**
- * Gated argv for sub-agent telemetry. Returns [] when subagentHooksEnabled() is
- * false (the default), so the baseline run path is byte-identical. When on, adds
- * `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream) and
- * a `--settings` inline JSON registering a no-op `true` PostToolUse hook matched
- * to `Agent` — just enough to make `claude` run+emit the PostToolUse event whose
- * `tool_response` carries totalDurationMs/totalTokens/usage. We read telemetry off
- * the surfaced stream-json event, NOT the hook command's stdout. `--bare`-proof
- * (inline settings need no settings file).
- */
+// ── Sub-agent telemetry + the --settings seam ────────────────────────────────
+// Telemetry is GATED (subagentHooksEnabled) and OFF by default. When on it adds
+// `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream)
+// and registers a no-op `true` PostToolUse hook matched to `Agent` — just enough
+// to make `claude` run+emit the PostToolUse event whose `tool_response` carries
+// totalDurationMs/totalTokens/usage. We read telemetry off the surfaced
+// stream-json event, NOT the hook command's stdout. `--bare`-proof (inline
+// settings need no settings file). The argv contract is on buildSettingsArgs.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** The telemetry hook-settings OBJECT (see subagentHooksEnabled). null when off. */
 export function buildHookSettings() {
   if (!subagentHooksEnabled()) return null;
@@ -103,6 +103,15 @@ export function buildHookSettings() {
 export function buildSettingsArgs(permissionRules) {
   const hook = buildHookSettings();
   const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
+  // truthy while hasRules stays false, so the whole policy would drop out of
+  // argv silently. Say it once, then take the same no-rules path (fail-open,
+  // matching readGuardrails) — the empty/absent cases ({}, {deny: []}, null)
+  // are normal and stay quiet.
+  if (!hasRules && permissionRules && typeof permissionRules === 'object'
+      && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
+    console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
+  }
   if (!hook && !hasRules) return [];
   const settings = {};
   if (hook) settings.hooks = hook.hooks;

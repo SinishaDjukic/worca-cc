@@ -240,6 +240,26 @@ test('buildSettingsArgs: hooks off + no rules -> [] (baseline untouched)', () =>
   assert.equal(buildHookSettings(), null);
 });
 
+test('buildSettingsArgs: malformed rules warn once and fall through; empty stays quiet', () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    // Truthy object, nothing usable: argv must stay baseline AND say so.
+    assert.deepEqual(buildSettingsArgs({ deny: 'Bash(curl:*)' }), []);
+    assert.equal(warnings.length, 1, `exactly one warn: ${JSON.stringify(warnings)}`);
+    assert.match(warnings[0], /permissionRules/);
+    // Normal empty/absent shapes are not a problem -> no extra warn.
+    warnings.length = 0;
+    for (const rules of [null, undefined, {}, { deny: [] }]) {
+      assert.deepEqual(buildSettingsArgs(rules), []);
+    }
+    assert.deepEqual(warnings, [], 'empty/absent permissionRules never warn');
+  } finally {
+    console.warn = realWarn;
+  }
+});
+
 test('runClaude FORWARDS permissionRules to runReal (drop-at-gate guard)', async () => {
   const dir = await tmp();
   const out = join(dir, 'argv.txt');

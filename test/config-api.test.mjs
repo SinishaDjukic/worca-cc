@@ -161,6 +161,10 @@ test('POST /api/config responds with the FULL run-config shape (workflows layer,
   const { config } = await r.json();
   assert.ok(config.workflows && typeof config.workflows === 'object', 'run-config workflows layer present');
   assert.equal(config.steps.refiner.model, 'claude-opus-4-8');
+  // ...and the SAME normalized guardrails shape GET returns — readRunConfig
+  // forwards the raw stored blob, which has no `effective` key.
+  assert.ok(config.guardrails?.effective, 'guardrails normalized like GET /api/config');
+  assert.equal(typeof config.guardrails.level, 'string');
 });
 
 test('GET /api/config carries guardrailPresets/levels in both branches and a normalized guardrails shape', async () => {

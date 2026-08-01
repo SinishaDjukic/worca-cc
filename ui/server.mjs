@@ -1737,6 +1737,10 @@ app.post('/api/config', async (req, res) => {
     // to their whole config state — echoing the narrow view dropped workflows/
     // activeWorkflowId and made saved node models paint as unconfigured.
     const config = await readRunConfig(projectDir);
+    // Same normalization as GET /api/config: readRunConfig forwards the RAW
+    // stored guardrails blob, and clients assign this response to their whole
+    // config state — echoing the raw shape would clobber {level,custom,effective}.
+    config.guardrails = await readGuardrailsConfig(projectDir);
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.
@@ -1780,6 +1784,8 @@ app.patch('/api/config', async (req, res) => {
       await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
     }
     const config = await readRunConfig(projectDir);
+    // Same normalization as GET /api/config (raw stored blob -> {level,custom,effective}).
+    config.guardrails = await readGuardrailsConfig(projectDir);
     res.json({ config });
   } catch (err) {
     // The config.mjs setters throw only on validation (unknown model/effort,
@@ -1825,7 +1831,7 @@ app.post('/api/config/guardrails', async (req, res) => {
     const guardrails = await setGuardrails(projectDir, req.body?.guardrails || {});
     res.json({ guardrails });
   } catch (err) {
-    // Match the sibling config writers' error spelling (ui/server.mjs:1730/:1774/:1787).
+    // Match the sibling /api/config writers' error spelling.
     badRequest(res, err && err.message ? err.message : String(err));
   }
 });
