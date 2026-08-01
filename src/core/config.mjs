@@ -15,6 +15,7 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
+import { sanitizeGuardrailsConfig, validateGuardrailsConfig, resolveGuardrails } from './guardrails.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -489,4 +490,64 @@ export async function resolveRunConfig(projectDir, workflowId) {
     nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},
     feedbacks: wf.feedbacks && typeof wf.feedbacks === 'object' ? wf.feedbacks : {},
   };
+}
+
+/** The raw stored guardrails blob for a project ({} when unset). Internal. */
+function readGuardrailsBlob(projectDir) {
+  const row = readConfigRow(projectKey(projectDir));
+  const extra = row ? parseJson(row.extra, {}) : {};
+  return extra.guardrails;
+}
+
+/**
+ * EFFECTIVE 5-key guardrail settings for a project — presets resolved from the
+ * code table, custom from storage, unset ⇒ empty policy. Never throws.
+ * This is the enforcement read: orchestrator/workspace-scan consume it.
+ * @param {string} projectDir
+ */
+export async function readGuardrails(projectDir) {
+  return resolveGuardrails(readGuardrailsBlob(projectDir));
+}
+
+/**
+ * Stored shape + effective settings, for the API/UI:
+ * { level, custom|null, effective }.
+ * @param {string} projectDir
+ */
+export async function readGuardrailsConfig(projectDir) {
+  const blob = readGuardrailsBlob(projectDir);
+  const cfg = sanitizeGuardrailsConfig(blob);
+  return { level: cfg.level, custom: cfg.custom, effective: resolveGuardrails(blob) };
+}
+
+/**
+ * Persist { level, custom? }. Strict-validates (throws on invalid — the API's
+ * 400). `custom` is replaced WHOLESALE when provided and kept dormant when not
+ * (persist-alongside: choosing a preset never erases custom edits; switching
+ * back to Custom restores them). Preserves every OTHER extra key (webUiTesting
+ * etc.). Returns the updated { level, custom, effective }.
+ * @param {string} projectDir
+ * @param {{level: string, custom?: object|null}} next
+ */
+export async function setGuardrails(projectDir, next) {
+  const key = projectKey(projectDir);
+  const stored = sanitizeGuardrailsConfig(readGuardrailsBlob(projectDir));
+  const v = validateGuardrailsConfig(next, { hasStoredCustom: !!stored.custom });
+  if (!v.ok) throw new Error(v.errors.join('; '));
+  const cleanNext = sanitizeGuardrailsConfig({ level: next.level, custom: next.custom ?? undefined });
+  const record = {
+    level: cleanNext.level,
+    custom: cleanNext.custom ?? stored.custom,   // persist-alongside
+  };
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = parseJson(row?.extra, {});
+    extra.guardrails = record;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return readGuardrailsConfig(projectDir);
 }
