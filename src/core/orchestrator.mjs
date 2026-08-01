@@ -64,7 +64,8 @@ import {
   probeClaudeCapabilities,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels } from './config.mjs';
+import { resolveStepModels, readGuardrails } from './config.mjs';
+import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
@@ -237,6 +238,12 @@ class Orchestrator extends EventEmitter {
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
+    // Guardrails: resolved by _resolveGuardrails() from run() AND resume(); null
+    // until then, so dispatcher tests that bypass run() get claudeOpts without
+    // the fields (legacy parity).
+    this.guardrails = null;
+    this.guardrailPermissionRules = null;
+    this.guardrailHonorByKey = null;
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
@@ -462,6 +469,7 @@ class Orchestrator extends EventEmitter {
       this.toolInstruction = tools.instruction || '';
       this.state.tools = tools;
       this.stepModels = stepModels;
+      await this._resolveGuardrails();
       this._log(
         'preflight',
         'info',
@@ -745,6 +753,7 @@ class Orchestrator extends EventEmitter {
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
+      await this._resolveGuardrails();
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
       // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
@@ -1064,6 +1073,26 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Resolve the EFFECTIVE guardrails for this run: read each member's effective
+   * settings (single project => the one synthesized member), capture the
+   * per-member honor map for the §8.19 lift, then take the deny-safe union.
+   * Called from run() AND resume() — resume re-reads current config, so a run
+   * resumed after a guardrails edit enforces the latest saved policy.
+   */
+  async _resolveGuardrails() {
+    const effective = await Promise.all(this.members.map((m) => readGuardrails(m.projectDir)));
+    // Honor is per member, NEVER the union: unionGuardrails' honorProjectSettings
+    // is an any-true some(), so gating on it would let one unconfigured member
+    // (default true) force-lift a member that explicitly saved false. The union's
+    // field stays in the shape as advisory only.
+    this.guardrailHonorByKey = new Map(
+      this.members.map((m, i) => [m.projectKey, effective[i].honorProjectSettings !== false]),
+    );
+    this.guardrails = unionGuardrails(effective);
+    this.guardrailPermissionRules = guardrailsToPermissionRules(this.guardrails);
+  }
+
+  /**
    * §5.2 step 7 / §6 Phase 3: assemble the run context at the run root and wire its
    * outputs into every consumer. Called from run() (after the skills gate, with the
    * HOISTED resolutions) and from resume() (with the resolutions persisted in
@@ -1102,8 +1131,27 @@ class Orchestrator extends EventEmitter {
       requiredSkillResolutions: resolvedSkills,           // possibly empty — a valid, common input
       graphInstructions: this.toolInstructions,
       homeDir: homedir(),
+      honorByKey: this.guardrailHonorByKey,
     });
     this.runContext = rc;
+    if (rc?.projectPermissions) {
+      this.guardrailPermissionRules = mergePermissionRules(this.guardrailPermissionRules, rc.projectPermissions);
+    }
+    // Audit (spec bullet): the resolved effective policy, compact, into run.json.
+    // Written HERE because runRoot exists only on detached runs and this is the
+    // one site where this.guardrails and the FINAL (post-lift) rule set are both
+    // in scope on run() AND resume(). updateRunManifest merges the patch
+    // (run-manifest.mjs:79-82), and a resume re-writes the same values
+    // idempotently. denyCount includes the lifted repo deny rules, whose exact
+    // list Task 6 already persisted as run.json.projectPermissions. Legacy runs
+    // have no run.json, so no audit record — run.json is a detached-run artifact.
+    await updateRunManifest(this.runRoot, {
+      guardrails: {
+        envScrub: !!this.guardrails?.envScrub,
+        denyCount: this.guardrailPermissionRules?.deny?.length || 0,
+        protectedCount: this.guardrails?.protectedPaths?.length || 0,
+      },
+    });
     this.injectedPaths = rc.injectedPaths;                // feeds _excludePathspecs / teardown / rescue (§8.8)
     this.mcpConfigPath = rc.mcpConfigPath;
     // V1-gated (§4.1 outcome table). Branch (a) PASSED on this CLI (server wildcard),
@@ -2482,6 +2530,9 @@ class Orchestrator extends EventEmitter {
         permissionMode: this.claude.permissionMode,
         model: step.model || this.claude.model, // per-role, falling back to global
         effort: step.effort,                     // per-role effort (undefined when unset)
+        permissionRules: this.guardrailPermissionRules || undefined,
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
         mock: this.claude.mock,
       },
     };
@@ -2560,6 +2611,9 @@ class Orchestrator extends EventEmitter {
         permissionMode: this.claude.permissionMode,
         model: node.model || this.claude.model, // per-node, falling back to global
         effort: node.effort,                     // per-node effort (undefined when unset)
+        permissionRules: this.guardrailPermissionRules || undefined,
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
         mock: this.claude.mock,
       },
     };
@@ -3370,6 +3424,11 @@ class Orchestrator extends EventEmitter {
         // _setupRunRoot() so runCwd is populated here.
         cwd: this.runCwd ?? this.projectDir,
         signal: this.abort.signal,
+        // Title generation is the one claude process a RUN spawns outside runOpts,
+        // so it honors the same env policy as the pipeline nodes. Both undefined
+        // on an unconfigured project ⇒ byte-identical spawn env (legacy parity).
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
       }))
       .then((real) => {
         if (!real || real === this.state.title) return;     // empty / unchanged → keep provisional
