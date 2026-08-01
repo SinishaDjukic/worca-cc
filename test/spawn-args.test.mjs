@@ -270,3 +270,74 @@ test('runClaude mock path is unaffected by permissionRules (no spawn, no error)'
   });
   assert.equal(r.exitCode, 0);
 });
+
+// ── guardrails: env scrub ────────────────────────────────────────────────────
+import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
+
+/** A fake `claude` that dumps its own environment (KEY=VALUE lines) to a file. */
+async function fakeEnvBin(dir, outFile) {
+  const bin = join(dir, 'fake-claude-env.sh');
+  await writeFile(bin, '#!/bin/sh\nenv > ' + JSON.stringify(outFile) + '\nexit 0\n', 'utf8');
+  await chmod(bin, 0o755);
+  return bin;
+}
+
+test('buildSpawnEnv: scrub off -> undefined (spawn inherits, byte-identical to today)', () => {
+  assert.equal(buildSpawnEnv(false, []), undefined);
+  assert.equal(buildSpawnEnv(undefined, undefined), undefined);
+});
+
+test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only, marker set', () => {
+  const prev = { AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY, NPM_TOKEN: process.env.NPM_TOKEN, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  process.env.AWS_SECRET_ACCESS_KEY = 'leak-me';
+  process.env.NPM_TOKEN = 'npm-secret';
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+  try {
+    const env = buildSpawnEnv(true, ['NPM_TOKEN']);
+    assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined, 'cloud creds are scrubbed');
+    assert.equal(env.NPM_TOKEN, 'npm-secret', 'allowlisted var passes through');
+    assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test', 'claude auth survives');
+    assert.equal(env.PATH, process.env.PATH, 'base PATH survives');
+    assert.equal(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1', 'subprocess scrub marker set');
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate guard)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'env.txt');
+  const bin = await fakeEnvBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TEST_LEAK;
+  delete process.env.WORCA_MOCK;
+  process.env.WORCA_TEST_LEAK = 'should-not-appear';
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', envScrub: true, envAllowlist: [] });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TEST_LEAK; else process.env.WORCA_TEST_LEAK = prevLeak;
+  }
+  const envDump = await readFile(out, 'utf8');
+  assert.ok(!envDump.includes('WORCA_TEST_LEAK'), 'scrubbed var must not reach the child');
+  assert.ok(envDump.includes('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1'));
+});
+
+test('runClaude with envScrub off inherits the parent env (legacy parity)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'env.txt');
+  const bin = await fakeEnvBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TEST_LEAK;
+  delete process.env.WORCA_MOCK;
+  process.env.WORCA_TEST_LEAK = 'inherited';
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p' });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TEST_LEAK; else process.env.WORCA_TEST_LEAK = prevLeak;
+  }
+  assert.ok((await readFile(out, 'utf8')).includes('WORCA_TEST_LEAK=inherited'));
+});

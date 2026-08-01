@@ -118,6 +118,55 @@ export function buildHookArgs() {
   return buildSettingsArgs(null);
 }
 
+// Base env a headless claude needs to function at all; everything else is
+// withheld under scrub. ANTHROPIC_*/CLAUDE_* prefixes carry the CLI's own auth
+// and configuration and MUST survive, or every scrubbed run would fail auth.
+// The proxy / CA vars are CONNECTIVITY config, not secrets: without them a
+// scrubbed run behind a TLS-intercepting corporate proxy fails TLS on every
+// spawn (the 2.1.220 binary reads all of them). Cloud-provider creds
+// (AWS_*/GOOGLE_APPLICATION_CREDENTIALS/AZURE_*) are intentionally NOT here —
+// a Bedrock/Vertex/Foundry deployment allowlists them per-project (documented).
+const SPAWN_ENV_BASE = [
+  'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+];
+
+/**
+ * The spawn env under guardrails. undefined when scrub is off — spawn() then
+ * inherits process.env exactly as today. When on: base vars + every `ANTHROPIC_`-
+ * and `CLAUDE_`-prefixed var + the per-project allowlist, plus
+ * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1. (Do not rewrite those prefixes with a `*`
+ * glob here — the resulting `*` + `/` would terminate this comment block.)
+ *
+ * That last var is NOT a stable contract and is not merely cosmetic. Verified by
+ * inspecting the installed 2.1.220 binary: it parses the value as a boolean
+ * ("1"/"true"/"yes"/"on") and latches it process-wide; when truthy the CLI ALSO
+ * (a) forces its permission mode to "default", overriding our
+ * `--permission-mode acceptEdits` (it prints a stderr notice saying to declare
+ * allowedTools explicitly, which runReal already does), (b) forces the sandbox
+ * filesystem mode to "strict" and disables auto-allow-bash-if-sandboxed, and
+ * (c) takes conservative paths in its bash-command analyzer. `=0` opts out.
+ * Treat any of this as build-specific and re-verify before relying on it.
+ *
+ * @param {boolean|undefined} envScrub
+ * @param {string[]|undefined} envAllowlist
+ * @returns {Record<string,string>|undefined}
+ */
+export function buildSpawnEnv(envScrub, envAllowlist) {
+  if (!envScrub) return undefined;
+  const allow = new Set(Array.isArray(envAllowlist) ? envAllowlist : []);
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (SPAWN_ENV_BASE.includes(k) || k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_') || allow.has(k)) {
+      env[k] = v;
+    }
+  }
+  env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1';
+  return env;
+}
+
 /**
  * Whether mock mode is active. Driven by WORCA_MOCK or an explicit opts.mock
  * passed through by the orchestrator (handled by caller mapping mock->env or
@@ -150,6 +199,9 @@ function mockEnabled(opts) {
  * @param {string[]} [o.mcpServerGrants] §5.3 `mcp__<server>` grants unioned into --allowedTools
  * @param {{deny?:string[],allow?:string[],ask?:string[]}} [o.permissionRules] guardrail permission
  *   rules merged into the single `--settings` payload (absent => argv unchanged)
+ * @param {boolean} [o.envScrub]         guardrail: spawn with a minimal env instead of
+ *   inheriting process.env (absent/false => spawn inherits, today's behavior)
+ * @param {string[]} [o.envAllowlist]    guardrail: extra env var names to keep under scrub
  * @param {string[]} [o.workspaceWriteTargets] §8.10 MOCK-ONLY member checkouts the mock
  *   implementer writes into instead of `cwd` (empty/absent => today's cwd behavior).
  *   Never reaches argv: `runReal` ignores it by construction.
@@ -174,6 +226,8 @@ export async function runClaude(o = {}) {
     mcpConfigPath,
     mcpServerGrants,
     permissionRules,
+    envScrub,
+    envAllowlist,
     workspaceWriteTargets,
     resumeSessionId,
     bin = DEFAULT_BIN,
@@ -208,6 +262,8 @@ export async function runClaude(o = {}) {
     mcpConfigPath,
     mcpServerGrants,
     permissionRules,
+    envScrub,
+    envAllowlist,
   });
 }
 
@@ -261,16 +317,20 @@ export function buildClaudeArgs({
   return args;
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist }) {
   return new Promise((resolveP, rejectP) => {
     const args = buildClaudeArgs({
       prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
       mcpConfigPath, mcpServerGrants, permissionRules,
     });
 
+    // undefined when the guardrail is off, and the spread then adds NO `env` key —
+    // spawn inherits process.env exactly as it did before guardrails existed.
+    const spawnEnv = buildSpawnEnv(envScrub, envAllowlist);
+
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}) });
     } catch (err) {
       rejectP(new Error(`Failed to spawn ${bin}: ${err.message}`));
       return;

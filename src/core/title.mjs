@@ -27,7 +27,7 @@ export function sanitizeTitle(raw) {
  * Produce a concise LLM title for a prompt. Never throws — returns '' on any
  * failure/abort/empty input so the caller keeps the provisional title.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[]}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
@@ -43,6 +43,12 @@ export async function generateTitle(prompt, opts = {}) {
       permissionMode: 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
+      // Title generation runs DURING a pipeline run, so it must honor the same
+      // guardrails as the run itself. All three are undefined when absent, and
+      // runClaude treats undefined as "not passed" — existing callers are unchanged.
+      bin: opts.bin,
+      envScrub: opts.envScrub,
+      envAllowlist: opts.envAllowlist,
       onEvent: () => {},
     });
     return sanitizeTitle(out);
