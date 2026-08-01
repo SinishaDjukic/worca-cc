@@ -34,7 +34,9 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
+  setGuardrails, readGuardrailsConfig,
 } from '../src/core/config.mjs';
+import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS } from '../src/core/guardrails.mjs';
 import {
   DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
 } from '../src/core/workflows.mjs';
@@ -1695,7 +1697,10 @@ app.get('/api/config', async (req, res) => {
   // project-less response carries only the predefined Opus/Sonnet/Haiku set.
   if (raw == null || raw === '') {
     const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-    return res.json({ config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS });
+    return res.json({
+      config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS,
+      guardrailPresets: GUARDRAIL_PRESETS, guardrailLevels: GUARDRAIL_LEVELS,
+    });
   }
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -1704,8 +1709,16 @@ app.get('/api/config', async (req, res) => {
     // PLUS the run-config workflows{} (node model/effort, feedback cycles) and
     // activeWorkflowId. It is a superset of readConfig, so the client keeps using
     // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
-    const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
-    res.json({ config, models, steps: agentSteps(), efforts: EFFORTS });
+    // readRunConfig forwards the RAW stored guardrails blob; overwrite it with the
+    // normalized {level, custom, effective} shape so clients never parse legacy blobs.
+    const [config, models, guardrails] = await Promise.all([
+      readRunConfig(projectDir), listModels(projectDir), readGuardrailsConfig(projectDir),
+    ]);
+    config.guardrails = guardrails;
+    res.json({
+      config, models, steps: agentSteps(), efforts: EFFORTS,
+      guardrailPresets: GUARDRAIL_PRESETS, guardrailLevels: GUARDRAIL_LEVELS,
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1798,6 +1811,22 @@ app.delete('/api/config/models', async (req, res) => {
     res.json({ config, models: await listModels(projectDir) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/config/guardrails -> persist a project's guardrails {level, custom?}.
+// Validation lives in config.mjs/guardrails.mjs; invalid payloads throw -> 400,
+// mirroring the other /api/config writers. resolveProjectDir keeps the row key
+// consistent with GET (raw trimming could key a different row for symlinks).
+app.post('/api/config/guardrails', async (req, res) => {
+  const projectDir = resolveProjectDir(req.body?.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const guardrails = await setGuardrails(projectDir, req.body?.guardrails || {});
+    res.json({ guardrails });
+  } catch (err) {
+    // Match the sibling config writers' error spelling (ui/server.mjs:1730/:1774/:1787).
+    badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 
