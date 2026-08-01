@@ -287,7 +287,7 @@ test('buildSpawnEnv: scrub off -> undefined (spawn inherits, byte-identical to t
   assert.equal(buildSpawnEnv(undefined, undefined), undefined);
 });
 
-test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only, marker set', () => {
+test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', () => {
   const prev = { AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY, NPM_TOKEN: process.env.NPM_TOKEN, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
   process.env.AWS_SECRET_ACCESS_KEY = 'leak-me';
   process.env.NPM_TOKEN = 'npm-secret';
@@ -298,7 +298,6 @@ test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only, m
     assert.equal(env.NPM_TOKEN, 'npm-secret', 'allowlisted var passes through');
     assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test', 'claude auth survives');
     assert.equal(env.PATH, process.env.PATH, 'base PATH survives');
-    assert.equal(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1', 'subprocess scrub marker set');
   } finally {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
@@ -322,7 +321,7 @@ test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate gu
   }
   const envDump = await readFile(out, 'utf8');
   assert.ok(!envDump.includes('WORCA_TEST_LEAK'), 'scrubbed var must not reach the child');
-  assert.ok(envDump.includes('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1'));
+  assert.ok(envDump.includes('PATH='), 'the child still got a usable base env');
 });
 
 test('runClaude with envScrub off inherits the parent env (legacy parity)', async () => {

@@ -135,19 +135,14 @@ const SPAWN_ENV_BASE = [
 /**
  * The spawn env under guardrails. undefined when scrub is off — spawn() then
  * inherits process.env exactly as today. When on: base vars + every `ANTHROPIC_`-
- * and `CLAUDE_`-prefixed var + the per-project allowlist, plus
- * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1. (Do not rewrite those prefixes with a `*`
- * glob here — the resulting `*` + `/` would terminate this comment block.)
+ * and `CLAUDE_`-prefixed var + the per-project allowlist. (Do not rewrite those
+ * prefixes with a `*` glob here — the resulting `*` + `/` would end this comment.)
  *
- * That last var is NOT a stable contract and is not merely cosmetic. Verified by
- * inspecting the installed 2.1.220 binary: it parses the value as a boolean
- * ("1"/"true"/"yes"/"on") and latches it process-wide; when truthy the CLI ALSO
- * (a) forces its permission mode to "default", overriding our
- * `--permission-mode acceptEdits` (it prints a stderr notice saying to declare
- * allowedTools explicitly, which runReal already does), (b) forces the sandbox
- * filesystem mode to "strict" and disables auto-allow-bash-if-sandboxed, and
- * (c) takes conservative paths in its bash-command analyzer. `=0` opts out.
- * Treat any of this as build-specific and re-verify before relying on it.
+ * We deliberately do NOT set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB. On CLI 2.1.220
+ * (live-verified 2026-08-01) a truthy value forces the permission mode to
+ * "default", overriding our `--permission-mode acceptEdits` (and, per static
+ * analysis, forces a strict sandbox) — which would break scrubbed pipeline runs.
+ * Do not reinstate it without re-verifying against the installed CLI.
  *
  * @param {boolean|undefined} envScrub
  * @param {string[]|undefined} envAllowlist
@@ -163,7 +158,6 @@ export function buildSpawnEnv(envScrub, envAllowlist) {
       env[k] = v;
     }
   }
-  env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1';
   return env;
 }
 
