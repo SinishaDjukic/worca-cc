@@ -191,3 +191,51 @@ test('runClaude without the two new fields spawns the SAME argv as before (legac
     '--allowedTools', 'Read,Bash',
   ]);
 });
+
+// ── guardrails: permissionRules -> ONE --settings payload ────────────────────
+import { buildSettingsArgs, buildHookSettings } from '../src/core/claude-runner.mjs';
+
+test('buildClaudeArgs: permissionRules emit a single --settings with permissions', () => {
+  const args = buildClaudeArgs({
+    ...BASE, allowedTools: ['Read'],
+    permissionRules: { deny: ['Read(.env*)', 'Bash(curl:*)'] },
+  });
+  const i = args.indexOf('--settings');
+  assert.ok(i > -1, `--settings present: ${JSON.stringify(args)}`);
+  assert.equal(args.indexOf('--settings', i + 1), -1, 'exactly ONE --settings flag');
+  const settings = JSON.parse(args[i + 1]);
+  assert.deepEqual(settings.permissions, { deny: ['Read(.env*)', 'Bash(curl:*)'] });
+  assert.ok(!('hooks' in settings), 'no hook settings when WORCA_SUBAGENT_HOOKS is off');
+});
+
+test('buildClaudeArgs: permissionRules absent/null/empty -> argv byte-identical to today', () => {
+  for (const extra of [{}, { permissionRules: null }, { permissionRules: undefined }, { permissionRules: { deny: [] } }]) {
+    const args = buildClaudeArgs({ ...BASE, allowedTools: ['Read', 'Bash'], ...extra });
+    assert.deepEqual(args, [
+      '-p', 'p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+      '--allowedTools', 'Read,Bash',
+    ]);
+  }
+});
+
+test('buildSettingsArgs: telemetry hooks + permissions merge into ONE --settings json', () => {
+  const prev = process.env.WORCA_SUBAGENT_HOOKS;
+  process.env.WORCA_SUBAGENT_HOOKS = '1';
+  try {
+    const args = buildSettingsArgs({ deny: ['Bash(curl:*)'] });
+    assert.equal(args[0], '--include-hook-events');
+    assert.equal(args[1], '--settings');
+    assert.equal(args.length, 3);
+    const settings = JSON.parse(args[2]);
+    assert.deepEqual(settings.permissions, { deny: ['Bash(curl:*)'] });
+    assert.ok(settings.hooks?.PostToolUse, 'hook settings preserved in the SAME payload');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_SUBAGENT_HOOKS;
+    else process.env.WORCA_SUBAGENT_HOOKS = prev;
+  }
+});
+
+test('buildSettingsArgs: hooks off + no rules -> [] (baseline untouched)', () => {
+  assert.deepEqual(buildSettingsArgs(null), []);
+  assert.equal(buildHookSettings(), null);
+});

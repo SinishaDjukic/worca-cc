@@ -84,12 +84,38 @@ export function subagentHooksEnabled() {
  * the surfaced stream-json event, NOT the hook command's stdout. `--bare`-proof
  * (inline settings need no settings file).
  */
-export function buildHookArgs() {
-  if (!subagentHooksEnabled()) return [];
-  const settings = JSON.stringify({
+/** The telemetry hook-settings OBJECT (see subagentHooksEnabled). null when off. */
+export function buildHookSettings() {
+  if (!subagentHooksEnabled()) return null;
+  return {
     hooks: { PostToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'true', async: true }] }] },
-  });
-  return ['--include-hook-events', '--settings', settings];
+  };
+}
+
+/**
+ * The ONE --settings seam. Telemetry hook settings (gated, default off) and the
+ * guardrails `permissions` rules merge into a SINGLE inline JSON — two --settings
+ * flags would be last-wins at the CLI, silently dropping one payload.
+ * [] when there is nothing to say, so the baseline argv is byte-identical.
+ * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
+ * @returns {string[]}
+ */
+export function buildSettingsArgs(permissionRules) {
+  const hook = buildHookSettings();
+  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  if (!hook && !hasRules) return [];
+  const settings = {};
+  if (hook) settings.hooks = hook.hooks;
+  if (hasRules) settings.permissions = permissionRules;
+  const args = [];
+  if (hook) args.push('--include-hook-events');
+  args.push('--settings', JSON.stringify(settings));
+  return args;
+}
+
+/** Back-compat alias for the pre-guardrails name (telemetry-only payload). */
+export function buildHookArgs() {
+  return buildSettingsArgs(null);
 }
 
 /**
@@ -203,7 +229,7 @@ export async function runClaude(o = {}) {
  *  all (E2) and no shipped feature uses it (§5.3 / §8.18). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
-  mcpConfigPath, mcpServerGrants,
+  mcpConfigPath, mcpServerGrants, permissionRules,
 }) {
   const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
   if (resumeSessionId) args.push('--resume', resumeSessionId);
@@ -214,10 +240,12 @@ export function buildClaudeArgs({
     args.push('--model', model);
   }
   for (const a of buildEffortArgs(effort)) args.push(a);
-  // Gated, default-off per-sub-agent telemetry (WORCA_SUBAGENT_HOOKS). [] when
-  // off, so the baseline argv is unchanged; a CLI that rejects these flags would
-  // only ever fail when the operator opted in.
-  for (const a of buildHookArgs()) args.push(a);
+  // The ONE --settings seam: gated, default-off per-sub-agent telemetry
+  // (WORCA_SUBAGENT_HOOKS) and the guardrails `permissions` rules merge into a
+  // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
+  // there is neither, so the baseline argv is unchanged; a CLI that rejects these
+  // flags would only ever fail when the operator opted in.
+  for (const a of buildSettingsArgs(permissionRules)) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
