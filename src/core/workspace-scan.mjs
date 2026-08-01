@@ -33,12 +33,35 @@ import {
 } from './worktree.mjs';
 import { runWorkspaceScan } from './phases.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
+import { readGuardrails } from './config.mjs';
+import { unionGuardrails, guardrailsToPermissionRules } from './guardrails.mjs';
 
 // The scanning agent's name in the prompt-role/registry sense (drives the .md body
 // it loads; the MOCK_ROLE marker differs — workspace-scan — and is set inside
 // runWorkspaceScan, C3). The off-pipeline scanner body is NOT loaded by the
 // orchestrator (it is the dispatcher's job), so the engine loads it itself.
 const SCANNER_AGENT_FILE = 'worca-cc-workspace-scanner.md';
+
+/**
+ * Union the member projects' EFFECTIVE guardrails for the scanner spawn
+ * (deny-safe: ANY member's restrictions apply to the whole scan, since the one
+ * scanning agent reads across every member). All fields are `undefined` when the
+ * union is empty, so an all-permissive workspace spawns exactly as it did before.
+ * NOTE (settings asymmetry): the scanner's cwd is the PRIMARY member's real
+ * checkout, so only THAT repo's committed .claude/settings.json loads natively;
+ * this helper adds no repo-settings lift — guardrail denies still apply to all.
+ * @param {string[]} memberDirs
+ * @returns {Promise<{permissionRules?: object, envScrub?: boolean, envAllowlist?: string[]}>}
+ */
+export async function resolveScanGuardrails(memberDirs) {
+  const gs = await Promise.all((memberDirs || []).map((d) => readGuardrails(d)));
+  const g = unionGuardrails(gs);
+  return {
+    permissionRules: guardrailsToPermissionRules(g) || undefined,
+    envScrub: g.envScrub || undefined,
+    envAllowlist: g.envScrub ? g.envAllowlist : undefined,
+  };
+}
 
 /**
  * @param {object} opts
@@ -278,6 +301,9 @@ class WorkspaceScan extends EventEmitter {
    */
   async _runScanningAgent() {
     const agentBody = await this._loadScannerBody();
+    // Deny-safe union of EVERY member's guardrails — the scanner reads across all
+    // of them from one spawn, so the strictest member's policy governs the scan.
+    const scanGuardrails = await resolveScanGuardrails(this.projects.map((p) => p.projectDir));
     const ctx = {
       // The scanner runs from the primary member's dir; investigators get each
       // member's absolute path from the task prompt runWorkspaceScan builds.
@@ -303,6 +329,7 @@ class WorkspaceScan extends EventEmitter {
         model: this.claude.model,
         bin: this.claude.bin,
         mock: this.claude.mock,
+        ...scanGuardrails,
       },
       signal: this.abort.signal,
       onEvent: (e) => this._onAgentEvent(e),
