@@ -34,9 +34,8 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
-  setGuardrails, readGuardrailsConfig,
 } from '../src/core/config.mjs';
-import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS, validateGuardrails } from '../src/core/guardrails.mjs';
+import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
@@ -1721,7 +1720,6 @@ app.get('/api/config', async (req, res) => {
     const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
     return res.json({
       config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS,
-      guardrailPresets: GUARDRAIL_PRESETS, guardrailLevels: GUARDRAIL_LEVELS,
     });
   }
   const projectDir = resolveProjectDir(raw);
@@ -1731,15 +1729,15 @@ app.get('/api/config', async (req, res) => {
     // PLUS the run-config workflows{} (node model/effort, feedback cycles) and
     // activeWorkflowId. It is a superset of readConfig, so the client keeps using
     // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
-    // readRunConfig forwards the RAW stored guardrails blob; overwrite it with the
-    // normalized {level, custom, effective} shape so clients never parse legacy blobs.
-    const [config, models, guardrails] = await Promise.all([
-      readRunConfig(projectDir), listModels(projectDir), readGuardrailsConfig(projectDir),
+    // NOTE: readRunConfig forwards unknown extra keys verbatim — a project
+    // configured under the REMOVED per-project guardrails model may still show
+    // its raw legacy blob under config.guardrails. It is inert: nothing
+    // interprets it (guardrails are selected per run via /api/guardrails).
+    const [config, models] = await Promise.all([
+      readRunConfig(projectDir), listModels(projectDir),
     ]);
-    config.guardrails = guardrails;
     res.json({
       config, models, steps: agentSteps(), efforts: EFFORTS,
-      guardrailPresets: GUARDRAIL_PRESETS, guardrailLevels: GUARDRAIL_LEVELS,
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -1759,10 +1757,6 @@ app.post('/api/config', async (req, res) => {
     // to their whole config state — echoing the narrow view dropped workflows/
     // activeWorkflowId and made saved node models paint as unconfigured.
     const config = await readRunConfig(projectDir);
-    // Same normalization as GET /api/config: readRunConfig forwards the RAW
-    // stored guardrails blob, and clients assign this response to their whole
-    // config state — echoing the raw shape would clobber {level,custom,effective}.
-    config.guardrails = await readGuardrailsConfig(projectDir);
     res.json({ config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.
@@ -1806,8 +1800,6 @@ app.patch('/api/config', async (req, res) => {
       await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
     }
     const config = await readRunConfig(projectDir);
-    // Same normalization as GET /api/config (raw stored blob -> {level,custom,effective}).
-    config.guardrails = await readGuardrailsConfig(projectDir);
     res.json({ config });
   } catch (err) {
     // The config.mjs setters throw only on validation (unknown model/effort,
@@ -1839,22 +1831,6 @@ app.delete('/api/config/models', async (req, res) => {
     res.json({ config, models: await listModels(projectDir) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  }
-});
-
-// POST /api/config/guardrails -> persist a project's guardrails {level, custom?}.
-// Validation lives in config.mjs/guardrails.mjs; invalid payloads throw -> 400,
-// mirroring the other /api/config writers. resolveProjectDir keeps the row key
-// consistent with GET (raw trimming could key a different row for symlinks).
-app.post('/api/config/guardrails', async (req, res) => {
-  const projectDir = resolveProjectDir(req.body?.projectDir);
-  if (!projectDir) return badRequest(res, 'projectDir is required');
-  try {
-    const guardrails = await setGuardrails(projectDir, req.body?.guardrails || {});
-    res.json({ guardrails });
-  } catch (err) {
-    // Match the sibling /api/config writers' error spelling.
-    badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 

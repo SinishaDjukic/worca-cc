@@ -37,13 +37,7 @@ test('GET /api/config returns predefined models + empty config + step defs', asy
   const r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(j.config, {
-    steps: {}, customModels: [], workflows: {},
-    guardrails: {
-      level: 'permissive', custom: null,
-      effective: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] },
-    },
-  });
+  assert.deepEqual(j.config, { steps: {}, customModels: [], workflows: {} });
   assert.ok(j.models.some((m) => m.id === 'claude-opus-4-8'));
   assert.ok(j.steps.some((s) => s.key === 'planner'));
   assert.ok(j.efforts.includes('xhigh'));
@@ -161,66 +155,4 @@ test('POST /api/config responds with the FULL run-config shape (workflows layer,
   const { config } = await r.json();
   assert.ok(config.workflows && typeof config.workflows === 'object', 'run-config workflows layer present');
   assert.equal(config.steps.refiner.model, 'claude-opus-4-8');
-  // ...and the SAME normalized guardrails shape GET returns — readRunConfig
-  // forwards the raw stored blob, which has no `effective` key.
-  assert.ok(config.guardrails?.effective, 'guardrails normalized like GET /api/config');
-  assert.equal(typeof config.guardrails.level, 'string');
-});
-
-test('GET /api/config carries guardrailPresets/levels in both branches and a normalized guardrails shape', async () => {
-  const bare = await (await fetch(`${base}/api/config`)).json();          // project-less branch
-  assert.ok(bare.guardrailPresets?.normal?.deny?.length > 0);
-  assert.deepEqual(bare.guardrailLevels, ['permissive', 'normal', 'secure', 'custom']);
-  const withProj = await (await fetch(`${base}/api/config?${q({ projectDir: proj })}`)).json();
-  assert.ok(withProj.guardrailPresets?.secure?.envScrub === true);
-  assert.deepEqual(withProj.config.guardrails, {
-    level: 'permissive', custom: null,
-    effective: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] },
-  });
-});
-
-test('POST /api/config/guardrails: preset level persists; GET reflects it', async () => {
-  const r = await fetch(`${base}/api/config/guardrails`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, guardrails: { level: 'normal' } }),
-  });
-  assert.equal(r.status, 200);
-  const { guardrails } = await r.json();
-  assert.equal(guardrails.level, 'normal');
-  assert.ok(guardrails.effective.deny.includes('Bash(git push)'));
-  const g = await (await fetch(`${base}/api/config?${q({ projectDir: proj })}`)).json();
-  assert.equal(g.config.guardrails.level, 'normal');
-});
-
-test('POST /api/config/guardrails: custom round-trip and dormant restore', async () => {
-  const custom = {
-    honorProjectSettings: true, envScrub: false, envAllowlist: [],
-    protectedPaths: ['*.sqlite'], deny: ['Bash(curl:*)'],
-  };
-  let r = await fetch(`${base}/api/config/guardrails`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, guardrails: { level: 'custom', custom } }),
-  });
-  assert.equal(r.status, 200);
-  assert.deepEqual((await r.json()).guardrails.effective, custom);
-  // switch to a preset (custom stays dormant), then back with NO payload
-  await fetch(`${base}/api/config/guardrails`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, guardrails: { level: 'secure' } }),
-  });
-  r = await fetch(`${base}/api/config/guardrails`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, guardrails: { level: 'custom' } }),
-  });
-  assert.equal(r.status, 200);
-  assert.deepEqual((await r.json()).guardrails.effective.protectedPaths, ['*.sqlite']);
-});
-
-test('POST /api/config/guardrails: 400s — bad level, bad rule, missing projectDir', async () => {
-  const post = (body) => fetch(`${base}/api/config/guardrails`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  });
-  assert.equal((await post({ projectDir: proj, guardrails: { level: 'paranoid' } })).status, 400);
-  assert.equal((await post({ projectDir: proj, guardrails: { level: 'custom', custom: { deny: ['rm -rf /'] } } })).status, 400);
-  assert.equal((await post({ guardrails: { level: 'normal' } })).status, 400);
 });

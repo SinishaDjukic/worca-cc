@@ -106,7 +106,7 @@ export function buildSettingsArgs(permissionRules) {
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
   // argv silently. Say it once, then take the same no-rules path (fail-open,
-  // matching readGuardrails) — the empty/absent cases ({}, {deny: []}, null)
+  // matching the guardrail-set read path) — the empty/absent cases ({}, {deny: []}, null)
   // are normal and stay quiet.
   if (!hasRules && permissionRules && typeof permissionRules === 'object'
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
