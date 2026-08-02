@@ -64,7 +64,8 @@ import {
   probeClaudeCapabilities,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, readGuardrails } from './config.mjs';
+import { resolveStepModels } from './config.mjs';
+import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
@@ -247,6 +248,11 @@ class Orchestrator extends EventEmitter {
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
+    // Which guardrail set governs this run (guardrails are selected PER RUN;
+    // there is no per-project guardrails dimension). 'permissive' = the empty
+    // policy = byte-identical legacy spawn, so callers that never pass the
+    // option (CLI, tests, pre-picker API bodies) keep today's behavior exactly.
+    this.guardrailsId = this.opts.guardrailsId || 'permissive';
     // Clarify needs orchestrator state (this._ask / this._writeClarifyAnswers), so it is a
     // bound runner rather than a pure runners.mjs entry. Put it first so opts.runners may
     // still override it in tests.
@@ -1073,22 +1079,34 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Resolve the EFFECTIVE guardrails for this run: read each member's effective
-   * settings (single project => the one synthesized member), capture the
-   * per-member honor map for the §8.19 lift, then take the deny-safe union.
-   * Called from run() AND resume() — resume re-reads current config, so a run
-   * resumed after a guardrails edit enforces the latest saved policy.
+   * Resolve THE run's guardrails: the per-run selected set (this.guardrailsId,
+   * default 'permissive') IS the policy — member project configs are NOT read
+   * (per-project guardrails were removed; one set applies uniformly to every
+   * member). Built-ins resolve from GUARDRAIL_PRESETS at read time; user sets
+   * from the store at read time. Called from run() AND resume() — resume
+   * re-reads the set by id, so a set edited while paused is enforced at its
+   * LATEST definition. A missing/deleted set fails OPEN to the Permissive
+   * (empty) policy with a loud warn — never an abort.
    */
   async _resolveGuardrails() {
-    const effective = await Promise.all(this.members.map((m) => readGuardrails(m.projectDir)));
-    // Honor is per member, NEVER the union: unionGuardrails' honorProjectSettings
-    // is an any-true some(), so gating on it would let one unconfigured member
-    // (default true) force-lift a member that explicitly saved false. The union's
-    // field stays in the shape as advisory only.
-    this.guardrailHonorByKey = new Map(
-      this.members.map((m, i) => [m.projectKey, effective[i].honorProjectSettings !== false]),
-    );
-    this.guardrails = unionGuardrails(effective);
+    let set = await readGuardrailSet(this.guardrailsId || 'permissive');
+    if (!set) {
+      this._log('guardrails', 'warn',
+        `guardrail set "${this.guardrailsId}" not found; running with the Permissive (empty) policy`);
+      set = await readGuardrailSet('permissive'); // virtual built-in: always resolves
+    }
+    // One UNIFORM honor value for every member: the run set's honorProjectSettings
+    // gates the per-member repo-settings deny lift. The map SHAPE is unchanged
+    // (run-context.mjs's honorByKey consumer is untouched); only its values are
+    // uniform now — there is no per-member saved preference anymore.
+    const honor = set.settings.honorProjectSettings !== false;
+    this.guardrailHonorByKey = new Map(this.members.map((m) => [m.projectKey, honor]));
+    // unionGuardrails over the ONE-element list keeps the tested normalization
+    // path (fresh arrays, de-dupe, a non-scrubbing set's dormant allowlist
+    // drops — enforcement gates allowlist on envScrub anyway): the run's set is
+    // the whole union. Its envAllowlist is NOT stripped — it IS the policy;
+    // there is no member policy to relax against.
+    this.guardrails = unionGuardrails([set.settings]);
     this.guardrailPermissionRules = guardrailsToPermissionRules(this.guardrails);
   }
 
@@ -1145,11 +1163,14 @@ class Orchestrator extends EventEmitter {
     // idempotently. denyCount includes the lifted repo deny rules, whose exact
     // list Task 6 already persisted as run.json.projectPermissions. Legacy runs
     // have no run.json, so no audit record — run.json is a detached-run artifact.
+    // guardrailsId names the selected set (id only — sets are mutable and resolve
+    // by reference, so this is not a content snapshot).
     await updateRunManifest(this.runRoot, {
       guardrails: {
         envScrub: !!this.guardrails?.envScrub,
         denyCount: this.guardrailPermissionRules?.deny?.length || 0,
         protectedCount: this.guardrails?.protectedPaths?.length || 0,
+        guardrailsId: this.guardrailsId,
       },
     });
     this.injectedPaths = rc.injectedPaths;                // feeds _excludePathspecs / teardown / rescue (§8.8)

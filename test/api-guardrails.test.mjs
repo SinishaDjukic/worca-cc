@@ -161,3 +161,36 @@ test('DELETE /api/guardrails/:id: built-in -> 400, unknown -> 404', async () => 
   assert.equal((await fetch(`${base}/api/guardrails/secure`, { method: 'DELETE' })).status, 400);
   assert.equal((await fetch(`${base}/api/guardrails/gr_missing`, { method: 'DELETE' })).status, 404);
 });
+
+test('POST /api/run rejects an unknown guardrailsId -> 400 (before the run starts)', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-grrun-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, guardrailsId: 'gr_nope' }),
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /unknown guardrailsId "gr_nope"/);
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('POST /api/run accepts a known guardrailsId (built-in id) -> 200 {runId}', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-grrun2-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, guardrailsId: 'secure' }),
+  });
+  assert.equal(r.status, 200);
+  assert.ok((await r.json()).runId, 'runId returned');
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+test('POST /api/run rejects a NON-STRING guardrailsId -> 400 (never a silent policy drop)', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-grrun3-'));
+  const r = await fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, guardrailsId: 123 }),
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /guardrailsId must be a string/);
+  await rm(projectDir, { recursive: true, force: true });
+});

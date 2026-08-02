@@ -682,6 +682,22 @@ app.post('/api/run', async (req, res) => {
       typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
     if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
 
+    // Optional guardrailsId selects the named guardrail set that IS this run's
+    // policy (applied uniformly to every member — guardrails are per-run only).
+    // Absent/blank/null normalizes to 'permissive' — the empty policy,
+    // byte-identical legacy spawn — so pre-picker API/CLI callers keep today's
+    // behavior. A NON-STRING value is a caller bug and 400s (normalizing it
+    // away would silently drop the requested policy). Unknown ids 400 up
+    // front, like workflowId.
+    if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
+      return badRequest(res, 'guardrailsId must be a string');
+    }
+    const guardrailsId =
+      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : 'permissive';
+    if (!(await readGuardrailSet(guardrailsId))) {
+      return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
+    }
+
     const runId = randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
@@ -760,6 +776,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
       });
@@ -806,6 +823,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
       });
