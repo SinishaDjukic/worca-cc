@@ -17,6 +17,8 @@ const state = {
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
+  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
@@ -119,6 +121,8 @@ const el = {
   pipelineConfig: $('#pipeline-config'),
   configError: $('#config-error'),
   workflowSelect: $('#workflowSelect'),
+  guardrailsSelect: $('#guardrailsSelect'),
+  guardrailsHint: $('#guardrailsHint'),
   wfDefaultStages: $('#wf-default-stages'),
   wfNodeConfig: $('#wf-node-config'),
   wfFeedbackConfig: $('#wf-feedback-config'),
@@ -1478,6 +1482,7 @@ async function loadConfig(projectDir) {
   // renderStepConfigs() internally for backward-compat.
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
+  await loadGuardrailsInto(state.guardrailsId);
 }
 
 // ---------------------------------------------------------------------------
@@ -2467,6 +2472,62 @@ async function loadWorkflowsInto(selectId) {
   await renderWorkflowConfig(state.workflowId);
 }
 
+// Returns the guardrail-set list, or null on failure — callers must distinguish
+// "server answered" (built-ins are always present) from "the list could not be
+// fetched" (null), or a transient failure silently rebuilds the dropdown to
+// Permissive-only and reroutes the next run's policy.
+async function listGuardrailsApi() {
+  try {
+    const res = await fetch('/api/guardrails');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+  } catch { return null; }
+}
+
+// Hint: the SELECTED set's summary (raw 5-key counts via guardrailSummary — the
+// run.json audit's denyCount additionally includes the Read/Edit expansion +
+// lifted repo rules, so the hint speaks in list counts, not audit numbers).
+function updateGuardrailsHint() {
+  if (!el.guardrailsHint) return;
+  const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
+  if (!sel || sel.id === 'permissive') {
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    return;
+  }
+  const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
+  el.guardrailsHint.textContent = `This run: ${guardrailSummary(sel.settings)} — applied uniformly${members}.`;
+}
+
+// Fill #guardrailsSelect with every named set (built-ins first — server order),
+// preserving the active selection (state.guardrailsId). Mirrors loadWorkflowsInto.
+async function loadGuardrailsInto(selectId) {
+  const sel = el.guardrailsSelect;
+  if (!sel) return;
+  const sets = await listGuardrailsApi();
+  if (sets === null) {
+    // List fetch failed: keep whatever the dropdown already shows (do NOT
+    // rebuild to Permissive-only — that would silently reroute the next run's
+    // policy) and note it non-blockingly in the log pane.
+    appendLog({ source: 'ui', level: 'error', text: 'guardrails: list failed', ts: Date.now() });
+    updateGuardrailsHint();
+    return;
+  }
+  const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
+  state.guardrailSets = list;
+  const want = selectId || state.guardrailsId || 'permissive';
+  sel.innerHTML = '';
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
+  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  // and SAY so via the form's message line: a vanished selection must never
+  // silently revert while the user believes it is still selected.
+  state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
+  if (want !== 'permissive' && state.guardrailsId === 'permissive') {
+    setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+  }
+  sel.value = state.guardrailsId;
+  updateGuardrailsHint();
+}
+
 // Render the config UI for one workflow. Default -> show the legacy 4 stage rows
 // and hide the dynamic containers. Saved -> fetch topology + registry, render a
 // node row per node and a cycle input per feedback.
@@ -2622,6 +2683,14 @@ if (el.workflowSelect) {
     state.workflowId = el.workflowSelect.value || 'wf_default';
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
+  });
+}
+
+// Guardrails change: remember the run's set and refresh the summary hint.
+if (el.guardrailsSelect) {
+  el.guardrailsSelect.addEventListener('change', () => {
+    state.guardrailsId = el.guardrailsSelect.value || 'permissive';
+    updateGuardrailsHint();
   });
 }
 
@@ -5636,6 +5705,11 @@ el.form.addEventListener('submit', async (e) => {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
+    // Omit-when-default: 'permissive' IS the server default, so the key is
+    // absent on default runs — byte-identical legacy request bodies. (The
+    // server normalizes omitted/''/null to 'permissive'; always-sending would
+    // be equivalent but would change every legacy-shaped request for no gain.)
+    guardrailsId: state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined,
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,

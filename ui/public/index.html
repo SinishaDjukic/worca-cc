@@ -234,6 +234,21 @@
                     </div>
                   </div>
 
+                  <!-- Guardrails picker (built-ins + named sets; the selection IS the
+                       run's policy, applied uniformly to every member). app.js populates
+                       from GET /api/guardrails. Sits OUTSIDE the target panes: applies
+                       to Project and Workspace targets alike. Default Permissive = no
+                       restrictions (legacy behavior). -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label for="guardrailsSelect">Guardrails</label>
+                    <div class="select-wrap">
+                      <select id="guardrailsSelect" class="select" aria-label="Guardrails">
+                        <option value="permissive">Permissive (default)</option>
+                      </select>
+                    </div>
+                    <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
+                  </div>
+
                   <!-- Default-workflow stages: Clarify + the original four rows, shown
                        when the Default workflow is selected (backward-compat). -->
                   <div id="wf-default-stages">
