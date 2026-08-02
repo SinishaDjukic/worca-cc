@@ -5003,226 +5003,6 @@ function updateProjectsCount() {
   if (el.navProjectsCount) el.navProjectsCount.textContent = String(state.projects.length);
 }
 
-// ---- Per-project guardrails panel (Projects view) ---------------------------
-// The list DOM is fully rebuilt on every render, so ALL panel state lives here,
-// keyed by project name, and buildProjectRow re-applies it.
-const grOpen = new Set();    // expanded rows
-const grState = new Map();   // name -> {presets, levels, saved:{level,settings}, draft:{level,settings}, loaded, error}
-
-const grClone = (o) => JSON.parse(JSON.stringify(o));
-
-function grDirty(st) {
-  if (!st || !st.loaded) return false;
-  if (st.draft.level !== st.saved.level) return true;
-  return st.draft.level === 'custom'
-    && JSON.stringify(st.draft.settings) !== JSON.stringify(st.saved.settings);
-}
-
-/** Which preset the draft settings equal (order-insensitive), or null. */
-function grDetectPreset(st, settings) {
-  const key = (g) => JSON.stringify({
-    honorProjectSettings: !!g.honorProjectSettings, envScrub: !!g.envScrub,
-    envAllowlist: [...new Set(g.envAllowlist || [])].sort(),
-    protectedPaths: [...new Set(g.protectedPaths || [])].sort(),
-    deny: [...new Set(g.deny || [])].sort(),
-  });
-  const k = key(settings);
-  for (const lvl of ['permissive', 'normal', 'secure']) {
-    if (st.presets[lvl] && key(st.presets[lvl]) === k) return lvl;
-  }
-  return null;
-}
-
-async function grLoad(p) {
-  const st = grState.get(p.name);
-  if (st?.loaded || st?.loading) return;
-  grState.set(p.name, { loading: true });
-  try {
-    const res = await fetch(`/api/config?projectDir=${encodeURIComponent(p.path)}`);
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    const g = data.config?.guardrails
-      || { level: 'permissive', custom: null, effective: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] } };
-    const saved = { level: g.level, settings: g.effective };
-    grState.set(p.name, {
-      presets: data.guardrailPresets || {}, levels: data.guardrailLevels || ['permissive', 'normal', 'secure', 'custom'],
-      storedCustom: g.custom, saved, draft: grClone(saved), loaded: true, error: '',
-    });
-  } catch (e) {
-    grState.set(p.name, { loaded: false, error: e.message });
-  }
-}
-
-function grToggleOpen(item, p) {
-  const opening = !grOpen.has(p.name);
-  if (opening) {
-    grOpen.add(p.name);
-    item.classList.add('open');
-    grRenderPanel(item, p);                 // paints "Loading…" until the fetch lands
-    grLoad(p).then(() => {
-      // Row nodes may have been rebuilt while the fetch was in flight — requery.
-      // Use the repo's cssEscape() helper, NOT bare CSS.escape:
-      // jsdom 29.1.1 provides no window.CSS, so bare `CSS.escape` throws
-      // ReferenceError under test and the panel never paints.
-      const cur = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`);
-      if (cur && grOpen.has(p.name)) grRenderPanel(cur, p);
-    });
-  } else {
-    grOpen.delete(p.name);
-    item.classList.remove('open');
-  }
-}
-
-const grEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-function grListHtml(cls, entries, placeholder) {
-  const rows = (entries || []).map((v) =>
-    `<div class="gr-row"><span class="mono">${grEsc(v)}</span><button type="button" class="gr-rm" data-value="${grEsc(v)}" title="Remove" aria-label="Remove">&#10005;</button></div>`
-  ).join('');
-  return `
-    <div class="gr-list ${cls}">${rows || '<div class="gr-empty">none</div>'}</div>
-    <div class="path-row gr-add" data-list="${cls}">
-      <input class="input" type="text" placeholder="${grEsc(placeholder)}" spellcheck="false" />
-      <button type="button" class="btn btn-ghost btn-mini gr-add-btn">+ add</button>
-    </div>`;
-}
-
-function grRenderPanel(item, p) {
-  const body = item.querySelector('.gr-body');
-  if (!body) return;
-  const st = grState.get(p.name);
-  if (!st || st.loading) { body.innerHTML = '<div class="gr-body-inner"><p class="hint">Loading guardrails…</p></div>'; return; }
-  if (!st.loaded) { body.innerHTML = `<div class="gr-body-inner"><p class="hint err">${grEsc(st.error || 'failed to load')}</p></div>`; return; }
-  const d = st.draft;
-  const segBtn = (lvl, label) =>
-    `<button type="button" data-preset="${lvl}" class="${d.level === lvl ? 'on' : ''}" aria-pressed="${d.level === lvl}">${label}</button>`;
-  const dirty = grDirty(st);
-  body.innerHTML = `
-  <div class="gr-body-inner">
-    <div class="field">
-      <label>Guardrails level</label>
-      <div class="seg gr-preset">
-        ${segBtn('permissive', 'Permissive')}${segBtn('normal', 'Normal')}${segBtn('secure', 'Secure++')}${segBtn('custom', 'Custom')}
-      </div>
-      <small class="hint">Normal is the recommended baseline. Editing any setting switches to Custom. In a workspace, every member's guardrails combine deny-safely — one Secure++ member hardens the whole run.</small>
-    </div>
-    <div class="switch-row" style="margin-bottom:6px">
-      <div class="switch gr-honor ${d.settings.honorProjectSettings ? 'on' : ''}" role="switch" aria-checked="${!!d.settings.honorProjectSettings}" tabindex="0"></div>
-      <span class="txt">Honor project <code>.claude/settings.json</code></span>
-    </div>
-    <small class="hint opt" style="display:block;margin:-2px 0 14px">On single-project runs the repo's settings load natively from the worktree — this toggle only gates whether they're lifted into a <em>workspace</em> run (per member), and only the <code>deny</code> rules are lifted.</small>
-    <div class="switch-row" style="margin-bottom:14px">
-      <div class="switch gr-scrub ${d.settings.envScrub ? 'on' : ''}" role="switch" aria-checked="${!!d.settings.envScrub}" tabindex="0"></div>
-      <span class="txt">Scrub environment on agent spawn</span>
-    </div>
-    <div class="field">
-      <label>Env allowlist <span class="opt">(passed through when scrub is on)</span></label>
-      ${grListHtml('gr-allow', d.settings.envAllowlist, 'NPM_TOKEN')}
-    </div>
-    <div class="field">
-      <label>Protected paths <span class="opt">(denies Read/Edit; secret-safety rests on Read — use relative, <code>**/</code>, or <code>~/</code> patterns, never a single leading <code>/</code>)</span></label>
-      ${grListHtml('gr-paths', d.settings.protectedPaths, '.env*   |   **/secrets/**')}
-    </div>
-    <div class="field">
-      <label>Deny rules <span class="opt">(pairs: Bash(git push) + Bash(git push:*))</span></label>
-      ${grListHtml('gr-deny', d.settings.deny, 'Bash(curl:*)')}
-    </div>
-    <p class="hint gr-msg${st.msgErr ? ' err' : ''}">${grEsc(st.msg || '')}</p>
-    <div class="actions" style="justify-content:flex-end;margin-top:14px">
-      <button type="button" class="btn btn-ghost btn-mini gr-discard" ${dirty ? '' : 'disabled'}>Discard</button>
-      <button type="button" class="btn btn-primary btn-mini gr-save" ${dirty ? '' : 'disabled'}>Save guardrails</button>
-    </div>
-  </div>`;
-}
-
-const GR_LIST_FIELDS = { 'gr-allow': 'envAllowlist', 'gr-paths': 'protectedPaths', 'gr-deny': 'deny' };
-
-function grRepaint(item, p) { grRenderPanel(item, p); }
-
-function grMutateSettings(item, p, fn) {
-  const st = grState.get(p.name);
-  if (!st?.loaded) return;
-  fn(st.draft.settings);
-  st.draft.level = grDetectPreset(st, st.draft.settings) ?? 'custom';
-  st.msg = ''; st.msgErr = false;
-  grRepaint(item, p);
-}
-
-function grApplyPreset(item, p, level) {
-  const st = grState.get(p.name);
-  if (!st?.loaded || !level) return;
-  st.draft.level = level;
-  if (level === 'custom') {
-    st.draft.settings = grClone(st.storedCustom || st.draft.settings);
-  } else if (st.presets[level]) {
-    st.draft.settings = grClone(st.presets[level]);
-  }
-  st.msg = ''; st.msgErr = false;
-  grRepaint(item, p);
-}
-
-function grToggleSwitch(item, p, sw) {
-  const field = sw.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
-  grMutateSettings(item, p, (s) => { s[field] = !s[field]; });
-}
-
-function grAddEntry(item, p, addRow) {
-  const cls = addRow.dataset.list;
-  const field = GR_LIST_FIELDS[cls];
-  const input = addRow.querySelector('input');
-  const v = (input?.value || '').trim();
-  if (!field || !v) return;
-  grMutateSettings(item, p, (s) => { if (!s[field].includes(v)) s[field] = [...s[field], v]; });
-  // grMutateSettings repaints the panel (innerHTML), destroying the add-input —
-  // restore focus to the same list's fresh input so consecutive adds flow.
-  item.querySelector(`.gr-add[data-list="${cls}"] input`)?.focus();
-}
-
-function grRemoveEntry(item, p, btn) {
-  const listEl = btn.closest('.gr-list');
-  const field = listEl && GR_LIST_FIELDS[[...listEl.classList].find((c) => GR_LIST_FIELDS[c])];
-  const v = btn.dataset.value;
-  if (!field) return;
-  grMutateSettings(item, p, (s) => { s[field] = s[field].filter((x) => x !== v); });
-}
-
-async function grSave(item, p) {
-  const st = grState.get(p.name);
-  if (!st?.loaded || !grDirty(st)) return;
-  const btn = item.querySelector('.gr-save');
-  if (btn) btn.disabled = true;
-  const guardrails = st.draft.level === 'custom'
-    ? { level: 'custom', custom: st.draft.settings }
-    : { level: st.draft.level };                       // preset: no payload — dormant custom kept
-  try {
-    const res = await fetch('/api/config/guardrails', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir: p.path, guardrails }),
-    });
-    const data = await safeJson(res);
-    // The list may have rebuilt during the POST (WebSocket projects-changed) —
-    // repaint the LIVE row node, not the possibly-detached `item`.
-    const live = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`) || item;
-    if (!res.ok) { st.msg = data.error || `HTTP ${res.status}`; st.msgErr = true; grRepaint(live, p); return; }
-    st.storedCustom = data.guardrails.custom;
-    st.saved = { level: data.guardrails.level, settings: data.guardrails.effective };
-    st.draft = grClone(st.saved);
-    st.msg = 'Saved.'; st.msgErr = false;
-    grRepaint(live, p);
-  } catch (e) {
-    const live = el.projectsList?.querySelector(`.pl-item[data-name="${cssEscape(p.name)}"]`) || item;
-    st.msg = e.message; st.msgErr = true; grRepaint(live, p);
-  }
-}
-
-function grDiscard(item, p) {
-  const st = grState.get(p.name);
-  if (!st?.loaded) return;
-  st.draft = grClone(st.saved);
-  st.msg = ''; st.msgErr = false;
-  grRepaint(item, p);
-}
-
 // Folder basename, tolerant of trailing slashes and either separator.
 function basenameOf(p) {
   return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
@@ -5250,8 +5030,6 @@ function buildProjectRow(p) {
 
   const row = document.createElement('div');
   row.className = 'pl-row';
-  row.insertAdjacentHTML('afterbegin',
-    '<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>');
 
   const main = document.createElement('div');
   main.className = 'pl-main';
@@ -5282,15 +5060,6 @@ function buildProjectRow(p) {
 
   row.append(main, del);
   item.append(row);
-
-  const body = document.createElement('div');
-  body.className = 'pl-body gr-body';
-  item.append(body);
-  // Re-apply expansion across full-list rebuilds (WebSocket projects-changed etc.)
-  if (grOpen.has(p.name)) {
-    item.classList.add('open');
-    grRenderPanel(item, p);
-  }
   return item;
 }
 
@@ -5373,7 +5142,6 @@ async function deleteProject(p) {
     const data = await safeJson(res);
     if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     state.projects = Array.isArray(data.projects) ? data.projects : [];
-    grOpen.delete(p.name); grState.delete(p.name);
     if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.removeItem(LAST_PROJECT_KEY);
     renderProjectsList();
     renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
@@ -5444,35 +5212,12 @@ async function saveProjectAdd() {
 // ---- Event wiring (guarded so non-UI test imports don't throw) --------------
 if (el.projectsList) {
   el.projectsList.addEventListener('click', (e) => {
-    const item = e.target.closest && e.target.closest('.pl-item');
+    const del = e.target.closest && e.target.closest('.proj-del');
+    if (!del) return;
+    const item = del.closest('.pl-item');
     if (!item) return;
     const p = state.projects.find((x) => x.name === item.dataset.name);
-    if (!p) return;
-    if (e.target.closest('.proj-del')) return deleteProject(p);
-    const segBtn = e.target.closest('.gr-preset button');
-    if (segBtn) return grApplyPreset(item, p, segBtn.dataset.preset);
-    const sw = e.target.closest('.switch');
-    if (sw) return grToggleSwitch(item, p, sw);
-    const rm = e.target.closest('.gr-rm');
-    if (rm) return grRemoveEntry(item, p, rm);
-    const addBtn = e.target.closest('.gr-add-btn');
-    if (addBtn) return grAddEntry(item, p, addBtn.closest('.gr-add'));
-    if (e.target.closest('.gr-save')) return grSave(item, p);
-    if (e.target.closest('.gr-discard')) return grDiscard(item, p);
-    if (e.target.closest('.gr-body')) return;            // clicks inside the panel never toggle
-    if (e.target.closest('.pl-row')) return grToggleOpen(item, p);
-  });
-  el.projectsList.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const item = e.target.closest && e.target.closest('.pl-item');
-    if (!item) return;
-    const p = state.projects.find((x) => x.name === item.dataset.name);
-    if (!p) return;
-    if (e.target.classList?.contains('switch')) { e.preventDefault(); return grToggleSwitch(item, p, e.target); }
-    if (e.key === 'Enter' && e.target.matches?.('.gr-add input')) {
-      e.preventDefault();
-      return grAddEntry(item, p, e.target.closest('.gr-add'));
-    }
+    if (p) deleteProject(p);
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
@@ -5506,8 +5251,6 @@ if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
     confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd, updateProjectsCount,
-    grToggleOpen, grRenderPanel, grOpen, grState,
-    grApplyPreset, grSave, grDiscard,
   };
 }
 
