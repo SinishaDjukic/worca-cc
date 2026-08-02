@@ -56,6 +56,10 @@
             <span>Projects</span>
             <span class="nav-count n-grey" id="nav-projects-count">0</span>
           </button>
+          <button type="button" data-nav="guardrails">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
+            <span>Guardrails</span>
+          </button>
           <button type="button" data-nav="composer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Pipeline Composer</span>
@@ -85,6 +89,7 @@
           <button type="button" data-nav="agents">Agents</button>
           <button type="button" data-nav="plugins">Plugins</button>
           <button type="button" data-nav="projects">Projects</button>
+          <button type="button" data-nav="guardrails">Guardrails</button>
           <button type="button" data-nav="composer">Composer</button>
           <button type="button" data-nav="settings">Settings</button>
         </nav>
@@ -690,6 +695,23 @@
           <div class="run-list" id="plugins-list"></div>
         </section>
         <!-- /view plugins -->
+
+        <!-- ===== VIEW: GUARDRAILS ===== -->
+        <section class="view hidden" data-view="guardrails">
+          <div class="topbar">
+            <div>
+              <h1>Guardrails</h1>
+              <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
+            </div>
+            <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Create guardrails
+            </button>
+          </div>
+          <p id="guardrails-msg" class="form-msg" aria-live="polite"></p>
+          <div class="run-list" id="guardrails-list"></div>
+        </section>
+        <!-- /view guardrails -->
 
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">

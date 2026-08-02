@@ -316,6 +316,7 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
+.path-row .btn{flex:0 0 auto;white-space:nowrap;}
 
 /* segmented toggle */
 .seg{display:inline-flex;background:var(--field);border-radius:12px;padding:4px;gap:4px;}
@@ -1180,3 +1181,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .src-badge{display:inline-flex;gap:6px;align-items:center;font-size:11.5px;background:var(--chip-bg,#f0f0f4);border-radius:999px;padding:2px 10px;}
 .src-badge-plugin{font-weight:700;}
 .src-report-wrap{display:inline-flex;gap:8px;align-items:center;margin-left:10px;}
+
+/* ---- Guardrails view ---- */
+.badge.violet{background:var(--violet-bg);color:var(--violet-ink);}
+.grv-card{padding:16px 20px;}
+.grv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.grv-name{font-size:14.5px;}
+.grv-name-input{flex:1 1 auto;min-width:0;}
+.grv-summary{display:block;margin:6px 0 10px;}
+.grv-actions{display:flex;gap:8px;margin-top:4px;}
+.grv-editor{padding:18px 22px;}
+.grv-editor .field{margin-top:12px;}
+.grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
+.grv-editor-actions{justify-content:flex-end;margin-top:14px;}

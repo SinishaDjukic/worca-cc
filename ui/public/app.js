@@ -66,6 +66,10 @@ import {
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
   renderOrphanList,
 } from './plugins-view.mjs';
+import {
+  renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
+  renderCreateDialog, collectCreateDialog, renderGuardrailReferences409, guardrailSummary,
+} from './guardrails-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 
 // ---------------------------------------------------------------------------
@@ -233,6 +237,11 @@ const el = {
   pluginModalBody: $('#plugin-modal-body'),
   pluginModalActions: $('#plugin-modal-actions'),
   pluginModalClose: $('#plugin-modal-close'),
+
+  // Guardrails view
+  guardrailsList: $('#guardrails-list'),
+  guardrailsMsg: $('#guardrails-msg'),
+  guardrailCreateBtn: $('#guardrail-create-btn'),
 };
 
 // ---------------------------------------------------------------------------
@@ -6032,6 +6041,116 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
 if (el.pluginRepoScan) el.pluginRepoScan.addEventListener('click', scanPluginRepo);
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', closePluginModal);
 
+// ---- Guardrails view (named sets: list + create + delete; editor in grv*) ----
+// All view state lives here; loadGuardrailsView rebuilds the DOM from it.
+const grvState = { sets: [], editing: null, saved: null };
+const grvClone = (o) => JSON.parse(JSON.stringify(o));
+
+function setGuardrailsMsg(text, kind) {
+  if (!el.guardrailsMsg) return;
+  el.guardrailsMsg.textContent = text || '';
+  el.guardrailsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+// Task 6 replaces this stub with the real editor open.
+function openGuardrailEditor(id) {
+  setGuardrailsMsg(`editor for "${id}" not built yet`, 'err');
+  el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+}
+
+async function loadGuardrailsView(param = '') {
+  if (!el.guardrailsList) return;
+  setGuardrailsMsg('');
+  try {
+    const res = await fetch('/api/guardrails');
+    const data = await safeJson(res);
+    if (!res.ok) return setGuardrailsMsg(data.error || `HTTP ${res.status}`, 'err');
+    grvState.sets = Array.isArray(data.guardrails) ? data.guardrails : [];
+    if (param && grvState.sets.some((s) => s.id === param)) return openGuardrailEditor(param);
+    grvState.editing = null;
+    el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+  } catch (e) {
+    setGuardrailsMsg(e.message, 'err');
+  }
+}
+
+// "Create guardrails" dialog (pluginModal shell). With `settings` provided the
+// start-from select is hidden and those settings are used verbatim (the
+// built-in save-as-new flow).
+function openCreateDialog({ settings = null, title = 'Create guardrails' } = {}) {
+  const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name }));
+  const body = renderCreateDialog(sources, { hideFrom: !!settings });
+  const fail = (m) => {
+    const msgEl = body.querySelector('.grv-create-msg');
+    if (msgEl) { msgEl.textContent = m; msgEl.className = 'hint err grv-create-msg'; }
+  };
+  pluginModal(title, body, [
+    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
+    ['Create', 'btn btn-primary btn-mini', async () => {
+      const { name, from } = collectCreateDialog(body);
+      if (!name) return fail('name is required');
+      const src = settings
+        || (from ? ((grvState.sets.find((s) => s.id === from) || {}).settings || {}) : {});
+      try {
+        const res = await fetch('/api/guardrails', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, settings: src }),
+        });
+        const data = await safeJson(res);
+        // Any failure — including the 409 duplicate-name conflict — surfaces in
+        // .grv-create-msg; the dialog stays open so the user can pick another name.
+        if (!res.ok) return fail((data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`);
+        closePluginModal();
+        await loadGuardrailsView();
+        // Open the freshly created set in the editor (deep link via the router).
+        location.hash = `guardrails/${data.guardrails.id}`;
+      } catch (e) { fail(e.message); }
+    }],
+  ]);
+  body.querySelector('.grv-create-name')?.focus();
+}
+
+async function deleteGuardrailSetFlow(id) {
+  const set = grvState.sets.find((s) => s.id === id);
+  const ok = await confirmModal({
+    title: 'Delete guardrail set',
+    message: `Delete "${(set && set.name) || id}"? Runs that already recorded it keep their record; paused runs that pinned it block deletion until they finish.`,
+    confirmLabel: 'Delete',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/guardrails/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (res.status === 409) {
+      pluginModal('Cannot delete guardrail set', renderGuardrailReferences409(data.references || []));
+      return;
+    }
+    if (!res.ok) return setGuardrailsMsg(data.error || `HTTP ${res.status}`, 'err');
+    setGuardrailsMsg('Deleted.', 'ok');
+    loadGuardrailsView();
+  } catch (e) {
+    setGuardrailsMsg(e.message, 'err');
+  }
+}
+
+// One delegated listener for the whole view (list actions here; Task 6 appends
+// the editor branches to THIS listener).
+if (el.guardrailsList) {
+  el.guardrailsList.addEventListener('click', (e) => {
+    const t = e.target;
+    const edit = t.closest && t.closest('.grv-edit');
+    if (edit) { location.hash = `guardrails/${edit.dataset.id}`; return; }
+    const del = t.closest && t.closest('.grv-delete');
+    if (del) { deleteGuardrailSetFlow(del.dataset.id); return; }
+  });
+}
+if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openCreateDialog());
+
+// Test hook (mirrors window.__projects / window.__agents).
+if (typeof window !== 'undefined') {
+  window.__guardrails = { loadGuardrailsView, openGuardrailEditor, openCreateDialog, deleteGuardrailSetFlow, grvState };
+}
+
 // ---------------------------------------------------------------------------
 // Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
 // done, which finishRun handles (card drops out + History refresh). On failure
@@ -8216,7 +8335,7 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'];
 
 function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -8274,6 +8393,7 @@ function showView(name, param = '') {
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'plugins') loadPluginsView();
+  if (name === 'guardrails') loadGuardrailsView(param);
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
