@@ -80,7 +80,7 @@ test('opening a user_version=1 DB forward-migrates to v2 (adds sub_agents + inde
 
   // 2) Open through production getDb() — migrate() must run the v2 ladder step.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13, 'forward-migrated to v13 (the v2 step added sub_agents)');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 14, 'forward-migrated to v14 (the v2 step added sub_agents)');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='sub_agents'").get().n,
     1, 'sub_agents table created by the v1->v2 migration');

@@ -156,7 +156,7 @@ test('first getDb() auto-runs the fs->db migration (DB is empty + legacy JSON pr
   const db = getDb(); // triggers migrate(db) then maybeMigrateFromFs(db)
   const n = db.prepare('SELECT COUNT(*) AS c FROM pipelines').get().c;
   assert.ok(n >= 1, 'the legacy pipeline was imported into the pipelines table');
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13, 'schema stamped');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 14, 'schema stamped');
   // every relevant table populated by the one-time importer
   const count = (t) => db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c;
   assert.equal(count('projects'), 2, 'projects.json -> projects');

@@ -39,7 +39,7 @@ test('opening a user_version=5 DB forward-migrates to v6 (adds skills to both ag
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13, 'forward-migrated to v13');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 14, 'forward-migrated to v14');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('skills'));
   assert.ok(db.prepare('PRAGMA table_info(pipeline_steps)').all().map((c) => c.name).includes('skills'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');
