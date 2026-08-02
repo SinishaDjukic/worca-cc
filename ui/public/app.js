@@ -6052,10 +6052,69 @@ function setGuardrailsMsg(text, kind) {
   el.guardrailsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
-// Task 6 replaces this stub with the real editor open.
+const GRV_LIST_FIELDS = { 'gr-allow': 'envAllowlist', 'gr-paths': 'protectedPaths', 'gr-deny': 'deny' };
+
+function grvRenderEditor(settings, opts) {
+  el.guardrailsList.replaceChildren(renderGuardrailEditor(
+    { ...grvState.editing, settings }, opts,
+  ));
+}
+
 function openGuardrailEditor(id) {
-  setGuardrailsMsg(`editor for "${id}" not built yet`, 'err');
-  el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+  const set = grvState.sets.find((s) => s.id === id);
+  if (!set) {
+    setGuardrailsMsg(`guardrail set "${id}" not found`, 'err');
+    el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+    return;
+  }
+  grvState.editing = { id: set.id, name: set.name, origin: set.origin || null };
+  grvState.saved = { name: set.name, settings: grvClone(set.settings) };
+  grvRenderEditor(grvClone(set.settings), { dirty: false, msg: '', msgErr: false });
+}
+
+function grvDirty(rootEl) {
+  return JSON.stringify(collectGuardrailEditor(rootEl)) !== JSON.stringify(grvState.saved);
+}
+
+// collect -> mutate -> full re-render.
+function grvMutate(rootEl, fn) {
+  const cur = collectGuardrailEditor(rootEl);
+  fn(cur.settings);
+  grvState.editing.name = cur.name; // typed name survives the repaint
+  const dirty = JSON.stringify(cur) !== JSON.stringify(grvState.saved);
+  grvRenderEditor(cur.settings, { dirty, msg: '', msgErr: false });
+}
+
+async function grvSave(rootEl) {
+  const cur = collectGuardrailEditor(rootEl);
+  if (!grvDirty(rootEl)) return;
+  grvState.editing.name = cur.name; // failure repaints must not revert a typed name
+  if (grvState.editing.origin === 'builtin') {
+    // Built-ins are code, not rows: dirty edits become a NEW named set. (The
+    // create dialog's error branch surfaces a 409 duplicate-name conflict in
+    // .grv-create-msg, so a colliding name never clobbers an existing set.)
+    return openCreateDialog({ settings: cur.settings, title: 'Save as new guardrail set' });
+  }
+  if (!cur.name) return grvRenderEditor(cur.settings, { dirty: true, msg: 'name is required', msgErr: true });
+  try {
+    const res = await fetch(`/api/guardrails/${encodeURIComponent(grvState.editing.id)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cur.name, settings: cur.settings }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      const msg = (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`;
+      return grvRenderEditor(cur.settings, { dirty: true, msg, msgErr: true });
+    }
+    grvState.saved = { name: data.guardrails.name, settings: grvClone(data.guardrails.settings) };
+    grvState.editing.name = data.guardrails.name;
+    const i = grvState.sets.findIndex((s) => s.id === grvState.editing.id);
+    if (i >= 0) grvState.sets[i] = { ...grvState.sets[i], ...data.guardrails };
+    grvRenderEditor(grvClone(grvState.saved.settings),
+      { dirty: false, msg: 'Saved. Applies to future runs that pick this set, and to paused runs on resume.', msgErr: false });
+  } catch (e) {
+    grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true });
+  }
 }
 
 async function loadGuardrailsView(param = '') {
@@ -6133,8 +6192,8 @@ async function deleteGuardrailSetFlow(id) {
   }
 }
 
-// One delegated listener for the whole view (list actions here; Task 6 appends
-// the editor branches to THIS listener).
+// One delegated listener for the whole view: list actions first, then the
+// editor branches (both surfaces mount into el.guardrailsList).
 if (el.guardrailsList) {
   el.guardrailsList.addEventListener('click', (e) => {
     const t = e.target;
@@ -6142,13 +6201,77 @@ if (el.guardrailsList) {
     if (edit) { location.hash = `guardrails/${edit.dataset.id}`; return; }
     const del = t.closest && t.closest('.grv-delete');
     if (del) { deleteGuardrailSetFlow(del.dataset.id); return; }
+    const root = t.closest && t.closest('.grv-editor');
+    if (!root) return;
+    if (t.closest('.grv-back')) { location.hash = 'guardrails'; loadGuardrailsView(); return; }
+    const sw = t.closest('.switch');
+    if (sw) {
+      const fld = sw.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
+      return grvMutate(root, (s) => { s[fld] = !s[fld]; });
+    }
+    const rm = t.closest('.gr-rm');
+    if (rm) {
+      const listEl = rm.closest('.gr-list');
+      const fld = listEl && GRV_LIST_FIELDS[[...listEl.classList].find((c) => GRV_LIST_FIELDS[c])];
+      if (fld) grvMutate(root, (s) => { s[fld] = s[fld].filter((x) => x !== rm.dataset.value); });
+      return;
+    }
+    const addBtn = t.closest('.gr-add-btn');
+    if (addBtn) {
+      const addRow = addBtn.closest('.gr-add');
+      const fld = GRV_LIST_FIELDS[addRow && addRow.dataset.list];
+      const input = addRow && addRow.querySelector('input');
+      const v = ((input && input.value) || '').trim();
+      if (!fld || !v) return;
+      grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
+      // The repaint destroyed the add-input — restore focus for consecutive adds.
+      el.guardrailsList.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+      return;
+    }
+    if (t.closest('.grv-discard')) {
+      grvState.editing.name = grvState.saved.name;
+      grvRenderEditor(grvClone(grvState.saved.settings), { dirty: false, msg: '', msgErr: false });
+      return;
+    }
+    if (t.closest('.grv-save')) { grvSave(root); return; }
+  });
+  // Name typing enables Save/Discard WITHOUT a repaint, so focus survives.
+  el.guardrailsList.addEventListener('input', (e) => {
+    if (!e.target.classList || !e.target.classList.contains('grv-name-input')) return;
+    const root = e.target.closest('.grv-editor');
+    if (!root) return;
+    const dirty = grvDirty(root);
+    const save = root.querySelector('.grv-save');
+    if (save) save.disabled = !dirty;
+    const disc = root.querySelector('.grv-discard');
+    if (disc) disc.disabled = !dirty;
+  });
+  // Keyboard parity with the switches and add-inputs.
+  el.guardrailsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const root = e.target.closest && e.target.closest('.grv-editor');
+    if (!root) return;
+    if (e.target.classList?.contains('switch')) {
+      e.preventDefault();
+      const fld = e.target.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
+      return grvMutate(root, (s) => { s[fld] = !s[fld]; });
+    }
+    if (e.key === 'Enter' && e.target.matches?.('.gr-add input')) {
+      e.preventDefault();
+      const addRow = e.target.closest('.gr-add');
+      const fld = GRV_LIST_FIELDS[addRow && addRow.dataset.list];
+      const v = (e.target.value || '').trim();
+      if (!fld || !v) return;
+      grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
+      el.guardrailsList.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+    }
   });
 }
 if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openCreateDialog());
 
 // Test hook (mirrors window.__projects / window.__agents).
 if (typeof window !== 'undefined') {
-  window.__guardrails = { loadGuardrailsView, openGuardrailEditor, openCreateDialog, deleteGuardrailSetFlow, grvState };
+  window.__guardrails = { loadGuardrailsView, openGuardrailEditor, openCreateDialog, deleteGuardrailSetFlow, grvState, grvSave, grvMutate };
 }
 
 // ---------------------------------------------------------------------------

@@ -139,3 +139,122 @@ test('delete flow: confirm -> DELETE; a 409 renders the pinning-run list in the 
   assert.ok(!modal.classList.contains('hidden'), '409 modal shown');
   assert.match(modal.querySelector('.grv-refs409 .mono').textContent, /pipeline p1/);
 });
+
+test('deep link #guardrails/gr_org opens the editor prefilled; toggling scrub enables Save; Save PUTs {name, settings}', async () => {
+  const puts = [];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/guardrails/gr_org') && opts.method === 'PUT') {
+        puts.push(JSON.parse(opts.body));
+        const sent = JSON.parse(opts.body);
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          guardrails: { id: 'gr_org', name: sent.name, origin: null, settings: sent.settings },
+        }) });
+      }
+      return undefined;
+    },
+  });
+  await openGuardrails(window, 'gr_org');
+  const editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.ok(editor, 'editor rendered');
+  assert.equal(editor.querySelector('.grv-name-input').value, 'Org Policy');
+  assert.ok(editor.querySelector('.gr-scrub').classList.contains('on'));
+  assert.equal(editor.querySelector('.grv-save').disabled, true, 'clean');
+  click(window, editor.querySelector('.gr-scrub'));
+  await tick();
+  const dirty = window.document.querySelector('#guardrails-list .grv-editor'); // re-rendered — requery
+  assert.equal(dirty.querySelector('.grv-save').disabled, false);
+  assert.ok(!dirty.querySelector('.gr-scrub').classList.contains('on'), 'toggle painted off');
+  click(window, dirty.querySelector('.grv-save'));
+  await tick(); await tick();
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].name, 'Org Policy');
+  assert.equal(puts[0].settings.envScrub, false, 'collected from the live DOM');
+  const saved = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.equal(saved.querySelector('.grv-save').disabled, true, 'clean after save');
+  assert.match(saved.querySelector('.grv-msg').textContent, /Saved\./);
+});
+
+test('editor add/remove rows mutate and repaint; Discard reverts to the saved snapshot', async () => {
+  const { window } = await boot();
+  await openGuardrails(window, 'gr_org');
+  let editor = window.document.querySelector('#guardrails-list .grv-editor');
+  // add a deny rule
+  editor.querySelector('.gr-add[data-list="gr-deny"] input').value = 'Bash(wget:*)';
+  click(window, editor.querySelector('.gr-add[data-list="gr-deny"] .gr-add-btn'));
+  await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.deepEqual([...editor.querySelectorAll('.gr-list.gr-deny .gr-row .mono')].map((n) => n.textContent),
+    ['Bash(curl:*)', 'Bash(wget:*)']);
+  assert.equal(editor.querySelector('.grv-save').disabled, false);
+  // remove the original rule
+  click(window, editor.querySelector('.gr-rm[data-value="Bash(curl:*)"]'));
+  await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.deepEqual([...editor.querySelectorAll('.gr-list.gr-deny .gr-row .mono')].map((n) => n.textContent),
+    ['Bash(wget:*)']);
+  // discard -> saved snapshot restored
+  click(window, editor.querySelector('.grv-discard'));
+  await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.deepEqual([...editor.querySelectorAll('.gr-list.gr-deny .gr-row .mono')].map((n) => n.textContent),
+    ['Bash(curl:*)']);
+  assert.equal(editor.querySelector('.grv-save').disabled, true);
+});
+
+test('built-in editor: editable, Save labeled "Save as new set", dirty save opens the create dialog and POSTs the edits', async () => {
+  const posts = [];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/guardrails') && opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({
+          guardrails: { id: 'gr_stricter', name: 'Stricter', origin: null, settings: JSON.parse(opts.body).settings },
+        }) });
+      }
+      return undefined;
+    },
+  });
+  await openGuardrails(window, 'secure');
+  let editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.equal(editor.querySelector('.grv-name-input'), null, 'built-in: static name');
+  assert.equal(editor.querySelector('.grv-save').textContent, 'Save as new set');
+  editor.querySelector('.gr-add[data-list="gr-deny"] input').value = 'Bash(wget:*)';
+  click(window, editor.querySelector('.gr-add[data-list="gr-deny"] .gr-add-btn'));
+  await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  click(window, editor.querySelector('.grv-save'));
+  await tick();
+  const modal = window.document.querySelector('#plugin-modal');
+  assert.ok(!modal.classList.contains('hidden'), 'save-as dialog open');
+  assert.equal(modal.querySelector('.grv-create-from'), null, 'start-from hidden — settings are the edits');
+  modal.querySelector('.grv-create-name').value = 'Stricter';
+  click(window, [...window.document.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Create'));
+  await tick(); await tick();
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].settings.deny.includes('Bash(wget:*)'), 'edited settings posted');
+});
+
+test('editor 400 (errors array) surfaces in .grv-msg and the editor stays dirty for retry', async () => {
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/guardrails/gr_org') && opts.method === 'PUT') {
+        return Promise.resolve({ ok: false, status: 400, json: async () => ({
+          error: 'invalid guardrails', errors: ['deny rule "oops" is not a valid permission rule (expected Tool(pattern))'],
+        }) });
+      }
+      return undefined;
+    },
+  });
+  await openGuardrails(window, 'gr_org');
+  let editor = window.document.querySelector('#guardrails-list .grv-editor');
+  click(window, editor.querySelector('.gr-honor'));
+  await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  click(window, editor.querySelector('.grv-save'));
+  await tick(); await tick();
+  editor = window.document.querySelector('#guardrails-list .grv-editor');
+  assert.match(editor.querySelector('.grv-msg').textContent, /not a valid permission rule/);
+  assert.ok(editor.querySelector('.grv-msg').classList.contains('err'));
+  assert.equal(editor.querySelector('.grv-save').disabled, false, 'still dirty for retry');
+});
