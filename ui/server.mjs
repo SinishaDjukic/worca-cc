@@ -21,7 +21,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
-  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups,
+  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
@@ -36,7 +36,11 @@ import {
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
   setGuardrails, readGuardrailsConfig,
 } from '../src/core/config.mjs';
-import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS } from '../src/core/guardrails.mjs';
+import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS, validateGuardrails } from '../src/core/guardrails.mjs';
+import {
+  listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
+  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
+} from '../src/core/guardrail-store.mjs';
 import {
   DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
 } from '../src/core/workflows.mjs';
@@ -1894,6 +1898,102 @@ app.delete('/api/workflows/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Guardrail sets (global store, table guardrail_sets). The built-ins
+// Permissive / Normal / Strict are VIRTUAL (GUARDRAIL_PRESETS) — the server
+// prepends them, they are never persisted (CONTRACT mirrors /api/workflows:
+// GET -> { guardrails: [...listBuiltinGuardrailSets(), ...listGuardrailSets()] }).
+// Thin handlers: persistence in guardrail-store.mjs, 400s from validateGuardrails.
+// DELETE maps the store's ReferencedError -> 409 { error, references }
+// (structural match — the sendPluginError pattern; references are paused runs
+// whose resume_point pins the set).
+// ---------------------------------------------------------------------------
+function sendGuardrailError(res, err) {
+  const message = err && err.message ? err.message : String(err);
+  if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
+    return res.status(409).json({ error: message, references: err.references || [] });
+  }
+  res.status(500).json({ error: message });
+}
+
+app.get('/api/guardrails', async (_req, res) => {
+  try {
+    const sets = await listGuardrailSets(); // CONV-1: await
+    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...sets] });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/guardrails/:id', async (req, res) => {
+  try {
+    const set = await readGuardrailSet(req.params.id); // CONV-1: await; built-ins resolve virtually
+    if (!set) return res.status(404).json({ error: 'guardrail set not found' });
+    res.json(set);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/guardrails', async (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) return badRequest(res, 'name is required');
+  if (name.length > 200) return badRequest(res, 'name too long (max 200 characters)');
+  const v = validateGuardrails(body.settings ?? {});
+  if (!v.ok) return res.status(400).json({ error: 'invalid guardrails', errors: v.errors });
+  try {
+    // POST is CREATE, not upsert: a minted id colliding with an existing set must
+    // never silently REPLACE it (the existing set may be the policy other runs
+    // select). Renames/edits go through PUT.
+    const mintedId = `gr_${slugify(name)}`;
+    if (await readGuardrailSet(mintedId)) {
+      return res.status(409).json({ error: 'a guardrail set with this name already exists' });
+    }
+    const set = await writeGuardrailSet({ name, settings: body.settings || {} }); // CONV-1: await
+    if (!set) return badRequest(res, 'invalid guardrail set id'); // defensive: minted gr_ ids never hit this
+    res.status(201).json({ guardrails: set });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.put('/api/guardrails/:id', async (req, res) => {
+  const id = req.params.id;
+  if (isBuiltinGuardrailSetId(id)) return badRequest(res, 'built-in guardrail sets cannot be edited');
+  const body = req.body || {};
+  try {
+    const existing = await readGuardrailSet(id);
+    if (!existing) return res.status(404).json({ error: 'guardrail set not found' });
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : existing.name;
+    if (name.length > 200) return badRequest(res, 'name too long (max 200 characters)');
+    // `== null` on purpose: validateGuardrails(null) is early-ok (guardrails.mjs:132-134),
+    // so a strict `=== undefined` check would let {settings: null} silently wipe a
+    // selected set to the empty policy. null/absent both mean "keep stored".
+    const settings = body.settings == null ? existing.settings : body.settings;
+    const v = validateGuardrails(settings);
+    if (!v.ok) return res.status(400).json({ error: 'invalid guardrails', errors: v.errors });
+    const set = await writeGuardrailSet({ id, name, settings, createdAt: existing.createdAt }); // CONV-1: await
+    if (!set) return badRequest(res, 'invalid guardrail set id');
+    res.json({ guardrails: set });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/guardrails/:id', async (req, res) => {
+  const id = req.params.id;
+  // Built-ins are not in the user store and must never be deleted.
+  if (isBuiltinGuardrailSetId(id)) return badRequest(res, 'built-in guardrail sets cannot be deleted');
+  try {
+    const removed = await deleteGuardrailSet(id); // CONV-1: await; throws ReferencedError while pinned
+    if (!removed) return res.status(404).json({ error: 'guardrail set not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    sendGuardrailError(res, err);
   }
 });
 
