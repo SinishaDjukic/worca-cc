@@ -198,3 +198,149 @@ test('unknown guardrailsId at run time fails OPEN to Permissive with a loud warn
     assert.equal(c.permissionRules, undefined, `${key}: ran with the empty policy (documented fail-open)`);
   }
 });
+
+test('RESUME re-reads the selected set BY ID (latest definition), rehydrated from resume_point', async () => {
+  const dir = gitDir();
+  const set = await writeGuardrailSet({
+    name: 'Overlay',
+    settings: { honorProjectSettings: true, envScrub: true, envAllowlist: ['NPM_TOKEN'], protectedPaths: [], deny: [] },
+  });
+
+  // Pause -> fresh-instance -> resume() bootstrap (from test/orchestrator-resume.test.mjs);
+  // the runners seam doubles as the spy since runners receive the full _nodeCtx.
+  let hangOnce = true;
+  let orchRef = null;
+  const mkRunners = (captured) => ({
+    producer: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      if (hangOnce) {
+        hangOnce = false;
+        queueMicrotask(() => orchRef.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return { status: 'ok', summary: 'ok' };
+    },
+    verifier: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      return { status: 'ok', issues: [], review: { issues: [] }, summary: '' };
+    },
+  });
+
+  const run1 = [];
+  const orch1 = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners(run1),
+    guardrailsId: set.id,
+  });
+  orchRef = orch1;
+  assert.equal((await orch1.run()).status, 'paused');
+  assert.equal(run1[0]?.claudeOpts.envScrub, true, 'pre-pause segment enforced the selection');
+
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.row.status, 'paused');
+  assert.equal(saved.row.guardrails_id, set.id, 'selection persisted in the pipelines column');
+  assert.equal(JSON.parse(saved.row.resume_point).guardrailsId, set.id, 'and in the resume point');
+
+  // Edit the set while paused — resume must enforce the LATEST definition (re-resolve by id).
+  await writeGuardrailSet({ id: set.id, name: 'Overlay', settings: { ...set.settings, deny: ['Bash(nc:*)'] } });
+
+  const run2 = [];
+  const orch2 = createOrchestrator({
+    projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(run2), resume: saved,
+  });
+  orchRef = orch2;
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.ok(run2.length >= 1, 'nodes ran after resume');
+  const first = run2[0].claudeOpts;
+  assert.equal(first.envScrub, true, 'FRESH instance re-resolved the selection from resume_point');
+  assert.ok(first.permissionRules?.deny?.includes('Bash(nc:*)'), 'post-pause nodes carry the EDITED set');
+});
+
+test('a set deleted while paused: RESUME warns and proceeds Permissive (fail-open, loud)', async () => {
+  const { prepare, tx } = await import('../src/core/db.mjs');
+  const dir = gitDir();
+  const set = await writeGuardrailSet({ name: 'Doomed', settings: { ...SET_SETTINGS } });
+
+  let hangOnce = true;
+  let orchRef = null;
+  const mkRunners = (captured) => ({
+    producer: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      if (hangOnce) {
+        hangOnce = false;
+        queueMicrotask(() => orchRef.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return { status: 'ok', summary: 'ok' };
+    },
+    verifier: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      return { status: 'ok', issues: [], review: { issues: [] }, summary: '' };
+    },
+  });
+
+  const run1 = [];
+  const orch1 = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners(run1),
+    guardrailsId: set.id,
+  });
+  orchRef = orch1;
+  assert.equal((await orch1.run()).status, 'paused');
+  const saved = readPipelineForResume(orch1.state.id);
+
+  // Out-of-band row delete: deleteGuardrailSet would 409 on the resume-point pin,
+  // so this simulates DB surgery / a divergent-checkout store.
+  tx(() => { prepare('DELETE FROM guardrail_sets WHERE id = ?').run(set.id); });
+
+  const run2 = [];
+  const orch2 = createOrchestrator({
+    projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(run2), resume: saved,
+  });
+  orchRef = orch2;
+  const logs = [];
+  orch2.on('log', (l) => logs.push(l));
+  assert.equal((await orch2.resume()).status, 'done', 'fail-open: resume still completes');
+  assert.ok(
+    logs.some((l) => l.source === 'guardrails' && l.level === 'warn' && l.text.includes(set.id)),
+    `deleted set named in the run log: ${JSON.stringify(logs.filter((l) => l.source === 'guardrails'))}`,
+  );
+  assert.ok(run2.length >= 1, 'nodes ran after resume');
+  for (const { claudeOpts: c } of run2) {
+    assert.equal(c.permissionRules, undefined, 'post-resume nodes run with the empty policy (documented fail-open)');
+    assert.equal(c.envScrub, undefined, 'no scrub');
+  }
+});
+
+test('guardrailsId surfaces on every persistence read: column, History list entry, detail state; default runs record "permissive"', async () => {
+  const { listAllPipelines, readPipelineByKey } = await import('../src/core/artifacts.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const dir = gitDir();
+  const set = await writeGuardrailSet({
+    name: 'Persist Me',
+    settings: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: ['Bash(wget:*)'] },
+  });
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    guardrailsId: set.id,
+  });
+  assert.equal((await orch.run()).status, 'done');
+  const saved = readPipelineForResume(orch.state.id);
+  assert.equal(saved.row.guardrails_id, set.id, 'column written at creation (INSERT-only) and never nulled by later persists');
+  const entry = (await listAllPipelines()).find((e) => e.id === orch.state.id);
+  assert.equal(entry.guardrailsId, set.id, 'History list entry exposes it');
+  const detail = await readPipelineByKey(projectKey(dir), orch.state.id);
+  assert.equal(detail.state.guardrailsId, set.id, 'detail state (rowToState) exposes it');
+
+  // A run with NO selection records the concrete default — an honest
+  // "this run ran unguarded (Permissive)" record, not NULL.
+  const orch2 = createOrchestrator({
+    projectDir: dir, prompt: 'y', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  assert.equal((await orch2.run()).status, 'done');
+  assert.equal(readPipelineForResume(orch2.state.id).row.guardrails_id, 'permissive');
+});

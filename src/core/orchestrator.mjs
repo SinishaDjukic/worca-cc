@@ -507,6 +507,7 @@ class Orchestrator extends EventEmitter {
         sourceMeta: input.sourceMeta || null,
         extras: this.opts.extras,
         title: this.opts.title,
+        guardrailsId: this.guardrailsId,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -527,6 +528,10 @@ class Orchestrator extends EventEmitter {
       // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
       // safe — this keeps the live state object self-consistent for any reader).
       this.state.prompt = this.pipeline.promptText;
+      // Same reasoning for the run's guardrail selection: createPipeline INSERTed
+      // guardrails_id and the curated UPSERT excludes it (creation-immutable), so
+      // mirroring it onto the live state only keeps rowToState round-trips honest.
+      this.state.guardrailsId = this.guardrailsId;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -676,7 +681,8 @@ class Orchestrator extends EventEmitter {
             // Paused outside _dispatch (preflight/worktree): boundary point at step 0.
             this.state.resumePoint = {
               version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-              bus: null, stepModels: this.stepModels, workflowId: this.workflowId, plan: null,
+              bus: null, stepModels: this.stepModels, workflowId: this.workflowId,
+              guardrailsId: this.guardrailsId, plan: null,
               nodes: [], gate: null, toolInstruction: this.toolInstruction ?? '',
               pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
             };
@@ -759,6 +765,12 @@ class Orchestrator extends EventEmitter {
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
+      // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
+      // LATEST saved set definition (missing set -> warn + Permissive, inside
+      // _resolveGuardrails). Legacy resume points without the field fall back to
+      // the constructor default ('permissive'). Keep state in sync for re-persist.
+      this.guardrailsId = rp.guardrailsId || this.guardrailsId;
+      this.state.guardrailsId = this.guardrailsId;
       await this._resolveGuardrails();
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
@@ -1892,6 +1904,7 @@ class Orchestrator extends EventEmitter {
       bus: jsonClone(bus),
       stepModels: this.stepModels,
       workflowId: this.workflowId,
+      guardrailsId: this.guardrailsId,
       plan: jsonClone({ id: plan.id, name: plan.name, steps: plan.steps, feedbacks: plan.feedbacks }),
       nodes: cur.map((s) => ({
         nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',

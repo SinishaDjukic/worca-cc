@@ -752,6 +752,7 @@ function resolveAgainst(base, p) {
  *                                    used when inline `prompt` is absent/empty
  * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
+ * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -765,6 +766,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
+    guardrailsId = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -852,6 +854,10 @@ export async function createPipeline(projectDir, opts = {}) {
     // the orchestrator passes sourceType explicitly through the sources.mjs seam.
     sourceType: sourceType || (sourceMeta ? 'plugin' : (promptFile ? 'markdown' : 'prompt')),
     sourceMeta: sourceMeta || null,
+    // The run's selected guardrail set id (per-run model; 'permissive' for
+    // unguarded runs). Creation-immutable, like sourceType: written on INSERT,
+    // never touched by updates. NULL = legacy/pre-entity or non-orchestrator row.
+    guardrailsId: guardrailsId || null,
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -955,9 +961,9 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * A11(a): the ON CONFLICT(id) DO UPDATE clause SETs ONLY the columns that
  * legitimately mutate during a run. It deliberately does NOT touch the
  * creation-immutable identity columns (project_key, prompt, target, title,
- * workspace_key, started_at, source_type, source_ref) — the orchestrator's
- * this.state omits several of them (orchestrator.mjs:174-191), so a blanket
- * "SET <every column>=excluded.<column>" would null them on the first
+ * workspace_key, started_at, source_type, source_ref, guardrails_id) — the
+ * orchestrator's this.state omits several of them (orchestrator.mjs:174-191), so
+ * a blanket "SET <every column>=excluded.<column>" would null them on the first
  * post-create persist (and _persist's catch{} would hide the loss). The INSERT
  * arm still writes every column; only the UPDATE arm is curated.
  *
@@ -986,11 +992,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref)
+        source_type, source_ref, guardrails_id)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref)
+        @source_type,@source_ref,@guardrails_id)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1308,6 +1314,7 @@ function toPipelineRow(o) {
     resume_point: o.resumePoint == null ? null : s(o.resumePoint),
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
+    guardrails_id: o.guardrailsId ?? null,
   };
 }
 
@@ -1346,6 +1353,8 @@ function totalsFor(row) {
  *  - `branch` (wire) = state.branch.feature; `sourceBranch` = state.branch.source.
  *  - `mtime` maps to updated_at parsed to ms (a SORT KEY only; never displayed).
  *  - `row.dir` is attached by the caller (the real on-disk run dir).
+ *  - `guardrailsId` (additive, v14+): the run's selected guardrail set id
+ *    ('permissive' = unguarded) or null for legacy rows.
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr? }
@@ -1374,6 +1383,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     startedAt: row.started_at ?? null,
     branch: feature,
     sourceBranch: source,
+    guardrailsId: row.guardrails_id ?? null,
     survived,
     added,
     removed,
@@ -1426,7 +1436,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'}
     ORDER BY started_at DESC
@@ -1450,7 +1460,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id
     FROM pipelines
     ORDER BY started_at DESC
   `).all();
@@ -1599,6 +1609,7 @@ function rowToState(row) {
     branch: j(row.branch, null),
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
+    guardrailsId: row.guardrails_id ?? null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count
@@ -1890,7 +1901,7 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id
     FROM pipelines WHERE workspace_key = ? ORDER BY started_at DESC
   `).all(workspaceKey);
   const out = [];
