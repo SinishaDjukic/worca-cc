@@ -57,6 +57,7 @@ import {
   groupPaletteByDomain,
 } from './composer-core.mjs';
 import { logLineClass } from './log-line.mjs';
+import { logLineVisible, logFacets } from './log-filter.mjs';
 import {
   statusChip, diffBadges, mergeFindings,
   sourceBadge, reportResultControl, workflowPickerLabel,
@@ -907,6 +908,7 @@ function makeRun({
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
+    logFilter: { source: '', level: '', step: '' }, // '' === all; render-time only (logLines keeps everything)
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
@@ -2907,21 +2909,91 @@ function setAutoscroll(r, on) {
 }
 
 // Per-run log: push to the model and, if the card is mounted, append the line.
+// Filtering is render-time only: the model keeps every line, so changing a
+// filter never loses history; a hidden line is simply not appended.
 function onLog(r, msg) {
   const text = msg.text;
   if (text === undefined || text === null) return;
-  const rec = { ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub };
+  const rec = {
+    ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub,
+    ...(msg.nodeId != null ? { nodeId: msg.nodeId } : {}),
+    ...(msg.stepIndex != null ? { stepIndex: msg.stepIndex } : {}),
+    ...(msg.cycle != null ? { cycle: msg.cycle } : {}),
+  };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
   if (r.el) {
+    maybePaintLogFilters(r, rec);
     const logEl = r.el.querySelector('.log');
-    if (logEl) {
+    if (logEl && logLineVisible(rec, r.logFilter)) {
       logEl.appendChild(buildLogLine(rec));
       while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
       maybeAutoscrollLog(r);
     }
   }
+}
+
+// ── Log filtering (source / level / step) ───────────────────────────────────
+
+// Fill one filter <select> with an "all" option + the facet values, preserving
+// the current selection (a value that vanished from the facets falls back to all).
+function fillFilterSelect(sel, allLabel, values, current, labelOf) {
+  if (!sel) return;
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = allLabel;
+  sel.appendChild(all);
+  for (const v of values) {
+    const opt = document.createElement('option');
+    opt.value = String(v);
+    opt.textContent = labelOf ? labelOf(v) : String(v);
+    sel.appendChild(opt);
+  }
+  sel.value = values.some((v) => String(v) === String(current)) ? String(current) : '';
+}
+
+// (Re)populate a run card's three filter dropdowns from the lines seen so far.
+// `root` lets buildRunCard target the freshly-cloned node before r.el is assigned.
+function paintLogFilters(r, root = r.el) {
+  if (!root) return;
+  const facets = logFacets(r.logLines);
+  fillFilterSelect(root.querySelector('.log-f-source'), 'all sources', facets.sources, r.logFilter.source);
+  fillFilterSelect(root.querySelector('.log-f-level'), 'all levels', facets.levels, r.logFilter.level);
+  fillFilterSelect(root.querySelector('.log-f-step'), 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  r._logFacetKeys = facetKeys(facets);
+}
+
+// Cheap incremental check for onLog: only rebuild the dropdowns when `rec`
+// introduces a facet value they don't offer yet.
+function facetKeys(facets) {
+  return new Set([
+    ...facets.sources.map((s) => `s:${s}`),
+    ...facets.levels.map((l) => `l:${l}`),
+    ...facets.steps.map((i) => `t:${i}`),
+  ]);
+}
+function maybePaintLogFilters(r, rec) {
+  const seen = r._logFacetKeys;
+  if (!seen) { paintLogFilters(r); return; }
+  const f = logFacets([rec]);
+  for (const k of facetKeys(f)) {
+    if (!seen.has(k)) { paintLogFilters(r); return; }
+  }
+}
+
+// Re-render a card's log pane from the model through the current filter (called
+// when a filter changes; live appends stay incremental via onLog).
+function repaintFilteredLog(r) {
+  if (!r || !r.el) return;
+  const logEl = r.el.querySelector('.log');
+  if (!logEl) return;
+  logEl.innerHTML = '';
+  for (const rec of r.logLines) {
+    if (logLineVisible(rec, r.logFilter)) logEl.appendChild(buildLogLine(rec));
+  }
+  maybeAutoscrollLog(r);
 }
 
 function onArtifact(r, msg) {
@@ -5850,7 +5922,13 @@ async function seedResumedLog(newRunId, prevLines, logUrl) {
       if (res.ok) {
         for (const raw of (await res.text()).split('\n')) {
           const t = raw.trim(); if (!t) continue;
-          try { const rec = JSON.parse(t); head.push({ source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub }); } catch { /* torn line */ }
+          try {
+            const rec = JSON.parse(t);
+            head.push({
+              source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
+              ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
+            });
+          } catch { /* torn line */ }
         }
       }
     } catch { /* best-effort seed */ }
@@ -5971,6 +6049,22 @@ if (runListEl) {
     const card = sw.closest('.run-card');
     const r = card && runs.get(card.dataset.runId);
     if (r) setAutoscroll(r, r.autoscroll === false);
+  });
+
+  // Log filter dropdowns (source/level/step). Delegated like the switch above;
+  // read all three so one change event leaves the whole filter consistent.
+  runListEl.addEventListener('change', (e) => {
+    const sel = e.target.closest && e.target.closest('.log-f');
+    if (!sel) return;
+    const card = sel.closest('.run-card');
+    const r = card && runs.get(card.dataset.runId);
+    if (!r) return;
+    r.logFilter = {
+      source: card.querySelector('.log-f-source')?.value || '',
+      level: card.querySelector('.log-f-level')?.value || '',
+      step: card.querySelector('.log-f-step')?.value || '',
+    };
+    repaintFilteredLog(r);
   });
 }
 
@@ -6998,26 +7092,57 @@ function paintLiveLogsBar(barEl, logUrl, hasLog) {
 }
 
 // Fetch the persisted NDJSON and render each line with the SAME buildLogLine() the
-// live panel uses, so persisted logs look identical to live ones.
+// live panel uses, so persisted logs look identical to live ones — including the
+// same source/level/step filter bar as the live card.
 async function loadLiveLogs(panel, logUrl) {
+  const bar = document.createElement('div');
+  bar.className = 'log-filters';
   const box = document.createElement('div');
   box.className = 'log';
   panel.innerHTML = '';
-  panel.appendChild(box);
+  panel.append(bar, box);
   try {
     const res = await fetch(logUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    let n = 0;
+    const recs = [];
     for (const raw of text.split('\n')) {
       const t = raw.trim();
       if (!t) continue;
       let rec;
       try { rec = JSON.parse(t); } catch { continue; } // skip a torn final line
-      box.appendChild(buildLogLine({ source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub }));
-      n++;
+      recs.push({
+        source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
+        ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
+      });
     }
-    if (n === 0) box.textContent = '(no log lines)';
+    const filter = { source: '', level: '', step: '' };
+    const paint = () => {
+      box.innerHTML = '';
+      let n = 0;
+      for (const rec of recs) {
+        if (logLineVisible(rec, filter)) { box.appendChild(buildLogLine(rec)); n++; }
+      }
+      if (n === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
+    };
+    const facets = logFacets(recs);
+    for (const [cls, allLabel, values, labelOf] of [
+      ['log-f-source', 'all sources', facets.sources, null],
+      ['log-f-level', 'all levels', facets.levels, null],
+      ['log-f-step', 'all steps', facets.steps, (i) => `step ${i + 1}`],
+    ]) {
+      const sel = document.createElement('select');
+      sel.className = `log-f ${cls}`;
+      fillFilterSelect(sel, allLabel, values, '', labelOf);
+      sel.addEventListener('change', () => {
+        filter.source = bar.querySelector('.log-f-source')?.value || '';
+        filter.level = bar.querySelector('.log-f-level')?.value || '';
+        filter.step = bar.querySelector('.log-f-step')?.value || '';
+        paint();
+      });
+      bar.appendChild(sel);
+    }
+    paint();
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;
     panel.dataset.loaded = ''; // allow a retry on the next open
@@ -7394,9 +7519,15 @@ function buildRunCard(r) {
   }
   renderRunMeta(r, node);
 
-  // Hydrate the log from any events that arrived before the card existed.
+  // Hydrate the log from any events that arrived before the card existed,
+  // through the run's current filter, and offer the facets seen so far.
   const logEl = node.querySelector('.log');
-  if (logEl) for (const rec of r.logLines) logEl.appendChild(buildLogLine(rec));
+  if (logEl) {
+    for (const rec of r.logLines) {
+      if (logLineVisible(rec, r.logFilter)) logEl.appendChild(buildLogLine(rec));
+    }
+  }
+  paintLogFilters(r, node);
 
   // The switch is cloned ON from the template; mirror the run's persisted choice so
   // a rebuild (finish/resume/reconcile) never silently re-enables auto-scroll.
