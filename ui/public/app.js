@@ -2924,9 +2924,12 @@ function onLog(r, msg) {
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
   if (r.el) {
-    maybePaintLogFilters(r, rec);
+    // A repaint (true) already rendered rec from the model — appending again
+    // would duplicate the line.
+    const repainted = maybePaintLogFilters(r, rec);
     const logEl = r.el.querySelector('.log');
-    if (logEl && logLineVisible(rec, r.logFilter)) {
+    if (logEl && !repainted && logLineVisible(rec, r.logFilter)) {
+      clearLogPlaceholder(logEl);
       logEl.appendChild(buildLogLine(rec));
       while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
       maybeAutoscrollLog(r);
@@ -2956,13 +2959,33 @@ function fillFilterSelect(sel, allLabel, values, current, labelOf) {
 
 // (Re)populate a run card's three filter dropdowns from the lines seen so far.
 // `root` lets buildRunCard target the freshly-cloned node before r.el is assigned.
+// Returns true when the pane was fully repainted (see below), false otherwise.
 function paintLogFilters(r, root = r.el) {
-  if (!root) return;
+  if (!root) return false;
   const facets = logFacets(r.logLines);
-  fillFilterSelect(root.querySelector('.log-f-source'), 'all sources', facets.sources, r.logFilter.source);
-  fillFilterSelect(root.querySelector('.log-f-level'), 'all levels', facets.levels, r.logFilter.level);
-  fillFilterSelect(root.querySelector('.log-f-step'), 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  const selSource = root.querySelector('.log-f-source');
+  const selLevel = root.querySelector('.log-f-level');
+  const selStep = root.querySelector('.log-f-step');
+  fillFilterSelect(selSource, 'all sources', facets.sources, r.logFilter.source);
+  fillFilterSelect(selLevel, 'all levels', facets.levels, r.logFilter.level);
+  fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
   r._logFacetKeys = facetKeys(facets);
+  // A selection whose value vanished from the facets (log rotation, rebuild)
+  // fell back to "all" in the DOM; mirror that into the model and repaint so
+  // the pane never stays filtered by a value the dropdowns no longer show.
+  const effective = {
+    source: selSource ? selSource.value : r.logFilter.source,
+    level: selLevel ? selLevel.value : r.logFilter.level,
+    step: selStep ? selStep.value : r.logFilter.step,
+  };
+  if (effective.source !== r.logFilter.source
+    || effective.level !== r.logFilter.level
+    || String(effective.step) !== String(r.logFilter.step)) {
+    r.logFilter = effective;
+    repaintFilteredLog(r, root);
+    return true;
+  }
+  return false;
 }
 
 // Cheap incremental check for onLog: only rebuild the dropdowns when `rec`
@@ -2974,24 +2997,41 @@ function facetKeys(facets) {
     ...facets.steps.map((i) => `t:${i}`),
   ]);
 }
+// Returns paintLogFilters' repaint flag (true when the pane was fully
+// repainted) so onLog can skip its own incremental append.
 function maybePaintLogFilters(r, rec) {
   const seen = r._logFacetKeys;
-  if (!seen) { paintLogFilters(r); return; }
+  if (!seen) return paintLogFilters(r);
   const f = logFacets([rec]);
   for (const k of facetKeys(f)) {
-    if (!seen.has(k)) { paintLogFilters(r); return; }
+    if (!seen.has(k)) return paintLogFilters(r);
   }
+  return false;
+}
+
+// The live-card empty-state note ('(no lines match the filter)') is plain text
+// stamped with data-empty; incremental appends must clear it first.
+function clearLogPlaceholder(logEl) {
+  if (logEl.dataset.empty) { logEl.textContent = ''; delete logEl.dataset.empty; }
 }
 
 // Re-render a card's log pane from the model through the current filter (called
-// when a filter changes; live appends stay incremental via onLog).
-function repaintFilteredLog(r) {
-  if (!r || !r.el) return;
-  const logEl = r.el.querySelector('.log');
+// on a filter change and by buildRunCard's hydration; live appends stay
+// incremental via onLog). `root` lets buildRunCard target the freshly-cloned
+// node before r.el is assigned.
+function repaintFilteredLog(r, root = r.el) {
+  if (!r || !root) return;
+  const logEl = root.querySelector('.log');
   if (!logEl) return;
   logEl.innerHTML = '';
+  delete logEl.dataset.empty;
+  let shown = 0;
   for (const rec of r.logLines) {
-    if (logLineVisible(rec, r.logFilter)) logEl.appendChild(buildLogLine(rec));
+    if (logLineVisible(rec, r.logFilter)) { logEl.appendChild(buildLogLine(rec)); shown++; }
+  }
+  if (shown === 0 && r.logLines.length) {
+    logEl.textContent = '(no lines match the filter)';
+    logEl.dataset.empty = '1';
   }
   maybeAutoscrollLog(r);
 }
@@ -7521,12 +7561,9 @@ function buildRunCard(r) {
 
   // Hydrate the log from any events that arrived before the card existed,
   // through the run's current filter, and offer the facets seen so far.
-  const logEl = node.querySelector('.log');
-  if (logEl) {
-    for (const rec of r.logLines) {
-      if (logLineVisible(rec, r.logFilter)) logEl.appendChild(buildLogLine(rec));
-    }
-  }
+  // paintLogFilters may repaint once more if a stale selection fell back to
+  // "all" — cheap, and it keeps the pane and the dropdowns consistent.
+  repaintFilteredLog(r, node);
   paintLogFilters(r, node);
 
   // The switch is cloned ON from the template; mirror the run's persisted choice so
