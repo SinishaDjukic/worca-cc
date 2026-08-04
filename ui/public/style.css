@@ -1184,13 +1184,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---- Guardrails view ---- */
 .badge.violet{background:var(--violet-bg);color:var(--violet-ink);}
+.grv-list{display:grid;gap:14px;}
 .grv-card{padding:16px 20px;}
 .grv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .grv-name{font-size:14.5px;}
 .grv-name-input{flex:1 1 auto;min-width:0;}
 .grv-summary{display:block;margin:6px 0 10px;}
 .grv-actions{display:flex;gap:8px;margin-top:4px;}
+.grv-actions .btn-ghost{padding:7px 12px;font-size:12px;}
 .grv-editor{padding:18px 22px;}
+.grv-editor .grv-head{margin-bottom:16px;}
 .grv-editor .field{margin-top:12px;}
 .grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
 .grv-editor-actions{justify-content:flex-end;margin-top:14px;}
