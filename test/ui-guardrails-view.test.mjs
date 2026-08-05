@@ -379,3 +379,53 @@ test('browser Back to bare #guardrails closes an open edit wizard (loadGuardrail
   await tick(); await tick();
   assert.ok(modal.classList.contains('hidden'), 'wizard closed on bare-hash reload');
 });
+
+test('dirty-guard: Escape on a dirty editor asks to discard; confirming closes', async () => {
+  const { window } = await boot();
+  await openGuardrails(window, 'gr_org');
+  const modal = window.document.querySelector('#plugin-modal');
+  const editor = modal.querySelector('.grv-editor');
+  click(window, editor.querySelector('.gr-scrub')); // make it dirty
+  await tick();
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  await tick();
+  const confirm = window.document.querySelector('#confirm-modal');
+  assert.ok(!confirm.classList.contains('hidden'), 'discard confirm shown');
+  click(window, window.document.querySelector('#confirm-ok'));
+  await tick(); await tick();
+  assert.ok(modal.classList.contains('hidden'), 'wizard closed after confirming discard');
+});
+
+test('dirty-guard: canceling the discard confirm keeps the wizard open', async () => {
+  const { window } = await boot();
+  await openGuardrails(window, 'gr_org');
+  const modal = window.document.querySelector('#plugin-modal');
+  click(window, modal.querySelector('.grv-editor .gr-scrub')); // dirty
+  await tick();
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  await tick();
+  click(window, window.document.querySelector('#confirm-cancel'));
+  await tick(); await tick();
+  assert.ok(!modal.classList.contains('hidden'), 'stays open when discard is canceled');
+});
+
+test('dirty-guard: backdrop click on a dirty editor asks to discard', async () => {
+  const { window } = await boot();
+  await openGuardrails(window, 'gr_org');
+  const modal = window.document.querySelector('#plugin-modal');
+  click(window, modal.querySelector('.grv-editor .gr-scrub')); // dirty
+  await tick();
+  click(window, modal); // target === the overlay itself = backdrop
+  await tick();
+  assert.ok(!window.document.querySelector('#confirm-modal').classList.contains('hidden'), 'discard confirm shown on backdrop');
+});
+
+test('clean close: Escape on a pristine editor closes with no confirm', async () => {
+  const { window } = await boot();
+  await openGuardrails(window, 'gr_org');
+  const modal = window.document.querySelector('#plugin-modal');
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  await tick(); await tick();
+  assert.ok(window.document.querySelector('#confirm-modal').classList.contains('hidden'), 'no confirm for a clean editor');
+  assert.ok(modal.classList.contains('hidden'), 'closed directly');
+});

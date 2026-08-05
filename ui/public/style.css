@@ -633,6 +633,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    top-nav shown only when the sidebar is hidden (<1080px). */
 .viewer-modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;
   padding:24px;background:rgba(25,25,27,.42);}
+/* Confirm dialog must stack ABOVE the plugin/wizard modal (equal .viewer-modal z-index,
+   but #confirm-modal precedes #plugin-modal in the DOM). */
+#confirm-modal.viewer-modal{z-index:60;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
@@ -1204,3 +1207,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .grv-editor .field{margin-top:12px;}
 .grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
 .grv-editor-actions{justify-content:flex-end;margin-top:14px;}
+/* ---- Guardrail wizard (Step 1 + read-only view) ---- */
+.grv-wizard .grv-source-list{display:grid;gap:8px;margin:12px 0;max-height:46vh;overflow-y:auto;}
+.grv-source-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line,#d8d8de);border-radius:10px;cursor:pointer;}
+.grv-source-row:hover{background:var(--chip-bg,#f7f7fa);}
+.grv-source-name{flex:1 1 auto;font-size:14px;}
+.grv-wizard-actions{justify-content:flex-end;margin-top:14px;}
+.grv-editor .switch.disabled{opacity:.5;pointer-events:none;}
+/* The editor renders as a .card; nested in the modal body it must not double the card chrome. */
+#plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;}
+/* Hide the empty plugin-modal footer for the wizard (it keeps a margin-top otherwise). */
+#plugin-modal-actions:empty{display:none;}

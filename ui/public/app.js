@@ -6140,6 +6140,19 @@ if (el.pluginModalBody) {
   });
 }
 
+// Dismiss the wizard via Esc / backdrop click, routed through grvCloseWizard (dirty-guard).
+// Gated on grvState.wizard so other #plugin-modal consumers (plugin install/settings/doctor/409)
+// are untouched. Esc yields when the confirm dialog is on top so it doesn't close both at once.
+if (el.pluginModal) {
+  el.pluginModal.addEventListener('click', (e) => {
+    if (grvState.wizard && e.target === el.pluginModal) grvCloseWizard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (grvState.wizard && e.key === 'Escape'
+      && (!el.confirmModal || el.confirmModal.classList.contains('hidden'))) grvCloseWizard();
+  });
+}
+
 if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openGuardrailWizard('create'));
 
 if (typeof window !== 'undefined') {
