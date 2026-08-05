@@ -63,6 +63,45 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
   return root;
 }
 
+// Wizard Step 1: choose a starting point (Blank, a built-in, or a saved set).
+// sources: [{id, name, origin}]. Returns detached DOM; app.js wires .grv-next/.grv-cancel.
+export function renderStartStep(sources, { doc = globalThis.document, selectedId = '' } = {}) {
+  const root = h(doc, 'div', 'grv-wizard grv-step1');
+  root.appendChild(h(doc, 'p', 'hint', 'Choose a starting point'));
+  const list = h(doc, 'div', 'grv-source-list');
+  list.setAttribute('role', 'radiogroup');
+  list.setAttribute('aria-label', 'Starting point');
+  const addRow = (id, label, builtin) => {
+    const row = h(doc, 'label', 'grv-source-row');
+    const radio = h(doc, 'input', 'grv-source');
+    radio.type = 'radio';
+    radio.name = 'grv-source';
+    radio.value = id;
+    if (id === selectedId) radio.checked = true;
+    row.appendChild(radio);
+    row.appendChild(h(doc, 'span', 'grv-source-name', label));
+    if (builtin) row.appendChild(h(doc, 'span', 'badge waiting', 'built-in'));
+    list.appendChild(row);
+  };
+  addRow('', 'Blank (custom)', false);
+  for (const s of sources || []) addRow(s.id, s.name, s.origin === 'builtin');
+  root.appendChild(list);
+  const actions = h(doc, 'div', 'actions grv-wizard-actions');
+  const cancel = h(doc, 'button', 'btn btn-ghost btn-mini grv-cancel', 'Cancel');
+  cancel.type = 'button';
+  const next = h(doc, 'button', 'btn btn-primary btn-mini grv-next', 'Next →');
+  next.type = 'button';
+  actions.appendChild(cancel);
+  actions.appendChild(next);
+  root.appendChild(actions);
+  return root;
+}
+
+export function collectStartStep(rootEl) {
+  const sel = rootEl.querySelector('.grv-source:checked');
+  return sel ? sel.value : '';
+}
+
 function listEditor(doc, cls, entries, placeholder) {
   const wrap = h(doc, 'div');
   const list = h(doc, 'div', `gr-list ${cls}`);

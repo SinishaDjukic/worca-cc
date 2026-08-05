@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
-  renderCreateDialog, collectCreateDialog, renderGuardrailReferences409,
+  renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from '../ui/public/guardrails-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -80,16 +80,25 @@ test('collectGuardrailEditor round-trips the rendered editor', () => {
   assert.equal(got.settings.envScrub, false);
 });
 
-test('create dialog: sources + blank option, collect, and the hideFrom variant', () => {
-  const el = renderCreateDialog([{ id: 'normal', name: 'Normal' }, { id: 'gr_org', name: 'Org Policy' }], { doc });
-  const opts = [...el.querySelectorAll('.grv-create-from option')].map((o) => [o.value, o.textContent]);
-  assert.deepEqual(opts, [['', 'Blank (permissive)'], ['normal', 'Normal'], ['gr_org', 'Org Policy']]);
-  el.querySelector('.grv-create-name').value = 'New Set';
-  el.querySelector('.grv-create-from').value = 'gr_org';
-  assert.deepEqual(collectCreateDialog(el), { name: 'New Set', from: 'gr_org' });
-  const hidden = renderCreateDialog([{ id: 'normal', name: 'Normal' }], { doc, hideFrom: true });
-  assert.equal(hidden.querySelector('.grv-create-from'), null, 'start-from suppressed');
-  assert.deepEqual(collectCreateDialog(hidden), { name: '', from: '' });
+test('start step: Blank first + one row per source, built-in badge, Blank checked by default', () => {
+  const el = renderStartStep(
+    [{ id: 'secure', name: 'Strict', origin: 'builtin' }, { id: 'gr_org', name: 'Org Policy', origin: null }],
+    { doc });
+  const rows = [...el.querySelectorAll('.grv-source-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.grv-source').value), ['', 'secure', 'gr_org']);
+  assert.deepEqual(rows.map((r) => r.querySelector('.grv-source-name').textContent),
+    ['Blank (custom)', 'Strict', 'Org Policy']);
+  assert.ok(rows[1].querySelector('.badge'), 'built-in badge on the built-in row');
+  assert.equal(rows[2].querySelector('.badge'), null, 'no badge on the user row');
+  assert.equal(el.querySelector('.grv-source:checked').value, '', 'Blank checked by default');
+  assert.equal(el.querySelector('.grv-source-list').getAttribute('role'), 'radiogroup');
+  assert.ok(el.querySelector('.grv-next') && el.querySelector('.grv-cancel'));
+});
+
+test('collectStartStep returns the checked value and honors selectedId', () => {
+  const el = renderStartStep([{ id: 'secure', name: 'Strict', origin: 'builtin' }], { doc, selectedId: 'secure' });
+  assert.equal(el.querySelector('.grv-source:checked').value, 'secure');
+  assert.equal(collectStartStep(el), 'secure');
 });
 
 test('renderGuardrailReferences409 flattens the referencing list into mono rows', () => {
