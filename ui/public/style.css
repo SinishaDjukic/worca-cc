@@ -1185,15 +1185,22 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---- Guardrails view ---- */
 .badge.violet{background:var(--violet-bg);color:var(--violet-ink);}
 .grv-list{display:grid;gap:14px;}
-.grv-card{padding:16px 20px;}
+.grv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
+.grv-body{flex:1 1 auto;min-width:0;}
 .grv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .grv-name{font-size:14.5px;}
 .grv-name-input{flex:1 1 auto;min-width:0;}
-.grv-summary{display:block;margin:6px 0 10px;}
+.grv-summary{display:block;margin:6px 0 0;}
 .grv-actions{display:flex;gap:8px;margin-top:4px;}
 .grv-actions .btn-ghost{padding:7px 12px;font-size:12px;}
+/* Open affordance: down-chevron at the card's vertical center-right (mirrors hist/ws cards). */
+.grv-open{flex:0 0 auto;background:none;border:none;padding:6px;border-radius:8px;cursor:pointer;color:var(--ink-3);display:inline-flex;align-items:center;transition:.12s;}
+.grv-open:hover{color:var(--ink);background:var(--chip-bg,#f7f7fa);}
+.grv-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.grv-open .chev{width:15px;height:15px;}
 .grv-editor{padding:18px 22px;}
 .grv-editor .grv-head{margin-bottom:16px;}
+.grv-editor .switch-row{margin-top:12px;}
 .grv-editor .field{margin-top:12px;}
 .grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
 .grv-editor-actions{justify-content:flex-end;margin-top:14px;}

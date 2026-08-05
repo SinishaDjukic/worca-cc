@@ -32,23 +32,29 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
   for (const s of sets || []) {
     const card = h(doc, 'section', 'card grv-card');
     card.dataset.id = s.id;
+    const body = h(doc, 'div', 'grv-body');
     const head = h(doc, 'div', 'grv-head');
     head.appendChild(h(doc, 'b', 'grv-name', s.name));
     head.appendChild(originBadge(doc, s.origin));
-    card.appendChild(head);
-    card.appendChild(h(doc, 'small', 'grv-summary hint', guardrailSummary(s.settings)));
-    const actions = h(doc, 'div', 'grv-actions');
-    const edit = h(doc, 'button', 'btn-ghost grv-edit', s.origin === 'builtin' ? 'View' : 'Edit');
-    edit.type = 'button';
-    edit.dataset.id = s.id;
-    actions.appendChild(edit);
+    body.appendChild(head);
+    body.appendChild(h(doc, 'small', 'grv-summary hint', guardrailSummary(s.settings)));
+    card.appendChild(body);
     if (s.origin !== 'builtin') {
       const del = h(doc, 'button', 'btn-ghost grv-delete', 'Delete');
       del.type = 'button';
       del.dataset.id = s.id;
-      actions.appendChild(del);
+      card.appendChild(del);
     }
-    card.appendChild(actions);
+    // Open affordance: a down-chevron on the card's right edge (mirrors the
+    // history/workspace cards). Keeps the .grv-edit routing class so app.js's
+    // one delegated listener still opens the editor. Built-ins read "View".
+    const open = h(doc, 'button', 'grv-edit grv-open');
+    open.type = 'button';
+    open.dataset.id = s.id;
+    open.title = s.origin === 'builtin' ? 'View' : 'Edit';
+    open.setAttribute('aria-label', open.title);
+    open.innerHTML = '<svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+    card.appendChild(open);
     root.appendChild(card);
   }
   if (!sets || !sets.length) {
