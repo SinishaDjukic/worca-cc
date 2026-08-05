@@ -69,8 +69,8 @@ import {
   renderOrphanList,
 } from './plugins-view.mjs';
 import {
-  renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
-  renderCreateDialog, collectCreateDialog, renderGuardrailReferences409, guardrailSummary,
+  guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
+  renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 
@@ -5856,12 +5856,17 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
   if (!el.pluginAddRow.classList.contains('hidden')) el.pluginRepoUrl.focus();
 });
 if (el.pluginRepoScan) el.pluginRepoScan.addEventListener('click', scanPluginRepo);
-if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', closePluginModal);
+if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
+  if (grvState.wizard) return grvCloseWizard();
+  closePluginModal();
+});
 
-// ---- Guardrails view (named sets: list + create + delete; editor in grv*) ----
-// All view state lives here; loadGuardrailsView rebuilds the DOM from it.
-const grvState = { sets: [], editing: null, saved: null };
+// ---- Guardrails view (named sets: list + two-step wizard popup) ----
+// All view state lives here; loadGuardrailsView rebuilds the list, and the wizard
+// (Step 1 start-picker -> Step 2 editor) renders into the #plugin-modal body.
+const grvState = { sets: [], editing: null, saved: null, wizard: null };
 const grvClone = (o) => JSON.parse(JSON.stringify(o));
+const emptyGuardrails = () => ({ honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] });
 
 function setGuardrailsMsg(text, kind) {
   if (!el.guardrailsMsg) return;
@@ -5871,69 +5876,97 @@ function setGuardrailsMsg(text, kind) {
 
 const GRV_LIST_FIELDS = { 'gr-allow': 'envAllowlist', 'gr-paths': 'protectedPaths', 'gr-deny': 'deny' };
 
+// Re-render the Step-2 editor into the modal body (was an inline #guardrails-list swap).
 function grvRenderEditor(settings, opts) {
-  el.guardrailsList.replaceChildren(renderGuardrailEditor(
-    { ...grvState.editing, settings }, opts,
+  el.pluginModalBody.replaceChildren(renderGuardrailEditor(
+    { ...grvState.editing, settings }, { mode: grvState.wizard.mode, ...opts },
   ));
 }
 
-function openGuardrailEditor(id) {
-  const set = grvState.sets.find((s) => s.id === id);
-  if (!set) {
-    setGuardrailsMsg(`guardrail set "${id}" not found`, 'err');
-    el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
-    return;
+function grvRenderStep1() {
+  const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
+  el.pluginModalBody.replaceChildren(renderStartStep(sources, { selectedId: grvState.wizard.sourceId || '' }));
+  (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
+}
+
+// Open the wizard. mode 'create' starts at Step 1; 'edit'/'view' open Step 2 for `set`.
+function openGuardrailWizard(mode, set) {
+  if (mode === 'create') {
+    grvState.wizard = { mode, step: 1, sourceId: '' };
+    grvState.editing = { id: null, name: '', origin: null };
+    grvState.saved = { name: '', settings: emptyGuardrails() };
+    const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
+    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), []);
+    (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
+  } else {
+    grvState.wizard = { mode, step: 2, sourceId: '' };
+    grvState.editing = { id: set.id, name: set.name, origin: set.origin || null };
+    grvState.saved = { name: set.name, settings: grvClone(set.settings) };
+    pluginModal(mode === 'view' ? 'View guardrail set' : 'Edit guardrail set',
+      renderGuardrailEditor({ ...grvState.editing, settings: grvClone(set.settings) },
+        { mode, dirty: false, msg: '', msgErr: false }), []);
+    el.pluginModalBody.querySelector(mode === 'view' ? '.grv-save' : '.grv-name-input')?.focus();
   }
-  grvState.editing = { id: set.id, name: set.name, origin: set.origin || null };
-  grvState.saved = { name: set.name, settings: grvClone(set.settings) };
-  grvRenderEditor(grvClone(set.settings), { dirty: false, msg: '', msgErr: false });
+}
+
+// Close the wizard + refresh the list. Normalizes a deep-link hash back to bare
+// #guardrails (router reloads); a bare hash refreshes in place.
+function grvExitWizard() {
+  grvState.wizard = null;
+  grvState.editing = null;
+  closePluginModal();
+  if (location.hash.slice(1).startsWith('guardrails/')) location.hash = 'guardrails';
+  else loadGuardrailsView();
+}
+
+// Close with a dirty-guard: confirm discard only when the Step-2 editor has unsaved
+// changes; Step 1 (no editor) always closes freely.
+async function grvCloseWizard() {
+  const root = el.pluginModalBody.querySelector('.grv-editor');
+  if (root && grvDirty(root)) {
+    const ok = await confirmModal({
+      title: 'Discard changes?',
+      message: 'This guardrail set has unsaved changes. Discard them?',
+      confirmLabel: 'Discard',
+    });
+    if (!ok) return;
+  }
+  grvExitWizard();
 }
 
 function grvDirty(rootEl) {
   return JSON.stringify(collectGuardrailEditor(rootEl)) !== JSON.stringify(grvState.saved);
 }
 
-// collect -> mutate -> full re-render.
+// collect -> mutate -> full re-render of the Step-2 editor.
 function grvMutate(rootEl, fn) {
   const cur = collectGuardrailEditor(rootEl);
   fn(cur.settings);
-  grvState.editing.name = cur.name; // typed name survives the repaint
+  grvState.editing.name = cur.name;
   const dirty = JSON.stringify(cur) !== JSON.stringify(grvState.saved);
   grvRenderEditor(cur.settings, { dirty, msg: '', msgErr: false });
 }
 
+// Create-only for Task 3; Task 4 replaces this with the full create/edit/view version.
 async function grvSave(rootEl) {
   const cur = collectGuardrailEditor(rootEl);
-  if (!grvDirty(rootEl)) return;
-  grvState.editing.name = cur.name; // failure repaints must not revert a typed name
-  if (grvState.editing.origin === 'builtin') {
-    // Built-ins are code, not rows: dirty edits become a NEW named set. (The
-    // create dialog's error branch surfaces a 409 duplicate-name conflict in
-    // .grv-create-msg, so a colliding name never clobbers an existing set.)
-    return openCreateDialog({ settings: cur.settings, title: 'Save as new guardrail set' });
-  }
   if (!cur.name) return grvRenderEditor(cur.settings, { dirty: true, msg: 'name is required', msgErr: true });
+  grvState.editing.name = cur.name;
   try {
-    const res = await fetch(`/api/guardrails/${encodeURIComponent(grvState.editing.id)}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    const res = await fetch('/api/guardrails', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: cur.name, settings: cur.settings }),
     });
     const data = await safeJson(res);
-    if (!res.ok) {
-      const msg = (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`;
-      return grvRenderEditor(cur.settings, { dirty: true, msg, msgErr: true });
-    }
-    grvState.saved = { name: data.guardrails.name, settings: grvClone(data.guardrails.settings) };
-    grvState.editing.name = data.guardrails.name;
-    const i = grvState.sets.findIndex((s) => s.id === grvState.editing.id);
-    if (i >= 0) grvState.sets[i] = { ...grvState.sets[i], ...data.guardrails };
-    grvRenderEditor(grvClone(grvState.saved.settings),
-      { dirty: false, msg: 'Saved. Applies to future runs that pick this set, and to paused runs on resume.', msgErr: false });
-  } catch (e) {
-    grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true });
-  }
+    if (!grvState.wizard) return; // user discarded/closed while the request was in flight
+    if (!res.ok) return grvRenderEditor(cur.settings, { dirty: true, msg: (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`, msgErr: true });
+    grvExitWizard();
+  } catch (e) { grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true }); }
 }
 
+// Final routing: render the list and, when `param` names a set, open the wizard in
+// 'edit' (user) or 'view' (built-in). Resets a stale wizard on any path that does not
+// open a fresh one (browser Back to the bare list, or a bad deep-link).
 async function loadGuardrailsView(param = '') {
   if (!el.guardrailsList) return;
   setGuardrailsMsg('');
@@ -5942,48 +5975,18 @@ async function loadGuardrailsView(param = '') {
     const data = await safeJson(res);
     if (!res.ok) return setGuardrailsMsg(data.error || `HTTP ${res.status}`, 'err');
     grvState.sets = Array.isArray(data.guardrails) ? data.guardrails : [];
-    if (param && grvState.sets.some((s) => s.id === param)) return openGuardrailEditor(param);
-    grvState.editing = null;
     el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+    if (param) {
+      const set = grvState.sets.find((s) => s.id === param);
+      if (set) { openGuardrailWizard(set.origin === 'builtin' ? 'view' : 'edit', set); return; }
+      setGuardrailsMsg(`guardrail set "${param}" not found`, 'err');
+    }
+    if (grvState.wizard) { // no fresh wizard opened above: close any stale one (browser Back / bad id)
+      grvState.wizard = null; grvState.editing = null; closePluginModal();
+    }
   } catch (e) {
     setGuardrailsMsg(e.message, 'err');
   }
-}
-
-// "Create guardrails" dialog (pluginModal shell). With `settings` provided the
-// start-from select is hidden and those settings are used verbatim (the
-// built-in save-as-new flow).
-function openCreateDialog({ settings = null, title = 'Create guardrails' } = {}) {
-  const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name }));
-  const body = renderCreateDialog(sources, { hideFrom: !!settings });
-  const fail = (m) => {
-    const msgEl = body.querySelector('.grv-create-msg');
-    if (msgEl) { msgEl.textContent = m; msgEl.className = 'hint err grv-create-msg'; }
-  };
-  pluginModal(title, body, [
-    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Create', 'btn btn-primary btn-mini', async () => {
-      const { name, from } = collectCreateDialog(body);
-      if (!name) return fail('name is required');
-      const src = settings
-        || (from ? ((grvState.sets.find((s) => s.id === from) || {}).settings || {}) : {});
-      try {
-        const res = await fetch('/api/guardrails', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, settings: src }),
-        });
-        const data = await safeJson(res);
-        // Any failure — including the 409 duplicate-name conflict — surfaces in
-        // .grv-create-msg; the dialog stays open so the user can pick another name.
-        if (!res.ok) return fail((data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`);
-        closePluginModal();
-        await loadGuardrailsView();
-        // Open the freshly created set in the editor (deep link via the router).
-        location.hash = `guardrails/${data.guardrails.id}`;
-      } catch (e) { fail(e.message); }
-    }],
-  ]);
-  body.querySelector('.grv-create-name')?.focus();
 }
 
 async function deleteGuardrailSetFlow(id) {
@@ -6009,8 +6012,8 @@ async function deleteGuardrailSetFlow(id) {
   }
 }
 
-// One delegated listener for the whole view: list actions first, then the
-// editor branches (both surfaces mount into el.guardrailsList).
+// List surface: open the wizard (deep-link via hash) or delete. Editor events now
+// live on the modal body (the editor renders inside #plugin-modal).
 if (el.guardrailsList) {
   el.guardrailsList.addEventListener('click', (e) => {
     const t = e.target;
@@ -6018,11 +6021,47 @@ if (el.guardrailsList) {
     if (edit) { location.hash = `guardrails/${edit.dataset.id}`; return; }
     const del = t.closest && t.closest('.grv-delete');
     if (del) { deleteGuardrailSetFlow(del.dataset.id); return; }
-    const root = t.closest && t.closest('.grv-editor');
+  });
+}
+
+// Wizard surface: Step-1 (source/next/cancel) + Step-2 editor events. Gated on an
+// open wizard so other #plugin-modal consumers are untouched.
+if (el.pluginModalBody) {
+  el.pluginModalBody.addEventListener('click', (e) => {
+    if (!grvState.wizard) return;
+    const t = e.target;
+    if (t.closest('.grv-cancel')) { grvExitWizard(); return; }
+    if (t.closest('.grv-next')) {
+      const srcId = collectStartStep(el.pluginModalBody);
+      const w = grvState.wizard;
+      const src = srcId ? (grvState.sets.find((s) => s.id === srcId) || {}) : null;
+      const seed = (src && src.settings) ? grvClone(src.settings) : emptyGuardrails();
+      // Returning via Back and re-picking the SAME source restores the in-progress
+      // Step-2 edits instead of silently re-seeding (no data loss on Back -> Next).
+      const restore = w.work && srcId === w.sourceId;
+      const settings = restore ? w.work.settings : seed;
+      const name = restore ? w.work.name : '';
+      grvState.wizard = { mode: 'create', step: 2, sourceId: srcId }; // drops w.work
+      grvState.editing = { id: null, name, origin: null };
+      grvState.saved = { name: '', settings: seed };
+      grvRenderEditor(settings, {
+        dirty: JSON.stringify({ name, settings }) !== JSON.stringify(grvState.saved),
+        msg: '', msgErr: false,
+      });
+      el.pluginModalBody.querySelector('.grv-name-input')?.focus();
+      return;
+    }
+    if (t.closest('.grv-back')) {
+      const editorEl = el.pluginModalBody.querySelector('.grv-editor');
+      grvState.wizard.work = editorEl ? collectGuardrailEditor(editorEl) : null; // stash edits for same-source return
+      grvState.wizard.step = 1;
+      grvRenderStep1();
+      return;
+    }
+    const root = t.closest('.grv-editor');
     if (!root) return;
-    if (t.closest('.grv-back')) { location.hash = 'guardrails'; loadGuardrailsView(); return; }
     const sw = t.closest('.switch');
-    if (sw) {
+    if (sw && !sw.classList.contains('disabled')) {
       const fld = sw.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
       return grvMutate(root, (s) => { s[fld] = !s[fld]; });
     }
@@ -6041,8 +6080,7 @@ if (el.guardrailsList) {
       const v = ((input && input.value) || '').trim();
       if (!fld || !v) return;
       grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
-      // The repaint destroyed the add-input — restore focus for consecutive adds.
-      el.guardrailsList.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+      el.pluginModalBody.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
       return;
     }
     if (t.closest('.grv-discard')) {
@@ -6052,9 +6090,8 @@ if (el.guardrailsList) {
     }
     if (t.closest('.grv-save')) { grvSave(root); return; }
   });
-  // Name typing enables Save/Discard WITHOUT a repaint, so focus survives.
-  el.guardrailsList.addEventListener('input', (e) => {
-    if (!e.target.classList || !e.target.classList.contains('grv-name-input')) return;
+  el.pluginModalBody.addEventListener('input', (e) => {
+    if (!grvState.wizard || !e.target.classList || !e.target.classList.contains('grv-name-input')) return;
     const root = e.target.closest('.grv-editor');
     if (!root) return;
     const dirty = grvDirty(root);
@@ -6063,12 +6100,12 @@ if (el.guardrailsList) {
     const disc = root.querySelector('.grv-discard');
     if (disc) disc.disabled = !dirty;
   });
-  // Keyboard parity with the switches and add-inputs.
-  el.guardrailsList.addEventListener('keydown', (e) => {
+  el.pluginModalBody.addEventListener('keydown', (e) => {
+    if (!grvState.wizard) return;
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const root = e.target.closest && e.target.closest('.grv-editor');
     if (!root) return;
-    if (e.target.classList?.contains('switch')) {
+    if (e.target.classList?.contains('switch') && !e.target.classList.contains('disabled')) {
       e.preventDefault();
       const fld = e.target.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
       return grvMutate(root, (s) => { s[fld] = !s[fld]; });
@@ -6080,15 +6117,15 @@ if (el.guardrailsList) {
       const v = (e.target.value || '').trim();
       if (!fld || !v) return;
       grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
-      el.guardrailsList.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+      el.pluginModalBody.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
     }
   });
 }
-if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openCreateDialog());
 
-// Test hook (mirrors window.__projects / window.__agents).
+if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openGuardrailWizard('create'));
+
 if (typeof window !== 'undefined') {
-  window.__guardrails = { loadGuardrailsView, openGuardrailEditor, openCreateDialog, deleteGuardrailSetFlow, grvState, grvSave, grvMutate };
+  window.__guardrails = { loadGuardrailsView, openGuardrailWizard, deleteGuardrailSetFlow, grvState, grvSave, grvMutate };
 }
 
 // ---------------------------------------------------------------------------
@@ -8288,6 +8325,12 @@ function showView(name, param = '') {
   if (currentShownView === 'agent-create' && name !== 'agent-create') {
     if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
     resetAgentWizard();
+  }
+  // Close the guardrail wizard when leaving Guardrails (its modal is a top-level
+  // overlay, not a [data-view], so it isn't auto-hidden; a stale wizard would also
+  // capture other #plugin-modal consumers' Esc/backdrop/Close).
+  if (currentShownView === 'guardrails' && name !== 'guardrails' && grvState.wizard) {
+    grvState.wizard = null; grvState.editing = null; closePluginModal();
   }
   currentShownView = name;
 

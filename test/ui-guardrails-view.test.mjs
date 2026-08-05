@@ -83,35 +83,43 @@ test('navigating to #guardrails renders the list from GET /api/guardrails (built
   assert.equal(cards[0].querySelector('.grv-delete'), null, 'built-in undeletable');
 });
 
-test('Create guardrails: dialog opens, Create POSTs {name, settings from start-from}, view reloads and deep-links', async () => {
+test('create wizard: New -> Step 1 -> Next -> Step 2 -> Create POSTs {name, settings}, closes, reloads', async () => {
   const posts = [];
   const { window } = await boot({
     fetchHandler: (u, opts) => {
       if (u.endsWith('/api/guardrails') && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body));
         return Promise.resolve({ ok: true, status: 201, json: async () => ({
-          guardrails: { id: 'gr_new-set', name: 'New Set', origin: null, settings: SETS[2].settings },
+          guardrails: { id: 'gr_new-set', name: 'New Set', origin: null, settings: JSON.parse(opts.body).settings },
         }) });
       }
-      return undefined; // fall through to the boot defaults (GET /api/guardrails serves SETS)
+      return undefined;
     },
   });
   await openGuardrails(window);
   click(window, window.document.querySelector('#guardrail-create-btn'));
   await tick();
   const modal = window.document.querySelector('#plugin-modal');
-  assert.ok(!modal.classList.contains('hidden'), 'create dialog open in the plugin modal');
-  modal.querySelector('.grv-create-name').value = 'New Set';
-  modal.querySelector('.grv-create-from').value = 'secure';
-  const createBtn = [...window.document.querySelectorAll('#plugin-modal-actions button')]
-    .find((b) => b.textContent === 'Create');
-  click(window, createBtn);
+  assert.ok(!modal.classList.contains('hidden'), 'wizard open');
+  assert.ok(modal.querySelector('.grv-step1'), 'Step 1 shown');
+  modal.querySelector('.grv-source[value="secure"]').checked = true;
+  click(window, modal.querySelector('.grv-next'));
+  await tick();
+  const editor = modal.querySelector('.grv-editor');
+  assert.ok(editor && editor.dataset.mode === 'create', 'Step 2 editor in create mode');
+  assert.deepEqual([...editor.querySelectorAll('.gr-list.gr-deny .gr-row .mono')].map((n) => n.textContent),
+    ['Bash(curl:*)'], 'prefilled from Strict');
+  const nameInput = editor.querySelector('.grv-name-input');
+  nameInput.value = 'New Set';
+  nameInput.dispatchEvent(new window.Event('input', { bubbles: true })); // fire the enable path a real user triggers
+  await tick();
+  assert.equal(modal.querySelector('.grv-save').disabled, false, 'typing a name enables Create');
+  click(window, modal.querySelector('.grv-save')); // "Create set"
   await tick(); await tick();
   assert.equal(posts.length, 1);
   assert.equal(posts[0].name, 'New Set');
-  assert.deepEqual(posts[0].settings, SETS[2].settings, 'start-from seeds the settings');
-  assert.ok(modal.classList.contains('hidden'), 'modal closed on success');
-  assert.equal(window.location.hash, '#guardrails/gr_new-set', 'deep-links the new set');
+  assert.deepEqual(posts[0].settings, SETS[2].settings, 'start-from seeds settings');
+  assert.ok(modal.classList.contains('hidden'), 'closes on success');
 });
 
 test('delete flow: confirm -> DELETE; a 409 renders the pinning-run list in the modal', async () => {
