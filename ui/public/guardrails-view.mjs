@@ -227,41 +227,6 @@ export function collectGuardrailEditor(rootEl) {
   };
 }
 
-// "Create guardrails" dialog body: name + start-from (hidden for the built-in
-// save-as-new flow, which supplies its own settings).
-export function renderCreateDialog(sources, { doc = globalThis.document, hideFrom = false } = {}) {
-  const root = h(doc, 'div', 'grv-create');
-  const name = h(doc, 'input', 'input grv-create-name');
-  name.type = 'text';
-  name.placeholder = 'e.g. Org policy';
-  name.spellcheck = false;
-  root.appendChild(field(doc, 'Name', name));
-  if (!hideFrom) {
-    const wrap = h(doc, 'div', 'select-wrap');
-    const sel = h(doc, 'select', 'select grv-create-from');
-    const blank = h(doc, 'option', null, 'Blank (permissive)');
-    blank.value = '';
-    sel.appendChild(blank);
-    for (const s of sources || []) {
-      const o = h(doc, 'option', null, s.name);
-      o.value = s.id;
-      sel.appendChild(o);
-    }
-    wrap.appendChild(sel);
-    root.appendChild(field(doc, 'Start from', wrap));
-  }
-  root.appendChild(h(doc, 'small', 'hint grv-create-msg', ''));
-  return root;
-}
-
-export function collectCreateDialog(rootEl) {
-  const from = rootEl.querySelector('.grv-create-from');
-  return {
-    name: ((rootEl.querySelector('.grv-create-name') || {}).value || '').trim(),
-    from: from ? (from.value || '') : '',
-  };
-}
-
 // 409 body: who still pins the set ([{id, referencedBy: string[]}] flattened —
 // referencedBy entries are "pipeline <id>" resume-point pins).
 export function renderGuardrailReferences409(references, { doc = globalThis.document } = {}) {
