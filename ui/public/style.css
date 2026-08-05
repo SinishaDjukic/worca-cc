@@ -1214,8 +1214,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .grv-source-name{flex:1 1 auto;font-size:14px;}
 .grv-wizard-actions{justify-content:flex-end;margin-top:14px;}
 .grv-editor .switch.disabled{opacity:.5;pointer-events:none;}
-/* The editor renders as a .card; nested in the modal body it must not double the card chrome. */
-#plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;}
+/* The editor renders as a .card, so inside #plugin-modal it re-matches the
+   `#plugin-modal .card` rule above (640px + its own overflow:auto/max-height).
+   That pinned it to 640px inside the 900px body AND made it a nested scroll
+   container whose scrollbar clipped the right edge of every row/button. Strip
+   the card chrome AND the width/scroll so it fills the body and the OUTER
+   .card stays the single scroll container. */
+#plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;
+  width:auto;max-width:none;max-height:none;overflow:visible;}
 /* Hide the empty plugin-modal footer for the wizard (it keeps a margin-top otherwise). */
 #plugin-modal-actions:empty{display:none;}
 /* The wizard needs more room than the default plugin modal (640px): the editor's
