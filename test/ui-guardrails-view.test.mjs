@@ -404,6 +404,8 @@ test('dirty-guard: canceling the discard confirm keeps the wizard open', async (
   await tick();
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   await tick();
+  const confirm = window.document.querySelector('#confirm-modal');
+  assert.ok(!confirm.classList.contains('hidden'), 'discard confirm shown');
   click(window, window.document.querySelector('#confirm-cancel'));
   await tick(); await tick();
   assert.ok(!modal.classList.contains('hidden'), 'stays open when discard is canceled');
