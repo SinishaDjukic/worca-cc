@@ -5947,21 +5947,39 @@ function grvMutate(rootEl, fn) {
   grvRenderEditor(cur.settings, { dirty, msg: '', msgErr: false });
 }
 
-// Create-only for Task 3; Task 4 replaces this with the full create/edit/view version.
 async function grvSave(rootEl) {
   const cur = collectGuardrailEditor(rootEl);
+  const mode = grvState.wizard.mode;
+  if (mode === 'view') {
+    // "Save as new set": flip the read-only built-in view into a create, prefilled.
+    grvState.wizard = { mode: 'create', step: 2, sourceId: grvState.editing.id };
+    const settings = cur.settings;
+    grvState.editing = { id: null, name: '', origin: null };
+    grvState.saved = { name: '', settings: grvClone(settings) };
+    el.pluginModalTitle.textContent = 'Create guardrails'; // header was 'View guardrail set'
+    grvRenderEditor(settings, { dirty: false, msg: '', msgErr: false });
+    el.pluginModalBody.querySelector('.grv-name-input')?.focus();
+    return;
+  }
   if (!cur.name) return grvRenderEditor(cur.settings, { dirty: true, msg: 'name is required', msgErr: true });
   grvState.editing.name = cur.name;
+  const isCreate = mode === 'create';
+  const url = isCreate ? '/api/guardrails' : `/api/guardrails/${encodeURIComponent(grvState.editing.id)}`;
   try {
-    const res = await fetch('/api/guardrails', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(url, {
+      method: isCreate ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: cur.name, settings: cur.settings }),
     });
     const data = await safeJson(res);
     if (!grvState.wizard) return; // user discarded/closed while the request was in flight
-    if (!res.ok) return grvRenderEditor(cur.settings, { dirty: true, msg: (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`, msgErr: true });
+    if (!res.ok) {
+      const msg = (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`;
+      return grvRenderEditor(cur.settings, { dirty: true, msg, msgErr: true });
+    }
     grvExitWizard();
-  } catch (e) { grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true }); }
+  } catch (e) {
+    grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true });
+  }
 }
 
 // Final routing: render the list and, when `param` names a set, open the wizard in
