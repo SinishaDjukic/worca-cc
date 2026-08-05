@@ -1218,3 +1218,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 #plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;}
 /* Hide the empty plugin-modal footer for the wizard (it keeps a margin-top otherwise). */
 #plugin-modal-actions:empty{display:none;}
+/* The wizard needs more room than the default plugin modal (640px): the editor's
+   labeled fields with inline "+ add" rows and the two-button footer overflow 640.
+   Scoped via :has() so other #plugin-modal consumers (install/settings/doctor/409)
+   keep their 640px width. 960 = 640 * 1.5. */
+#plugin-modal .card:has(.grv-wizard),
+#plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
