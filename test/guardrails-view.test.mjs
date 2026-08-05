@@ -43,30 +43,41 @@ test('list cards: name, origin badge, summary, delegation hooks; built-ins get V
   assert.match(cards[1].querySelector('.grv-summary').textContent, /2 deny · 1 paths · scrub on/);
 });
 
-test('editor: user set renders a name input, switches, three row editors, Save disabled while clean', () => {
-  const el = renderGuardrailEditor(USER_SET, { doc });
-  assert.equal(el.dataset.id, 'gr_org');
+test('editor create mode: name input, Back control, "Create set" primary', () => {
+  const el = renderGuardrailEditor({ ...USER_SET, name: '' }, { doc, mode: 'create', dirty: true });
+  assert.equal(el.dataset.mode, 'create');
+  assert.ok(el.querySelector('.grv-name-input'), 'editable name');
+  assert.ok(el.querySelector('.grv-back'), 'create shows a Back-to-step-1 control');
+  assert.equal(el.querySelector('.grv-save').textContent, 'Create set');
+  assert.equal(el.querySelector('.grv-save').disabled, false, 'dirty enables create');
+});
+
+test('editor edit mode: name input, no Back, "Save" primary, clean disables actions', () => {
+  const el = renderGuardrailEditor(USER_SET, { doc, mode: 'edit' });
+  assert.equal(el.dataset.mode, 'edit');
   assert.equal(el.querySelector('.grv-name-input').value, 'Org Policy');
-  assert.ok(el.querySelector('.gr-honor').classList.contains('on'));
-  assert.ok(el.querySelector('.gr-scrub').classList.contains('on'));
+  assert.equal(el.querySelector('.grv-back'), null, 'edit has no Back');
+  assert.equal(el.querySelector('.grv-save').textContent, 'Save');
+  assert.equal(el.querySelector('.grv-save').disabled, true, 'clean');
+  assert.equal(el.querySelector('.grv-discard').disabled, true);
   assert.deepEqual(
     [...el.querySelectorAll('.gr-list.gr-deny .gr-row .mono')].map((n) => n.textContent),
     ['Bash(curl:*)', 'Bash(nc:*)']);
-  assert.equal(el.querySelector('.gr-list.gr-deny .gr-row .gr-rm').dataset.value, 'Bash(curl:*)');
-  assert.equal(el.querySelector('.gr-add[data-list="gr-allow"] input').placeholder, 'NPM_TOKEN');
-  assert.equal(el.querySelector('.grv-save').disabled, true);
-  assert.equal(el.querySelector('.grv-save').textContent, 'Save');
-  assert.equal(el.querySelector('.grv-discard').disabled, true);
 });
 
-test('editor: built-in renders static name + badge, "Save as new set" label; dirty enables actions and paints msg', () => {
-  const el = renderGuardrailEditor(BUILTIN, { doc, dirty: true, msg: 'boom', msgErr: true });
-  assert.equal(el.querySelector('.grv-name-input'), null, 'no name input on built-ins');
+test('editor view mode: static name + badge, read-only, "Save as new set" always enabled, no Discard', () => {
+  const el = renderGuardrailEditor(BUILTIN, { doc, mode: 'view' });
+  assert.equal(el.dataset.mode, 'view');
+  assert.equal(el.querySelector('.grv-name-input'), null, 'no name input');
   assert.equal(el.querySelector('.grv-name').textContent, 'Strict');
+  assert.equal(el.querySelector('.grv-origin').textContent, 'built-in');
   assert.equal(el.querySelector('.grv-save').textContent, 'Save as new set');
-  assert.equal(el.querySelector('.grv-save').disabled, false);
-  assert.equal(el.querySelector('.grv-msg').textContent, 'boom');
-  assert.ok(el.querySelector('.grv-msg').classList.contains('err'));
+  assert.equal(el.querySelector('.grv-save').disabled, false, 'always enabled');
+  assert.equal(el.querySelector('.grv-discard'), null, 'no Discard in read-only view');
+  assert.ok(el.querySelector('.gr-honor').classList.contains('disabled'), 'switch disabled');
+  assert.equal(el.querySelector('.gr-honor').getAttribute('aria-disabled'), 'true', 'switch aria-disabled');
+  assert.equal(el.querySelector('.gr-add'), null, 'read-only: no add-rows rendered');
+  assert.equal(el.querySelectorAll('.gr-rm').length, 0, 'read-only: no remove buttons rendered');
 });
 
 test('collectGuardrailEditor round-trips the rendered editor', () => {

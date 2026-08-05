@@ -102,22 +102,25 @@ export function collectStartStep(rootEl) {
   return sel ? sel.value : '';
 }
 
-function listEditor(doc, cls, entries, placeholder) {
+function listEditor(doc, cls, entries, placeholder, readOnly = false) {
   const wrap = h(doc, 'div');
   const list = h(doc, 'div', `gr-list ${cls}`);
   for (const v of entries || []) {
     const row = h(doc, 'div', 'gr-row');
     row.appendChild(h(doc, 'span', 'mono', v));
-    const rm = h(doc, 'button', 'gr-rm', '✕');
-    rm.type = 'button';
-    rm.dataset.value = v;
-    rm.title = 'Remove';
-    rm.setAttribute('aria-label', 'Remove');
-    row.appendChild(rm);
+    if (!readOnly) {
+      const rm = h(doc, 'button', 'gr-rm', '✕');
+      rm.type = 'button';
+      rm.dataset.value = v;
+      rm.title = 'Remove';
+      rm.setAttribute('aria-label', 'Remove');
+      row.appendChild(rm);
+    }
     list.appendChild(row);
   }
   if (!entries || !entries.length) list.appendChild(h(doc, 'div', 'gr-empty', 'none'));
   wrap.appendChild(list);
+  if (readOnly) return wrap; // no add-row in read-only view
   const add = h(doc, 'div', 'path-row gr-add');
   add.dataset.list = cls;
   const input = h(doc, 'input', 'input');
@@ -132,12 +135,13 @@ function listEditor(doc, cls, entries, placeholder) {
   return wrap;
 }
 
-function switchRow(doc, cls, on, label) {
+function switchRow(doc, cls, on, label, readOnly = false) {
   const row = h(doc, 'div', 'switch-row');
-  const sw = h(doc, 'div', `switch ${cls}${on ? ' on' : ''}`);
+  const sw = h(doc, 'div', `switch ${cls}${on ? ' on' : ''}${readOnly ? ' disabled' : ''}`);
   sw.setAttribute('role', 'switch');
   sw.setAttribute('aria-checked', String(!!on));
-  sw.tabIndex = 0;
+  if (readOnly) sw.setAttribute('aria-disabled', 'true');
+  else sw.tabIndex = 0;
   row.appendChild(sw);
   row.appendChild(h(doc, 'span', 'txt', label));
   return row;
@@ -150,18 +154,22 @@ function field(doc, label, child) {
   return f;
 }
 
-// renderGuardrailEditor({id,name,origin,settings}) -> detached editor card.
-// Built-ins: static name + badge, Save labeled "Save as new set". app.js owns
-// all state; mutations re-render this whole card.
-export function renderGuardrailEditor(set, { doc = globalThis.document, dirty = false, msg = '', msgErr = false } = {}) {
+// renderGuardrailEditor(set, {mode}) -> detached editor card (wizard Step 2).
+// mode: 'create' (Back-to-step-1 + "Create set") | 'edit' ("Save") | 'view'
+// (read-only built-in + "Save as new set"). app.js owns state; mutations re-render.
+export function renderGuardrailEditor(set, { doc = globalThis.document, mode = 'edit', dirty = false, msg = '', msgErr = false } = {}) {
   const s = set.settings || {};
+  const readOnly = mode === 'view';
   const root = h(doc, 'section', 'card grv-editor');
   root.dataset.id = set.id || '';
+  root.dataset.mode = mode;
   const head = h(doc, 'div', 'grv-head');
-  const back = h(doc, 'button', 'btn btn-mini grv-back', 'Back');
-  back.type = 'button';
-  head.appendChild(back);
-  if (set.origin === 'builtin') {
+  if (mode === 'create') {
+    const back = h(doc, 'button', 'btn btn-mini grv-back', '← Back');
+    back.type = 'button';
+    head.appendChild(back);
+  }
+  if (readOnly) {
     head.appendChild(h(doc, 'b', 'grv-name', set.name));
     head.appendChild(h(doc, 'span', 'badge waiting grv-origin', 'built-in'));
   } else {
@@ -173,24 +181,29 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, dirty = 
     head.appendChild(name);
   }
   root.appendChild(head);
-  root.appendChild(switchRow(doc, 'gr-honor', s.honorProjectSettings, 'Honor project .claude/settings.json'));
-  root.appendChild(switchRow(doc, 'gr-scrub', s.envScrub, 'Scrub environment on agent spawn'));
+  root.appendChild(switchRow(doc, 'gr-honor', s.honorProjectSettings, 'Honor project .claude/settings.json', readOnly));
+  root.appendChild(switchRow(doc, 'gr-scrub', s.envScrub, 'Scrub environment on agent spawn', readOnly));
   root.appendChild(field(doc, 'Env allowlist (passed through when scrub is on)',
-    listEditor(doc, 'gr-allow', s.envAllowlist, 'NPM_TOKEN')));
+    listEditor(doc, 'gr-allow', s.envAllowlist, 'NPM_TOKEN', readOnly)));
   root.appendChild(field(doc, 'Protected paths (denies Read/Edit)',
-    listEditor(doc, 'gr-paths', s.protectedPaths, '.env*   |   **/secrets/**')));
+    listEditor(doc, 'gr-paths', s.protectedPaths, '.env*   |   **/secrets/**', readOnly)));
   root.appendChild(field(doc, 'Deny rules (pairs: Bash(git push) + Bash(git push:*))',
-    listEditor(doc, 'gr-deny', s.deny, 'Bash(curl:*)')));
-  root.appendChild(h(doc, 'p', `hint grv-msg${msgErr ? ' err' : ''}`, msg || ''));
+    listEditor(doc, 'gr-deny', s.deny, 'Bash(curl:*)', readOnly)));
+  const msgEl = h(doc, 'p', `hint grv-msg${msgErr ? ' err' : ''}`, msg || '');
+  msgEl.setAttribute('role', 'status');
+  msgEl.setAttribute('aria-live', 'polite');
+  root.appendChild(msgEl);
   const actions = h(doc, 'div', 'actions grv-editor-actions');
-  const discard = h(doc, 'button', 'btn btn-ghost btn-mini grv-discard', 'Discard');
-  discard.type = 'button';
-  discard.disabled = !dirty;
-  actions.appendChild(discard);
+  if (!readOnly) {
+    const discard = h(doc, 'button', 'btn btn-ghost btn-mini grv-discard', 'Discard');
+    discard.type = 'button';
+    discard.disabled = !dirty;
+    actions.appendChild(discard);
+  }
   const save = h(doc, 'button', 'btn btn-primary btn-mini grv-save',
-    set.origin === 'builtin' ? 'Save as new set' : 'Save');
+    mode === 'create' ? 'Create set' : (mode === 'view' ? 'Save as new set' : 'Save'));
   save.type = 'button';
-  save.disabled = !dirty;
+  save.disabled = readOnly ? false : !dirty;
   actions.appendChild(save);
   root.appendChild(actions);
   return root;
