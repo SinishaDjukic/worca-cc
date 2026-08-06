@@ -37,7 +37,7 @@ test('assistant tool_use is logged as a readable tool call, not bare "assistant"
   assert.equal(logs[0].text, '→ Read src/app.js');
 });
 
-test('bare user (tool_result) envelope events are dropped (log) and emit no subagent', () => {
+test('user tool_result envelope logs ← result at debug and emits no subagent', () => {
   const orch = createOrchestrator({ projectDir: '/tmp/proj' });
   const logs = []; const subs = [];
   orch.on('log', (l) => logs.push(l));
@@ -46,13 +46,20 @@ test('bare user (tool_result) envelope events are dropped (log) and emit no suba
     type: 'user',
     raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } },
   });
-  assert.equal(logs.length, 0, 'tool_result echoes carry no log line');
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'debug');
+  assert.equal(logs[0].text, '← result ok x');
   assert.equal(subs.length, 0, 'an untracked tool_use_id is not a sub-agent finish');
 });
 
-test('system init envelope events are dropped', () => {
-  const logs = capture('planner', { type: 'system', raw: { type: 'system', subtype: 'init' } });
-  assert.equal(logs.length, 0);
+test('system init envelope logs [init] model=… at debug', () => {
+  const logs = capture('planner', { type: 'system', raw: { type: 'system', subtype: 'init', model: 'claude-x' } });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'debug');
+  assert.equal(logs[0].text, '[init] model=claude-x');
+  const noModel = capture('planner', { type: 'system', raw: { type: 'system', subtype: 'init' } });
+  assert.equal(noModel.length, 1);
+  assert.equal(noModel[0].text, '[init] model=?');
 });
 
 test('assistant text still logs at info unchanged', () => {
@@ -208,4 +215,135 @@ test('string raw (non-JSON runner line) stays under the plain role, no sub', () 
   assert.equal(logs[0].source, 'planner');
   assert.equal(logs[0].text, 'a non-JSON stdout line');
   assert.equal(logs[0].sub, undefined);
+});
+
+// ── Agent-log parity: mixed turns, tool results, init ───────────────────────
+
+test('mixed turn logs text at info AND each tool call at debug', () => {
+  const logs = capture('planner', {
+    type: 'assistant',
+    text: 'Planning.',
+    raw: {
+      type: 'assistant',
+      message: { content: [
+        { type: 'text', text: 'Planning.' },
+        { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/proj/a.js' } },
+      ] },
+    },
+  });
+  assert.deepEqual(logs.map((l) => [l.level, l.text]), [
+    ['info', 'Planning.'],
+    ['debug', '→ Read a.js'],
+  ]);
+});
+
+test('mixed turn with two tools logs one info + two debug, in order', () => {
+  const logs = capture('planner', {
+    type: 'assistant',
+    text: 'Working.',
+    raw: {
+      type: 'assistant',
+      message: { content: [
+        { type: 'text', text: 'Working.' },
+        { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/proj/a.js' } },
+        { type: 'tool_use', name: 'Bash', input: { command: 'npm test' } },
+      ] },
+    },
+  });
+  assert.deepEqual(logs.map((l) => [l.level, l.text]), [
+    ['info', 'Working.'],
+    ['debug', '→ Read a.js'],
+    ['debug', '→ Bash npm test'],
+  ]);
+});
+
+test('text-only turn stays a single info line (no trailing tool/result line)', () => {
+  const logs = capture('planner', {
+    type: 'assistant',
+    text: 'Just text.',
+    raw: { type: 'assistant', message: { content: [{ type: 'text', text: 'Just text.' }] } },
+  });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'info');
+  assert.equal(logs[0].text, 'Just text.');
+});
+
+test('tool_result ok truncates id to 8 chars', () => {
+  const logs = capture('planner', {
+    type: 'user',
+    raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_01ABCDEFGH', content: 'ok' }] } },
+  });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'debug');
+  assert.equal(logs[0].text, '← result ok toolu_01');
+});
+
+test('tool_result error renders error', () => {
+  const logs = capture('planner', {
+    type: 'user',
+    raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_9fXYZ', is_error: true, content: 'boom' }] } },
+  });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].text, '← result error toolu_9f');
+});
+
+test('tool_result with missing id renders ?', () => {
+  const logs = capture('planner', {
+    type: 'user',
+    raw: { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } },
+  });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].text, '← result ok ?');
+});
+
+test('child tool_result is tagged "role ▸ label" + sub', () => {
+  const logs = captureSeq([
+    ['planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 't1', name: 'Task', input: { description: 'research auth' } } ] } } }],
+    ['planner', { type: 'user', raw: { type: 'user', parent_tool_use_id: 't1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'r1', content: 'ok' } ] } } }],
+  ]);
+  const line = logs.find((l) => l.text === '← result ok r1');
+  assert.ok(line, 'child tool_result line exists');
+  assert.equal(line.source, 'planner ▸ research auth');
+  assert.equal(line.sub, true);
+  assert.equal(line.level, 'debug');
+});
+
+test('sub-agent finish still fires lifecycle AND logs a result line', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const logs = []; const subs = [];
+  orch.on('log', (l) => logs.push(l));
+  orch.on('subagent', (m) => subs.push(m));
+  const attr = { nodeId: 'n1', stepIndex: 0, cycle: 1, stepKey: 'planner@1' };
+  orch._onAgentEvent('planner', { type: 'assistant', raw: { type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'Task', input: { description: 'research auth' } } ] } } }, attr);
+  orch._onAgentEvent('planner', { type: 'user', raw: { type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 't1', content: 'done' } ] } } }, attr);
+  assert.ok(subs.some((m) => m.id === 't1' && m.status === 'finished'), 'a sub-agent finish delta fired');
+  assert.ok(logs.some((l) => l.text === '← result ok t1'), 'the finish also logs a ← result line');
+});
+
+test('init line carries step attribution', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const logs = [];
+  orch.on('log', (l) => logs.push(l));
+  orch._onAgentEvent('planner',
+    { type: 'system', raw: { type: 'system', subtype: 'init', model: 'claude-x' } },
+    { nodeId: 'n1', stepIndex: 2, cycle: 1, stepKey: 'planner@1' });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].text, '[init] model=claude-x');
+  assert.equal(logs[0].nodeId, 'n1');
+  assert.equal(logs[0].stepIndex, 2);
+  assert.equal(logs[0].cycle, 1);
+});
+
+test('result event never logs a [done]/turns line', () => {
+  const logs = capture('planner', {
+    type: 'result',
+    costUsd: 0,
+    raw: { type: 'result', total_cost_usd: 0, result: '' },
+  });
+  assert.ok(!logs.some((l) => /turns|\[done\]/.test(l.text)), 'no [done]/turns line');
+  assert.ok(!logs.some((l) => /^[←→]|\[init\]/.test(l.text)), 'no arrow/init line either');
 });

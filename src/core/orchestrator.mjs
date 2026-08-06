@@ -2701,18 +2701,30 @@ class Orchestrator extends EventEmitter {
     // add `sub`. {...null} === {}, so attr === null (the clarify pre-step) is safe.
     const logAttr = sub ? { ...attr, sub: true } : attr;
 
+    // Human-readable assistant text (if any). NO early return: a single
+    // assistant turn can carry BOTH a text block and tool_use blocks — fall
+    // through so each tool call is logged too. A text-only turn has no
+    // tool_use/tool_result blocks, so the loops below are empty and its output
+    // is identical to the pre-change path.
     const text = (e.text || '').trim();
-    if (text) {
-      this._log(source, 'info', text, logAttr);
-      return;
+    if (text) this._log(source, 'info', text, logAttr);
+
+    // The `system`/init event has no text and no tool blocks — surface the
+    // model (parity with worca's `[init] model=<model>`) instead of dropping it.
+    if (e.raw && e.raw.type === 'system' && e.raw.subtype === 'init') {
+      this._log(source, 'debug', `[init] model=${e.raw.model || '?'}`, logAttr);
     }
-    // No human-readable text. Rather than echo the bare stream-json envelope
-    // type (the old noisy `[planner] user` / `[planner] system` lines), surface
-    // the concrete tool calls the agent made this turn. Contentless envelope
-    // events — tool_result echoes (`user`) and the init `system` event — carry
-    // no information and are dropped.
+
+    // Concrete tool calls the agent made this turn (assistant.tool_use blocks).
     for (const call of describeToolUses(e.raw, this.projectDir)) {
       this._log(source, 'debug', `→ ${call}`, logAttr);
+    }
+
+    // Tool-result outcomes (`user`-envelope + child tool_result blocks).
+    // ADDITIVE ONLY — _recordSubAgentFinishes (above) still owns sub-agent
+    // lifecycle state; this loop never mutates state, it only logs.
+    for (const line of describeToolResults(e.raw)) {
+      this._log(source, 'debug', `← ${line}`, logAttr);
     }
   }
 
@@ -3553,6 +3565,27 @@ function describeToolUses(raw, projectDir) {
     }
   }
   return calls;
+}
+
+/**
+ * Describe tool_result blocks in a stream-json event as short outcome one-liners
+ * (`result ok <id8>` / `result error <id8>`). Scans message.content for
+ * {type:'tool_result', tool_use_id, is_error?}. Returns [] when `raw` is a string
+ * (non-JSON runner line) or carries no tool_result blocks (assistant turns, the
+ * init event), so the caller adds no line. The 8-char tool_use_id prefix matches
+ * worca's contract and is enough to correlate a result with its call within one
+ * turn. Mirrors describeToolUses: the `← ` arrow prefix is added by the caller.
+ */
+function describeToolResults(raw) {
+  const content = raw?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const lines = [];
+  for (const b of content) {
+    if (b?.type !== 'tool_result') continue;
+    const id = typeof b.tool_use_id === 'string' ? b.tool_use_id.slice(0, 8) : '?';
+    lines.push(`result ${b.is_error ? 'error' : 'ok'} ${id}`);
+  }
+  return lines;
 }
 
 /** A short, human-readable target for a tool call (file, command, pattern…). */
