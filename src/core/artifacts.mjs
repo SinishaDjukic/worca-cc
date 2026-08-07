@@ -1052,6 +1052,25 @@ export function updatePipelineTitle(pipelineId, title) {
 }
 
 /**
+ * Persist the last observed PR facts on the pipeline row (spec §6.8).
+ * Best-effort (PR facts are re-observable); NEVER touches updated_at — the
+ * stats layer uses updated_at as the terminal-write proxy.
+ * @param {string} pipelineId
+ * @param {{ url:string, number?:number|null, state?:string }} pr
+ */
+export function persistPrState(pipelineId, pr) {
+  if (!pipelineId || !pr || !pr.url) return;
+  try {
+    tx(() => {
+      getDb().prepare(
+        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?
+         WHERE id = ?`,
+      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
+    });
+  } catch { /* best-effort */ }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
@@ -1384,6 +1403,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    pauseReason: row.pause_reason ?? null,
     survived,
     added,
     removed,
@@ -1436,9 +1456,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+           json_extract(resume_point, '$.pauseReason') AS pause_reason
     FROM pipelines
-    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'}
+    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
   `).all(workspaceKey ? workspaceKey : projectKey(projectDir));
   const out = [];
@@ -1460,8 +1481,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
+           json_extract(resume_point, '$.pauseReason') AS pause_reason
     FROM pipelines
+    WHERE archived_at IS NULL
     ORDER BY started_at DESC
   `).all();
 
@@ -1522,14 +1545,15 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
 }
 
 /**
- * Total number of pipelines across every project + workspace store (all statuses).
- * Backs the History sidebar count. Cheap COUNT(*) — never lists or loads rows.
- * Sync (getDb().prepare(...).get()), matching this module's idiom (it imports
- * only getDb + tx, not a bare `prepare`).
+ * Total number of NON-ARCHIVED pipelines across every project + workspace store
+ * (all statuses). Backs the History sidebar count, so it must agree with what the
+ * list reads show — archived rows are hidden there too. Cheap COUNT(*) — never
+ * lists or loads rows. Sync (getDb().prepare(...).get()), matching this module's
+ * idiom (it imports only getDb + tx, not a bare `prepare`).
  * @returns {number}
  */
 export function countPipelines() {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get();
+  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS NULL').get();
   return row ? Number(row.n) : 0;
 }
 
@@ -1548,11 +1572,11 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (targets.length === 0) { await onBatch([], true); return; }
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
-    const items = await Promise.all(slice.map(async (r) => ({
-      projectKey: r.projectKey,
-      id: r.id,
-      pr: (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null,
-    })));
+    const items = await Promise.all(slice.map(async (r) => {
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null;
+      if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
+      return { projectKey: r.projectKey, id: r.id, pr };
+    }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
   }
 }
@@ -1901,8 +1925,9 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id
-    FROM pipelines WHERE workspace_key = ? ORDER BY started_at DESC
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+           json_extract(resume_point, '$.pauseReason') AS pause_reason
+    FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
   `).all(workspaceKey);
   const out = [];
   for (const row of rows) {

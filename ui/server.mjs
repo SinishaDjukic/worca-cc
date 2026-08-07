@@ -20,14 +20,17 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
-  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
+  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
+  pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+  setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod,
 } from '../src/core/settings.mjs';
+import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -49,7 +52,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
-import { deletePipeline } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -392,6 +395,9 @@ function wireRun(entry) {
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
         resolvePending(entry, { reason: entry.status });
+        if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
+          emitChanged('budget-changed');
+        }
       }
       if (name === 'error') {
         entry.status = 'error';
@@ -697,6 +703,12 @@ app.post('/api/run', async (req, res) => {
       return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
     }
 
+    // Budget gate: no new pipelines while the total window is spent (F6).
+    const budget = budgetStatus();
+    if (budget.blocked) {
+      return res.status(403).json({ error: 'total cost limit reached', budget });
+    }
+
     const runId = randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
@@ -929,6 +941,26 @@ app.post('/api/resume', async (req, res) => {
     if (!saved) return res.status(404).json({ error: 'pipeline not found' });
     if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
     if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
+
+    if (saved.row.archived_at) {
+      return res.status(409).json({ error: 'pipeline is archived' });
+    }
+    const budget = budgetStatus();
+    if (budget.blocked) {
+      return res.status(403).json({ error: 'total cost limit reached', budget });
+    }
+    // Override persists only once the (never-bypassable) total gate passes —
+    // a total-refused request must not leave cost_cap_override armed.
+    if (req.body && req.body.ignoreCostCap === true) {
+      setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+    }
+    const pipeCap = budget.pipelineLimitUsd;
+    const spentSoFar = Number(saved.row.total_cost_usd || 0);
+    if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
+      return res.status(403).json({
+        error: 'pipeline cost limit reached', budget, needsOverride: true,
+      });
+    }
 
     // Double-resume guard: any live entry already driving this pipeline id.
     for (const e of runs.values()) {
@@ -1225,7 +1257,7 @@ app.delete('/api/runs/:id', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
 
   try {
-    const report = await deletePipeline({
+    const report = await archivePipeline({
       workspaceKey: workspaceId || null,
       key: workspaceId ? null : (projectKey || null),
       projectDir: (workspaceId || projectKey) ? null : projectDir,
@@ -1288,6 +1320,13 @@ app.post('/api/pr', async (req, res) => {
 
   const pr = await createPr({ projectDir: repoDir, base: source, head: feature, title: state.title || feature });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
+
+  // Persist the PR facts we just learned, so History/stats survive a gh outage.
+  const parsePrNumber = (u) => Number((/\/pull\/(\d+)/.exec(u) || [])[1]) || null;
+  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
+  if (pipelineIdForPr) {
+    persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
+  }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
@@ -1684,22 +1723,38 @@ app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
 const settingsState = () => ({
   root: getWorcaRoot(), projectsRoot: rawProjectsRoot(),
   projectsRootDefault: defaultProjectsRoot(), default: defaultRoot(),
+  pipelineCostLimitUsd: pipelineCostLimitUsd(),
+  totalCostLimitUsd: totalCostLimitUsd(),
+  costLimitResetPeriod: costLimitResetPeriod(),
 });
 
 app.get('/api/settings', (_req, res) => {
   res.json(settingsState());
 });
 
+app.get('/api/budget', (_req, res) => {
+  res.json(budgetStatus());
+});
+
 app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   try {
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
     }
-    if (has('root') || !has('projectsRoot')) {
+    if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(body.pipelineCostLimitUsd ?? '');
+    if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(body.totalCostLimitUsd ?? '');
+    if (has('costLimitResetPeriod')) {
+      await setCostLimitResetPeriod(typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '');
+    }
+    // Legacy contract: a POST that names no known key clears root. Budget keys
+    // must not trip it — a budget-only save would otherwise wipe the root.
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey)) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
+    if (hasBudgetKey) emitChanged('budget-changed');
     res.json(settingsState());
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
