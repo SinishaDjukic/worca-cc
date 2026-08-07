@@ -38,6 +38,10 @@
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
           </button>
+          <button type="button" data-nav="stats">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
+            <span>Statistics</span>
+          </button>
           <button type="button" data-nav="workspaces">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
             <span>Workspaces</span>
@@ -71,6 +75,7 @@
         </nav>
 
         <div class="side-foot">
+          <div id="side-spend"></div>
           <div class="conn">
             <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
             <span id="ws-label">disconnected</span>
@@ -85,6 +90,7 @@
           <button type="button" class="active" data-nav="new">New</button>
           <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
           <button type="button" data-nav="history">History</button>
+          <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
           <button type="button" data-nav="workspaces">Workspaces</button>
           <button type="button" data-nav="agents">Agents</button>
           <button type="button" data-nav="plugins">Plugins</button>
@@ -328,6 +334,7 @@
                 <input id="mock" type="checkbox" hidden />
 
                 <!-- Actions -->
+                <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
                   <button type="submit" id="start-btn" class="btn-go">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
@@ -481,6 +488,26 @@
           </template>
         </section>
         <!-- /view history -->
+
+        <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="stats">
+          <div class="topbar">
+            <div>
+              <h1>Statistics</h1>
+              <div class="sub">Spend, time worked, and outcomes across all pipelines · costs are Claude Code estimates, not billing</div>
+            </div>
+          </div>
+          <div class="stats-filter">
+            <div class="seg" id="stats-range" role="group" aria-label="Time range">
+              <button type="button" data-range="week">This week</button>
+              <button type="button" data-range="month">This month</button>
+              <button type="button" data-range="all">All time</button>
+            </div>
+          </div>
+          <div id="stats-body"><small class="hint">Loading…</small></div>
+          <div id="stats-tip" class="chart-tip" hidden></div>
+        </section>
+        <!-- /view stats -->
 
         <!-- ===== VIEW: WORKSPACES ===== -->
         <section class="view hidden" data-view="workspaces">

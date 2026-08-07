@@ -73,6 +73,7 @@ import {
   renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
+import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -246,6 +247,10 @@ const el = {
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
   guardrailCreateBtn: $('#guardrail-create-btn'),
+
+  // Statistics view
+  statsBody: $('#stats-body'),
+  statsRange: $('#stats-range'),
 };
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,102 @@ function setWsStatus(on) {
 }
 
 // ---------------------------------------------------------------------------
+// Spend indicator. One /api/budget snapshot drives the sidebar block, the
+// compact topnav amount, and the New-view creation gate. Refreshed at boot, on
+// every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
+// ---------------------------------------------------------------------------
+const budgetState = { budget: null, timer: null, fetching: false };
+
+async function refreshBudget() {
+  if (budgetState.fetching) return;
+  budgetState.fetching = true;
+  try {
+    const res = await fetch('/api/budget');
+    const data = await safeJson(res);
+    if (res.ok) { budgetState.budget = data; paintBudget(); }
+  } catch { /* transient */ } finally { budgetState.fetching = false; }
+}
+
+function paintBudget() {
+  const b = budgetState.budget;
+  const mount = document.getElementById('side-spend');
+  const topAmt = document.getElementById('topnav-spend');
+  if (!b) { if (topAmt) topAmt.hidden = true; return; }
+  if (mount) {
+    mount.replaceChildren(renderBudgetIndicator(b,
+      { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+  }
+  if (topAmt) {
+    topAmt.hidden = false;
+    topAmt.textContent = fmtUsd(b.windowSpendUsd);
+    topAmt.classList.toggle('warn', !b.blocked && b.totalLimitUsd != null
+      && b.windowSpendUsd / b.totalLimitUsd >= BUDGET_WARN_AT);
+    topAmt.classList.toggle('over', !!b.blocked);
+  }
+  applyBudgetToNewView();
+  if (currentView() === 'settings') paintBudgetReadout();
+  repaintCostBanners();
+}
+
+// Forward declarations so paintBudget() is callable from here on: the Settings
+// readout and the paused-card cost banners land in later slices.
+function paintBudgetReadout() {}
+function repaintCostBanners() {}
+
+function applyBudgetToNewView() {
+  const b = budgetState.budget;
+  const note = document.getElementById('newBlockedNote');
+  const start = document.getElementById('start-btn');
+  if (!note || !start) return;
+  const blocked = !!(b && b.blocked);
+  start.disabled = blocked;
+  note.hidden = !blocked;
+  if (blocked) {
+    const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
+    const msg = `Total budget reached — ${fmtUsd(b.windowSpendUsd)} of ${fmtUsd(b.totalLimitUsd)} ` +
+      `spent this ${w}. New pipelines are blocked until ${fmtResetAtLocal(b.windowEndMs)}, ` +
+      `or a higher total limit in Settings.`;
+    note.textContent = msg;
+    start.title = msg;
+  } else {
+    start.title = '';
+  }
+}
+
+function fmtResetAtLocal(ms) {
+  const d = new Date(ms);
+  const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const p = (x) => String(x).padStart(2, '0');
+  return `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function startBudgetTick() {
+  if (budgetState.timer) return;
+  const interval = typeof window.__budgetTickMs === 'number' ? window.__budgetTickMs : 60000;
+  budgetState.timer = setInterval(() => {
+    const b = budgetState.budget;
+    if (!b) return;
+    // Refetch when spend can actually move (live runs) or the window has rolled
+    // over (spend resets to $0 and blocked must clear server-side — repainting
+    // the pre-reset snapshot would keep the UI "blocked" forever while idle).
+    if (liveRuns().length || Date.now() >= b.windowEndMs) { refreshBudget(); return; }
+    // Idle countdown: windowEndMs is the fixed anchor; the fetched msUntilReset
+    // is stale by definition. Recompute the remainder, then repaint — no fetch.
+    b.msUntilReset = Math.max(0, b.windowEndMs - Date.now());
+    paintBudget();
+  }, interval);
+  budgetState.timer.unref?.();                 // no-op in browsers/jsdom (number)
+}
+
+// The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
+// <nav> that navLinks snapshots at boot — so route it from a container listener
+// rather than the [data-nav] delegation.
+document.getElementById('side-spend').addEventListener('click', (e) => {
+  if (e.target.closest('.spend-ind')) location.hash = 'stats';
+});
+
+// ---------------------------------------------------------------------------
 // Server message router. Multi-run: every run's events arrive here (the server
 // broadcasts every run to every socket). Each event carries its own runId; we
 // fan it out to the matching per-run model.
@@ -351,7 +452,15 @@ function handleServerMessage(msg) {
   // !msg.runId early-return below.
   if (msg.type === 'pipelines-changed') {
     refreshAllCounts();
+    refreshBudget();
     if (currentView() === 'history') loadHistoryView({ force: true });
+    if (currentView() === 'stats') loadStatsView();
+    return;
+  }
+  // A cost pause or a budget-key settings save moves spend/limits; the indicator
+  // is global, so repaint it regardless of the open view.
+  if (msg.type === 'budget-changed') {
+    refreshBudget();
     return;
   }
   if (msg.type === 'projects-changed') {
@@ -513,6 +622,7 @@ function onHello(msg) {
   }
 
   refreshAllCounts();
+  refreshBudget();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
   // Background-load history on the first connect so the sidebar count + PR states
@@ -6007,6 +6117,36 @@ async function loadGuardrailsView(param = '') {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Statistics view
+// ---------------------------------------------------------------------------
+const statsState = { range: null };
+
+function defaultStatsRange() {
+  const period = budgetState.budget?.resetPeriod;
+  return period === 'weekly' ? 'week' : 'month';
+}
+
+async function loadStatsView() {
+  if (!statsState.range) statsState.range = defaultStatsRange();
+  // seg highlight
+  for (const b of el.statsRange.querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.range === statsState.range);
+  }
+  const body = el.statsBody;
+  if (body.childElementCount) body.classList.add('is-loading');
+  const res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
+  const data = await safeJson(res);
+  body.classList.remove('is-loading');
+  if (!res.ok) {
+    body.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
+    return;
+  }
+  body.replaceChildren(renderStatsBody(data, {
+    fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+}
+
 async function deleteGuardrailSetFlow(id) {
   const set = grvState.sets.find((s) => s.id === id);
   const ok = await confirmModal({
@@ -6357,6 +6497,44 @@ if (runListEl) {
     if (r) setAutoscroll(r, r.autoscroll === false);
   });
 }
+
+// Statistics: range segmented control + chart tooltip. Both are delegated, so
+// they survive every replaceChildren() the loader does on #stats-body.
+el.statsRange.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-range]');
+  if (!btn) return;
+  statsState.range = btn.dataset.range;
+  loadStatsView();
+});
+
+const statsSection = document.querySelector('section[data-view="stats"]');
+const statsTip = document.getElementById('stats-tip');
+function showChartTip(target) {
+  const tipText = target.dataset.tip || '';
+  if (!tipText) return;
+  statsTip.replaceChildren(...tipText.split('\n').map((line, i) =>
+    Object.assign(document.createElement('div'),
+      { className: i === 0 ? 'tip-head' : 'tip-val', textContent: line })));
+  const r = target.getBoundingClientRect();
+  statsTip.style.left = `${Math.round(r.left + r.width / 2)}px`;
+  statsTip.style.top = `${Math.round(r.top - 8)}px`;
+  statsTip.style.transform = 'translate(-50%, -100%)';
+  statsTip.hidden = false;
+}
+statsSection.addEventListener('pointerover', (e) => {
+  const hit = e.target.closest('.ch-hit');
+  if (hit) showChartTip(hit);
+});
+statsSection.addEventListener('pointerout', (e) => {
+  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
+});
+statsSection.addEventListener('focusin', (e) => {
+  const hit = e.target.closest('.ch-hit');
+  if (hit) showChartTip(hit);
+});
+statsSection.addEventListener('focusout', (e) => {
+  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
+});
 
 // ---------------------------------------------------------------------------
 // History
@@ -8343,7 +8521,7 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'];
 
 function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -8403,6 +8581,7 @@ function showView(name, param = '') {
     }
   }
   if (name === 'history') loadHistoryView();
+  if (name === 'stats') loadStatsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
@@ -8412,7 +8591,7 @@ function showView(name, param = '') {
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
-  if (name === 'new') loadTaskSources();
+  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
@@ -8495,3 +8674,5 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 const [bootView, bootParam] = parseHash();
 showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
+refreshBudget();
+startBudgetTick();
