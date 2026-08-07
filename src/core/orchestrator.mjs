@@ -52,7 +52,13 @@ import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rol
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { worcaHome } from './projects.mjs';
-import { runRootMode, getProjectsRoot } from './settings.mjs';
+import {
+  runRootMode, getProjectsRoot,
+  pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+} from './settings.mjs';
+import {
+  recordCostDelta, readCostCapOverride, windowedSpendUsd, costWindowStart,
+} from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
@@ -683,7 +689,8 @@ class Orchestrator extends EventEmitter {
               version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
               bus: null, stepModels: this.stepModels, workflowId: this.workflowId,
               guardrailsId: this.guardrailsId, plan: null,
-              nodes: [], gate: null, toolInstruction: this.toolInstruction ?? '',
+              nodes: [], gate: null, pauseReason: this.pauseReason || null,
+              toolInstruction: this.toolInstruction ?? '',
               pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
             };
           }
@@ -746,6 +753,9 @@ class Orchestrator extends EventEmitter {
     if (row.status !== 'paused' && row.status !== 'interrupted') {
       throw new Error(`resume(): pipeline is "${row.status}", not resumable`);
     }
+    // Defense in depth: an archived run's worktree/run root were reclaimed, so
+    // resuming it would rebuild nothing and write into a reaped tree.
+    if (row.archived_at) throw new Error('resume(): pipeline is archived');
     if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
     try {
       // ── rehydrate identity + state ──
@@ -1831,6 +1841,7 @@ class Orchestrator extends EventEmitter {
         }
         this._checkAbort();
         this._checkPause();
+        this._checkCostLimits();   // step-boundary budget gate (spec §6.5)
         const cycle = stepCycle[i];
         const results = await this._runStep(steps[i], i, cycle, bus);
         this._resumeNodeSessions = null; // one-shot: only the interrupted step re-attaches
@@ -1910,6 +1921,7 @@ class Orchestrator extends EventEmitter {
         nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',
       })),
       gate: this._pauseGate ? { ...this._pauseGate } : null,
+      pauseReason: this.pauseReason || null,
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph build),
       // not the detect-time tools.instruction — resume() restores it verbatim.
       toolInstruction: this.toolInstruction ?? '',
@@ -2250,6 +2262,44 @@ class Orchestrator extends EventEmitter {
     this._log(node.key, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`);
     appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${node.key} — ${reason}. Resume after the reset.`).catch(() => {});
     this.pause();
+  }
+
+  /** Step-boundary budget gate. Reads settings + DB FRESH each boundary so a
+   *  raised limit or a window reset takes effect at the next step (F9). */
+  _checkCostLimits() {
+    if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
+    const pipeLimit = pipelineCostLimitUsd();
+    // resume() rehydrates state.steps but not state.totalCostUsd, so the row
+    // total reads $0 until the first cost event of the resumed run. Take the
+    // larger of the two so a resumed over-cap pipeline cannot run one free step.
+    const spentHere = Math.max(this.state.totalCostUsd || 0, sumStepCosts(this.state.steps));
+    if (pipeLimit != null && spentHere >= pipeLimit
+        && !readCostCapOverride(this.pipeline.id)) {
+      this._pauseForCost('cost_pipeline',
+        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${pipeLimit.toFixed(2)})`);
+    }
+    const totalLimit = totalCostLimitUsd();
+    if (totalLimit != null) {
+      const period = costLimitResetPeriod();
+      const spent = windowedSpendUsd(costWindowStart(new Date(), period).getTime());
+      if (spent >= totalLimit) {
+        this._pauseForCost('cost_total',
+          `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
+      }
+    }
+  }
+
+  /** Mirror of _pauseForLimit, but with a MACHINE-READABLE reason code
+   *  ('cost_pipeline' | 'cost_total') the UI switches on. Unlike _pauseForLimit
+   *  (whose caller throws), this throws itself — its caller is the boundary
+   *  gate, not a catch block. The audit line here is required: _completePaused
+   *  suppresses its generic audit whenever pauseReason is set. */
+  _pauseForCost(code, detail) {
+    if (!this.pauseReason) this.pauseReason = code;
+    this._log('orchestrator', 'warn', `${detail} — pausing for manual resume`);
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: ${detail}.`).catch(() => {});
+    this.pause();
+    throw pauseErr();
   }
 
   /** Decide how to recover from a classified error. Auto mode: bounded backoff
@@ -3347,6 +3397,13 @@ class Orchestrator extends EventEmitter {
     // their sum. Keeping a separate running total and rounding it on every add
     // drifts from Σ steps (e.g. 0.00005 + 0.00015 gave total 0.0003 vs Σ 0.0002).
     this.state.totalCostUsd = sumStepCosts(this.state.steps);
+    // Append-only spend ledger (windowed budget accounting). Best-effort:
+    // accounting must never kill a run; ledger and state share the same DB,
+    // so failures co-occur with the _persist catch below anyway.
+    if (costUsd > 0 && this.pipeline?.id) {
+      try { recordCostDelta({ pipelineId: this.pipeline.id, stepKey: key, amountUsd: costUsd }); }
+      catch (err) { this._log('orchestrator', 'warn', `cost ledger write failed: ${err?.message || err}`); }
+    }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
     this._persist().catch(() => {});

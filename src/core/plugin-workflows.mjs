@@ -117,7 +117,12 @@ export async function removePluginWorkflows(name) {
       references.push({ workflowId: cfg.active_workflow_id, referencedBy: [`project_config ${cfg.project_key}`] });
     }
   }
-  for (const p of prepare('SELECT id, resume_point FROM pipelines WHERE resume_point IS NOT NULL').all()) {
+  // archived_at IS NULL for the same reason guardrail-store.mjs filters it: an
+  // archived row keeps its resume_point but can never be resumed or seen again,
+  // so a pin held there would strand `worca plugin remove` permanently.
+  for (const p of prepare(
+    'SELECT id, resume_point FROM pipelines WHERE resume_point IS NOT NULL AND archived_at IS NULL',
+  ).all()) {
     try {
       const rp = JSON.parse(p.resume_point);
       if (rp && ids.has(rp.workflowId)) references.push({ workflowId: rp.workflowId, referencedBy: [`pipeline ${p.id}`] });

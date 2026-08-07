@@ -11,6 +11,9 @@
 //   contextMaxBytesPerFile — §5.4 per-source-file inlining cap.
 //   contextMaxBytesTotal   — §5.4 total memory budget.
 //   skillMount             — §5.6 'copy' (default) | 'symlink' (opt-in).
+//   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
+//   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
+//   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
 // All of them are OPTIONAL and read through the same read-modify-write object, so
 // a new key needs no migration and never disturbs the others (unknown keys — e.g.
 // written by a newer version — survive a write by the same property).
@@ -305,4 +308,98 @@ export async function setSkillMount(input) {
   }
   await persistSettings(settings);
   return { skillMount: skillMount() };
+}
+
+// ---------------------------------------------------------------------------
+// Cost limits (spec 2026-08-07). Readers fall back loudly to null (= no limit)
+// or the default period; setters throw; '' / null / undefined clears the key.
+
+export const COST_RESET_PERIODS = ['weekly', 'monthly'];
+export const DEFAULT_COST_RESET_PERIOD = 'monthly';
+
+/** A USD cap is a positive finite number (fractional dollars allowed). */
+const isUsdCap = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+/** Read a USD cap key: number, or null = unlimited. */
+function readUsdCap(key) {
+  const v = readSettings()[key];
+  if (v === undefined) return null;
+  if (isUsdCap(v)) return v;
+  console.warn(`[worca] invalid ${key} ${JSON.stringify(v)} — treating as unset (no limit)`);
+  return null;
+}
+
+/** Per-pipeline lifetime spend cap in USD, or null (no limit). */
+export function pipelineCostLimitUsd() { return readUsdCap('pipelineCostLimitUsd'); }
+/** Windowed all-pipelines spend cap in USD, or null (no limit). */
+export function totalCostLimitUsd() { return readUsdCap('totalCostLimitUsd'); }
+
+/** Reset period for the total budget window: 'weekly' (Mon 00:00) | 'monthly' (1st 00:00). */
+export function costLimitResetPeriod() {
+  const v = readSettings().costLimitResetPeriod;
+  if (v === undefined) return DEFAULT_COST_RESET_PERIOD;
+  if (COST_RESET_PERIODS.includes(v)) return v;
+  console.warn(`[worca] invalid costLimitResetPeriod ${JSON.stringify(v)} — using ${DEFAULT_COST_RESET_PERIOD}`);
+  return DEFAULT_COST_RESET_PERIOD;
+}
+
+/** '' / null / undefined all mean "clear this key" on the write path. */
+const isClearInput = (v) => v === '' || v === null || v === undefined;
+
+/** @throws {Error} unless `input` is a positive finite number (or a clear). */
+function assertUsdCapInput(key, input) {
+  if (!isClearInput(input) && !isUsdCap(input)) {
+    throw new Error(`${key} must be a positive number of USD`);
+  }
+}
+
+/** @throws {Error} unless `input` is 'weekly' | 'monthly' (or a clear). */
+function assertResetPeriodInput(input) {
+  if (!isClearInput(input) && !COST_RESET_PERIODS.includes(input)) {
+    throw new Error(`costLimitResetPeriod must be one of ${COST_RESET_PERIODS.join(' | ')}`);
+  }
+}
+
+/**
+ * Validate a whole cost-limit write SET before any of it is persisted. The three
+ * setters each persist on their own, so a multi-key write whose second key is
+ * invalid would otherwise leave the first one on disk and still fail — a caller
+ * that reports the failure (and repaints its pre-save values) would then be out of
+ * sync with a half-applied settings file. Only the keys PRESENT on `inputs` are
+ * checked; a key set to undefined means "clear", so use hasOwnProperty semantics
+ * at the call site to decide what to include.
+ * @param {{pipelineCostLimitUsd?: *, totalCostLimitUsd?: *, costLimitResetPeriod?: *}} inputs
+ * @throws {Error} on the first invalid input
+ */
+export function assertCostLimitInputs(inputs = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(inputs, k);
+  if (has('pipelineCostLimitUsd')) assertUsdCapInput('pipelineCostLimitUsd', inputs.pipelineCostLimitUsd);
+  if (has('totalCostLimitUsd')) assertUsdCapInput('totalCostLimitUsd', inputs.totalCostLimitUsd);
+  if (has('costLimitResetPeriod')) assertResetPeriodInput(inputs.costLimitResetPeriod);
+}
+
+/** Write (or clear) a USD cap key. @throws {Error} unless positive finite number (or empty). */
+async function setUsdCap(key, input) {
+  assertUsdCapInput(key, input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings[key];  // reset to unlimited
+  else settings[key] = input;
+  await persistSettings(settings);
+  return { [key]: readUsdCap(key) };            // the EFFECTIVE value
+}
+
+/** @throws {Error} unless `input` is a positive number (or empty, which clears). */
+export const setPipelineCostLimitUsd = (input) => setUsdCap('pipelineCostLimitUsd', input);
+
+/** @throws {Error} unless `input` is a positive number (or empty, which clears). */
+export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', input);
+
+/** @throws {Error} unless `input` is 'weekly' | 'monthly' (or empty, which resets). */
+export async function setCostLimitResetPeriod(input) {
+  assertResetPeriodInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.costLimitResetPeriod;  // reset to 'monthly'
+  else settings.costLimitResetPeriod = input;
+  await persistSettings(settings);
+  return { costLimitResetPeriod: costLimitResetPeriod() };
 }

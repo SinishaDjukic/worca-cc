@@ -156,7 +156,22 @@ test('budget-changed unblocking re-enables Resume and clears the total banner', 
   await ctx.tick();
   const resume = ctx.window.document.querySelector('#run-list .run-card .btn-resume');
   assert.equal(resume.disabled, false, 'a raised/reset budget must unblock the parked run');
-  assert.equal(resume.title, '', 'the blocked tooltip is cleared with it');
+  // Clearing the blocked tooltip must RESTORE the template's help text, not
+  // blank the button — every ordinary paused card is painted through here too.
+  const stock = ctx.window.document.getElementById('run-card-tpl')
+    .content.querySelector('.btn-resume').title;
+  assert.ok(stock, 'the template ships a stock Resume tooltip');
+  assert.equal(resume.title, stock, 'the stock tooltip comes back');
+});
+
+test('an ordinary paused run keeps the template Resume tooltip', async () => {
+  const ctx = await boot();
+  const card = await pausedRun(ctx, null);
+  const resume = card.querySelector('.btn-resume');
+  const stock = ctx.window.document.getElementById('run-card-tpl')
+    .content.querySelector('.btn-resume').title;
+  assert.equal(resume.disabled, false);
+  assert.equal(resume.title, stock, 'painting must not strip the stock tooltip');
 });
 
 test('a non-cost pause leaves the banner hidden and the pill plain', async () => {
@@ -246,11 +261,27 @@ test('history: a budget-changed unblock re-enables a gated hist-resume', async (
 test('reload parity: a hello-seeded paused run with pauseReason renders the banner', async () => {
   const ctx = await boot();
   ctx.showRunning();
+  // Field-for-field the real hello summary: every key ui/server.mjs
+  // summarizeRuns() emits, in its order. The SERVER half of this contract
+  // (wireRun storing entry.pauseReason, summarizeRuns emitting it) is pinned
+  // separately by test/server-pause-reason.test.mjs — keep the two in step.
   ctx.recv({
     type: 'hello',
     runs: [{
-      runId: 'r9', title: 'Reloaded', projectDir: PROJECT, status: 'paused',
-      startedAt: '00:00:00', stepper: null, pipelineId: 'pl_9', pauseReason: 'cost_pipeline',
+      runId: 'r9',
+      stepper: null,
+      pipelineId: 'pl_9',
+      projectDir: PROJECT,
+      title: 'Reloaded',
+      status: 'paused',
+      pauseReason: 'cost_pipeline',
+      startedAt: '00:00:00',
+      pendingQuestion: null,
+      kind: 'run',
+      scanId: null,
+      genId: null,
+      workspaceId: null,
+      projectNames: null,
     }],
   });
   await ctx.tick();

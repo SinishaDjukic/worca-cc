@@ -137,12 +137,19 @@ export async function writeGuardrailSet(set) {
  * recoverable runs pin — errored rows retain theirs and legitimately block, the
  * plugin-workflows scope). The historical pipelines.guardrails_id COLUMN is
  * deliberately NOT scanned: it records finished runs, and history never blocks.
+ * ARCHIVED rows are excluded for the same reason they are excluded from every
+ * list read: History's Archive soft-deletes (archived_at stamped, resume_point
+ * left in place), and an archived run is invisible, unresumable and un-re-
+ * archivable — so a kept pin would be permanent with no UI escape hatch. The
+ * hard DELETE this replaced released it.
  * Raw prepare() reads only, so it is callable from inside deleteGuardrailSet's
  * tx (tx() non-reentrancy bars nested tx() CALLS, not reads).
  */
 function scanReferences(id) {
   const referencedBy = [];
-  for (const p of prepare('SELECT id, resume_point FROM pipelines WHERE resume_point IS NOT NULL').all()) {
+  for (const p of prepare(
+    'SELECT id, resume_point FROM pipelines WHERE resume_point IS NOT NULL AND archived_at IS NULL',
+  ).all()) {
     try {
       const rp = JSON.parse(p.resume_point);
       if (rp && rp.guardrailsId === id) referencedBy.push(`pipeline ${p.id}`);

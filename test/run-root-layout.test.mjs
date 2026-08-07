@@ -32,7 +32,7 @@ import { RESULTS_FILE, DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { runRootSweepLookups, legacySweepLookups } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
 
@@ -645,6 +645,31 @@ test('runRootSweepLookups: a real DB failure PROPAGATES instead of reading as "n
     else process.env.WORCA_HOME = prevHome;
     _resetForTests();
   }
+});
+
+test('both sweep lookups ignore ARCHIVED rows (an archived run may not pin a path forever)', async () => {
+  const WT = join(tmpdir(), 'worca-cc-arch0001-wt');
+  seedPipelineRow({
+    id: 'arch0001', projectKey: 'k-arch', status: 'paused',
+    branch: { feature: 'worca-cc/arch0001', worktreeDir: WT },
+  });
+  assert.equal(runRootSweepLookups().statusOf('arch0001'), 'paused', 'a live row reads normally');
+  assert.ok(legacySweepLookups().referencedPaths.has(WT), 'and claims its worktree path');
+
+  // History "Archive" soft-deletes: archived_at is stamped, status/branch stay. The
+  // hard DELETE it replaced made the row VERIFIABLY absent, which is what let both
+  // sweeps reclaim a path that archive-time worktree removal failed to remove (dirty
+  // tree, index.lock). Keeping 'paused' here would pin that path permanently, since
+  // an archived row can never be resumed, re-archived, or seen in History again.
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), 'arch0001');
+
+  const rr = runRootSweepLookups();
+  assert.equal(rr.statusOf('arch0001'), null, 'archived reads as row-less, not as paused');
+  assert.equal(await rr.membersOf('arch0001'), null);
+  const legacy = legacySweepLookups();
+  assert.equal(legacy.statusOf('arch0001'), null);
+  assert.ok(!legacy.referencedPaths.has(WT), 'an archived row no longer claims its worktree path');
 });
 
 test('sweep: no <worcaHome>/runs dir at all is a silent no-op', async () => {

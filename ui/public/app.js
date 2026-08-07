@@ -332,6 +332,14 @@ function setWsStatus(on) {
 // ---------------------------------------------------------------------------
 const budgetState = { budget: null, timer: null, fetching: false };
 
+// True between "Start clicked" and the POST /api/run settling. Any budget repaint
+// landing inside that window — a `budget-changed` broadcast, an archive's
+// `pipelines-changed`, another run's `done`, the slow tick — runs
+// applyBudgetToNewView, which writes start.disabled unconditionally; without this
+// flag such a repaint re-enables Start mid-submit and a fast second click starts
+// the same run twice.
+let startSubmitInFlight = false;
+
 async function refreshBudget() {
   if (budgetState.fetching) return;
   budgetState.fetching = true;
@@ -369,7 +377,7 @@ function applyBudgetToNewView() {
   const start = document.getElementById('start-btn');
   if (!note || !start) return;
   const blocked = !!(b && b.blocked);
-  start.disabled = blocked;
+  start.disabled = blocked || startSubmitInFlight;
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
@@ -1020,7 +1028,8 @@ function makeRun({
     local,
     kind,                 // 'run' | 'workspace-run' | 'scan' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
-    pauseReason,          // 'cost_pipeline' | 'cost_total' | null — drives the cost-pause banner
+    pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
+                          // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     workspaceId,
     workspaceName,
     lastActivityAt: Date.now(),  // recency for tab/overview ordering (bumped on every tagged event)
@@ -3599,9 +3608,16 @@ function finishRun(r, status) {
 
 function onDone(r, msg) {
   // A cost pause carries the reason code ('cost_pipeline' | 'cost_total') that
-  // drives the card banner, the status pill, and the resume gating.
-  if (msg.reason) r.pauseReason = msg.reason;
+  // drives the card banner, the status pill, and the resume gating. Assigned
+  // unconditionally so a later reasonless done clears it, matching the server's
+  // own entry.pauseReason reset in wireRun.
+  r.pauseReason = msg.reason || null;
   finishRun(r, msg.status || 'done');
+  // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
+  // budget-changed, and startBudgetTick refetches only while runs are live. Without
+  // this the delta — and the `blocked` flip it can cause — waited for a reload, so
+  // Start stayed enabled and the click hit the raw 403 instead of the creation gate.
+  refreshBudget();
 }
 
 function onError(r) {
@@ -5538,6 +5554,10 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 el.form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  // Enter in any field submits the form directly, bypassing the disabled Start
+  // button — so the in-flight window has to be closed here too, not only via
+  // start.disabled, or a second Enter starts the same run twice.
+  if (startSubmitInFlight) return;
   setFormMsg('', '');
 
   // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
@@ -5610,6 +5630,9 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
+  // Guard the whole in-flight window: applyBudgetToNewView also drives
+  // start.disabled, and this run's own creation event repaints it.
+  startSubmitInFlight = true;
   el.startBtn.disabled = true;
   setFormMsg('Starting run...', '');
 
@@ -5631,6 +5654,7 @@ el.form.addEventListener('submit', async (e) => {
     });
     const data = await safeJson(res);
     if (!res.ok || !data.runId) {
+      startSubmitInFlight = false;
       el.startBtn.disabled = false;
       return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
     }
@@ -5638,8 +5662,10 @@ el.form.addEventListener('submit', async (e) => {
     // begin tracking the new run (creates a local model + switches to Running)
     beginRun(data.runId, projectDir, title,
       target === 'workspace' ? { workspaceId, workspaceName, projectNames: workspaceProjectNames } : {});
-    // Re-enable the form so more runs can be started concurrently.
-    el.startBtn.disabled = false;
+    // Re-enable the form so more runs can be started concurrently — unless the
+    // budget just went over, in which case the gate keeps Start disabled.
+    startSubmitInFlight = false;
+    el.startBtn.disabled = !!budgetState.budget?.blocked;
     setFormMsg('Run started.', 'ok');
     if (extras.length) {
       appendLog({
@@ -5650,6 +5676,7 @@ el.form.addEventListener('submit', async (e) => {
       });
     }
   } catch (err) {
+    startSubmitInFlight = false;
     el.startBtn.disabled = false;
     setFormMsg(`Error: ${err.message}`, 'err');
   }
@@ -6226,8 +6253,18 @@ async function loadStatsView() {
   }
   const body = el.statsBody;
   if (body.childElementCount) body.classList.add('is-loading');
-  const res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
-  const data = await safeJson(res);
+  // A network-level rejection is not an !res.ok — without this catch it escapes
+  // as an unhandled rejection and leaves the body stuck in .is-loading.
+  let res, data;
+  try {
+    res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
+    data = await safeJson(res);
+  } catch (err) {
+    body.classList.remove('is-loading');
+    body.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint err', textContent: `Could not load statistics: ${err.message}` }));
+    return;
+  }
   body.classList.remove('is-loading');
   if (!res.ok) {
     body.replaceChildren(Object.assign(document.createElement('small'),
@@ -8483,6 +8520,18 @@ function currentNodeCycles(r) {
   return !!(cell && cell.nodes.some((n) => n.cycles));
 }
 
+// The run-card template's stock Resume tooltip. Read from the template rather
+// than duplicated as a literal so the two cannot drift; painting restores it
+// whenever a card is not total-budget blocked, instead of blanking the button.
+let _stockResumeTitle = null;
+function stockResumeTitle() {
+  if (_stockResumeTitle === null) {
+    _stockResumeTitle = document.getElementById('run-card-tpl')
+      ?.content?.querySelector('.btn-resume')?.title || '';
+  }
+  return _stockResumeTitle;
+}
+
 function paintRunCard(r) {
   if (!r.el) return;
 
@@ -8575,7 +8624,7 @@ function paintRunCard(r) {
     resumeBtn.disabled = !!totalBlocked;
     resumeBtn.title = totalBlocked
       ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
-      : '';
+      : stockResumeTitle();
   }
 }
 

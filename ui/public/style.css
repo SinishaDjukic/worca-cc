@@ -1227,3 +1227,81 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    keep their 640px width. 960 = 640 * 1.5. */
 #plugin-modal .card:has(.grv-wizard),
 #plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
+
+/* ---------- Statistics view ---------- */
+.stats-filter{display:flex;margin-bottom:18px;}
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.stat-tile{padding:18px 20px;}
+.stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
+.stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
+.stat-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:999px;}
+.stat-value{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
+.stat-frac{font-size:16px;color:var(--ink-3);}
+.stat-sub{display:block;color:var(--ink-3);font-size:11.5px;margin-top:6px;}
+.stat-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:10px;overflow:hidden;}
+.stat-meter .stat-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.chart-card{padding:20px 22px;}
+.chart-fig{margin:0;}
+.chart-svg{display:block;width:100%;height:auto;}
+.chart-empty{display:grid;place-items:center;min-height:180px;}
+.chart-legend{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 10px;font-size:12px;color:var(--ink-2);}
+.lg-item{display:inline-flex;align-items:center;gap:6px;}
+.lg-item b{font-family:var(--mono);font-weight:600;color:var(--ink);}
+.lg-swatch{width:10px;height:10px;border-radius:3px;display:inline-block;}
+.ch-hit{fill:transparent;}
+.ch-hit:hover{fill:var(--field);}
+.ch-hit:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chart-tip{position:fixed;z-index:70;background:var(--ink);color:#fff;border-radius:10px;
+  padding:8px 11px;font-size:12px;line-height:1.45;pointer-events:none;box-shadow:var(--shadow);}
+.chart-tip .tip-head{font-weight:600;}
+.chart-tip .tip-val{font-family:var(--mono);}
+#stats-body.is-loading{opacity:.55;pointer-events:none;transition:opacity .15s;}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+
+/* ---------- Sidebar spend indicator ---------- */
+.spend-ind{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:var(--r-ctrl);
+  background:var(--field);padding:10px 12px;cursor:pointer;font-family:inherit;}
+.spend-ind:hover{background:var(--line);}
+.spend-ind:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.spend-ind-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.spend-ind-label{font-size:12px;font-weight:600;color:var(--ink-2);}
+.spend-ind-amt{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);}
+.spend-ind-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:8px;overflow:hidden;}
+/* meterEl() names the fill "<meter-class>-fill", so: spend-ind-meter-fill */
+.spend-ind-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
+.spend-ind-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:6px;}
+.spend-ind.warn .spend-ind-meter{background:var(--amber-bg);}
+.spend-ind.warn .spend-ind-meter-fill{background:var(--amber-ink);}
+.spend-ind.warn .spend-ind-sub{color:var(--amber-ink);}
+.spend-ind.over .spend-ind-meter{background:var(--red-bg);}
+.spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
+.spend-ind.over .spend-ind-sub{color:var(--red-ink);}
+.topnav-amt{margin-left:7px;font-family:var(--mono);font-weight:600;}
+.topnav-amt.warn{color:var(--amber-ink);}
+.topnav-amt.over{color:var(--red-ink);}
+.topnav button.active .topnav-amt{color:inherit;}
+
+/* ---------- Budget readout (Settings) ---------- */
+.budget-readout{margin-bottom:6px;}
+.budget-readout .spend-ind-meter{max-width:420px;}
+.budget-readout-line{font-size:13px;color:var(--ink-2);margin-top:8px;}
+.budget-readout-line b{font-family:var(--mono);font-weight:600;color:var(--ink);}
+
+/* ---------- Cost-pause banner ---------- */
+.cost-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;}
+.cost-banner.cb-pipeline{background:var(--amber-bg);color:var(--amber-ink);}
+.cost-banner.cb-total{background:var(--red-bg);color:var(--red-ink);}
+.cost-banner b{display:block;margin-bottom:4px;}
+.cost-banner .cb-text{color:var(--ink-2);}
+.cost-banner .cb-text .mono{font-family:var(--mono);font-weight:600;color:var(--ink);}
+.cost-banner .cb-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
+.hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);margin-left:10px;}
+.hist-pausenote.total{color:var(--red-ink);}
+
+@media (max-width:1080px){
+  .stat-row{grid-template-columns:repeat(2,1fr);}
+  .charts-grid{grid-template-columns:1fr;}
+}

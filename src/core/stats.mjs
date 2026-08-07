@@ -18,7 +18,9 @@ const RANGES = ['week', 'month', 'all'];
 function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 function monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 
-/** Cohort totals over runs started in [fromMs, toMs). */
+/** Cohort totals over runs started in [fromMs, toMs). Legacy fs->db imports have
+ *  no started_at; they fall back to updated_at so their money (which always
+ *  lands in the all-time sums) is never counted without its run. */
 function cohortTotals(fromMs, toMs) {
   const fromIso = new Date(fromMs).toISOString();
   const toIso = new Date(toMs).toISOString();
@@ -36,7 +38,8 @@ function cohortTotals(fromMs, toMs) {
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
-    WHERE p.started_at >= ? AND p.started_at < ?
+    WHERE COALESCE(p.started_at, p.updated_at) >= ?
+      AND COALESCE(p.started_at, p.updated_at) <  ?
   `).get(fromIso, toIso);
   return {
     runs: row.runs, finished: row.finished, stopped: row.stopped, failed: row.failed,

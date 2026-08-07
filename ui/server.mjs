@@ -28,7 +28,7 @@ import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
-  setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod,
+  setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
 } from '../src/core/settings.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
@@ -326,6 +326,12 @@ function summarizeRuns() {
     projectDir: r.projectDir,
     title: r.title,
     status: r.status,
+    // Why the run is paused, or null — ANY orchestrator pause code rides here
+    // (e.g. 'usage_limit'), not just the cost pair. Carried in hello so a
+    // reload/reconnect restores the cost banner (the client gates that render on
+    // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
+    // until the next event.
+    pauseReason: r.pauseReason || null,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
@@ -395,6 +401,9 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // Remember the pause reason for summarizeRuns (hello). Reset on every
+        // done so a later reasonless finish cannot leave a stale cost banner.
+        entry.pauseReason = (payload && payload.reason) || null;
         resolvePending(entry, { reason: entry.status });
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
@@ -1244,9 +1253,12 @@ app.get('/api/history/:key/:id/log', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // DELETE /api/runs/:id?projectKey=...  (or ?projectDir=...)
-// Remove a FINISHED pipeline and everything tied to it: its store folder, its
-// shared plan/review markdown, and its local branch + worktree. The remote
-// branch is never touched. Refused (409) while the run is live in this process.
+// ARCHIVE a FINISHED pipeline: reclaims everything on disk — its store folder,
+// its shared plan/review markdown, its artifacts index rows, and its local
+// branch + worktree — then soft-deletes the row (`archived_at`) instead of
+// dropping it, so its cost and outcome stay in Statistics forever. The row
+// disappears from History and every list/count read. The remote branch is never
+// touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
@@ -1755,15 +1767,25 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  // Normalize the budget keys first, then validate them as a SET before ANY write.
+  // Each setter persists on its own, so a two-key POST whose second key is invalid
+  // used to answer 400 with the first key already on disk, no budget-changed
+  // emitted, and a client (which early-returns on !res.ok) still painting its
+  // pre-save values over a half-applied settings file.
+  const budget = {};
+  if (has('pipelineCostLimitUsd')) budget.pipelineCostLimitUsd = body.pipelineCostLimitUsd ?? '';
+  if (has('totalCostLimitUsd')) budget.totalCostLimitUsd = body.totalCostLimitUsd ?? '';
+  if (has('costLimitResetPeriod')) {
+    budget.costLimitResetPeriod = typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '';
+  }
   try {
+    assertCostLimitInputs(budget);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
     }
-    if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(body.pipelineCostLimitUsd ?? '');
-    if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(body.totalCostLimitUsd ?? '');
-    if (has('costLimitResetPeriod')) {
-      await setCostLimitResetPeriod(typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '');
-    }
+    if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
+    if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
+    if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     // Legacy contract: a POST that names no known key clears root. Budget keys
     // must not trip it — a budget-only save would otherwise wipe the root.
     if (has('root') || !(has('projectsRoot') || hasBudgetKey)) {

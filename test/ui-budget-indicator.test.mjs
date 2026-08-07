@@ -51,11 +51,17 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
   };
   // Mutable so a test can swap the server's answer mid-run and re-drive the
   // client with a `budget-changed` frame.
-  const box = { budget };
+  // `runResponse` lets a test hold POST /api/run open and drive events into the
+  // in-flight window between "Start disabled" and the response landing.
+  const box = { budget, runResponse: null };
   const counts = { budget: 0, stats: 0 };
   const statsCalls = [];
-  window.fetch = (url) => {
+  window.fetch = (url, opts) => {
     const u = String(url);
+    if (u.endsWith('/api/run') && opts && opts.method === 'POST') {
+      return box.runResponse
+        || Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'run-1' }) });
+    }
     if (u.includes('/api/budget')) {
       counts.budget += 1;
       return Promise.resolve({ ok: true, status: 200, json: async () => box.budget });
@@ -126,6 +132,35 @@ test('budget-changed repaints; blocked disables #start-btn with a visible reason
   assert.equal(ctx.window.document.querySelector('#newBlockedNote').hidden, true);
 });
 
+// Starting a run broadcasts pipelines-changed (and, on a cost pause,
+// budget-changed) — both repaint the budget. applyBudgetToNewView writes
+// start.disabled unconditionally, so a repaint landing inside the submit's own
+// in-flight window re-enabled Start and a fast second click double-submitted.
+test('a budget repaint mid-submit must not re-enable #start-btn', async () => {
+  const ctx = await boot();
+  const doc = ctx.window.document;
+  let releaseRun;
+  ctx.box.runResponse = new Promise((r) => { releaseRun = r; });
+
+  const psel = doc.querySelector('#projectSelect');
+  assert.ok(psel.options.length > 0, 'projects loaded');
+  psel.value = PROJECT;
+  psel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  doc.querySelector('#prompt').value = 'do a thing';
+  doc.querySelector('#run-form').dispatchEvent(new ctx.window.Event('submit', { bubbles: true, cancelable: true }));
+  await ctx.tick();
+  assert.equal(doc.querySelector('#start-btn').disabled, true, 'Start is disabled while the POST is in flight');
+
+  await ctx.pushBudgetChanged();
+  assert.equal(doc.querySelector('#start-btn').disabled, true,
+    'a budget repaint must not re-enable Start mid-submit');
+
+  releaseRun({ ok: true, status: 200, json: async () => ({ runId: 'run-1' }) });
+  await ctx.tick();
+  await ctx.tick();
+  assert.equal(doc.querySelector('#start-btn').disabled, false, 'Start returns once the POST settles');
+});
+
 test('clicking the indicator navigates to #stats', async () => {
   const { window, tick } = await boot();
   window.document.querySelector('#side-spend .spend-ind').click();
@@ -138,6 +173,28 @@ test('weekly resetPeriod budget makes #stats default to range=week', async () =>
   await ctx.showView('stats');
   assert.ok(ctx.statsCalls.some((u) => u.includes('range=week')),
     `expected a range=week /api/stats fetch, got ${JSON.stringify(ctx.statsCalls)}`);
+});
+
+// A non-cost `done` broadcasts nothing (the server emits budget-changed only for
+// cost pauses, and pipelines-changed only on archive), and the slow tick refetches
+// only while runs are live — so the LAST spend delta, and a `blocked` flip it
+// causes, went unseen until a reload: Start stayed enabled and the click hit the
+// raw 403 instead of the pre-emptive gate.
+test('a run finishing refetches the budget so the final delta lands without a reload', async () => {
+  const ctx = await boot();
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#start-btn').disabled, false, 'unblocked boot leaves Start enabled');
+
+  ctx.box.budget = blockedBudget();
+  const before = ctx.counts.budget;
+  ctx.wsBox.ws.dispatch('message', {
+    data: JSON.stringify({ type: 'done', runId: 'run-fin', status: 'done' }),
+  });
+  await ctx.tick();
+  await ctx.tick();
+
+  assert.ok(ctx.counts.budget > before, 'the client refetches /api/budget when a run ends');
+  assert.equal(doc.querySelector('#start-btn').disabled, true, 'and the creation gate flips closed');
 });
 
 // The two tick suites run last: their fast interval outlives the test, and a

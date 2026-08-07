@@ -134,6 +134,22 @@ test('the guard also catches a paused pipeline whose resume_point pins the workf
   await assert.rejects(() => removePluginWorkflows('demo'), ReferencedError);
 });
 
+test('but an ARCHIVED pipeline releases the pin — archive must not strand `worca plugin remove`', async () => {
+  const versionDir = installFakePlugin('demo', { 'simple.json': TPL });
+  await importPluginWorkflows('demo', versionDir);
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-pwf-proj3-')); homes.push(proj);
+  const { id } = await seedPipeline(proj, { status: 'paused' });
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 1, kind: 'boundary', workflowId: 'wfp_demo_simple' }), id);
+  await assert.rejects(() => removePluginWorkflows('demo'), ReferencedError);
+  // History "Archive" soft-deletes the row (archived_at stamped, resume_point kept).
+  // It is unresumable and invisible from there on, so the pin must lift — the hard
+  // DELETE it replaced used to lift it, and there is no UI escape hatch otherwise.
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id);
+  assert.deepEqual(await removePluginWorkflows('demo'), { removed: ['wfp_demo_simple'] });
+});
+
 test('referencedPluginAgents finds this plugin\'s keys inside NON-plugin workflows', async () => {
   installFakePlugin('demo', {});
   const wf = await writeWorkflow({

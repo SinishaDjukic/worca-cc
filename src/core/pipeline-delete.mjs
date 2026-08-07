@@ -119,8 +119,10 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
       const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch });
       if (pr) persistPrState(row.id, pr);
     }
-  } catch (err) {
-    report.warnings.push(`pr refresh failed: ${err?.message || err}`);
+  } catch (e) {
+    // Named `e`, not `err`: `err` is this module's error-factory helper and a catch
+    // parameter would shadow it for the whole block.
+    report.warnings.push(`pr refresh failed: ${e?.message || e}`);
   }
 
   // 1) Unlink the EXACT indexed markdown (no baseName-derivation). Pipeline-local
@@ -210,8 +212,10 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   return report;
 }
 
-// Compat alias: the server still imports `deletePipeline`. Task 11 switches the
-// call site over to the archive name; this keeps that import working until then.
+// Compat alias. The server now calls `archivePipeline` directly; this name is
+// kept for the pre-existing suites (test/pipeline-delete.test.mjs,
+// test/persist-roundtrip.test.mjs) that assert the FS/branch reclamation half
+// under the old name — which archive still performs in full.
 export { archivePipeline as deletePipeline };
 
 /** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>). */

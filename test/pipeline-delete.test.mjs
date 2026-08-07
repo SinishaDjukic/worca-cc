@@ -263,27 +263,34 @@ test('deletePipeline({workspaceKey}) returns null for an unknown workspace id', 
   }
 });
 
-test('deletePipeline cascades: child rows (artifacts) are gone after delete', async () => {
+test('artifact index rows are cleaned on archive; the pipelines row survives', async () => {
   const repo = await freshRepo();
   const prev = process.env.WORCA_HOME;
   await freshStore(repo, {
     id: 'cas1', base: 'add-login-screen', datePrefix: '04-06-26', status: 'done', branch: null,
   });
   try {
-    assert.equal((await listArtifacts('cas1')).length, 4, 'artifacts indexed before delete');
+    assert.equal((await listArtifacts('cas1')).length, 4, 'artifacts indexed before archive');
     const report = await deletePipeline({ key: 'proj-00000001', id: 'cas1' });
     assert.ok(report && report.ok);
-    assert.equal((await listArtifacts('cas1')).length, 0, 'FK cascade cleared the artifacts rows');
+    // No FK cascade fires any more (the row is UPDATEd, not DELETEd) — the archive
+    // deletes the artifacts index explicitly, because its files were just unlinked.
+    assert.equal((await listArtifacts('cas1')).length, 0, 'artifacts index cleared explicitly');
+    // Inverted expectation: archive is a SOFT delete. The row is the permanent
+    // statistical record of the run, so it must outlive its files.
+    const row = getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get('cas1');
+    assert.ok(row, 'pipelines row survives the archive');
+    assert.ok(row.archived_at, 'archived_at is stamped');
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }
 });
 
 // ── Phase 1: the detached run root is removed too (§8.13 guards) ──────────────
-// Without this, deleting a paused or interrupted detached run from the UI would
+// Without this, archiving a paused or interrupted detached run from the UI would
 // leave the generated CLAUDE.md, mcp.json, run.json, the workspace skill mount and
-// the emptied repos/ shell on disk permanently — and, because deletion DELETEs the
-// pipelines row, the boot sweep would then see a row-less run root forever.
+// the emptied repos/ shell on disk permanently — nothing else ever reclaims a run
+// root, and the archived row keeps pointing at it.
 
 test('deleting a PAUSED detached run removes <worcaHome>/runs/<id>; a later sweep finds nothing', async () => {
   const repo = await freshRepo();

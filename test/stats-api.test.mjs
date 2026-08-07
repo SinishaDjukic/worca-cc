@@ -120,6 +120,22 @@ test('range=month: daily buckets from the 1st; range=all: monthly buckets + fall
   assert.ok(all.series.length >= 2);                  // Jul + Aug buckets present
 });
 
+// Legacy fs->db imports land without a startedAt (src/core/migrate-fs-to-db.mjs),
+// so their started_at is NULL. A bare `started_at >= ?` drops them from every
+// cohort — including range='all' — while their money still lands in the all-time
+// fallback sums, making `runs` and `spentUsd` disagree.
+test('rows with a NULL started_at still count, attributed by updated_at', async () => {
+  const beforeAll = getStats({ range: 'all', now: NOW }).totals.runs;
+  const beforeWeek = getStats({ range: 'week', now: NOW }).totals.runs;
+  const { id } = await seedPipeline('/tmp/p', { status: 'done' });
+  getDb().prepare('UPDATE pipelines SET started_at = NULL, updated_at = ? WHERE id = ?')
+    .run(iso(2026, 8, 4), id);
+  assert.equal(getStats({ range: 'all', now: NOW }).totals.runs, beforeAll + 1,
+    'all-time cohort keeps NULL-started rows');
+  assert.equal(getStats({ range: 'week', now: NOW }).totals.runs, beforeWeek + 1,
+    'windowed cohort attributes them by updated_at');
+});
+
 test('unknown range throws RangeError', () => {
   assert.throws(() => getStats({ range: 'year', now: NOW }), RangeError);
 });

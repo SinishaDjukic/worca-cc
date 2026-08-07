@@ -1457,7 +1457,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
-           json_extract(resume_point, '$.pauseReason') AS pause_reason
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -1482,7 +1482,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
-           json_extract(resume_point, '$.pauseReason') AS pause_reason
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
     WHERE archived_at IS NULL
     ORDER BY started_at DESC
@@ -1738,7 +1738,16 @@ export function lookupPipelineRow(key, id) {
 export function runRootSweepLookups() {
   // No try/catch by design (see above): only a successful query that matched nothing
   // returns null. Any DB-level failure propagates to the caller.
-  const rowById = (id) => getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(id) || null;
+  //
+  // ARCHIVED rows read as row-less, which is exactly what the hard DELETE they
+  // replaced produced. Archive already reclaimed the FS; if a worktree/run root
+  // survived that pass (dirty tree, index.lock), a kept `paused` status would put
+  // it in RUN_ROOT_KEEP forever — the row can never be resumed, re-archived, or
+  // seen in History again, so nothing would ever release it. Row-less means
+  // reclaim, and the rescue triple is correctly skipped (the artifact index rows
+  // and the run dir are already gone).
+  const rowById = (id) => getDb()
+    .prepare('SELECT * FROM pipelines WHERE id = ? AND archived_at IS NULL').get(id) || null;
   return {
     statusOf: (id) => rowById(id)?.status ?? null,
     membersOf: async (id) => {
@@ -1799,7 +1808,11 @@ export function runRootSweepLookups() {
  */
 export function legacySweepLookups() {
   // No try/catch by design (see above): a DB-level failure propagates to the caller.
-  const rows = getDb().prepare('SELECT id, status, branch, workspace_meta FROM pipelines').all();
+  // archived_at IS NULL for the same reason runRootSweepLookups filters it: an
+  // archived row must stop both claiming its worktree path via referencedPaths and
+  // reporting a KEEP status, or a path archive failed to remove is pinned forever.
+  const rows = getDb()
+    .prepare('SELECT id, status, branch, workspace_meta FROM pipelines WHERE archived_at IS NULL').all();
   const status = new Map();
   const referencedPaths = new Set();
   for (const row of rows) {
@@ -1926,7 +1939,7 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
-           json_extract(resume_point, '$.pauseReason') AS pause_reason
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
   `).all(workspaceKey);
   const out = [];

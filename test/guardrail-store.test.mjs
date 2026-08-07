@@ -134,3 +134,20 @@ test('deleteGuardrailSet: pinned by a resume_point -> ReferencedError; the histo
   assert.deepEqual(await guardrailSetReferences(saved.id), [], 'no pins left');
   assert.equal(await deleteGuardrailSet(saved.id), true, 'historical column references never block deletion');
 });
+
+test('an ARCHIVED row releases its pin — archive must not strand a set forever', async () => {
+  const saved = await writeGuardrailSet({ name: 'Pinned Then Archived', settings: {} });
+  getDb().prepare(
+    "INSERT INTO pipelines (id, project_key, status, resume_point) VALUES ('p1', 'k1', 'paused', ?)"
+  ).run(JSON.stringify({ version: 1, guardrailsId: saved.id }));
+  assert.deepEqual(await guardrailSetReferences(saved.id),
+    [{ id: saved.id, referencedBy: ['pipeline p1'] }], 'live paused row pins');
+  // History "Archive" soft-deletes (pipeline-delete.mjs stamps archived_at and
+  // leaves the row otherwise intact). An archived run is invisible in History and
+  // unresumable, so its resume point is no longer a reference — before the archive
+  // change the hard DELETE released it, and nothing may pin the set permanently.
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), 'p1');
+  assert.deepEqual(await guardrailSetReferences(saved.id), [], 'archived rows do not pin');
+  assert.equal(await deleteGuardrailSet(saved.id), true);
+});
