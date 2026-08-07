@@ -59,14 +59,8 @@ body{
   border-right:1px solid var(--line);
   overflow-y:auto;
 }
-.brand{display:flex;align-items:center;gap:11px;padding:0 8px;margin-bottom:30px;}
-.brand .mark{
-  width:38px;height:38px;border-radius:12px;background:var(--ink);
-  display:grid;place-items:center;flex:0 0 auto;
-}
-.brand .mark span{width:13px;height:13px;border-radius:50%;
-  border:3px solid #fff;display:block;}
-.brand .name{font-weight:700;font-size:19px;letter-spacing:-.02em;}
+.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:10px;}
+.brand .logo{height:48px;width:auto;display:block;}
 
 .nav{display:flex;flex-direction:column;gap:4px;}
 .nav button{
