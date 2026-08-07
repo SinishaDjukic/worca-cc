@@ -1196,11 +1196,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .grv-summary{display:block;margin:6px 0 0;}
 .grv-actions{display:flex;gap:8px;margin-top:4px;}
 .grv-actions .btn-ghost{padding:7px 12px;font-size:12px;}
-/* Open affordance: down-chevron at the card's vertical center-right (mirrors hist/ws cards). */
-.grv-open{flex:0 0 auto;background:none;border:none;padding:6px;border-radius:8px;cursor:pointer;color:var(--ink-3);display:inline-flex;align-items:center;transition:.12s;}
-.grv-open:hover{color:var(--ink);background:var(--chip-bg,#f7f7fa);}
-.grv-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.grv-open .chev{width:15px;height:15px;}
+/* Details button on the card's right edge — opens the read-only view (built-ins) or the editor (user sets). */
+.grv-details{flex:0 0 auto;}
 .grv-editor{padding:18px 22px;}
 .grv-editor .grv-head{margin-bottom:16px;}
 .grv-editor .switch-row{margin-top:12px;}

@@ -45,15 +45,14 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
       del.dataset.id = s.id;
       card.appendChild(del);
     }
-    // Open affordance: a down-chevron on the card's right edge (mirrors the
-    // history/workspace cards). Keeps the .grv-edit routing class so app.js's
-    // one delegated listener still opens the editor. Built-ins read "View".
-    const open = h(doc, 'button', 'grv-edit grv-open');
+    // Open affordance: a "Details" button on the card's right edge. Keeps the
+    // .grv-edit routing class so app.js's one delegated listener still opens
+    // the editor. Built-ins open a read-only view; user sets open for editing
+    // (the title reflects that; the visible label is the accessible name).
+    const open = h(doc, 'button', 'btn-ghost grv-edit grv-details', 'Details');
     open.type = 'button';
     open.dataset.id = s.id;
     open.title = s.origin === 'builtin' ? 'View' : 'Edit';
-    open.setAttribute('aria-label', open.title);
-    open.innerHTML = '<svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
     card.appendChild(open);
     root.appendChild(card);
   }

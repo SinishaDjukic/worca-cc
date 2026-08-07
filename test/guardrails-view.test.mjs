@@ -35,7 +35,7 @@ test('list cards: name, origin badge, summary, delegation hooks; built-ins get V
   assert.equal(cards[0].querySelector('.grv-name').textContent, 'Strict');
   assert.equal(cards[0].querySelector('.grv-origin').textContent, 'built-in');
   assert.equal(cards[0].querySelector('.grv-edit').title, 'View');
-  assert.ok(cards[0].querySelector('.grv-edit .chev'), 'open affordance is a chevron');
+  assert.equal(cards[0].querySelector('.grv-edit').textContent, 'Details', 'open affordance is a Details button');
   assert.equal(cards[0].querySelector('.grv-delete'), null, 'built-ins are undeletable');
   assert.equal(cards[1].querySelector('.grv-origin').textContent, 'user');
   assert.equal(cards[1].querySelector('.grv-edit').dataset.id, 'gr_org');
