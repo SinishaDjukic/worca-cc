@@ -7148,9 +7148,9 @@ function isDeletableEntry(p) {
   return !['running', 'starting', 'created', 'pausing'].includes(s);
 }
 
-// Wire the Delete button in the expanded card. Shown only for finished entries.
+// Wire the Archive button in the expanded card. Shown only for finished entries.
 // Confirms via window.confirm (the app's destructive-action convention), then
-// DELETEs the pipeline and drops the card from the list.
+// DELETEs the pipeline — which archives it — and drops the card from the list.
 function setupDeleteButton(node, projectDir, p) {
   const btn = node.querySelector('.hist-delete');
   if (!btn) return;
@@ -7159,12 +7159,13 @@ function setupDeleteButton(node, projectDir, p) {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card
     const label = p.title || p.id || 'this entry';
-    if (!window.confirm(
-      `Delete "${label}"?\n\nThis removes the pipeline records and its local branch/worktree. ` +
-      `The remote branch is kept. This cannot be undone.`)) return;
+    const msg = `Archive "${label}"?\n\nThis removes it from History and deletes its local ` +
+      `branch/worktree. Its cost and outcome are kept for Statistics; the remote branch is kept. ` +
+      `This cannot be undone.`;
+    if (!window.confirm(msg)) return;
     btn.disabled = true;
     const prev = btn.textContent;
-    btn.textContent = 'Deleting…';
+    btn.textContent = 'Archiving…';
     try {
       const qs = new URLSearchParams();
       // A workspace run routes by bare workspaceId; ?projectKey would carry the
