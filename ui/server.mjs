@@ -31,6 +31,7 @@ import {
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod,
 } from '../src/core/settings.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
+import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -1174,6 +1175,20 @@ app.get('/api/counts', (_req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/stats?range=week|month|all  -> the Statistics view payload (§6.9).
+// Pure DB reads; an unknown range is the caller's fault, so getStats' RangeError
+// maps to 400 while anything else keeps bubbling to the error handler.
+app.get('/api/stats', (req, res) => {
+  try {
+    const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'month';
+    res.json(getStats({ range }));
+  } catch (err) {
+    if (err instanceof RangeError) return badRequest(res, err.message);
+    throw err;
   }
 });
 

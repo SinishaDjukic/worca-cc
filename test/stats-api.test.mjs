@@ -1,10 +1,12 @@
 // test/stats-api.test.mjs
-// Module half of the statistics surface: src/core/stats.mjs. Seeds a small
-// world of runs (one archived — stats deliberately include archived rows) plus
-// ledger events, then asserts cohort KPIs, ledger money, prev-window deltas and
-// the zero-filled series.
+// Both halves of the statistics surface: the src/core/stats.mjs module and the
+// GET /api/stats route that serves it. Seeds a small world of runs (one
+// archived — stats deliberately include archived rows) plus ledger events, then
+// asserts cohort KPIs, ledger money, prev-window deltas and the zero-filled
+// series; the route half mounts `app` on an ephemeral port over the same home.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +15,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { recordCostDelta } from '../src/core/cost-budget.mjs';
+import { app, runs } from '../ui/server.mjs';
 
 useTempHome(after); // DB sandbox (WORCA_HOME)
 
@@ -32,6 +35,20 @@ after(async () => {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await rm(sandboxHome, { recursive: true, force: true });
+});
+
+// Route half: mount `app` on an ephemeral port. WORCA_HOME is already pinned by
+// useTempHome (module eval) and HOME by the sandbox `before` above, so the route
+// reads the very same DB and settings the module half seeds.
+let srv, base;
+before(async () => {
+  srv = http.createServer(app);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${srv.address().port}`;
+});
+after(async () => {
+  if (srv) await new Promise((r) => srv.close(r));
+  runs.clear();
 });
 
 const NOW = new Date(2026, 7, 6, 15, 0);          // Thu 2026-08-06 local
@@ -105,4 +122,18 @@ test('range=month: daily buckets from the 1st; range=all: monthly buckets + fall
 
 test('unknown range throws RangeError', () => {
   assert.throws(() => getStats({ range: 'year', now: NOW }), RangeError);
+});
+
+test('GET /api/stats serves the shape; defaults to month; 400 on bad range', async () => {
+  let res = await fetch(`${base}/api/stats?range=week`);
+  assert.equal(res.status, 200);
+  const s = await res.json();
+  for (const k of ['range', 'bucket', 'windowStartMs', 'windowEndMs', 'totals', 'prev', 'budget', 'series']) {
+    assert.ok(k in s, `stats.${k}`);
+  }
+  res = await fetch(`${base}/api/stats`);
+  assert.equal((await res.json()).range, 'month');
+  res = await fetch(`${base}/api/stats?range=year`);
+  assert.equal(res.status, 400);
+  assert.ok((await res.json()).error);
 });
