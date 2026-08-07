@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -687,6 +687,45 @@ function applySchemaV15(db) {
 }
 
 /**
+ * v15 -> v16 (spend-ledger backfill): v15 created cost_ledger EMPTY and only the
+ * live orchestrator writes it, so every pre-upgrade run reads $0 in windowed
+ * spend (stats week/month, sidebar budget) while History shows its
+ * pipelines.total_cost_usd. Insert ONE synthetic row per costed pipeline that
+ * has NO ledger rows at all (a live-recorded run's total again would double-
+ * count), amount = the same fallback-aware figure the all-time sums use (row
+ * total, else step sum), ts = the run's start (cohort semantics — the money
+ * lands in the same week/month bucket as the run), step_key NULL. Pipelines
+ * with no parseable timestamp are skipped — they still count in the all-time
+ * totals via the pipelines fallback. Gap-repair first, v12-v15 style: a
+ * divergent stamp can sit at 15 without the table.
+ */
+function applySchemaV16(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  // A hand-built or divergent DB (minimal test seeds) can reach this step
+  // without the cost columns the base DDL has always carried — such a DB never
+  // stored a cost, so there is nothing to backfill.
+  const has = (table, col) =>
+    db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('pipelines', 'total_cost_usd') || !has('pipeline_steps', 'cost_usd')) return;
+  const rows = db.prepare(`
+    SELECT p.id,
+      CASE WHEN p.total_cost_usd > 0 THEN p.total_cost_usd ELSE COALESCE(s.sc, 0) END AS cost,
+      COALESCE(p.started_at, p.updated_at) AS ts_iso
+    FROM pipelines p
+    LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc
+               FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
+    WHERE NOT EXISTS (SELECT 1 FROM cost_ledger cl WHERE cl.pipeline_id = p.id)
+  `).all();
+  const ins = db.prepare(
+    'INSERT INTO cost_ledger (pipeline_id, step_key, amount_usd, ts) VALUES (?, NULL, ?, ?)');
+  for (const r of rows) {
+    const ts = Date.parse(r.ts_iso ?? '');
+    if (!(r.cost > 0) || !Number.isFinite(ts)) continue;
+    ins.run(r.id, r.cost, ts);
+  }
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -733,6 +772,7 @@ export function migrate(db) {
     if (current < 13) applySchemaV13(db);
     if (current < 14) applySchemaV14(db);
     if (current < 15) applySchemaV15(db);
+    if (current < 16) applySchemaV16(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
