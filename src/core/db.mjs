@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -524,6 +524,19 @@ CREATE TABLE IF NOT EXISTS guardrail_sets (
 );
 `;
 
+/** v15: append-only spend ledger. NO foreign key on pipeline_id: spend is a
+ *  permanent financial fact and must survive any row surgery. */
+const COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS cost_ledger (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  step_key    TEXT,
+  amount_usd  REAL NOT NULL,
+  ts          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cost_ledger_ts ON cost_ledger (ts);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -541,7 +554,9 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
-                            source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT' },
+                            source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
+                            archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
+                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT' },
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
   workflows:              { domain: 'TEXT', origin: 'TEXT' },
@@ -571,7 +586,15 @@ function schemaGaps(db) {
   const hasGuardrailSets = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='guardrail_sets'"
   ).get().n > 0;
-  return { columns: missing, stepQuestionsTable: !hasStepQuestions, guardrailSetsTable: !hasGuardrailSets };
+  const hasCostLedger = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
+  ).get().n > 0;
+  return {
+    columns: missing,
+    stepQuestionsTable: !hasStepQuestions,
+    guardrailSetsTable: !hasGuardrailSets,
+    costLedgerTable: !hasCostLedger,
+  };
 }
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
@@ -582,6 +605,7 @@ function repairSchemaGaps(db, gaps) {
   }
   if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
   if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
+  if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
 }
 
 /**
@@ -597,7 +621,8 @@ function repairSchemaGaps(db, gaps) {
  */
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
-  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable) return; // clean — no lock
+  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
+      && !gaps.costLedgerTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -651,6 +676,17 @@ function applySchemaV14(db) {
 }
 
 /**
+ * v14 -> v15 (cost limits + archive + PR persistence, spec 2026-08-07):
+ *   cost_ledger table; pipelines archived_at / cost_cap_override / pr_url /
+ *   pr_number / pr_state / pr_checked_at. CONDITIONAL repair like v12-v14 —
+ *   the columns live in INCREMENTAL_COLUMNS and the table in the schemaGaps
+ *   flags, so earlier self-heals may already have applied them.
+ */
+function applySchemaV15(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -696,6 +732,7 @@ export function migrate(db) {
     if (current < 12) applySchemaV12(db);
     if (current < 13) applySchemaV13(db);
     if (current < 14) applySchemaV14(db);
+    if (current < 15) applySchemaV15(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
