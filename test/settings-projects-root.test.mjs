@@ -306,14 +306,18 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
-test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default}', async () => {
+test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    assert.deepEqual(Object.keys(j).sort(), ['default', 'projectsRoot', 'projectsRootDefault', 'root']);
+    assert.deepEqual(Object.keys(j).sort(), ['costLimitResetPeriod', 'default', 'pipelineCostLimitUsd',
+      'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');
     assert.equal(j.default, home);
+    assert.equal(j.pipelineCostLimitUsd, null, 'no cap set -> unlimited');
+    assert.equal(j.totalCostLimitUsd, null, 'no cap set -> unlimited');
+    assert.equal(j.costLimitResetPeriod, 'monthly', 'the default window');
   });
 });
 

@@ -752,6 +752,7 @@ function resolveAgainst(base, p) {
  *                                    used when inline `prompt` is absent/empty
  * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
+ * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -765,6 +766,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
+    guardrailsId = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -852,6 +854,10 @@ export async function createPipeline(projectDir, opts = {}) {
     // the orchestrator passes sourceType explicitly through the sources.mjs seam.
     sourceType: sourceType || (sourceMeta ? 'plugin' : (promptFile ? 'markdown' : 'prompt')),
     sourceMeta: sourceMeta || null,
+    // The run's selected guardrail set id (per-run model; 'permissive' for
+    // unguarded runs). Creation-immutable, like sourceType: written on INSERT,
+    // never touched by updates. NULL = legacy/pre-entity or non-orchestrator row.
+    guardrailsId: guardrailsId || null,
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -955,9 +961,9 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * A11(a): the ON CONFLICT(id) DO UPDATE clause SETs ONLY the columns that
  * legitimately mutate during a run. It deliberately does NOT touch the
  * creation-immutable identity columns (project_key, prompt, target, title,
- * workspace_key, started_at, source_type, source_ref) — the orchestrator's
- * this.state omits several of them (orchestrator.mjs:174-191), so a blanket
- * "SET <every column>=excluded.<column>" would null them on the first
+ * workspace_key, started_at, source_type, source_ref, guardrails_id) — the
+ * orchestrator's this.state omits several of them (orchestrator.mjs:174-191), so
+ * a blanket "SET <every column>=excluded.<column>" would null them on the first
  * post-create persist (and _persist's catch{} would hide the loss). The INSERT
  * arm still writes every column; only the UPDATE arm is curated.
  *
@@ -986,11 +992,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref)
+        source_type, source_ref, guardrails_id)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref)
+        @source_type,@source_ref,@guardrails_id)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1043,6 +1049,25 @@ export function updatePipelineTitle(pipelineId, title) {
   } catch {
     /* best-effort: the live state event still carries the new title */
   }
+}
+
+/**
+ * Persist the last observed PR facts on the pipeline row (spec §6.8).
+ * Best-effort (PR facts are re-observable); NEVER touches updated_at — the
+ * stats layer uses updated_at as the terminal-write proxy.
+ * @param {string} pipelineId
+ * @param {{ url:string, number?:number|null, state?:string }} pr
+ */
+export function persistPrState(pipelineId, pr) {
+  if (!pipelineId || !pr || !pr.url) return;
+  try {
+    tx(() => {
+      getDb().prepare(
+        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?
+         WHERE id = ?`,
+      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
+    });
+  } catch { /* best-effort */ }
 }
 
 /**
@@ -1308,6 +1333,7 @@ function toPipelineRow(o) {
     resume_point: o.resumePoint == null ? null : s(o.resumePoint),
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
+    guardrails_id: o.guardrailsId ?? null,
   };
 }
 
@@ -1346,6 +1372,8 @@ function totalsFor(row) {
  *  - `branch` (wire) = state.branch.feature; `sourceBranch` = state.branch.source.
  *  - `mtime` maps to updated_at parsed to ms (a SORT KEY only; never displayed).
  *  - `row.dir` is attached by the caller (the real on-disk run dir).
+ *  - `guardrailsId` (additive, v14+): the run's selected guardrail set id
+ *    ('permissive' = unguarded) or null for legacy rows.
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr? }
@@ -1374,6 +1402,8 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     startedAt: row.started_at ?? null,
     branch: feature,
     sourceBranch: source,
+    guardrailsId: row.guardrails_id ?? null,
+    pauseReason: row.pause_reason ?? null,
     survived,
     added,
     removed,
@@ -1426,9 +1456,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
-    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'}
+    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
   `).all(workspaceKey ? workspaceKey : projectKey(projectDir));
   const out = [];
@@ -1450,8 +1481,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
+    WHERE archived_at IS NULL
     ORDER BY started_at DESC
   `).all();
 
@@ -1512,14 +1545,15 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
 }
 
 /**
- * Total number of pipelines across every project + workspace store (all statuses).
- * Backs the History sidebar count. Cheap COUNT(*) — never lists or loads rows.
- * Sync (getDb().prepare(...).get()), matching this module's idiom (it imports
- * only getDb + tx, not a bare `prepare`).
+ * Total number of NON-ARCHIVED pipelines across every project + workspace store
+ * (all statuses). Backs the History sidebar count, so it must agree with what the
+ * list reads show — archived rows are hidden there too. Cheap COUNT(*) — never
+ * lists or loads rows. Sync (getDb().prepare(...).get()), matching this module's
+ * idiom (it imports only getDb + tx, not a bare `prepare`).
  * @returns {number}
  */
 export function countPipelines() {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get();
+  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS NULL').get();
   return row ? Number(row.n) : 0;
 }
 
@@ -1538,11 +1572,11 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (targets.length === 0) { await onBatch([], true); return; }
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
-    const items = await Promise.all(slice.map(async (r) => ({
-      projectKey: r.projectKey,
-      id: r.id,
-      pr: (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null,
-    })));
+    const items = await Promise.all(slice.map(async (r) => {
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null;
+      if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
+      return { projectKey: r.projectKey, id: r.id, pr };
+    }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
   }
 }
@@ -1599,6 +1633,7 @@ function rowToState(row) {
     branch: j(row.branch, null),
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
+    guardrailsId: row.guardrails_id ?? null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count
@@ -1703,7 +1738,16 @@ export function lookupPipelineRow(key, id) {
 export function runRootSweepLookups() {
   // No try/catch by design (see above): only a successful query that matched nothing
   // returns null. Any DB-level failure propagates to the caller.
-  const rowById = (id) => getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(id) || null;
+  //
+  // ARCHIVED rows read as row-less, which is exactly what the hard DELETE they
+  // replaced produced. Archive already reclaimed the FS; if a worktree/run root
+  // survived that pass (dirty tree, index.lock), a kept `paused` status would put
+  // it in RUN_ROOT_KEEP forever — the row can never be resumed, re-archived, or
+  // seen in History again, so nothing would ever release it. Row-less means
+  // reclaim, and the rescue triple is correctly skipped (the artifact index rows
+  // and the run dir are already gone).
+  const rowById = (id) => getDb()
+    .prepare('SELECT * FROM pipelines WHERE id = ? AND archived_at IS NULL').get(id) || null;
   return {
     statusOf: (id) => rowById(id)?.status ?? null,
     membersOf: async (id) => {
@@ -1764,7 +1808,11 @@ export function runRootSweepLookups() {
  */
 export function legacySweepLookups() {
   // No try/catch by design (see above): a DB-level failure propagates to the caller.
-  const rows = getDb().prepare('SELECT id, status, branch, workspace_meta FROM pipelines').all();
+  // archived_at IS NULL for the same reason runRootSweepLookups filters it: an
+  // archived row must stop both claiming its worktree path via referencedPaths and
+  // reporting a KEEP status, or a path archive failed to remove is pinned forever.
+  const rows = getDb()
+    .prepare('SELECT id, status, branch, workspace_meta FROM pipelines WHERE archived_at IS NULL').all();
   const status = new Map();
   const referencedPaths = new Set();
   for (const row of rows) {
@@ -1890,8 +1938,9 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch
-    FROM pipelines WHERE workspace_key = ? ORDER BY started_at DESC
+    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
+    FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
   `).all(workspaceKey);
   const out = [];
   for (const row of rows) {

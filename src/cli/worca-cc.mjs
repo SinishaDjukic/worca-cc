@@ -153,6 +153,18 @@ function fail(msg) {
   process.exit(2);
 }
 
+/** Budget-refusal line: "$X of $Y spent this week; resets 2026-09-01 00:00 (in 24d 12h)". */
+function budgetRefusalDetail(b) {
+  const p = (x) => String(x).padStart(2, '0');
+  const d = new Date(b.windowEndMs);
+  const when = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const days = Math.floor(b.msUntilReset / 86400000);
+  const hours = Math.floor((b.msUntilReset % 86400000) / 3600000);
+  const periodWord = b.resetPeriod === 'weekly' ? 'week' : 'month';
+  return `$${b.windowSpendUsd.toFixed(2)} of $${b.totalLimitUsd.toFixed(2)} spent this ${periodWord}; `
+    + `resets ${when} (in ${days}d ${hours}h)`;
+}
+
 const HELP = `worca — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
 
 Usage:
@@ -167,9 +179,11 @@ Subcommands:
   list                        List registered projects (tab-separated; missing dirs are flagged).
   remove <name>               Remove a registered project by name (case-insensitive).
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
+    [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|init|validate|exec. See: worca plugin help
+  config [get|set|unset]      Budget & cost-limit settings
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -606,15 +620,90 @@ async function cmdDoctor() {
   return 0;
 }
 
+/** `worca config` — list/get/set/unset the budget settings.
+ *  Exit codes: 0 ok, 2 usage/validation (fail()). */
+async function cmdConfig(argv) {
+  const settings = await import('../core/settings.mjs');
+  const { budgetStatus } = await import('../core/cost-budget.mjs');
+
+  const KEYS = {
+    pipelineCostLimitUsd: {
+      aliases: ['pipeline-cost-limit', 'pipeline-cost-limit-usd'],
+      read: settings.pipelineCostLimitUsd, write: settings.setPipelineCostLimitUsd, numeric: true,
+    },
+    totalCostLimitUsd: {
+      aliases: ['total-cost-limit', 'total-cost-limit-usd'],
+      read: settings.totalCostLimitUsd, write: settings.setTotalCostLimitUsd, numeric: true,
+    },
+    costLimitResetPeriod: {
+      aliases: ['cost-reset-period'],
+      read: settings.costLimitResetPeriod, write: settings.setCostLimitResetPeriod, numeric: false,
+    },
+  };
+  const canonical = (name) => {
+    if (!name) return null;
+    if (KEYS[name]) return name;
+    return Object.keys(KEYS).find((k) => KEYS[k].aliases.includes(name)) || null;
+  };
+  const allowed = () => Object.keys(KEYS).join(', ');
+  const show = (k) => {
+    const v = KEYS[k].read();
+    return v === null || v === undefined ? '(unset)' : String(v);
+  };
+  const fmtUsd2 = (n) => `$${n.toFixed(2)}`;
+  const fmtLocal = (ms) => {
+    const d = new Date(ms);
+    const p = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fmtIn = (ms) => {
+    const dDays = Math.floor(ms / 86400000);
+    const dHours = Math.floor((ms % 86400000) / 3600000);
+    return `${dDays}d ${dHours}h`;
+  };
+
+  const [verb, keyArg, valueArg] = argv;
+  if (!verb) {
+    for (const k of Object.keys(KEYS)) out(`${k}\t${show(k)}`);
+    const b = budgetStatus();
+    if (b.totalLimitUsd != null) {
+      const periodWord = b.resetPeriod === 'weekly' ? 'week' : 'month';
+      out(`window\t${fmtUsd2(b.windowSpendUsd)} of ${fmtUsd2(b.totalLimitUsd)} spent this ${periodWord}; `
+        + `resets ${fmtLocal(b.windowEndMs)} (in ${fmtIn(b.msUntilReset)})`);
+    }
+    return 0;
+  }
+  if (!['get', 'set', 'unset'].includes(verb)) {
+    fail(`Unknown config verb: ${verb}. Use get | set | unset (or no verb to list).`);
+  }
+  const key = canonical(keyArg);
+  if (!key) fail(`Unknown config key: ${keyArg || '(none)'}. Allowed: ${allowed()}`);
+  if (verb === 'get') { out(show(key)); return 0; }
+  try {
+    if (verb === 'unset') { await KEYS[key].write(''); out(`${key}\t(unset)`); return 0; }
+    if (valueArg === undefined) fail(`config set ${key} requires a value.`);
+    const input = KEYS[key].numeric ? Number(valueArg) : valueArg;
+    if (KEYS[key].numeric && !Number.isFinite(input)) {
+      fail(`${key} must be a positive number of USD, got: ${valueArg}`);
+    }
+    await KEYS[key].write(input);
+    out(`${key}\t${show(key)}`);
+    return 0;
+  } catch (err) {
+    fail(err && err.message ? err.message : String(err));
+  }
+}
+
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
   const id = (argv.find((a) => !a.startsWith('--')) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--ignore-cost-cap]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
+  const ignoreCap = argv.includes('--ignore-cost-cap');
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -633,6 +722,27 @@ async function cmdResume(argv) {
   }
   if (!saved.resumePoint) {
     process.stderr.write(`pipeline ${id} has no resume point\n`);
+    return 1;
+  }
+  if (saved.row.archived_at) {
+    process.stderr.write('worca resume: pipeline is archived\n');
+    return 1;
+  }
+  const { budgetStatus, setCostCapOverride, readCostCapOverride } =
+    await import('../core/cost-budget.mjs');
+  const budget = budgetStatus();
+  if (budget.blocked) {
+    process.stderr.write(`worca: total cost limit reached: ${budgetRefusalDetail(budget)}. `
+      + 'Raise it: worca config set totalCostLimitUsd <usd>\n');
+    return 1;
+  }
+  // Override persists only once the never-bypassable total gate passes.
+  if (ignoreCap) setCostCapOverride(id);
+  const spentSoFar = Number(saved.row.total_cost_usd || 0);
+  if (budget.pipelineLimitUsd != null && spentSoFar >= budget.pipelineLimitUsd
+      && !readCostCapOverride(id)) {
+    process.stderr.write(`worca: pipeline cost limit reached: $${spentSoFar.toFixed(2)} spent `
+      + `>= $${budget.pipelineLimitUsd.toFixed(2)} cap. Resume anyway: worca resume ${id} --ignore-cost-cap\n`);
     return 1;
   }
 
@@ -1172,7 +1282,7 @@ async function cmdPlugin(argv) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'config']);
 
 async function main() {
   const sub = process.argv[2];
@@ -1184,6 +1294,7 @@ async function main() {
     if (sub === 'resume') return cmdResume(rest);
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);
+    if (sub === 'config') return cmdConfig(rest);
   }
 
   const flags = parseArgs(process.argv.slice(2));
@@ -1220,6 +1331,17 @@ async function main() {
   const projectDir = resolve(flags.project);
   // Resolve extras against the shell cwd so relative paths are unambiguous.
   const extras = (flags.extras || []).map((p) => resolve(process.cwd(), p));
+
+  // Never create a run that the orchestrator would immediately pause on the total
+  // budget: refuse up front (mock runs included — WORCA_MOCK is already set above).
+  const { budgetStatus } = await import('../core/cost-budget.mjs');
+  const budget = budgetStatus();
+  if (budget.blocked) {
+    process.stderr.write(`worca: total cost limit reached: ${budgetRefusalDetail(budget)}. `
+      + 'Raise it: worca config set totalCostLimitUsd <usd>\n');
+    return 1;
+  }
+
   const orch = createOrchestrator({
     projectDir,
     prompt: flags.prompt || undefined,

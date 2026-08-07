@@ -17,6 +17,8 @@ const state = {
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
+  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
@@ -67,7 +69,12 @@ import {
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
   renderOrphanList,
 } from './plugins-view.mjs';
+import {
+  guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
+  renderStartStep, collectStartStep, renderGuardrailReferences409,
+} from './guardrails-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
+import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -116,6 +123,8 @@ const el = {
   pipelineConfig: $('#pipeline-config'),
   configError: $('#config-error'),
   workflowSelect: $('#workflowSelect'),
+  guardrailsSelect: $('#guardrailsSelect'),
+  guardrailsHint: $('#guardrailsHint'),
   wfDefaultStages: $('#wf-default-stages'),
   wfNodeConfig: $('#wf-node-config'),
   wfFeedbackConfig: $('#wf-feedback-config'),
@@ -172,6 +181,15 @@ const el = {
   settingsSave: $('#settingsSave'),
   settingsReset: $('#settingsReset'),
   settingsMsg: $('#settingsMsg'),
+
+  // Settings: budget & cost limits card
+  budgetReadout: $('#budgetReadout'),
+  budgetPerPipeline: $('#budgetPerPipeline'),
+  budgetTotal: $('#budgetTotal'),
+  budgetResetPeriod: $('#budgetResetPeriod'),
+  budgetSave: $('#budgetSave'),
+  budgetReset: $('#budgetReset'),
+  budgetMsg: $('#budgetMsg'),
 
   // Agents management view
   agentsList: $('#agents-list'),
@@ -234,6 +252,15 @@ const el = {
   pluginModalBody: $('#plugin-modal-body'),
   pluginModalActions: $('#plugin-modal-actions'),
   pluginModalClose: $('#plugin-modal-close'),
+
+  // Guardrails view
+  guardrailsList: $('#guardrails-list'),
+  guardrailsMsg: $('#guardrails-msg'),
+  guardrailCreateBtn: $('#guardrail-create-btn'),
+
+  // Statistics view
+  statsBody: $('#stats-body'),
+  statsRange: $('#stats-range'),
 };
 
 // ---------------------------------------------------------------------------
@@ -300,6 +327,105 @@ function setWsStatus(on) {
 }
 
 // ---------------------------------------------------------------------------
+// Spend indicator. One /api/budget snapshot drives the sidebar block, the
+// compact topnav amount, and the New-view creation gate. Refreshed at boot, on
+// every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
+// ---------------------------------------------------------------------------
+const budgetState = { budget: null, timer: null, fetching: false };
+
+// True between "Start clicked" and the POST /api/run settling. Any budget repaint
+// landing inside that window — a `budget-changed` broadcast, an archive's
+// `pipelines-changed`, another run's `done`, the slow tick — runs
+// applyBudgetToNewView, which writes start.disabled unconditionally; without this
+// flag such a repaint re-enables Start mid-submit and a fast second click starts
+// the same run twice.
+let startSubmitInFlight = false;
+
+async function refreshBudget() {
+  if (budgetState.fetching) return;
+  budgetState.fetching = true;
+  try {
+    const res = await fetch('/api/budget');
+    const data = await safeJson(res);
+    if (res.ok) { budgetState.budget = data; paintBudget(); }
+  } catch { /* transient */ } finally { budgetState.fetching = false; }
+}
+
+function paintBudget() {
+  const b = budgetState.budget;
+  const mount = document.getElementById('side-spend');
+  const topAmt = document.getElementById('topnav-spend');
+  if (!b) { if (topAmt) topAmt.hidden = true; return; }
+  if (mount) {
+    mount.replaceChildren(renderBudgetIndicator(b,
+      { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+  }
+  if (topAmt) {
+    topAmt.hidden = false;
+    topAmt.textContent = fmtUsd(b.windowSpendUsd);
+    topAmt.classList.toggle('warn', !b.blocked && b.totalLimitUsd != null
+      && b.windowSpendUsd / b.totalLimitUsd >= BUDGET_WARN_AT);
+    topAmt.classList.toggle('over', !!b.blocked);
+  }
+  applyBudgetToNewView();
+  if (currentView() === 'settings') paintBudgetReadout();
+  repaintCostBanners();
+}
+
+function applyBudgetToNewView() {
+  const b = budgetState.budget;
+  const note = document.getElementById('newBlockedNote');
+  const start = document.getElementById('start-btn');
+  if (!note || !start) return;
+  const blocked = !!(b && b.blocked);
+  start.disabled = blocked || startSubmitInFlight;
+  note.hidden = !blocked;
+  if (blocked) {
+    const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
+    const msg = `Total budget reached — ${fmtUsd(b.windowSpendUsd)} of ${fmtUsd(b.totalLimitUsd)} ` +
+      `spent this ${w}. New pipelines are blocked until ${fmtResetAtLocal(b.windowEndMs)}, ` +
+      `or a higher total limit in Settings.`;
+    note.textContent = msg;
+    start.title = msg;
+  } else {
+    start.title = '';
+  }
+}
+
+function fmtResetAtLocal(ms) {
+  const d = new Date(ms);
+  const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const p = (x) => String(x).padStart(2, '0');
+  return `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function startBudgetTick() {
+  if (budgetState.timer) return;
+  const interval = typeof window.__budgetTickMs === 'number' ? window.__budgetTickMs : 60000;
+  budgetState.timer = setInterval(() => {
+    const b = budgetState.budget;
+    if (!b) return;
+    // Refetch when spend can actually move (live runs) or the window has rolled
+    // over (spend resets to $0 and blocked must clear server-side — repainting
+    // the pre-reset snapshot would keep the UI "blocked" forever while idle).
+    if (liveRuns().length || Date.now() >= b.windowEndMs) { refreshBudget(); return; }
+    // Idle countdown: windowEndMs is the fixed anchor; the fetched msUntilReset
+    // is stale by definition. Recompute the remainder, then repaint — no fetch.
+    b.msUntilReset = Math.max(0, b.windowEndMs - Date.now());
+    paintBudget();
+  }, interval);
+  budgetState.timer.unref?.();                 // no-op in browsers/jsdom (number)
+}
+
+// The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
+// <nav> that navLinks snapshots at boot — so route it from a container listener
+// rather than the [data-nav] delegation.
+document.getElementById('side-spend').addEventListener('click', (e) => {
+  if (e.target.closest('.spend-ind')) location.hash = 'stats';
+});
+
+// ---------------------------------------------------------------------------
 // Server message router. Multi-run: every run's events arrive here (the server
 // broadcasts every run to every socket). Each event carries its own runId; we
 // fan it out to the matching per-run model.
@@ -339,7 +465,15 @@ function handleServerMessage(msg) {
   // !msg.runId early-return below.
   if (msg.type === 'pipelines-changed') {
     refreshAllCounts();
+    refreshBudget();
     if (currentView() === 'history') loadHistoryView({ force: true });
+    if (currentView() === 'stats') loadStatsView();
+    return;
+  }
+  // A cost pause or a budget-key settings save moves spend/limits; the indicator
+  // is global, so repaint it regardless of the open view.
+  if (msg.type === 'budget-changed') {
+    refreshBudget();
     return;
   }
   if (msg.type === 'projects-changed') {
@@ -468,6 +602,7 @@ function onHello(msg) {
       pendingQuestion: r0.pendingQuestion || null,
       kind: r0.kind || 'run',
       pipelineId: r0.pipelineId || null,
+      pauseReason: r0.pauseReason || null,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -501,6 +636,7 @@ function onHello(msg) {
   }
 
   refreshAllCounts();
+  refreshBudget();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
   // Background-load history on the first connect so the sidebar count + PR states
@@ -880,7 +1016,7 @@ function nowHMS() {
 
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
-  pendingQuestion = null, kind = 'run', pipelineId = null,
+  pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -893,6 +1029,8 @@ function makeRun({
     local,
     kind,                 // 'run' | 'workspace-run' | 'scan' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
+    pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
+                          // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     workspaceId,
     workspaceName,
     lastActivityAt: Date.now(),  // recency for tab/overview ordering (bumped on every tagged event)
@@ -1471,6 +1609,7 @@ async function loadConfig(projectDir) {
   // renderStepConfigs() internally for backward-compat.
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
+  await loadGuardrailsInto(state.guardrailsId);
 }
 
 // ---------------------------------------------------------------------------
@@ -2460,6 +2599,62 @@ async function loadWorkflowsInto(selectId) {
   await renderWorkflowConfig(state.workflowId);
 }
 
+// Returns the guardrail-set list, or null on failure — callers must distinguish
+// "server answered" (built-ins are always present) from "the list could not be
+// fetched" (null), or a transient failure silently rebuilds the dropdown to
+// Permissive-only and reroutes the next run's policy.
+async function listGuardrailsApi() {
+  try {
+    const res = await fetch('/api/guardrails');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+  } catch { return null; }
+}
+
+// Hint: the SELECTED set's summary (raw 5-key counts via guardrailSummary — the
+// run.json audit's denyCount additionally includes the Read/Edit expansion +
+// lifted repo rules, so the hint speaks in list counts, not audit numbers).
+function updateGuardrailsHint() {
+  if (!el.guardrailsHint) return;
+  const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
+  if (!sel || sel.id === 'permissive') {
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    return;
+  }
+  const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
+  el.guardrailsHint.textContent = `This run: ${guardrailSummary(sel.settings)} — applied uniformly${members}.`;
+}
+
+// Fill #guardrailsSelect with every named set (built-ins first — server order),
+// preserving the active selection (state.guardrailsId). Mirrors loadWorkflowsInto.
+async function loadGuardrailsInto(selectId) {
+  const sel = el.guardrailsSelect;
+  if (!sel) return;
+  const sets = await listGuardrailsApi();
+  if (sets === null) {
+    // List fetch failed: keep whatever the dropdown already shows (do NOT
+    // rebuild to Permissive-only — that would silently reroute the next run's
+    // policy) and note it non-blockingly in the log pane.
+    appendLog({ source: 'ui', level: 'error', text: 'guardrails: list failed', ts: Date.now() });
+    updateGuardrailsHint();
+    return;
+  }
+  const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
+  state.guardrailSets = list;
+  const want = selectId || state.guardrailsId || 'permissive';
+  sel.innerHTML = '';
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
+  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  // and SAY so via the form's message line: a vanished selection must never
+  // silently revert while the user believes it is still selected.
+  state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
+  if (want !== 'permissive' && state.guardrailsId === 'permissive') {
+    setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+  }
+  sel.value = state.guardrailsId;
+  updateGuardrailsHint();
+}
+
 // Render the config UI for one workflow. Default -> show the legacy 4 stage rows
 // and hide the dynamic containers. Saved -> fetch topology + registry, render a
 // node row per node and a cycle input per feedback.
@@ -2615,6 +2810,14 @@ if (el.workflowSelect) {
     state.workflowId = el.workflowSelect.value || 'wf_default';
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
+  });
+}
+
+// Guardrails change: remember the run's set and refresh the summary hint.
+if (el.guardrailsSelect) {
+  el.guardrailsSelect.addEventListener('change', () => {
+    state.guardrailsId = el.guardrailsSelect.value || 'permissive';
+    updateGuardrailsHint();
   });
 }
 
@@ -3516,7 +3719,17 @@ function finishRun(r, status) {
 }
 
 function onDone(r, msg) {
+  // A cost pause carries the reason code ('cost_pipeline' | 'cost_total') that
+  // drives the card banner, the status pill, and the resume gating. Assigned
+  // unconditionally so a later reasonless done clears it, matching the server's
+  // own entry.pauseReason reset in wireRun.
+  r.pauseReason = msg.reason || null;
   finishRun(r, msg.status || 'done');
+  // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
+  // budget-changed, and startBudgetTick refetches only while runs are live. Without
+  // this the delta — and the `blocked` flip it can cause — waited for a reload, so
+  // Start stayed enabled and the click hit the raw 403 instead of the creation gate.
+  refreshBudget();
 }
 
 function onError(r) {
@@ -5453,6 +5666,10 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 el.form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  // Enter in any field submits the form directly, bypassing the disabled Start
+  // button — so the in-flight window has to be closed here too, not only via
+  // start.disabled, or a second Enter starts the same run twice.
+  if (startSubmitInFlight) return;
   setFormMsg('', '');
 
   // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
@@ -5482,6 +5699,11 @@ el.form.addEventListener('submit', async (e) => {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
+    // Omit-when-default: 'permissive' IS the server default, so the key is
+    // absent on default runs — byte-identical legacy request bodies. (The
+    // server normalizes omitted/''/null to 'permissive'; always-sending would
+    // be equivalent but would change every legacy-shaped request for no gain.)
+    guardrailsId: state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined,
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
@@ -5520,6 +5742,9 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
+  // Guard the whole in-flight window: applyBudgetToNewView also drives
+  // start.disabled, and this run's own creation event repaints it.
+  startSubmitInFlight = true;
   el.startBtn.disabled = true;
   setFormMsg('Starting run...', '');
 
@@ -5541,6 +5766,7 @@ el.form.addEventListener('submit', async (e) => {
     });
     const data = await safeJson(res);
     if (!res.ok || !data.runId) {
+      startSubmitInFlight = false;
       el.startBtn.disabled = false;
       return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
     }
@@ -5548,8 +5774,10 @@ el.form.addEventListener('submit', async (e) => {
     // begin tracking the new run (creates a local model + switches to Running)
     beginRun(data.runId, projectDir, title,
       target === 'workspace' ? { workspaceId, workspaceName, projectNames: workspaceProjectNames } : {});
-    // Re-enable the form so more runs can be started concurrently.
-    el.startBtn.disabled = false;
+    // Re-enable the form so more runs can be started concurrently — unless the
+    // budget just went over, in which case the gate keeps Start disabled.
+    startSubmitInFlight = false;
+    el.startBtn.disabled = !!budgetState.budget?.blocked;
     setFormMsg('Run started.', 'ok');
     if (extras.length) {
       appendLog({
@@ -5560,6 +5788,7 @@ el.form.addEventListener('submit', async (e) => {
       });
     }
   } catch (err) {
+    startSubmitInFlight = false;
     el.startBtn.disabled = false;
     setFormMsg(`Error: ${err.message}`, 'err');
   }
@@ -5632,6 +5861,9 @@ async function loadSettings() {
     const data = await safeJson(res);
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
+    paintBudgetSettings(data);
+    paintBudgetReadout();
+    refreshBudget();
     if (el.settingsRootDefault) el.settingsRootDefault.textContent = data.default ? `Default: ${data.default}` : '';
     if (el.settingsProjectsRootDefault) {
       const fallback = projectsRootFallback(data);
@@ -5675,6 +5907,85 @@ if (el.settingsSave) {
   ));
 }
 if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSettings('', ''));
+
+// ---------------------------------------------------------------------------
+// Settings: budget & cost limits card. Reads the three limit keys off the same
+// /api/settings payload the root card uses, and renders the live spend readout
+// from the /api/budget snapshot paintBudget() already keeps fresh.
+// ---------------------------------------------------------------------------
+function setBudgetMsg(text, kind) {
+  el.budgetMsg.textContent = text || '';
+  el.budgetMsg.className = 'hint' + (kind ? ` ${kind}` : '');
+}
+
+function paintBudgetSettings(data) {
+  el.budgetPerPipeline.value = data.pipelineCostLimitUsd ?? '';
+  el.budgetTotal.value = data.totalCostLimitUsd ?? '';
+  el.budgetResetPeriod.value = data.costLimitResetPeriod || 'monthly';
+}
+
+function paintBudgetReadout() {
+  const b = budgetState.budget;
+  if (!b || !el.budgetReadout) return;
+  el.budgetReadout.replaceChildren(renderBudgetReadout(b,
+    { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+}
+
+// '' -> null (no limit). NaN is the validation-failure marker: anything that is
+// not a finite number of at least one cent.
+function readBudgetField(input) {
+  const v = input.value.trim();
+  if (v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0.01) return NaN;
+  return n;
+}
+
+async function saveBudgetSettings(payload) {
+  el.budgetSave.disabled = true;
+  el.budgetReset.disabled = true;
+  setBudgetMsg('Saving…');
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setBudgetMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    paintBudgetSettings(data);
+    setBudgetMsg('Saved.');
+    refreshBudget();                        // sidebar + readout repaint immediately
+  } catch (e) { setBudgetMsg(e.message, 'err'); }
+  finally {
+    el.budgetSave.disabled = false;
+    el.budgetReset.disabled = false;
+  }
+}
+
+if (el.budgetSave) {
+  el.budgetSave.addEventListener('click', () => {
+    const per = readBudgetField(el.budgetPerPipeline);
+    const total = readBudgetField(el.budgetTotal);
+    if (Number.isNaN(per) || Number.isNaN(total)) {
+      setBudgetMsg('Limits must be at least $0.01, or blank for no limit.', 'err');
+      return;
+    }
+    saveBudgetSettings({
+      pipelineCostLimitUsd: per, totalCostLimitUsd: total,
+      costLimitResetPeriod: el.budgetResetPeriod.value,
+    });
+  });
+}
+// Clears both limits and leaves the reset period alone: POSTing `null` deletes
+// the key server-side (the REST arm passes `body.x ?? ''` to the setter).
+if (el.budgetReset) {
+  el.budgetReset.addEventListener('click', () => {
+    el.budgetPerPipeline.value = '';
+    el.budgetTotal.value = '';
+    saveBudgetSettings({ pipelineCostLimitUsd: null, totalCostLimitUsd: null });
+  });
+}
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -5885,7 +6196,348 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
   if (!el.pluginAddRow.classList.contains('hidden')) el.pluginRepoUrl.focus();
 });
 if (el.pluginRepoScan) el.pluginRepoScan.addEventListener('click', scanPluginRepo);
-if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', closePluginModal);
+if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
+  if (grvState.wizard) return grvCloseWizard();
+  closePluginModal();
+});
+
+// ---- Guardrails view (named sets: list + two-step wizard popup) ----
+// All view state lives here; loadGuardrailsView rebuilds the list, and the wizard
+// (Step 1 start-picker -> Step 2 editor) renders into the #plugin-modal body.
+const grvState = { sets: [], editing: null, saved: null, wizard: null };
+const grvClone = (o) => JSON.parse(JSON.stringify(o));
+const emptyGuardrails = () => ({ honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] });
+
+function setGuardrailsMsg(text, kind) {
+  if (!el.guardrailsMsg) return;
+  el.guardrailsMsg.textContent = text || '';
+  el.guardrailsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+const GRV_LIST_FIELDS = { 'gr-allow': 'envAllowlist', 'gr-paths': 'protectedPaths', 'gr-deny': 'deny' };
+
+// Re-render the Step-2 editor into the modal body (was an inline #guardrails-list swap).
+function grvRenderEditor(settings, opts) {
+  el.pluginModalBody.replaceChildren(renderGuardrailEditor(
+    { ...grvState.editing, settings }, { mode: grvState.wizard.mode, ...opts },
+  ));
+}
+
+function grvRenderStep1() {
+  const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
+  el.pluginModalBody.replaceChildren(renderStartStep(sources, { selectedId: grvState.wizard.sourceId || '' }));
+  (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
+}
+
+// Open the wizard. mode 'create' starts at Step 1; 'edit'/'view' open Step 2 for `set`.
+function openGuardrailWizard(mode, set) {
+  if (mode === 'create') {
+    grvState.wizard = { mode, step: 1, sourceId: '' };
+    grvState.editing = { id: null, name: '', origin: null };
+    grvState.saved = { name: '', settings: emptyGuardrails() };
+    const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
+    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), []);
+    (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
+  } else {
+    grvState.wizard = { mode, step: 2, sourceId: '' };
+    grvState.editing = { id: set.id, name: set.name, origin: set.origin || null };
+    grvState.saved = { name: set.name, settings: grvClone(set.settings) };
+    pluginModal(mode === 'view' ? 'View guardrail set' : 'Edit guardrail set',
+      renderGuardrailEditor({ ...grvState.editing, settings: grvClone(set.settings) },
+        { mode, dirty: false, msg: '', msgErr: false }), []);
+    el.pluginModalBody.querySelector(mode === 'view' ? '.grv-save' : '.grv-name-input')?.focus();
+  }
+}
+
+// Close the wizard + refresh the list. Normalizes a deep-link hash back to bare
+// #guardrails (router reloads); a bare hash refreshes in place.
+function grvExitWizard() {
+  grvState.wizard = null;
+  grvState.editing = null;
+  closePluginModal();
+  if (location.hash.slice(1).startsWith('guardrails/')) location.hash = 'guardrails';
+  else loadGuardrailsView();
+}
+
+// Close with a dirty-guard: confirm discard only when the Step-2 editor has unsaved
+// changes; Step 1 (no editor) always closes freely.
+async function grvCloseWizard() {
+  const root = el.pluginModalBody.querySelector('.grv-editor');
+  if (root && grvDirty(root)) {
+    const ok = await confirmModal({
+      title: 'Discard changes?',
+      message: 'This guardrail set has unsaved changes. Discard them?',
+      confirmLabel: 'Discard',
+    });
+    if (!ok) return;
+  }
+  grvExitWizard();
+}
+
+function grvDirty(rootEl) {
+  return JSON.stringify(collectGuardrailEditor(rootEl)) !== JSON.stringify(grvState.saved);
+}
+
+// collect -> mutate -> full re-render of the Step-2 editor.
+function grvMutate(rootEl, fn) {
+  const cur = collectGuardrailEditor(rootEl);
+  fn(cur.settings);
+  grvState.editing.name = cur.name;
+  const dirty = JSON.stringify(cur) !== JSON.stringify(grvState.saved);
+  grvRenderEditor(cur.settings, { dirty, msg: '', msgErr: false });
+}
+
+async function grvSave(rootEl) {
+  const cur = collectGuardrailEditor(rootEl);
+  const mode = grvState.wizard.mode;
+  if (mode === 'view') {
+    // "Save as new set": flip the read-only built-in view into a create, prefilled.
+    grvState.wizard = { mode: 'create', step: 2, sourceId: grvState.editing.id };
+    const settings = cur.settings;
+    grvState.editing = { id: null, name: '', origin: null };
+    grvState.saved = { name: '', settings: grvClone(settings) };
+    el.pluginModalTitle.textContent = 'Create guardrails'; // header was 'View guardrail set'
+    grvRenderEditor(settings, { dirty: false, msg: '', msgErr: false });
+    el.pluginModalBody.querySelector('.grv-name-input')?.focus();
+    return;
+  }
+  if (!cur.name) return grvRenderEditor(cur.settings, { dirty: true, msg: 'name is required', msgErr: true });
+  grvState.editing.name = cur.name;
+  const isCreate = mode === 'create';
+  const url = isCreate ? '/api/guardrails' : `/api/guardrails/${encodeURIComponent(grvState.editing.id)}`;
+  try {
+    const res = await fetch(url, {
+      method: isCreate ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cur.name, settings: cur.settings }),
+    });
+    const data = await safeJson(res);
+    if (!grvState.wizard) return; // user discarded/closed while the request was in flight
+    if (!res.ok) {
+      const msg = (data.errors ? data.errors.join('; ') : data.error) || `HTTP ${res.status}`;
+      return grvRenderEditor(cur.settings, { dirty: true, msg, msgErr: true });
+    }
+    grvExitWizard();
+  } catch (e) {
+    grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true });
+  }
+}
+
+// Final routing: render the list and, when `param` names a set, open the wizard in
+// 'edit' (user) or 'view' (built-in). Resets a stale wizard on any path that does not
+// open a fresh one (browser Back to the bare list, or a bad deep-link).
+async function loadGuardrailsView(param = '') {
+  if (!el.guardrailsList) return;
+  setGuardrailsMsg('');
+  try {
+    const res = await fetch('/api/guardrails');
+    const data = await safeJson(res);
+    if (!res.ok) return setGuardrailsMsg(data.error || `HTTP ${res.status}`, 'err');
+    grvState.sets = Array.isArray(data.guardrails) ? data.guardrails : [];
+    el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
+    if (param) {
+      const set = grvState.sets.find((s) => s.id === param);
+      if (set) { openGuardrailWizard(set.origin === 'builtin' ? 'view' : 'edit', set); return; }
+      setGuardrailsMsg(`guardrail set "${param}" not found`, 'err');
+    }
+    if (grvState.wizard) { // no fresh wizard opened above: close any stale one (browser Back / bad id)
+      grvState.wizard = null; grvState.editing = null; closePluginModal();
+    }
+  } catch (e) {
+    setGuardrailsMsg(e.message, 'err');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statistics view
+// ---------------------------------------------------------------------------
+const statsState = { range: null };
+
+function defaultStatsRange() {
+  const period = budgetState.budget?.resetPeriod;
+  return period === 'weekly' ? 'week' : 'month';
+}
+
+async function loadStatsView() {
+  if (!statsState.range) statsState.range = defaultStatsRange();
+  // seg highlight
+  for (const b of el.statsRange.querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.range === statsState.range);
+  }
+  const body = el.statsBody;
+  if (body.childElementCount) body.classList.add('is-loading');
+  // A network-level rejection is not an !res.ok — without this catch it escapes
+  // as an unhandled rejection and leaves the body stuck in .is-loading.
+  let res, data;
+  try {
+    res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
+    data = await safeJson(res);
+  } catch (err) {
+    body.classList.remove('is-loading');
+    body.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint err', textContent: `Could not load statistics: ${err.message}` }));
+    return;
+  }
+  body.classList.remove('is-loading');
+  if (!res.ok) {
+    body.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
+    return;
+  }
+  body.replaceChildren(renderStatsBody(data, {
+    fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+}
+
+async function deleteGuardrailSetFlow(id) {
+  const set = grvState.sets.find((s) => s.id === id);
+  const ok = await confirmModal({
+    title: 'Delete guardrail set',
+    message: `Delete "${(set && set.name) || id}"? Runs that already recorded it keep their record; paused runs that pinned it block deletion until they finish.`,
+    confirmLabel: 'Delete',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/guardrails/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (res.status === 409) {
+      pluginModal('Cannot delete guardrail set', renderGuardrailReferences409(data.references || []));
+      return;
+    }
+    if (!res.ok) return setGuardrailsMsg(data.error || `HTTP ${res.status}`, 'err');
+    setGuardrailsMsg('Deleted.', 'ok');
+    loadGuardrailsView();
+  } catch (e) {
+    setGuardrailsMsg(e.message, 'err');
+  }
+}
+
+// List surface: open the wizard (deep-link via hash) or delete. Editor events now
+// live on the modal body (the editor renders inside #plugin-modal).
+if (el.guardrailsList) {
+  el.guardrailsList.addEventListener('click', (e) => {
+    const t = e.target;
+    const edit = t.closest && t.closest('.grv-edit');
+    if (edit) { location.hash = `guardrails/${edit.dataset.id}`; return; }
+    const del = t.closest && t.closest('.grv-delete');
+    if (del) { deleteGuardrailSetFlow(del.dataset.id); return; }
+  });
+}
+
+// Wizard surface: Step-1 (source/next/cancel) + Step-2 editor events. Gated on an
+// open wizard so other #plugin-modal consumers are untouched.
+if (el.pluginModalBody) {
+  el.pluginModalBody.addEventListener('click', (e) => {
+    if (!grvState.wizard) return;
+    const t = e.target;
+    if (t.closest('.grv-cancel')) { grvExitWizard(); return; }
+    if (t.closest('.grv-next')) {
+      const srcId = collectStartStep(el.pluginModalBody);
+      const w = grvState.wizard;
+      const src = srcId ? (grvState.sets.find((s) => s.id === srcId) || {}) : null;
+      const seed = (src && src.settings) ? grvClone(src.settings) : emptyGuardrails();
+      // Returning via Back and re-picking the SAME source restores the in-progress
+      // Step-2 edits instead of silently re-seeding (no data loss on Back -> Next).
+      const restore = w.work && srcId === w.sourceId;
+      const settings = restore ? w.work.settings : seed;
+      const name = restore ? w.work.name : '';
+      grvState.wizard = { mode: 'create', step: 2, sourceId: srcId }; // drops w.work
+      grvState.editing = { id: null, name, origin: null };
+      grvState.saved = { name: '', settings: seed };
+      grvRenderEditor(settings, {
+        dirty: JSON.stringify({ name, settings }) !== JSON.stringify(grvState.saved),
+        msg: '', msgErr: false,
+      });
+      el.pluginModalBody.querySelector('.grv-name-input')?.focus();
+      return;
+    }
+    if (t.closest('.grv-back')) {
+      const editorEl = el.pluginModalBody.querySelector('.grv-editor');
+      grvState.wizard.work = editorEl ? collectGuardrailEditor(editorEl) : null; // stash edits for same-source return
+      grvState.wizard.step = 1;
+      grvRenderStep1();
+      return;
+    }
+    const root = t.closest('.grv-editor');
+    if (!root) return;
+    const sw = t.closest('.switch');
+    if (sw && !sw.classList.contains('disabled')) {
+      const fld = sw.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
+      return grvMutate(root, (s) => { s[fld] = !s[fld]; });
+    }
+    const rm = t.closest('.gr-rm');
+    if (rm) {
+      const listEl = rm.closest('.gr-list');
+      const fld = listEl && GRV_LIST_FIELDS[[...listEl.classList].find((c) => GRV_LIST_FIELDS[c])];
+      if (fld) grvMutate(root, (s) => { s[fld] = s[fld].filter((x) => x !== rm.dataset.value); });
+      return;
+    }
+    const addBtn = t.closest('.gr-add-btn');
+    if (addBtn) {
+      const addRow = addBtn.closest('.gr-add');
+      const fld = GRV_LIST_FIELDS[addRow && addRow.dataset.list];
+      const input = addRow && addRow.querySelector('input');
+      const v = ((input && input.value) || '').trim();
+      if (!fld || !v) return;
+      grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
+      el.pluginModalBody.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+      return;
+    }
+    if (t.closest('.grv-discard')) {
+      grvState.editing.name = grvState.saved.name;
+      grvRenderEditor(grvClone(grvState.saved.settings), { dirty: false, msg: '', msgErr: false });
+      return;
+    }
+    if (t.closest('.grv-save')) { grvSave(root); return; }
+  });
+  el.pluginModalBody.addEventListener('input', (e) => {
+    if (!grvState.wizard || !e.target.classList || !e.target.classList.contains('grv-name-input')) return;
+    const root = e.target.closest('.grv-editor');
+    if (!root) return;
+    const dirty = grvDirty(root);
+    const save = root.querySelector('.grv-save');
+    if (save) save.disabled = !dirty;
+    const disc = root.querySelector('.grv-discard');
+    if (disc) disc.disabled = !dirty;
+  });
+  el.pluginModalBody.addEventListener('keydown', (e) => {
+    if (!grvState.wizard) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const root = e.target.closest && e.target.closest('.grv-editor');
+    if (!root) return;
+    if (e.target.classList?.contains('switch') && !e.target.classList.contains('disabled')) {
+      e.preventDefault();
+      const fld = e.target.classList.contains('gr-honor') ? 'honorProjectSettings' : 'envScrub';
+      return grvMutate(root, (s) => { s[fld] = !s[fld]; });
+    }
+    if (e.key === 'Enter' && e.target.matches?.('.gr-add input')) {
+      e.preventDefault();
+      const addRow = e.target.closest('.gr-add');
+      const fld = GRV_LIST_FIELDS[addRow && addRow.dataset.list];
+      const v = (e.target.value || '').trim();
+      if (!fld || !v) return;
+      grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
+      el.pluginModalBody.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
+    }
+  });
+}
+
+// Dismiss the wizard via Esc / backdrop click, routed through grvCloseWizard (dirty-guard).
+// Gated on grvState.wizard so other #plugin-modal consumers (plugin install/settings/doctor/409)
+// are untouched. Esc yields when the confirm dialog is on top so it doesn't close both at once.
+if (el.pluginModal) {
+  el.pluginModal.addEventListener('click', (e) => {
+    if (grvState.wizard && e.target === el.pluginModal) grvCloseWizard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (grvState.wizard && e.key === 'Escape'
+      && (!el.confirmModal || el.confirmModal.classList.contains('hidden'))) grvCloseWizard();
+  });
+}
+
+if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openGuardrailWizard('create'));
+
+if (typeof window !== 'undefined') {
+  window.__guardrails = { loadGuardrailsView, openGuardrailWizard, deleteGuardrailSetFlow, grvState, grvSave, grvMutate };
+}
 
 // ---------------------------------------------------------------------------
 // Per-card Stop. POST /api/stop; on success the server emits state(stopped) +
@@ -5982,7 +6634,22 @@ async function seedResumedLog(newRunId, prevLines, logUrl) {
   renderRunningView();
 }
 
-async function resumeRunFromCard(runId, btn) {
+// Shared copy for the "continue without cap" confirmation, so the Running card
+// and the History card ask the exact same question.
+const COST_OVERRIDE_CONFIRM = {
+  title: 'Continue without cap?',
+  message: 'This pipeline will ignore the per-pipeline cost limit from now on, ' +
+    'including future resumes. The total budget limit still applies.',
+  confirmLabel: 'Continue without cap',
+};
+
+/** cb-override click: confirm, then resume with the persistent cap override. */
+async function confirmCostOverride(runId, btn) {
+  const ok = await confirmModal({ ...COST_OVERRIDE_CONFIRM });
+  if (ok) resumeRunFromCard(runId, btn, { ignoreCostCap: true });
+}
+
+async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
   const pipelineId = r.pipelineId;
@@ -5999,7 +6666,7 @@ async function resumeRunFromCard(runId, btn) {
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipelineId }),
+      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
@@ -6054,6 +6721,15 @@ if (runListEl) {
       if (runId) resumeRunFromCard(runId, resumeBtn);
       return;
     }
+    // Cost-banner actions. This handler is a plain sync arrow — the override
+    // confirm is async, so fire-and-forget it exactly like .btn-resume above.
+    const overrideBtn = e.target.closest && e.target.closest('.cb-override');
+    if (overrideBtn) {
+      const runId = overrideBtn.closest('.run-card')?.dataset.runId;
+      if (runId) confirmCostOverride(runId, overrideBtn);
+      return;
+    }
+    if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
     if (sw) {
       const card = sw.closest('.run-card');
@@ -6107,6 +6783,44 @@ if (runListEl) {
     repaintFilteredLog(r);
   });
 }
+
+// Statistics: range segmented control + chart tooltip. Both are delegated, so
+// they survive every replaceChildren() the loader does on #stats-body.
+el.statsRange.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-range]');
+  if (!btn) return;
+  statsState.range = btn.dataset.range;
+  loadStatsView();
+});
+
+const statsSection = document.querySelector('section[data-view="stats"]');
+const statsTip = document.getElementById('stats-tip');
+function showChartTip(target) {
+  const tipText = target.dataset.tip || '';
+  if (!tipText) return;
+  statsTip.replaceChildren(...tipText.split('\n').map((line, i) =>
+    Object.assign(document.createElement('div'),
+      { className: i === 0 ? 'tip-head' : 'tip-val', textContent: line })));
+  const r = target.getBoundingClientRect();
+  statsTip.style.left = `${Math.round(r.left + r.width / 2)}px`;
+  statsTip.style.top = `${Math.round(r.top - 8)}px`;
+  statsTip.style.transform = 'translate(-50%, -100%)';
+  statsTip.hidden = false;
+}
+statsSection.addEventListener('pointerover', (e) => {
+  const hit = e.target.closest('.ch-hit');
+  if (hit) showChartTip(hit);
+});
+statsSection.addEventListener('pointerout', (e) => {
+  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
+});
+statsSection.addEventListener('focusin', (e) => {
+  const hit = e.target.closest('.ch-hit');
+  if (hit) showChartTip(hit);
+});
+statsSection.addEventListener('focusout', (e) => {
+  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
+});
 
 // ---------------------------------------------------------------------------
 // History
@@ -6605,9 +7319,9 @@ function isDeletableEntry(p) {
   return !['running', 'starting', 'created', 'pausing'].includes(s);
 }
 
-// Wire the Delete button in the expanded card. Shown only for finished entries.
+// Wire the Archive button in the expanded card. Shown only for finished entries.
 // Confirms via window.confirm (the app's destructive-action convention), then
-// DELETEs the pipeline and drops the card from the list.
+// DELETEs the pipeline — which archives it — and drops the card from the list.
 function setupDeleteButton(node, projectDir, p) {
   const btn = node.querySelector('.hist-delete');
   if (!btn) return;
@@ -6616,12 +7330,13 @@ function setupDeleteButton(node, projectDir, p) {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card
     const label = p.title || p.id || 'this entry';
-    if (!window.confirm(
-      `Delete "${label}"?\n\nThis removes the pipeline records and its local branch/worktree. ` +
-      `The remote branch is kept. This cannot be undone.`)) return;
+    const msg = `Archive "${label}"?\n\nThis removes it from History and deletes its local ` +
+      `branch/worktree. Its cost and outcome are kept for Statistics; the remote branch is kept. ` +
+      `This cannot be undone.`;
+    if (!window.confirm(msg)) return;
     btn.disabled = true;
     const prev = btn.textContent;
-    btn.textContent = 'Deleting…';
+    btn.textContent = 'Archiving…';
     try {
       const qs = new URLSearchParams();
       // A workspace run routes by bare workspaceId; ?projectKey would carry the
@@ -6652,11 +7367,80 @@ function setupDeleteButton(node, projectDir, p) {
 // Resume a paused pipeline from its history card. POST /api/resume returns the
 // new live runId; the run announces itself over the WS — mirror beginRun's
 // post-launch block so the user lands on the live card immediately.
+// Statuses that count as "parked, resumable" for the cost-pause note.
+const PAUSED_STATUSES = ['paused', 'pausing', 'interrupted'];
+
+// Disable a history Resume button while a total-budget pause is still blocked by
+// the current window. Shared by setupResumeButton (first paint) and
+// refreshHistResumeGating (every later budget change).
+function applyHistResumeGate(btn, pauseReason, budget) {
+  const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
+  btn.disabled = totalBlocked;
+  btn.title = totalBlocked
+    ? `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`
+    : '';
+}
+
+// Re-gate every mounted history Resume button from the dataset.pauseReason stamp
+// buildHistCard left behind, so a budget change unblocks them without a refetch.
+function refreshHistResumeGating() {
+  const host = el.history;
+  if (!host) return;
+  for (const card of host.querySelectorAll('.hist-card')) {
+    const btn = card.querySelector('.hist-resume');
+    if (!btn || btn.hidden) continue;
+    applyHistResumeGate(btn, card.dataset.pauseReason || '', budgetState.budget);
+  }
+}
+
+// cb-override from an expanded History card: same confirmation as the Running
+// card, then setupResumeButton's POST -> upsert -> land-on-the-live-card recipe
+// with the persistent per-pipeline cap override.
+async function histCostOverride(projectDir, id, record, btn) {
+  const ok = await confirmModal({ ...COST_OVERRIDE_CONFIRM });
+  if (!ok) return;
+  const p = record || {};
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Resuming…';
+  try {
+    const res = await fetch('/api/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipelineId: id, ignoreCostCap: true }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    upsertRun({
+      runId: data.runId,
+      title: p.title || id,
+      projectDir: p.projectDir || projectDir || '',
+      status: 'starting',
+      pipelineId: id,
+      local: true,
+    });
+    const prior = [...runs.values()].find(
+      (x) => x.runId !== data.runId && x.pipelineId === id && Array.isArray(x.logLines) && x.logLines.length
+    );
+    await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(id, p));
+    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    hideViewer();
+    updateNavCounts();
+    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    renderRunningView();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = label;
+    btn.title = `Could not resume: ${err.message}`;
+  }
+}
+
 function setupResumeButton(node, projectDir, p) {
   const btn = node.querySelector('.hist-resume');
   if (!btn) return;
   if (String(p.status || '').toLowerCase() !== 'paused') { btn.hidden = true; return; }
   btn.hidden = false;
+  applyHistResumeGate(btn, (typeof p.pauseReason === 'string' ? p.pauseReason : ''), budgetState.budget);
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card when clicking the button
     btn.disabled = true;
@@ -6786,6 +7570,21 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   // Branch name under the date/cost (left column; hidden when empty via :empty).
   const branchEl = node.querySelector('.hist-branch');
   if (branchEl) branchEl.textContent = p.branch || '';
+
+  // Cost-pause note in the head. The reason is also stamped on the card so a
+  // later budget repaint can re-gate Resume without refetching the record.
+  const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+  if (pauseReason) node.dataset.pauseReason = pauseReason;
+  const noteEl = node.querySelector('.hist-pausenote');
+  if (noteEl) {
+    const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
+      && pauseReason.startsWith('cost_');
+    noteEl.hidden = !costPaused;
+    noteEl.textContent = costPaused
+      ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+      : '';
+    noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
+  }
 
   // Right-side cluster (before the chevron): lines changed + Create-PR button.
   renderHistDiff(node.querySelector('.hist-diff'), p);
@@ -6980,6 +7779,28 @@ async function loadHistDetail(projectDir, id, detail, record) {
     // alongside a stale error.
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
+    // Cost-pause banner above the stepper, mirroring the Running card. Wired with
+    // DIRECT listeners like setupResumeButton/setupDeleteButton — History has no
+    // container-level click delegate to extend.
+    const oldBanner = detail.querySelector('.cost-banner');
+    if (oldBanner) oldBanner.remove();
+    const histPauseReason = record && typeof record.pauseReason === 'string' ? record.pauseReason : '';
+    if (histPauseReason.startsWith('cost_')) {
+      const banner = renderCostPauseBanner(
+        { pauseReason: histPauseReason, pipelineId: id, totalCostUsd: data.state.totalCostUsd },
+        { budget: budgetState.budget || {},
+          fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
+      const settingsBtn = banner.querySelector('.cb-settings');
+      if (settingsBtn) settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); location.hash = 'settings'; });
+      const overrideBtn = banner.querySelector('.cb-override');
+      if (overrideBtn) {
+        overrideBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          histCostOverride(projectDir, id, record, overrideBtn);   // fire-and-forget (sync handler)
+        });
+      }
+      detail.prepend(banner);
+    }
     const host = detail.querySelector('.run-flow');
     if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
@@ -7514,7 +8335,12 @@ const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', 
 // pause is never mislabeled "awaiting answers".
 function statusPill(r) {
   if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
-  if (r.status === 'paused') return { family: 'amber', text: 'Paused' };
+  if (r.status === 'paused') {
+    // A cost pause names its cause so the pill alone explains why the run parked.
+    if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
+    if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    return { family: 'amber', text: 'Paused' };
+  }
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
@@ -7862,6 +8688,18 @@ function currentNodeCycles(r) {
   return !!(cell && cell.nodes.some((n) => n.cycles));
 }
 
+// The run-card template's stock Resume tooltip. Read from the template rather
+// than duplicated as a literal so the two cannot drift; painting restores it
+// whenever a card is not total-budget blocked, instead of blanking the button.
+let _stockResumeTitle = null;
+function stockResumeTitle() {
+  if (_stockResumeTitle === null) {
+    _stockResumeTitle = document.getElementById('run-card-tpl')
+      ?.content?.querySelector('.btn-resume')?.title || '';
+  }
+  return _stockResumeTitle;
+}
+
 function paintRunCard(r) {
   if (!r.el) return;
 
@@ -7920,12 +8758,53 @@ function paintRunCard(r) {
   }
   r.el.classList.toggle('attention', r.pendingQuestion != null);
 
+  // Cost-pause banner: rebuilt from the current budget snapshot on every paint so
+  // a raised limit / window reset is reflected without a card rebuild.
+  const bannerEl = r.el.querySelector('.cost-banner');
+  if (bannerEl) {
+    const costPaused = isPaused(r) && typeof r.pauseReason === 'string'
+      && r.pauseReason.startsWith('cost_');
+    if (costPaused) {
+      const fresh = renderCostPauseBanner(
+        { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+        { budget: budgetState.budget || {},
+          fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
+      bannerEl.replaceChildren(...fresh.childNodes);
+      bannerEl.className = fresh.className;
+      bannerEl.hidden = false;
+    } else {
+      bannerEl.hidden = true;
+      bannerEl.className = 'cost-banner';
+      bannerEl.replaceChildren();
+    }
+  }
+
   // Paused → swap Pause for Resume (Stop stays, to discard the paused run).
   const paused = isPaused(r);
   const pauseBtn = r.el.querySelector('.btn-pause');
   const resumeBtn = r.el.querySelector('.btn-resume');
   if (pauseBtn) pauseBtn.hidden = paused;
   if (resumeBtn) resumeBtn.hidden = !paused;
+  // A total-budget pause cannot be resumed at all until the window resets or the
+  // limit is raised — the server 403s it, so the button says so up front.
+  const totalBlocked = r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
+  if (resumeBtn) {
+    resumeBtn.disabled = !!totalBlocked;
+    resumeBtn.title = totalBlocked
+      ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
+      : stockResumeTitle();
+  }
+}
+
+// Repaint every cost-paused card against the current budget snapshot. Iterates
+// ALL runs, not liveRuns(): a paused run is _finished and excluded there.
+function repaintCostBanners() {
+  for (const r of runs.values()) {
+    if (isPaused(r) && typeof r.pauseReason === 'string' && r.pauseReason.startsWith('cost_')) {
+      paintRunCard(r);
+    }
+  }
+  if (currentView() === 'history') refreshHistResumeGating();
 }
 
 function questionCount(pq) {
@@ -8127,7 +9006,7 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'];
 
 function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -8140,6 +9019,12 @@ function showView(name, param = '') {
   if (currentShownView === 'agent-create' && name !== 'agent-create') {
     if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
     resetAgentWizard();
+  }
+  // Close the guardrail wizard when leaving Guardrails (its modal is a top-level
+  // overlay, not a [data-view], so it isn't auto-hidden; a stale wizard would also
+  // capture other #plugin-modal consumers' Esc/backdrop/Close).
+  if (currentShownView === 'guardrails' && name !== 'guardrails' && grvState.wizard) {
+    grvState.wizard = null; grvState.editing = null; closePluginModal();
   }
   currentShownView = name;
 
@@ -8181,15 +9066,17 @@ function showView(name, param = '') {
     }
   }
   if (name === 'history') loadHistoryView();
+  if (name === 'stats') loadStatsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'plugins') loadPluginsView();
+  if (name === 'guardrails') loadGuardrailsView(param);
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
-  if (name === 'new') loadTaskSources();
+  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
@@ -8272,3 +9159,5 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 const [bootView, bootParam] = parseHash();
 showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
+refreshBudget();
+startBudgetTick();

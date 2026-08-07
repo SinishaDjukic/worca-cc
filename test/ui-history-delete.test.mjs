@@ -39,7 +39,7 @@ const runs = (pipelines, ghAvailable) => Promise.resolve({ ok: true, status: 200
 const FIN = { id: 'p1', title: 'Feat', status: 'stopped', startedAt: '2026-06-02T00:00:00Z',
               projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj' };
 
-test('finished entry shows an enabled Delete button under the stepper', async () => {
+test('finished entry shows an enabled Archive button under the stepper', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([FIN], false) : null),
   });
@@ -47,11 +47,12 @@ test('finished entry shows an enabled Delete button under the stepper', async ()
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   const btn = card.querySelector('.hist-detail .hist-delete');
-  assert.ok(btn, 'delete button is inside hist-detail (under the stepper)');
+  assert.ok(btn, 'archive button is inside hist-detail (under the stepper)');
   assert.equal(btn.hidden, false, 'visible for a finished entry');
+  assert.match(btn.textContent, /Archive/, 'label reads Archive, not Delete');
 });
 
-test('running entry hides the Delete button', async () => {
+test('running entry hides the Archive button', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, status: 'running' }], false) : null),
   });
@@ -61,7 +62,7 @@ test('running entry hides the Delete button', async () => {
   assert.equal(btn.hidden, true);
 });
 
-test('interrupted entry shows the Delete button', async () => {
+test('interrupted entry shows the Archive button', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, status: 'interrupted' }], false) : null),
   });
@@ -84,7 +85,8 @@ test('confirm + click issues DELETE with the id and removes the card', async () 
       return null;
     },
   });
-  window.confirm = () => true; // stub the popup
+  let msg = null;
+  window.confirm = (m) => { msg = m; return true; }; // stub the popup
   showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
@@ -93,6 +95,32 @@ test('confirm + click issues DELETE with the id and removes the card', async () 
   assert.ok(deleted && deleted.includes('/api/runs/p1'), 'DELETE called for p1');
   assert.match(deleted, /projectKey=/, 'history delete passes projectKey');
   assert.equal(window.document.querySelector('#history .hist-card'), null, 'card removed from the list');
+  assert.match(msg, /^Archive "/, 'confirm copy leads with Archive');
+  assert.ok(msg.includes('kept for Statistics'), 'confirm copy says the cost/outcome survive for Statistics');
+  assert.ok(msg.includes('remote branch is kept'), 'confirm copy still promises the remote branch');
+});
+
+test('the in-flight label reads Archiving…', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { window, showHistory } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/history')) return runs([FIN], false);
+      if (url.includes('/api/runs/p1') && opts.method === 'DELETE') {
+        return gate.then(() => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+      }
+      return null;
+    },
+  });
+  window.confirm = () => true;
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const btn = window.document.querySelector('#history .hist-card .hist-delete');
+  btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(btn.textContent, 'Archiving…', 'progress label while the request is in flight');
+  release();
+  await new Promise((r) => setTimeout(r, 0));
 });
 
 test('declining the confirm popup makes no request', async () => {

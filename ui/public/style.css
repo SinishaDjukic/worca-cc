@@ -59,14 +59,8 @@ body{
   border-right:1px solid var(--line);
   overflow-y:auto;
 }
-.brand{display:flex;align-items:center;gap:11px;padding:0 8px;margin-bottom:30px;}
-.brand .mark{
-  width:38px;height:38px;border-radius:12px;background:var(--ink);
-  display:grid;place-items:center;flex:0 0 auto;
-}
-.brand .mark span{width:13px;height:13px;border-radius:50%;
-  border:3px solid #fff;display:block;}
-.brand .name{font-weight:700;font-size:19px;letter-spacing:-.02em;}
+.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:10px;}
+.brand .logo{height:48px;width:auto;display:block;}
 
 .nav{display:flex;flex-direction:column;gap:4px;}
 .nav button{
@@ -316,6 +310,7 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
+.path-row .btn{flex:0 0 auto;white-space:nowrap;}
 
 /* segmented toggle */
 .seg{display:inline-flex;background:var(--field);border-radius:12px;padding:4px;gap:4px;}
@@ -638,6 +633,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    top-nav shown only when the sidebar is hidden (<1080px). */
 .viewer-modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;
   padding:24px;background:rgba(25,25,27,.42);}
+/* Confirm dialog must stack ABOVE the plugin/wizard modal (equal .viewer-modal z-index,
+   but #confirm-modal precedes #plugin-modal in the DOM). */
+#confirm-modal.viewer-modal{z-index:60;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
@@ -1100,6 +1098,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .proj-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .proj-del svg{width:16px;height:16px;stroke-width:1.9;}
 
+/* Guardrails row editors (used by the Guardrails view) */
+.gr-list{display:flex;flex-direction:column;margin-bottom:8px;}
+.gr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12.5px;}
+.gr-row:last-child{border-bottom:none;}
+.gr-rm{flex:0 0 auto;width:26px;height:26px;border-radius:8px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);font-size:11px;transition:.12s;}
+.gr-rm:hover{color:var(--red-ink);border-color:var(--red);background:var(--red-bg);}
+.gr-empty{color:var(--ink-3);font-size:12px;padding:6px 0;}
+
 /* ===== Confirm + add-project modals (reuse .viewer-modal shell) ===== */
 /* MUST come after .viewer-modal .card (style.css:514) — equal specificity, later wins. */
 .confirm-modal .card{width:min(440px,100%);}
@@ -1178,3 +1184,125 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .src-badge{display:inline-flex;gap:6px;align-items:center;font-size:11.5px;background:var(--chip-bg,#f0f0f4);border-radius:999px;padding:2px 10px;}
 .src-badge-plugin{font-weight:700;}
 .src-report-wrap{display:inline-flex;gap:8px;align-items:center;margin-left:10px;}
+
+/* ---- Guardrails view ---- */
+.badge.violet{background:var(--violet-bg);color:var(--violet-ink);}
+.grv-list{display:grid;gap:14px;}
+.grv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
+.grv-body{flex:1 1 auto;min-width:0;}
+.grv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.grv-name{font-size:14.5px;}
+.grv-name-input{flex:1 1 auto;min-width:0;}
+.grv-summary{display:block;margin:6px 0 0;}
+.grv-actions{display:flex;gap:8px;margin-top:4px;}
+.grv-actions .btn-ghost{padding:7px 12px;font-size:12px;}
+/* Details button on the card's right edge — opens the read-only view (built-ins) or the editor (user sets). */
+.grv-details{flex:0 0 auto;}
+.grv-editor{padding:18px 22px;}
+.grv-editor .grv-head{margin-bottom:16px;}
+.grv-editor .switch-row{margin-top:12px;}
+.grv-editor .field{margin-top:12px;}
+.grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
+.grv-editor-actions{justify-content:flex-end;margin-top:14px;}
+/* ---- Guardrail wizard (Step 1 + read-only view) ---- */
+.grv-wizard .grv-source-list{display:grid;gap:8px;margin:12px 0;max-height:46vh;overflow-y:auto;}
+.grv-source-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line,#d8d8de);border-radius:10px;cursor:pointer;}
+.grv-source-row:hover{background:var(--chip-bg,#f7f7fa);}
+.grv-source-name{flex:1 1 auto;font-size:14px;}
+.grv-wizard-actions{justify-content:flex-end;margin-top:14px;}
+.grv-editor .switch.disabled{opacity:.5;pointer-events:none;}
+/* The editor renders as a .card, so inside #plugin-modal it re-matches the
+   `#plugin-modal .card` rule above (640px + its own overflow:auto/max-height).
+   That pinned it to 640px inside the 900px body AND made it a nested scroll
+   container whose scrollbar clipped the right edge of every row/button. Strip
+   the card chrome AND the width/scroll so it fills the body and the OUTER
+   .card stays the single scroll container. */
+#plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;
+  width:auto;max-width:none;max-height:none;overflow:visible;}
+/* Hide the empty plugin-modal footer for the wizard (it keeps a margin-top otherwise). */
+#plugin-modal-actions:empty{display:none;}
+/* The wizard needs more room than the default plugin modal (640px): the editor's
+   labeled fields with inline "+ add" rows and the two-button footer overflow 640.
+   Scoped via :has() so other #plugin-modal consumers (install/settings/doctor/409)
+   keep their 640px width. 960 = 640 * 1.5. */
+#plugin-modal .card:has(.grv-wizard),
+#plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
+
+/* ---------- Statistics view ---------- */
+.stats-filter{display:flex;margin-bottom:18px;}
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.stat-tile{padding:18px 20px;}
+.stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
+.stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
+.stat-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:999px;}
+.stat-value{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
+.stat-frac{font-size:16px;color:var(--ink-3);}
+.stat-sub{display:block;color:var(--ink-3);font-size:11.5px;margin-top:6px;}
+.stat-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:10px;overflow:hidden;}
+.stat-meter .stat-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.chart-card{padding:20px 22px;}
+.chart-fig{margin:0;}
+.chart-svg{display:block;width:100%;height:auto;}
+.chart-empty{display:grid;place-items:center;min-height:180px;}
+.chart-legend{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 10px;font-size:12px;color:var(--ink-2);}
+.lg-item{display:inline-flex;align-items:center;gap:6px;}
+.lg-item b{font-family:var(--mono);font-weight:600;color:var(--ink);}
+.lg-swatch{width:10px;height:10px;border-radius:3px;display:inline-block;}
+.ch-hit{fill:transparent;}
+/* hit rect paints above the bars (DOM order) — hover must stay translucent */
+.ch-hit:hover{fill:var(--ink);fill-opacity:.05;}
+.ch-hit:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chart-tip{position:fixed;z-index:70;background:var(--ink);color:#fff;border-radius:10px;
+  padding:8px 11px;font-size:12px;line-height:1.45;pointer-events:none;box-shadow:var(--shadow);}
+.chart-tip .tip-head{font-weight:600;}
+.chart-tip .tip-val{font-family:var(--mono);}
+#stats-body.is-loading{opacity:.55;pointer-events:none;transition:opacity .15s;}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+
+/* ---------- Sidebar spend indicator ---------- */
+.spend-ind{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:var(--r-ctrl);
+  background:var(--field);padding:10px 12px;cursor:pointer;font-family:inherit;}
+.spend-ind:hover{background:var(--line);}
+.spend-ind:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.spend-ind-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.spend-ind-label{font-size:12px;font-weight:600;color:var(--ink-2);}
+.spend-ind-amt{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);}
+.spend-ind-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:8px;overflow:hidden;}
+/* meterEl() names the fill "<meter-class>-fill", so: spend-ind-meter-fill */
+.spend-ind-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
+.spend-ind-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:6px;}
+.spend-ind.warn .spend-ind-meter{background:var(--amber-bg);}
+.spend-ind.warn .spend-ind-meter-fill{background:var(--amber-ink);}
+.spend-ind.warn .spend-ind-sub{color:var(--amber-ink);}
+.spend-ind.over .spend-ind-meter{background:var(--red-bg);}
+.spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
+.spend-ind.over .spend-ind-sub{color:var(--red-ink);}
+.topnav-amt{margin-left:7px;font-family:var(--mono);font-weight:600;}
+.topnav-amt.warn{color:var(--amber-ink);}
+.topnav-amt.over{color:var(--red-ink);}
+.topnav button.active .topnav-amt{color:inherit;}
+
+/* ---------- Budget readout (Settings) ---------- */
+.budget-readout{margin-bottom:6px;}
+.budget-readout .spend-ind-meter{max-width:420px;}
+.budget-readout-line{font-size:13px;color:var(--ink-2);margin-top:8px;}
+.budget-readout-line b{font-family:var(--mono);font-weight:600;color:var(--ink);}
+
+/* ---------- Cost-pause banner ---------- */
+.cost-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;}
+.cost-banner.cb-pipeline{background:var(--amber-bg);color:var(--amber-ink);}
+.cost-banner.cb-total{background:var(--red-bg);color:var(--red-ink);}
+.cost-banner b{display:block;margin-bottom:4px;}
+.cost-banner .cb-text{color:var(--ink-2);}
+.cost-banner .cb-text .mono{font-family:var(--mono);font-weight:600;color:var(--ink);}
+.cost-banner .cb-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
+.hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);margin-left:10px;}
+.hist-pausenote.total{color:var(--red-ink);}
+
+@media (max-width:1080px){
+  .stat-row{grid-template-columns:repeat(2,1fr);}
+  .charts-grid{grid-template-columns:1fr;}
+}

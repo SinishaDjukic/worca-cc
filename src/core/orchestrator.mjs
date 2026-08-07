@@ -52,7 +52,13 @@ import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rol
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { worcaHome } from './projects.mjs';
-import { runRootMode, getProjectsRoot } from './settings.mjs';
+import {
+  runRootMode, getProjectsRoot,
+  pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+} from './settings.mjs';
+import {
+  recordCostDelta, readCostCapOverride, windowedSpendUsd, costWindowStart,
+} from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
@@ -65,6 +71,8 @@ import {
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels } from './config.mjs';
+import { readGuardrailSet } from './guardrail-store.mjs';
+import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
@@ -237,9 +245,20 @@ class Orchestrator extends EventEmitter {
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
+    // Guardrails: resolved by _resolveGuardrails() from run() AND resume(); null
+    // until then, so dispatcher tests that bypass run() get claudeOpts without
+    // the fields (legacy parity).
+    this.guardrails = null;
+    this.guardrailPermissionRules = null;
+    this.guardrailHonorByKey = null;
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
+    // Which guardrail set governs this run (guardrails are selected PER RUN;
+    // there is no per-project guardrails dimension). 'permissive' = the empty
+    // policy = byte-identical legacy spawn, so callers that never pass the
+    // option (CLI, tests, pre-picker API bodies) keep today's behavior exactly.
+    this.guardrailsId = this.opts.guardrailsId || 'permissive';
     // Clarify needs orchestrator state (this._ask / this._writeClarifyAnswers), so it is a
     // bound runner rather than a pure runners.mjs entry. Put it first so opts.runners may
     // still override it in tests.
@@ -462,6 +481,7 @@ class Orchestrator extends EventEmitter {
       this.toolInstruction = tools.instruction || '';
       this.state.tools = tools;
       this.stepModels = stepModels;
+      await this._resolveGuardrails();
       this._log(
         'preflight',
         'info',
@@ -493,6 +513,7 @@ class Orchestrator extends EventEmitter {
         sourceMeta: input.sourceMeta || null,
         extras: this.opts.extras,
         title: this.opts.title,
+        guardrailsId: this.guardrailsId,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -513,6 +534,10 @@ class Orchestrator extends EventEmitter {
       // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
       // safe — this keeps the live state object self-consistent for any reader).
       this.state.prompt = this.pipeline.promptText;
+      // Same reasoning for the run's guardrail selection: createPipeline INSERTed
+      // guardrails_id and the curated UPSERT excludes it (creation-immutable), so
+      // mirroring it onto the live state only keeps rowToState round-trips honest.
+      this.state.guardrailsId = this.guardrailsId;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -662,8 +687,10 @@ class Orchestrator extends EventEmitter {
             // Paused outside _dispatch (preflight/worktree): boundary point at step 0.
             this.state.resumePoint = {
               version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-              bus: null, stepModels: this.stepModels, workflowId: this.workflowId, plan: null,
-              nodes: [], gate: null, toolInstruction: this.toolInstruction ?? '',
+              bus: null, stepModels: this.stepModels, workflowId: this.workflowId,
+              guardrailsId: this.guardrailsId, plan: null,
+              nodes: [], gate: null, pauseReason: this.pauseReason || null,
+              toolInstruction: this.toolInstruction ?? '',
               pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
             };
           }
@@ -726,6 +753,9 @@ class Orchestrator extends EventEmitter {
     if (row.status !== 'paused' && row.status !== 'interrupted') {
       throw new Error(`resume(): pipeline is "${row.status}", not resumable`);
     }
+    // Defense in depth: an archived run's worktree/run root were reclaimed, so
+    // resuming it would rebuild nothing and write into a reaped tree.
+    if (row.archived_at) throw new Error('resume(): pipeline is archived');
     if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
     try {
       // ── rehydrate identity + state ──
@@ -745,6 +775,13 @@ class Orchestrator extends EventEmitter {
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
+      // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
+      // LATEST saved set definition (missing set -> warn + Permissive, inside
+      // _resolveGuardrails). Legacy resume points without the field fall back to
+      // the constructor default ('permissive'). Keep state in sync for re-persist.
+      this.guardrailsId = rp.guardrailsId || this.guardrailsId;
+      this.state.guardrailsId = this.guardrailsId;
+      await this._resolveGuardrails();
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
       // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
@@ -1064,6 +1101,38 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Resolve THE run's guardrails: the per-run selected set (this.guardrailsId,
+   * default 'permissive') IS the policy — member project configs are NOT read
+   * (per-project guardrails were removed; one set applies uniformly to every
+   * member). Built-ins resolve from GUARDRAIL_PRESETS at read time; user sets
+   * from the store at read time. Called from run() AND resume() — resume
+   * re-reads the set by id, so a set edited while paused is enforced at its
+   * LATEST definition. A missing/deleted set fails OPEN to the Permissive
+   * (empty) policy with a loud warn — never an abort.
+   */
+  async _resolveGuardrails() {
+    let set = await readGuardrailSet(this.guardrailsId || 'permissive');
+    if (!set) {
+      this._log('guardrails', 'warn',
+        `guardrail set "${this.guardrailsId}" not found; running with the Permissive (empty) policy`);
+      set = await readGuardrailSet('permissive'); // virtual built-in: always resolves
+    }
+    // One UNIFORM honor value for every member: the run set's honorProjectSettings
+    // gates the per-member repo-settings deny lift. The map SHAPE is unchanged
+    // (run-context.mjs's honorByKey consumer is untouched); only its values are
+    // uniform now — there is no per-member saved preference anymore.
+    const honor = set.settings.honorProjectSettings !== false;
+    this.guardrailHonorByKey = new Map(this.members.map((m) => [m.projectKey, honor]));
+    // unionGuardrails over the ONE-element list keeps the tested normalization
+    // path (fresh arrays, de-dupe, a non-scrubbing set's dormant allowlist
+    // drops — enforcement gates allowlist on envScrub anyway): the run's set is
+    // the whole union. Its envAllowlist is NOT stripped — it IS the policy;
+    // there is no member policy to relax against.
+    this.guardrails = unionGuardrails([set.settings]);
+    this.guardrailPermissionRules = guardrailsToPermissionRules(this.guardrails);
+  }
+
+  /**
    * §5.2 step 7 / §6 Phase 3: assemble the run context at the run root and wire its
    * outputs into every consumer. Called from run() (after the skills gate, with the
    * HOISTED resolutions) and from resume() (with the resolutions persisted in
@@ -1102,8 +1171,30 @@ class Orchestrator extends EventEmitter {
       requiredSkillResolutions: resolvedSkills,           // possibly empty — a valid, common input
       graphInstructions: this.toolInstructions,
       homeDir: homedir(),
+      honorByKey: this.guardrailHonorByKey,
     });
     this.runContext = rc;
+    if (rc?.projectPermissions) {
+      this.guardrailPermissionRules = mergePermissionRules(this.guardrailPermissionRules, rc.projectPermissions);
+    }
+    // Audit (spec bullet): the resolved effective policy, compact, into run.json.
+    // Written HERE because runRoot exists only on detached runs and this is the
+    // one site where this.guardrails and the FINAL (post-lift) rule set are both
+    // in scope on run() AND resume(). updateRunManifest merges the patch
+    // (run-manifest.mjs:79-82), and a resume re-writes the same values
+    // idempotently. denyCount includes the lifted repo deny rules, whose exact
+    // list Task 6 already persisted as run.json.projectPermissions. Legacy runs
+    // have no run.json, so no audit record — run.json is a detached-run artifact.
+    // guardrailsId names the selected set (id only — sets are mutable and resolve
+    // by reference, so this is not a content snapshot).
+    await updateRunManifest(this.runRoot, {
+      guardrails: {
+        envScrub: !!this.guardrails?.envScrub,
+        denyCount: this.guardrailPermissionRules?.deny?.length || 0,
+        protectedCount: this.guardrails?.protectedPaths?.length || 0,
+        guardrailsId: this.guardrailsId,
+      },
+    });
     this.injectedPaths = rc.injectedPaths;                // feeds _excludePathspecs / teardown / rescue (§8.8)
     this.mcpConfigPath = rc.mcpConfigPath;
     // V1-gated (§4.1 outcome table). Branch (a) PASSED on this CLI (server wildcard),
@@ -1750,6 +1841,7 @@ class Orchestrator extends EventEmitter {
         }
         this._checkAbort();
         this._checkPause();
+        this._checkCostLimits();   // step-boundary budget gate (spec §6.5)
         const cycle = stepCycle[i];
         const results = await this._runStep(steps[i], i, cycle, bus);
         this._resumeNodeSessions = null; // one-shot: only the interrupted step re-attaches
@@ -1823,11 +1915,13 @@ class Orchestrator extends EventEmitter {
       bus: jsonClone(bus),
       stepModels: this.stepModels,
       workflowId: this.workflowId,
+      guardrailsId: this.guardrailsId,
       plan: jsonClone({ id: plan.id, name: plan.name, steps: plan.steps, feedbacks: plan.feedbacks }),
       nodes: cur.map((s) => ({
         nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',
       })),
       gate: this._pauseGate ? { ...this._pauseGate } : null,
+      pauseReason: this.pauseReason || null,
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph build),
       // not the detect-time tools.instruction — resume() restores it verbatim.
       toolInstruction: this.toolInstruction ?? '',
@@ -2170,6 +2264,44 @@ class Orchestrator extends EventEmitter {
     this.pause();
   }
 
+  /** Step-boundary budget gate. Reads settings + DB FRESH each boundary so a
+   *  raised limit or a window reset takes effect at the next step (F9). */
+  _checkCostLimits() {
+    if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
+    const pipeLimit = pipelineCostLimitUsd();
+    // resume() rehydrates state.steps but not state.totalCostUsd, so the row
+    // total reads $0 until the first cost event of the resumed run. Take the
+    // larger of the two so a resumed over-cap pipeline cannot run one free step.
+    const spentHere = Math.max(this.state.totalCostUsd || 0, sumStepCosts(this.state.steps));
+    if (pipeLimit != null && spentHere >= pipeLimit
+        && !readCostCapOverride(this.pipeline.id)) {
+      this._pauseForCost('cost_pipeline',
+        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${pipeLimit.toFixed(2)})`);
+    }
+    const totalLimit = totalCostLimitUsd();
+    if (totalLimit != null) {
+      const period = costLimitResetPeriod();
+      const spent = windowedSpendUsd(costWindowStart(new Date(), period).getTime());
+      if (spent >= totalLimit) {
+        this._pauseForCost('cost_total',
+          `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
+      }
+    }
+  }
+
+  /** Mirror of _pauseForLimit, but with a MACHINE-READABLE reason code
+   *  ('cost_pipeline' | 'cost_total') the UI switches on. Unlike _pauseForLimit
+   *  (whose caller throws), this throws itself — its caller is the boundary
+   *  gate, not a catch block. The audit line here is required: _completePaused
+   *  suppresses its generic audit whenever pauseReason is set. */
+  _pauseForCost(code, detail) {
+    if (!this.pauseReason) this.pauseReason = code;
+    this._log('orchestrator', 'warn', `${detail} — pausing for manual resume`);
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: ${detail}.`).catch(() => {});
+    this.pause();
+    throw pauseErr();
+  }
+
   /** Decide how to recover from a classified error. Auto mode: bounded backoff
    *  then give up (and abort immediately if a pause fired during backoff, so a
    *  pause is never followed by a wasted retry). Interactive: ONE shared prompt
@@ -2482,6 +2614,9 @@ class Orchestrator extends EventEmitter {
         permissionMode: this.claude.permissionMode,
         model: step.model || this.claude.model, // per-role, falling back to global
         effort: step.effort,                     // per-role effort (undefined when unset)
+        permissionRules: this.guardrailPermissionRules || undefined,
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
         mock: this.claude.mock,
       },
     };
@@ -2560,6 +2695,9 @@ class Orchestrator extends EventEmitter {
         permissionMode: this.claude.permissionMode,
         model: node.model || this.claude.model, // per-node, falling back to global
         effort: node.effort,                     // per-node effort (undefined when unset)
+        permissionRules: this.guardrailPermissionRules || undefined,
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
         mock: this.claude.mock,
       },
     };
@@ -3271,6 +3409,13 @@ class Orchestrator extends EventEmitter {
     // their sum. Keeping a separate running total and rounding it on every add
     // drifts from Σ steps (e.g. 0.00005 + 0.00015 gave total 0.0003 vs Σ 0.0002).
     this.state.totalCostUsd = sumStepCosts(this.state.steps);
+    // Append-only spend ledger (windowed budget accounting). Best-effort:
+    // accounting must never kill a run; ledger and state share the same DB,
+    // so failures co-occur with the _persist catch below anyway.
+    if (costUsd > 0 && this.pipeline?.id) {
+      try { recordCostDelta({ pipelineId: this.pipeline.id, stepKey: key, amountUsd: costUsd }); }
+      catch (err) { this._log('orchestrator', 'warn', `cost ledger write failed: ${err?.message || err}`); }
+    }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
     this._persist().catch(() => {});
@@ -3382,6 +3527,11 @@ class Orchestrator extends EventEmitter {
         // _setupRunRoot() so runCwd is populated here.
         cwd: this.runCwd ?? this.projectDir,
         signal: this.abort.signal,
+        // Title generation is the one claude process a RUN spawns outside runOpts,
+        // so it honors the same env policy as the pipeline nodes. Both undefined
+        // on an unconfigured project ⇒ byte-identical spawn env (legacy parity).
+        envScrub: this.guardrails?.envScrub || undefined,
+        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
       }))
       .then((real) => {
         if (!real || real === this.state.title) return;     // empty / unchanged → keep provisional

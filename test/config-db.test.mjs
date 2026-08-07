@@ -226,3 +226,24 @@ test('run-config writes do NOT clobber legacy steps/customModels and vice-versa'
   assert.equal(rc.workflows.wf_x.nodes.s0_0.model, 'claude-sonnet-4-6');
   assert.deepEqual(rc.steps.planner, { model: 'claude-opus-4-8', effort: 'xhigh' });
 });
+
+test('legacy per-project guardrails blob in extra is INERT: never interpreted, round-tripped untouched by other writers', async () => {
+  const dir = await freshProject();
+  const key = projectKey(dir);
+  const legacy = { level: 'secure', custom: { envScrub: true, deny: ['Bash(curl:*)'] } };
+  getDb().prepare(`
+    INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+    VALUES (?, '{}', '[]', NULL, ?)
+  `).run(key, JSON.stringify({ guardrails: legacy, webUiTesting: { enabled: true } }));
+  // Sibling writers upsert ONLY their own columns — the blob must survive both.
+  await setStep(dir, 'planner', { model: 'claude-opus-4-8' });
+  await setActiveWorkflow(dir, 'wf_default');
+  const raw = JSON.parse(getDb().prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key).extra);
+  assert.deepEqual(raw.guardrails, legacy, 'blob byte-identical after unrelated writes');
+  // readRunConfig's generic unknown-key forward EXPOSES it verbatim — that is
+  // the extra-blob mechanics, not consumption: no code path interprets it, and
+  // nothing normalizes it (no {level,custom,effective} shape anymore).
+  const rc = await readRunConfig(dir);
+  assert.deepEqual(rc.guardrails, legacy, 'forwarded raw, never normalized');
+  assert.deepEqual(rc.webUiTesting, { enabled: true });
+});

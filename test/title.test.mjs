@@ -30,3 +30,27 @@ test('generateTitle returns a non-empty deterministic title in mock mode', async
 test('generateTitle returns "" when the prompt is empty', async () => {
   assert.equal(await generateTitle('', { cwd: process.cwd() }), '');
 });
+
+test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during runs)', async () => {
+  const { mkdtemp, writeFile, readFile, chmod, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-title-env-'));
+  const out = join(dir, 'env.txt');
+  const bin = join(dir, 'fake-claude-env.sh');
+  await writeFile(bin, '#!/bin/sh\nenv > ' + JSON.stringify(out) + '\necho t\nexit 0\n', 'utf8');
+  await chmod(bin, 0o755);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TITLE_LEAK;
+  delete process.env.WORCA_MOCK;
+  process.env.WORCA_TITLE_LEAK = 'secret';
+  try {
+    await generateTitle('some task', { cwd: dir, bin, envScrub: true, envAllowlist: [] });
+    const dump = await readFile(out, 'utf8');
+    assert.ok(!dump.includes('WORCA_TITLE_LEAK'), 'title spawn must honor env scrub');
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TITLE_LEAK; else process.env.WORCA_TITLE_LEAK = prevLeak;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

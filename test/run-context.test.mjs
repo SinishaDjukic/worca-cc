@@ -106,6 +106,7 @@ async function assemble(over = {}) {
     requiredSkillResolutions: over.requiredSkillResolutions ?? new Map(),
     graphInstructions: over.graphInstructions ?? new Map(),
     homeDir: over.homeDir ?? (await emptyDir()),
+    ...(over.honorByKey ? { honorByKey: over.honorByKey } : {}),
     ...(over.platform ? { platform: over.platform } : {}),
   });
 }
@@ -1118,6 +1119,76 @@ test('§8.19: an UNPARSEABLE committed settings.json still warns (we cannot prov
   const hits = settingsWarn(rc.warnings);
   assert.equal(hits.length, 1, JSON.stringify(rc.warnings));
   assert.match(hits[0], /could not be parsed/i);
+});
+
+test('§8.19 v2: member DENY rules are LIFTED by default; warning names only the remaining keys', async () => {
+  const rr = await mkRunRoot('pidsettings6');
+  const real = await writeTree(await tmp('worca-cc-rc-slift-'), { 'CLAUDE.md': 'M\n' });
+  const wt = await writeTree(join(rr, 'repos', 'k1'), {
+    '.claude/settings.json': JSON.stringify({
+      permissions: { deny: ['Read(.env*)', 'Bash(curl:*)'], allow: ['Bash(npm run lint)'] },
+      hooks: { PostToolUse: [] },
+    }),
+  });
+  const rc = await assemble({
+    runRoot: rr, isWorkspace: true,
+    members: [{ projectKey: 'k1', projectName: 'alpha', projectDir: real, worktreeDir: wt }],
+  });
+  assert.deepEqual(rc.projectPermissions, { deny: ['Read(.env*)', 'Bash(curl:*)'] },
+    'deny lifted; allow NOT lifted');
+  const hits = settingsWarn(rc.warnings);
+  assert.equal(hits.length, 1, JSON.stringify(rc.warnings));
+  assert.match(hits[0], /keys: hooks\)/, 'only the remaining keys are named');
+  assert.doesNotMatch(hits[0], /keys:.*permissions/, 'permissions left the not-in-force list');
+  assert.match(hits[0], /deny rules WERE lifted/, 'the appended sentence says so');
+  const manifest = await readRunManifest(rr);
+  assert.deepEqual(manifest.projectPermissions, { deny: ['Read(.env*)', 'Bash(curl:*)'] },
+    'durable in run.json (the audit record)');
+});
+
+test('§8.19 v2: a deny-only permissions-ONLY settings file lifts silently — no warning for that member', async () => {
+  const rr = await mkRunRoot('pidsettings7');
+  const real = await writeTree(await tmp('worca-cc-rc-ssilent-'), { 'CLAUDE.md': 'M\n' });
+  const wt = await writeTree(join(rr, 'repos', 'k1'), {
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Edit(secrets/**)'] } }),
+  });
+  const rc = await assemble({
+    runRoot: rr, isWorkspace: true,
+    members: [{ projectKey: 'k1', projectName: 'P', projectDir: real, worktreeDir: wt }],
+  });
+  assert.deepEqual(rc.projectPermissions, { deny: ['Edit(secrets/**)'] });
+  assert.deepEqual(settingsWarn(rc.warnings), [], `nothing remains unhonored: ${JSON.stringify(rc.warnings)}`);
+});
+
+test('§8.19 v2: per-member honor — an opted-out member is NOT lifted (full warning), its neighbour still is', async () => {
+  const rr = await mkRunRoot('pidsettings8');
+  const realA = await writeTree(await tmp('worca-cc-rc-sha-'), { 'CLAUDE.md': 'A\n' });
+  const realB = await writeTree(await tmp('worca-cc-rc-shb-'), { 'CLAUDE.md': 'B\n' });
+  const wtA = await writeTree(join(rr, 'repos', 'a-1111'), {
+    '.claude/settings.json': JSON.stringify({
+      permissions: { deny: ['Read(a-secret*)'] }, hooks: { PostToolUse: [] },
+    }),
+  });
+  const wtB = await writeTree(join(rr, 'repos', 'b-2222'), {
+    '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(b-secret*)'] } }),
+  });
+  const rc = await assemble({
+    runRoot: rr, isWorkspace: true,
+    members: [
+      { projectKey: 'a-1111', projectName: 'alpha', projectDir: realA, worktreeDir: wtA },
+      { projectKey: 'b-2222', projectName: 'beta', projectDir: realB, worktreeDir: wtB },
+    ],
+    // alpha SAVED honorProjectSettings:false; beta is ABSENT from the map
+    // (unconfigured => honored) — the `.get() !== false` default under test.
+    honorByKey: new Map([['a-1111', false]]),
+  });
+  assert.deepEqual(rc.projectPermissions, { deny: ['Read(b-secret*)'] },
+    'only the honored member lifts; a neighbour can never force-lift alpha');
+  const hits = settingsWarn(rc.warnings);
+  assert.equal(hits.length, 1, `alpha warns in full, beta lifts silently: ${JSON.stringify(rc.warnings)}`);
+  assert.match(hits[0], /alpha/);
+  assert.match(hits[0], /keys: hooks, permissions\)/, 'not-honored keeps today\'s full keys list');
+  assert.doesNotMatch(hits[0], /WERE lifted/, 'no appended sentence when nothing lifted');
 });
 
 // ── S2: the manifest-rehydration skill-name guard ───────────────────────────

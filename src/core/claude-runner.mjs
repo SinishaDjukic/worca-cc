@@ -74,22 +74,100 @@ export function subagentHooksEnabled() {
   return !!v && v !== '0' && v.toLowerCase() !== 'false';
 }
 
-/**
- * Gated argv for sub-agent telemetry. Returns [] when subagentHooksEnabled() is
- * false (the default), so the baseline run path is byte-identical. When on, adds
- * `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream) and
- * a `--settings` inline JSON registering a no-op `true` PostToolUse hook matched
- * to `Agent` — just enough to make `claude` run+emit the PostToolUse event whose
- * `tool_response` carries totalDurationMs/totalTokens/usage. We read telemetry off
- * the surfaced stream-json event, NOT the hook command's stdout. `--bare`-proof
- * (inline settings need no settings file).
- */
-export function buildHookArgs() {
-  if (!subagentHooksEnabled()) return [];
-  const settings = JSON.stringify({
+// ── Sub-agent telemetry + the --settings seam ────────────────────────────────
+// Telemetry is GATED (subagentHooksEnabled) and OFF by default. When on it adds
+// `--include-hook-events` (surfaces hook lifecycle on the SAME stdout stream)
+// and registers a no-op `true` PostToolUse hook matched to `Agent` — just enough
+// to make `claude` run+emit the PostToolUse event whose `tool_response` carries
+// totalDurationMs/totalTokens/usage. We read telemetry off the surfaced
+// stream-json event, NOT the hook command's stdout. `--bare`-proof (inline
+// settings need no settings file). The argv contract is on buildSettingsArgs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The telemetry hook-settings OBJECT (see subagentHooksEnabled). null when off. */
+export function buildHookSettings() {
+  if (!subagentHooksEnabled()) return null;
+  return {
     hooks: { PostToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'true', async: true }] }] },
-  });
-  return ['--include-hook-events', '--settings', settings];
+  };
+}
+
+/**
+ * The ONE --settings seam. Telemetry hook settings (gated, default off) and the
+ * guardrails `permissions` rules merge into a SINGLE inline JSON — two --settings
+ * flags would be last-wins at the CLI, silently dropping one payload.
+ * [] when there is nothing to say, so the baseline argv is byte-identical.
+ * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
+ * @returns {string[]}
+ */
+export function buildSettingsArgs(permissionRules) {
+  const hook = buildHookSettings();
+  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
+  // truthy while hasRules stays false, so the whole policy would drop out of
+  // argv silently. Say it once, then take the same no-rules path (fail-open,
+  // matching the guardrail-set read path) — the empty/absent cases ({}, {deny: []}, null)
+  // are normal and stay quiet.
+  if (!hasRules && permissionRules && typeof permissionRules === 'object'
+      && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
+    console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
+  }
+  if (!hook && !hasRules) return [];
+  const settings = {};
+  if (hook) settings.hooks = hook.hooks;
+  if (hasRules) settings.permissions = permissionRules;
+  const args = [];
+  if (hook) args.push('--include-hook-events');
+  args.push('--settings', JSON.stringify(settings));
+  return args;
+}
+
+/** Back-compat alias for the pre-guardrails name (telemetry-only payload). */
+export function buildHookArgs() {
+  return buildSettingsArgs(null);
+}
+
+// Base env a headless claude needs to function at all; everything else is
+// withheld under scrub. ANTHROPIC_*/CLAUDE_* prefixes carry the CLI's own auth
+// and configuration and MUST survive, or every scrubbed run would fail auth.
+// The proxy / CA vars are CONNECTIVITY config, not secrets: without them a
+// scrubbed run behind a TLS-intercepting corporate proxy fails TLS on every
+// spawn (the 2.1.220 binary reads all of them). Cloud-provider creds
+// (AWS_*/GOOGLE_APPLICATION_CREDENTIALS/AZURE_*) are intentionally NOT here —
+// a Bedrock/Vertex/Foundry deployment allowlists them per-project (documented).
+const SPAWN_ENV_BASE = [
+  'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+];
+
+/**
+ * The spawn env under guardrails. undefined when scrub is off — spawn() then
+ * inherits process.env exactly as today. When on: base vars + every `ANTHROPIC_`-
+ * and `CLAUDE_`-prefixed var + the per-project allowlist. (Do not rewrite those
+ * prefixes with a `*` glob here — the resulting `*` + `/` would end this comment.)
+ *
+ * We deliberately do NOT set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB. On CLI 2.1.220
+ * (live-verified 2026-08-01) a truthy value forces the permission mode to
+ * "default", overriding our `--permission-mode acceptEdits` (and, per static
+ * analysis, forces a strict sandbox) — which would break scrubbed pipeline runs.
+ * Do not reinstate it without re-verifying against the installed CLI.
+ *
+ * @param {boolean|undefined} envScrub
+ * @param {string[]|undefined} envAllowlist
+ * @returns {Record<string,string>|undefined}
+ */
+export function buildSpawnEnv(envScrub, envAllowlist) {
+  if (!envScrub) return undefined;
+  const allow = new Set(Array.isArray(envAllowlist) ? envAllowlist : []);
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (SPAWN_ENV_BASE.includes(k) || k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_') || allow.has(k)) {
+      env[k] = v;
+    }
+  }
+  return env;
 }
 
 /**
@@ -122,6 +200,11 @@ function mockEnabled(opts) {
  * @param {boolean} [o.mock]             force mock mode
  * @param {string} [o.mcpConfigPath]     §5.5 generated <runRoot>/mcp.json (--mcp-config)
  * @param {string[]} [o.mcpServerGrants] §5.3 `mcp__<server>` grants unioned into --allowedTools
+ * @param {{deny?:string[],allow?:string[],ask?:string[]}} [o.permissionRules] guardrail permission
+ *   rules merged into the single `--settings` payload (absent => argv unchanged)
+ * @param {boolean} [o.envScrub]         guardrail: spawn with a minimal env instead of
+ *   inheriting process.env (absent/false => spawn inherits, today's behavior)
+ * @param {string[]} [o.envAllowlist]    guardrail: extra env var names to keep under scrub
  * @param {string[]} [o.workspaceWriteTargets] §8.10 MOCK-ONLY member checkouts the mock
  *   implementer writes into instead of `cwd` (empty/absent => today's cwd behavior).
  *   Never reaches argv: `runReal` ignores it by construction.
@@ -145,6 +228,9 @@ export async function runClaude(o = {}) {
     signal,
     mcpConfigPath,
     mcpServerGrants,
+    permissionRules,
+    envScrub,
+    envAllowlist,
     workspaceWriteTargets,
     resumeSessionId,
     bin = DEFAULT_BIN,
@@ -178,6 +264,9 @@ export async function runClaude(o = {}) {
     resumeSessionId,
     mcpConfigPath,
     mcpServerGrants,
+    permissionRules,
+    envScrub,
+    envAllowlist,
   });
 }
 
@@ -203,7 +292,7 @@ export async function runClaude(o = {}) {
  *  all (E2) and no shipped feature uses it (§5.3 / §8.18). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
-  mcpConfigPath, mcpServerGrants,
+  mcpConfigPath, mcpServerGrants, permissionRules,
 }) {
   const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
   if (resumeSessionId) args.push('--resume', resumeSessionId);
@@ -214,10 +303,12 @@ export function buildClaudeArgs({
     args.push('--model', model);
   }
   for (const a of buildEffortArgs(effort)) args.push(a);
-  // Gated, default-off per-sub-agent telemetry (WORCA_SUBAGENT_HOOKS). [] when
-  // off, so the baseline argv is unchanged; a CLI that rejects these flags would
-  // only ever fail when the operator opted in.
-  for (const a of buildHookArgs()) args.push(a);
+  // The ONE --settings seam: gated, default-off per-sub-agent telemetry
+  // (WORCA_SUBAGENT_HOOKS) and the guardrails `permissions` rules merge into a
+  // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
+  // there is neither, so the baseline argv is unchanged; a CLI that rejects these
+  // flags would only ever fail when the operator opted in.
+  for (const a of buildSettingsArgs(permissionRules)) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -229,16 +320,20 @@ export function buildClaudeArgs({
   return args;
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist }) {
   return new Promise((resolveP, rejectP) => {
     const args = buildClaudeArgs({
       prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
-      mcpConfigPath, mcpServerGrants,
+      mcpConfigPath, mcpServerGrants, permissionRules,
     });
+
+    // undefined when the guardrail is off, and the spread then adds NO `env` key —
+    // spawn inherits process.env exactly as it did before guardrails existed.
+    const spawnEnv = buildSpawnEnv(envScrub, envAllowlist);
 
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}) });
     } catch (err) {
       rejectP(new Error(`Failed to spawn ${bin}: ${err.message}`));
       return;

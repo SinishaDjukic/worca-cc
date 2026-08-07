@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 16;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -513,6 +513,30 @@ CREATE TABLE IF NOT EXISTS step_questions (
 );
 `;
 
+const GUARDRAIL_SETS_DDL = `
+CREATE TABLE IF NOT EXISTS guardrail_sets (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  settings   TEXT NOT NULL DEFAULT '{}',  -- JSON: the 5-key guardrails shape (sanitizeGuardrails on read)
+  origin     TEXT,                        -- 'plugin:<name>' provenance; NULL = user-created; built-ins are never rows
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
+/** v15: append-only spend ledger. NO foreign key on pipeline_id: spend is a
+ *  permanent financial fact and must survive any row surgery. */
+const COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS cost_ledger (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  step_key    TEXT,
+  amount_usd  REAL NOT NULL,
+  ts          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cost_ledger_ts ON cost_ledger (ts);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -530,7 +554,9 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
-                            source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT' },
+                            source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
+                            archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
+                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT' },
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
   workflows:              { domain: 'TEXT', origin: 'TEXT' },
@@ -539,12 +565,11 @@ const INCREMENTAL_COLUMNS = {
 
 /**
  * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the
- * live schema, plus a `stepQuestionsTable: true` flag when the step_questions
- * table itself is missing (its CREATE is IF-NOT-EXISTS, so it is safe to
- * reassert on any stamped DB). Cheap and read-only: one PRAGMA table_info per
- * known table + one sqlite_master probe, no writes. A table absent from
- * INCREMENTAL_COLUMNS' map (table_info returns []) is skipped — creating base
- * tables is the version ladder's job.
+ * live schema, plus `stepQuestionsTable`/`guardrailSetsTable: true` flags when
+ * those IF-NOT-EXISTS tables are missing (safe to reassert on any stamped DB).
+ * Cheap and read-only: one PRAGMA table_info per known table + one sqlite_master
+ * probe each, no writes. A table absent from INCREMENTAL_COLUMNS' map (table_info
+ * returns []) is skipped — creating base tables is the version ladder's job.
  */
 function schemaGaps(db) {
   const missing = [];
@@ -558,7 +583,18 @@ function schemaGaps(db) {
   const hasStepQuestions = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'"
   ).get().n > 0;
-  return { columns: missing, stepQuestionsTable: !hasStepQuestions };
+  const hasGuardrailSets = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='guardrail_sets'"
+  ).get().n > 0;
+  const hasCostLedger = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
+  ).get().n > 0;
+  return {
+    columns: missing,
+    stepQuestionsTable: !hasStepQuestions,
+    guardrailSetsTable: !hasGuardrailSets,
+    costLedgerTable: !hasCostLedger,
+  };
 }
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
@@ -568,6 +604,8 @@ function repairSchemaGaps(db, gaps) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   }
   if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
+  if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
+  if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
 }
 
 /**
@@ -583,7 +621,8 @@ function repairSchemaGaps(db, gaps) {
  */
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
-  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable) return; // clean — no lock
+  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
+      && !gaps.costLedgerTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -621,6 +660,69 @@ function applySchemaV12(db) {
  */
 function applySchemaV13(db) {
   repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
+ * Incremental v13 -> v14 migration (guardrails-entity spec 2026-08-02, per-run model):
+ *   guardrail_sets table            -- named guardrail sets (built-ins are virtual, never rows)
+ *   pipelines.guardrails_id TEXT    -- the run's selected set id; NULL = legacy/pre-entity row
+ * A CONDITIONAL repair like applySchemaV12/13, NOT plain DDL: the column lives in
+ * INCREMENTAL_COLUMNS and the table in the schemaGaps flags, so earlier heals on a
+ * ladder pass from <12 have ALREADY added them — an unconditional ALTER/CREATE
+ * would throw "duplicate column"/"table already exists" on every fresh DB.
+ */
+function applySchemaV14(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
+ * v14 -> v15 (cost limits + archive + PR persistence, spec 2026-08-07):
+ *   cost_ledger table; pipelines archived_at / cost_cap_override / pr_url /
+ *   pr_number / pr_state / pr_checked_at. CONDITIONAL repair like v12-v14 —
+ *   the columns live in INCREMENTAL_COLUMNS and the table in the schemaGaps
+ *   flags, so earlier self-heals may already have applied them.
+ */
+function applySchemaV15(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/**
+ * v15 -> v16 (spend-ledger backfill): v15 created cost_ledger EMPTY and only the
+ * live orchestrator writes it, so every pre-upgrade run reads $0 in windowed
+ * spend (stats week/month, sidebar budget) while History shows its
+ * pipelines.total_cost_usd. Insert ONE synthetic row per costed pipeline that
+ * has NO ledger rows at all (a live-recorded run's total again would double-
+ * count), amount = the same fallback-aware figure the all-time sums use (row
+ * total, else step sum), ts = the run's start (cohort semantics — the money
+ * lands in the same week/month bucket as the run), step_key NULL. Pipelines
+ * with no parseable timestamp are skipped — they still count in the all-time
+ * totals via the pipelines fallback. Gap-repair first, v12-v15 style: a
+ * divergent stamp can sit at 15 without the table.
+ */
+function applySchemaV16(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  // A hand-built or divergent DB (minimal test seeds) can reach this step
+  // without the cost columns the base DDL has always carried — such a DB never
+  // stored a cost, so there is nothing to backfill.
+  const has = (table, col) =>
+    db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('pipelines', 'total_cost_usd') || !has('pipeline_steps', 'cost_usd')) return;
+  const rows = db.prepare(`
+    SELECT p.id,
+      CASE WHEN p.total_cost_usd > 0 THEN p.total_cost_usd ELSE COALESCE(s.sc, 0) END AS cost,
+      COALESCE(p.started_at, p.updated_at) AS ts_iso
+    FROM pipelines p
+    LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc
+               FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
+    WHERE NOT EXISTS (SELECT 1 FROM cost_ledger cl WHERE cl.pipeline_id = p.id)
+  `).all();
+  const ins = db.prepare(
+    'INSERT INTO cost_ledger (pipeline_id, step_key, amount_usd, ts) VALUES (?, NULL, ?, ?)');
+  for (const r of rows) {
+    const ts = Date.parse(r.ts_iso ?? '');
+    if (!(r.cost > 0) || !Number.isFinite(ts)) continue;
+    ins.run(r.id, r.cost, ts);
+  }
 }
 
 /**
@@ -668,6 +770,9 @@ export function migrate(db) {
     if (current < 11) db.exec(SCHEMA_V11);
     if (current < 12) applySchemaV12(db);
     if (current < 13) applySchemaV13(db);
+    if (current < 14) applySchemaV14(db);
+    if (current < 15) applySchemaV15(db);
+    if (current < 16) applySchemaV16(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

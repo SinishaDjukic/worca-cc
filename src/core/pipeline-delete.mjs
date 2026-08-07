@@ -1,22 +1,29 @@
 // src/core/pipeline-delete.mjs
-// Delete a finished pipeline and everything that belongs to it: its store folder,
-// its shared plan/review markdown (now resolved EXACTLY via the artifacts index,
-// no more baseName guessing), and its local branch + worktree. The remote branch
-// is never touched. Best-effort on git: filesystem store removal always proceeds;
-// git failures are reported as warnings, not thrown. The DB row is DELETEd last;
-// the FK ON DELETE CASCADE clears its steps/events/clarify/reviews/artifacts.
+// ARCHIVE a finished pipeline: reclaim everything that costs disk — its store
+// folder, its shared plan/review markdown (resolved EXACTLY via the artifacts
+// index, no more baseName guessing), its detached run root, and its local branch
+// + worktree — then SOFT-DELETE the DB row by stamping archived_at. The remote
+// branch is never touched. Best-effort on git: filesystem store removal always
+// proceeds; git failures are reported as warnings, not thrown.
+//
+// The pipelines row is PERMANENT: it is the run's statistical record (cost,
+// duration, status), so it is never DELETEd and no FK ON DELETE CASCADE fires.
+// Its steps/events/clarify/reviews children stay for the same reason. The only
+// child rows removed are `artifacts` — that index points at the exact files this
+// function just unlinked, so leaving it would strand dead pointers.
+// List and count reads filter on `archived_at IS NULL`; by-id reads still resolve.
 
 import { rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
-import { listArtifacts, readPipelineByKey } from './artifacts.mjs';
+import { listArtifacts, readPipelineByKey, persistPrState } from './artifacts.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { rmGuarded } from './run-manifest.mjs';
-import { branchExists } from './git-info.mjs';
+import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
@@ -53,8 +60,11 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
 
 /**
  * @param {{ projectDir?:string, key?:string, workspaceKey?:string, id:string }} args
- * @returns {Promise<null | { ok, id, pipelineDir, planFiles, reviewFiles, branch, worktree, warnings }>}
+ * @returns {Promise<null | { ok, id, archived, pipelineDir, planFiles, reviewFiles, branch, worktree, warnings }
+ *                        | { ok, id, alreadyArchived, warnings }>}
  *          null => no pipeline with that id (404). Throws err(code:'RUNNING'|'BAD_REQUEST') for guards.
+ *          An already-archived row short-circuits to { alreadyArchived: true } — the FS was
+ *          reclaimed by the first call, so a second pass has nothing to do (idempotent).
  *
  * When `workspaceKey` is set the pipeline lives in the workspace store
  * (store/workspaces/<workspaceKey>/); branch/worktree cleanup iterates the
@@ -63,7 +73,7 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
  * single scalar `state.branch`. The state is reconstructed from the DB row by the
  * same reader history uses. Result warnings[] aggregates per-project failures.
  */
-export async function deletePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
   // Resolve the store key ONCE so the run dir and the shared plan/review files are
@@ -80,6 +90,11 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
   if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot delete a running pipeline', 'RUNNING');
   }
+  // Idempotent: the first archive already reclaimed the FS. Re-running the unlink /
+  // worktree / rm passes would only produce noise (and warnings) over gone paths.
+  if (row.archived_at) {
+    return { ok: true, id: row.id, alreadyArchived: true, warnings: [] };
+  }
 
   // Reconstruct state (branch/branches/projects) via the same reader history uses.
   const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
@@ -90,9 +105,25 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
   const runDir = await findRunDir(pipelinesDir, row.id);
 
   const report = {
-    ok: true, id: row.id, pipelineDir: runDir,
+    ok: true, id: row.id, archived: true, pipelineDir: runDir,
     planFiles: [], reviewFiles: [], branch: null, worktree: null, runRoot: null, warnings: [],
   };
+
+  // Final PR observation while the branch still exists (spec §6.8.3). Single-
+  // project runs only: workspace rows carry a branches MAP (state.branches) —
+  // their per-project PR facts are left to prior enrichment passes (accepted
+  // limitation). A merge after archive is never observed — also accepted.
+  try {
+    const branch = state?.branch?.feature;
+    if (branch && state?.projectDir && await hasGh()) {
+      const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch });
+      if (pr) persistPrState(row.id, pr);
+    }
+  } catch (e) {
+    // Named `e`, not `err`: `err` is this module's error-factory helper and a catch
+    // parameter would shadow it for the whole block.
+    report.warnings.push(`pr refresh failed: ${e?.message || e}`);
+  }
 
   // 1) Unlink the EXACT indexed markdown (no baseName-derivation). Pipeline-local
   //    artifacts (prompt/extras/checklist/webui) live INSIDE runDir and are cleared
@@ -150,10 +181,11 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
 
   // 2b) The detached run root, under the same §8.13 assertions rmGuarded enforces
   //     everywhere (`<worcaHome>/runs/` prefix + basename === pipelineId). Without
-  //     this, deleting a paused or interrupted detached run from the UI would leave
+  //     this, archiving a paused or interrupted detached run from the UI would leave
   //     the generated CLAUDE.md, mcp.json, run.json, the workspace skill mount and
-  //     the emptied repos/ shell on disk permanently — and, because deletion DELETEs
-  //     the pipelines row, the boot sweep would then see a row-less run root forever.
+  //     the emptied repos/ shell on disk permanently. Archiving KEEPS the pipelines
+  //     row, so the boot sweep can still resolve this id — but the run root is gone
+  //     and unreclaimable-by-id later, so it must be removed here, not deferred.
   //     A legacy run simply has no such dir, so this is a no-op there.
   const runRoot = join(worcaHome(), 'runs', row.id);
   if (existsSync(runRoot)) {
@@ -166,12 +198,25 @@ export async function deletePipeline({ projectDir = null, key = null, workspaceK
   //    pipeline-local md). Everything else lives inside it.
   if (runDir) await rm(runDir, { recursive: true, force: true });
 
-  // 4) The DB row — FK ON DELETE CASCADE clears steps/events/clarify/reviews/artifacts.
-  //    A5: the cascade does every child table in this single DELETE; no nested tx().
-  tx(() => { getDb().prepare('DELETE FROM pipelines WHERE id = ?').run(row.id); });
+  // 4) Soft delete: the run's statistical record is permanent (spec §6.7). The
+  //    FS was reclaimed above; the row now only carries history. The artifacts
+  //    INDEX rows are deleted explicitly — their files were just unlinked, and
+  //    the CASCADE that used to clear them no longer fires (no row DELETE).
+  //    pipeline_steps and the other children stay: stats fallback sums need them.
+  tx(() => {
+    getDb().prepare('DELETE FROM artifacts WHERE pipeline_id = ?').run(row.id);
+    getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), row.id);
+  });
 
   return report;
 }
+
+// Compat alias. The server now calls `archivePipeline` directly; this name is
+// kept for the pre-existing suites (test/pipeline-delete.test.mjs,
+// test/persist-roundtrip.test.mjs) that assert the FS/branch reclamation half
+// under the old name — which archive still performs in full.
+export { archivePipeline as deletePipeline };
 
 /** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>). */
 async function findRunDir(pipelinesDir, id) {

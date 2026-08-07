@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app, runs } from '../ui/server.mjs';
 import { recordArtifact, writeStoreMeta } from '../src/core/artifacts.mjs';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 let srv, base, home, prevHome;
@@ -70,4 +70,9 @@ test('200 removes the pipeline dir + shared plan/review files', async () => {
   assert.equal(existsSync(join(root, 'pipelines', '04-06-26-my-feature-pp')), false);
   assert.equal(existsSync(join(root, 'plans', '04-06-26-my-feature.md')), false);
   assert.equal(existsSync(join(root, 'reviews', '04-06-26-my-feature-impl-review.md')), false);
+  // The FS is reclaimed, but the run's statistical record is permanent: the row
+  // survives as a soft delete stamped with archived_at.
+  const row = getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get('pp');
+  assert.ok(row, 'pipelines row survives the archive');
+  assert.ok(row.archived_at, 'archived_at stamped');
 });

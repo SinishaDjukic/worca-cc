@@ -40,6 +40,7 @@ import { join, resolve, dirname, basename, isAbsolute, sep } from 'node:path';
 import { contextMaxBytesPerFile, contextMaxBytesTotal, skillMount, defaultRoot } from './settings.mjs';
 import { readRunManifest, updateRunManifest } from './run-manifest.mjs';
 import { isValidSkillName } from './skills.mjs';
+import { mergePermissionRules } from './guardrails.mjs';
 
 /**
  * The `--allowedTools` grant shape this build emits for merged MCP servers.
@@ -247,9 +248,13 @@ export async function discoverProjectAgents(dir, onError) {
  * and `{keys:null}` when the file EXISTS but does not parse: we cannot prove an
  * unreadable-shaped file carries nothing, so the caller still warns. Never throws.
  * Exported for testing.
+ *
+ * `permissions` carries the file's DENY rules (see pickPermissions), which the
+ * caller lifts into the run's merged `--settings` payload for members that honor
+ * their project settings; null when there are none to lift.
  * @param {string} dir
  * @param {(p:string, err:object)=>void} [onError]
- * @returns {Promise<{file:string, keys:string[]|null}|null>}
+ * @returns {Promise<{file:string, keys:string[]|null, permissions:{deny:string[]}|null}|null>}
  */
 export async function discoverProjectSettings(dir, onError) {
   if (!dir) return null;
@@ -258,11 +263,26 @@ export async function discoverProjectSettings(dir, onError) {
   if (body === null) return null;                       // absent, or unreadable + already named
   try {
     const parsed = JSON.parse(body);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { file, keys: null };
-    return { file, keys: Object.keys(parsed).sort() };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { file, keys: null, permissions: null };
+    return { file, keys: Object.keys(parsed).sort(), permissions: pickPermissions(parsed.permissions) };
   } catch {
-    return { file, keys: null };
+    return { file, keys: null, permissions: null };
   }
+}
+
+/**
+ * The string-filtered DENY rules of a settings `permissions` value, as `{deny}`;
+ * null when there are none. allow/ask are NEVER lifted: project-scope `allow`
+ * rules are ignored in headless `-p` mode until the workspace-trust dialog, but
+ * the CLI `--settings` payload is user-scope and IS applied — lifting them would
+ * let a committed repo file widen a read-only role beyond `--allowedTools`
+ * (Global Constraint). Deny is pure restriction (deny rules only ever ADD
+ * restrictions), so deny alone is safe to lift.
+ */
+function pickPermissions(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+  const deny = Array.isArray(p.deny) ? p.deny.filter((r) => typeof r === 'string' && r.trim()) : [];
+  return deny.length ? { deny } : null;
 }
 
 // ── §5.4 `@import` resolution ───────────────────────────────────────────────
@@ -985,12 +1005,14 @@ export function generateClaudeMd({
  *        as the plain object persisted in `run.json.skillResolutions`.
  * @param {Map<string,string>|object} a.graphInstructions   per-member graph instruction
  * @param {string} a.homeDir
+ * @param {Map<string,boolean>|null} [a.honorByKey]  per-member honorProjectSettings keyed by projectKey — null honors everyone
  * @param {string} [a.platform]                  injectable for the win32 branch
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
   runRoot, members = [], projectsRoot, isWorkspace = false,
-  requiredSkillResolutions, graphInstructions, homeDir, platform = process.platform,
+  requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
+  platform = process.platform,
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1204,23 +1226,52 @@ export async function assembleRunContext({
   // way as §8.21 below. Today a workspace node's cwd is the config-source member's
   // worktree, so THAT member's committed `.claude/settings.json` (hooks, permission
   // rules, statusline) applies to every node; under §5.3 the cwd is `<runRoot>`, which
-  // has no project settings file, so NO member's apply. The decision is to accept the
-  // loss and warn by name rather than paper over it with an unmergeable `--settings`
-  // (E8's silent-ignore hazard would replace a visible loss with an invisible one).
-  // A file that parses to an EMPTY object carries nothing, so nothing is lost and
-  // nothing is said; one that does not parse still warns — we cannot prove it is empty.
+  // has no project settings file, so NO member's apply.
+  //
+  // The DENY rules are no longer an accepted loss: for every member that honors its
+  // project settings they are LIFTED here into `projectPermissions`, merged into the
+  // single `--settings` payload the runner emits (claude-runner.mjs buildSettingsArgs
+  // emits exactly ONE merged flag, so there is no unmergeable-`--settings` / E8
+  // silent-ignore hazard). allow/ask are NEVER lifted: project-scope `allow` is
+  // ignored in headless `-p` mode until the workspace-trust dialog, but the
+  // `--settings` payload is USER scope and IS applied, so lifting it would let a
+  // committed repo file widen a run past that gate and beyond `--allowedTools`
+  // (Global Constraint). Deny only ever ADDS restrictions, so deny alone is safe.
+  //
+  // hooks/statusline remain accepted losses and are still warned by name. A file that
+  // parses to an EMPTY object carries nothing, so nothing is lost and nothing is said;
+  // one that does not parse still warns — we cannot prove it is empty.
+  let projectPermissions = null;
   if (isWorkspace) {
     for (const m of sorted) {
       const s = await discoverProjectSettings(m.worktreeDir, onError);
       if (!s || (Array.isArray(s.keys) && s.keys.length === 0)) continue;
-      const carries = s.keys
-        ? `keys: ${s.keys.join(', ')}`
+      // Per-member honor gate: each member is gated by ITS OWN effective
+      // honorProjectSettings (Task 7 supplies the map; an absent entry means
+      // unconfigured => honor, matching DEFAULT_GUARDRAILS). Never the run-wide
+      // union — its some() would let one unconfigured member force-lift a member
+      // that explicitly opted out ("a member can never relax another member's
+      // policy").
+      const honored = honorByKey ? honorByKey.get(m.projectKey) !== false : true;
+      const lifted = honored && s.permissions ? s.permissions : null;
+      if (lifted) projectPermissions = mergePermissionRules(projectPermissions, lifted);
+      // Keys still NOT in force this run: everything when not honored / no deny
+      // rules / unparseable; everything except `permissions` when its deny rules
+      // were lifted.
+      const lostKeys = s.keys ? s.keys.filter((k) => !(lifted && k === 'permissions')) : null;
+      if (Array.isArray(lostKeys) && lostKeys.length === 0) continue; // permissions-only file, fully lifted
+      const carries = lostKeys
+        ? `keys: ${lostKeys.join(', ')}`
         : 'its contents could not be parsed, so what it carries is unknown';
       warnings.push(
         `project hooks/permissions from \`${m.projectName || m.projectKey}\` do not apply on ` +
         'workspace runs (cwd is the run root); move anything essential into an agent\'s frontmatter ' +
         '`tools:` or a `requiresSkills` skill. Not in force this run: `.claude/settings.json` ' +
-        `(${carries}).`,
+        `(${carries}).` +
+        // NB: the word "permissions" must not appear after the keys list — the
+        // §8.19 v2 test asserts /keys:.*permissions/ does NOT match, i.e. that the
+        // key left the not-in-force list.
+        (lifted ? ' Its deny rules WERE lifted into this run\'s --settings.' : ''),
       );
     }
   }
@@ -1281,6 +1332,7 @@ export async function assembleRunContext({
     injectedPaths,
     renames,
     warnings,
+    projectPermissions,
     bytes,
     memberCount: sorted.length,
   };
@@ -1290,6 +1342,7 @@ export async function assembleRunContext({
     renames,
     bytes,
     warnings,
+    projectPermissions,
     capabilities: { mcpGrants: MCP_GRANT_MODE },
     mcpConfigPath,
     mcpServerNames,

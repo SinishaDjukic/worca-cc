@@ -26,7 +26,7 @@ const V12_MINIMAL_SEED = `
 
 test('fresh DB migrates to v13 with source columns + workflow origin, defaults correct', () => {
   const db = getDb(); // opens + migrates to SCHEMA_VERSION
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   assert.ok(pipCols.includes('source_type'), 'pipelines.source_type exists');
   assert.ok(pipCols.includes('source_ref'), 'pipelines.source_ref exists');
@@ -50,7 +50,7 @@ test('a v12-stamped DB upgrades: columns added, pre-existing rows backfill the d
 
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
   const row = db.prepare("SELECT source_type, source_ref FROM pipelines WHERE id = 'pre'").get();
   assert.equal(row.source_type, 'prompt', 'legacy row reads the ALTER default');
   assert.equal(row.source_ref, null);
@@ -59,17 +59,17 @@ test('a v12-stamped DB upgrades: columns added, pre-existing rows backfill the d
 });
 
 // Cross-branch stamp collision (the recorded hazard on INCREMENTAL_COLUMNS): a
-// divergent ladder stamped the shared DB AT this version but this build's columns
-// are missing. migrate()'s fast path must heal them WITHOUT touching the stamp.
-test('fast-path reconcile heals a v13-stamped DB missing columns (partial gap)', () => {
+// divergent ladder stamped the shared DB AT the current version but this build's
+// columns are missing. migrate()'s fast path must heal them WITHOUT touching the stamp.
+test('fast-path reconcile heals a current-stamped DB missing the v13 columns (partial gap)', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(V12_MINIMAL_SEED);
   db.exec('ALTER TABLE pipelines ADD COLUMN source_ref TEXT'); // present; source_type + origin missing
-  db.exec('PRAGMA user_version = 13'); // stamped current: the ladder must no-op...
+  db.exec('PRAGMA user_version = 16'); // stamped current: the ladder must no-op...
 
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13, 'stamp untouched');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16, 'stamp untouched');
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   assert.ok(pipCols.includes('source_type'), 'source_type healed');
   assert.ok(pipCols.includes('source_ref'), 'pre-existing source_ref survived (no duplicate-column throw)');
@@ -97,7 +97,7 @@ test('ladder from below 12 does not double-add the v13 columns', () => {
     PRAGMA user_version = 11;
   `);
   migrate(db); // v12 heal adds source_*/origin, then the v13 step must no-op — not throw
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   assert.ok(pipCols.includes('source_type') && pipCols.includes('source_ref'));
 });
@@ -108,5 +108,5 @@ test('migrate() is idempotent at v13 (second call is a clean no-op)', () => {
   db.exec('PRAGMA user_version = 12');
   migrate(db);
   migrate(db); // fast path + reconcile: must not throw duplicate column / table
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 13);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
 });

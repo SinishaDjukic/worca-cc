@@ -191,3 +191,172 @@ test('runClaude without the two new fields spawns the SAME argv as before (legac
     '--allowedTools', 'Read,Bash',
   ]);
 });
+
+// ── guardrails: permissionRules -> ONE --settings payload ────────────────────
+import { buildSettingsArgs, buildHookSettings } from '../src/core/claude-runner.mjs';
+
+test('buildClaudeArgs: permissionRules emit a single --settings with permissions', () => {
+  const args = buildClaudeArgs({
+    ...BASE, allowedTools: ['Read'],
+    permissionRules: { deny: ['Read(.env*)', 'Bash(curl:*)'] },
+  });
+  const i = args.indexOf('--settings');
+  assert.ok(i > -1, `--settings present: ${JSON.stringify(args)}`);
+  assert.equal(args.indexOf('--settings', i + 1), -1, 'exactly ONE --settings flag');
+  const settings = JSON.parse(args[i + 1]);
+  assert.deepEqual(settings.permissions, { deny: ['Read(.env*)', 'Bash(curl:*)'] });
+  assert.ok(!('hooks' in settings), 'no hook settings when WORCA_SUBAGENT_HOOKS is off');
+});
+
+test('buildClaudeArgs: permissionRules absent/null/empty -> argv byte-identical to today', () => {
+  for (const extra of [{}, { permissionRules: null }, { permissionRules: undefined }, { permissionRules: { deny: [] } }]) {
+    const args = buildClaudeArgs({ ...BASE, allowedTools: ['Read', 'Bash'], ...extra });
+    assert.deepEqual(args, [
+      '-p', 'p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+      '--allowedTools', 'Read,Bash',
+    ]);
+  }
+});
+
+test('buildSettingsArgs: telemetry hooks + permissions merge into ONE --settings json', () => {
+  const prev = process.env.WORCA_SUBAGENT_HOOKS;
+  process.env.WORCA_SUBAGENT_HOOKS = '1';
+  try {
+    const args = buildSettingsArgs({ deny: ['Bash(curl:*)'] });
+    assert.equal(args[0], '--include-hook-events');
+    assert.equal(args[1], '--settings');
+    assert.equal(args.length, 3);
+    const settings = JSON.parse(args[2]);
+    assert.deepEqual(settings.permissions, { deny: ['Bash(curl:*)'] });
+    assert.ok(settings.hooks?.PostToolUse, 'hook settings preserved in the SAME payload');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_SUBAGENT_HOOKS;
+    else process.env.WORCA_SUBAGENT_HOOKS = prev;
+  }
+});
+
+test('buildSettingsArgs: hooks off + no rules -> [] (baseline untouched)', () => {
+  assert.deepEqual(buildSettingsArgs(null), []);
+  assert.equal(buildHookSettings(), null);
+});
+
+test('buildSettingsArgs: malformed rules warn once and fall through; empty stays quiet', () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    // Truthy object, nothing usable: argv must stay baseline AND say so.
+    assert.deepEqual(buildSettingsArgs({ deny: 'Bash(curl:*)' }), []);
+    assert.equal(warnings.length, 1, `exactly one warn: ${JSON.stringify(warnings)}`);
+    assert.match(warnings[0], /permissionRules/);
+    // Normal empty/absent shapes are not a problem -> no extra warn.
+    warnings.length = 0;
+    for (const rules of [null, undefined, {}, { deny: [] }]) {
+      assert.deepEqual(buildSettingsArgs(rules), []);
+    }
+    assert.deepEqual(warnings, [], 'empty/absent permissionRules never warn');
+  } finally {
+    console.warn = realWarn;
+  }
+});
+
+test('runClaude FORWARDS permissionRules to runReal (drop-at-gate guard)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({
+      cwd: dir, bin, prompt: 'p', allowedTools: ['Read'],
+      permissionRules: { deny: ['Read(.env*)'] },
+    });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK;
+    else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--settings');
+  assert.ok(i > -1, `--settings reached the spawn: ${JSON.stringify(argv)}`);
+  assert.deepEqual(JSON.parse(argv[i + 1]).permissions, { deny: ['Read(.env*)'] });
+});
+
+test('runClaude mock path is unaffected by permissionRules (no spawn, no error)', async () => {
+  const dir = await tmp();
+  const r = await runClaude({
+    cwd: dir, mock: true, onEvent: () => {},
+    prompt: 'MOCK_ROLE: implementer\nMOCK_IN: /plan.md',
+    permissionRules: { deny: ['Read(.env*)'] },
+  });
+  assert.equal(r.exitCode, 0);
+});
+
+// ── guardrails: env scrub ────────────────────────────────────────────────────
+import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
+
+/** A fake `claude` that dumps its own environment (KEY=VALUE lines) to a file. */
+async function fakeEnvBin(dir, outFile) {
+  const bin = join(dir, 'fake-claude-env.sh');
+  await writeFile(bin, '#!/bin/sh\nenv > ' + JSON.stringify(outFile) + '\nexit 0\n', 'utf8');
+  await chmod(bin, 0o755);
+  return bin;
+}
+
+test('buildSpawnEnv: scrub off -> undefined (spawn inherits, byte-identical to today)', () => {
+  assert.equal(buildSpawnEnv(false, []), undefined);
+  assert.equal(buildSpawnEnv(undefined, undefined), undefined);
+});
+
+test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', () => {
+  const prev = { AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY, NPM_TOKEN: process.env.NPM_TOKEN, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  process.env.AWS_SECRET_ACCESS_KEY = 'leak-me';
+  process.env.NPM_TOKEN = 'npm-secret';
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+  try {
+    const env = buildSpawnEnv(true, ['NPM_TOKEN']);
+    assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined, 'cloud creds are scrubbed');
+    assert.equal(env.NPM_TOKEN, 'npm-secret', 'allowlisted var passes through');
+    assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test', 'claude auth survives');
+    assert.equal(env.PATH, process.env.PATH, 'base PATH survives');
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate guard)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'env.txt');
+  const bin = await fakeEnvBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TEST_LEAK;
+  delete process.env.WORCA_MOCK;
+  process.env.WORCA_TEST_LEAK = 'should-not-appear';
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', envScrub: true, envAllowlist: [] });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TEST_LEAK; else process.env.WORCA_TEST_LEAK = prevLeak;
+  }
+  const envDump = await readFile(out, 'utf8');
+  assert.ok(!envDump.includes('WORCA_TEST_LEAK'), 'scrubbed var must not reach the child');
+  assert.ok(envDump.includes('PATH='), 'the child still got a usable base env');
+});
+
+test('runClaude with envScrub off inherits the parent env (legacy parity)', async () => {
+  const dir = await tmp();
+  const out = join(dir, 'env.txt');
+  const bin = await fakeEnvBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TEST_LEAK;
+  delete process.env.WORCA_MOCK;
+  process.env.WORCA_TEST_LEAK = 'inherited';
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p' });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TEST_LEAK; else process.env.WORCA_TEST_LEAK = prevLeak;
+  }
+  assert.ok((await readFile(out, 'utf8')).includes('WORCA_TEST_LEAK=inherited'));
+});

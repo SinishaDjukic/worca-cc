@@ -420,6 +420,13 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
+    // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
+    // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
+    // when the project has no guardrails, so the argv and env stay byte-identical
+    // (the runner treats undefined as "absent").
+    permissionRules: c.permissionRules,
+    envScrub: c.envScrub,
+    envAllowlist: c.envAllowlist,
     bin: c.bin,
     mock: c.mock,
     signal: ctx.signal,
@@ -428,6 +435,8 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     },
   };
 }
+
+export const _runOptsForTests = runOpts;
 
 /** A compact task header reused across roles. Exported for testing. */
 export function taskHeader(ctx, title) {

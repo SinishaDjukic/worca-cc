@@ -9,3 +9,5 @@ graphify-out/
 .worca-cc-test/
 .playwright-mcp/
 /*.png
+
+.superpowers/

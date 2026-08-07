@@ -20,14 +20,18 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
-  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume,
-  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups,
+  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
+  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
+  pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+  setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
 } from '../src/core/settings.mjs';
+import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
+import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -35,6 +39,11 @@ import {
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
+import { validateGuardrails } from '../src/core/guardrails.mjs';
+import {
+  listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
+  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
+} from '../src/core/guardrail-store.mjs';
 import {
   DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
 } from '../src/core/workflows.mjs';
@@ -44,7 +53,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
-import { deletePipeline } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -317,6 +326,12 @@ function summarizeRuns() {
     projectDir: r.projectDir,
     title: r.title,
     status: r.status,
+    // Why the run is paused, or null — ANY orchestrator pause code rides here
+    // (e.g. 'usage_limit'), not just the cost pair. Carried in hello so a
+    // reload/reconnect restores the cost banner (the client gates that render on
+    // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
+    // until the next event.
+    pauseReason: r.pauseReason || null,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
@@ -386,7 +401,13 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // Remember the pause reason for summarizeRuns (hello). Reset on every
+        // done so a later reasonless finish cannot leave a stale cost banner.
+        entry.pauseReason = (payload && payload.reason) || null;
         resolvePending(entry, { reason: entry.status });
+        if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
+          emitChanged('budget-changed');
+        }
       }
       if (name === 'error') {
         entry.status = 'error';
@@ -676,6 +697,28 @@ app.post('/api/run', async (req, res) => {
       typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
     if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
 
+    // Optional guardrailsId selects the named guardrail set that IS this run's
+    // policy (applied uniformly to every member — guardrails are per-run only).
+    // Absent/blank/null normalizes to 'permissive' — the empty policy,
+    // byte-identical legacy spawn — so pre-picker API/CLI callers keep today's
+    // behavior. A NON-STRING value is a caller bug and 400s (normalizing it
+    // away would silently drop the requested policy). Unknown ids 400 up
+    // front, like workflowId.
+    if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
+      return badRequest(res, 'guardrailsId must be a string');
+    }
+    const guardrailsId =
+      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : 'permissive';
+    if (!(await readGuardrailSet(guardrailsId))) {
+      return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
+    }
+
+    // Budget gate: no new pipelines while the total window is spent (F6).
+    const budget = budgetStatus();
+    if (budget.blocked) {
+      return res.status(403).json({ error: 'total cost limit reached', budget });
+    }
+
     const runId = randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
@@ -754,6 +797,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
       });
@@ -800,6 +844,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
       });
@@ -906,6 +951,26 @@ app.post('/api/resume', async (req, res) => {
     if (!saved) return res.status(404).json({ error: 'pipeline not found' });
     if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
     if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
+
+    if (saved.row.archived_at) {
+      return res.status(409).json({ error: 'pipeline is archived' });
+    }
+    const budget = budgetStatus();
+    if (budget.blocked) {
+      return res.status(403).json({ error: 'total cost limit reached', budget });
+    }
+    // Override persists only once the (never-bypassable) total gate passes —
+    // a total-refused request must not leave cost_cap_override armed.
+    if (req.body && req.body.ignoreCostCap === true) {
+      setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+    }
+    const pipeCap = budget.pipelineLimitUsd;
+    const spentSoFar = Number(saved.row.total_cost_usd || 0);
+    if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
+      return res.status(403).json({
+        error: 'pipeline cost limit reached', budget, needsOverride: true,
+      });
+    }
 
     // Double-resume guard: any live entry already driving this pipeline id.
     for (const e of runs.values()) {
@@ -1123,6 +1188,20 @@ app.get('/api/counts', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/stats?range=week|month|all  -> the Statistics view payload (§6.9).
+// Pure DB reads; an unknown range is the caller's fault, so getStats' RangeError
+// maps to 400 while anything else keeps bubbling to the error handler.
+app.get('/api/stats', (req, res) => {
+  try {
+    const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'month';
+    res.json(getStats({ range }));
+  } catch (err) {
+    if (err instanceof RangeError) return badRequest(res, err.message);
+    throw err;
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
 // over the WS as batched `history-pr` events (reuses broadcast(), the same
 // fire-to-every-socket primitive wireRun/wireScan use). The body's `token`
@@ -1174,9 +1253,12 @@ app.get('/api/history/:key/:id/log', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // DELETE /api/runs/:id?projectKey=...  (or ?projectDir=...)
-// Remove a FINISHED pipeline and everything tied to it: its store folder, its
-// shared plan/review markdown, and its local branch + worktree. The remote
-// branch is never touched. Refused (409) while the run is live in this process.
+// ARCHIVE a FINISHED pipeline: reclaims everything on disk — its store folder,
+// its shared plan/review markdown, its artifacts index rows, and its local
+// branch + worktree — then soft-deletes the row (`archived_at`) instead of
+// dropping it, so its cost and outcome stay in Statistics forever. The row
+// disappears from History and every list/count read. The remote branch is never
+// touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
@@ -1202,7 +1284,7 @@ app.delete('/api/runs/:id', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
 
   try {
-    const report = await deletePipeline({
+    const report = await archivePipeline({
       workspaceKey: workspaceId || null,
       key: workspaceId ? null : (projectKey || null),
       projectDir: (workspaceId || projectKey) ? null : projectDir,
@@ -1265,6 +1347,13 @@ app.post('/api/pr', async (req, res) => {
 
   const pr = await createPr({ projectDir: repoDir, base: source, head: feature, title: state.title || feature });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
+
+  // Persist the PR facts we just learned, so History/stats survive a gh outage.
+  const parsePrNumber = (u) => Number((/\/pull\/(\d+)/.exec(u) || [])[1]) || null;
+  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
+  if (pipelineIdForPr) {
+    persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
+  }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
@@ -1661,22 +1750,48 @@ app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
 const settingsState = () => ({
   root: getWorcaRoot(), projectsRoot: rawProjectsRoot(),
   projectsRootDefault: defaultProjectsRoot(), default: defaultRoot(),
+  pipelineCostLimitUsd: pipelineCostLimitUsd(),
+  totalCostLimitUsd: totalCostLimitUsd(),
+  costLimitResetPeriod: costLimitResetPeriod(),
 });
 
 app.get('/api/settings', (_req, res) => {
   res.json(settingsState());
 });
 
+app.get('/api/budget', (_req, res) => {
+  res.json(budgetStatus());
+});
+
 app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  // Normalize the budget keys first, then validate them as a SET before ANY write.
+  // Each setter persists on its own, so a two-key POST whose second key is invalid
+  // used to answer 400 with the first key already on disk, no budget-changed
+  // emitted, and a client (which early-returns on !res.ok) still painting its
+  // pre-save values over a half-applied settings file.
+  const budget = {};
+  if (has('pipelineCostLimitUsd')) budget.pipelineCostLimitUsd = body.pipelineCostLimitUsd ?? '';
+  if (has('totalCostLimitUsd')) budget.totalCostLimitUsd = body.totalCostLimitUsd ?? '';
+  if (has('costLimitResetPeriod')) {
+    budget.costLimitResetPeriod = typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '';
+  }
   try {
+    assertCostLimitInputs(budget);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
     }
-    if (has('root') || !has('projectsRoot')) {
+    if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
+    if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
+    if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
+    // Legacy contract: a POST that names no known key clears root. Budget keys
+    // must not trip it — a budget-only save would otherwise wipe the root.
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey)) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
+    if (hasBudgetKey) emitChanged('budget-changed');
     res.json(settingsState());
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -1695,7 +1810,9 @@ app.get('/api/config', async (req, res) => {
   // project-less response carries only the predefined Opus/Sonnet/Haiku set.
   if (raw == null || raw === '') {
     const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-    return res.json({ config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS });
+    return res.json({
+      config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS,
+    });
   }
   const projectDir = resolveProjectDir(raw);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -1704,8 +1821,16 @@ app.get('/api/config', async (req, res) => {
     // PLUS the run-config workflows{} (node model/effort, feedback cycles) and
     // activeWorkflowId. It is a superset of readConfig, so the client keeps using
     // config.steps unchanged while gaining config.workflows / config.activeWorkflowId.
-    const [config, models] = await Promise.all([readRunConfig(projectDir), listModels(projectDir)]);
-    res.json({ config, models, steps: agentSteps(), efforts: EFFORTS });
+    // NOTE: readRunConfig forwards unknown extra keys verbatim — a project
+    // configured under the REMOVED per-project guardrails model may still show
+    // its raw legacy blob under config.guardrails. It is inert: nothing
+    // interprets it (guardrails are selected per run via /api/guardrails).
+    const [config, models] = await Promise.all([
+      readRunConfig(projectDir), listModels(projectDir),
+    ]);
+    res.json({
+      config, models, steps: agentSteps(), efforts: EFFORTS,
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1859,6 +1984,102 @@ app.delete('/api/workflows/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Guardrail sets (global store, table guardrail_sets). The built-ins
+// Permissive / Normal / Strict are VIRTUAL (GUARDRAIL_PRESETS) — the server
+// prepends them, they are never persisted (CONTRACT mirrors /api/workflows:
+// GET -> { guardrails: [...listBuiltinGuardrailSets(), ...listGuardrailSets()] }).
+// Thin handlers: persistence in guardrail-store.mjs, 400s from validateGuardrails.
+// DELETE maps the store's ReferencedError -> 409 { error, references }
+// (structural match — the sendPluginError pattern; references are paused runs
+// whose resume_point pins the set).
+// ---------------------------------------------------------------------------
+function sendGuardrailError(res, err) {
+  const message = err && err.message ? err.message : String(err);
+  if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
+    return res.status(409).json({ error: message, references: err.references || [] });
+  }
+  res.status(500).json({ error: message });
+}
+
+app.get('/api/guardrails', async (_req, res) => {
+  try {
+    const sets = await listGuardrailSets(); // CONV-1: await
+    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...sets] });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/guardrails/:id', async (req, res) => {
+  try {
+    const set = await readGuardrailSet(req.params.id); // CONV-1: await; built-ins resolve virtually
+    if (!set) return res.status(404).json({ error: 'guardrail set not found' });
+    res.json(set);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/guardrails', async (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) return badRequest(res, 'name is required');
+  if (name.length > 200) return badRequest(res, 'name too long (max 200 characters)');
+  const v = validateGuardrails(body.settings ?? {});
+  if (!v.ok) return res.status(400).json({ error: 'invalid guardrails', errors: v.errors });
+  try {
+    // POST is CREATE, not upsert: a minted id colliding with an existing set must
+    // never silently REPLACE it (the existing set may be the policy other runs
+    // select). Renames/edits go through PUT.
+    const mintedId = `gr_${slugify(name)}`;
+    if (await readGuardrailSet(mintedId)) {
+      return res.status(409).json({ error: 'a guardrail set with this name already exists' });
+    }
+    const set = await writeGuardrailSet({ name, settings: body.settings || {} }); // CONV-1: await
+    if (!set) return badRequest(res, 'invalid guardrail set id'); // defensive: minted gr_ ids never hit this
+    res.status(201).json({ guardrails: set });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.put('/api/guardrails/:id', async (req, res) => {
+  const id = req.params.id;
+  if (isBuiltinGuardrailSetId(id)) return badRequest(res, 'built-in guardrail sets cannot be edited');
+  const body = req.body || {};
+  try {
+    const existing = await readGuardrailSet(id);
+    if (!existing) return res.status(404).json({ error: 'guardrail set not found' });
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : existing.name;
+    if (name.length > 200) return badRequest(res, 'name too long (max 200 characters)');
+    // `== null` on purpose: validateGuardrails(null) is early-ok (guardrails.mjs:132-134),
+    // so a strict `=== undefined` check would let {settings: null} silently wipe a
+    // selected set to the empty policy. null/absent both mean "keep stored".
+    const settings = body.settings == null ? existing.settings : body.settings;
+    const v = validateGuardrails(settings);
+    if (!v.ok) return res.status(400).json({ error: 'invalid guardrails', errors: v.errors });
+    const set = await writeGuardrailSet({ id, name, settings, createdAt: existing.createdAt }); // CONV-1: await
+    if (!set) return badRequest(res, 'invalid guardrail set id');
+    res.json({ guardrails: set });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/guardrails/:id', async (req, res) => {
+  const id = req.params.id;
+  // Built-ins are not in the user store and must never be deleted.
+  if (isBuiltinGuardrailSetId(id)) return badRequest(res, 'built-in guardrail sets cannot be deleted');
+  try {
+    const removed = await deleteGuardrailSet(id); // CONV-1: await; throws ReferencedError while pinned
+    if (!removed) return res.status(404).json({ error: 'guardrail set not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    sendGuardrailError(res, err);
   }
 });
 

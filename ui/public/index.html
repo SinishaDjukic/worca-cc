@@ -6,18 +6,14 @@
     <title>Worca CC</title>
     <link rel="stylesheet" href="/style.css" />
     <meta name="theme-color" content="#ffffff" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>%E2%9A%99%EF%B8%8F</text></svg>"
-    />
+    <link rel="icon" type="image/png" href="/assets/worca-favicon.png" />
   </head>
   <body>
     <div class="app">
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar">
         <div class="brand">
-          <div class="mark"><span></span></div>
-          <div class="name">worca-cc</div>
+          <img class="logo" src="/assets/worca-logo.png" alt="Worca" />
         </div>
 
         <nav class="nav" aria-label="Primary">
@@ -38,6 +34,10 @@
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
           </button>
+          <button type="button" data-nav="stats">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
+            <span>Statistics</span>
+          </button>
           <button type="button" data-nav="workspaces">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
             <span>Workspaces</span>
@@ -56,6 +56,10 @@
             <span>Projects</span>
             <span class="nav-count n-grey" id="nav-projects-count">0</span>
           </button>
+          <button type="button" data-nav="guardrails">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
+            <span>Guardrails</span>
+          </button>
           <button type="button" data-nav="composer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Pipeline Composer</span>
@@ -67,6 +71,7 @@
         </nav>
 
         <div class="side-foot">
+          <div id="side-spend"></div>
           <div class="conn">
             <span id="ws-dot" class="dot dot-off" title="WebSocket status"></span>
             <span id="ws-label">disconnected</span>
@@ -81,10 +86,12 @@
           <button type="button" class="active" data-nav="new">New</button>
           <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
           <button type="button" data-nav="history">History</button>
+          <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
           <button type="button" data-nav="workspaces">Workspaces</button>
           <button type="button" data-nav="agents">Agents</button>
           <button type="button" data-nav="plugins">Plugins</button>
           <button type="button" data-nav="projects">Projects</button>
+          <button type="button" data-nav="guardrails">Guardrails</button>
           <button type="button" data-nav="composer">Composer</button>
           <button type="button" data-nav="settings">Settings</button>
         </nav>
@@ -229,6 +236,21 @@
                     </div>
                   </div>
 
+                  <!-- Guardrails picker (built-ins + named sets; the selection IS the
+                       run's policy, applied uniformly to every member). app.js populates
+                       from GET /api/guardrails. Sits OUTSIDE the target panes: applies
+                       to Project and Workspace targets alike. Default Permissive = no
+                       restrictions (legacy behavior). -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label for="guardrailsSelect">Guardrails</label>
+                    <div class="select-wrap">
+                      <select id="guardrailsSelect" class="select" aria-label="Guardrails">
+                        <option value="permissive">Permissive (default)</option>
+                      </select>
+                    </div>
+                    <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
+                  </div>
+
                   <!-- Default-workflow stages: Clarify + the original four rows, shown
                        when the Default workflow is selected (backward-compat). -->
                   <div id="wf-default-stages">
@@ -308,6 +330,7 @@
                 <input id="mock" type="checkbox" hidden />
 
                 <!-- Actions -->
+                <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
                   <button type="submit" id="start-btn" class="btn-go">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
@@ -342,6 +365,7 @@
               </div>
               <div class="run-flow-wrap"><div class="run-flow"></div></div>
               <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="cost-banner" hidden></div>
               <div class="subs-bar" hidden>
                 <button type="button" class="btn-subs" aria-expanded="false">
                   <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
@@ -385,6 +409,7 @@
                 <div class="h-meta">
                   <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
                   <span class="hist-branch mono"></span>
+                  <span class="hist-pausenote" hidden></span>
                 </div>
                 <div class="hist-aside">
                   <span class="hist-diff" aria-label="lines changed"></span>
@@ -453,7 +478,7 @@
                       <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
                       <line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>
                     </svg>
-                    Delete
+                    Archive
                   </button>
                 </div>
               </div>
@@ -461,6 +486,26 @@
           </template>
         </section>
         <!-- /view history -->
+
+        <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="stats">
+          <div class="topbar">
+            <div>
+              <h1>Statistics</h1>
+              <div class="sub">Spend, time worked, and outcomes across all pipelines · costs are Claude Code estimates, not billing</div>
+            </div>
+          </div>
+          <div class="stats-filter">
+            <div class="seg" id="stats-range" role="group" aria-label="Time range">
+              <button type="button" data-range="week">This week</button>
+              <button type="button" data-range="month">This month</button>
+              <button type="button" data-range="all">All time</button>
+            </div>
+          </div>
+          <div id="stats-body"><small class="hint">Loading…</small></div>
+          <div id="stats-tip" class="chart-tip" hidden></div>
+        </section>
+        <!-- /view stats -->
 
         <!-- ===== VIEW: WORKSPACES ===== -->
         <section class="view hidden" data-view="workspaces">
@@ -691,6 +736,23 @@
         </section>
         <!-- /view plugins -->
 
+        <!-- ===== VIEW: GUARDRAILS ===== -->
+        <section class="view hidden" data-view="guardrails">
+          <div class="topbar">
+            <div>
+              <h1>Guardrails</h1>
+              <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
+            </div>
+            <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Create guardrails
+            </button>
+          </div>
+          <p id="guardrails-msg" class="form-msg" aria-live="polite"></p>
+          <div class="run-list" id="guardrails-list"></div>
+        </section>
+        <!-- /view guardrails -->
+
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
           <div class="topbar">
@@ -895,6 +957,37 @@
               <button type="button" id="settingsSave" class="btn btn-primary btn-mini">Save</button>
             </div>
             <small class="hint" id="settingsMsg"></small>
+          </section>
+
+          <section class="card" style="max-width:760px;padding:22px;margin-top:18px">
+            <div class="card-head"><h2>Budget &amp; cost limits</h2></div>
+            <div id="budgetReadout"></div>
+            <small class="hint">Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.</small>
+            <div class="field">
+              <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
+              <input id="budgetPerPipeline" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
+              <small class="hint">Pause a pipeline when its estimated cost reaches this amount. Leave blank for no limit.</small>
+            </div>
+            <div class="field">
+              <label for="budgetTotal">Total cost limit (USD)</label>
+              <input id="budgetTotal" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
+              <small class="hint">Pause all pipelines and block new ones when total spend in the period reaches this amount. Leave blank for no limit.</small>
+            </div>
+            <div class="field">
+              <label for="budgetResetPeriod">Reset period</label>
+              <div class="select-wrap">
+                <select id="budgetResetPeriod" class="select">
+                  <option value="weekly">Weekly &mdash; resets Monday 00:00</option>
+                  <option value="monthly">Monthly &mdash; resets on the 1st, 00:00</option>
+                </select>
+              </div>
+              <small class="hint">Spend counts within the current period and returns to $0.00 at the reset. Times are local.</small>
+            </div>
+            <div class="add-project-actions" style="margin-top:14px">
+              <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
+              <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
+            </div>
+            <small class="hint" id="budgetMsg"></small>
           </section>
         </section>
         <!-- /view settings -->
