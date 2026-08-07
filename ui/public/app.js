@@ -181,6 +181,15 @@ const el = {
   settingsReset: $('#settingsReset'),
   settingsMsg: $('#settingsMsg'),
 
+  // Settings: budget & cost limits card
+  budgetReadout: $('#budgetReadout'),
+  budgetPerPipeline: $('#budgetPerPipeline'),
+  budgetTotal: $('#budgetTotal'),
+  budgetResetPeriod: $('#budgetResetPeriod'),
+  budgetSave: $('#budgetSave'),
+  budgetReset: $('#budgetReset'),
+  budgetMsg: $('#budgetMsg'),
+
   // Agents management view
   agentsList: $('#agents-list'),
   agentsMsg: $('#agents-msg'),
@@ -353,11 +362,6 @@ function paintBudget() {
   if (currentView() === 'settings') paintBudgetReadout();
   repaintCostBanners();
 }
-
-// Forward declarations so paintBudget() is callable from here on: the Settings
-// readout and the paused-card cost banners land in later slices.
-function paintBudgetReadout() {}
-function repaintCostBanners() {}
 
 function applyBudgetToNewView() {
   const b = budgetState.budget;
@@ -589,6 +593,7 @@ function onHello(msg) {
       pendingQuestion: r0.pendingQuestion || null,
       kind: r0.kind || 'run',
       pipelineId: r0.pipelineId || null,
+      pauseReason: r0.pauseReason || null,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -1002,7 +1007,7 @@ function nowHMS() {
 
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
-  pendingQuestion = null, kind = 'run', pipelineId = null,
+  pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -1015,6 +1020,7 @@ function makeRun({
     local,
     kind,                 // 'run' | 'workspace-run' | 'scan' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
+    pauseReason,          // 'cost_pipeline' | 'cost_total' | null — drives the cost-pause banner
     workspaceId,
     workspaceName,
     lastActivityAt: Date.now(),  // recency for tab/overview ordering (bumped on every tagged event)
@@ -3592,6 +3598,9 @@ function finishRun(r, status) {
 }
 
 function onDone(r, msg) {
+  // A cost pause carries the reason code ('cost_pipeline' | 'cost_total') that
+  // drives the card banner, the status pill, and the resume gating.
+  if (msg.reason) r.pauseReason = msg.reason;
   finishRun(r, msg.status || 'done');
 }
 
@@ -5713,6 +5722,9 @@ async function loadSettings() {
     const data = await safeJson(res);
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
+    paintBudgetSettings(data);
+    paintBudgetReadout();
+    refreshBudget();
     if (el.settingsRootDefault) el.settingsRootDefault.textContent = data.default ? `Default: ${data.default}` : '';
     if (el.settingsProjectsRootDefault) {
       const fallback = projectsRootFallback(data);
@@ -5756,6 +5768,85 @@ if (el.settingsSave) {
   ));
 }
 if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSettings('', ''));
+
+// ---------------------------------------------------------------------------
+// Settings: budget & cost limits card. Reads the three limit keys off the same
+// /api/settings payload the root card uses, and renders the live spend readout
+// from the /api/budget snapshot paintBudget() already keeps fresh.
+// ---------------------------------------------------------------------------
+function setBudgetMsg(text, kind) {
+  el.budgetMsg.textContent = text || '';
+  el.budgetMsg.className = 'hint' + (kind ? ` ${kind}` : '');
+}
+
+function paintBudgetSettings(data) {
+  el.budgetPerPipeline.value = data.pipelineCostLimitUsd ?? '';
+  el.budgetTotal.value = data.totalCostLimitUsd ?? '';
+  el.budgetResetPeriod.value = data.costLimitResetPeriod || 'monthly';
+}
+
+function paintBudgetReadout() {
+  const b = budgetState.budget;
+  if (!b || !el.budgetReadout) return;
+  el.budgetReadout.replaceChildren(renderBudgetReadout(b,
+    { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+}
+
+// '' -> null (no limit). NaN is the validation-failure marker: anything that is
+// not a finite number of at least one cent.
+function readBudgetField(input) {
+  const v = input.value.trim();
+  if (v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0.01) return NaN;
+  return n;
+}
+
+async function saveBudgetSettings(payload) {
+  el.budgetSave.disabled = true;
+  el.budgetReset.disabled = true;
+  setBudgetMsg('Saving…');
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setBudgetMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    paintBudgetSettings(data);
+    setBudgetMsg('Saved.');
+    refreshBudget();                        // sidebar + readout repaint immediately
+  } catch (e) { setBudgetMsg(e.message, 'err'); }
+  finally {
+    el.budgetSave.disabled = false;
+    el.budgetReset.disabled = false;
+  }
+}
+
+if (el.budgetSave) {
+  el.budgetSave.addEventListener('click', () => {
+    const per = readBudgetField(el.budgetPerPipeline);
+    const total = readBudgetField(el.budgetTotal);
+    if (Number.isNaN(per) || Number.isNaN(total)) {
+      setBudgetMsg('Limits must be at least $0.01, or blank for no limit.', 'err');
+      return;
+    }
+    saveBudgetSettings({
+      pipelineCostLimitUsd: per, totalCostLimitUsd: total,
+      costLimitResetPeriod: el.budgetResetPeriod.value,
+    });
+  });
+}
+// Clears both limits and leaves the reset period alone: POSTing `null` deletes
+// the key server-side (the REST arm passes `body.x ?? ''` to the setter).
+if (el.budgetReset) {
+  el.budgetReset.addEventListener('click', () => {
+    el.budgetPerPipeline.value = '';
+    el.budgetTotal.value = '';
+    saveBudgetSettings({ pipelineCostLimitUsd: null, totalCostLimitUsd: null });
+  });
+}
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -6388,7 +6479,22 @@ async function seedResumedLog(newRunId, prevLines, logUrl) {
   renderRunningView();
 }
 
-async function resumeRunFromCard(runId, btn) {
+// Shared copy for the "continue without cap" confirmation, so the Running card
+// and the History card ask the exact same question.
+const COST_OVERRIDE_CONFIRM = {
+  title: 'Continue without cap?',
+  message: 'This pipeline will ignore the per-pipeline cost limit from now on, ' +
+    'including future resumes. The total budget limit still applies.',
+  confirmLabel: 'Continue without cap',
+};
+
+/** cb-override click: confirm, then resume with the persistent cap override. */
+async function confirmCostOverride(runId, btn) {
+  const ok = await confirmModal({ ...COST_OVERRIDE_CONFIRM });
+  if (ok) resumeRunFromCard(runId, btn, { ignoreCostCap: true });
+}
+
+async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
   const pipelineId = r.pipelineId;
@@ -6405,7 +6511,7 @@ async function resumeRunFromCard(runId, btn) {
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipelineId }),
+      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
@@ -6460,6 +6566,15 @@ if (runListEl) {
       if (runId) resumeRunFromCard(runId, resumeBtn);
       return;
     }
+    // Cost-banner actions. This handler is a plain sync arrow — the override
+    // confirm is async, so fire-and-forget it exactly like .btn-resume above.
+    const overrideBtn = e.target.closest && e.target.closest('.cb-override');
+    if (overrideBtn) {
+      const runId = overrideBtn.closest('.run-card')?.dataset.runId;
+      if (runId) confirmCostOverride(runId, overrideBtn);
+      return;
+    }
+    if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
     if (sw) {
       const card = sw.closest('.run-card');
@@ -7080,11 +7195,80 @@ function setupDeleteButton(node, projectDir, p) {
 // Resume a paused pipeline from its history card. POST /api/resume returns the
 // new live runId; the run announces itself over the WS — mirror beginRun's
 // post-launch block so the user lands on the live card immediately.
+// Statuses that count as "parked, resumable" for the cost-pause note.
+const PAUSED_STATUSES = ['paused', 'pausing', 'interrupted'];
+
+// Disable a history Resume button while a total-budget pause is still blocked by
+// the current window. Shared by setupResumeButton (first paint) and
+// refreshHistResumeGating (every later budget change).
+function applyHistResumeGate(btn, pauseReason, budget) {
+  const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
+  btn.disabled = totalBlocked;
+  btn.title = totalBlocked
+    ? `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`
+    : '';
+}
+
+// Re-gate every mounted history Resume button from the dataset.pauseReason stamp
+// buildHistCard left behind, so a budget change unblocks them without a refetch.
+function refreshHistResumeGating() {
+  const host = el.history;
+  if (!host) return;
+  for (const card of host.querySelectorAll('.hist-card')) {
+    const btn = card.querySelector('.hist-resume');
+    if (!btn || btn.hidden) continue;
+    applyHistResumeGate(btn, card.dataset.pauseReason || '', budgetState.budget);
+  }
+}
+
+// cb-override from an expanded History card: same confirmation as the Running
+// card, then setupResumeButton's POST -> upsert -> land-on-the-live-card recipe
+// with the persistent per-pipeline cap override.
+async function histCostOverride(projectDir, id, record, btn) {
+  const ok = await confirmModal({ ...COST_OVERRIDE_CONFIRM });
+  if (!ok) return;
+  const p = record || {};
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Resuming…';
+  try {
+    const res = await fetch('/api/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipelineId: id, ignoreCostCap: true }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    upsertRun({
+      runId: data.runId,
+      title: p.title || id,
+      projectDir: p.projectDir || projectDir || '',
+      status: 'starting',
+      pipelineId: id,
+      local: true,
+    });
+    const prior = [...runs.values()].find(
+      (x) => x.runId !== data.runId && x.pipelineId === id && Array.isArray(x.logLines) && x.logLines.length
+    );
+    await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(id, p));
+    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    hideViewer();
+    updateNavCounts();
+    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    renderRunningView();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = label;
+    btn.title = `Could not resume: ${err.message}`;
+  }
+}
+
 function setupResumeButton(node, projectDir, p) {
   const btn = node.querySelector('.hist-resume');
   if (!btn) return;
   if (String(p.status || '').toLowerCase() !== 'paused') { btn.hidden = true; return; }
   btn.hidden = false;
+  applyHistResumeGate(btn, (typeof p.pauseReason === 'string' ? p.pauseReason : ''), budgetState.budget);
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card when clicking the button
     btn.disabled = true;
@@ -7214,6 +7398,21 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   // Branch name under the date/cost (left column; hidden when empty via :empty).
   const branchEl = node.querySelector('.hist-branch');
   if (branchEl) branchEl.textContent = p.branch || '';
+
+  // Cost-pause note in the head. The reason is also stamped on the card so a
+  // later budget repaint can re-gate Resume without refetching the record.
+  const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+  if (pauseReason) node.dataset.pauseReason = pauseReason;
+  const noteEl = node.querySelector('.hist-pausenote');
+  if (noteEl) {
+    const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
+      && pauseReason.startsWith('cost_');
+    noteEl.hidden = !costPaused;
+    noteEl.textContent = costPaused
+      ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+      : '';
+    noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
+  }
 
   // Right-side cluster (before the chevron): lines changed + Create-PR button.
   renderHistDiff(node.querySelector('.hist-diff'), p);
@@ -7408,6 +7607,28 @@ async function loadHistDetail(projectDir, id, detail, record) {
     // alongside a stale error.
     const stale = detail.querySelector('.detail-error');
     if (stale) stale.remove();
+    // Cost-pause banner above the stepper, mirroring the Running card. Wired with
+    // DIRECT listeners like setupResumeButton/setupDeleteButton — History has no
+    // container-level click delegate to extend.
+    const oldBanner = detail.querySelector('.cost-banner');
+    if (oldBanner) oldBanner.remove();
+    const histPauseReason = record && typeof record.pauseReason === 'string' ? record.pauseReason : '';
+    if (histPauseReason.startsWith('cost_')) {
+      const banner = renderCostPauseBanner(
+        { pauseReason: histPauseReason, pipelineId: id, totalCostUsd: data.state.totalCostUsd },
+        { budget: budgetState.budget || {},
+          fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
+      const settingsBtn = banner.querySelector('.cb-settings');
+      if (settingsBtn) settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); location.hash = 'settings'; });
+      const overrideBtn = banner.querySelector('.cb-override');
+      if (overrideBtn) {
+        overrideBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          histCostOverride(projectDir, id, record, overrideBtn);   // fire-and-forget (sync handler)
+        });
+      }
+      detail.prepend(banner);
+    }
     const host = detail.querySelector('.run-flow');
     if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
@@ -7911,7 +8132,12 @@ const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', 
 // pause is never mislabeled "awaiting answers".
 function statusPill(r) {
   if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
-  if (r.status === 'paused') return { family: 'amber', text: 'Paused' };
+  if (r.status === 'paused') {
+    // A cost pause names its cause so the pill alone explains why the run parked.
+    if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
+    if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    return { family: 'amber', text: 'Paused' };
+  }
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
@@ -8314,12 +8540,53 @@ function paintRunCard(r) {
   }
   r.el.classList.toggle('attention', r.pendingQuestion != null);
 
+  // Cost-pause banner: rebuilt from the current budget snapshot on every paint so
+  // a raised limit / window reset is reflected without a card rebuild.
+  const bannerEl = r.el.querySelector('.cost-banner');
+  if (bannerEl) {
+    const costPaused = isPaused(r) && typeof r.pauseReason === 'string'
+      && r.pauseReason.startsWith('cost_');
+    if (costPaused) {
+      const fresh = renderCostPauseBanner(
+        { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+        { budget: budgetState.budget || {},
+          fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
+      bannerEl.replaceChildren(...fresh.childNodes);
+      bannerEl.className = fresh.className;
+      bannerEl.hidden = false;
+    } else {
+      bannerEl.hidden = true;
+      bannerEl.className = 'cost-banner';
+      bannerEl.replaceChildren();
+    }
+  }
+
   // Paused → swap Pause for Resume (Stop stays, to discard the paused run).
   const paused = isPaused(r);
   const pauseBtn = r.el.querySelector('.btn-pause');
   const resumeBtn = r.el.querySelector('.btn-resume');
   if (pauseBtn) pauseBtn.hidden = paused;
   if (resumeBtn) resumeBtn.hidden = !paused;
+  // A total-budget pause cannot be resumed at all until the window resets or the
+  // limit is raised — the server 403s it, so the button says so up front.
+  const totalBlocked = r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
+  if (resumeBtn) {
+    resumeBtn.disabled = !!totalBlocked;
+    resumeBtn.title = totalBlocked
+      ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
+      : '';
+  }
+}
+
+// Repaint every cost-paused card against the current budget snapshot. Iterates
+// ALL runs, not liveRuns(): a paused run is _finished and excluded there.
+function repaintCostBanners() {
+  for (const r of runs.values()) {
+    if (isPaused(r) && typeof r.pauseReason === 'string' && r.pauseReason.startsWith('cost_')) {
+      paintRunCard(r);
+    }
+  }
+  if (currentView() === 'history') refreshHistResumeGating();
 }
 
 function questionCount(pq) {
