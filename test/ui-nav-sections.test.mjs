@@ -147,3 +147,30 @@ test('CTA is outlined at rest and compensates the border in its padding', () => 
   assert.ok(active, 'active CTA keeps the dark current-view fill');
   assert.match(active, /background:\s*var\(--ink\)/);
 });
+
+// ---- Task 3: compact topnav mirrors the grouping ----
+
+test('topnav order mirrors the sidebar, with a separator per group boundary', () => {
+  const tokens = [...topnav().matchAll(/data-nav="([a-z]+)"|class="(topnav-sep)"/g)]
+    .map((m) => m[1] || m[2]);
+  assert.deepEqual(tokens, [
+    'new', 'topnav-sep',
+    'running', 'history', 'stats', 'topnav-sep',
+    'composer', 'agents', 'guardrails', 'plugins', 'topnav-sep',
+    'projects', 'workspaces', 'topnav-sep',
+    'settings',
+  ]);
+});
+
+test('separators are spans (button count and settings-text invariants hold)', () => {
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 11);
+  assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"><\/span>/g) || []).length, 4);
+  assert.match(topnav(), /data-nav="settings">Settings<\/button>/);
+});
+
+test('.topnav-sep is a hairline that cannot flex-grow', () => {
+  const sep = ruleBody('.topnav-sep');
+  assert.ok(sep, '.topnav-sep rule must exist (inside the topnav media block)');
+  assert.match(sep, /flex:\s*0 0 1px/);
+  assert.match(sep, /background:\s*var\(--line-2\)/);
+});

@@ -696,6 +696,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .topnav button:hover{background:var(--field);color:var(--ink);}
   .topnav button.active{background:var(--ink);color:#fff;}
   .topnav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .topnav-sep{flex:0 0 1px;background:var(--line-2);margin:6px 2px;}
 }
 
 /* ---------- per-pipeline cost (per-node cost is the graph's .nrun .cost) ---------- */
