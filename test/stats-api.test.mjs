@@ -149,6 +149,9 @@ test('GET /api/stats serves the shape; defaults to month; 400 on bad range', asy
   }
   res = await fetch(`${base}/api/stats`);
   assert.equal((await res.json()).range, 'month');
+  res = await fetch(`${base}/api/stats?range=today`);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).bucket, 'hour');
   res = await fetch(`${base}/api/stats?range=year`);
   assert.equal(res.status, 400);
   assert.ok((await res.json()).error);

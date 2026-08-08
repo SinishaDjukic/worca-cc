@@ -5,26 +5,24 @@
 //
 // Attribution: money = cost_ledger by event timestamp (exact); runs, time,
 // and PRs = cohort by started_at (a run belongs to the bucket its start falls
-// in, with its CURRENT status). 'all' money/time use the fallback-aware
-// pipelines sums so pre-ledger history still counts.
+// in, with its CURRENT status). 'today' differs: its totals count runs whose
+// lifespan [started_at, updated_at] overlaps the day ("active today"), and its
+// hourly bars attribute terminal outcomes to the hour of the terminal write
+// (updated_at). 'all' money/time use the fallback-aware pipelines sums so
+// pre-ledger history still counts.
 
 import { prepare } from './db.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
 } from './cost-budget.mjs';
 
-const RANGES = ['week', 'month', 'all'];
+const RANGES = ['today', 'week', 'month', 'all'];
 
+function hourStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()); }
 function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 function monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 
-/** Cohort totals over runs started in [fromMs, toMs). Legacy fs->db imports have
- *  no started_at; they fall back to updated_at so their money (which always
- *  lands in the all-time sums) is never counted without its run. */
-function cohortTotals(fromMs, toMs) {
-  const fromIso = new Date(fromMs).toISOString();
-  const toIso = new Date(toMs).toISOString();
-  const row = prepare(`
+const TOTALS_SELECT = `
     SELECT COUNT(*) AS runs,
       COALESCE(SUM(status = 'done'), 0)                                      AS finished,
       COALESCE(SUM(status = 'stopped'), 0)                                   AS stopped,
@@ -37,10 +35,10 @@ function cohortTotals(fromMs, toMs) {
       COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
-               FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
-    WHERE COALESCE(p.started_at, p.updated_at) >= ?
-      AND COALESCE(p.started_at, p.updated_at) <  ?
-  `).get(fromIso, toIso);
+               FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id`;
+
+function totalsRow(sql, isoA, isoB) {
+  const row = prepare(sql).get(isoA, isoB);
   return {
     runs: row.runs, finished: row.finished, stopped: row.stopped, failed: row.failed,
     paused: row.paused, running: row.running,
@@ -48,6 +46,35 @@ function cohortTotals(fromMs, toMs) {
     workedMs: Number(row.active || 0),
     cohortSpendUsd: roundUsd(row.spend || 0),
   };
+}
+
+/** Cohort totals over runs started in [fromMs, toMs). Legacy fs->db imports have
+ *  no started_at; they fall back to updated_at so their money (which always
+ *  lands in the all-time sums) is never counted without its run. */
+function cohortTotals(fromMs, toMs) {
+  return totalsRow(`${TOTALS_SELECT}
+    WHERE COALESCE(p.started_at, p.updated_at) >= ?
+      AND COALESCE(p.started_at, p.updated_at) <  ?`,
+    new Date(fromMs).toISOString(), new Date(toMs).toISOString());
+}
+
+/** Runs whose lifespan [started_at, updated_at] overlaps [fromMs, toMs) —
+ *  "active in the window": started, updated, or finished inside it. There is
+ *  no finished_at column; updated_at is the terminal-write proxy. */
+function activeTotals(fromMs, toMs) {
+  return totalsRow(`${TOTALS_SELECT}
+    WHERE COALESCE(p.started_at, p.updated_at) <  ?
+      AND COALESCE(p.updated_at, p.started_at) >= ?`,
+    new Date(toMs).toISOString(), new Date(fromMs).toISOString());
+}
+
+/** Runs whose LAST write (updated_at, ≈ the terminal write for finished runs)
+ *  falls in [fromMs, toMs) — hourly outcome attribution for the today range. */
+function updatedTotals(fromMs, toMs) {
+  return totalsRow(`${TOTALS_SELECT}
+    WHERE COALESCE(p.updated_at, p.started_at) >= ?
+      AND COALESCE(p.updated_at, p.started_at) <  ?`,
+    new Date(fromMs).toISOString(), new Date(toMs).toISOString());
 }
 
 /** Ledger spend in [fromMs, toMs). */
@@ -60,7 +87,13 @@ function ledgerSpend(fromMs, toMs) {
 /** Build zero-filled buckets [{startMs, endMs}] from windowStart through `now`. */
 function buildBuckets(windowStart, now, bucket) {
   const out = [];
-  if (bucket === 'day') {
+  if (bucket === 'hour') {
+    for (let h = hourStart(windowStart); h <= now;
+         h = new Date(h.getFullYear(), h.getMonth(), h.getDate(), h.getHours() + 1)) {
+      out.push({ startMs: h.getTime(),
+        endMs: new Date(h.getFullYear(), h.getMonth(), h.getDate(), h.getHours() + 1).getTime() });
+    }
+  } else if (bucket === 'day') {
     for (let d = dayStart(windowStart); d <= now; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
       out.push({ startMs: d.getTime(), endMs: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() });
     }
@@ -78,7 +111,12 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
   const budget = budgetStatus(now);
 
   let windowStart, windowEnd, prevStart, prevEnd, bucket;
-  if (range === 'week') {
+  if (range === 'today') {
+    windowStart = dayStart(now);
+    windowEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    prevStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    prevEnd = windowStart; bucket = 'hour';
+  } else if (range === 'week') {
     windowStart = costWindowStart(now, 'weekly'); windowEnd = costWindowEnd(now, 'weekly');
     prevStart = new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate() - 7);
     prevEnd = windowStart; bucket = 'day';
@@ -93,8 +131,12 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     prevStart = null; prevEnd = null; bucket = 'month';
   }
 
+  // 'today' counts runs ACTIVE in the window (Q&A: started, updated, or
+  // finished today); every other range keeps cohort-by-start. prev flows
+  // through the same closure, so the yesterday delta compares like with like.
+  const windowTotalsFn = range === 'today' ? activeTotals : cohortTotals;
   const shapeTotals = (fromMs, toMs) => {
-    const c = cohortTotals(fromMs, toMs);
+    const c = windowTotalsFn(fromMs, toMs);
     return {
       spentUsd: ledgerSpend(fromMs, toMs),
       workedMs: c.workedMs,
@@ -120,8 +162,11 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
 
   const prev = prevStart ? shapeTotals(prevStart.getTime(), prevEnd.getTime()) : null;
 
+  // Hourly bars pin terminal outcomes to the hour of the terminal write; the
+  // day/month bars keep cohort-by-start. Money is ledger-exact either way.
+  const bucketTotalsFn = range === 'today' ? updatedTotals : cohortTotals;
   const series = buildBuckets(windowStart, now, bucket).map(({ startMs, endMs }) => {
-    const c = cohortTotals(startMs, endMs);
+    const c = bucketTotalsFn(startMs, endMs);
     return {
       bucketStartMs: startMs,
       spentUsd: ledgerSpend(startMs, endMs),

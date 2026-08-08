@@ -80,7 +80,8 @@ function deltaChip(doc, cur, prevVal, range) {
   if (range === 'all' || prevVal == null || !(prevVal > 0)) return null;
   const pct = Math.round(((cur - prevVal) / prevVal) * 100);
   const chip = h(doc, 'span', 'stat-delta', `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}%`);
-  chip.title = range === 'week' ? 'vs previous week' : 'vs previous month';
+  chip.title = range === 'today' ? 'vs yesterday'
+    : range === 'week' ? 'vs previous week' : 'vs previous month';
   return chip;
 }
 
@@ -314,11 +315,15 @@ function roundedTopBar(x, y, w, hgt, r = 4) {
 function bucketLabel(ms, bucket) {
   const d = new Date(ms);
   if (bucket === 'month') return MO[d.getMonth()];
+  if (bucket === 'hour') return `${String(d.getHours()).padStart(2, '0')}:00`;
   return d.getDay() === 1 || d.getDate() === 1 ? `${WD[d.getDay()]} ${d.getDate()}` : String(d.getDate());
 }
 
 function tipDate(ms, bucket) {
   const d = new Date(ms);
+  if (bucket === 'hour') {
+    return `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}, ${String(d.getHours()).padStart(2, '0')}:00`;
+  }
   return bucket === 'month'
     ? `${MO[d.getMonth()]} ${d.getFullYear()}`
     : `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}`;
@@ -395,7 +400,7 @@ function chartCard(doc, title, rangeLabel) {
   return card;
 }
 
-const unitWord = (bucket) => (bucket === 'month' ? 'month' : 'day');
+const unitWord = (bucket) => (bucket === 'month' ? 'month' : bucket === 'hour' ? 'hour' : 'day');
 
 /** Spend column chart: blue ramp, current bucket darker + direct-labeled. */
 export function renderSpendChart(spec, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
@@ -503,7 +508,9 @@ export function renderStatsBody(model, opts = {}) {
   const grid = h(doc, 'div', 'charts-grid');
   const rangeLabel = model.range === 'all'
     ? 'last 12 months'
-    : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+    : model.range === 'today'
+      ? tipDate(model.windowStartMs, 'day')
+      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
   const currentBucketStartMs = model.series.length
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
