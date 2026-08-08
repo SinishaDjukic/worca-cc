@@ -55,7 +55,8 @@ test('running children container still sits between Running and History', () => 
 
 test('Settings stays a .nav child (app.js selector `.nav button[data-nav]` must match it)', () => {
   assert.match(sidebar(), /data-nav="settings">\s*<svg/);
-  assert.ok(!/side-foot[\s\S]*data-nav="settings"/.test(html),
+  const sideFoot = html.match(/<div class="side-foot">[\s\S]*?<\/aside>/)[0];
+  assert.ok(!/data-nav=/.test(sideFoot),
     'settings must not move into .side-foot — routing would silently die');
 });
 
