@@ -34,6 +34,17 @@ test('.log-filters keeps its pills on a single flex line', () => {
     'the bar itself must shrink as a run-card flex item instead of overflowing the head row');
 });
 
+test('run-card head puts the pill bar on its own row under "Live log"', () => {
+  const head = ruleBody('.run-log-head');
+  assert.ok(head, '.run-log-head rule must exist');
+  assert.match(head, /flex-wrap:\s*wrap/, 'head must wrap so the pill bar can drop to a second row');
+  const bar = ruleBody('.run-log-head .log-filters');
+  assert.ok(bar, '.run-log-head .log-filters rule must exist');
+  assert.match(bar, /flex-basis:\s*100%/, 'pill bar spans the full width -> forced onto its own row');
+  assert.match(bar, /order:\s*1/,
+    'bar sorts after the label and autoscroll switch so row 1 stays "Live log" ⟷ Auto-scroll');
+});
+
 test('.log-filters .log-f resets the global select width:100%', () => {
   const body = ruleBody('.log-filters .log-f');
   assert.ok(body, '.log-filters .log-f rule must exist');

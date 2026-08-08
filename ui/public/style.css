@@ -479,7 +479,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-log{margin-top:16px;}
 .run-log[hidden]{display:none;}
 .run-log .log{min-height:210px;max-height:320px;overflow-y:auto;}
-.run-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.run-log-head{display:flex;align-items:center;justify-content:space-between;gap:8px 10px;flex-wrap:wrap;margin-bottom:10px;}
 .run-log-head .ll-label{font-weight:700;font-size:13px;}
 .run-log-head .switch-row .txt{font-size:12.5px;font-weight:600;color:var(--ink-2);}
 
@@ -489,6 +489,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .log-filters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0;}
 .log-filters .log-f{font:inherit;font-size:12px;padding:2px 6px;border:1px solid var(--line);border-radius:8px;
   background:#FBFBF9;color:var(--ink-2);max-width:150px;width:auto;min-width:0;}
+/* run card: pills drop to a full-width second row under "Live log" (order puts
+   the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
+.run-log-head .log-filters{order:1;flex-basis:100%;}
 .logs-panel .log-filters{margin-top:8px;}
 
 /* needs-attention card + paused stage */
