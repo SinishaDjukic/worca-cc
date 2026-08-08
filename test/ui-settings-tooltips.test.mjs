@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
+const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const settingsView = () => {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
@@ -78,4 +79,84 @@ test('style.css defines the info-tip icon and the floating bubble', () => {
   assert.match(css, /\.info-bubble\{[^}]*position:fixed/, 'bubble is viewport-positioned');
   assert.match(css, /\.info-bubble\{[^}]*z-index:70/, 'bubble on the established tooltip layer');
   assert.ok(css.includes('.label-row{'), '.label-row rule');
+});
+
+async function boot({ fetchHandler } = {}) {
+  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
+  const { window } = dom;
+  window.Element.prototype.scrollIntoView = function () {};
+  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  window.fetch = (url, opts) => {
+    if (fetchHandler) { const r = fetchHandler(String(url), opts || {}); if (r) return r; }
+    if (String(url).includes('/api/projects'))
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
+  };
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+  }
+  globalThis.window = window; globalThis.document = window.document;
+  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await new Promise((r) => setTimeout(r, 0));
+  return { window };
+}
+
+const fire = (window, target, type, Ctor = 'Event') =>
+  target.dispatchEvent(new window[Ctor](type, { bubbles: true }));
+
+test('hovering an info icon shows the shared bubble with that icon HTML; leaving hides it', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(doc.querySelector('.info-bubble'), null, 'no bubble until first hover');
+
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  fire(window, rootTip, 'mouseover');
+  let bubble = doc.querySelector('.info-bubble');
+  assert.ok(bubble, 'bubble created on hover');
+  assert.equal(bubble.getAttribute('role'), 'tooltip');
+  assert.ok(!bubble.classList.contains('hidden'), 'bubble visible');
+  assert.match(bubble.textContent.replace(/\s+/g, ' '), /does not move existing data/);
+  assert.ok(bubble.querySelector('code'), 'HTML formatting carried into the bubble');
+
+  fire(window, rootTip, 'mouseout');
+  assert.ok(doc.querySelector('.info-bubble').classList.contains('hidden'), 'hidden on mouseout');
+
+  // A second icon reuses the same bubble with new content.
+  const budgetTip = doc.querySelector('button.info-tip[aria-label="About budget costs"]');
+  fire(window, budgetTip, 'mouseover');
+  bubble = doc.querySelector('.info-bubble');
+  assert.equal(doc.querySelectorAll('.info-bubble').length, 1, 'one shared bubble');
+  assert.match(bubble.textContent, /not authoritative billing/);
+});
+
+test('keyboard: focus shows the bubble, Escape and blur hide it', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const tip = doc.querySelector('button.info-tip[aria-label="About Reset period"]');
+  fire(window, tip, 'focusin');
+  const bubble = doc.querySelector('.info-bubble');
+  assert.ok(bubble && !bubble.classList.contains('hidden'), 'focus shows bubble');
+  assert.match(bubble.textContent, /Times are local/);
+
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.ok(bubble.classList.contains('hidden'), 'Escape hides bubble');
+
+  fire(window, tip, 'focusin');
+  assert.ok(!bubble.classList.contains('hidden'), 're-shown on focus');
+  fire(window, tip, 'focusout');
+  assert.ok(bubble.classList.contains('hidden'), 'blur hides bubble');
+});
+
+test('loadSettings has no dead references to the removed Default: hint elements', () => {
+  const app = readFileSync(appPath, 'utf8');
+  assert.ok(!app.includes('settingsRootDefault'), 'el.settingsRootDefault gone');
+  assert.ok(!app.includes('settingsProjectsRootDefault'), 'el.settingsProjectsRootDefault gone');
 });

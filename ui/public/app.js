@@ -174,10 +174,8 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
-  settingsRootDefault: $('#settingsRootDefault'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
-  settingsProjectsRootDefault: $('#settingsProjectsRootDefault'),
   settingsSave: $('#settingsSave'),
   settingsReset: $('#settingsReset'),
   settingsMsg: $('#settingsMsg'),
@@ -5882,11 +5880,6 @@ async function loadSettings() {
     paintBudgetSettings(data);
     paintBudgetReadout();
     refreshBudget();
-    if (el.settingsRootDefault) el.settingsRootDefault.textContent = data.default ? `Default: ${data.default}` : '';
-    if (el.settingsProjectsRootDefault) {
-      const fallback = projectsRootFallback(data);
-      el.settingsProjectsRootDefault.textContent = fallback ? `Default: ${fallback}` : '';
-    }
     setSettingsMsg('');
   } catch (e) { setSettingsMsg(e.message, 'err'); }
 }
@@ -5925,6 +5918,55 @@ if (el.settingsSave) {
   ));
 }
 if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSettings('', ''));
+
+// ---------------------------------------------------------------------------
+// ⓘ info tooltips (settings). Content lives in each icon's hidden .tip-content
+// span; ONE shared fixed-position bubble is created lazily and repositioned per
+// icon — same layering as the stats chart tip (z-index 70). Delegated so icons
+// added by future markup need no extra wiring. pointer-events:none on the
+// bubble keeps mouseout from flickering when the tip overlaps the icon.
+let infoBubble = null;
+function showInfoTip(icon) {
+  const content = icon.querySelector('.tip-content');
+  if (!content) return;
+  if (!infoBubble) {
+    infoBubble = document.createElement('div');
+    infoBubble.className = 'info-bubble';
+    infoBubble.setAttribute('role', 'tooltip');
+    document.body.appendChild(infoBubble);
+  }
+  infoBubble.innerHTML = content.innerHTML;
+  infoBubble.classList.remove('hidden');
+  // Below the icon, left-aligned; clamp into the viewport, flip above if the
+  // bottom would overflow. (Zero-size rects under jsdom fall through safely.)
+  const r = icon.getBoundingClientRect();
+  const b = infoBubble.getBoundingClientRect();
+  let left = r.left;
+  let top = r.bottom + 8;
+  const vw = window.innerWidth || 0;
+  const vh = window.innerHeight || 0;
+  if (left + b.width > vw - 12) left = Math.max(12, vw - b.width - 12);
+  if (top + b.height > vh - 12 && r.top - b.height - 8 > 0) top = r.top - b.height - 8;
+  infoBubble.style.left = `${left}px`;
+  infoBubble.style.top = `${top}px`;
+}
+const hideInfoTip = () => { if (infoBubble) infoBubble.classList.add('hidden'); };
+
+document.addEventListener('mouseover', (e) => {
+  const icon = e.target.closest?.('.info-tip');
+  if (icon) showInfoTip(icon);
+});
+document.addEventListener('mouseout', (e) => {
+  if (e.target.closest?.('.info-tip')) hideInfoTip();
+});
+document.addEventListener('focusin', (e) => {
+  const icon = e.target.closest?.('.info-tip');
+  if (icon) showInfoTip(icon);
+});
+document.addEventListener('focusout', (e) => {
+  if (e.target.closest?.('.info-tip')) hideInfoTip();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideInfoTip(); });
 
 // ---------------------------------------------------------------------------
 // Settings: budget & cost limits card. Reads the three limit keys off the same
