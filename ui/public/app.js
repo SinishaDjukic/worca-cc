@@ -561,8 +561,6 @@ function handleServerMessage(msg) {
       break;
   }
 
-  r.lastActivityAt = Date.now();   // recency for ordering
-
   updateNavCounts();
   // If the user is already on the Running view, build/repaint cards now.
   // Without this, a run this tab didn't start (begun in another tab or via the
@@ -1008,6 +1006,18 @@ function paintRunGraph(host, manifest, view) {
 // Running view; events are fanned out by handleServerMessage.
 // ---------------------------------------------------------------------------
 const runs = new Map();
+let runOrderSeq = 0;   // monotonic per-tab creation order; drives stable card/tab ordering
+// runId -> orderKey, kept even after the run leaves the runs map (resume drops
+// the superseded paused run). A trailing tagged frame for a dropped runId
+// re-materializes it through upsertRun -> makeRun; without this memo it would
+// mint a FRESH (highest) key and outrank the run that just superseded it.
+const runOrderKeys = new Map();
+
+function orderKeyFor(runId) {
+  let key = runOrderKeys.get(runId);
+  if (key === undefined) { key = ++runOrderSeq; runOrderKeys.set(runId, key); }
+  return key;
+}
 
 function nowHMS() {
   const d = new Date();
@@ -1033,7 +1043,11 @@ function makeRun({
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     workspaceId,
     workspaceName,
-    lastActivityAt: Date.now(),  // recency for tab/overview ordering (bumped on every tagged event)
+    // Stable ordering key: assigned once per runId, never bumped by activity
+    // and never re-minted if the run is dropped and re-materialized.
+    // hello seeds runs in server registration order, so this tracks true
+    // creation order across reloads too (newest = highest).
+    orderKey: orderKeyFor(runId),
     stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
     nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
@@ -3226,6 +3240,10 @@ function repaintFilteredLog(r, root = r.el) {
   if (!r || !root) return;
   const logEl = root.querySelector('.log');
   if (!logEl) return;
+  // Auto-scroll OFF freezes the viewport: carry the position across the
+  // wipe+rebuild (the browser clamps if the filtered content is shorter).
+  // ON keeps its pin-to-bottom via maybeAutoscrollLog below.
+  const savedTop = logEl.scrollTop;
   logEl.innerHTML = '';
   delete logEl.dataset.empty;
   let shown = 0;
@@ -3237,6 +3255,7 @@ function repaintFilteredLog(r, root = r.el) {
     logEl.dataset.empty = '1';
   }
   maybeAutoscrollLog(r);
+  if (r.autoscroll === false && savedTop) logEl.scrollTop = savedTop;
 }
 
 function onArtifact(r, msg) {
@@ -3677,7 +3696,6 @@ function finishRun(r, status) {
   r.status = status;
   r.pendingQuestion = null;
   r._answering = false;
-  r.lastActivityAt = Date.now();
 
   // Clear the card's qpanel + attention before it drops out.
   if (r.el) {
@@ -8277,7 +8295,8 @@ function overviewRuns() {
 }
 
 // Ordering (spec): needs-attention → running/starting → finished-unread;
-// most-recently-active first within a group.
+// newest-created first within a group. STABLE while running: log activity
+// never reorders (orderKey is assigned once in makeRun, never bumped).
 function tabGroupRank(r) {
   if (r.pendingQuestion != null) return 0;
   if (isLive(r)) return 1;
@@ -8286,7 +8305,7 @@ function tabGroupRank(r) {
 function cmpTabRuns(a, b) {
   const g = tabGroupRank(a) - tabGroupRank(b);
   if (g) return g;
-  return (b.lastActivityAt || 0) - (a.lastActivityAt || 0);
+  return (b.orderKey || 0) - (a.orderKey || 0);
 }
 
 // Status dot family for a child row (left edge). Reuses existing color tokens.
@@ -8819,25 +8838,48 @@ function renderRunningView() {
   renderOverview();
 }
 
+// Attach/move one card without losing user scroll state. Re-inserting an
+// attached node is spec'd as remove+insert, which zeroes every scrollable
+// descendant (.log scrollTop, .run-flow-wrap scrollLeft). Save → insert →
+// write back synchronously (before paint), same technique as buildRunGraph's
+// scrollLeft preservation across its structural rebuild.
+function insertCardPreservingScroll(list, el, before) {
+  const logEl = el.querySelector('.log');
+  const flowWrap = el.querySelector('.run-flow-wrap');
+  const savedTop = logEl ? logEl.scrollTop : 0;
+  const savedLeft = flowWrap ? flowWrap.scrollLeft : 0;
+  list.insertBefore(el, before || null);
+  if (logEl && savedTop) logEl.scrollTop = savedTop;
+  if (flowWrap && savedLeft) flowWrap.scrollLeft = savedLeft;
+}
+
 // Shared #run-list reconcile. Builds/reuses one card per run, orders to match,
-// removes stale cards. Tolerates r.el === null (finishRun evicts non-lingerers,
-// and buildRunCard only sets r.el when pendingQuestion != null — app.js:6075).
-// buildRunCard RETURNS the node; assign its return to r.el.
+// removes stale cards. Tolerates r.el === null (finishRun evicts non-lingerers).
+// buildRunCard RETURNS the node — assign its return to r.el (it self-assigns
+// only on the pendingQuestion hydration path, app.js:8405–8407).
+// A card already in its correct slot is NOT touched — reattaching an attached
+// node resets descendant scroll (log pane, stepper row) and breaks the .main
+// scroller's anchoring, which is exactly the scroll-reset-on-every-log bug.
 function paintRunList(list, rlist, emptyMsg) {
   if (rlist.length) {
     const empty = list.querySelector('.run-empty');
     if (empty) empty.remove();
   }
   const seen = new Set();
+  let prev = null;   // last correctly-placed card
   for (const r of rlist) {
     seen.add(r.runId);
     if (!r.el || r.el.dataset.runId !== r.runId) r.el = buildRunCard(r);
-    list.appendChild(r.el);   // appendChild MOVES existing nodes → enforces order
+    const inPlace = r.el.parentNode === list && r.el.previousElementSibling === prev;
+    if (!inPlace) {
+      insertCardPreservingScroll(list, r.el, prev ? prev.nextSibling : list.firstChild);
+    }
     paintRunCard(r);
-    // Card is now in the document → pin its log to the bottom (no-op if the
-    // auto-scroll switch is off). Covers fresh hydration + reattach, where a
-    // detached-node scrollTop set earlier was lost (scrollHeight≈0 off-DOM).
+    // Pin to bottom when auto-scroll is ON (no-op when OFF). Idempotent for
+    // in-place cards; covers fresh hydration + real moves, where a detached-node
+    // scrollTop set earlier was lost (scrollHeight≈0 off-DOM).
     maybeAutoscrollLog(r);
+    prev = r.el;
   }
   [...list.children].forEach((c) => {
     if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
@@ -8899,7 +8941,33 @@ function renderPipelineTabs() {
 
   const host = $('#nav-running-children');
   if (!host) return;
-  if (rows.length === 0) { host.innerHTML = ''; host.classList.add('hidden'); return; }
+  if (rows.length === 0) {
+    host.innerHTML = ''; host.dataset.tabsSig = ''; host.classList.add('hidden');
+    return;
+  }
+
+  // Rebuild gate: every tagged event (incl. every log line) lands here, but a
+  // log frame changes nothing a row renders. Skip identical rebuilds so the
+  // sidebar DOM (and its scroll position) stays put; any rendered datum
+  // changing — order, dot, title, project, end marker, active, lingering,
+  // collapsed — changes the signature and repaints as before. JSON.stringify
+  // is the encoding: titles/labels are free text, so a hand-joined concat
+  // could alias two different states; JSON escaping is unambiguous.
+  const sig = JSON.stringify([runningCollapsed, rows.map((r) => [
+    r.runId,
+    runDotClass(r),
+    r.title,
+    Array.isArray(r.projectNames) && r.projectNames.length
+      ? r.projectNames.join(' · ') : projectName(r.projectDir),
+    r.pendingQuestion != null ? 'q'
+      : isPaused(r) ? 'p'
+      : (r._finished || isTerminalStatus(r.status)) ? (r.status === 'done' ? 'ok' : 'bad')
+      : '',
+    r.runId === state.selectedRunId,
+    isLingering(r),
+  ])]);
+  if (host.dataset.tabsSig === sig) return;
+  host.dataset.tabsSig = sig;
 
   host.classList.remove('hidden');
   host.classList.toggle('collapsed', runningCollapsed);  // auto-expanded: default false
