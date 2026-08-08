@@ -1188,7 +1188,7 @@ app.get('/api/counts', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=week|month|all  -> the Statistics view payload (§6.9).
+// GET /api/stats?range=today|week|month|all  -> the Statistics view payload (§6.9).
 // Pure DB reads; an unknown range is the caller's fault, so getStats' RangeError
 // maps to 400 while anything else keeps bubbling to the error handler.
 app.get('/api/stats', (req, res) => {

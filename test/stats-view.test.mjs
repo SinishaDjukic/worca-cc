@@ -215,3 +215,39 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
   assert.equal(empty.querySelectorAll('.chart-empty').length, 2);
   assert.equal(empty.querySelector('svg.chart-svg'), null);
 });
+
+// --- Today range -----------------------------------------------------------
+
+test('renderKpiRow: Today delta chips read "vs yesterday"', () => {
+  const kpi = renderKpiRow({ ...MODEL, range: 'today' }, { doc });
+  const chip = kpi.querySelector('.stat-delta');
+  assert.ok(chip, 'chip renders when prev exists');
+  assert.equal(chip.title, 'vs yesterday');
+});
+
+const SPEND_HOURLY = {
+  bucket: 'hour', currentBucketStartMs: +new Date(2026, 7, 6, 10),
+  rangeLabel: 'Thu Aug 6',
+  series: [
+    { bucketStartMs: +new Date(2026, 7, 6, 8),  spentUsd: 0.5 },
+    { bucketStartMs: +new Date(2026, 7, 6, 9),  spentUsd: 0 },
+    { bucketStartMs: +new Date(2026, 7, 6, 10), spentUsd: 1.25 },
+  ],
+};
+
+test('renderSpendChart: hour buckets get hourly title, ticks, and tooltips', () => {
+  const card = renderSpendChart(SPEND_HOURLY, { doc });
+  assert.match(card.querySelector('h2').textContent, /Spend per hour/);
+  const ticks = [...card.querySelectorAll('svg text')].map((t) => t.textContent);
+  assert.ok(ticks.includes('08:00'), 'zero-padded hourly x tick');
+  const hit = card.querySelector('.ch-hit');
+  assert.match(hit.dataset.tip, /^Thu Aug 6, 08:00\n/, 'tooltip head names the hour');
+});
+
+test('renderStatsBody: Today gets a single-date range label and per-hour cards', () => {
+  const model = { ...MODEL, range: 'today', bucket: 'hour',
+    windowStartMs: +new Date(2026, 7, 6), windowEndMs: +new Date(2026, 7, 7),
+    series: SPEND_HOURLY.series.map((p) => ({ ...p, finished: 0, stopped: 0, failed: 0 })) };
+  const hint = renderStatsBody(model, { doc }).querySelector('.chart-card .hint');
+  assert.equal(hint.textContent, 'Thu Aug 6', 'no "Thu Aug 6 – Thu Aug 6" span');
+});

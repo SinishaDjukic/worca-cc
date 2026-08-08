@@ -101,6 +101,19 @@ test('range seg: clicking All time refetches range=all and moves .on', async () 
     false, 'the previous segment lost .on');
 });
 
+test('range seg: clicking Today refetches range=today and moves .on', async () => {
+  const { window, calls, tick, showStats } = await boot();
+  await showStats();
+  const todayBtn = window.document.querySelector('#stats-range [data-range="today"]');
+  assert.ok(todayBtn, 'Today button exists in the segmented control');
+  todayBtn.click();
+  await tick();
+  assert.ok(calls.some((u) => u.includes('range=today')), 'refetched with range=today');
+  assert.ok(todayBtn.classList.contains('on'), 'Today is the highlighted segment');
+  assert.equal(window.document.querySelector('#stats-range [data-range="month"]').classList.contains('on'),
+    false, 'the previous segment lost .on');
+});
+
 test('tooltip: pointerover on a .ch-hit fills and shows #stats-tip; focus parity', async () => {
   const { window, showStats } = await boot();
   await showStats();
