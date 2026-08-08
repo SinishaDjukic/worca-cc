@@ -79,6 +79,11 @@ test('style.css defines the info-tip icon and the floating bubble', () => {
   assert.match(css, /\.info-bubble\{[^}]*position:fixed/, 'bubble is viewport-positioned');
   assert.match(css, /\.info-bubble\{[^}]*z-index:70/, 'bubble on the established tooltip layer');
   assert.ok(css.includes('.label-row{'), '.label-row rule');
+  // `.card h2`'s later 18px bottom margin wins the specificity tie against
+  // `.card-head h2` — inside the flex row that sinks the ⓘ below the heading.
+  assert.match(css, /\.label-row > h2\{margin:0;\}/, 'budget h2 sheds its bottom margin inside the flex row');
+  // The deleted disclaimer hint used to separate the readout from the fields.
+  assert.match(css, /\.budget-readout\{[^}]*margin-bottom:24px/, 'spend readout keeps a section gap below it');
 });
 
 async function boot({ fetchHandler } = {}) {

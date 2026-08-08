@@ -295,6 +295,9 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 /* Label + ⓘ ride together; the row replaces the label's own bottom margin. */
 .label-row{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
 .label-row > label{display:inline-block;font-weight:600;font-size:13px;margin-bottom:0;}
+/* `.card h2` (later in the file) wins its tie with `.card-head h2` and re-adds an
+   18px bottom margin; centered flex would sink the ⓘ below the heading text. */
+.label-row > h2{margin:0;}
 .card-head .label-row{margin-bottom:0;}
 .info-tip{position:relative;width:16px;height:16px;flex:0 0 16px;padding:0;
   border:1.5px solid var(--ink-3);border-radius:50%;background:transparent;color:var(--ink-3);
@@ -1310,7 +1313,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .topnav button.active .topnav-amt{color:inherit;}
 
 /* ---------- Budget readout (Settings) ---------- */
-.budget-readout{margin-bottom:6px;}
+/* Section gap before the limit fields (the disclaimer hint that used to sit
+   here moved into the card heading's ⓘ tooltip). */
+.budget-readout{margin-bottom:24px;}
 .budget-readout .spend-ind-meter{max-width:420px;}
 .budget-readout-line{font-size:13px;color:var(--ink-2);margin-top:8px;}
 .budget-readout-line b{font-family:var(--mono);font-weight:600;color:var(--ink);}
