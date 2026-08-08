@@ -62,12 +62,12 @@ const PROJECTS_ROOT_HINT =
   'The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and '
   + '.mcp.json are made available to every pipeline agent. Leave blank to use your home folder.';
 
-test('settings markup carries a Projects root folder field, its picker, and the pinned hint', () => {
+test('settings markup carries a Projects root folder field, its picker, and the tooltip hint', () => {
   assert.ok(html.includes('id="settingsProjectsRoot"'), 'missing #settingsProjectsRoot input');
   assert.ok(html.includes('<label for="settingsProjectsRoot">Projects root folder</label>'),
     'missing/renamed "Projects root folder" label');
   assert.ok(html.includes('id="settingsProjectsRootBrowse"'), 'missing folder-picker button');
-  // The hint is wrapped across source lines; compare whitespace-collapsed.
+  // The hint lives in the ⓘ tooltip now; it is wrapped across source lines — compare whitespace-collapsed.
   assert.ok(html.replace(/\s+/g, ' ').includes(PROJECTS_ROOT_HINT), 'projectsRoot hint text drifted from §5.1');
 });
 
@@ -82,8 +82,6 @@ test('settings view renders the field and reflects the server projectsRoot + def
   assert.ok(input, 'settings view has a projects-root input');
   assert.equal(input.value, '/home/me/code', 'the persisted projectsRoot loaded into the field');
   assert.equal(input.placeholder, '/home/me', 'the blank-field fallback shown as the placeholder');
-  assert.ok(window.document.querySelector('#settingsProjectsRootDefault').textContent.includes('/home/me'),
-    'the fallback also named in the hint line');
 });
 
 // The pinned hint promises "Leave blank to use your home folder", so an unset

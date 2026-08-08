@@ -291,6 +291,25 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
   border-right:2px solid var(--ink-2);border-bottom:2px solid var(--ink-2);
   transform:translateY(-65%) rotate(45deg);pointer-events:none;}
 
+/* ---------- Info tooltips (settings) ---------- */
+/* Label + ⓘ ride together; the row replaces the label's own bottom margin. */
+.label-row{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+.label-row > label{display:inline-block;font-weight:600;font-size:13px;margin-bottom:0;}
+.card-head .label-row{margin-bottom:0;}
+.info-tip{position:relative;width:16px;height:16px;flex:0 0 16px;padding:0;
+  border:1.5px solid var(--ink-3);border-radius:50%;background:transparent;color:var(--ink-3);
+  font-family:inherit;font-size:10px;font-weight:700;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center;cursor:help;
+  transition:color .15s,border-color .15s;}
+.info-tip:hover{border-color:var(--ink);color:var(--ink);}
+.info-tip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The shared floating bubble (created once by app.js, filled per icon). */
+.info-bubble{position:fixed;z-index:70;background:var(--ink);color:#fff;border-radius:10px;
+  padding:10px 13px;font-size:12px;line-height:1.5;max-width:340px;box-shadow:var(--shadow);
+  pointer-events:none;}
+.info-bubble code{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.14);
+  border-radius:4px;padding:1px 4px;}
+
 .row-2,.grid-2{display:flex;gap:11px;}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;}
 .row-2 .with-x{flex:1;}

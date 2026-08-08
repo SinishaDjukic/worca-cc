@@ -927,30 +927,30 @@
 
           <section class="card" style="max-width:760px;padding:22px">
             <div class="field">
-              <label for="settingsRoot">Worca CC root folder</label>
+              <div class="label-row">
+                <label for="settingsRoot">Worca CC root folder</label>
+                <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
+                  The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
+                  history store, the project list, and saved workflows. Leave blank to use the default.
+                  Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
+                  data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
+                  the old root is left in place.
+                </span></button>
+              </div>
               <input id="settingsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
-              <small class="hint">
-                The folder under which Worca CC keeps its data — a <code>.worca-cc/</code> directory holding the
-                history store, the project list, and saved workflows. Leave blank to use the default.
-                Changes apply to new runs immediately.
-              </small>
-              <small class="hint" id="settingsRootDefault"></small>
-              <small class="hint">
-                Note: changing the root does <b>not</b> move existing data. Worca CC starts a fresh
-                <code>.worca-cc/</code> under the new folder; history under the old root is left in place.
-              </small>
             </div>
             <div class="field">
-              <label for="settingsProjectsRoot">Projects root folder</label>
+              <div class="label-row">
+                <label for="settingsProjectsRoot">Projects root folder</label>
+                <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
+                  The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
+                  .mcp.json are made available to every pipeline agent. Leave blank to use your home folder.
+                </span></button>
+              </div>
               <div class="path-row">
                 <input id="settingsProjectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
                 <button type="button" id="settingsProjectsRootBrowse" class="btn btn-ghost btn-mini" title="Pick the projects root folder">Browse&hellip;</button>
               </div>
-              <small class="hint">
-                The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
-                .mcp.json are made available to every pipeline agent. Leave blank to use your home folder.
-              </small>
-              <small class="hint" id="settingsProjectsRootDefault"></small>
             </div>
             <div class="add-project-actions" style="margin-top:14px">
               <button type="button" id="settingsReset" class="btn btn-ghost btn-mini">Reset to default</button>
@@ -960,28 +960,47 @@
           </section>
 
           <section class="card" style="max-width:760px;padding:22px;margin-top:18px">
-            <div class="card-head"><h2>Budget &amp; cost limits</h2></div>
+            <div class="card-head">
+              <div class="label-row">
+                <h2>Budget &amp; cost limits</h2>
+                <button type="button" class="info-tip" aria-label="About budget costs">i<span class="tip-content hidden">
+                  Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.
+                </span></button>
+              </div>
+            </div>
             <div id="budgetReadout"></div>
-            <small class="hint">Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.</small>
             <div class="field">
-              <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
+              <div class="label-row">
+                <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
+                <button type="button" class="info-tip" aria-label="About Per-pipeline cost limit">i<span class="tip-content hidden">
+                  Pause a pipeline when its estimated cost reaches this amount. Leave blank for no limit.
+                </span></button>
+              </div>
               <input id="budgetPerPipeline" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
-              <small class="hint">Pause a pipeline when its estimated cost reaches this amount. Leave blank for no limit.</small>
             </div>
             <div class="field">
-              <label for="budgetTotal">Total cost limit (USD)</label>
+              <div class="label-row">
+                <label for="budgetTotal">Total cost limit (USD)</label>
+                <button type="button" class="info-tip" aria-label="About Total cost limit">i<span class="tip-content hidden">
+                  Pause all pipelines and block new ones when total spend in the period reaches this amount.
+                  Leave blank for no limit.
+                </span></button>
+              </div>
               <input id="budgetTotal" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
-              <small class="hint">Pause all pipelines and block new ones when total spend in the period reaches this amount. Leave blank for no limit.</small>
             </div>
             <div class="field">
-              <label for="budgetResetPeriod">Reset period</label>
+              <div class="label-row">
+                <label for="budgetResetPeriod">Reset period</label>
+                <button type="button" class="info-tip" aria-label="About Reset period">i<span class="tip-content hidden">
+                  Spend counts within the current period and returns to $0.00 at the reset. Times are local.
+                </span></button>
+              </div>
               <div class="select-wrap">
                 <select id="budgetResetPeriod" class="select">
                   <option value="weekly">Weekly &mdash; resets Monday 00:00</option>
                   <option value="monthly">Monthly &mdash; resets on the 1st, 00:00</option>
                 </select>
               </div>
-              <small class="hint">Spend counts within the current period and returns to $0.00 at the reset. Times are local.</small>
             </div>
             <div class="add-project-actions" style="margin-top:14px">
               <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
