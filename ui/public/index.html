@@ -10,6 +10,21 @@
   </head>
   <body>
     <div class="app">
+      <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
+      <nav class="topnav" aria-label="Primary compact">
+        <button type="button" class="active" data-nav="new">New</button>
+        <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+        <button type="button" data-nav="history">History</button>
+        <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
+        <button type="button" data-nav="workspaces">Workspaces</button>
+        <button type="button" data-nav="agents">Agents</button>
+        <button type="button" data-nav="plugins">Plugins</button>
+        <button type="button" data-nav="projects">Projects</button>
+        <button type="button" data-nav="guardrails">Guardrails</button>
+        <button type="button" data-nav="composer">Composer</button>
+        <button type="button" data-nav="settings">Settings</button>
+      </nav>
+
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar">
         <div class="brand">
@@ -17,10 +32,12 @@
         </div>
 
         <nav class="nav" aria-label="Primary">
-          <button type="button" class="active" data-nav="new">
+          <button type="button" class="active nav-cta" data-nav="new">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
             <span>New pipeline</span>
           </button>
+
+          <div class="nav-sect">Activity</div>
           <button type="button" data-nav="running">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
@@ -38,32 +55,38 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
             <span>Statistics</span>
           </button>
-          <button type="button" data-nav="workspaces">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
-            <span>Workspaces</span>
-            <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
+
+          <div class="nav-sect">Build</div>
+          <button type="button" data-nav="composer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+            <span>Pipeline Composer</span>
           </button>
           <button type="button" data-nav="agents">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
             <span>Agents</span>
           </button>
+          <button type="button" data-nav="guardrails">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
+            <span>Guardrails</span>
+          </button>
           <button type="button" data-nav="plugins">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8Z"></path><path d="M12 17v4"></path></svg>
             <span>Plugins</span>
           </button>
+
+          <div class="nav-sect">Manage</div>
           <button type="button" data-nav="projects">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
             <span>Projects</span>
             <span class="nav-count n-grey" id="nav-projects-count">0</span>
           </button>
-          <button type="button" data-nav="guardrails">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
-            <span>Guardrails</span>
+          <button type="button" data-nav="workspaces">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
+            <span>Workspaces</span>
+            <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
           </button>
-          <button type="button" data-nav="composer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
-            <span>Pipeline Composer</span>
-          </button>
+
+          <div class="nav-sep" aria-hidden="true"></div>
           <button type="button" data-nav="settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
             <span>Settings</span>
@@ -81,20 +104,6 @@
 
       <!-- ===================== Main ===================== -->
       <main class="main">
-        <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
-        <nav class="topnav" aria-label="Primary compact">
-          <button type="button" class="active" data-nav="new">New</button>
-          <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
-          <button type="button" data-nav="history">History</button>
-          <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
-          <button type="button" data-nav="workspaces">Workspaces</button>
-          <button type="button" data-nav="agents">Agents</button>
-          <button type="button" data-nav="plugins">Plugins</button>
-          <button type="button" data-nav="projects">Projects</button>
-          <button type="button" data-nav="guardrails">Guardrails</button>
-          <button type="button" data-nav="composer">Composer</button>
-          <button type="button" data-nav="settings">Settings</button>
-        </nav>
 
         <!-- ===== VIEW: NEW PIPELINE ===== -->
         <section class="view" data-view="new">
