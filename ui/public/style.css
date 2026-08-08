@@ -62,7 +62,7 @@ body{
 .brand{display:flex;align-items:center;padding:0 8px;margin-bottom:10px;}
 .brand .logo{height:48px;width:auto;display:block;}
 
-.nav{display:flex;flex-direction:column;gap:4px;}
+.nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;}
 .nav button{
   display:flex;align-items:center;gap:13px;width:100%;margin:0;
   padding:11px 13px;border:0;border-radius:13px;
@@ -76,6 +76,15 @@ body{
 .nav button.active{background:var(--ink);color:#fff;}
 .nav button.active svg{stroke:#fff;}
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.nav-sect{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);padding:14px 13px 2px;user-select:none;}
+.nav-sep{margin-top:auto;border-top:1px solid var(--line);}
+/* Primary action: outlined at rest so it doesn't fight the dark current-view
+   fill; border thickness is absorbed into padding to keep row height equal. */
+.nav button.nav-cta{border:1.5px solid var(--ink);color:var(--ink);font-weight:600;
+  padding:9.5px 11.5px;}
+.nav button.nav-cta:hover{background:var(--field);}
+.nav button.nav-cta.active{background:var(--ink);border-color:var(--ink);color:#fff;}
 .nav-count{margin-left:auto;min-width:22px;height:22px;padding:0 7px;border-radius:999px;
   display:grid;place-items:center;font-size:11.5px;font-weight:700;}
 .nav-count.n-amber{background:var(--amber);color:#fff;}

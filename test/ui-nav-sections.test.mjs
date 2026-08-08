@@ -108,3 +108,42 @@ test('clicking the CTA routes back to the New view', async () => {
   assert.ok(doc.querySelector('.nav button[data-nav="new"]').classList.contains('active'),
     'CTA still receives the .active state from the router');
 });
+
+// ---- Task 2: sidebar CSS ----
+// Same anchored ruleBody idiom as test/ui-pinned-sidebar.test.mjs.
+function ruleBody(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = css.match(new RegExp('(?:^|[\\s,}])' + escaped + '\\s*\\{([^}]*)\\}'));
+  return m ? m[1] : null;
+}
+
+test('.nav fills the sidebar column so margin-top:auto can pin Settings', () => {
+  const nav = ruleBody('.nav');
+  assert.ok(nav, '.nav rule must exist');
+  assert.match(nav, /flex:\s*1 1 auto/);
+});
+
+test('.nav-sect is a quiet uppercase label, not a button lookalike', () => {
+  const sect = ruleBody('.nav-sect');
+  assert.ok(sect, '.nav-sect rule must exist');
+  assert.match(sect, /text-transform:\s*uppercase/);
+  assert.match(sect, /letter-spacing/);
+  assert.match(sect, /color:\s*var\(--ink-3\)/);
+});
+
+test('.nav-sep pins the tail: pushes to the bottom and draws the divider', () => {
+  const sep = ruleBody('.nav-sep');
+  assert.ok(sep, '.nav-sep rule must exist');
+  assert.match(sep, /margin-top:\s*auto/);
+  assert.match(sep, /border-top:\s*1px solid var\(--line\)/);
+});
+
+test('CTA is outlined at rest and compensates the border in its padding', () => {
+  const cta = ruleBody('.nav button.nav-cta');
+  assert.ok(cta, '.nav button.nav-cta rule must exist');
+  assert.match(cta, /border:\s*1\.5px solid var\(--ink\)/);
+  assert.match(cta, /padding:\s*9\.5px 11\.5px/);
+  const active = ruleBody('.nav button.nav-cta.active');
+  assert.ok(active, 'active CTA keeps the dark current-view fill');
+  assert.match(active, /background:\s*var\(--ink\)/);
+});
