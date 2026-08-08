@@ -41,6 +41,20 @@ test('renderKpiRow: 4 tiles, caveat tooltip, fractions, subs', () => {
   assert.match(tiles[3].querySelector('.stat-frac').textContent, /\/ 18/);
 });
 
+test('renderKpiRow: numeric tokens in tile subs are bold, prose stays plain', () => {
+  const tiles = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile');
+  const bolds = (t) => [...t.querySelectorAll('.stat-sub b')].map((b) => b.textContent);
+  assert.deepEqual(bolds(tiles[0]), ['$50.00', '3d 4h']);
+  assert.equal(tiles[0].querySelector('.stat-sub').textContent, 'of $50.00 · resets in 3d 4h');
+  assert.deepEqual(bolds(tiles[1]), ['40']);
+  assert.deepEqual(bolds(tiles[2]), ['5', '1', '2']);
+  assert.deepEqual(bolds(tiles[3]), [], 'no numbers in "opened in this period"');
+
+  // Range/window mismatch line bolds both dollar figures.
+  const all = renderKpiRow({ ...MODEL, range: 'all' }, { doc }).querySelectorAll('.stat-tile')[0];
+  assert.deepEqual(bolds(all), ['$41.23', '$50.00']);
+});
+
 test('renderKpiRow: delta chips only when prev exists and prev value > 0; none for all-time', () => {
   const withPrev = renderKpiRow(MODEL, { doc });
   assert.ok(withPrev.querySelector('.stat-delta'));

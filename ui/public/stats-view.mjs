@@ -84,6 +84,22 @@ function deltaChip(doc, cur, prevVal, range) {
   return chip;
 }
 
+// Numeric tokens in tile sub-lines ($50.00, 3d 4h, bare counts) get <b> so the
+// figures read at a glance; surrounding prose stays plain. Unit groups like
+// "3d 4h" bold as one token.
+const SUB_NUM_RE = /\$[\d,.]+|\d+[a-z]+(?: \d+[a-z]+)*|\d+/g;
+function subEl(doc, str) {
+  const el = h(doc, 'small', 'stat-sub');
+  let last = 0;
+  for (const m of str.matchAll(SUB_NUM_RE)) {
+    if (m.index > last) el.appendChild(doc.createTextNode(str.slice(last, m.index)));
+    el.appendChild(h(doc, 'b', null, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) el.appendChild(doc.createTextNode(str.slice(last)));
+  return el;
+}
+
 function tile(doc, { iconD, label, chip, valueNodes, meter, sub, title }) {
   const card = h(doc, 'section', 'card stat-tile');
   if (title) card.title = title;
@@ -96,7 +112,7 @@ function tile(doc, { iconD, label, chip, valueNodes, meter, sub, title }) {
   for (const n of valueNodes) value.appendChild(n);
   card.appendChild(value);
   if (meter) card.appendChild(meter);
-  if (sub) card.appendChild(h(doc, 'small', 'stat-sub', sub));
+  if (sub) card.appendChild(subEl(doc, sub));
   return card;
 }
 

@@ -179,3 +179,18 @@ test('.topnav-sep is a hairline that cannot flex-grow', () => {
   assert.ok(topnavBlock, 'media block that shows .topnav must exist');
   assert.match(topnavBlock, /\.topnav-sep\{/, '.topnav-sep must be defined inside that media block');
 });
+
+test('pinned Settings gets breathing room above the footer cards', () => {
+  const foot = ruleBody('.side-foot');
+  assert.ok(foot, '.side-foot rule must exist');
+  assert.match(foot, /padding-top:\s*14px/,
+    'footer needs padding-top so Settings does not sit flush on the spend card');
+});
+
+test('compact topnav wraps instead of spilling past its rounded box', () => {
+  const media = [...css.matchAll(/@media[^{]*\{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+  const topnavBlock = media.find((b) => /\.topnav\{[^}]*display:flex/.test(b));
+  assert.ok(topnavBlock, 'media block that shows .topnav must exist');
+  assert.match(topnavBlock, /\.topnav\{[^}]*flex-wrap:\s*wrap/,
+    '11 buttons cannot shrink below min-content; without wrap they overflow the pill below ~965px');
+});

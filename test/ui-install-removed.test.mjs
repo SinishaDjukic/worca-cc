@@ -12,9 +12,16 @@ test('index.html: Install agents button is removed', () => {
   assert.ok(!html.includes('Install agents'), '"Install agents" label still present');
 });
 
-test('index.html: sidebar footer + WS status survive the removal', () => {
+test('index.html: sidebar footer survives; WS status indicator is removed', () => {
   assert.ok(html.includes('class="side-foot"'), '.side-foot footer was wrongly removed');
-  assert.ok(html.includes('id="ws-dot"'), 'WS status dot was wrongly removed');
+  assert.ok(!html.includes('id="ws-dot"'), 'WS status dot still present');
+  assert.ok(!html.includes('id="ws-label"'), 'WS status label still present');
+});
+
+test('app.js: WS status indicator wiring is removed', () => {
+  assert.ok(!appJs.includes('setWsStatus'), 'setWsStatus still present');
+  assert.ok(!appJs.includes('wsDot'), 'wsDot DOM ref still present');
+  assert.ok(!appJs.includes('wsLabel'), 'wsLabel DOM ref still present');
 });
 
 test('app.js: install button client wiring is removed', () => {

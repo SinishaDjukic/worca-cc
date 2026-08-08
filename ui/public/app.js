@@ -80,9 +80,6 @@ import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCost
 // Elements
 // ---------------------------------------------------------------------------
 const el = {
-  wsDot: $('#ws-dot'),
-  wsLabel: $('#ws-label'),
-
   form: $('#run-form'),
   projectSelect: $('#projectSelect'),
   projectDelete: $('#project-delete'),
@@ -282,7 +279,6 @@ function connectWS() {
     // there (handleServerMessage), not re-sent here. Reset the per-socket
     // dedupe set so the new socket re-subscribes to still-live runs.
     state.helloSubscribed = new Set();
-    setWsStatus(true);
   });
 
   ws.addEventListener('message', (e) => {
@@ -297,7 +293,6 @@ function connectWS() {
 
   ws.addEventListener('close', () => {
     state.wsReady = false;
-    setWsStatus(false);
     scheduleReconnect();
   });
 
@@ -317,11 +312,6 @@ function scheduleReconnect() {
     reconnectTimer = null;
     connectWS();
   }, 1500);
-}
-
-function setWsStatus(on) {
-  el.wsDot.className = 'dot ' + (on ? 'dot-on' : 'dot-off');
-  el.wsLabel.textContent = on ? 'connected' : 'disconnected';
 }
 
 // ---------------------------------------------------------------------------
@@ -9280,7 +9270,6 @@ if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 // boot
 // ---------------------------------------------------------------------------
 syncSourceToggle();
-setWsStatus(false);
 loadProjects();
 connectWS();
 // Restore the New-Pipeline target (project | workspace). 'workspace' lazy-loads
