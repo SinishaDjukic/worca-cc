@@ -170,7 +170,12 @@ test('separators are spans (button count and settings-text invariants hold)', ()
 
 test('.topnav-sep is a hairline that cannot flex-grow', () => {
   const sep = ruleBody('.topnav-sep');
-  assert.ok(sep, '.topnav-sep rule must exist (inside the topnav media block)');
+  assert.ok(sep, '.topnav-sep rule must exist');
   assert.match(sep, /flex:\s*0 0 1px/);
   assert.match(sep, /background:\s*var\(--line-2\)/);
+  // Placement: the rule must live inside the same media block that shows the topnav.
+  const media = [...css.matchAll(/@media[^{]*\{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+  const topnavBlock = media.find((b) => /\.topnav\{[^}]*display:flex/.test(b));
+  assert.ok(topnavBlock, 'media block that shows .topnav must exist');
+  assert.match(topnavBlock, /\.topnav-sep\{/, '.topnav-sep must be defined inside that media block');
 });
