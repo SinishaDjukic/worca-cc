@@ -155,6 +155,60 @@ test('keyboard: focus shows the bubble, Escape and blur hide it', async () => {
   assert.ok(bubble.classList.contains('hidden'), 'blur hides bubble');
 });
 
+test('focusin associates the icon with the bubble via aria-describedby; Escape/focusout clears it', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  assert.ok(!rootTip.hasAttribute('aria-describedby'), 'no association before focus');
+
+  fire(window, rootTip, 'focusin');
+  assert.equal(rootTip.getAttribute('aria-describedby'), 'info-bubble', 'icon points at the bubble');
+  const bubble = doc.getElementById('info-bubble');
+  assert.ok(bubble, 'the id the icon points at resolves to the bubble');
+  assert.ok(!bubble.classList.contains('hidden'), 'the described bubble is visible');
+
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.ok(!rootTip.hasAttribute('aria-describedby'), 'Escape clears the association');
+
+  fire(window, rootTip, 'focusin');
+  assert.equal(rootTip.getAttribute('aria-describedby'), 'info-bubble', 're-focus restores it');
+  fire(window, rootTip, 'focusout');
+  assert.ok(!rootTip.hasAttribute('aria-describedby'), 'focusout clears the association');
+
+  // Moving focus straight to a different icon (no intervening blur) hands the
+  // association off instead of leaving it stuck on the icon that lost focus.
+  fire(window, rootTip, 'focusin');
+  const budgetTip = doc.querySelector('button.info-tip[aria-label="About budget costs"]');
+  fire(window, budgetTip, 'focusin');
+  assert.ok(!rootTip.hasAttribute('aria-describedby'), 'previous icon released');
+  assert.equal(budgetTip.getAttribute('aria-describedby'), 'info-bubble', 'new icon takes over');
+});
+
+test('navigating away from Settings hides the info bubble (showView leave-guard)', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  fire(window, rootTip, 'focusin');
+  const bubble = doc.querySelector('.info-bubble');
+  assert.ok(bubble && !bubble.classList.contains('hidden'), 'bubble visible while still on Settings');
+  assert.equal(rootTip.getAttribute('aria-describedby'), 'info-bubble');
+
+  window.location.hash = 'new';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.ok(bubble.classList.contains('hidden'), 'bubble hidden after leaving Settings');
+  assert.ok(!rootTip.hasAttribute('aria-describedby'), 'association cleared on the way out too');
+});
+
 test('loadSettings has no dead references to the removed Default: hint elements', () => {
   const app = readFileSync(appPath, 'utf8');
   assert.ok(!app.includes('settingsRootDefault'), 'el.settingsRootDefault gone');

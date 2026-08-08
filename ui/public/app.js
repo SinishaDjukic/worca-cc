@@ -5925,20 +5925,36 @@ if (el.settingsReset) el.settingsReset.addEventListener('click', () => saveSetti
 // icon — same layering as the stats chart tip (z-index 70). Delegated so icons
 // added by future markup need no extra wiring. pointer-events:none on the
 // bubble keeps mouseout from flickering when the tip overlaps the icon.
+// aria-describedby ties the active icon to the bubble's stable #info-bubble id
+// so its text — otherwise display:none and shadowed by the icon's own
+// aria-label — reaches screen readers; infoTipIcon tracks which icon currently
+// holds that attribute so hideInfoTip can clear it with no event target to read
+// (e.g. when the router hides the tip on view switch).
 let infoBubble = null;
+let infoTipIcon = null;
 function showInfoTip(icon) {
   const content = icon.querySelector('.tip-content');
   if (!content) return;
   if (!infoBubble) {
     infoBubble = document.createElement('div');
     infoBubble.className = 'info-bubble';
+    infoBubble.id = 'info-bubble';
     infoBubble.setAttribute('role', 'tooltip');
     document.body.appendChild(infoBubble);
   }
   infoBubble.innerHTML = content.innerHTML;
   infoBubble.classList.remove('hidden');
+  if (infoTipIcon && infoTipIcon !== icon) infoTipIcon.removeAttribute('aria-describedby');
+  infoTipIcon = icon;
+  icon.setAttribute('aria-describedby', 'info-bubble');
   // Below the icon, left-aligned; clamp into the viewport, flip above if the
   // bottom would overflow. (Zero-size rects under jsdom fall through safely.)
+  // Reset any inline position left over from the previous icon first: a stale
+  // `left` parked near the right edge shrinks the shrink-to-fit width the
+  // getBoundingClientRect() below measures, squeezing the clamp math for
+  // whichever icon shows next on a narrower window.
+  infoBubble.style.left = '0px';
+  infoBubble.style.top = '0px';
   const r = icon.getBoundingClientRect();
   const b = infoBubble.getBoundingClientRect();
   let left = r.left;
@@ -5950,7 +5966,10 @@ function showInfoTip(icon) {
   infoBubble.style.left = `${left}px`;
   infoBubble.style.top = `${top}px`;
 }
-const hideInfoTip = () => { if (infoBubble) infoBubble.classList.add('hidden'); };
+const hideInfoTip = () => {
+  if (infoBubble) infoBubble.classList.add('hidden');
+  if (infoTipIcon) { infoTipIcon.removeAttribute('aria-describedby'); infoTipIcon = null; }
+};
 
 document.addEventListener('mouseover', (e) => {
   const icon = e.target.closest?.('.info-tip');
@@ -9136,6 +9155,10 @@ function showView(name, param = '') {
   if (currentShownView === 'guardrails' && name !== 'guardrails' && grvState.wizard) {
     grvState.wizard = null; grvState.editing = null; closePluginModal();
   }
+  // Same idea for the settings info-tip bubble: it also lives on document.body,
+  // not inside the [data-view] section, so leaving Settings with the pointer or
+  // focus parked on an icon would otherwise leave it floating over the next view.
+  if (currentShownView === 'settings' && name !== 'settings') hideInfoTip();
   currentShownView = name;
 
   // Focus selection lives only while on the Running view.
