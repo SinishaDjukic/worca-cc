@@ -1327,14 +1327,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .spend-ind:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .spend-ind-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
 .spend-ind-label{font-size:12px;font-weight:600;color:var(--ink-2);}
-.spend-ind-amt{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);}
+.spend-ind-amt{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink);}
 .spend-ind-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:8px;overflow:hidden;}
 /* meterEl() names the fill "<meter-class>-fill", so: spend-ind-meter-fill */
 .spend-ind-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
 .spend-ind-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:6px;}
 .spend-ind.warn .spend-ind-meter{background:var(--amber-bg);}
 .spend-ind.warn .spend-ind-meter-fill{background:var(--amber-ink);}
-.spend-ind.warn .spend-ind-sub{color:var(--amber-ink);}
 .spend-ind.over .spend-ind-meter{background:var(--red-bg);}
 .spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
 .spend-ind.over .spend-ind-sub{color:var(--red-ink);}

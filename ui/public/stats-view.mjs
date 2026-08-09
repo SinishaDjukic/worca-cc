@@ -211,9 +211,7 @@ export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt =
   btn.appendChild(rowEl);
   if (b.totalLimitUsd != null) {
     btn.appendChild(meterEl(doc, 'spend-ind-meter', b.blocked ? 100 : ratio * 100));
-    btn.appendChild(h(doc, 'small', 'spend-ind-sub', b.blocked
-      ? 'limit reached · new runs blocked'
-      : `of ${fmt.usd(b.totalLimitUsd)} · resets in ${fmtIn(b.msUntilReset)}`));
+    if (b.blocked) btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'limit reached · new runs blocked'));
   } else {
     btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'no total limit'));
   }
