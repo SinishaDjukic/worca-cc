@@ -93,8 +93,12 @@ test('renderBudgetIndicator: states default/warn/over/no-limit + period label + 
   assert.equal(el.dataset.nav, 'stats');
   assert.match(el.querySelector('.spend-ind-label').textContent, /Spent this week/);
   assert.ok(!el.classList.contains('warn') && !el.classList.contains('over'));
+  assert.ok(el.querySelector('.spend-ind-meter'), 'the status bar stays');
+  assert.equal(el.querySelector('.spend-ind-sub'), null,
+    'no "of $X · resets in Y" sub-line — the card is value + bar only');
   el = renderBudgetIndicator(BUDGET, { doc });                       // 41.23/50 = 82%
   assert.ok(el.classList.contains('warn'));
+  assert.equal(el.querySelector('.spend-ind-sub'), null, 'warn state has no sub-line either');
   assert.match(el.title, /\$41\.2312/);
   assert.match(el.title, /not authoritative billing/);
   el = renderBudgetIndicator({ ...BUDGET, windowSpendUsd: 52, blocked: true }, { doc });

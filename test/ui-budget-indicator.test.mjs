@@ -70,6 +70,12 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
       counts.stats += 1; statsCalls.push(u);
       return Promise.resolve({ ok: true, status: 200, json: async () => statsFixture(box.budget) });
     }
+    if (u.includes('/api/settings')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        root: '', projectsRoot: '', projectsRootDefault: '/home/me', default: '/home/me',
+        pipelineCostLimitUsd: null, totalCostLimitUsd: 50, costLimitResetPeriod: 'monthly',
+      }) });
+    }
     if (u.includes('/api/projects')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) });
     }
@@ -207,11 +213,14 @@ test('idle tick recomputes the countdown from windowEndMs without fetching', asy
     // msUntilReset is deliberately stale-huge; windowEndMs is the real anchor.
     budget: { ...okBudget(), msUntilReset: 999 * DAY, windowEndMs: Date.now() + 2 * HOUR },
   });
+  // The sidebar card no longer renders the countdown; the Settings readout is
+  // the tick recompute's rendered observable now.
+  await ctx.showView('settings');
   const before = ctx.counts.budget;
   await ctx.wait(20);
-  const sub = ctx.window.document.querySelector('#side-spend .spend-ind-sub');
-  assert.doesNotMatch(sub.textContent, /999d/, 'the stale fetched msUntilReset must never be repainted as-is');
-  assert.match(sub.textContent, /resets in [12]h/, `countdown recomputed from windowEndMs, got "${sub.textContent}"`);
+  const readout = ctx.window.document.querySelector('#budgetReadout');
+  assert.doesNotMatch(readout.textContent, /999d/, 'the stale fetched msUntilReset must never be repainted as-is');
+  assert.match(readout.textContent, /resets in [12]h/, `countdown recomputed from windowEndMs, got "${readout.textContent}"`);
   assert.equal(ctx.counts.budget, before, 'an idle tick inside the window must not refetch');
 });
 
