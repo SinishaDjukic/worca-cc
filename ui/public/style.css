@@ -59,8 +59,8 @@ body{
   border-right:1px solid var(--line);
   overflow-y:auto;
 }
-.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:10px;}
-.brand .logo{height:40px;width:auto;display:block;}
+.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:24px;}
+.brand .logo{height:36px;width:auto;display:block;}
 
 .nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;}
 .nav button{
@@ -764,12 +764,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agent-pill:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
 .agent-pill:active{cursor:grabbing;}
 .agent-pill.dragging{opacity:.35;}
-.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}
-.agent-pill .phead{display:inline-flex;align-items:center;gap:9px;max-width:100%;min-width:0;overflow-wrap:anywhere;}
+/* Dot pins to the FIRST name line (flex-start + optical nudge), because the
+   name may wrap to a second line — a centered dot would float between them. */
+.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;margin-top:3px;}
+.agent-pill .phead{display:inline-flex;align-items:flex-start;gap:9px;max-width:100%;min-width:0;overflow-wrap:anywhere;}
+.agent-pill .pname{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere;line-height:1.3;}
 /* align-self:stretch overrides the card's align-items:flex-start — otherwise
    .pdesc shrink-to-fits to the full string width and its own overflow:hidden
    clips against that oversized box instead of the card. */
-.agent-pill .pdesc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;align-self:stretch;max-width:100%;min-width:0;overflow-wrap:anywhere;font-weight:400;font-size:11.5px;line-height:1.45;color:var(--ink-2);}
+.agent-pill .pdesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;align-self:stretch;max-width:100%;min-width:0;overflow-wrap:anywhere;font-weight:400;font-size:11.5px;line-height:1.45;color:var(--ink-2);}
+/* 3-line text budget: a name that wrapped to 2 lines (.name-2l, toggled by a
+   ResizeObserver in app.js) leaves only 1 line for the description. */
+.agent-pill.name-2l .pdesc{-webkit-line-clamp:1;}
 .agent-pill .pdesc.derived{font-style:italic;}
 
 .composer-hint {

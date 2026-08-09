@@ -1778,6 +1778,8 @@ const composerCollapsed = new Set();   // domains the user has collapsed via chi
 
 function composerBuildPalette(pal) {
   const palette = composer.els.palette;
+  const ro = pillNameRO();
+  if (ro) ro.disconnect();   // old pills are about to be thrown away
   palette.innerHTML = '';
   const domains = paletteDomains(pal);
   const groups = groupPaletteByDomain(pal, domains);
@@ -1849,6 +1851,28 @@ function paletteDesc(ag) {
   return { text: io.length ? io.join(' · ') : 'No description yet', derived: true };
 }
 
+// Name-aware description clamp: the palette card budgets 3 text lines — a name
+// that wraps to 2 lines (.name-2l) leaves 1 for the description, a 1-line name
+// leaves 2. Measured with a ResizeObserver, not guessed: wrapping depends on
+// the rendered width, and a palette built while hidden reports height 0 until
+// the composer first shows — the observer fires again on that resize.
+let pillNameROInst;
+function pillNameRO() {
+  if (pillNameROInst === undefined) {
+    pillNameROInst = window.ResizeObserver
+      ? new window.ResizeObserver((entries) => { entries.forEach((en) => pillApplyNameClamp(en.target)); })
+      : null;
+  }
+  return pillNameROInst;
+}
+function pillApplyNameClamp(pname) {
+  const pill = pname.closest('.agent-pill');
+  const h = pname.getBoundingClientRect().height;
+  if (!pill || !h) return;   // h=0 → not laid out yet; keep the current class
+  const lh = parseFloat(window.getComputedStyle(pname).lineHeight) || 16;
+  pill.classList.toggle('name-2l', h > lh * 1.5);
+}
+
 // Extracted from the old composerBuildPalette loop body so the pill markup + drag
 // handlers live in one place.
 function composerPalettedPill(ag) {
@@ -1871,7 +1895,7 @@ function composerPalettedPill(ag) {
     ? `<span class="tip-line">${escapeHtml(consumesList.join(', ') || '—')} → ${escapeHtml(producesList.join(', ') || '—')}</span>`
     : '';
   p.innerHTML =
-    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>` +
+    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span><span class="pname">${escapeHtml(ag.displayName)}</span></span>` +
     `<small class="pdesc${desc.derived ? ' derived' : ''}">${escapeHtml(desc.text)}</small>` +
     `<span class="tip-content hidden">` +
       `<span class="tip-desc">${escapeHtml(tipDesc)}</span>` +
@@ -1887,6 +1911,8 @@ function composerPalettedPill(ag) {
     composer.dragKey = null; p.classList.remove('dragging');
     document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
   });
+  const ro = pillNameRO();
+  if (ro) ro.observe(p.querySelector('.pname'));
   return p;
 }
 

@@ -41,7 +41,7 @@ test('the card description stretches to the card width and breaks unbreakable to
   assert.match(pdesc, /align-self:\s*stretch/, 'flex-start would shrink-to-fit the full 100-char string');
   assert.match(pdesc, /max-width:\s*100%/, 'never wider than the card content box');
   assert.match(pdesc, /overflow-wrap:\s*anywhere/, 'a URL / path / 100xa must wrap, not overflow');
-  assert.match(pdesc, /-webkit-line-clamp:\s*3/, 'the 3-line clamp still holds');
+  assert.match(pdesc, /-webkit-line-clamp:\s*2/, 'the 2-line clamp still holds');
 });
 
 test('the card header row is bounded the same way (long display names)', () => {
@@ -49,6 +49,23 @@ test('the card header row is bounded the same way (long display names)', () => {
   assert.ok(phead, '.agent-pill .phead rule must exist');
   assert.match(phead, /max-width:\s*100%/, 'header cannot exceed the card');
   assert.match(phead, /overflow-wrap:\s*anywhere/, 'a long unbroken name wraps inside the card');
+});
+
+// ---------- 3-line text budget: name 2 lines max, description fills the rest ----------
+
+test('the name clamps at 2 lines and breaks unbreakable tokens', () => {
+  const pname = body('.agent-pill .pname');
+  assert.ok(pname, '.agent-pill .pname rule must exist');
+  assert.match(pname, /-webkit-line-clamp:\s*2/, 'names never exceed 2 lines');
+  assert.match(pname, /overflow:\s*hidden/, 'clamp needs overflow hidden to cut line 3');
+  assert.match(pname, /overflow-wrap:\s*anywhere/, 'a long unbroken name wraps, not overflows');
+  assert.match(pname, /min-width:\s*0/, 'flex item must be allowed to shrink');
+});
+
+test('a 2-line name (.name-2l) drops the description to 1 line', () => {
+  const one = body('.agent-pill.name-2l .pdesc');
+  assert.ok(one, '.agent-pill.name-2l .pdesc rule must exist');
+  assert.match(one, /-webkit-line-clamp:\s*1/, 'wrapped name leaves 1 line for the description');
 });
 
 // ---------- F4: no see-through band above the pinned header ----------
