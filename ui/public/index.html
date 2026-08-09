@@ -264,7 +264,7 @@
                   <div id="wf-default-stages">
                     <div class="stage-cfg">
                       <div class="acc red"></div>
-                      <div class="meta"><b>Clarify</b><small>surface open decisions before planning</small></div>
+                      <div class="meta"><b>Clarify</b><small>Turns hidden decisions into questions before planning</small></div>
                       <div class="picks">
                         <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
@@ -276,7 +276,7 @@
 
                     <div class="stage-cfg">
                       <div class="acc violet"></div>
-                      <div class="meta"><b>Plan</b><small>architecture &amp; task breakdown</small></div>
+                      <div class="meta"><b>Plan</b><small>Explores the codebase and writes the implementation plan</small></div>
                       <div class="picks">
                         <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
@@ -288,7 +288,7 @@
 
                     <div class="stage-cfg">
                       <div class="acc green"></div>
-                      <div class="meta"><b>Refine</b><small>tighten the plan</small></div>
+                      <div class="meta"><b>Refine</b><small>Rewrites the latest plan into a tighter version</small></div>
                       <div class="picks">
                         <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
@@ -300,7 +300,7 @@
 
                     <div class="stage-cfg">
                       <div class="acc peach"></div>
-                      <div class="meta"><b>Implement</b><small>write the code</small></div>
+                      <div class="meta"><b>Implement</b><small>Writes the code from the approved plan, strict TDD</small></div>
                       <div class="picks">
                         <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
@@ -312,7 +312,7 @@
 
                     <div class="stage-cfg">
                       <div class="acc blue"></div>
-                      <div class="meta"><b>Review</b><small>verify &amp; report</small></div>
+                      <div class="meta"><b>Review</b><small>Reviews the implementation diff against the plan</small></div>
                       <div class="picks">
                         <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
                         <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
@@ -884,6 +884,7 @@
               <span class="p-label">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
                 Agents · drag onto the canvas to build your pipeline
+                <input id="composer-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or description">
               </span>
               <div id="composer-palette" style="display:contents"></div>
             </div>

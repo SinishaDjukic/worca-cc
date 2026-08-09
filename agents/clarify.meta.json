@@ -2,7 +2,7 @@
   "key": "clarify",
   "domain": "coding",
   "displayName": "Clarify",
-  "description": "surface open decisions before planning",
+  "description": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
   "color": "red",
   "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
   "agentFile": "worca-cc-clarify.md",

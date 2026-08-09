@@ -2,7 +2,7 @@
   "key": "workspaceScanner",
   "domain": "shared",
   "displayName": "Workspace Scan",
-  "description": "investigate cross-project relations",
+  "description": "Maps how the workspace's projects relate before pipelines run. Shared APIs, schemas, queues, and build dependencies.",
   "color": "violet",
   "icon": "<path d=\"M4 7h16M4 12h10M4 17h7\" stroke-linecap=\"round\"/><circle cx=\"18\" cy=\"15\" r=\"3\"/><path d=\"M20.2 17.2L22 19\" stroke-linecap=\"round\"/>",
   "agentFile": "worca-cc-workspace-scanner.md",

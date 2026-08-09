@@ -130,6 +130,9 @@ class AgentGen extends EventEmitter {
       '"loopSource": bool, "fanOut": bool, "asksQuestions": bool, "questionsLocked": bool, ' +
       '"questionsDefault": bool, "consumes": [..], "optionalConsumes": [..], ' +
       '"produces": [..], "connectsTo": "*"|["key",..], "order": number }\n' +
+      '"description" is the palette blurb: 1-2 plain sentences, max 160 chars total and the ' +
+      'FIRST sentence max 75 chars (the palette card clamps at 1-2 short lines). It is shown under ' +
+      'the agent name in the composer palette — say what the agent does and what it reads/produces.\n' +
       'Questions flags: asksQuestions=true if the agent may need a user decision mid-task ' +
       '(the orchestrator pauses it and resumes it with the answers). questionsLocked=true ONLY if ' +
       "asking the user is the agent's whole purpose (the user then cannot toggle it in the " +

@@ -59,8 +59,8 @@ body{
   border-right:1px solid var(--line);
   overflow-y:auto;
 }
-.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:10px;}
-.brand .logo{height:40px;width:auto;display:block;}
+.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:24px;}
+.brand .logo{height:36px;width:auto;display:block;}
 
 .nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;}
 .nav button{
@@ -312,6 +312,8 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
   pointer-events:none;}
 .info-bubble code{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.14);
   border-radius:4px;padding:1px 4px;}
+.info-bubble .tip-desc{display:block;}
+.info-bubble .tip-line{display:block;margin-top:6px;font-family:var(--mono);font-size:10.5px;letter-spacing:.02em;opacity:.75;}
 
 .row-2,.grid-2{display:flex;gap:11px;}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;}
@@ -406,9 +408,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* .meta keeps a floor width so long node labels can't collapse under .picks;
    past the floor the row wraps (.stage-cfg is flex-wrap) instead of overlapping. */
 .stage-cfg .meta{flex:1 1 150px;min-width:150px;}
-.stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;}
-.stage-cfg .meta small{color:var(--ink-3);font-size:12px;}
-.stage-cfg .meta b,.stage-cfg .meta small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The label stays one ellipsized line; the caption WRAPS (clamped at 2 lines) —
+   forcing nowrap on it cut every stage blurb mid-sentence once the copy grew
+   past the ~235px column. */
+.stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.stage-cfg .meta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;color:var(--ink-3);font-size:12px;line-height:1.35;}
 .stage-cfg .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;flex:0 1 auto;min-width:0;}
 .stage-cfg .select-wrap{width:180px;}
 .stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
@@ -742,14 +746,37 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* (ported from docs/pipeline-composer/mockups; reuses :root tokens)          */
 /* ========================================================================== */
 .builder-card{padding:0;overflow:hidden;}
-.palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:20px 24px;border-bottom:1px solid var(--line);background:var(--panel);}
-.palette .p-label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:100%;margin-bottom:4px;}
+/* No top padding: sticky pins to the scrollport's PADDING edge, so a 20px inset
+   here would leave a see-through band above the pinned header for cards to
+   scroll through. The header row re-applies the inset itself (same fix shape as
+   body.view-history .main + .hist-filter). */
+.palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:0 24px 20px;border-bottom:1px solid var(--line);background:var(--panel);max-height:320px;overflow-y:auto;}
+.palette .p-label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:100%;margin-bottom:-10px;padding-top:20px;padding-bottom:14px;position:sticky;top:0;z-index:2;background:var(--panel);}
 .palette .p-label svg{width:14px;height:14px;stroke:var(--ink-3);stroke-width:2;}
-.agent-pill{display:inline-flex;align-items:center;gap:9px;background:#fff;border:1.5px solid var(--line-2);border-radius:999px;padding:8px 15px 8px 11px;font-weight:600;font-size:12.5px;color:var(--ink);cursor:grab;box-shadow:var(--shadow-soft);transition:transform .12s,box-shadow .12s,border-color .12s;user-select:none;}
+.pal-filter{margin-left:auto;width:200px;padding:6px 10px;border:1.5px solid transparent;border-radius:10px;background:var(--field);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;text-transform:none;letter-spacing:normal;}
+.pal-filter::placeholder{color:var(--ink-3);}
+.pal-filter:focus{outline:none;background:#fff;border-color:var(--ink);}
+.pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* min-width:0 lets the grid item shrink under its min-content width and
+   overflow:hidden makes the card the last line of defence: without both, a
+   single unbroken 100-char description paints across its neighbours. */
+.agent-pill{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;overflow:hidden;background:#fff;border:1.5px solid var(--line-2);border-radius:12px;padding:10px 12px;font-weight:600;font-size:12.5px;color:var(--ink);cursor:grab;box-shadow:var(--shadow-soft);transition:transform .12s,box-shadow .12s,border-color .12s;user-select:none;}
 .agent-pill:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
 .agent-pill:active{cursor:grabbing;}
 .agent-pill.dragging{opacity:.35;}
-.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}
+/* Dot pins to the FIRST name line (flex-start + optical nudge), because the
+   name may wrap to a second line — a centered dot would float between them. */
+.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;margin-top:3px;}
+.agent-pill .phead{display:inline-flex;align-items:flex-start;gap:9px;max-width:100%;min-width:0;overflow-wrap:anywhere;}
+.agent-pill .pname{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere;line-height:1.3;}
+/* align-self:stretch overrides the card's align-items:flex-start — otherwise
+   .pdesc shrink-to-fits to the full string width and its own overflow:hidden
+   clips against that oversized box instead of the card. */
+.agent-pill .pdesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;align-self:stretch;max-width:100%;min-width:0;overflow-wrap:anywhere;font-weight:400;font-size:11.5px;line-height:1.45;color:var(--ink-2);}
+/* 3-line text budget: a name that wrapped to 2 lines (.name-2l, toggled by a
+   ResizeObserver in app.js) leaves only 1 line for the description. */
+.agent-pill.name-2l .pdesc{-webkit-line-clamp:1;}
+.agent-pill .pdesc.derived{font-style:italic;}
 
 .composer-hint {
   margin: 0 0 10px;
@@ -784,6 +811,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .node .nmeta{min-width:0;flex:1;}
 .node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
 .node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
+.flow .node .nmeta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .node .nx,.node .loop,.node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
 .node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
 .node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
@@ -1144,7 +1172,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pal-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%;margin-bottom:8px;}
 .pal-chip{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line,#d8d8de);background:var(--card,#fff);cursor:pointer;text-transform:capitalize;}
 .pal-chip.off{opacity:.45;text-decoration:line-through;}
-.pal-section{width:100%;}
+.pal-section{width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}
+.pal-section .pal-head{grid-column:1/-1;}
 .pal-section.collapsed .agent-pill,.pal-section.collapsed .pal-head{display:none;}
 .pal-head{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted,#8a8a92);margin:6px 0 4px;}
 .pl-domain{font-size:10px;padding:1px 6px;border-radius:999px;background:var(--chip,#eee);color:var(--muted,#777);text-transform:capitalize;vertical-align:middle;}

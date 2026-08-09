@@ -1745,6 +1745,8 @@ async function initComposer() {
   document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
   document.getElementById('composer-save').addEventListener('click', composerSave);
   document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
+  const agentFilter = document.getElementById('composer-agent-filter');
+  if (agentFilter) agentFilter.addEventListener('input', composerApplyFilter);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
   composer.els.wires.addEventListener('click', (e) => {
     const g = e.target.closest('.fb-del'); if (!g) return;
@@ -1776,6 +1778,8 @@ const composerCollapsed = new Set();   // domains the user has collapsed via chi
 
 function composerBuildPalette(pal) {
   const palette = composer.els.palette;
+  const ro = pillNameRO();
+  if (ro) ro.disconnect();   // old pills are about to be thrown away
   palette.innerHTML = '';
   const domains = paletteDomains(pal);
   const groups = groupPaletteByDomain(pal, domains);
@@ -1807,6 +1811,66 @@ function composerBuildPalette(pal) {
     g.agents.forEach((ag) => sec.appendChild(composerPalettedPill(ag)));
     palette.appendChild(sec);
   });
+  composerApplyFilter();
+}
+
+// Live palette filter (spec 2026-08-09 §Decisions 7): toggles .hidden only —
+// cards stay in the DOM so drag handlers and collapse state survive filtering.
+// The haystack covers everything the card itself can show: key, name and
+// description always; channel names ONLY when the card's visible blurb IS the
+// derived "in: … · out: …" line. A card that paints a real description never
+// shows its channels, so matching them there is a hit with no visible reason.
+function composerApplyFilter() {
+  const input = document.getElementById('composer-agent-filter');
+  const q = ((input && input.value) || '').trim().toLowerCase();
+  document.querySelectorAll('#composer-palette .pal-section').forEach((sec) => {
+    let visible = 0;
+    sec.querySelectorAll('.agent-pill').forEach((p) => {
+      const ag = composer.agents[p.dataset.key] || {};
+      const chans = paletteDesc(ag).derived
+        ? ` ${(ag.consumes || []).join(' ')} ${(ag.produces || []).join(' ')}`
+        : '';
+      const hay = `${p.dataset.key} ${ag.displayName || ''} ${ag.description || ''}${chans}`.toLowerCase();
+      const hit = !q || hay.includes(q);
+      p.classList.toggle('hidden', !hit);
+      if (hit) visible += 1;
+    });
+    sec.classList.toggle('hidden', !!q && visible === 0);
+  });
+}
+
+// Palette blurb: the resolved sidecar/frontmatter description when present,
+// else a derived in/out line from the agent's channels (derived:true renders
+// italic and reads as a fallback, never as authored copy).
+function paletteDesc(ag) {
+  const d = typeof ag.description === 'string' ? ag.description.trim() : '';
+  if (d) return { text: d, derived: false };
+  const io = [];
+  if (Array.isArray(ag.consumes) && ag.consumes.length) io.push('in: ' + ag.consumes.join(', '));
+  if (Array.isArray(ag.produces) && ag.produces.length) io.push('out: ' + ag.produces.join(', '));
+  return { text: io.length ? io.join(' · ') : 'No description yet', derived: true };
+}
+
+// Name-aware description clamp: the palette card budgets 3 text lines — a name
+// that wraps to 2 lines (.name-2l) leaves 1 for the description, a 1-line name
+// leaves 2. Measured with a ResizeObserver, not guessed: wrapping depends on
+// the rendered width, and a palette built while hidden reports height 0 until
+// the composer first shows — the observer fires again on that resize.
+let pillNameROInst;
+function pillNameRO() {
+  if (pillNameROInst === undefined) {
+    pillNameROInst = window.ResizeObserver
+      ? new window.ResizeObserver((entries) => { entries.forEach((en) => pillApplyNameClamp(en.target)); })
+      : null;
+  }
+  return pillNameROInst;
+}
+function pillApplyNameClamp(pname) {
+  const pill = pname.closest('.agent-pill');
+  const h = pname.getBoundingClientRect().height;
+  if (!pill || !h) return;   // h=0 → not laid out yet; keep the current class
+  const lh = parseFloat(window.getComputedStyle(pname).lineHeight) || 16;
+  pill.classList.toggle('name-2l', h > lh * 1.5);
 }
 
 // Extracted from the old composerBuildPalette loop body so the pill markup + drag
@@ -1815,16 +1879,40 @@ function composerPalettedPill(ag) {
   const p = document.createElement('div');
   p.className = 'agent-pill';
   p.draggable = true;
+  p.tabIndex = 0;
   p.dataset.key = ag.key;
-  p.innerHTML = `<span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}`;
+  const desc = paletteDesc(ag);
+  const consumesList = Array.isArray(ag.consumes) ? ag.consumes : [];
+  const producesList = Array.isArray(ag.produces) ? ag.produces : [];
+  // Bubble content (three states): tip-desc is the real description or the bare
+  // fallback — never the derived in/out text (the IO line below already shows
+  // the channels; stating them twice in two formats reads as a bug). The IO
+  // line renders only when at least one side has channels ('—' fills the other).
+  const tipDesc = (typeof ag.description === 'string' && ag.description.trim())
+    ? ag.description.trim()
+    : 'No description yet';
+  const tipIo = (consumesList.length || producesList.length)
+    ? `<span class="tip-line">${escapeHtml(consumesList.join(', ') || '—')} → ${escapeHtml(producesList.join(', ') || '—')}</span>`
+    : '';
+  p.innerHTML =
+    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span><span class="pname">${escapeHtml(ag.displayName)}</span></span>` +
+    `<small class="pdesc${desc.derived ? ' derived' : ''}">${escapeHtml(desc.text)}</small>` +
+    `<span class="tip-content hidden">` +
+      `<span class="tip-desc">${escapeHtml(tipDesc)}</span>` +
+      `<span class="tip-line">${escapeHtml(ag.domain || 'general')} · ${escapeHtml(ag.origin || 'builtin')}</span>` +
+      tipIo +
+    `</span>`;
   p.addEventListener('dragstart', (e) => {
     composer.dragKey = ag.key; p.classList.add('dragging');
+    clearTimeout(pillTipTimer); hideInfoTip();   // never tooltip mid-drag
     if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
   });
   p.addEventListener('dragend', () => {
     composer.dragKey = null; p.classList.remove('dragging');
     document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
   });
+  const ro = pillNameRO();
+  if (ro) ro.observe(p.querySelector('.pname'));
   return p;
 }
 
@@ -5066,8 +5154,12 @@ async function deleteAgentCard(card, a) {
 async function duplicateAgentCard(a) {
   const full = await fetchAgentFull(a.key);
   if (!full) { setAgentsMsg('Could not load the agent to duplicate.', 'err'); return; }
-  const { key, origin, agentFile, ...rest } = full.meta || {};
+  // Drop the computed fields (this path never goes through the form): the copy
+  // gets its own key/agentFile, and a description derived from the source .md
+  // frontmatter must not be copied in as authored sidecar text.
+  const { key, origin, agentFile, agentPath, descriptionDerived, ...rest } = full.meta || {};
   const meta = { ...rest, displayName: `${full.meta.displayName || a.key} (copy)` };
+  if (descriptionDerived) meta.description = '';
   try {
     const res = await fetch('/api/agents', {
       method: 'POST',
@@ -5129,7 +5221,13 @@ function agentFormFill(root, meta, markdown) {
   }
   const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
   root.querySelector('.agent-f-name').value = meta.displayName || '';
-  root.querySelector('.agent-f-desc').value = meta.description || '';
+  // A description resolved from the .md frontmatter is computed, not authored:
+  // show it as a placeholder so the user knows where the blurb comes from, but
+  // never as a value — pre-filling it would PUT it straight back and freeze the
+  // fallback into the sidecar (and make an empty description unreachable).
+  const descInput = root.querySelector('.agent-f-desc');
+  descInput.value = meta.descriptionDerived ? '' : (meta.description || '');
+  descInput.placeholder = meta.descriptionDerived ? meta.description : '';
   root.querySelector('.agent-f-color').value = meta.color || 'amber';
   root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
   buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
@@ -5961,21 +6059,41 @@ const hideInfoTip = () => {
   if (infoTipIcon) { infoTipIcon.removeAttribute('aria-describedby'); infoTipIcon = null; }
 };
 
+// Palette cards share the settings bubble. Hover uses a ~250ms intent delay so
+// dragging across the palette doesn't strobe tooltips; keyboard focus is instant.
+// relatedTarget guards: mouseover/mouseout bubble through child elements (.phead,
+// .pdesc), so a cursor move BETWEEN children of the same trigger must be a no-op
+// — without the guard the bubble hides and re-arms on every crossing (strobe).
+// contains(null/undefined) is false, so events with no relatedTarget still work.
+const TIP_SELECTOR = '.info-tip, #composer-palette .agent-pill';
+let pillTipTimer = null;
 document.addEventListener('mouseover', (e) => {
-  const icon = e.target.closest?.('.info-tip');
-  if (icon) showInfoTip(icon);
+  const t = e.target.closest?.(TIP_SELECTOR);
+  if (!t) return;
+  if (t.contains(e.relatedTarget)) return; // moved between children of the same trigger
+  if (t.classList.contains('agent-pill')) {
+    clearTimeout(pillTipTimer);
+    pillTipTimer = setTimeout(() => showInfoTip(t), 250);
+  } else {
+    clearTimeout(pillTipTimer);
+    showInfoTip(t);
+  }
 });
 document.addEventListener('mouseout', (e) => {
-  if (e.target.closest?.('.info-tip')) hideInfoTip();
+  const t = e.target.closest?.(TIP_SELECTOR);
+  if (!t) return;
+  if (t.contains(e.relatedTarget)) return; // still inside the same trigger
+  clearTimeout(pillTipTimer);
+  hideInfoTip();
 });
 document.addEventListener('focusin', (e) => {
-  const icon = e.target.closest?.('.info-tip');
-  if (icon) showInfoTip(icon);
+  const t = e.target.closest?.(TIP_SELECTOR);
+  if (t) { clearTimeout(pillTipTimer); showInfoTip(t); }
 });
 document.addEventListener('focusout', (e) => {
-  if (e.target.closest?.('.info-tip')) hideInfoTip();
+  if (e.target.closest?.(TIP_SELECTOR)) { clearTimeout(pillTipTimer); hideInfoTip(); }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideInfoTip(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { clearTimeout(pillTipTimer); hideInfoTip(); } });
 
 // ---------------------------------------------------------------------------
 // Settings: budget & cost limits card. Reads the three limit keys off the same

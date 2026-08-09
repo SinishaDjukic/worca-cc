@@ -2,7 +2,7 @@
   "key": "workspaceReviewer",
   "domain": "shared",
   "displayName": "Workspace Review",
-  "description": "fan-out per-project review, synthesize one verdict",
+  "description": "Fans out one review per changed project in the workspace. Synthesizes a single cross-project verdict.",
   "color": "blue",
   "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M8 11l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-workspace-reviewer.md",

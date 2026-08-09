@@ -11,6 +11,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const AGENTS = [
   { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*' },
   { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42, origin: 'user', connectsTo: '*' },
+  // Description resolved from the .md frontmatter, not authored in the sidecar.
+  { key: 'derivedDesc', displayName: 'Derived Desc', description: 'Came from the .md frontmatter.', descriptionDerived: true, color: 'blue', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 43, origin: 'user', connectsTo: '*' },
 ];
 const CHANNELS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
 
@@ -120,6 +122,34 @@ test('editing an agent with a custom channel id keeps it: chip renders checked, 
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(puts.length, 1);
   assert.deepEqual(puts[0].meta.consumes, ['plan', 'spec'], 'custom id survives the edit round-trip');
+});
+
+test('a derived description is shown as a placeholder, never pre-filled, and never PUT back', async () => {
+  const puts = [];
+  const derived = AGENTS[2];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/agents/derivedDesc') && (!opts.method || opts.method === 'GET')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: derived, markdown: '# b' }) });
+      }
+      if (u.endsWith('/api/agents/derivedDesc') && opts.method === 'PUT') {
+        puts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: derived, markdown: '# b' }) });
+      }
+      return null;
+    },
+  });
+  await goAgents(window);
+  const card = window.document.querySelector('.agent-card[data-agent-key="derivedDesc"]');
+  click(window, card.querySelector('.agent-edit'));
+  await new Promise((r) => setTimeout(r, 0));
+  const desc = card.querySelector('.agent-f-desc');
+  assert.equal(desc.value, '', 'computed text must not masquerade as authored input');
+  assert.equal(desc.placeholder, derived.description, 'but the user still sees where the blurb comes from');
+  click(window, card.querySelector('.agent-edit-save')); // save WITHOUT touching the description
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].meta.description, '', 'a no-op save cannot freeze the fallback into the sidecar');
 });
 
 test('a 400 on save keeps the pane open and surfaces the error in the form', async () => {

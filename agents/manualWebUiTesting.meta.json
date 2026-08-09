@@ -2,7 +2,7 @@
   "key": "manualWebUiTesting",
   "domain": "coding",
   "displayName": "Manual web UI testing",
-  "description": "run manual cases via Playwright",
+  "description": "Runs the manual checklist in the live web UI via Playwright. Reports what passed, failed, or blocked.",
   "color": "violet",
   "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M10 8.5l5 3.5-5 3.5V8.5Z\" fill=\"currentColor\" stroke=\"none\"/>",
   "agentFile": "worca-cc-manual-web-ui-testing.md",
