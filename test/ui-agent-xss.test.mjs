@@ -124,3 +124,20 @@ test('composer never injects user-agent meta as markup: palette, canvas, saved c
   assert.equal(roEvil.querySelector('.nmeta small b'), null, 'RO description markup inert');
   assert.ok(!roEvil.querySelector('.nic svg').innerHTML.includes('onerror'), 'RO icon never injected');
 });
+test('palette card description + hover bubble render hostile meta as text', async () => {
+  const { window } = await boot({ fetchHandler: workflowsHandler });
+  await goComposer(window);
+  const doc = window.document;
+  const pill = doc.querySelector('#composer-palette .agent-pill[data-key="evil"]');
+  assert.ok(pill, 'hostile agent card present');
+  const pdesc = pill.querySelector('.pdesc');
+  assert.equal(pdesc.textContent, EVIL_DESC, 'description renders literally in the card');
+  assert.equal(pdesc.querySelector('b'), null, 'description markup inert in the card');
+  assert.equal(pill.querySelector('img'), null, 'no <img> parsed anywhere in the card');
+  pill.dispatchEvent(new window.Event('focusin', { bubbles: true }));
+  const bubble = doc.getElementById('info-bubble');
+  assert.ok(bubble && !bubble.classList.contains('hidden'), 'bubble shown on focus');
+  assert.ok(bubble.textContent.includes(EVIL_DESC), 'bubble shows the literal description');
+  assert.equal(bubble.querySelector('img'), null, 'no <img> in the bubble');
+  assert.equal(bubble.querySelector('b'), null, 'no injected markup in the bubble');
+});

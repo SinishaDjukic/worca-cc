@@ -56,46 +56,46 @@ export function distinctAgents(steps) {
 // GET /api/agents overrides this whenever present (see mergePalette).
 export const EMBEDDED_AGENTS = {
   clarify: {
-    key: 'clarify', displayName: 'Clarify', description: 'surface open decisions before planning',
+    key: 'clarify', displayName: 'Clarify', description: 'Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.',
     color: 'red', order: 0, connectsTo: ['planner'],
     icon: '<circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6" stroke-linecap="round" fill="none"/><circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none"/>',
   },
   planner: {
-    key: 'planner', displayName: 'Plan', description: 'architecture & breakdown',
+    key: 'planner', displayName: 'Plan', description: 'Explores the codebase and writes the implementation plan. Architecture, task breakdown, concrete code snippets; can ask clarifying questions first.',
     color: 'violet', order: 1, connectsTo: ['refiner', 'implementer', 'decomposer'],
     icon: '<path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/>',
   },
   refiner: {
-    key: 'refiner', displayName: 'Refine Plan', description: 'tighten the plan',
+    key: 'refiner', displayName: 'Refine Plan', description: 'Rewrites the latest plan into a tighter version. Fixes structure, correctness, and code snippets until no blocking issues remain.',
     color: 'green', order: 2, connectsTo: ['implementer', 'refiner', 'decomposer'],
     icon: '<path d="M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1" stroke-linecap="round"/><path d="M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z" stroke-linejoin="round"/>',
   },
   decomposer: {
-    key: 'decomposer', displayName: 'Decompose', description: 'break plan into vertical-slice tasks',
+    key: 'decomposer', displayName: 'Decompose', description: 'Splits an approved plan into vertical-slice tasks. Each task gets its own implementer.',
     color: 'blue', order: 2.5, connectsTo: ['implementer'],
   },
   implementer: {
-    key: 'implementer', displayName: 'Implementation', description: 'write the code',
+    key: 'implementer', displayName: 'Implementation', description: 'Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.',
     color: 'peach', order: 3, connectsTo: ['reviewer', 'manualTestsChecklist'],
     icon: '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   reviewer: {
-    key: 'reviewer', displayName: 'Review Implementation', description: 'verify & report',
+    key: 'reviewer', displayName: 'Review Implementation', description: 'Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.',
     color: 'blue', order: 4, connectsTo: ['implementer', 'manualTestsChecklist'],
     icon: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   manualTestsChecklist: {
-    key: 'manualTestsChecklist', displayName: 'Manual Tests Checklist', description: 'draft manual cases',
+    key: 'manualTestsChecklist', displayName: 'Manual Tests Checklist', description: 'Drafts a manual test checklist for the change. User-visible flows, edge cases, regressions worth clicking through.',
     color: 'blue', order: 5, connectsTo: ['manualWebUiTesting'],
     icon: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9.5 4V2.8h5V4" stroke-linejoin="round"/><path d="M8.8 12l1.6 1.6L13.4 10" stroke-linecap="round" stroke-linejoin="round"/>',
   },
   manualWebUiTesting: {
-    key: 'manualWebUiTesting', displayName: 'Manual web UI testing', description: 'run cases via Playwright',
+    key: 'manualWebUiTesting', displayName: 'Manual web UI testing', description: 'Runs the manual checklist in the live web UI via Playwright. Reports what passed, failed, or blocked.',
     color: 'violet', order: 6, connectsTo: ['implementer'],
     icon: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5V8.5Z" fill="currentColor" stroke="none"/>',
   },
   planReviewer: {
-    key: 'planReviewer', displayName: 'Plan Review', description: 'review the plan, bounce to planner',
+    key: 'planReviewer', displayName: 'Plan Review', description: 'Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.',
     color: 'amber', order: 7, connectsTo: ['planner', 'implementer', 'decomposer'],
     icon: '<path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z"/><path d="M15.5 15.5L21 21" stroke-linecap="round"/><path d="M7.6 10.3l2 2 3.3-3.6" stroke-linecap="round" stroke-linejoin="round"/>',
   },

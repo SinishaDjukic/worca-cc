@@ -2,7 +2,7 @@
   "key": "planner",
   "domain": "coding",
   "displayName": "Plan",
-  "description": "architecture & breakdown",
+  "description": "Explores the codebase and writes the implementation plan. Architecture, task breakdown, concrete code snippets; can ask clarifying questions first.",
   "color": "violet",
   "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
   "agentFile": "worca-cc-planner.md",

@@ -2,7 +2,7 @@
   "key": "decomposer",
   "domain": "coding",
   "displayName": "Decompose",
-  "description": "break plan into vertical-slice tasks",
+  "description": "Splits an approved plan into vertical-slice tasks. Each task gets its own implementer.",
   "color": "blue",
   "scope": "project",
   "icon": "<path d=\"M12 3v6M12 9l-5 5M12 9l5 5M5 14h2M17 14h2M6 18h2M16 18h2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",

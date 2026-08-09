@@ -2,7 +2,7 @@
   "key": "planReviewer",
   "domain": "coding",
   "displayName": "Plan Review",
-  "description": "review the plan, bounce to planner",
+  "description": "Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.",
   "color": "amber",
   "icon": "<path d=\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\"/><path d=\"M15.5 15.5L21 21\" stroke-linecap=\"round\"/><path d=\"M7.6 10.3l2 2 3.3-3.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-plan-reviewer.md",

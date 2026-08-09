@@ -2,7 +2,7 @@
   "key": "implementer",
   "domain": "coding",
   "displayName": "Implementation",
-  "description": "write the code",
+  "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
   "color": "peach",
   "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-implementer.md",

@@ -57,3 +57,11 @@ test('stop() yields a terminal agentgen-error{message:"stopped"} and status stop
   assert.equal(events.filter((e) => e.type === 'agentgen-error').length, 1);
   assert.equal(events.at(-1).message, 'stopped');
 });
+
+test('meta schema prompt teaches the palette-blurb description contract', () => {
+  const gen = createAgentGen({ name: 'X', purpose: 'p', claude: { mock: true } });
+  const block = gen._metaSchemaBlock();
+  assert.match(block, /palette blurb/i, 'names the surface');
+  assert.match(block, /160/, 'carries the total length budget');
+  assert.match(block, /75/, 'carries the first-sentence budget');
+});

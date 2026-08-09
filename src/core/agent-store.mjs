@@ -88,9 +88,15 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
     );
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
-  // `existing` carries the COMPUTED origin/agentPath fields; normalizeMeta's fixed
-  // return set drops them, so the spread below never persists them to the sidecar.
-  const raw = { ...existing, ...(rawMeta && typeof rawMeta === 'object' ? rawMeta : {}) };
+  // `existing` carries the COMPUTED origin/agentPath/descriptionDerived fields;
+  // normalizeMeta's fixed return set drops them, so the spread below never
+  // persists them to the sidecar. `description` is the exception: it DOES have a
+  // slot, so a description resolved from the .md frontmatter has to be dropped
+  // explicitly — otherwise any later save (even one that never touches the
+  // field) freezes the fallback into the sidecar and it stops tracking the .md.
+  const base = { ...existing };
+  if (base.descriptionDerived) base.description = '';
+  const raw = { ...base, ...(rawMeta && typeof rawMeta === 'object' ? rawMeta : {}) };
   raw.key = key;                                            // key immutable on update
   raw.agentFile = `${key}.md`;
   if (!Number.isFinite(Number(raw.order))) raw.order = existing.order;
