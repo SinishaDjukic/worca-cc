@@ -168,16 +168,17 @@ const RUNS = {
   ],
 };
 
-test('renderSpendChart: one hit rect per bucket; current bucket darker + single direct label', () => {
+test('renderSpendChart: one hit rect per bucket; uniform blue bars, no direct label', () => {
   const el = renderSpendChart(SPEND, { doc });
   assert.ok(el.querySelector('svg.chart-svg'));
   assert.equal(el.querySelectorAll('.ch-hit').length, 4);
-  const current = el.querySelectorAll('[data-current="1"]');
-  assert.equal(current.length, 1);
-  assert.equal(current[0].getAttribute('fill'), 'var(--blue-ink)');
-  const labels = el.querySelectorAll('.ch-direct');
-  assert.equal(labels.length, 1);
-  assert.match(labels[0].textContent, /\$0\.75/);
+  // every drawn bar wears the same blue; zero-spend bucket draws no bar
+  const bars = [...el.querySelectorAll('svg path')];
+  assert.equal(bars.length, 3);
+  assert.ok(bars.every((b) => b.getAttribute('fill') === 'var(--blue)'));
+  // no current-bucket special-casing: no marker attr, no direct value label
+  assert.equal(el.querySelectorAll('[data-current="1"]').length, 0);
+  assert.equal(el.querySelectorAll('.ch-direct').length, 0);
   const ticks = [...el.querySelectorAll('.ch-ytick')];
   assert.ok(ticks.length >= 2);
   assert.ok(ticks.every((t) => t.textContent.startsWith('$')));

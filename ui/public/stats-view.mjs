@@ -400,7 +400,7 @@ function chartCard(doc, title, rangeLabel) {
 
 const unitWord = (bucket) => (bucket === 'month' ? 'month' : bucket === 'hour' ? 'hour' : 'day');
 
-/** Spend column chart: blue ramp, current bucket darker + direct-labeled. */
+/** Spend column chart: uniform blue columns; per-bucket values live in the tooltip + sr table. */
 export function renderSpendChart(spec, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
   const card = chartCard(doc, `Spend per ${unitWord(spec.bucket)}`, spec.rangeLabel);
   const total = spec.series.reduce((a, p) => a + (p.spentUsd || 0), 0);
@@ -411,22 +411,14 @@ export function renderSpendChart(spec, { doc = globalThis.document, fmt = DEFAUL
     srHead: ['Bucket', 'Spend'],
     srRow: (pt) => [tipDate(pt.bucketStartMs, spec.bucket), fmt.usd(pt.spentUsd || 0)],
     tip: (pt) => fmt.usd(pt.spentUsd || 0),
-    drawBucket: ({ svg, pt, bx, bandW, yOf, isCurrent }) => {
+    drawBucket: ({ svg, pt, bx, bandW, yOf }) => {
       const v = pt.spentUsd || 0;
       if (v <= 0) return;
       const w = Math.min(24, bandW - 4);
       const x = bx + (bandW - w) / 2;
       const y = yOf(v);
-      const bar = s(doc, 'path', { d: roundedTopBar(x, y, w, T + PH - y),
-        fill: isCurrent ? 'var(--blue-ink)' : 'var(--blue)' });
-      if (isCurrent) bar.dataset.current = '1';
-      svg.appendChild(bar);
-      if (isCurrent) {
-        const t = s(doc, 'text', { class: 'ch-direct', x: x + w / 2, y: y - 5,
-          'text-anchor': 'middle', 'font-size': 10.5, 'font-weight': 600, fill: 'var(--ink)' });
-        t.textContent = fmt.usd(v);
-        svg.appendChild(t);
-      }
+      svg.appendChild(s(doc, 'path', { d: roundedTopBar(x, y, w, T + PH - y),
+        fill: 'var(--blue)' }));
     },
   });
   card.appendChild(fig);
