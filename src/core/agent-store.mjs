@@ -6,7 +6,7 @@
 
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadAgentRegistry, normalizeMeta, userAgentsDir } from './agent-registry.mjs';
+import { loadAgentRegistry, normalizeMeta, userAgentsDir, validateMetaV2 } from './agent-registry.mjs';
 import { listWorkflows } from './workflows.mjs';
 
 export { userAgentsDir }; // single source: the Phase 1 layer resolver
@@ -15,6 +15,14 @@ export { userAgentsDir }; // single source: the Phase 1 layer resolver
 export const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 function err(message, code) { return Object.assign(new Error(message), { code }); }
+
+/** The meta v2 gate for the save path: every broken rule, verbatim, as the 400
+ *  body — so the caller is told exactly what to fix instead of "invalid agent
+ *  metadata". There is NO v1 path: a v1-shaped meta fails on `metaVersion 2`. */
+function assertMetaV2(raw) {
+  const { errors } = validateMetaV2(raw);
+  if (errors.length) throw err(errors.join('; '), 'BAD_REQUEST');
+}
 
 /** The writable user layer dir. userAgentsDir() returns null only when the home
  *  cannot be resolved (no WORCA_HOME under node:test) — surface that as a 400. */
@@ -59,7 +67,9 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   raw.key = key;
   raw.agentFile = `${key}.md`;                              // store-owned sibling file
   if (!Number.isFinite(Number(raw.order))) raw.order = 99;  // sort after built-ins by default
+  assertMetaV2(raw);
   const meta = normalizeMeta(raw);
+  // Unreachable while both run the same rules — a backstop against them drifting.
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const existing = loadAgentRegistry()[key];
   if (existing && existing.origin === 'builtin') {
@@ -100,7 +110,9 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   raw.key = key;                                            // key immutable on update
   raw.agentFile = `${key}.md`;
   if (!Number.isFinite(Number(raw.order))) raw.order = existing.order;
+  assertMetaV2(raw);
   const meta = normalizeMeta(raw);
+  // Unreachable while both run the same rules — a backstop against them drifting.
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const dir = requireUserDir();
   if (typeof markdown === 'string') {

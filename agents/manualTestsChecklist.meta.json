@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "manualTestsChecklist",
   "domain": "coding",
   "displayName": "Manual Tests Checklist",
@@ -7,10 +8,14 @@
   "icon": "<rect x=\"6\" y=\"4\" width=\"12\" height=\"17\" rx=\"2\"/><path d=\"M9.5 4V2.8h5V4\" stroke-linejoin=\"round\"/><path d=\"M8.8 12l1.6 1.6L13.4 10\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-manual-tests-checklist.md",
   "runnerType": "producer",
-  "loopSource": false,
-  "produces": ["checklist"],
-  "consumes": ["plan","code"],
-  "connectsTo": ["manualWebUiTesting"],
+  "mockRole": "manual-tests-checklist",
+  "promptHints": "Read the implementation plan and the implemented changes (via `git diff` in your cwd), then write a markdown checklist of concrete manual test cases a human can run against the app. Each case: a `- [ ]` line with steps and the expected result.",
+  "inputs": [
+    { "id": "plan", "type": "md" }
+  ],
+  "outputs": [
+    { "id": "checklist", "type": "md", "filename": "manual-tests-checklist.md" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

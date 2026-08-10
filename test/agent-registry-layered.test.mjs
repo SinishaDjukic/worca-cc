@@ -20,9 +20,11 @@ function writeAgent(dir, key, extra = {}) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${key}.md`), `# ${key}\n\nYou are the ${key} agent.\n`);
   writeFileSync(join(dir, `${key}.meta.json`), JSON.stringify({
+    metaVersion: 2,
     key, displayName: key, description: 'd', color: 'amber', icon: '<path d="M0 0"/>',
-    agentFile: `${key}.md`, runnerType: 'producer', loopSource: false,
-    produces: ['plan'], consumes: ['userPrompt'], optionalConsumes: [], connectsTo: '*',
+    agentFile: `${key}.md`, runnerType: 'producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
     order: 99, ...extra,
   }, null, 2));
 }

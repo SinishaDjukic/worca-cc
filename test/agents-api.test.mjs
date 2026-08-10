@@ -31,7 +31,13 @@ const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, bo
 const put = (p, b) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(b) });
 const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
 
-const META = { displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42 };
+// meta v2: the save path validates typed ports, so the fixture declares them.
+const META = {
+  metaVersion: 2, displayName: 'Docs Writer', description: 'writes docs', color: 'green',
+  runnerType: 'producer', order: 42,
+  inputs: [{ id: 'plan', type: 'md' }],
+  outputs: [{ id: 'review', type: 'md', filename: '{base}-docs-review.md' }],
+};
 const MD = '# Agent: Docs Writer\n\nYou write docs.\n';
 
 test('GET /api/agents carries origin + channels and EXCLUDES markdown', async () => {
@@ -89,10 +95,12 @@ test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a u
 });
 
 test('GET /api/agents channels is the open-vocabulary union: built-ins + custom ids from agents', async () => {
+  // v2 derives channelDefs from the output ports — authoring them is gone.
   const meta = {
-    displayName: 'Spec Maker', description: 'emits a spec', color: 'blue', runnerType: 'producer',
-    consumes: ['plan'], produces: ['spec'], order: 50,
-    channelDefs: [{ id: 'spec', kind: 'json', filename: 'api-spec.json' }],
+    metaVersion: 2, displayName: 'Spec Maker', description: 'emits a spec', color: 'blue',
+    runnerType: 'producer', order: 50,
+    inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'spec', type: 'json', filename: 'api-spec.json' }],
   };
   const c = await post('/api/agents', { meta, markdown: '# Agent: Spec Maker\n\nYou emit specs.\n' });
   assert.equal(c.status, 201);

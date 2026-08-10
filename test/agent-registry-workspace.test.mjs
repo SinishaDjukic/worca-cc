@@ -81,16 +81,22 @@ test('scope coercion fails SAFE: a bogus scope value coerces to "project" (visib
   // typo surfaces a VISIBLE project agent rather than a silently-hidden one (§6.6).
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-scope-'));
   tmpDirs.push(dir);
+  const ports = {
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  };
   await writeFile(join(dir, 'typoAgent.meta.json'), JSON.stringify({
-    key: 'typoAgent', displayName: 'Typo', description: 'd', color: 'blue',
-    icon: '<path d="M0 0"/>', agentFile: 'worca-cc-typo.md',
+    metaVersion: 2, key: 'typoAgent', displayName: 'Typo', description: 'd', color: 'blue',
+    icon: '<path d="M0 0"/>', agentFile: 'worca-cc-typo.md', ...ports,
     runnerType: 'producer', order: 9, scope: 'workspace-onlyy', // <- typo
   }), 'utf8');
+  await writeFile(join(dir, 'worca-cc-typo.md'), '# typo agent\n', 'utf8');
   await writeFile(join(dir, 'wsOnly.meta.json'), JSON.stringify({
-    key: 'wsOnly', displayName: 'WS', description: 'd', color: 'blue',
-    icon: '<path d="M0 0"/>', agentFile: 'worca-cc-ws.md',
+    metaVersion: 2, key: 'wsOnly', displayName: 'WS', description: 'd', color: 'blue',
+    icon: '<path d="M0 0"/>', agentFile: 'worca-cc-ws.md', ...ports,
     runnerType: 'producer', order: 10, scope: 'workspace-only', // exact marker
   }), 'utf8');
+  await writeFile(join(dir, 'worca-cc-ws.md'), '# ws agent\n', 'utf8');
 
   const reg = loadAgentRegistry(dir);
   assert.equal(reg.typoAgent.scope, 'project', 'a typo coerces to project (fails safe to visible)');

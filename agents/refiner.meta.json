@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "refiner",
   "domain": "coding",
   "displayName": "Refine Plan",
@@ -7,11 +8,21 @@
   "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-plan-refiner.md",
   "runnerType": "producer",
-  "loopSource": false,
+  "mockRole": "refiner",
+  "promptHints": "Mark a finding critical/major only if it must be fixed before implementation.",
+  "wantsRequest": true,
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "verdict": { "filename": "refine-review-cycle{cycle}.json" },
   "fanOut": true,
-  "produces": ["plan","review"],
-  "consumes": ["plan"],
-  "connectsTo": ["implementer","refiner","decomposer"],
+  "inputs": [
+    { "id": "plan", "type": "md" },
+    { "id": "revise", "type": "md", "required": false, "loop": true }
+  ],
+  "outputs": [
+    { "id": "plan", "type": "md", "when": "clean", "filename": "{base}{vsuffix}.md", "store": "project" },
+    { "id": "revise", "type": "md", "when": "blocking", "filename": "{base}{vsuffix}.md", "store": "project", "artifactKind": "plan" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

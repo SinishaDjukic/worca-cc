@@ -15,8 +15,12 @@ function layer(files) {
   return dir;
 }
 const sidecar = (key, extra = {}) => JSON.stringify({
+  metaVersion: 2,
   key, displayName: key, color: 'blue', runnerType: 'producer', order: 1,
-  agentFile: `${key}.md`, ...extra,
+  agentFile: `${key}.md`,
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  ...extra,
 });
 const load = (dir) => loadAgentRegistry(dir, { userAgentsDir: null, includePlugins: false });
 
@@ -44,9 +48,12 @@ test('quoted frontmatter values are unquoted', () => {
   assert.equal(load(dir).gamma.description, 'Quoted: colons, commas, fine.');
 });
 
-test('missing .md, no frontmatter, no description line, or a block scalar → empty string', () => {
+test('no .md at all, no frontmatter, no description line, or a block scalar → empty string', () => {
   const dir = layer({
-    'noMd.meta.json': sidecar('noMd'),
+    // A palette-only sidecar (no agentFile) has no body to fall back to. A
+    // sidecar that NAMES a missing body is a different case: meta v2 skips it at
+    // load (see test/agent-registry-v2.test.mjs), so it can no longer be read here.
+    'noMd.meta.json': sidecar('noMd', { agentFile: null }),
     'noFm.meta.json': sidecar('noFm'), 'noFm.md': '# no frontmatter\n',
     'noLine.meta.json': sidecar('noLine'), 'noLine.md': '---\nname: noLine\n---\n',
     'folded.meta.json': sidecar('folded'),

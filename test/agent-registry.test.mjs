@@ -21,7 +21,11 @@ test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', (
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
-  const base = { key: 'x', order: 1 };
+  const base = {
+    metaVersion: 2, key: 'x', order: 1, runnerType: 'producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  };
   assert.equal(normalizeMeta({ ...base }).domain, 'general');                       // absent
   assert.equal(normalizeMeta({ ...base, domain: 'shared' }).domain, 'shared');      // sentinel
   assert.equal(normalizeMeta({ ...base, domain: 'Marketing!' }).domain, 'general'); // malformed
@@ -57,7 +61,7 @@ test('each entry is a well-formed AgentMeta', () => {
     assert.equal(typeof m.icon, 'string');
     assert.ok(m.icon.length > 0);
     assert.ok(['producer', 'verifier', 'clarifier'].includes(m.runnerType));
-    assert.equal(typeof m.loopSource, 'boolean');
+    assert.equal(m.metaVersion, 2);
     assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `connectsTo for ${key}: ${JSON.stringify(m.connectsTo)}`);
     assert.equal(typeof m.order, 'number');
   }
@@ -142,13 +146,17 @@ test('original four agentFiles match the orchestrator AGENT_FILES map', () => {
   }
 });
 
-test('exactly the verifiers are loopSources; producers are not', () => {
+test('conditional routing replaces loopSource: a verdict + when-gated outputs', () => {
   const reg = loadAgentRegistry();
-  const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
-  // workspaceReviewer is the workspace-run review loop source (mirrors reviewer).
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'planReviewer', 'reviewer', 'workspaceReviewer']);
+  const branching = Object.values(reg).filter((m) => m.verdict).map((m) => m.key).sort();
+  // The four v1 loopSources, PLUS the refiner: a producer whose clean/blocking
+  // arms are what drive the refine self-loop (v1 modelled that as loopSource:false
+  // and dispatched it out of band).
+  assert.deepEqual(branching, ['manualWebUiTesting', 'planReviewer', 'refiner', 'reviewer', 'workspaceReviewer']);
   for (const m of Object.values(reg)) {
-    if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
+    assert.ok(!Object.hasOwn(m, 'loopSource'), `${m.key}: loopSource is a dead v1 field`);
+    if (m.runnerType === 'verifier') assert.ok(m.verdict, `${m.key} verifier must declare a verdict`);
+    if (m.verdict) assert.ok(m.outputs.some((p) => p.when !== 'always'), `${m.key} must route conditionally`);
   }
 });
 

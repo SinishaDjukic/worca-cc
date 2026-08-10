@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "workspaceReviewer",
   "domain": "shared",
   "displayName": "Workspace Review",
@@ -7,14 +8,24 @@
   "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M8 11l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-workspace-reviewer.md",
   "runnerType": "verifier",
-  "loopSource": true,
+  "scope": "workspace-only",
+  "workspaceVariantOf": "reviewer",
+  "mockRole": "workspace-reviewer",
+  "promptHints": "The issue list is the UNION of every per-project critical/major issue (never collapse one), sorted by projectKey then severity, each location prefixed \"<projectKey>: \".",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "review",
+  "verdict": { "filename": "ws-review-cycle{cycle}.json" },
   "fanOut": true,
-  "produces": ["review"],
-  "consumes": ["plan", "code"],
-  "connectsTo": ["implementer"],
+  "inputs": [
+    { "id": "plan", "type": "md" },
+    { "id": "done", "type": "void", "required": false, "as": "worktree" }
+  ],
+  "outputs": [
+    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-ws-review.md", "store": "project" },
+    { "id": "pass", "type": "void", "when": "clean" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,
-  "order": 4.5,
-  "scope": "workspace-only"
+  "order": 4.5
 }

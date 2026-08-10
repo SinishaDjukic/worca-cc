@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "decomposer",
   "domain": "coding",
   "displayName": "Decompose",
@@ -8,12 +9,14 @@
   "icon": "<path d=\"M12 3v6M12 9l-5 5M12 9l5 5M5 14h2M17 14h2M6 18h2M16 18h2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-decomposer.md",
   "runnerType": "producer",
-  "loopSource": false,
+  "mockRole": "decomposer",
   "fanOut": true,
-  "produces": ["decomposition"],
-  "consumes": ["plan"],
-  "optionalConsumes": [],
-  "connectsTo": ["implementer"],
+  "inputs": [
+    { "id": "plan", "type": "md" }
+  ],
+  "outputs": [
+    { "id": "tasks", "type": "json", "filename": "decomposition.json" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

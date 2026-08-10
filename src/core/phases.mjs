@@ -316,8 +316,9 @@ export function resolveAgentBody(ctx, key) {
   return ctx?.agentPrompts?.[key];
 }
 
-/** Render the MOCK marker block appended to every task prompt. */
-function mockMarkers(fields) {
+/** Render the MOCK marker block appended to every task prompt. Exported so the
+ *  graph executor assembles the same marker block instead of forking one. */
+export function mockMarkers(fields) {
   const lines = [];
   for (const [key, val] of Object.entries(fields)) {
     if (val === undefined || val === null || val === '') continue;
@@ -392,8 +393,10 @@ export function workspaceWriteTargetsFor(ctx) {
   return (ctx.workspace?.projects || []).map((p) => p.worktreeDir).filter(Boolean);
 }
 
-/** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
-function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
+/** Map the orchestrator's claudeOpts into runClaude options shared by every role.
+ *  Exported so the graph executor reuses this exact mapping (RESUME_HEADER prefix
+ *  and questionsPromptBlock suffix included) rather than forking it. */
+export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   return {
     cwd: ctx.projectDir,
@@ -436,6 +439,8 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   };
 }
 
+/** Back-compat alias for the tests that imported runOpts before it was a proper
+ *  named export. Same function object — never let the two drift. */
 export const _runOptsForTests = runOpts;
 
 /** A compact task header reused across roles. Exported for testing. */

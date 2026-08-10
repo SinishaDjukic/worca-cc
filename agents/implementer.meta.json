@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "implementer",
   "domain": "coding",
   "displayName": "Implementation",
@@ -7,12 +8,32 @@
   "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
   "agentFile": "worca-cc-implementer.md",
   "runnerType": "producer",
-  "loopSource": false,
+  "mockRole": "implementer",
+  "sideEffect": "code",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
   "fanOut": true,
-  "produces": ["code"],
-  "consumes": ["plan","review"],
-  "optionalConsumes": ["review"],
-  "connectsTo": ["reviewer","manualTestsChecklist"],
+  "inputs": [
+    { "id": "plan", "type": "md" },
+    {
+      "id": "fix",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "Address EVERY critical and major issue in the review below, then re-run the tests. Follow the plan; deviate only if something does not work at all."
+    },
+    {
+      "id": "task",
+      "type": "json",
+      "required": false,
+      "expands": true,
+      "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan."
+    }
+  ],
+  "outputs": [
+    { "id": "done", "type": "void" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

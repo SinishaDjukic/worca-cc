@@ -8,14 +8,17 @@ import {
   listAgents, readAgent, createAgent, updateAgent, deleteAgent,
   keyFromName, userAgentsDir, AGENT_KEY_RE,
 } from '../src/core/agent-store.mjs';
+import { validateMetaV2 } from '../src/core/agent-registry.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
 
 useTempHome(after);
 
 const MD = '# Agent: Docs Writer\n\nYou write docs.\n';
 const META = {
-  displayName: 'Docs Writer', description: 'writes docs', color: 'green',
-  runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42,
+  metaVersion: 2, displayName: 'Docs Writer', description: 'writes docs', color: 'green',
+  runnerType: 'producer', order: 42,
+  inputs: [{ id: 'plan', type: 'md' }],
+  outputs: [{ id: 'review', type: 'md', filename: 'docs-review.md' }],
 };
 
 test('keyFromName: lower-camel slug', () => {
@@ -32,6 +35,8 @@ test('createAgent writes the <key>.md + <key>.meta.json pair and lists with orig
   assert.equal(markdown, MD);
   const onDisk = JSON.parse(await readFile(join(userAgentsDir(), 'docsWriter.meta.json'), 'utf8'));
   assert.equal(onDisk.key, 'docsWriter');
+  assert.equal(onDisk.metaVersion, 2, 'the sidecar persists as meta v2');
+  assert.deepEqual(onDisk.outputs.map((p) => p.id), ['review']);
   assert.equal(await readFile(join(userAgentsDir(), 'docsWriter.md'), 'utf8'), MD);
   const all = await listAgents();
   const mine = all.find((m) => m.key === 'docsWriter');
@@ -49,6 +54,40 @@ test('createAgent rejects a builtin-key collision and an empty markdown', async 
   await assert.rejects( // duplicate user key
     () => createAgent({ meta: META, markdown: MD }),
     (e) => e.code === 'DUPLICATE');
+});
+
+// ── meta v2 is the ONLY accepted shape (no dual-accept path) ────────────────
+
+test('createAgent 400s a v1-shaped meta with validateMetaV2 rule text, verbatim', async () => {
+  const v1 = {
+    displayName: 'Legacy Agent', description: 'v1 shaped', color: 'green',
+    runnerType: 'producer', consumes: ['plan'], produces: ['review'],
+  };
+  // The store validates the raw it is about to persist (key/agentFile/order filled in).
+  const expected = validateMetaV2({ ...v1, key: 'legacyAgent', agentFile: 'legacyAgent.md', order: 99 })
+    .errors.join('; ');
+  assert.match(expected, /metaVersion 2/, 'the v1 shape trips the version rule');
+  await assert.rejects(() => createAgent({ meta: v1, markdown: MD }), (e) => {
+    assert.equal(e.code, 'BAD_REQUEST');
+    assert.equal(e.message, expected, 'the 400 body is the rule text, verbatim');
+    return true;
+  });
+  assert.equal(await readAgent('legacyAgent'), null, 'nothing was written');
+});
+
+test('createAgent/updateAgent 400 on a broken v2 rule and name it', async () => {
+  await assert.rejects(
+    () => createAgent({ meta: { ...META, displayName: 'No Outputs', outputs: [] }, markdown: MD }),
+    (e) => e.code === 'BAD_REQUEST' && /at least one output port is required/.test(e.message));
+  await assert.rejects(
+    () => createAgent({
+      meta: { ...META, displayName: 'Gate Grabber', inputs: [{ id: 'await', type: 'void' }] },
+      markdown: MD,
+    }),
+    (e) => e.code === 'BAD_REQUEST' && /"await" is reserved/.test(e.message));
+  await assert.rejects(
+    () => updateAgent('docsWriter', { meta: { ...META, outputs: [{ id: 'review', type: 'md' }] } }),
+    (e) => e.code === 'BAD_REQUEST' && /require a filename template/.test(e.message));
 });
 
 test('readAgent returns {meta, markdown} for user AND builtin agents', async () => {

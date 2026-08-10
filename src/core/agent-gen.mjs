@@ -8,8 +8,9 @@
 // POST /api/agents. Mode A (no userMarkdown): one runClaude writes BOTH the .md
 // body and the meta JSON draft. Mode B (userMarkdown given): the body is the
 // user's verbatim; the LLM writes ONLY the meta JSON, inferred from the body +
-// the neighbors' produces/consumes. Files are read back as authoritative
-// (phases.mjs runWorkspaceScan pattern) then normalized via normalizeMeta.
+// the neighbors' typed PORTS. Files are read back as authoritative
+// (phases.mjs runWorkspaceScan pattern) then normalized via normalizeMeta — the
+// meta v2 gate, so a draft that breaks a port rule never reaches the store.
 
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -35,7 +36,6 @@ class AgentGen extends EventEmitter {
     this.expectedBefore = Array.isArray(opts.expectedBefore) ? opts.expectedBefore : [];
     this.expectedAfter = Array.isArray(opts.expectedAfter) ? opts.expectedAfter : [];
     this.userMarkdown = typeof opts.userMarkdown === 'string' && opts.userMarkdown.trim() ? opts.userMarkdown : '';
-    this.channels = Array.isArray(opts.channels) ? opts.channels : [];
     this.claude = opts.claude || {};
     this.genId = `agen_${randomUUID()}`;
     this.scratchDir = join(worcaHome(), 'tmp', 'agent-gen', this.genId.slice(5, 13));
@@ -110,29 +110,58 @@ class AgentGen extends EventEmitter {
 
   _neighborBlock() {
     const j = (list) => JSON.stringify(list.map((m) => ({
-      key: m.key, displayName: m.displayName, produces: m.produces || [],
-      consumes: m.consumes || [], optionalConsumes: m.optionalConsumes || [],
+      key: m.key,
+      displayName: m.displayName,
+      inputs: (m.inputs || []).map((p) => ({ id: p.id, type: p.type })),
+      outputs: (m.outputs || []).map((p) => ({ id: p.id, type: p.type, when: p.when || 'always' })),
     })), null, 2);
     return (
       `## Pipeline neighbors\n\n` +
-      `Agents expected to run BEFORE this one (their produces are this agent's likely consumes):\n${j(this.expectedBefore)}\n\n` +
-      `Agents expected to run AFTER this one (their consumes are this agent's likely produces):\n${j(this.expectedAfter)}\n\n` +
-      `## Channel vocabulary\n\nconsumes/optionalConsumes/produces MUST use ONLY these ids: ` +
-      `${this.channels.join(', ') || '(see neighbors)'}\n\n`
+      `Agents expected to run BEFORE this one (their OUTPUT ports are what this agent's inputs get wired to):\n${j(this.expectedBefore)}\n\n` +
+      `Agents expected to run AFTER this one (their INPUT ports are what this agent's outputs feed):\n${j(this.expectedAfter)}\n\n` +
+      'Wires are drawn in the composer and only require matching port TYPES, so port ids are yours ' +
+      'to choose: declare the ports this agent actually needs, and reuse a neighbor\'s id only when ' +
+      'it genuinely names the same payload.\n\n'
     );
   }
 
   _metaSchemaBlock() {
     return (
       `Write the metadata JSON to: ${this.metaPath}\n` +
-      'EXACT shape (one JSON object): { "key": "<lowerCamel>", "displayName", "description", ' +
-      '"color": "green|peach|red|blue|violet|amber", "runnerType": "producer|verifier", ' +
-      '"loopSource": bool, "fanOut": bool, "asksQuestions": bool, "questionsLocked": bool, ' +
-      '"questionsDefault": bool, "consumes": [..], "optionalConsumes": [..], ' +
-      '"produces": [..], "connectsTo": "*"|["key",..], "order": number }\n' +
+      'One JSON object, sidecar meta v2 (typed ports — there is no channel vocabulary). ' +
+      'REQUIRED: { "metaVersion": 2, "key": "<lowerCamel>", "displayName", "description", ' +
+      '"runnerType": "producer"|"verifier"|"clarifier", "inputs": [..], "outputs": [..] } — ' +
+      'at least one output port, at most 8 ports per side.\n' +
+      'An INPUT port: { "id", "type": "md"|"json"|"void", "label", "required" (default true; a ' +
+      'required input is a barrier the agent waits on), "loop" (true = loop receiver, which forces ' +
+      'required:false), "expands" (json only — run once per element of the array it carries), ' +
+      '"as": "file"|"answers"|"fix-review"|"worktree" (how the payload is rendered into the prompt; ' +
+      'default "file", and "worktree" is the only renderer a void input takes), "directive" (extra ' +
+      'prompt text injected when this port fires) }.\n' +
+      'An OUTPUT port: { "id", "type": "md"|"json"|"void", "when": "always"|"blocking"|"clean" ' +
+      '(default "always"; anything else requires "verdict"), "filename" (plain basename, required on ' +
+      'md/json ports, may interpolate {cycle} {vsuffix} {base}), "store": "run"|"project" (default ' +
+      '"run"), "artifactKind" (defaults to the port id) }. A void port carries no payload — it is a ' +
+      'pure signal, so it takes neither filename nor store.\n' +
+      'Port ids are lowerCamel, max 32 chars, unique per side. The id "await" is RESERVED: the engine ' +
+      'synthesizes an await gate port on every node, so never declare it on either side.\n' +
+      'Runner obligations: "verifier" MUST declare "verdict": { "filename": "<basename>" } (the JSON ' +
+      'verdict it writes; conditional "blocking"/"clean" outputs branch on it). "clarifier" MUST ' +
+      'declare at least one json output port (the answers it writes back). "producer" just writes its ' +
+      'outputs.\n' +
+      'Optional agent-level fields: "color": "green|peach|red|blue|violet|amber", "icon" (an inline ' +
+      'SVG path), "sideEffect": "code" (the agent edits the working tree), "scope": "project" (default) ' +
+      'or "workspace-only", "domain" (palette group, e.g. "coding"), "order" (UI sort only), ' +
+      '"fanOut" (may spawn parallel sub-agents), "asksQuestions"/"questionsLocked"/"questionsDefault" ' +
+      '(see below), "requiresSkills": ["skill-name", ..], "promptHints" (extra system-prompt text), ' +
+      '"wantsRequest" (inject the user request + its attachments), "workspaceFanOut" (run once per ' +
+      'workspace member), "workspaceStrategy": "explore"|"task"|"review", "workspaceVariantOf": ' +
+      '"<agentKey>" (this agent substitutes for that one in a workspace; requires scope ' +
+      '"workspace-only"), "placeable": false (never placeable as a graph node), "mockRole" (omit ' +
+      'unless the agent mimics a built-in writer; an unknown value is dropped).\n' +
       '"description" is the palette blurb: 1-2 plain sentences, max 160 chars total and the ' +
       'FIRST sentence max 75 chars (the palette card clamps at 1-2 short lines). It is shown under ' +
-      'the agent name in the composer palette — say what the agent does and what it reads/produces.\n' +
+      'the agent name in the composer palette — say what the agent does and what it reads/writes.\n' +
       'Questions flags: asksQuestions=true if the agent may need a user decision mid-task ' +
       '(the orchestrator pauses it and resumes it with the answers). questionsLocked=true ONLY if ' +
       "asking the user is the agent's whole purpose (the user then cannot toggle it in the " +

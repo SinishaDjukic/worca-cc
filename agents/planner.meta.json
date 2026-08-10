@@ -1,4 +1,5 @@
 {
+  "metaVersion": 2,
   "key": "planner",
   "domain": "coding",
   "displayName": "Plan",
@@ -7,12 +8,24 @@
   "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
   "agentFile": "worca-cc-planner.md",
   "runnerType": "producer",
-  "loopSource": false,
+  "mockRole": "planner-plan",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
   "fanOut": true,
-  "produces": ["plan"],
-  "consumes": ["userPrompt", "clarify", "review"],
-  "optionalConsumes": ["clarify", "review"],
-  "connectsTo": ["refiner", "implementer", "planReviewer", "decomposer"],
+  "inputs": [
+    { "id": "task", "type": "md" },
+    { "id": "answers", "type": "json", "required": false, "as": "answers" },
+    {
+      "id": "revise",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "## Revise to address the review\n\nA reviewer found issues with the previous plan. Re-plan from scratch (cold start) and address EVERY critical and major finding in the review below. Preserve the \"## Clarifications (Q&A)\" section."
+    }
+  ],
+  "outputs": [
+    { "id": "plan", "type": "md", "filename": "{base}{vsuffix}.md", "store": "project" }
+  ],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

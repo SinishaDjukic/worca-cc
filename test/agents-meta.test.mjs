@@ -62,7 +62,7 @@ test('every meta has the required fields and a runnable runnerType', async () =>
       assert.ok(meta[field] != null && meta[field] !== '', `${file}: missing "${field}"`);
     }
     assert.ok(RUNNER_TYPES.has(meta.runnerType), `${file}: runnerType "${meta.runnerType}" must be producer|verifier|clarifier`);
-    assert.equal(typeof meta.loopSource, 'boolean', `${file}: loopSource must be a boolean`);
+    assert.equal(meta.metaVersion, 2, `${file}: every shipped sidecar is meta v2`);
     assert.equal(typeof meta.order, 'number', `${file}: order must be a number`);
   }
 });
@@ -78,13 +78,15 @@ test('loadAgentRegistry returns the 6 shipped agents keyed by key, sorted by ord
   assert.deepEqual(orders, sorted, 'loadAgentRegistry must return entries sorted by .order');
 });
 
-test('every sidecar declares produces/consumes/connectsTo explicitly', async () => {
+test('every sidecar declares its typed ports explicitly (v2 replaces produces/consumes/connectsTo)', async () => {
   const files = (await readdir(AGENTS_DIR)).filter((x) => x.endsWith('.meta.json'));
   for (const f of files) {
     const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
-    assert.ok(Array.isArray(m.produces), `${f} produces`);
-    assert.ok(Array.isArray(m.consumes), `${f} consumes`);
-    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `${f} connectsTo`);
+    assert.ok(Array.isArray(m.inputs), `${f} inputs`);
+    assert.ok(Array.isArray(m.outputs) && m.outputs.length, `${f} outputs`);
+    for (const dead of ['produces', 'consumes', 'connectsTo', 'loopSource', 'uiPhase', 'channelDefs']) {
+      assert.ok(!Object.hasOwn(m, dead), `${f}: dead v1 field "${dead}" must not be authored`);
+    }
   }
 });
 
@@ -103,9 +105,14 @@ test('requiresSkills, when present, is an array of non-blank strings', async () 
 
 test('normalizeMeta exposes requiresSkills (defaulting to []) and filters junk', async () => {
   const { normalizeMeta } = await import('../src/core/agent-registry.mjs');
-  assert.deepEqual(normalizeMeta({ key: 'a', order: 1 }).requiresSkills, []);
+  const base = {
+    metaVersion: 2, runnerType: 'producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  };
+  assert.deepEqual(normalizeMeta({ ...base, key: 'a', order: 1 }).requiresSkills, []);
   assert.deepEqual(
-    normalizeMeta({ key: 'b', order: 2, requiresSkills: ['imagegen', ' ', 3, ' x '] }).requiresSkills,
+    normalizeMeta({ ...base, key: 'b', order: 2, requiresSkills: ['imagegen', ' ', 3, ' x '] }).requiresSkills,
     ['imagegen', 'x'],
   );
 });

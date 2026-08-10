@@ -10,14 +10,18 @@ test('decomposer is registered with the expected channel spec', () => {
   assert.equal(d.fanOut, true);
   assert.equal(d.scope, 'project');
   assert.deepEqual(d.consumes, ['plan']);
-  assert.deepEqual(d.produces, ['decomposition']);
-  assert.deepEqual(d.connectsTo, ['implementer']);
+  assert.deepEqual(d.produces, ['decomposition']);   // the v2 `tasks` output port
+  assert.equal(d.connectsTo, '*');                   // v2 drops the authored adjacency list
   assert.equal(d.agentFile, 'worca-cc-decomposer.md');
+  assert.deepEqual(d.inputs.map((p) => p.id), ['plan']);
+  assert.deepEqual(d.outputs.map((p) => p.id), ['tasks']);
 });
 
 test('refiner / planner / planReviewer may connect to the decomposer', () => {
   const reg = loadAgentRegistry();
-  assert.ok(reg.refiner.connectsTo.includes('decomposer'), 'refiner -> decomposer must be allowed');
-  assert.ok(reg.planner.connectsTo.includes('decomposer'), 'planner -> decomposer must be allowed');
-  assert.ok(reg.planReviewer.connectsTo.includes('decomposer'), 'planReviewer -> decomposer must be allowed');
+  // v2 has no per-agent allow-list: every agent connects to every agent, and the
+  // graph validator decides legality from the port TYPES instead.
+  for (const key of ['refiner', 'planner', 'planReviewer']) {
+    assert.equal(reg[key].connectsTo, '*', `${key} -> decomposer must be allowed`);
+  }
 });

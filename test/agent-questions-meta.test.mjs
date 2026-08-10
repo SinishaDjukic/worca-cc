@@ -5,7 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeMeta, loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
 
-const base = { key: 'demo', order: 99 };
+const base = {
+  metaVersion: 2, key: 'demo', order: 99, runnerType: 'producer',
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+};
 
 test('normalizeMeta defaults the questions fields to false', () => {
   const m = normalizeMeta({ ...base });
