@@ -92,7 +92,7 @@ Model env **wins over** inherited/allowlisted values and **survives scrub**: it 
 - Prefix: `WORCA_` — protects `WORCA_MOCK`, `WORCA_CLAUDE_BIN`, `WORCA_EFFORT_FLAG`, `WORCA_SUBAGENT_HOOKS`, `WORCA_RUN_ROOT`, all of which the runner reads from `process.env` and any of which injection could otherwise subvert (mock mode, binary path).
 - Everything else — including all `ANTHROPIC_*` / `CLAUDE_*` — is allowed: routing them is the point.
 
-The list lives in one exported constant in `claude-runner.mjs` next to `SPAWN_ENV_BASE`, used by both the settings validator and the spawn-time filter.
+The policy lives in `src/core/model-env.mjs`, a zero-import leaf module, imported by both the settings validator and the runner's spawn-time filter. (It cannot live next to `SPAWN_ENV_BASE` in `claude-runner.mjs` as originally drafted: `settings.mjs` is bound to a no-core-graph-imports contract and must validate against the same list.) `EFFORTS` moves there too, re-exported from `config.mjs` for import-compat, for the same reason.
 
 ### 4.5 Validation
 
@@ -149,7 +149,7 @@ No destructive auto-migration. Transition plan:
 
 ## 6. Implementation order
 
-1. `settings.mjs` catalog storage + sanitization + reserved-key constant in `claude-runner.mjs` (pure, fully unit-testable).
+1. `settings.mjs` catalog storage + sanitization + the `model-env.mjs` leaf (reserved-key policy, `${VAR}` refs, spawn-time filter) (pure, fully unit-testable).
 2. `config.mjs` effective catalog + `resolveModelEnv` + validation parity + removal semantics.
 3. `claude-runner.mjs` `modelEnv` seam + spawn-env merge; orchestrator dispatch wiring + aux call sites.
 4. API endpoints + masking.

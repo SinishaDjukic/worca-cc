@@ -15,6 +15,7 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
+import { EFFORTS } from './model-env.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -36,8 +37,10 @@ export const AGENT_STEPS = agentSteps();
 /** Live key set (recomputed per call so runtime-added user agents validate). */
 const stepKeys = () => new Set(agentSteps().map((s) => s.key));
 
-/** All effort levels the UI can offer (ordering is not a ranking). */
-export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+/** All effort levels the UI can offer (ordering is not a ranking). Canonical
+ *  home is model-env.mjs (so settings.mjs can validate catalog entries without
+ *  importing the core graph); re-exported here for import-compat. */
+export { EFFORTS };
 
 /**
  * Built-in models. `efforts` is the subset of EFFORTS each model supports.
