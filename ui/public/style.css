@@ -747,97 +747,76 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-delete svg{display:block;}
 
 /* ========================================================================== */
-/* Pipeline Composer v2 — node graph canvas, top agent drawer, inspector      */
+/* Pipeline Composer v2 — node graph canvas, agents card, inspector           */
 /* Card geometry is graph-geometry.mjs's, not CSS's: node width/height and     */
 /* every port-row height are set inline from the model so the renderer and the */
 /* hit-tester agree. The rules below are pure appearance — changing a size     */
 /* here without changing graph-geometry.mjs would desync wiring from pixels.   */
 /* ========================================================================== */
-/* Column: the drawer bar sits above the canvas + inspector row. The bar is 44px
-   of content PLUS .gv-drawer's own 1px border-bottom — the drawer's height is
-   auto, so that border is additive (*{box-sizing:border-box} at style.css:43
-   governs SPECIFIED heights only). 640 + 45 = 685 preserves the canvas height
-   exactly: min-height is a BORDER box under that same rule, so .card's 1px
-   borders make today's canvas 638px, and 685 - 2 - 45 is 638 again. .gv-canvas
-   declares no height anywhere in this stylesheet — its size is pure
-   align-items:stretch — and .builder-card{padding:0} already beats
-   .card{padding:24px} on source order. NOTE: spec §4.1 says 684; it is off by
-   the drawer's border. */
-.builder-card{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:685px;}
-/* The row owns the height, not the card. min-height:0 is gone on purpose: that
-   flag exists to let a flex child shrink below its content, and nothing in this
-   row wants to — the canvas is overflow:hidden and the rail is absolutely
-   positioned (see the inspector block below).
-   638 is the collapsed canvas height the card's 685px was built around
-   (685 - 2 card borders - 45 drawer). The open panel is absolute and covers the
-   row's top 240px, so the row grows by 240 for the UNCOVERED band to stay 638:
-   the card then measures 2 + 45 + 878 = 925. The canvas's TOP edge never moves
-   in either state — only its bottom — so every pointer handler that reads
-   rect.top/rect.left is unaffected, including during a light dismiss that
-   collapses the drawer mid-pointerdown. */
+/* Column: the card is the canvas row and nothing else now. 640 = the 638px
+   canvas plus .card's two 1px borders — min-height is a BORDER box under
+   *{box-sizing:border-box} (style.css:43), and .gv-canvas declares no height
+   anywhere in this stylesheet, so its size is pure align-items:stretch.
+   .builder-card{padding:0} already beats .card{padding:24px} on source order.
+   It was 685 = 2 + 45 (the old drawer bar and its border) + 638; the palette
+   moved into its own card and took the bar with it, so the visible canvas
+   height is unchanged and only the chrome around it moved. */
+.builder-card{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:640px;}
+/* The composer stacks three cards — canvas, agents, saved pipelines — and .card
+   carries no margin of its own (.view is display:block, style.css:249), so
+   before this rule they shared a seam with doubled borders. 22px is the house
+   gap (.col, style.css:264) and .topbar already owns the 22px above the first
+   card, so the FIRST .card must stay unmatched — hence `~ .card` rather than a
+   blanket `.card`. General sibling and not `+` because the empty
+   #composer-dialog host sits between the agents card and the saved card. */
+.view[data-view="composer"] > .card ~ .card{margin-top:22px;}
+/* The row owns the height, not the card. min-height:0 is absent on purpose:
+   that flag exists to let a flex child shrink below its content, and nothing in
+   this row wants to — the canvas is overflow:hidden and the rail is absolutely
+   positioned (see the inspector block below). The canvas's top edge no longer
+   moves in any state, so every pointer handler that reads rect.top/rect.left is
+   invariant. */
 .gv-body{position:relative;flex:1 1 auto;display:flex;min-height:638px;--ins-w:280px;}
-.gv-drawer[data-open="true"] ~ .gv-body{min-height:878px;}
 /* --ins-w is how much of the canvas's right edge the floating rail covers. It
    inherits into .gv-canvas, so the decorations inside it can offset themselves
    without any JS. */
 .gv-body[data-inspector="collapsed"]{--ins-w:28px;}
 
-/* ---------- top agent drawer ---------- */
-/* z-index 7, not 5: .gv-chip is z-index:6 (style.css:803) and NOTHING between it
-   and the root creates a stacking context — .gv-canvas is position:relative with
-   z-index:auto, .gv-body is unpositioned, and .builder-card/.card set no
-   position, transform, opacity or filter. At 5 the illegal-drop reason chip
-   would paint over the open palette. Nothing else in the composer reaches 7. */
-.gv-drawer{position:relative;z-index:7;flex:0 0 auto;border-bottom:1px solid var(--line);}
-.gv-drawer-bar{height:44px;display:flex;align-items:center;gap:12px;padding:0 16px;}
-.gv-drawer-toggle{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
-  color:var(--ink-2);background:none;border:0;padding:4px 6px;border-radius:9px;cursor:pointer;
-  font-family:inherit;}
-.gv-drawer-toggle:hover{background:var(--field);color:var(--ink);}
-.gv-drawer-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.gv-drawer-toggle .chev{width:14px;height:14px;flex:0 0 auto;transition:transform var(--t-fast,120ms);}
-.gv-drawer[data-open="false"] .gv-drawer-toggle .chev{transform:rotate(-90deg);}
-/* Re-homed from `.gv-palette-top .pal-filter` (old line 761): width:100% becomes
-   flex + max-width, and 36px becomes 32px to sit in the 44px bar. Every other
-   declaration, and the ::placeholder rule, carry over verbatim.
+/* ---------- agents card ---------- */
+/* Always expanded. There is no disclosure state, no stored preference and no
+   gesture that hides the palette. Same column-flex shape as .builder-card so the
+   head stays put and the scroll host owns the overflow, and the same padding:0
+   override against .card{padding:24px}.
+   The card is IN FLOW — it overlays nothing — which is why composer-editor.mjs
+   no longer carries a canvasInsetTop correction. `height`, not `max-height`, on
+   the scroll host: the section stays 300px however many custom agents a user
+   registers, so the saved-pipelines card below it never moves. */
+.gv-palette-card{padding:0;overflow:hidden;display:flex;flex-direction:column;}
+.gv-palette-head{flex:0 0 52px;height:52px;display:flex;align-items:center;gap:12px;
+  padding:0 18px;border-bottom:1px solid var(--line);}
+.gv-palette-title{font-size:12.5px;font-weight:600;color:var(--ink-2);}
+/* Carried over verbatim from the old drawer bar's `.pal-filter` rule — spelled
+   without that dead class name so the "every drawer rule is gone" guard in
+   test/ui-composer-chrome.test.mjs stays a plain substring check.
    input[type=search] is NOT matched by the generic control rules at 278-299, so
    the focus ring has to be declared here. min-width:0 lets the field shrink
-   instead of pushing the bar past .builder-card's overflow:hidden. */
-.gv-drawer-bar .pal-filter{flex:1 1 auto;min-width:0;max-width:320px;height:32px;border:none;
+   instead of pushing the head past the card's overflow:hidden. */
+.gv-palette-head .pal-filter{flex:1 1 auto;min-width:0;max-width:320px;height:32px;border:none;
   border-radius:11px;background:var(--field);padding:0 12px;font-size:12.5px;font-weight:500;
   color:var(--ink);font-family:inherit;}
-.gv-drawer-bar .pal-filter::placeholder{color:var(--ink-3);}
-.gv-drawer-bar .pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* Fixed height + internal scroll, and absolute so it OVERLAYS rather than
-   reflows. height, not max-height: the panel stays 240px however many custom
-   agents a user registers. top:100% resolves against the drawer's PADDING box
-   (44px — the border-bottom sits outside it), so the panel spans card y 44..284,
-   well inside the 685px card: .builder-card's overflow:hidden never clips it.
-   It covers canvas y 0..239. canvasInsetTop() reports the panel's own 240px box
-   — one pixel more than the true overlap, which is one pixel of extra clearance,
-   not a bug. */
-.gv-palette-scroll{position:absolute;top:100%;left:0;right:0;height:240px;overflow-y:auto;
-  padding:14px 16px 8px;background:var(--panel);border-bottom:2px solid var(--line-2);
-  box-shadow:0 10px 32px rgba(25,25,27,.10);}
-.gv-drawer[data-open="false"] .gv-palette-scroll{display:none;}
+.gv-palette-head .pal-filter::placeholder{color:var(--ink-3);}
+.gv-palette-head .pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-palette-scroll{height:300px;overflow-y:auto;padding:14px 18px 8px;}
 /* The chips are renderPalette()'s first child inside the scroll box, so they
    would scroll away. Pin them, cancelling the container's 14px top padding so
    they sit flush once stuck.
    PLACEMENT: `.gv-palette-scroll .pal-chips` is specificity (0,2,0) and BOTH
-   bare `.pal-chips` declarations — style.css:764 and the duplicate near the
-   bottom of the file — are (0,1,0), so this wins wherever it sits and belongs
-   here, in the composer block. It sets margin-top, never the margin shorthand,
-   so the duplicate's margin-bottom survives untouched. */
+   bare `.pal-chips` declarations — the one directly below and the duplicate near
+   the bottom of the file — are (0,1,0), so this wins wherever it sits and
+   belongs here. It sets margin-top, never the margin shorthand, so the
+   duplicate's margin-bottom survives untouched. */
 .gv-palette-scroll .pal-chips{position:sticky;top:-14px;z-index:1;
   background:var(--panel);padding-top:14px;margin-top:-14px;}
-/* The empty-state pill is position:absolute;top:24px inside the canvas
-   (style.css:799) and D5 opens the drawer by default on exactly the agent-free
-   canvas that shows it — without this, the onboarding copy is invisible on every
-   first visit. 264 = the panel's 240px box (canvasInsetTop's number) plus the
-   original 24px lead — a pixel more clearance than the true 239px overlap needs.
-   The selector is (0,4,0) against the base rule's (0,1,0), so where it sits in
-   the file does not matter. */
-.gv-drawer[data-open="true"] ~ .gv-body .gv-empty{top:264px;}
 .pal-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
 .pal-chip{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);background:var(--field);border-radius:999px;padding:5px 10px;}
 .pal-chip.off{opacity:.45;}
@@ -847,7 +826,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pal-group .lab{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);}
 .pal-group .chip{font-family:var(--mono);font-size:9px;border-radius:6px;padding:2.5px 6px;line-height:1.2;background:var(--field);color:var(--ink-3);white-space:nowrap;}
 .pal-group .pinned-tag{background:none;padding-right:0;text-transform:uppercase;letter-spacing:.05em;}
-.pal-pinned{border-top:1px solid var(--line);background:var(--field);margin:0 -16px;padding:13px 16px 15px;}
+.pal-pinned{border-top:1px solid var(--line);background:var(--field);margin:0 -18px;padding:13px 18px 15px;}
 .pal-pinned .chip{background:#fff;}
 /* Was a single column in the 264px rail; now wraps across the card width.
    1046px usable / minmax(196px) with an 8px gap = 5 pills per row at 1440.
@@ -977,9 +956,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    z-index 6 paints the rail over the wires and cards it now covers, and over
    the canvas decorations (.gv-empty/.gv-legend/.gv-zoom are 4). It ties with
    .gv-chip (6) and wins on source order, which is right: the rail is a
-   persistent surface, the chip a transient cursor-follower. It stays under the
-   drawer (7), so the open palette still covers the rail's top 240px, exactly as
-   it did when the rail was in flow.
+   persistent surface, the chip a transient cursor-follower.
+   Nothing paints above it any more: the drawer that used to own z-index 7 went
+   with the palette, so the rail and .gv-chip (both 6) are the ceiling.
    display:flex / flex-direction:column / min-height:0 carry over VERBATIM —
    .gv-inspector below is written as a column-flex child of a column-flex
    parent, and dropping them would be a silent regression.
@@ -995,7 +974,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    18px inset plus the rail's 1px border puts the inspector title at x=19 — it
    would clip the first 3px of every selected node's name, and of .ins-body's
    fields at every other vertical band. z-index 5 keeps it above the canvas
-   decorations (.gv-empty / .gv-legend / .gv-zoom are 4) and below the drawer (7).
+   decorations (.gv-empty / .gv-legend / .gv-zoom are 4).
    padding:0 is required: a UA <button>'s own padding would decentre the
    grid-centred SVG inside the fixed 22x30 box. */
 .gv-ins-handle{position:absolute;top:10px;left:-12px;width:22px;height:30px;z-index:5;

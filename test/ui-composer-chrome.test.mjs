@@ -202,12 +202,12 @@ test('destroy() unbinds the inspector handle and the filter Escape', () => {
 });
 
 // --- the real index.html and style.css --------------------------------------
-// The drawer is only a layout change: #composer-palette keeps its id and its
+// The palette is only a layout change: #composer-palette keeps its id and its
 // rendered subtree, so renderPalette/applyFilter/onPaletteClick are untouched
 // and ui-agent-xss's `#composer-palette .ap[data-key]` query still resolves.
 //
-// Two of these read style.css as text. That is the house pattern for rules that
-// cannot be exercised under jsdom (see test/ui-run-flow-css.test.mjs,
+// Several of these read style.css as text. That is the house pattern for rules
+// that cannot be exercised under jsdom (see test/ui-run-flow-css.test.mjs,
 // test/ui-pinned-sidebar.test.mjs) — jsdom applies no stylesheet, so a DOM
 // assertion here would be a tautology.
 
@@ -219,33 +219,31 @@ const REAL_CSS = readFileSync(
 );
 const realDoc = new JSDOM(REAL_HTML).window.document;
 
-test('index.html: the 264px palette rail is gone', () => {
-  assert.ok(!realDoc.querySelector('.gv-palette'), '.gv-palette is gone');
-  assert.ok(!realDoc.querySelector('.gv-palette-top'), '.gv-palette-top is gone');
-});
-
-test('index.html: the palette host lives inside the drawer, with its id intact', () => {
+test('index.html: the palette lives in its own card, right below the canvas card', () => {
   const panel = realDoc.querySelector('#composer-palette');
   assert.ok(panel, '#composer-palette still exists');
-  assert.ok(panel.closest('#composer-drawer'), 'it is inside the drawer');
   assert.ok(panel.classList.contains('gv-palette-scroll'));
+  const card = panel.closest('.gv-palette-card');
+  assert.ok(card, 'it sits inside the agents card');
+  assert.ok(card.classList.contains('card'), 'which is a real .card surface');
+  assert.equal(realDoc.querySelector('.builder-card').nextElementSibling, card,
+    'the canvas card comes first, the agents card immediately after');
 });
 
-test('index.html: the filter is in the bar, OUTSIDE the panel renderPalette() replaces', () => {
+test('index.html: nothing can hide the agents any more', () => {
+  assert.equal(realDoc.querySelector('#composer-drawer'), null, 'the drawer is gone');
+  assert.equal(realDoc.querySelector('#composer-drawer-toggle'), null, 'and its toggle');
+  assert.equal(realDoc.querySelector('.gv-drawer-bar'), null, 'and its bar');
+  assert.ok(!realDoc.querySelector('.gv-palette'), '.gv-palette, the 264px rail, is still gone');
+  assert.ok(!realDoc.querySelector('.gv-palette-top'), 'and so is .gv-palette-top');
+});
+
+test('index.html: the filter is in the head, OUTSIDE the panel renderPalette() replaces', () => {
   const filter = realDoc.querySelector('#composer-agent-filter');
   assert.ok(filter, '#composer-agent-filter still exists');
-  assert.ok(filter.closest('.gv-drawer-bar'), 'it is in the bar');
+  assert.ok(filter.closest('.gv-palette-head'), 'it is in the card head');
   assert.equal(filter.closest('#composer-palette'), null,
     'renderPalette() calls replaceChildren() on #composer-palette on every repaint');
-});
-
-test('index.html: the toggle is wired to the panel for assistive tech', () => {
-  const toggle = realDoc.querySelector('#composer-drawer-toggle');
-  assert.ok(toggle);
-  assert.equal(toggle.getAttribute('aria-controls'), 'composer-palette');
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-  assert.equal(toggle.querySelector('svg').getAttribute('aria-hidden'), 'true',
-    'the chevron is decorative — the name comes from the button text');
 });
 
 test('index.html: canvas and inspector are siblings inside the body row', () => {
@@ -255,31 +253,40 @@ test('index.html: canvas and inspector are siblings inside the body row', () => 
   assert.ok(realDoc.querySelector('#composer-inspector').closest('#composer-body'));
 });
 
-test('index.html: the drawer is the body row\'s previous sibling', () => {
-  // The empty-state clearance rule below is a `~` sibling selector, so this
-  // ordering is load-bearing, not cosmetic.
-  assert.equal(realDoc.querySelector('#composer-drawer').nextElementSibling.id, 'composer-body');
+test('index.html: the body row is the canvas card\'s only child', () => {
+  const body = realDoc.querySelector('#composer-body');
+  assert.equal(body.parentElement.className, 'card builder-card');
+  assert.equal(body.parentElement.children.length, 1,
+    'nothing sits above the canvas inside its card any more');
 });
 
-test('style.css: the open panel does not bury the canvas empty state', () => {
-  assert.match(REAL_CSS, /\.gv-drawer\[data-open="true"\]\s*~\s*\.gv-body\s+\.gv-empty\{[^}]*top:264px/,
-    '.gv-empty sits at top:24px and the panel covers the canvas\'s top 239px');
+test('style.css: the palette is in flow, fixed height, with its own scrollbar', () => {
+  assert.equal(/\.gv-drawer/.test(REAL_CSS), false, 'every drawer rule is gone');
+  assert.match(REAL_CSS, /\.gv-palette-card\{padding:0;overflow:hidden;display:flex;flex-direction:column;\}/,
+    'same column-flex shape as .builder-card, and padding:0 beats .card{padding:24px}');
+  assert.match(REAL_CSS, /\.gv-palette-scroll\{height:300px;overflow-y:auto;padding:14px 18px 8px;\}/,
+    'height, NOT max-height, and no position/top/left/right/shadow — it overlays nothing');
 });
 
-test('style.css: the drawer outranks everything the canvas paints', () => {
-  // .gv-chip is z-index:6 and NOTHING between it and the root creates a
-  // stacking context, so the drawer has to be >= 7 or the reason chip paints
-  // over the open palette.
-  assert.match(REAL_CSS, /\.gv-drawer\{[^}]*z-index:7/, 'the drawer is z-index:7');
+test('style.css: the three composer cards are 22px apart', () => {
+  assert.match(REAL_CSS, /\.view\[data-view="composer"\] > \.card ~ \.card\{margin-top:22px;\}/,
+    '`~` not `+`: the empty #composer-dialog host sits between two of them');
 });
 
-test('style.css: the two rules the whole goal rests on', () => {
+test('style.css: the canvas keeps exactly the height it had', () => {
   // Neither is observable at runtime — jsdom has no layout — and both are the
-  // difference between "the canvas got wider" and "nothing visibly changed".
-  assert.match(REAL_CSS, /\.builder-card\{[^}]*flex-direction:column[^}]*min-height:685px/,
-    'the card is a column and grew by the drawer bar');
+  // difference between "the canvas moved" and "only the chrome around it did".
+  assert.match(REAL_CSS, /\.builder-card\{[^}]*flex-direction:column[^}]*min-height:640px/,
+    '640 = the 638px canvas + .card\'s two borders; the old 685 carried the 45px bar');
+  assert.match(REAL_CSS, /\.gv-body\{[^}]*min-height:638px/,
+    'the body row, not the card, owns the height');
   assert.match(REAL_CSS, /\.pills\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(196px,100%\),1fr\)\)/,
-    'the pills wrap across the width instead of stacking in a column');
+    'the pills still wrap across the width instead of stacking in a column');
+});
+
+test('style.css: nothing pushes the canvas empty state down any more', () => {
+  assert.match(REAL_CSS, /\.gv-empty\{[^}]*top:24px/);
+  assert.equal(/top:264px/.test(REAL_CSS), false, 'the drawer clearance override is gone');
 });
 
 test('index.html: the collapse handle is a SIBLING of the inspector host', () => {
@@ -313,23 +320,11 @@ test('index.html: the collapse arrow points the way the panel travels', () => {
   assert.equal(path.getAttribute('d'), 'M9 6l6 6-6 6');
 });
 
-test('style.css: an open palette grows the card instead of eating the canvas', () => {
-  // The panel is position:absolute and covers the body row's top 240px. For the
-  // UNCOVERED band to equal the collapsed height, the row itself has to be 240
-  // taller: 638 + 240 = 878, and 45 (bar + its border) + 878 + 2 card borders
-  // = 925. The `~` selector is why index.html's drawer-before-body ordering is
-  // load-bearing — the test above pins that ordering.
-  assert.match(REAL_CSS, /\.gv-body\{[^}]*min-height:638px/,
-    'the body row, not the card, owns the collapsed height');
-  assert.match(REAL_CSS, /\.gv-drawer\[data-open="true"\]\s*~\s*\.gv-body\{[^}]*min-height:878px/,
-    'and it grows by exactly the panel height while the drawer is open');
-});
-
 test('style.css: the inspector floats over the canvas instead of shrinking it', () => {
   // position:absolute, not a flex item: the canvas keeps its full width and
   // collapsing the rail never reflows it. z-index 6 puts the rail over the
-  // canvas decorations (.gv-empty/.gv-legend/.gv-zoom are 4) while staying under
-  // the drawer (7), so the open palette still covers the rail's top 240px.
+  // canvas decorations (.gv-empty/.gv-legend/.gv-zoom are 4) and nothing paints
+  // above it now that the drawer is gone.
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*position:absolute/, 'the rail is out of flow');
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*right:0/, 'flush to the canvas right edge');
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*z-index:6/, 'over the canvas, under the drawer');
@@ -340,9 +335,10 @@ test('style.css: the inspector floats over the canvas instead of shrinking it', 
     'the collapsed rule sizes by width too — flex-basis no longer applies');
 });
 
-test('style.css: both seams read as deliberate 2px edges', () => {
+test('style.css: the inspector seam reads as a deliberate 2px edge', () => {
+  // The palette's own 2px border-bottom went with the overlay — the card's
+  // border and the 22px gap separate it now.
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*border-left:2px solid var\(--line-2\)/);
-  assert.match(REAL_CSS, /\.gv-palette-scroll\{[^}]*border-bottom:2px solid var\(--line-2\)/);
 });
 
 test('style.css: the canvas decorations clear the floating rail', () => {

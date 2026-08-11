@@ -790,27 +790,9 @@
             </div>
           </div>
 
+          <!-- Canvas card: the graph row and nothing else. Its height is
+               constant — nothing overlays it and nothing above it collapses. -->
           <section class="card builder-card">
-            <!-- Top drawer: the 44px bar is always in flow; the panel below it
-                 OVERLAYS the canvas when open, so opening it never reflows the
-                 graph. #composer-palette keeps its id and the exact subtree
-                 renderPalette() builds — the domain chips, the per-domain
-                 .pal-group sections and the pinned Flow group. -->
-            <div class="gv-drawer" id="composer-drawer" data-open="true">
-              <div class="gv-drawer-bar">
-                <button type="button" class="gv-drawer-toggle" id="composer-drawer-toggle"
-                        aria-expanded="true" aria-controls="composer-palette">
-                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                       stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
-                       stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"></path></svg>
-                  Agents
-                </button>
-                <input id="composer-agent-filter" class="pal-filter" type="search"
-                       placeholder="Filter agents…" aria-label="Filter agents by name or ports">
-              </div>
-              <div id="composer-palette" class="gv-palette-scroll"></div>
-            </div>
-
             <div class="gv-body" id="composer-body" data-inspector="open">
               <!-- The canvas host. composer-editor.mjs owns everything inside it:
                    the graph-view stage, the empty state, the reason chip, the
@@ -831,6 +813,20 @@
                 <aside class="gv-inspector" id="composer-inspector"></aside>
               </div>
             </div>
+          </section>
+
+          <!-- Agents: always expanded, never a disclosure. #composer-palette keeps
+               its id and the exact subtree renderPalette() builds — the domain
+               chips, the per-domain .pal-group sections and the pinned Flow group
+               — and the filter stays OUTSIDE it, because every repaint calls
+               replaceChildren() on that host. -->
+          <section class="card gv-palette-card" aria-label="Agents">
+            <div class="gv-palette-head">
+              <b class="gv-palette-title">Agents</b>
+              <input id="composer-agent-filter" class="pal-filter" type="search"
+                     placeholder="Filter agents&hellip;" aria-label="Filter agents by name or ports">
+            </div>
+            <div id="composer-palette" class="gv-palette-scroll"></div>
           </section>
 
           <div id="composer-dialog"></div>

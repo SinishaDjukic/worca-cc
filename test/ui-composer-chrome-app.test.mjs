@@ -160,3 +160,15 @@ test('app.js no longer corrects for a top overlay', () => {
   const APP = readFileSync(appPath, 'utf8');
   assert.equal(/canvasInsetTop/.test(APP), false, 'nothing covers the canvas from above');
 });
+
+test('the agent palette is on screen with no gesture at all', async () => {
+  const window = await boot();
+  await goComposer(window);
+  const doc = window.document;
+
+  assert.equal(doc.querySelector('#composer-drawer'), null);
+  assert.equal(doc.querySelector('#composer-drawer-toggle'), null);
+  assert.ok(doc.querySelector('#composer-palette .ap'), 'the pills rendered');
+  assert.ok(doc.querySelector('#composer-palette').closest('.gv-palette-card'),
+    'into the always-expanded card, not an overlay');
+});
