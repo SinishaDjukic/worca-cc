@@ -13,6 +13,11 @@
 /** 'open' | 'closed' — any manual toggle writes it, and it then wins forever. */
 export const DRAWER_KEY = 'worca-cc.composer.drawer';
 
+/** 'open' | 'collapsed' — the right rail's disclosure, same sticky contract.
+ *  Unlike the drawer it has NO template-derived default: a rail the user
+ *  collapsed stays collapsed, and syncDefault() never touches it. */
+export const INSPECTOR_KEY = 'worca-cc.composer.inspector';
+
 function defaultStorage() {
   try { return globalThis.localStorage || null; } catch { return null; }   // private mode throws
 }
@@ -32,6 +37,8 @@ function writeKey(storage, key, value) {
  * @param {Element}  opts.panel       #composer-palette — measured for the canvas inset
  * @param {Element}  [opts.canvas]    #composer-canvas — light dismiss target
  * @param {Element}  [opts.filter]    #composer-agent-filter — Escape stage 1, auto-open
+ * @param {Element}  [opts.body]      #composer-body — carries data-inspector
+ * @param {Element}  [opts.insToggle] #composer-inspector-toggle
  * @param {Storage}  [opts.storage]   defaults to globalThis.localStorage
  * @param {Function} [opts.hasAgents] () => boolean, consulted ONLY while no key is stored
  * @returns {{ canvasInsetTop(): number, syncDefault(): void, destroy(): void }}
@@ -42,6 +49,8 @@ export function createComposerChrome({
   panel = null,
   canvas = null,
   filter = null,
+  body = null,
+  insToggle = null,
   storage = defaultStorage(),
   hasAgents = () => false,
 } = {}) {
@@ -111,11 +120,29 @@ export function createComposerChrome({
     if (!isOpen() && filter && filter.value) setDrawer(true);
   }
 
+  const insOpen = () => !body || body.dataset.inspector !== 'collapsed';
+
+  function setInspector(open, { persist = false } = {}) {
+    if (!body) return;
+    body.dataset.inspector = open ? 'open' : 'collapsed';
+    if (insToggle) {
+      insToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      insToggle.setAttribute('aria-label', open ? 'Collapse inspector' : 'Expand inspector');
+    }
+    if (persist) writeKey(storage, INSPECTOR_KEY, open ? 'open' : 'collapsed');
+  }
+
+  function onInsToggleClick() {
+    setInspector(!insOpen(), { persist: true });
+  }
+
   if (toggle) toggle.addEventListener('click', onToggleClick);
   if (drawer) drawer.addEventListener('keydown', onDrawerKeyDown);
   if (canvas) canvas.addEventListener('pointerdown', onCanvasPointerDown);
   if (filter) filter.addEventListener('input', onFilterInput);
+  if (insToggle) insToggle.addEventListener('click', onInsToggleClick);
   syncDefault();
+  setInspector(readKey(storage, INSPECTOR_KEY) !== 'collapsed');
 
   return {
     canvasInsetTop() {
@@ -128,6 +155,7 @@ export function createComposerChrome({
       if (drawer) drawer.removeEventListener('keydown', onDrawerKeyDown);
       if (canvas) canvas.removeEventListener('pointerdown', onCanvasPointerDown);
       if (filter) filter.removeEventListener('input', onFilterInput);
+      if (insToggle) insToggle.removeEventListener('click', onInsToggleClick);
     },
   };
 }

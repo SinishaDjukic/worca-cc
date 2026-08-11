@@ -1668,6 +1668,7 @@ async function initComposer() {
   composer.els.drawer    = $('#composer-drawer');
   composer.els.drawerTog = $('#composer-drawer-toggle');
   composer.els.body      = $('#composer-body');
+  composer.els.insTog = $('#composer-inspector-toggle');
 
   // Constructed ONCE, and BEFORE the palette await: a stored 'closed' preference
   // has to be applied on the first paint, not after a network round-trip. The
@@ -1682,6 +1683,8 @@ async function initComposer() {
       panel: composer.els.palette,
       canvas: composer.els.canvas,
       filter: composer.els.filter,
+      body: composer.els.body,
+      insToggle: composer.els.insTog,
       hasAgents: () => Boolean(
         composer.editor?.template?.()?.nodes?.some((n) => n.kind === 'agent'),
       ),

@@ -944,7 +944,44 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;color:var(--amber-ink);box-shadow:var(--shadow-soft);}
 
 /* ---------- inspector ---------- */
-.gv-inspector{width:280px;flex:0 0 280px;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:auto;}
+/* The rail owns the width, the border and the collapse transition;
+   #composer-inspector stays the pure scroll host the editor replaceChildren()es,
+   so it keeps its id and its role. Its display:flex / flex-direction:column /
+   min-height:0 / overflow:auto carry over VERBATIM from the old rule — only
+   width / flex / border-left move up to the wrapper. .ins-panel (the next rule
+   down) is written as a column-flex child of a column-flex parent, so dropping
+   display:flex here would be a silent regression.
+   The transition is on flex-basis, which is what actually sizes a flex item
+   whose basis is not auto. It is safe for pointer maths: the canvas is
+   LEFT-anchored, so getBoundingClientRect().left is invariant while the right
+   edge animates and toWorld() stays accurate at every frame. The reduced-motion
+   block at style.css:655 already neutralises it for users who ask. */
+.gv-ins-rail{position:relative;flex:0 0 280px;width:280px;border-left:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0;transition:flex-basis var(--t-fast,120ms);}
+.gv-inspector{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;}
+/* The handle straddles the rail's left edge, OVERHANGING the canvas. It cannot
+   sit flush: absolute offsets resolve against the rail's PADDING box, so
+   left:-1px would put a 22px handle at border-box x 0..22, while .ins-head's
+   18px inset plus the rail's 1px border puts the inspector title at x=19 — it
+   would clip the first 3px of every selected node's name, and of .ins-body's
+   fields at every other vertical band. z-index 5 keeps it above the canvas
+   decorations (.gv-empty / .gv-legend / .gv-zoom are 4) and below the drawer (7).
+   padding:0 is required: a UA <button>'s own padding would decentre the
+   grid-centred SVG inside the fixed 22x30 box. */
+.gv-ins-handle{position:absolute;top:10px;left:-12px;width:22px;height:30px;z-index:5;
+  border:1px solid var(--line);border-radius:9px;background:var(--panel);
+  color:var(--ink-3);display:grid;place-items:center;cursor:pointer;padding:0;
+  box-shadow:var(--shadow-soft);}
+.gv-ins-handle:hover{color:var(--ink);background:var(--field);}
+.gv-ins-handle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-ins-handle svg{transition:transform var(--t-fast,120ms);}
+
+.gv-body[data-inspector="collapsed"] .gv-ins-rail{flex:0 0 28px;width:28px;}
+.gv-body[data-inspector="collapsed"] .gv-inspector{display:none;}
+/* 3px each side inside the 28px strip: `left` resolves against the padding box,
+   which starts 1px in, so 2px — not 3 — is the centred value. */
+.gv-body[data-inspector="collapsed"] .gv-ins-handle{left:2px;}
+.gv-body[data-inspector="collapsed"] .gv-ins-handle svg{transform:rotate(180deg);}
 .ins-panel{display:flex;flex-direction:column;min-height:0;}
 .ins-head{padding:16px 18px 15px;border-bottom:1px solid var(--line);}
 .ins-name{font-size:15px;font-weight:700;letter-spacing:-.02em;}

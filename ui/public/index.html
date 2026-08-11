@@ -817,8 +817,19 @@
                    legend and the zoom / auto-layout cluster. -->
               <div class="gv-canvas" id="composer-canvas"></div>
 
-              <!-- Right rail: the selected node's / wire's inspector. -->
-              <aside class="gv-inspector" id="composer-inspector"></aside>
+              <!-- Right rail: the selected node's / wire's inspector. The handle is
+                   a SIBLING of the host, never a child — renderInspector() calls
+                   replaceChildren() on #composer-inspector on every repaint. -->
+              <div class="gv-ins-rail" id="composer-ins-rail">
+                <button type="button" class="gv-ins-handle" id="composer-inspector-toggle"
+                        aria-expanded="true" aria-controls="composer-inspector"
+                        aria-label="Collapse inspector">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2.6" stroke-linecap="round"
+                       stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                </button>
+                <aside class="gv-inspector" id="composer-inspector"></aside>
+              </div>
             </div>
           </section>
 

@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { createComposerChrome, DRAWER_KEY } from '../ui/public/graph/composer-chrome.mjs';
+import { createComposerChrome, DRAWER_KEY, INSPECTOR_KEY } from '../ui/public/graph/composer-chrome.mjs';
 
 const SHELL = `<!doctype html><body>
   <section class="card builder-card">
@@ -29,8 +29,13 @@ const SHELL = `<!doctype html><body>
         <button id="pill" class="ap" type="button" data-key="planner">Plan</button>
       </div>
     </div>
-    <div class="gv-body" id="body" data-inspector="open">
+    <div class="gv-body" id="body" data-inspector="collapsed">
       <div id="canvas" class="gv-canvas"></div>
+      <div class="gv-ins-rail" id="rail">
+        <button id="ins-toggle" type="button" aria-expanded="false"
+                aria-controls="inspector" aria-label="Expand inspector"></button>
+        <aside id="inspector" class="gv-inspector"></aside>
+      </div>
     </div>
   </section>
 </body>`;
@@ -59,6 +64,8 @@ function boot({ storage = memStorage(), hasAgents = () => false, panelHeight = 2
     canvas: doc.getElementById('canvas'),
     pill: doc.getElementById('pill'),
     body: doc.getElementById('body'),
+    insToggle: doc.getElementById('ins-toggle'),
+    inspector: doc.getElementById('inspector'),
   };
   // jsdom answers zeros for every rect, so the panel's height is stubbed.
   els.panel.getBoundingClientRect = () => ({
@@ -66,7 +73,8 @@ function boot({ storage = memStorage(), hasAgents = () => false, panelHeight = 2
   });
   const chrome = createComposerChrome({
     drawer: els.drawer, toggle: els.toggle, panel: els.panel,
-    canvas: els.canvas, filter: els.filter, storage, hasAgents,
+    canvas: els.canvas, filter: els.filter,
+    body: els.body, insToggle: els.insToggle, storage, hasAgents,
   });
   return { window, doc, els, chrome, storage };
 }
@@ -401,4 +409,92 @@ test('style.css: the two rules the whole goal rests on', () => {
     'the card is a column and grew by the drawer bar');
   assert.match(REAL_CSS, /\.pills\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(196px,100%\),1fr\)\)/,
     'the pills wrap across the width instead of stacking in a column');
+});
+
+test('the inspector defaults to open when nothing is stored', () => {
+  // SHELL seeds `collapsed`, so this asserts the module wrote the default.
+  const { els } = boot();
+  assert.equal(els.body.dataset.inspector, 'open');
+  assert.equal(els.insToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(els.insToggle.getAttribute('aria-label'), 'Collapse inspector');
+});
+
+test('a stored inspector preference is restored, in both directions', () => {
+  // SHELL seeds `collapsed`, so the 'collapsed' direction alone would pass
+  // against an empty setInspector() — verified vacuous. Only the 'open'
+  // direction proves the module wrote anything, exactly as for DRAWER_KEY above.
+  const collapsed = boot({ storage: memStorage({ [INSPECTOR_KEY]: 'collapsed' }) });
+  assert.equal(collapsed.els.body.dataset.inspector, 'collapsed');
+  assert.equal(collapsed.els.insToggle.getAttribute('aria-expanded'), 'false');
+
+  const open = boot({ storage: memStorage({ [INSPECTOR_KEY]: 'open' }) });
+  assert.equal(open.els.body.dataset.inspector, 'open');
+  assert.equal(open.els.insToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(open.els.insToggle.getAttribute('aria-label'), 'Collapse inspector');
+});
+
+test('the inspector handle flips the rail, relabels itself, and persists', () => {
+  const { window, els, storage } = boot();
+
+  click(window, els.insToggle);
+  assert.equal(els.body.dataset.inspector, 'collapsed');
+  assert.equal(els.insToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(els.insToggle.getAttribute('aria-label'), 'Expand inspector');
+  assert.equal(storage.read(INSPECTOR_KEY), 'collapsed');
+
+  click(window, els.insToggle);
+  assert.equal(els.body.dataset.inspector, 'open');
+  assert.equal(els.insToggle.getAttribute('aria-label'), 'Collapse inspector');
+  assert.equal(storage.read(INSPECTOR_KEY), 'open');
+});
+
+test('the inspector rail is independent of the drawer', () => {
+  const { window, els } = boot();
+  // SHELL seeds `collapsed`, so without this guard the assertion below would
+  // match the fixture rather than the module — verified vacuous.
+  assert.equal(els.body.dataset.inspector, 'open', 'guard: the module applied its default');
+  click(window, els.insToggle);
+  assert.equal(els.body.dataset.inspector, 'collapsed');
+  assert.equal(isOpen(els), true, 'collapsing the rail did not touch the drawer');
+  click(window, els.toggle);
+  assert.equal(els.body.dataset.inspector, 'collapsed', 'and vice versa');
+});
+
+test('syncDefault() never touches the inspector', () => {
+  // The drawer's default is template-derived; the rail's is not. A shared
+  // sync would silently re-open a rail the user collapsed.
+  const { window, els, chrome } = boot();
+  assert.equal(els.body.dataset.inspector, 'open', 'guard: SHELL seeds collapsed, the module opened it');
+  click(window, els.insToggle);
+  assert.equal(els.body.dataset.inspector, 'collapsed');
+  chrome.syncDefault();
+  assert.equal(els.body.dataset.inspector, 'collapsed');
+});
+
+test('destroy() unbinds the inspector handle too', () => {
+  const { window, els, chrome } = boot();
+  chrome.destroy();
+  click(window, els.insToggle);
+  assert.equal(els.body.dataset.inspector, 'open');
+});
+
+test('index.html: the collapse handle is a SIBLING of the inspector host', () => {
+  // renderInspector() calls replaceChildren() on #composer-inspector on every
+  // repaint — a handle inside it would be deleted on the first selection.
+  const rail = realDoc.querySelector('#composer-ins-rail');
+  assert.ok(rail, '#composer-ins-rail exists');
+  const handle = realDoc.querySelector('#composer-inspector-toggle');
+  assert.ok(handle, '#composer-inspector-toggle exists');
+  const host = realDoc.querySelector('#composer-inspector');
+  assert.equal(handle.parentElement, rail, 'the handle hangs off the rail wrapper');
+  assert.equal(host.parentElement, rail, 'and the host is its SIBLING, not its child');
+  assert.equal(rail.parentElement, realDoc.querySelector('#composer-body'),
+    'the rail sits in the body row');
+  assert.equal(realDoc.querySelector('#composer-canvas').parentElement, rail.parentElement,
+    'canvas and rail share that row');
+  assert.equal(host.children.length, 0,
+    'the inspector host ships empty — the editor owns its contents');
+  assert.equal(handle.getAttribute('aria-controls'), 'composer-inspector');
+  assert.equal(handle.querySelector('svg').getAttribute('aria-hidden'), 'true',
+    'the chevron is decorative — the name comes from aria-label');
 });
