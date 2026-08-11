@@ -15,7 +15,8 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS } from './model-env.mjs';
+import { EFFORTS, prepareModelEnv } from './model-env.mjs';
+import { listGlobalModels, removeGlobalModel } from './settings.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -162,14 +163,71 @@ export async function readConfig(projectDir) {
 }
 
 /**
- * All selectable models = predefined + this project's custom models. Custom models
- * advertise the full effort set (their support is unknown — the user owns the raw id).
+ * Compose the EFFECTIVE catalog (configurable-models-design.md §4.2):
+ * predefined ⊕ global settings entries ⊕ legacy per-project custom models.
+ * A global entry whose id matches a predefined one OVERRIDES it (label,
+ * efforts, env) — the predefined id casing is kept so existing step/node refs
+ * stay stable. Legacy project entries rank lowest and are dropped on any id
+ * collision. `custom` widens from a boolean to false | 'global' | 'project'
+ * (both strings truthy, so existing `m.custom` checks keep working); `hasEnv`
+ * advertises routing env WITHOUT the values (this shape feeds UI dropdowns).
+ */
+function composeCatalog(projectCustom = []) {
+  const globals = listGlobalModels();
+  const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
+  const out = [];
+  const seen = new Set();
+  for (const m of PREDEFINED_MODELS) {
+    const shadow = globalByIdLc.get(m.id.toLowerCase());
+    out.push(shadow
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env }
+      : { ...m, custom: false, hasEnv: false });
+    seen.add(m.id.toLowerCase());
+  }
+  for (const m of globals) {
+    if (seen.has(m.id.toLowerCase())) continue; // predefined shadow, already emitted
+    seen.add(m.id.toLowerCase());
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env });
+  }
+  for (const m of projectCustom) {
+    if (seen.has(m.id.toLowerCase())) continue; // predefined/global wins
+    seen.add(m.id.toLowerCase());
+    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false });
+  }
+  return out;
+}
+
+/**
+ * All selectable models for a project = the effective catalog (predefined ⊕
+ * global ⊕ this project's legacy custom models). Legacy custom models
+ * advertise the full effort set (their support is unknown — the user owns the
+ * raw id); global entries advertise their configured subset.
  */
 export async function listModels(projectDir) {
   const { customModels } = readRaw(projectDir);
-  const predefined = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-  const custom = customModels.map((m) => ({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: true }));
-  return [...predefined, ...custom];
+  return composeCatalog(customModels);
+}
+
+/**
+ * The routing env for a model id (design §4.4), or undefined when none is
+ * configured. Only GLOBAL catalog entries carry env. Whole-value ${VAR} refs
+ * are expanded from worca's own process env HERE (the resolution point);
+ * reserved or unresolvable keys are dropped with a warning — write-time
+ * validation rejects reserved keys, so a drop means a hand-edited file.
+ * Synchronous; never throws.
+ * @param {string} modelId
+ * @returns {Record<string,string>|undefined}
+ */
+export function resolveModelEnv(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return undefined;
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === id.toLowerCase());
+  if (!entry || !entry.env) return undefined;
+  const { env, dropped } = prepareModelEnv(entry.env);
+  for (const k of dropped) {
+    console.warn(`[worca] model ${JSON.stringify(entry.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
+  }
+  return Object.keys(env).length ? env : undefined;
 }
 
 /**
@@ -264,6 +322,9 @@ export async function addCustomModel(projectDir, input = {}) {
   if (!id) throw new Error('model id is required');
   if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === id.toLowerCase())) {
     throw new Error(`"${id}" is already a predefined model`);
+  }
+  if (listGlobalModels().some((m) => m.id.toLowerCase() === id.toLowerCase())) {
+    throw new Error(`"${id}" is already a global model`);
   }
   const key = projectKey(projectDir);
   const cfg = readRaw(projectDir);
@@ -397,7 +458,10 @@ export async function readRunConfig(projectDir) {
  * workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
  * askQuestions are preserved when the caller omits them (read from the existing
  * row) and set when a boolean. Writes only the config_workflow_nodes table
- * (legacy view + extra untouched).
+ * (legacy view + extra untouched). Model/effort validate against the effective
+ * catalog exactly like setStep (design §4.5 — the two write paths must not
+ * disagree); rows persisted before this hardening are validated only when
+ * next written.
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
@@ -405,6 +469,19 @@ export async function readRunConfig(projectDir) {
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
+  const model = typeof selection.model === 'string' ? selection.model.trim() : '';
+  const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
+  const models = await listModels(projectDir);
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) throw new Error(`unknown model "${model}"`);
+  if (effort) {
+    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!entry) throw new Error('select a model before choosing an effort');
+    if (!entry.efforts.includes(effort)) {
+      throw new Error(`model "${model}" does not support effort "${effort}"`);
+    }
+  }
+
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
@@ -492,4 +569,101 @@ export async function resolveRunConfig(projectDir, workflowId) {
     nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},
     feedbacks: wf.feedbacks && typeof wf.feedbacks === 'object' ? wf.feedbacks : {},
   };
+}
+
+// ── global catalog removal (design §4.5) ──────────────────────────────────────
+// Removing a GLOBAL entry can dangle refs in EVERY project, unlike
+// removeCustomModel's single-project scope. Two carve-outs keep refs that stay
+// resolvable: (1) removing a predefined SHADOW merely reverts to the built-in
+// entry, so nothing dangles; (2) a project whose legacy customModels carries
+// the same id keeps its refs — the id still resolves there (composeCatalog
+// ranks the legacy entry back in once the global one is gone).
+
+/** All project_config rows with parsed steps/customModels (raw, all projects). */
+function allProjectConfigRows() {
+  getDb();
+  return prepare('SELECT project_key, steps, custom_models FROM project_config').all().map((r) => ({
+    projectKey: r.project_key,
+    steps: sanitizeSteps(parseJson(r.steps, {})),
+    customModels: sanitizeCustom(parseJson(r.custom_models, [])),
+  }));
+}
+
+/**
+ * Preview what removing a global catalog entry would clear, for the UI's
+ * confirmation dialog. `predefinedShadow: true` means the removal only reverts
+ * an override and clears nothing. Synchronous; never throws.
+ * @param {string} id
+ * @returns {{predefinedShadow: boolean,
+ *            steps: Array<{projectKey:string, step:string}>,
+ *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>}}
+ */
+export function globalModelRefs(id) {
+  const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
+  if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
+    return { predefinedShadow: true, steps: [], nodes: [] };
+  }
+  const rows = allProjectConfigRows();
+  const keep = new Set(rows
+    .filter((r) => r.customModels.some((m) => m.id.toLowerCase() === lc))
+    .map((r) => r.projectKey));
+  const steps = [];
+  for (const r of rows) {
+    if (keep.has(r.projectKey)) continue;
+    for (const [step, v] of Object.entries(r.steps)) {
+      if (v?.model && v.model.toLowerCase() === lc) steps.push({ projectKey: r.projectKey, step });
+    }
+  }
+  const nodes = prepare(
+    'SELECT project_key, workflow_id, node_id FROM config_workflow_nodes WHERE model = ? COLLATE NOCASE'
+  ).all(lc)
+    .filter((r) => !keep.has(r.project_key))
+    .map((r) => ({ projectKey: r.project_key, workflowId: r.workflow_id, nodeId: r.node_id }));
+  return { predefinedShadow: false, steps, nodes };
+}
+
+/**
+ * Remove a global catalog entry AND every ref it would dangle (per-node rows
+ * and legacy step selections, across all projects, minus the carve-outs
+ * above). Ref purge and settings removal are not one transaction — a purge
+ * that lands without the removal (or vice versa on a crash) is harmless, since
+ * refs can be re-set and purging is idempotent.
+ * @param {string} id
+ * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean}>}
+ * @throws {Error} on an unknown id (from removeGlobalModel)
+ */
+export async function removeGlobalModelAndRefs(id) {
+  const target = (typeof id === 'string' ? id : '').trim();
+  if (!listGlobalModels().some((m) => m.id.toLowerCase() === target.toLowerCase())) {
+    // Guard BEFORE the purge: an unknown id must throw without touching refs
+    // (they may belong to a legacy per-project model with the same string).
+    throw new Error(`unknown model id ${JSON.stringify(target)}`);
+  }
+  const refs = globalModelRefs(id);
+  let clearedSteps = 0;
+  let clearedNodes = 0;
+  if (!refs.predefinedShadow && (refs.steps.length || refs.nodes.length)) {
+    const lc = String(id).trim().toLowerCase();
+    const rows = allProjectConfigRows();
+    const stepKeysByProject = new Map(refs.steps.map((s) => [s.projectKey, true]));
+    tx(() => {
+      for (const r of rows) {
+        if (!stepKeysByProject.has(r.projectKey)) continue;
+        const filtered = {};
+        for (const [k, v] of Object.entries(r.steps)) {
+          if (v?.model && v.model.toLowerCase() === lc) { clearedSteps += 1; continue; }
+          filtered[k] = v;
+        }
+        prepare('UPDATE project_config SET steps = ? WHERE project_key = ?')
+          .run(JSON.stringify(filtered), r.projectKey);
+      }
+      for (const n of refs.nodes) {
+        clearedNodes += prepare(
+          'DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+        ).run(n.projectKey, n.workflowId, n.nodeId).changes;
+      }
+    });
+  }
+  await removeGlobalModel(id); // throws on unknown id — AFTER the idempotent purge
+  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow };
 }
