@@ -498,3 +498,13 @@ test('index.html: the collapse handle is a SIBLING of the inspector host', () =>
   assert.equal(handle.querySelector('svg').getAttribute('aria-hidden'), 'true',
     'the chevron is decorative — the name comes from aria-label');
 });
+
+test('index.html: the collapse arrow points the way the panel travels', () => {
+  // Expanded, the click collapses the rail RIGHTWARD, so the base path is a
+  // right chevron. style.css rotates it 180deg while collapsed, which yields the
+  // left chevron that means "click me to bring the panel back". The old base
+  // path, M15 6l-6 6 6 6, was the left chevron and had both states backwards.
+  const path = realDoc.querySelector('#composer-inspector-toggle svg path');
+  assert.ok(path, 'the handle still ships an inline chevron');
+  assert.equal(path.getAttribute('d'), 'M9 6l6 6-6 6');
+});
