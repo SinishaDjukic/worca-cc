@@ -142,8 +142,16 @@ export async function deleteAgent(key) {
     );
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
+  // A saved v2 template places agent KEYS on its graph nodes. A workspace variant
+  // is never placed directly — resolveGraph substitutes it for the node carrying
+  // its `workspaceVariantOf` target — so a node holding that target references
+  // this agent just as bindingly as one holding its own key.
+  const referencing = new Set([key]);
+  if (typeof existing.workspaceVariantOf === 'string' && existing.workspaceVariantOf) {
+    referencing.add(existing.workspaceVariantOf);
+  }
   const refs = (await listWorkflows())
-    .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key)))
+    .filter((wf) => (wf.nodes || []).some((n) => n && n.kind === 'agent' && referencing.has(n.key)))
     .map((wf) => wf.name || wf.id);
   if (refs.length) {
     throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} — delete or edit those first`, 'REFERENCED');

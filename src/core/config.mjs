@@ -14,24 +14,31 @@
 
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
-import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
 
 /**
- * Recompute the agent step list FRESH from the layered registry (repo agents/ +
- * ~/.worca-cc/agents). Use this instead of AGENT_STEPS anywhere a user-added agent
- * must appear without a process restart (the registry re-scans per call).
- * @returns {Array<{key:string,label:string,fanOut:boolean}>}
+ * The agent step list, recomputed FRESH from the layered registry (repo agents/ +
+ * ~/.worca-cc/agents) on every call, so a user-added agent appears without a
+ * process restart. Each agent labels itself with its `displayName` — there is no
+ * key->label table.
+ *
+ * §6.6/C9: `scope:'workspace-only'` agents are EXCLUDED — they are not part of the
+ * single-project per-step config keyspace this list drives.
+ * @returns {Array<{key:string,label:string,fanOut:boolean,asksQuestions:boolean,questionsLocked:boolean,questionsDefault:boolean}>}
  */
 export function agentSteps() {
-  return registryToSteps(loadAgentRegistry());
+  return Object.values(loadAgentRegistry())
+    .filter((m) => m.scope !== 'workspace-only')
+    .sort((a, b) => a.order - b.order)
+    .map((m) => ({
+      key: m.key,
+      label: m.displayName,
+      fanOut: !!m.fanOut,
+      asksQuestions: !!m.asksQuestions,
+      questionsLocked: !!m.questionsLocked,
+      questionsDefault: !!m.questionsDefault,
+    }));
 }
-
-/**
- * Boot-time snapshot of agentSteps(), kept for import-compat (UI boot payloads,
- * tests). PREFER agentSteps(): this constant goes stale when a user agent is
- * added/removed at runtime.
- */
-export const AGENT_STEPS = agentSteps();
 
 /** Live key set (recomputed per call so runtime-added user agents validate). */
 const stepKeys = () => new Set(agentSteps().map((s) => s.key));
@@ -331,17 +338,20 @@ function cleanNodeSel(selection) {
 }
 
 /**
- * Rebuild the nested workflows map { [workflowId]: { nodes, feedbacks } } from the
- * normalized config_workflow_nodes + config_workflow_feedbacks rows for a project.
- * Mirrors today's config.json `workflows` shape exactly. Synchronous; never throws.
+ * Rebuild the nested workflows map { [workflowId]: { nodes, feedbacks, wires } }
+ * from the normalized config_workflow_nodes + config_workflow_feedbacks +
+ * config_workflow_wires rows for a project. `wires` is the v2 per-WIRE loop
+ * budget overlay resolveGraph reads; `feedbacks` is the v1 shape it succeeds,
+ * kept so a project configured before the graph engine still round-trips.
+ * Synchronous; never throws.
  * @param {string} key projectKey
- * @returns {Record<string,{nodes:object,feedbacks:object}>}
+ * @returns {Record<string,{nodes:object,feedbacks:object,wires:object}>}
  */
 function readWorkflowsMap(key) {
   getDb();
   const workflows = {};
   const ensure = (wf) => {
-    if (!workflows[wf]) workflows[wf] = { nodes: {}, feedbacks: {} };
+    if (!workflows[wf]) workflows[wf] = { nodes: {}, feedbacks: {}, wires: {} };
     return workflows[wf];
   };
   for (const r of prepare(
@@ -359,6 +369,11 @@ function readWorkflowsMap(key) {
     'SELECT workflow_id, fb_id, max_cycles FROM config_workflow_feedbacks WHERE project_key = ?'
   ).all(key)) {
     ensure(r.workflow_id).feedbacks[r.fb_id] = { maxCycles: r.max_cycles };
+  }
+  for (const r of prepare(
+    'SELECT workflow_id, wire_id, max_cycles FROM config_workflow_wires WHERE project_key = ?'
+  ).all(key)) {
+    ensure(r.workflow_id).wires[r.wire_id] = { maxCycles: r.max_cycles };
   }
   return workflows;
 }
@@ -458,6 +473,29 @@ export async function setFeedbackCycles(projectDir, workflowId, fbId, maxCycles)
 }
 
 /**
+ * Set the loop budget for one WIRE of a graph template — the v2 successor to
+ * setFeedbackCycles, keyed by v2 wire id. Coerced to an integer >= 1 (a loop
+ * runs at least once). Writes only config_workflow_wires, the overlay
+ * resolveGraph reads at precedence overlay > wire.config.maxCycles > 3.
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @param {string} wireId
+ * @param {number} maxCycles
+ * @returns {Promise<void>}
+ */
+export async function setWireCycles(projectDir, workflowId, wireId, maxCycles) {
+  const n = Math.max(1, Math.floor(Number(maxCycles) || 0) || 1);
+  const key = projectKey(projectDir);
+  tx(() => {
+    prepare(`
+      INSERT INTO config_workflow_wires (workflow_id, project_key, wire_id, max_cycles)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(workflow_id, project_key, wire_id) DO UPDATE SET max_cycles = excluded.max_cycles
+    `).run(workflowId, key, wireId, n);
+  });
+}
+
+/**
  * Remember the last workflow selected in New Pipeline. Writes only
  * project_config.active_workflow_id; steps/custom_models/extra are preserved.
  * @param {string} projectDir
@@ -478,7 +516,7 @@ export async function setActiveWorkflow(projectDir, workflowId) {
 
 /**
  * Resolve just the run-config for one workflow into { nodes, feedbacks } maps
- * (the inputs resolveWorkflow overlays on the template). Unconfigured => empties.
+ * (the inputs resolveGraph overlays on the template). Unconfigured => empties.
  * @param {string} projectDir
  * @param {string} workflowId
  * @returns {Promise<{nodes:Record<string,object>,feedbacks:Record<string,{maxCycles:number}>}>}

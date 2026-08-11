@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync,
-  readlinkSync, lstatSync, readFileSync,
+  readlinkSync, lstatSync, readFileSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
@@ -64,7 +64,7 @@ function makeExec({ npmFails = false } = {}) {
 
 const PLUGIN_FILES = (name) => ({
   'worca-cc-plugin.json': JSON.stringify({
-    name, version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    name, version: '0.1.0', engines: { 'worca-cc-api': '>=2 <3' },
     taskSources: [{
       id: 'demo', displayName: 'Demo', module: './connector/index.mjs',
       configSchema: [{ key: 'token', type: 'text', secret: true, required: true, label: 'Token' }],
@@ -78,11 +78,24 @@ const PLUGIN_FILES = (name) => ({
     name, lockfileVersion: 3,
     packages: { '': { name }, 'node_modules/left-pad': { version: '1.3.0' } },
   }),
-  'agents/demoAgent.meta.json': JSON.stringify({ key: 'demoAgent', order: 90 }),
+  'agents/demoAgent.meta.json': JSON.stringify({
+    metaVersion: 2, key: 'demoAgent', runnerType: 'producer', order: 90,
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  }),
   'agents/demoAgent.md': '---\nname: demo-agent\ntools: Read, Bash\n---\nYou are demo.\n',
   'skills/demo-skill/SKILL.md': '# demo skill\n',
   'workflows/demo-flow.json': JSON.stringify({
-    name: 'Demo Flow', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [],
+    name: 'Demo Flow', version: 2, domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'demoAgent', x: 320, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+      { id: 'w2', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_end', port: 'result' } },
+    ],
   }),
 });
 
@@ -245,7 +258,34 @@ test('linkPlugin: dev-mode absolute symlink + linked lock entry', async () => {
   const row = listInstalledPlugins().find((p) => p.name === 'linked-plugin');
   assert.equal(row.linked, true);
   assert.equal(row.contributions.agents, 1);
+  assert.equal(row.apiMismatch, null, 'a current plugin carries no mismatch payload');
   assert.throws(() => linkPlugin('wrong-name', dev), /does not match/);
+});
+
+test('an installed API-1 plugin lists as apiMismatch, not merely broken — and is never deleted', () => {
+  // Hand-lay an already-installed plugin whose manifest was written for API 1:
+  // linkPlugin/installPlugin would refuse it today, which is exactly the state a
+  // host upgrade leaves behind on disk.
+  const legacyDir = join(scratch, 'legacy-installed');
+  writeTree(legacyDir, {
+    ...PLUGIN_FILES('legacy-plugin'),
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'legacy-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    }),
+  });
+  mkdirSync(pluginDir('legacy-plugin'), { recursive: true });
+  symlinkSync(legacyDir, pluginCurrentDir('legacy-plugin'), 'dir');
+  writePluginsLock({
+    ...readPluginsLock(),
+    'legacy-plugin': {
+      repo: null, subdir: '', pinnedSha: null, version: '0.1.0',
+      enabled: true, installedAt: '2026-07-12T00:00:00.000Z', linked: true,
+    },
+  });
+  const row = listInstalledPlugins().find((p) => p.name === 'legacy-plugin');
+  assert.equal(row.broken, true, 'the engines gate drops it from the registry');
+  assert.deepEqual(row.apiMismatch, { builtFor: 1, host: 2 });
+  assert.ok(existsSync(legacyDir), 'never deleted — the files stay for an update/reinstall');
 });
 
 test('buildInstallInventory works directly against any version dir', () => {

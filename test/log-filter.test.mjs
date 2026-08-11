@@ -55,9 +55,52 @@ test('logFacets collects distinct levels, parent-role sources, and sorted steps'
 });
 
 test('logFacets is safe on empty/malformed input', () => {
-  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [] });
+  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [], executions: [], artifactKinds: [] });
   const facets = logFacets([{ text: 'no source or level' }]);
   assert.deepEqual(facets.sources, []);
   assert.deepEqual(facets.levels, ['info']);
   assert.deepEqual(facets.steps, []);
+  assert.deepEqual(facets.executions, []);
+  assert.deepEqual(facets.artifactKinds, []);
+});
+
+// --- v2 dimensions --------------------------------------------------------
+// The graph engine stamps {nodeId, executionId} on log/subagent/stepskills/
+// stepgraphify (orchestrator.mjs:3257), so a run-monitor execution row can
+// narrow the log to exactly the executions it represents.
+
+test('executionId filter is an exact match; unattributed lines hide under it', () => {
+  const rec = L({ executionId: 'x:n_impl:2' });
+  assert.equal(logLineVisible(rec, { executionId: 'x:n_impl:2' }), true);
+  assert.equal(logLineVisible(rec, { executionId: 'x:n_impl:1' }), false);
+  assert.equal(logLineVisible(L(), { executionId: 'x:n_impl:2' }), false, 'orchestrator lines carry no execution');
+  assert.equal(logLineVisible(rec, { executionId: '' }), true);
+});
+
+test('artifactKind filter narrows artifact rows and hides plain log lines', () => {
+  const art = L({ source: 'artifact', level: 'artifact', artifactKind: 'plan' });
+  assert.equal(logLineVisible(art, { artifactKind: 'plan' }), true);
+  assert.equal(logLineVisible(art, { artifactKind: 'review' }), false);
+  assert.equal(logLineVisible(L(), { artifactKind: 'plan' }), false);
+  assert.equal(logLineVisible(art, { artifactKind: '' }), true);
+});
+
+test('the new dimensions AND with the old ones', () => {
+  const rec = L({ source: 'implementer', level: 'artifact', executionId: 'x:n_impl:2', artifactKind: 'code' });
+  assert.equal(logLineVisible(rec, { source: 'implementer', executionId: 'x:n_impl:2', artifactKind: 'code' }), true);
+  assert.equal(logLineVisible(rec, { source: 'implementer', executionId: 'x:n_impl:1', artifactKind: 'code' }), false);
+  assert.equal(logLineVisible(rec, { source: 'reviewer', executionId: 'x:n_impl:2', artifactKind: 'code' }), false);
+});
+
+test('logFacets collects executions in first-seen order and artifact kinds sorted', () => {
+  const facets = logFacets([
+    L({ executionId: 'x:n_impl:2' }),
+    L({ executionId: 'x:n_task:1' }),
+    L({ executionId: 'x:n_impl:2' }),
+    L({ source: 'artifact', artifactKind: 'review' }),
+    L({ source: 'artifact', artifactKind: 'plan' }),
+    L({ source: 'orchestrator' }),
+  ]);
+  assert.deepEqual(facets.executions, ['x:n_impl:2', 'x:n_task:1'], 'run order, not lexical');
+  assert.deepEqual(facets.artifactKinds, ['plan', 'review']);
 });

@@ -54,12 +54,12 @@ test('.log-filters .log-f resets the global select width:100%', () => {
 
 // ---------- DOM structure the CSS relies on ----------
 
-test('run-card template keeps the three pills as siblings in one .log-filters bar', () => {
+test('run-card template keeps the five pills as siblings in one .log-filters bar', () => {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'));
   const tpl = dom.window.document.getElementById('run-card-tpl');
   assert.ok(tpl, 'run-card template must exist');
   const bar = tpl.content.querySelector('.run-log-head .log-filters');
   assert.ok(bar, 'run-card head must contain a .log-filters bar');
   const pills = [...bar.children].map((el) => el.className);
-  assert.deepEqual(pills, ['log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step']);
+  assert.deepEqual(pills, ['log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step', 'log-f log-f-execution', 'log-f log-f-artifact']);
 });

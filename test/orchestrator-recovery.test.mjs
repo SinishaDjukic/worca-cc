@@ -131,10 +131,10 @@ test('shared gate: two concurrent recoveries of one class open ONE prompt', asyn
   orch.pipeline = { id: 1, dir, promptText: 'x' };   // minimal ctx for appendAudit/log
   let asks = 0;
   orch._ask = async ({ id }) => { asks++; orch.__rid = id; return { decision: 'retry' }; };
-  const node = { key: 'planner', nodeId: 'n1' };
+  const nc = { key: 'planner', nodeId: 'n1' };
   const [a, b] = await Promise.all([
-    orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
-    orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
+    orch._recover({ nc, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
+    orch._recover({ nc, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
   ]);
   assert.equal(a, 'retry');
   assert.equal(b, 'retry');
@@ -156,8 +156,8 @@ test('serialized gate: two DISTINCT classes never open two prompts at once', asy
     return { decision: 'retry' };
   };
   const [a, b] = await Promise.all([
-    orch._recover({ node: { key: 'n1', nodeId: 'a' }, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
-    orch._recover({ node: { key: 'n2', nodeId: 'b' }, cls: 'network', err: NET_ERR(), attempt: 1 }),
+    orch._recover({ nc: { key: 'n1', nodeId: 'a' }, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
+    orch._recover({ nc: { key: 'n2', nodeId: 'b' }, cls: 'network', err: NET_ERR(), attempt: 1 }),
   ]);
   assert.equal(a, 'retry');
   assert.equal(b, 'retry');
@@ -192,12 +192,13 @@ test('crash -> reconcile -> resume continues from saved boundary to done', async
   const id = orch.state.id;
   const pDir = orch.state.pipelineDir;
 
-  // Forge a "crash": flip the finished row back to running with a dead PID and a
-  // synthetic boundary point at step 0 (re-run from step 0 is safe for a mock runner).
+  // Forge a "crash": flip the finished row back to running with a dead PID and an
+  // EMPTY resume-v2 point (no scheduler snapshot), which restarts the graph from its
+  // task card — safe for a mock runner and the shape a pre-scheduler pause writes.
   const point = {
-    version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-    bus: null, stepModels: null, workflowId: 'wf_default', plan: null,
-    nodes: [], gate: null, toolInstruction: '', pipelineDir: pDir,
+    version: 2, snapshot: null, nodes: [], planVersion: 0,
+    stepModels: null, workflowId: 'wf_default', checkpointRef: null, checkpointRefs: {},
+    workspace: null, toolInstruction: '', pipelineDir: pDir,
     pausedAt: new Date().toISOString(),
   };
   // Re-create the worktree dir so resume()'s existsSync check passes: in a real crash
@@ -216,7 +217,7 @@ test('crash -> reconcile -> resume continues from saved boundary to done', async
   const after = readPipelineForResume(id);
   assert.equal(after.row.status, 'interrupted');
   assert.ok(after.resumePoint, 'resume_point preserved across reclassify');
-  assert.equal(after.resumePoint.kind, 'boundary');
+  assert.equal(after.resumePoint.version, 2);
 
   // Resume (requires Feature 6 widening to accept 'interrupted').
   const orch2 = createOrchestrator({

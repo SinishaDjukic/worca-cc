@@ -78,7 +78,7 @@ test('real child round-trip: op/args echo back; config+state arrive via stdin', 
   assert.deepEqual(result.args, { a: 1, s: 'x' });
   assert.equal(result.token, 'sekret', 'secret config travelled via stdin, not env/argv');
   assert.equal(result.cursor, 'page-1', 'state snapshot readable through ctx.state.get');
-  assert.equal(result.api, 1, 'ctx.apiVersion = WORCA_PLUGIN_API');
+  assert.equal(result.api, 2, 'ctx.apiVersion = WORCA_PLUGIN_API');
 });
 
 test('connector-thrown error maps to PluginOpError with the connector kind', async () => {

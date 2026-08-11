@@ -63,9 +63,12 @@ const CONNECTOR = `export default function createTaskSource(ctx) {
 }
 `;
 const AGENT_META = {
+  metaVersion: 2,
   key: 'localHelper', agentFile: 'localHelper.md',
   displayName: 'Local Helper', description: 'fixture agent', color: 'blue',
-  runnerType: 'producer', consumes: [], produces: ['plan'], order: 90,
+  runnerType: 'producer', order: 90,
+  inputs: [],
+  outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
 };
 
 async function makeFixtureRepo() {
@@ -227,10 +230,23 @@ test('DELETE /api/plugins/:name is guarded when a user workflow references a plu
   // Registry layer 3 (Task 6) serves localHelper while the plugin is enabled,
   // so POST /api/workflows (the production writer) accepts it — the simplest
   // way to seed a REAL referencing row.
+  // A v2 graph: localHelper declares zero inputs, so the Task node gates it
+  // through its synthesized `await` port (type any, accepts the md task token).
+  // The guard reads `graph.nodes[]`, not the v1 `steps` column every v2 writer
+  // blanks — scanning `steps` here found nothing and let the uninstall through.
   const wf = await post('/api/workflows', {
-    name: 'Uses Local Helper',
-    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'localHelper' }]],
-    feedbacks: [],
+    name: 'Uses Local Helper', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 320, y: 200, config: {} },
+      { id: 'n_helper', kind: 'agent', key: 'localHelper', x: 600, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 880, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_helper', port: 'await' } },
+      { id: 'w3', from: { node: 'n_helper', port: 'plan' }, to: { node: 'n_end', port: 'result' } },
+    ],
   });
   assert.equal(wf.status, 201, 'plugin agent key validates in a user workflow');
   const wfId = (await wf.json()).workflow.id;

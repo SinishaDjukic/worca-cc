@@ -35,17 +35,25 @@ async function bootLive() {
   return { window };
 }
 
-const MANIFEST = {
-  version: 1,
-  steps: [
-    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-    { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
-    { kind: 'agents', nodes: [{ id: 's3_0', key: 'implementer', uiPhase: 'implement', label: 'Implementation', color: 'peach', cycles: false }] },
-    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-  ],
-  feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }, { id: 'fb_review', from: 's3_0', to: 's1_0' }],
-};
+// v2 run manifest (buildGraphManifest, src/core/workflows.mjs:567): the run
+// monitor renders the graph the run actually ran, so a fixture carries one.
+const gnode = (id, key, label, color, i) => ({
+  id, kind: 'agent', key, label, color, sub: '', x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+  ports: {
+    inputs: [{ id: 'in', type: 'md', required: true, loop: false, expands: false }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
+});
+const gmanifest = (rows) => ({
+  version: 2,
+  graph: { nodes: rows.map((r, i) => gnode(r[0], r[1], r[2], r[3], i)), wires: [] },
+  bookends: { preflight: true, done: true },
+});
+const MANIFEST = gmanifest([
+  ['s0_0', 'planner', 'Plan', 'violet'],
+  ['s1_0', 'refiner', 'Refine Plan', 'green'],
+  ['s3_0', 'implementer', 'Implementation', 'peach'],
+]);
 
 test('subFanHtml renders one .sq per sub, .on iff running, exact ×N, capped at 24', async () => {
   const { window } = await bootLive();
@@ -66,42 +74,45 @@ test('subFanHtml renders one .sq per sub, .on iff running, exact ×N, capped at 
   assert.equal(host.querySelector('.fan .fl').textContent, '×30', 'count stays exact past the cap');
 });
 
-test('paintRunGraph injects the .fan strip into a node from view.subsOf', async () => {
+const decor = (o = {}) => ({
+  live: true, runStatus: 'running', active: [], executions: [], steps: [],
+  endReached: false, result: null, warnings: [], gateWireId: null, expanded: [], now: 0, ...o,
+});
+
+test('the run decor injects the .fan strip into a card from decor.subsOf', async () => {
   const { window } = await bootLive();
   const host = window.document.createElement('div');
   host.className = 'run-flow';
-  window.__np.buildRunGraph(host, MANIFEST);
 
   const subs = { s1_0: [{ status: 'running' }, { status: 'finished' }] };
-  window.__np.paintRunGraph(host, MANIFEST, {
-    statusOf: () => 'active', activeId: 's1_0', cycles: {}, live: true,
-    durText: () => '', costText: () => '', subsOf: (id) => subs[id] || [],
-  });
+  window.__np.paintRunGraph(host, MANIFEST, decor({
+    active: [{ nodeId: 's1_0', executionId: 'x:s1_0:1' }],
+    executions: [{ executionId: 'x:s1_0:1', nodeId: 's1_0', ordinal: 1, kind: 'cycle', status: 'start', agentKey: 'refiner' }],
+    subsOf: (id) => subs[id] || [],
+  }));
 
-  const n = host.querySelector('.run-node[data-id="s1_0"]');
-  assert.equal(n.querySelectorAll('.fan .sq').length, 2, 'node gets two squares');
+  const n = host.querySelector('.node[data-node-id="s1_0"]');
+  assert.equal(n.querySelectorAll('.fan .sq').length, 2, 'card gets two squares');
   assert.equal(n.querySelectorAll('.fan .sq.on').length, 1);
   assert.equal(n.querySelector('.fan .fl').textContent, '×2');
 
   // a node with no subs has no .fan
-  assert.equal(host.querySelector('.run-node[data-id="s0_0"] .fan'), null, 'no subs -> no strip');
+  assert.equal(host.querySelector('.node[data-node-id="s0_0"] .fan'), null, 'no subs -> no strip');
 
   // repaint with the sub finished -> .on drops to 0 (idempotent, no duplicate strip)
-  window.__np.paintRunGraph(host, MANIFEST, {
-    statusOf: () => 'done', activeId: null, cycles: {}, live: false,
-    durText: () => '', costText: () => '', subsOf: (id) => (id === 's1_0' ? [{ status: 'finished' }, { status: 'finished' }] : []),
-  });
+  window.__np.paintRunGraph(host, MANIFEST, decor({
+    live: false, runStatus: 'done',
+    executions: [{ executionId: 'x:s1_0:1', nodeId: 's1_0', ordinal: 1, kind: 'cycle', status: 'done', agentKey: 'refiner' }],
+    subsOf: (id) => (id === 's1_0' ? [{ status: 'finished' }, { status: 'finished' }] : []),
+  }));
   assert.equal(n.querySelectorAll('.fan').length, 1, 'strip not duplicated on repaint');
   assert.equal(n.querySelectorAll('.fan .sq.on').length, 0, 'no running square after finish');
 });
 
-test('paintRunGraph tolerates a view with no subsOf (back-compat)', async () => {
+test('the run decor tolerates a bag with no subsOf', async () => {
   const { window } = await bootLive();
   const host = window.document.createElement('div');
   host.className = 'run-flow';
-  window.__np.buildRunGraph(host, MANIFEST);
-  window.__np.paintRunGraph(host, MANIFEST, {
-    statusOf: () => 'done', activeId: null, cycles: {}, live: false, durText: () => '', costText: () => '',
-  });
+  window.__np.paintRunGraph(host, MANIFEST, decor({ live: false, runStatus: 'done' }));
   assert.equal(host.querySelector('.fan'), null, 'absent subsOf -> no strip, no throw');
 });

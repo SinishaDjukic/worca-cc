@@ -2,10 +2,17 @@
 // Parse + validate `worca-cc-plugin.json` (plugin spec §4.1) and whole plugin
 // dirs (§6.6 `worca plugin validate [--strict]`). Pure: fs reads only, no
 // writes, no DB, no worcaHome — callers pass absolute dirs.
+//
+// `validateMetaV2` is the ONE sidecar gate (agent-store's save path uses the
+// same function): a plugin agent is held to exactly the rules a user agent is,
+// so nothing installs that the registry would then silently skip at load. It is
+// a pure function over a parsed object — importing it keeps this module's
+// no-writes/no-DB contract intact.
 
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { validateMetaV2 } from './agent-registry.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -41,6 +48,32 @@ export function apiSatisfies(range, api = WORCA_PLUGIN_API) {
     if (!ok) return false;
   }
   return true;
+}
+
+/** The host API the range was BUILT FOR: the lowest integer it accepts. ">=1 <2"
+ *  and "1" both answer 1. Probing beats parsing — apiSatisfies is the only
+ *  authority on what a range means, and this way the two can never disagree.
+ *  null when nothing satisfies it (an unparseable range fails closed there too).
+ *  @param {string} range
+ *  @returns {number|null} */
+export function declaredApi(range) {
+  for (let n = 0; n <= 99; n += 1) if (apiSatisfies(range, n)) return n;
+  return null;
+}
+
+/**
+ * The Plugins-view api-mismatch payload (spec §5) for a manifest's engines
+ * range, or null when the host satisfies it. An API-incompatible plugin is not
+ * corrupt: its manifest simply stops normalizing, so it drops out of the
+ * registry while its files stay on disk. The card needs to say which API it was
+ * built for, not just that something is wrong.
+ * @param {string} range  engines['worca-cc-api']
+ * @param {number} [api]
+ * @returns {{builtFor: number|null, host: number}|null}
+ */
+export function apiMismatch(range, api = WORCA_PLUGIN_API) {
+  if (apiSatisfies(range, api)) return null;
+  return { builtFor: declaredApi(range), host: api };
 }
 
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
@@ -258,6 +291,12 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (!KEY_RE.test(key)) { push('error', `agents/${f}: "${key}" must be a valid agent key (letters/digits/_-)`); continue; }
       if (key !== stem) push('error', `agents/${f}: key "${key}" must match the filename stem "${stem}"`);
       if (!files.includes(`${stem}.md`)) push('error', `agents/${f}: missing sibling ${stem}.md`);
+      // API 2: the sidecar must pass the SAME meta v2 gate the agent-store save
+      // path applies, every failed rule named. ALL capability fields are open to
+      // plugins (verdict, sideEffect, mockRole, workspace*, placeable, …) — the
+      // gate is the schema, not an allow-list. A v1 sidecar fails here on
+      // `metaVersion 2` instead of installing and being skipped at registry load.
+      for (const e of validateMetaV2(meta).errors) push('error', `agents/${f}: ${e}`);
       agentKeys.add(key);
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
@@ -278,15 +317,25 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
     }
   }
 
-  // workflows/*.json may reference ONLY the plugin's own agent keys (§9.3)
+  // workflows/*.json are v2 GRAPHS (API 2) and may reference ONLY the plugin's
+  // own agent keys (§9.3). The isolation rule is DELIBERATE and stays: a plugin
+  // template that wired in a builtin or user agent would break the moment the
+  // host renamed one or the user deleted theirs, and the plugin could not ship a
+  // fix. Full graph validation (V1-V21) belongs to the importer, which has a
+  // live registry to resolve ports against; here only the shape the isolation
+  // walk needs is checked.
   const wfDir = join(absDir, 'workflows');
   if (existsSync(wfDir)) {
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
       catch { push('error', `workflows/${f}: invalid JSON`); continue; }
-      if (!Array.isArray(tpl?.steps)) { push('error', `workflows/${f}: "steps" must be an array`); continue; }
-      const keys = tpl.steps.flat().map((n) => n?.key).filter(Boolean);
+      if (Number(tpl?.version) !== 2) {
+        push('error', `workflows/${f}: must be a version-2 graph template (worca-cc-api ${WORCA_PLUGIN_API}); "steps" templates are no longer read`);
+        continue;
+      }
+      if (!Array.isArray(tpl.nodes)) { push('error', `workflows/${f}: "nodes" must be an array`); continue; }
+      const keys = tpl.nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
       for (const k of new Set(keys)) {
         if (!agentKeys.has(k)) push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
       }

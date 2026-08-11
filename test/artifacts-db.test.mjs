@@ -18,6 +18,7 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 
 const homes = [];
 beforeEach(async () => {
@@ -370,14 +371,11 @@ test('recordArtifact indexes a (kind, relPath) and listArtifacts returns them', 
 test('a mock run indexes plan + checklist + review markdown in the artifacts table', async () => {
   const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-art-proj-'));
   homes.push(projectDir);
-  // planner -> refiner -> implementer -> reviewer -> manualTestsChecklist:
-  // produces plan (planner/refiner), code (implementer), review md (reviewer:
-  // impl-review), and checklist (manualTestsChecklist). prompt is indexed by
-  // createPipeline.
-  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer'], ['manualTestsChecklist']]
-    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
-  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']].map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
-  const tpl = await writeWorkflow({ name: 'art-index', steps, feedbacks });
+  // The full no-decompose seed: planner/refiner produce the plan, the implementer
+  // writes code, the reviewer writes the shared impl-review md, and
+  // manualTestsChecklist writes the checklist. prompt is indexed by createPipeline.
+  const seed = SEED_TEMPLATES.find((t) => t.id === 'wf_full-no-decompose');
+  const tpl = await writeWorkflow({ ...structuredClone(seed), id: 'wf_art_index', name: 'art-index' });
   const orch = createOrchestrator({ projectDir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id });
   const res = await orch.run();
   assert.equal(res.status, 'done', 'pipeline converges');

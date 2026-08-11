@@ -21,9 +21,8 @@ const state = {
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
-  stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
-  channelIds: [], // known channel ids from /api/agents (drives the agent editor)
+  mockWriterRoles: [], // closed mockRole vocabulary from /api/agents (port editor select)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
@@ -44,20 +43,33 @@ const state = {
   activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
 };
 
-// UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
-// server is authoritative — see loadConfig, which also receives data.steps.)
-const STEP_ROLES = ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'];
-
+// The graph family (spec §6). composer-core.mjs is gone: its survivors —
+// mergePalette, groupPaletteByDomain, EMBEDDED_AGENTS — moved to
+// graph/agents-meta.mjs in v2 shape, and its channel-era legality helper
+// (canConnect) is replaced by graph-model's typed-port canWire, which the
+// editor calls directly.
+import { portsFnFor, normalizeTemplate, classifyLoops, CAPTION_KINDS } from './graph/graph-model.mjs';
+import { EMBEDDED_AGENTS, mergePalette, FLOW_PILLS } from './graph/agents-meta.mjs';
+import { createGraphView } from './graph/graph-view.mjs';
+import { rankNodes } from './graph/graph-layout.mjs';
+import { nodeSize, fitBounds } from './graph/graph-geometry.mjs';
 import {
-  topology,
-  metaLine,
-  distinctAgents,
-  defaultTopologyFromTemplate,
-  mergePalette,
-  canConnect,
-  EMBEDDED_AGENTS,
-  groupPaletteByDomain,
-} from './composer-core.mjs';
+  manifestNodes,
+  manifestTemplate,
+  manifestPortsFn,
+  manifestAgents,
+  isGraphManifest,
+  executionRows,
+  legacyChipRows,
+  runWarnings,
+  nodeColor,
+  decorate,
+  subFanHtml,
+  fmtDur,
+  fmtUsd as fmtUsdGraph,
+} from './graph/run-decor.mjs';
+import { createComposerEditor } from './graph/composer-editor.mjs';
+import { thumbnail } from './graph/thumbnail.mjs';
 import { logLineClass } from './log-line.mjs';
 import { logLineVisible, logFacets } from './log-filter.mjs';
 import {
@@ -122,7 +134,9 @@ const el = {
   workflowSelect: $('#workflowSelect'),
   guardrailsSelect: $('#guardrailsSelect'),
   guardrailsHint: $('#guardrailsHint'),
-  wfDefaultStages: $('#wf-default-stages'),
+  wfPreview: $('#wf-preview'),
+  wfOverridesToggle: $('#wf-overrides-toggle'),
+  wfOverrides: $('#wf-overrides'),
   wfNodeConfig: $('#wf-node-config'),
   wfFeedbackConfig: $('#wf-feedback-config'),
 
@@ -505,12 +519,15 @@ function handleServerMessage(msg) {
   // MATERIALIZE a run: each only attaches to one this tab already knows. (A
   // resolution for an unknown run is meaningless, and auto-creating a card would
   // resurrect the phantom.)
-  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'token' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
-    case 'phase':
-      onPhase(r, msg);
+    case 'exec':
+      onExec(r, msg);
+      break;
+    case 'token':
+      onToken(r, msg);
       break;
     case 'log':
       onLog(r, msg);
@@ -646,347 +663,260 @@ function currentView() {
 // Steps tracker
 // ---------------------------------------------------------------------------
 
-// Normalize a core phase name to one of our tracker step keys.
-// Order matters: more specific phases ("refine", "review", "implement") are
-// matched before the generic "plan"/"clarify" fallback, because names like
-// "plan-refine" contain the substring "plan".
-function normalizePhase(phase) {
-  if (!phase) return null;
-  const p = String(phase).toLowerCase();
-  if (p.includes('preflight')) return 'preflight';
-  if (p.includes('manual-web')) return 'manual-web';
-  if (p.includes('manual-checklist') || p.includes('manual-test')) return 'manual-checklist';
-  if (p.includes('refine')) return 'refine';
-  if (p.includes('review')) return 'review';
-  if (p.includes('implement')) return 'implement';
-  if (p.includes('done') || p.includes('complete') || p.includes('finish')) return 'done';
-  if (p.includes('clarify')) return 'clarify';
-  if (p.includes('plan')) return 'plan';
-  return null;
-}
-
-// Legacy default stepper, used when a run predates state.stepper (old history)
-// or before the first 'state' event arrives. Node ids = uiPhase keys so old
-// per-step costs/durations (bucketed by phase) still attribute correctly.
-const CLIENT_DEFAULT_STEPPER = {
-  version: 1,
-  steps: [
-    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-    { kind: 'agents', nodes: [{ id: 'clarify',   uiPhase: 'clarify',   label: 'Clarify',   color: 'red',    cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
-    { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
-    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-  ],
-  feedbacks: [],
-};
-
-// Pick the manifest to render: prefer a persisted/emitted one, else the legacy
-// default. Defensive against malformed shapes.
+// The run's graph manifest (`pipelines.stepper`) is the run monitor's source of
+// truth: buildGraphManifest (src/core/workflows.mjs:567) snapshots the resolved
+// graph at run start, so a card renders the graph it actually ran. There is no
+// client-side default any more — a run with no manifest yet simply has no graph
+// to draw, and the card shows the mount empty until the first `state` arrives.
 function manifestFor(stepper) {
-  if (stepper && Array.isArray(stepper.steps) && stepper.steps.length) return stepper;
-  return CLIENT_DEFAULT_STEPPER;
+  return stepper && (isGraphManifest(stepper) || Array.isArray(stepper.steps)) ? stepper : null;
 }
 
 // Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
-// (e.g. a decomposed run rewrites the implementer node into per-phase/per-task
-// nodes) so the live view can re-swap + rebuild mid-run.
+// (e.g. a decomposed run rewrites the implementer node into per-task nodes) so
+// the live view can re-swap + rebuild mid-run.
 function manifestSig(stepper) {
-  const m = manifestFor(stepper);
-  return (Array.isArray(m.steps) ? m.steps : [])
-    .map((cell) => (Array.isArray(cell.nodes) ? cell.nodes.map((n) => n.id).join(',') : ''))
-    .join('|');
+  return manifestNodes(manifestFor(stepper)).map((n) => n.id).join('|');
 }
 
-// Resolve an incoming phase/state event to a cell index + node id within a run's
-// manifest. nodeId (node phase events) pins the exact node; bookend/legacy events
-// match by phase: preflight/done by kind, everything else by uiPhase.
-function locateInManifest(manifest, msg) {
-  const m = manifestFor(manifest);
-  if (msg.nodeId) {
-    for (let i = 0; i < m.steps.length; i++) {
-      if (m.steps[i].nodes.some((n) => n.id === msg.nodeId)) return { cellIdx: i, nodeId: msg.nodeId };
-    }
-  }
-  const key = normalizePhase(msg.phase);
-  if (key === 'preflight') return { cellIdx: 0, nodeId: 'preflight' };
-  if (key === 'done') return { cellIdx: m.steps.length - 1, nodeId: 'done' };
-  for (let i = 0; i < m.steps.length; i++) {
-    const hit = m.steps[i].nodes.find((n) => n.uiPhase === key);
-    if (hit) return { cellIdx: i, nodeId: hit.id };
-  }
-  return { cellIdx: -1, nodeId: null };
-}
-
-// Map a phase status string + run status to a stepper node kind.
+// Map an execution/run status to the sub-agent-tree status vocabulary.
 function nodeKindFor(r, status) {
   if (r.pendingQuestion != null) return 'pause';
   if (r.status === 'stopped') return 'stop';
   if (['done', 'complete', 'passed', 'finish'].includes(status)) return 'done';
-  // A gracefully paused/pausing run leaves its frontier node mid-flight: mark it
-  // paused so the stepper shows WHERE it stopped instead of a phantom "running…".
   if (r.status === 'paused' || r.status === 'pausing') return 'pause';
   return 'now';
 }
 
-// Apply one phase/state transition to the run's live node-status map.
-// The scalar trackers (phaseKey/cycle/phaseStatus) drive the foot chip + status
-// pill and are kept in sync even when the phase isn't locatable in this run's
-// manifest (e.g. a manual-web phase on the legacy default manifest) — only the
-// cell-level node-status map needs a resolved cell + node id.
-function advanceRun(r, msg) {
-  r.phaseKey = normalizePhase(msg.phase) || r.phaseKey;
-  if (msg.cycle) r.cycle = msg.cycle;
-  r.phaseStatus = msg.status || '';
-  const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
-  if (cellIdx < 0 || !nodeId) return;
-  if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
-  if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
-  r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
+// ---------------------------------------------------------------------------
+// Run graph view (spec §7). The run monitor renders the SAME graph-view the
+// composer does — static (no pointer handlers of its own) — and lays the live
+// decor over it with run-decor. One view per card element; rebuilt only when the
+// manifest's node set changes, so a repaint never restarts a CSS animation.
+// ---------------------------------------------------------------------------
+
+const runViews = new WeakMap(); // host element -> { view, sig }
+
+// The palette graph-view draws headers from: the live composer palette when it
+// has landed, else the embedded fallback, with the RUN's own labels/colours
+// layered on top by manifestAgents.
+function runPalette() {
+  const live = composer.agents && Object.keys(composer.agents).length ? composer.agents : null;
+  return live || Object.fromEntries(mergePalette(null).map((a) => [a.key, a]));
 }
 
-// Replace a live card's stepper DOM when the manifest first arrives/changes.
+// Mount (or reuse) the graph for `stepper` inside `host` and return the view.
+// null when there is no manifest to draw yet.
+function runGraphView(host, stepper) {
+  const m = manifestFor(stepper);
+  if (!host || !m || !manifestNodes(m).length) {
+    if (host) host.replaceChildren();
+    runViews.delete(host);
+    return null;
+  }
+  const sig = manifestSig(m);
+  const cached = runViews.get(host);
+  if (cached && cached.sig === sig) {
+    cached.view.setAgents(manifestAgents(m, runPalette()));
+    return cached.view;
+  }
+  // A structural rebuild empties the mount, which clamps the surrounding
+  // scroller back to the origin. Capture before the wipe, restore after, so a
+  // manifest swap mid-run never yanks the graph away from where the user was.
+  const scroller = host.closest('.run-flow-wrap');
+  const left = scroller ? scroller.scrollLeft : 0;
+  const top = scroller ? scroller.scrollTop : 0;
+  const view = createGraphView(host, { portsFn: manifestPortsFn(m), agents: manifestAgents(m, runPalette()) });
+  runViews.set(host, { view, sig });
+  if (scroller && (left || top)) { scroller.scrollLeft = left; scroller.scrollTop = top; }
+  return view;
+}
+
+// Render the graph + lay the decor over it. `decor` is the run-decor bag.
+// A frozen v1 run has no graph to draw — it degrades to the flat chip strip.
+function paintRunGraph(host, stepper, decor) {
+  const m = manifestFor(stepper);
+  if (m && !isGraphManifest(m)) {
+    runViews.delete(host);
+    paintLegacyStrip(host, m, decor);
+    return null;
+  }
+  const view = runGraphView(host, stepper);
+  if (!view) return null;
+  view.render(manifestTemplate(m));
+  decorate(view, m, decor);
+  return view;
+}
+
+// ── The legacy (v1) renderer ───────────────────────────────────────────────
+// Everything from here to execsFromSteps renders FROZEN v1 runs and nothing
+// else, and it is the ONE place in the client allowed to read the v1 phase
+// vocabulary (the genericity charter's sanctioned exception (c)). No v2 run can
+// reach it: paintRunGraph forks on isGraphManifest, and a v2 manifest carries no
+// uiPhase at all.
+
+// Resolve v1 step rows onto their manifest node. `pipeline_steps.node_id` is
+// nullable and stepRowToStep omits `nodeId` entirely when it is NULL
+// (artifacts.mjs:1603), so the oldest frozen runs identify a step row by `phase`
+// alone — the node ids of a v1 manifest ARE its phases (or its nodes carry
+// `uiPhase`). Without this, every chip of such a run reads `pending` with no
+// cost and no duration. Rows already carrying a nodeId pass through untouched,
+// and a phase that names no node is dropped by legacyChipRows like any other
+// unmatched row.
+function legacyStepRows(manifest, steps) {
+  const byPhase = new Map();
+  for (const n of manifestNodes(manifest)) {
+    for (const phase of [n.uiPhase, n.id]) {
+      if (phase != null && !byPhase.has(phase)) byPhase.set(phase, n.id);
+    }
+  }
+  return (Array.isArray(steps) ? steps : []).map((s) => {
+    if (!s || s.nodeId != null) return s;
+    const nodeId = byPhase.get(s.phase);
+    return nodeId ? { ...s, nodeId } : s;
+  });
+}
+
+// Frozen v1 manifests (stepper.version 1 / absent) render as a flat horizontal
+// chip strip: label + status tint + cost/duration (spec §7). No wires, no
+// executions footer — v1 had neither.
+function paintLegacyStrip(host, manifest, decor) {
+  const strip = document.createElement('div');
+  strip.className = 'run-strip';
+  for (const chip of legacyChipRows(manifest, { steps: legacyStepRows(manifest, decor.steps) })) {
+    const el = document.createElement('span');
+    el.className = `rchip is-${chip.status}`;
+    el.dataset.id = chip.id;
+    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || '#ccc');
+    el.textContent = chip.text;
+    strip.appendChild(el);
+  }
+  host.replaceChildren(strip);
+}
+
+// A frozen run has no exec stream to replay — synthesize the ledger from the
+// persisted step rows, whose key IS the executionId (spec §8, V17).
+function execsFromSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
+    .filter((st) => st && (st.executionId || st.key))
+    .map((st) => {
+      const e = {
+        executionId: st.executionId || st.key,
+        nodeId: st.nodeId,
+        kind: 'cycle',
+        ordinal: Number(st.cycle) || 1,
+        status: st.status || 'done',
+        agentKey: null,
+        costUsd: Number(st.costUsd) || 0,
+      };
+      // The two exec-only dimensions the step row persists (artifacts.mjs
+      // exec_result/exec_trigger): `result` anchors the End result card and
+      // `trigger` drives the loop badges + the `cycle 2 · fix` row labels.
+      // `result` stays ABSENT unless recorded — endResult keys off `!== undefined`.
+      if (st.result !== undefined) e.result = st.result;
+      if (st.trigger) e.trigger = st.trigger;
+      return e;
+    });
+}
+
+// Replace a live card's graph when the manifest first arrives / changes.
 function rebuildStepperDom(r) {
   const host = r.el && r.el.querySelector('.run-flow');
-  if (host) buildRunGraph(host, r.stepper);
+  if (host) runViews.delete(host);
+  paintStepper(r);
 }
 
 // ---------------------------------------------------------------------------
-// Run/history node-graph (composer-style). buildRunGraph builds the static
-// .run-flow skeleton; paintRunGraph tints it + repaints wires via the shared
-// composerPaintWires. Walks the stepper manifest and emits composer .node markup.
+// Node palette tokens + the v1 wire painter. The run/history graph moved to
+// graph-view + run-decor; these stay for the remaining v1 surfaces and are
+// byte-identical to their previous definitions.
 // ---------------------------------------------------------------------------
+const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
+const COMPOSER_SEQ = '#B7B7BC';
 
-// Resolve a manifest node to its agent meta (icon/displayName/description/color).
-// Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
-// done) have no key -> a neutral cog so they still render an icon.
-//
-// IMPORTANT: read composer.agents[key] RAW (not composerAgent(key)). composerAgent
-// returns a non-undefined default {displayName:key,...} that would shadow the
-// EMBEDDED_AGENTS fallback. Raw access yields undefined when the live registry
-// isn't loaded yet, so the `|| EMBEDDED_AGENTS[key]` fallback fires. Do not simplify.
-const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
-function runNodeAgent(node) {
-  const key = node && node.key;
-  const live = key && composer.agents && composer.agents[key];
-  const embedded = key && EMBEDDED_AGENTS[key];
-  const meta = live || embedded || {};
-  return {
-    icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
-    color: node.color || meta.color || 'blue',
-    label: node.label || meta.displayName || node.id,
-    sub: node.sub || meta.description || '',
+/* ---- wires (shared renderer; ns-namespaced markers) ---- */
+function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
+  opts = opts || {};
+  const ns = opts.ns || 'main';
+  if (flowEl.offsetParent === null) return; // view hidden — skip
+  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
+  // the renderer itself reads the finished count from opts.cycles[fb.from]).
+  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
+  const loopBadge = (cx, cy, color, n) =>
+    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
+    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
+    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
+    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
+  const rect = (id) => {
+    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
+    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
   };
-}
-
-// Visible status caption under the node label. pending -> the node's description.
-const STAT_TEXT = { done: 'completed', active: 'running…', paused: 'awaiting input', stopped: 'stopped here', pending: '' };
-
-// Settled-status badge markup (check / two-bar / X). active+pending have none.
-const STAT_BADGE = {
-  done: '<div class="nstat done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>',
-  paused: '<div class="nstat paused"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg></div>',
-  stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
-};
-
-// Visible "model · effort" sub-line for a run-graph node, mirroring the New-
-// pipeline config caption (.step-current): friendly model label + raw effort.
-// Bookend cells (Preflight/Done) have no uiPhase and run no model -> no line.
-// A step with neither model nor effort inherits the global default -> "default"
-// (per-field "default" when only one is set). The "·" is U+00B7, matching the
-// composer separator. NOTE: the blank wording is "default" (clarification Q1),
-// which intentionally differs from the composer's "default model"/"default effort".
-function nodeModelLine(node) {
-  if (!node || !node.uiPhase) return '';
-  const model = node.model || '';
-  const effort = node.effort || '';
-  if (!model && !effort) return 'default';
-  const m = modelById(model);
-  const modelLabel = model ? (m ? m.label : model) : 'default';
-  return `${modelLabel} · ${effort || 'default'}`;
-}
-
-// Sub-agent square strip for a run-graph node. One <span.sq> per sub-agent
-// (.on iff that sub is still `running`), plus an exact ×N count. Squares are
-// render-capped (the count text stays exact); no subs -> empty string so a
-// node without sub-agents gets no border row. Pulse is CSS-only (.sq.on).
-const SUB_SQUARE_CAP = 24;
-function subFanHtml(subs) {
-  const list = Array.isArray(subs) ? subs : [];
-  if (list.length === 0) return '';
-  const squares = list
-    .slice(0, SUB_SQUARE_CAP)
-    .map((s) => `<span class="sq${s && s.status === 'running' ? ' on' : ''}"></span>`)
-    .join('');
-  return `<div class="fan">${squares}<span class="fl">×${list.length}</span></div>`;
-}
-
-// Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
-// isSelf => the node is its own self-cycle target (gets the .iterates ring).
-function runNode(node, status, isSelf) {
-  const ag = runNodeAgent(node);
-  const d = document.createElement('div');
-  d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
-  d.dataset.id = node.id;
-  d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
-  // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
-  const meLine = nodeModelLine(node);
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
-      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
-      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div>` +
-      (meLine ? `<small class="nmodel">${escapeHtml(meLine)}</small>` : '') +
-    `</div>` +
-    (STAT_BADGE[status] || '');
-  return d;
-}
-
-// The set of node ids in a manifest, in column order, as a stable signature.
-function runGraphNodeIds(manifest) {
-  const ids = [];
-  manifest.steps.forEach((cell) => cell.nodes.forEach((n) => ids.push(n.id)));
-  return ids;
-}
-
-// Build (or rebuild) the .run-flow skeleton into `host`. Idempotent: if the
-// host already holds a graph for the SAME ordered node-id set, leave the DOM
-// (and its running CSS animations) intact. Trailing <svg class="wires"> is the
-// shared renderer's target.
-function buildRunGraph(host, manifest) {
-  const m = manifestFor(manifest);
-  const ids = runGraphNodeIds(m);
-  if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
-
-  // Preserve horizontal scroll across a structural rebuild: emptying .run-flow
-  // collapses it to 0 width, which clamps the .run-flow-wrap scroller back to the
-  // far left. Capture before the wipe, restore after the columns are re-appended,
-  // so a new stage/node never yanks the pipeline back to the start. No-op off-DOM
-  // (a freshly-cloned card has scrollLeft 0 and nothing to keep). Works for both
-  // the live card and the history-detail card (both nest .run-flow in .run-flow-wrap).
-  const scroller = host.closest('.run-flow-wrap');
-  const savedLeft = scroller ? scroller.scrollLeft : 0;
-
-  host.dataset.graphSig = ids.join('|');
-  host.dataset.wiresSig = ''; // force a wire repaint after a structural rebuild
-  host.innerHTML = '';
-
-  const selfTargets = new Set(
-    (Array.isArray(m.feedbacks) ? m.feedbacks : [])
-      .filter((fb) => fb && fb.from === fb.to)
-      .map((fb) => fb.from),
-  );
-
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  m.steps.forEach((cell, i) => {
-    const col = document.createElement('div');
-    col.className = 'col';
-    col.dataset.cellIdx = String(i);
-    const tag = document.createElement('div');
-    tag.className = 'col-tag';
-    tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(tag);
-    for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
-    host.appendChild(col);
-  });
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'wires');
-  host.appendChild(svg);
-
-  // Restore the pre-rebuild horizontal scroll (the browser clamps automatically if
-  // the graph is now narrower). Only when there was a position to keep.
-  if (scroller && savedLeft) scroller.scrollLeft = savedLeft;
-}
-
-// Final per-node loop count the renderer consumes directly: a node that ran k
-// cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
-function loopCounts(manifest, nodeCycle) {
-  const nc = nodeCycle || {};
-  const out = {};
-  runGraphNodeIds(manifestFor(manifest)).forEach((id) => {
-    out[id] = Math.max(0, (nc[id] || 1) - 1);
-  });
-  return out;
-}
-
-// manifest.steps (cells with .nodes) -> the [[{id}…]…] shape composerPaintWires
-// walks for sequential + feedback wires.
-function manifestStepsForWires(manifest) {
-  return manifestFor(manifest).steps.map((cell) => cell.nodes.map((n) => ({ id: n.id })));
-}
-
-// Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
-// view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
-//          live:boolean, durText(id)->str, costText(id)->str,
-//          subsOf?(id)->Array<{status}> (optional; sub-agent squares) }.
-const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
-function paintRunGraph(host, manifest, view) {
-  const m = manifestFor(manifest);
-  const doneSet = new Set();
-  runGraphNodeIds(m).forEach((id) => {
-    const status = view.statusOf(id) || 'pending';
-    if (status === 'done') doneSet.add(id);
-    const el = host.querySelector(`.run-node[data-id="${id}"]`);
-    if (!el) return;
-
-    el.classList.remove(...RUN_STATUSES);
-    el.classList.add('is-' + status);
-
-    const statusEl = el.querySelector('.nstatus');
-    if (statusEl) {
-      const txt = STAT_TEXT[status];
-      statusEl.textContent = (txt != null && txt !== '') ? txt : (status === 'pending' ? (statusEl.dataset.sub || statusEl.textContent || '') : '');
+  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
+  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
+  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
+  let s = `<defs>` +
+    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
+    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
+    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
+  for (let i = 0; i < steps.length - 1; i++) {
+    steps[i].forEach((a) => {
+      steps[i + 1].forEach((b) => {
+        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
+        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
+        const dx = Math.max(36, (x2 - x1) * 0.5);
+        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
+        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
+        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
+      });
+    });
+  }
+  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
+  let maxBottom = 0;
+  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
+  feedbacks.forEach((fb, idx) => {
+    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
+    if (fb.from === fb.to) {
+      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
+      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
+      // toggle owns add/remove (composer); run/history pass cycles for the badge.
+      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
+      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      if (opts.cycles && !opts.del) {
+        const n = opts.cycles[fb.from] || 0;
+        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
+      }
+      return;
     }
-
-    // Swap the settled-status badge (.nstat). Remove any existing, then re-add.
-    const old = el.querySelector('.nstat');
-    if (old) old.remove();
-    if (STAT_BADGE[status]) el.insertAdjacentHTML('beforeend', STAT_BADGE[status]);
-
-    const durEl = el.querySelector('.dur');
-    if (durEl) durEl.textContent = view.durText(id) || '';
-    const costEl = el.querySelector('.cost');
-    if (costEl) costEl.textContent = view.costText(id) || '';
-
-    // Sub-agent square strip (graph view only; optional adapter). Idempotent:
-    // drop the old strip, inject the current one. Empty -> no strip / no row.
-    const oldFan = el.querySelector('.fan');
-    if (oldFan) oldFan.remove();
-    const fanHtml = view.subsOf ? subFanHtml(view.subsOf(id)) : '';
-    if (fanHtml) el.insertAdjacentHTML('beforeend', fanHtml);
+    const p = posOf(fb.from);
+    const below = p.len > 1 && p.i === p.len - 1;
+    let sx, sy, tx, ty, rail, mx, my;
+    if (below) {
+      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
+      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
+      my = rail - (rail - Math.max(sy, ty)) * 0.18;
+    } else {
+      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
+      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
+      my = rail + (Math.min(sy, ty) - rail) * 0.18;
+    }
+    mx = (sx + tx) / 2;
+    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    if (opts.del) {
+      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
+        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
+        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    } else if (opts.cycles) {
+      const n = opts.cycles[fb.from] || 0;
+      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
+    }
   });
-
-  // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
-  // every tick. Repaint only when activeId, the done-set, the loop counts, or
-  // the topology change since the last paint.
-  const cycles = view.cycles || {};
-  const sig = JSON.stringify([
-    view.live ? (view.activeId || null) : null,
-    [...doneSet].sort(),
-    Object.keys(cycles).sort().map((k) => `${k}:${cycles[k]}`),
-    host.dataset.graphSig || '',
-  ]);
-  if (host.dataset.wiresSig === sig) return;
-  host.dataset.wiresSig = sig;
-
-  const svg = host.querySelector('svg.wires');
-  if (!svg) return;
-  const steps = manifestStepsForWires(m);
-  const feedbacks = Array.isArray(m.feedbacks) ? m.feedbacks : [];
-  const paint = (window.__np && window.__np.composerPaintWires) || composerPaintWires;
-  const ns = (host.dataset.ns ||= 'rg-' + Math.random().toString(36).slice(2, 8));
-  paint(host, svg, steps, feedbacks, {
-    ns,
-    runMode: true,
-    activeId: view.live ? (view.activeId || null) : null,
-    doneSet,
-    cycles,
-  });
+  wiresEl.innerHTML = s;
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,19 +966,27 @@ function makeRun({
     // hello seeds runs in server registration order, so this tracks true
     // creation order across reloads too (newest = highest).
     orderKey: orderKeyFor(runId),
-    stepper: null,        // run's own stepper manifest (from 'state'); null => legacy default
-    nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
+    stepper: null,        // the run's graph manifest (from 'state'); null => nothing to draw yet
+    // --- graph run state (spec §3 events) ---------------------------------
+    executions: [],       // exec ledger, arrival order; upserted by executionId
+    execById: new Map(),  // executionId -> the same record (upsert index)
+    tokens: [],           // published tokens, capped; recorded, never routed by the UI
+    active: [],           // [{nodeId, executionId}] in flight, from state.active
+    result: null,         // End's bound { type, path?, value? }, or null
+    endReached: false,    // whether the run resolved THROUGH the End card
+    warnings: [],         // run-level warnings (Amendment f's quiescence case)
+    expandedNodes: new Set(), // node ids whose executions footer is open (default collapsed)
+    nodeStatus: {},       // { nodeId: 'done'|'now'|'pause'|'stop' } for the Agents dropdown
     nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
-    maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
-    phaseKey: 'preflight',
     cycle: 0,
-    phaseStatus: '',
-    costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
+    costByNode: {},       // { nodeId: usd } summed per card
     totalCostUsd: 0,   // pipeline total for the card meta line
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
-    logFilter: { source: '', level: '', step: '' }, // '' === all; render-time only (logLines keeps everything)
+    // '' === all; render-time only (logLines keeps everything). executionId +
+    // artifactKind are the graph-engine dimensions (spec §7 row-click narrowing).
+    logFilter: { source: '', level: '', step: '', executionId: '', artifactKind: '' },
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
@@ -1077,17 +1015,34 @@ function upsertRun(partial) {
 // ---------------------------------------------------------------------------
 // Per-run event handlers
 // ---------------------------------------------------------------------------
-function onPhase(r, msg) {
-  advanceRun(r, msg);
-  if (normalizePhase(msg.phase) === 'done') {
-    r.maxCellIdx = manifestFor(r.stepper).steps.length - 1;
-    r.phaseKey = 'done';
+// One execution transition (scheduler.mjs:133). The ledger is keyed by
+// executionId and upserted, so a `start` followed by `done`/`error` collapses to
+// one row and a replayed event buffer cannot duplicate it. This REPLACES v1's
+// `phase` event: the graph engine has executions, not phases.
+function onExec(r, msg) {
+  if (!msg || !msg.executionId) return;
+  let rec = r.execById.get(msg.executionId);
+  if (!rec) {
+    rec = { executionId: msg.executionId };
+    r.execById.set(msg.executionId, rec);
+    r.executions.push(rec);
   }
-  const cyc = msg.cycle ? ` #${msg.cycle}` : '';
-  const st = msg.status ? ` (${msg.status})` : '';
-  onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
+  // Merge only DEFINED fields: `trigger` rides the `start` frame only
+  // (scheduler.mjs:141) and must survive the `done` frame that omits it.
+  for (const k of ['nodeId', 'kind', 'ordinal', 'status', 'agentKey', 'costUsd', 'trigger', 'result', 'error', 'title']) {
+    if (msg[k] !== undefined) rec[k] = msg[k];
+  }
   maybeResume(r);
   paintRunCard(r);
+}
+
+// A published token. It routes nothing in the UI — the ledger and state.active
+// drive every visual — but it IS the record that a publish happened, including
+// the post-End drain publishes that are "recorded, not routed" (spec §7).
+function onToken(r, msg) {
+  if (!msg || msg.seq == null) return;
+  r.tokens.push({ seq: msg.seq, from: msg.from, type: msg.type, path: msg.path || null, forced: !!msg.forced });
+  if (r.tokens.length > MAX_TOKENS) r.tokens.shift();
 }
 
 // A submitted answer is only confirmed resumed when the next phase/state event
@@ -1144,8 +1099,7 @@ function safeAgentIcon(meta) {
 function fmtUsd(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return '';
-  if (v > 0 && v < 0.01) return '<$0.01';
-  return '$' + v.toFixed(2);
+  return fmtUsdGraph(v);
 }
 
 // Exact tenth-of-a-cent dollar string for tooltips (the backend tracks 4 dp,
@@ -1165,17 +1119,12 @@ function estTitle(n) {
 }
 
 // Format a duration in ms as a compact human string. Twin of fmtUsd: non-finite
-// or negative -> ''. <60s -> 'Ns'; <1h -> 'Mm Ss'; else 'Hh Mm'. Math.round
-// is half-up (500ms -> '1s').
+// or negative -> ''. Otherwise run-decor's fmtDur, so the card totals, the graph
+// node headers and the execution rows cannot drift apart.
 function fmtDuration(ms) {
   const v = Number(ms);
   if (!Number.isFinite(v) || v < 0) return '';
-  const s = Math.round(v / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+  return fmtDur(v);
 }
 
 // Live ms for one step: finalized activeMs plus the running tail when live.
@@ -1194,10 +1143,10 @@ function liveTotalMs(steps, now = Date.now()) {
   return sum;
 }
 
-// A step's stepper bucket key: its node id when present (new runs), else the
-// normalized phase (legacy runs, whose default-manifest node ids ARE uiPhases).
+// A step's graph bucket key. Every graph step row carries its node id
+// (orchestrator.mjs:2515); a row without one belongs to no card.
 function stepBucketKey(s) {
-  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : normalizePhase(s && s.phase);
+  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : null;
 }
 
 // Per-node active-ms bucket, keyed by stepBucketKey.
@@ -1234,25 +1183,16 @@ function subAgentsOf(r, nodeId) {
 
 // Find the manifest node with this id across all cells (null if absent).
 function findManifestNode(stepper, nodeId) {
-  const m = manifestFor(stepper);
-  for (const cell of m.steps) for (const n of cell.nodes) if (n.id === nodeId) return n;
-  return null;
+  return manifestNodes(manifestFor(stepper)).find((n) => n.id === nodeId) || null;
 }
 
-// Sub-agents to render on a graph node. Exact nodeId match first; if none, fall
-// back to the node's uiPhase — covers the window before the real s0_0-keyed stepper
-// arrives, when the graph is built from the legacy uiPhase-keyed default (its node
-// ids ARE uiPhases, and the sub-agents carry uiPhase). `src` = live run r or
-// history state st (both expose .subAgents + .stepper).
+// Sub-agents to render on a graph node: an exact nodeId match, and nothing else.
+// The engine stamps every sub-agent with the node that spawned it, and there is
+// no client-side default manifest to bridge any more — so the v1 uiPhase
+// fallback this once carried is gone (it would be a phase key in a SHARED path).
+// `src` = live run r or history state st (both expose .subAgents + .stepper).
 function subAgentsForNode(src, nodeId) {
-  const exact = subAgentsOf(src, nodeId);
-  if (exact.length) return exact;
-  const node = findManifestNode(src && src.stepper, nodeId);
-  if (node && node.uiPhase) {
-    const list = src && Array.isArray(src.subAgents) ? src.subAgents : [];
-    return list.filter((s) => s && s.uiPhase === node.uiPhase);
-  }
-  return exact;
+  return subAgentsOf(src, nodeId);
 }
 
 // Group sub-agents by nodeId for display (the DB keys by step_key, but the UI
@@ -1296,15 +1236,16 @@ function subsByNodeCycleArrays(subAgents) {
   return out;
 }
 
-// Set of manifest node ids that are real agents (cell kind 'agents') — EXCLUDES the
-// preflight/done bookends so they never appear as Agents-dropdown groups. Driven by
-// the run's stepper (manifestFor falls back to CLIENT_DEFAULT_STEPPER when absent).
+// Set of manifest node ids that are real agents — EXCLUDES the flow cards
+// (task/end/and/or/combine), which run no agent and so are never an Agents-
+// dropdown group. v1 manifests carry no per-node `kind`; their agent CELLS do.
 function agentNodeIdSet(stepper) {
   const m = manifestFor(stepper);
+  if (isGraphManifest(m)) return new Set(manifestNodes(m).filter((n) => n.kind === 'agent').map((n) => n.id));
   const set = new Set();
-  m.steps.forEach((cell) => {
+  for (const cell of (m && Array.isArray(m.steps) ? m.steps : [])) {
     if (cell && cell.kind === 'agents') (cell.nodes || []).forEach((n) => set.add(n.id));
-  });
+  }
   return set;
 }
 
@@ -1394,9 +1335,8 @@ function cyclesPerNode(subAgents) {
 }
 
 // Composite-key (nodeId|cycle) -> display label. Resolves the node label by
-// nodeId, then by uiPhase (id-agnostic fallback when the real stepper is absent),
-// then the raw id. Appends "· cycle N" only when that node spans >1 cycle (so
-// single-cycle steps like Plan render exactly as before).
+// nodeId against the run's own manifest, else the raw id. Appends "· cycle N"
+// only when that node spans >1 cycle (so a single-cycle node renders plainly).
 // Map<nodeId, Set<cycle>> from composite `nodeId|cycle` keys (the rendered group set).
 function cyclesFromKeys(keys) {
   const m = new Map();
@@ -1413,13 +1353,6 @@ function cyclesFromKeys(keys) {
 
 function cycleAwareLabel(stepper, subAgents, groupKeys) {
   const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
-  const m = manifestFor(stepper);
-  const phaseToLabel = {};                            // uiPhase -> label
-  m.steps.forEach((cell) => cell.nodes.forEach((n) => { if (n.uiPhase) phaseToLabel[n.uiPhase] = n.label || n.uiPhase; }));
-  const idToPhase = {};                               // nodeId -> uiPhase (from records)
-  for (const s of Array.isArray(subAgents) ? subAgents : []) {
-    if (s && s.nodeId != null && s.uiPhase != null) idToPhase[s.nodeId] = s.uiPhase;
-  }
   // Cycle-suffix multiplicity over the RENDERED group set when provided (so a node shown
   // across >1 cycle gets "· cycle N" even on cycles that spawned no sub-agents); falls
   // back to sub-agent-derived cycles for legacy 2-arg callers.
@@ -1430,13 +1363,9 @@ function cycleAwareLabel(stepper, subAgents, groupKeys) {
     const i = String(key).indexOf(CYCLE_KEY_SEP);
     const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
     const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
-    let label = byId(nodeId);
-    if (label === nodeId && idToPhase[nodeId] && phaseToLabel[idToPhase[nodeId]]) {
-      label = phaseToLabel[idToPhase[nodeId]];
-    }
+    const label = byId(nodeId);
     const set = multi.get(nodeId);
-    if (set && set.size > 1) label += ` · cycle ${cycle}`;
-    return label;
+    return set && set.size > 1 ? `${label} · cycle ${cycle}` : label;
   };
 }
 
@@ -1471,7 +1400,12 @@ function onState(r, msg) {
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
   if (msg.title && msg.title !== r.title) r.title = msg.title;
-  if (msg.phase) advanceRun(r, msg);
+  // Graph run state (spec §3 events): the in-flight set drives node glow + ants;
+  // result/endReached drive the End card and the quiescence banner.
+  if (Array.isArray(msg.active)) r.active = msg.active;
+  if (msg.result !== undefined) r.result = msg.result;
+  if (typeof msg.endReached === 'boolean') r.endReached = msg.endReached;
+  if (Array.isArray(msg.warnings)) r.warnings = msg.warnings;
   maybeResume(r);
   paintRunCard(r);
 }
@@ -1577,15 +1511,6 @@ async function loadConfig(projectDir) {
       state.config = data.config || { steps: {}, customModels: [] };
       state.models = Array.isArray(data.models) ? data.models : [];
       state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
-      state.stepDefaults = {};
-      if (Array.isArray(data.steps)) {
-        for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
-          fanOut: !!s.fanOut,
-          asksQuestions: !!s.asksQuestions,
-          questionsLocked: !!s.questionsLocked,
-          questionsDefault: !!s.questionsDefault,
-        };
-      }
       setConfigError('');
     } else {
       // Surface the failure but DO fall through to loadWorkflowsInto below: an
@@ -1594,7 +1519,6 @@ async function loadConfig(projectDir) {
       // previous project's config is never painted — or echoed back by a later
       // save — and render defaults with a visible explanation.
       state.config = { steps: {}, customModels: [] };
-      state.stepDefaults = {};
       appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
       setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
@@ -1602,13 +1526,11 @@ async function loadConfig(projectDir) {
     // Network-level failure: same reset as the non-ok branch (a previous
     // project's config must not linger), but keep last-known models/efforts.
     state.config = { steps: {}, customModels: [] };
-    state.stepDefaults = {};
     setConfigError('Could not load saved config (network error) — showing defaults.');
   }
   // Seed the active workflow from per-project run-config (activeWorkflowId),
-  // then populate the dropdown + render the chosen workflow's config. This
-  // supersedes the bare renderStepConfigs() call: the default branch still calls
-  // renderStepConfigs() internally for backward-compat.
+  // then populate the dropdown + render the chosen workflow's run setup (its
+  // mini-graph and per-run overrides).
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   await loadGuardrailsInto(state.guardrailsId);
@@ -1648,11 +1570,14 @@ async function getWorkflow(id) {
   }
 }
 
-async function saveWorkflow({ name, domain, steps, feedbacks }) {
+// `tpl` is the editor's v2 template body ({id,name,version,domain,nodes,wires,
+// canvas}) and is forwarded VERBATIM: the route reads every one of those fields,
+// and a destructured subset would silently post an empty graph.
+async function saveWorkflow(tpl) {
   const res = await fetch('/api/workflows', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, domain, steps, feedbacks }),
+    body: JSON.stringify(tpl),
   });
   const data = await safeJson(res);
   if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
@@ -1667,686 +1592,229 @@ async function deleteWorkflow(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline Composer module (ported from docs/pipeline-composer/mockups).
-// Pure serialization lives in composer-core.mjs; this is DOM wiring only.
-// Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
-// drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
-// SELF-LOOP NOTE: a SAME-NODE self-loop (fb.from===fb.to, e.g. the default's
-// fb_refine s1_0->s1_0) is created/removed via the node's top-left self-cycle
-// toggle (.selfloop), NOT the bottom-right link button — that one only draws edges
-// to DISTINCT nodes (composerAddFeedback still rejects from===to). paintWires
-// special-cases from===to to draw a small violet lobe beneath the node with NO
-// delete-X (the toggle owns removal; cross-node amber loops keep their X). Manual
-// checklist: Reset shows the Refine node with its self-cycle toggle lit (violet ring)
-// and a violet self-loop arc beneath it; clicking the toggle removes both, clicking
-// again restores them.
+// Pipeline Composer v2 — a free-form node graph.
+//
+// The v1 column composer (strips, columns, feedback link-mode, window.prompt
+// saves) is gone. composer-editor.mjs owns the canvas, the palette rail, the
+// inspector and the save modal; this block keeps what app.js has always kept:
+// the agent-registry cache, the endpoint calls, and the saved-pipeline list.
+//
+// `composer.agents` is DELIBERATELY never reassigned — it is mutated in place,
+// because portsFnFor closes over the object and the run/history graph reads it
+// (runNodeAgent). Swapping the reference would silently strand both.
 // ---------------------------------------------------------------------------
-const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
-const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
-const COMPOSER_SEQ = '#B7B7BC';
-
-let _composerReady = false;
 const composer = {
-  agents: {},          // key -> {key,displayName,description,color,icon,origin}
-  steps: [],           // Array<Array<{id,key}>> (local ids)
-  feedbacks: [],       // Array<{from,to}> (local ids)
-  saved: [],           // WorkflowTemplate[] from the server
-  linkFrom: null,
-  dragKey: null,
-  uid: 1,
+  agents: {},          // key -> palette entry (mergePalette shape); STABLE identity
+  palette: [],         // the same entries as an ordered list
+  saved: [],           // WorkflowTemplate[] (v2) from the server
+  editor: null,
   els: {},
 };
-const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
-const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
 
-// Test hook: expose the composer state + the mutators the jsdom tests drive
-// directly (mirrors the window.__np convention). composerRefresh/composerAddFeedback
-// are hoisted function declarations, so they are bound by reference here.
-if (typeof window !== 'undefined') {
-  window.__composer = composer;
-  window.__composerRefresh = composerRefresh;
-  window.__composerAddFeedback = composerAddFeedback;
-}
+// The client's synthesizing ports function: meta ports plus the universal
+// `await` gate on agent nodes, plus the flow-card table. Byte-mirrored from the
+// engine's — ui/public cannot import src/core (no build step).
+const composerPortsFn = portsFnFor(composer.agents);
 
-// Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
-// the next composer entry so in-session agent mutations show without a reload.
+let _composerReady = false;
 let _composerPaletteDirty = false;
 
-/** Refetch the registry and rebuild the composer palette in place. */
+// Adopt a merged palette. composer.agents is mutated IN PLACE (composerPortsFn
+// closes over it), never reassigned.
+function setComposerPalette(palette) {
+  composer.palette = palette;
+  for (const key of Object.keys(composer.agents)) delete composer.agents[key];
+  for (const entry of composer.palette) composer.agents[entry.key] = entry;
+  if (composer.editor) composer.editor.setAgents(composer.palette);
+}
+
 async function refreshComposerPalette() {
   _composerPaletteDirty = false;
-  const agentsRes = await fetchAgents();
-  const pal = mergePalette(agentsRes);
-  composer.agents = {};
-  pal.forEach((a) => { composer.agents[a.key] = a; });
-  composerBuildPalette(pal);
+  // mergePalette falls back to EMBEDDED_AGENTS when /api/agents is unreachable,
+  // so the composer degrades to builtins rather than to an empty rail.
+  setComposerPalette(mergePalette(await fetchAgents()));
 }
 
-async function initComposer() {
-  if (_composerReady) {
-    if (_composerPaletteDirty) await refreshComposerPalette();
-    composerDrawWires();
-    return;
-  }
-  _composerReady = true;
-  composer.els = {
-    flow: document.getElementById('composer-flow'),
-    wires: document.getElementById('composer-wires'),
-    palette: document.getElementById('composer-palette'),
-    banner: document.getElementById('composer-link-banner'),
-    linkText: document.getElementById('composer-link-text'),
-    list: document.getElementById('composer-saved-list'),
-    count: document.getElementById('composer-saved-count'),
-  };
-  if (!composer.els.flow) return;
-
-  // toolbar + global listeners (bound once)
-  document.getElementById('composer-reset').addEventListener('click', () => { composerExitLink(); composerReset(); });
-  document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
-  document.getElementById('composer-save').addEventListener('click', composerSave);
-  document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
-  const agentFilter = document.getElementById('composer-agent-filter');
-  if (agentFilter) agentFilter.addEventListener('input', composerApplyFilter);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
-  composer.els.wires.addEventListener('click', (e) => {
-    const g = e.target.closest('.fb-del'); if (!g) return;
-    composer.feedbacks.splice(+g.dataset.fb, 1); composerRefresh();
-  });
-  let rt;
-  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
-  if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
-
-  // palette from the registry (or embedded fallback)
-  await refreshComposerPalette();
-
-  // initial canvas = the saved default workflow (4-step)
-  await composerReset();
-  await composerLoadSaved();
+// The New-Pipeline preview and the topological row ordering both run through
+// composerPortsFn, so they need the palette even when the composer view was
+// never opened. Load it once, on demand.
+async function ensureComposerPalette() {
+  if (!Object.keys(composer.agents).length) await refreshComposerPalette();
 }
 
-/* ---- palette ---- */
-// Ordered header list derived from the already-order-sorted palette, mirroring
-// collectDomains (general last, shared excluded) — no extra API round-trip.
-function paletteDomains(pal) {
+function composerDomains() {
   const seen = [];
-  pal.forEach((a) => { if (a.domain && a.domain !== 'shared' && a.domain !== 'general' && !seen.includes(a.domain)) seen.push(a.domain); });
-  seen.push('general');
+  for (const t of composer.saved) {
+    const d = t && typeof t.domain === 'string' && t.domain ? t.domain : 'general';
+    if (!seen.includes(d)) seen.push(d);
+  }
   return seen;
 }
 
-const composerCollapsed = new Set();   // domains the user has collapsed via chips
+async function initComposer() {
+  composer.els.canvas = $('#composer-canvas');
+  if (!composer.els.canvas) return;   // section absent (partial DOM in tests)
+  composer.els.palette = $('#composer-palette');
+  composer.els.inspector = $('#composer-inspector');
+  composer.els.dialog = $('#composer-dialog');
+  composer.els.save = $('#composer-save');
+  composer.els.filter = $('#composer-agent-filter');
+  composer.els.reset = $('#composer-reset');
+  composer.els.dirty = $('#composer-dirty');
+  composer.els.savedList = $('#composer-saved-list');
+  composer.els.savedCount = $('#composer-saved-count');
 
-function composerBuildPalette(pal) {
-  const palette = composer.els.palette;
-  const ro = pillNameRO();
-  if (ro) ro.disconnect();   // old pills are about to be thrown away
-  palette.innerHTML = '';
-  const domains = paletteDomains(pal);
-  const groups = groupPaletteByDomain(pal, domains);
+  if (!_composerReady || _composerPaletteDirty) await refreshComposerPalette();
 
-  // Filter chips: one per domain, toggles section visibility.
-  const chips = document.createElement('div');
-  chips.className = 'pal-chips';
-  domains.forEach((d) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'pal-chip' + (composerCollapsed.has(d) ? ' off' : '');
-    chip.textContent = d;
-    chip.addEventListener('click', () => {
-      if (composerCollapsed.has(d)) composerCollapsed.delete(d); else composerCollapsed.add(d);
-      composerBuildPalette(pal);                 // cheap re-render
+  if (!_composerReady) {
+    _composerReady = true;
+    composer.editor = createComposerEditor({
+      canvas: composer.els.canvas,
+      palette: composer.els.palette,
+      inspector: composer.els.inspector,
+      dialogHost: composer.els.dialog,
+      saveButton: composer.els.save,
+      filter: composer.els.filter,
+      portsFn: composerPortsFn,
+      agents: composer.palette,
+      models: state.models,
+      efforts: state.efforts,
+      savedDomains: composerDomains(),
+      onSave: composerPersist,
+      onChange: composerPaintDirty,
     });
-    chips.appendChild(chip);
-  });
-  palette.appendChild(chips);
-
-  groups.forEach((g) => {
-    const sec = document.createElement('div');
-    sec.className = 'pal-section';
-    if (composerCollapsed.has(g.domain)) sec.classList.add('collapsed');
-    const head = document.createElement('div');
-    head.className = 'pal-head';
-    head.textContent = g.domain;
-    sec.appendChild(head);
-    g.agents.forEach((ag) => sec.appendChild(composerPalettedPill(ag)));
-    palette.appendChild(sec);
-  });
-  composerApplyFilter();
-}
-
-// Live palette filter (spec 2026-08-09 §Decisions 7): toggles .hidden only —
-// cards stay in the DOM so drag handlers and collapse state survive filtering.
-// The haystack covers everything the card itself can show: key, name and
-// description always; channel names ONLY when the card's visible blurb IS the
-// derived "in: … · out: …" line. A card that paints a real description never
-// shows its channels, so matching them there is a hit with no visible reason.
-function composerApplyFilter() {
-  const input = document.getElementById('composer-agent-filter');
-  const q = ((input && input.value) || '').trim().toLowerCase();
-  document.querySelectorAll('#composer-palette .pal-section').forEach((sec) => {
-    let visible = 0;
-    sec.querySelectorAll('.agent-pill').forEach((p) => {
-      const ag = composer.agents[p.dataset.key] || {};
-      const chans = paletteDesc(ag).derived
-        ? ` ${(ag.consumes || []).join(' ')} ${(ag.produces || []).join(' ')}`
-        : '';
-      const hay = `${p.dataset.key} ${ag.displayName || ''} ${ag.description || ''}${chans}`.toLowerCase();
-      const hit = !q || hay.includes(q);
-      p.classList.toggle('hidden', !hit);
-      if (hit) visible += 1;
-    });
-    sec.classList.toggle('hidden', !!q && visible === 0);
-  });
-}
-
-// Palette blurb: the resolved sidecar/frontmatter description when present,
-// else a derived in/out line from the agent's channels (derived:true renders
-// italic and reads as a fallback, never as authored copy).
-function paletteDesc(ag) {
-  const d = typeof ag.description === 'string' ? ag.description.trim() : '';
-  if (d) return { text: d, derived: false };
-  const io = [];
-  if (Array.isArray(ag.consumes) && ag.consumes.length) io.push('in: ' + ag.consumes.join(', '));
-  if (Array.isArray(ag.produces) && ag.produces.length) io.push('out: ' + ag.produces.join(', '));
-  return { text: io.length ? io.join(' · ') : 'No description yet', derived: true };
-}
-
-// Name-aware description clamp: the palette card budgets 3 text lines — a name
-// that wraps to 2 lines (.name-2l) leaves 1 for the description, a 1-line name
-// leaves 2. Measured with a ResizeObserver, not guessed: wrapping depends on
-// the rendered width, and a palette built while hidden reports height 0 until
-// the composer first shows — the observer fires again on that resize.
-let pillNameROInst;
-function pillNameRO() {
-  if (pillNameROInst === undefined) {
-    pillNameROInst = window.ResizeObserver
-      ? new window.ResizeObserver((entries) => { entries.forEach((en) => pillApplyNameClamp(en.target)); })
-      : null;
-  }
-  return pillNameROInst;
-}
-function pillApplyNameClamp(pname) {
-  const pill = pname.closest('.agent-pill');
-  const h = pname.getBoundingClientRect().height;
-  if (!pill || !h) return;   // h=0 → not laid out yet; keep the current class
-  const lh = parseFloat(window.getComputedStyle(pname).lineHeight) || 16;
-  pill.classList.toggle('name-2l', h > lh * 1.5);
-}
-
-// Extracted from the old composerBuildPalette loop body so the pill markup + drag
-// handlers live in one place.
-function composerPalettedPill(ag) {
-  const p = document.createElement('div');
-  p.className = 'agent-pill';
-  p.draggable = true;
-  p.tabIndex = 0;
-  p.dataset.key = ag.key;
-  const desc = paletteDesc(ag);
-  const consumesList = Array.isArray(ag.consumes) ? ag.consumes : [];
-  const producesList = Array.isArray(ag.produces) ? ag.produces : [];
-  // Bubble content (three states): tip-desc is the real description or the bare
-  // fallback — never the derived in/out text (the IO line below already shows
-  // the channels; stating them twice in two formats reads as a bug). The IO
-  // line renders only when at least one side has channels ('—' fills the other).
-  const tipDesc = (typeof ag.description === 'string' && ag.description.trim())
-    ? ag.description.trim()
-    : 'No description yet';
-  const tipIo = (consumesList.length || producesList.length)
-    ? `<span class="tip-line">${escapeHtml(consumesList.join(', ') || '—')} → ${escapeHtml(producesList.join(', ') || '—')}</span>`
-    : '';
-  p.innerHTML =
-    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span><span class="pname">${escapeHtml(ag.displayName)}</span></span>` +
-    `<small class="pdesc${desc.derived ? ' derived' : ''}">${escapeHtml(desc.text)}</small>` +
-    `<span class="tip-content hidden">` +
-      `<span class="tip-desc">${escapeHtml(tipDesc)}</span>` +
-      `<span class="tip-line">${escapeHtml(ag.domain || 'general')} · ${escapeHtml(ag.origin || 'builtin')}</span>` +
-      tipIo +
-    `</span>`;
-  p.addEventListener('dragstart', (e) => {
-    composer.dragKey = ag.key; p.classList.add('dragging');
-    clearTimeout(pillTipTimer); hideInfoTip();   // never tooltip mid-drag
-    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
-  });
-  p.addEventListener('dragend', () => {
-    composer.dragKey = null; p.classList.remove('dragging');
-    document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
-  });
-  const ro = pillNameRO();
-  if (ro) ro.observe(p.querySelector('.pname'));
-  return p;
-}
-
-/* ---- node ---- */
-function composerNodeEl(a) {
-  const ag = composerAgent(a.key);
-  const selfOn = composer.feedbacks.some((f) => f.from === a.id && f.to === a.id);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>` +
-    `<div class="nx" title="Remove agent">✕</div>` +
-    `<div class="loop" title="Draw a feedback loop from this agent">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
-  d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
-  d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
-  d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
-  // Exit link mode BEFORE adding the edge: composerExitLink hides the banner and
-  // would swallow the toast composerAddFeedback raises for a block reason or warn.
-  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { const from = composer.linkFrom; composerExitLink(); composerAddFeedback(from, a.id); } });
-  return d;
-}
-
-/* ---- drop helpers ---- */
-function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
-// Transient governance message: reuse the link-banner els (link mode is mutually
-// exclusive with dragging). Falls back to console when no banner is mounted (jsdom).
-function composerToast(msg) {
-  const banner = composer.els.banner, text = composer.els.linkText;
-  if (banner && text) { text.textContent = msg; banner.hidden = false; setTimeout(() => { banner.hidden = true; }, 2200); }
-  else if (typeof console !== 'undefined') console.warn('[composer]', msg); // jsdom/no-banner fallback
-}
-function composerMakeStrip(index, full) {
-  const s = document.createElement('div');
-  s.className = 'strip' + (full ? ' full' : '');
-  s.addEventListener('dragover', (e) => { composerAllow(e); s.classList.add('over'); });
-  s.addEventListener('dragleave', () => s.classList.remove('over'));
-  s.addEventListener('drop', (e) => {
-    e.preventDefault(); s.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[index - 1] || [];
-    const next = composer.steps[index] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
-    if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
-  });
-  return s;
-}
-function composerMakeCol(stepIdx) {
-  const col = document.createElement('div');
-  col.className = 'col';
-  const tag = document.createElement('div'); tag.className = 'col-tag';
-  tag.innerHTML = `Step ${stepIdx + 1}` + (composer.steps[stepIdx].length > 1 ? ' · <em>parallel</em>' : '');
-  col.appendChild(tag);
-  composer.steps[stepIdx].forEach((a) => col.appendChild(composerNodeEl(a)));
-  const hint = document.createElement('div'); hint.className = 'par-hint'; hint.textContent = '+ run in parallel';
-  col.appendChild(hint);
-  col.addEventListener('dragover', (e) => { composerAllow(e); col.classList.add('over'); });
-  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
-  col.addEventListener('drop', (e) => {
-    e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[stepIdx - 1] || [];
-    const next = composer.steps[stepIdx + 1] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev || badNext) {
-      const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
-      composerToast(v.reason); composer.dragKey = null; return;
+    if (composer.els.reset) {
+      composer.els.reset.addEventListener('click', () => { composerLoadTemplate(null); });
     }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
-  });
-  return col;
-}
-
-/* ---- render ---- */
-function composerRefresh() {
-  const flow = composer.els.flow;
-  [...flow.querySelectorAll(':scope > .strip, :scope > .col, :scope > .empty-flow')].forEach((e) => e.remove());
-  if (composer.steps.length === 0) {
-    flow.appendChild(composerMakeStrip(0, true));
-    const empty = document.createElement('div'); empty.className = 'empty-flow';
-    empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14" stroke-linecap="round"/></svg>' +
-      'Drag an agent here to begin<small>Place agents left-to-right for sequence · stack them for parallel steps</small>';
-    flow.appendChild(empty);
-  } else {
-    for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
-    flow.appendChild(composerMakeStrip(composer.steps.length));
+    if (composer.els.savedList) composer.els.savedList.addEventListener('click', onComposerSavedClick);
   }
-  const hint = document.getElementById('composer-decomposer-hint');
-  if (hint) {
-    const hasDecomposer = composer.steps.some((col) => col.some((n) => n.key === 'decomposer'));
-    hint.hidden = !hasDecomposer;
-  }
-  requestAnimationFrame(composerDrawWires);
-}
-
-/* ---- mutations ---- */
-function composerRemoveNode(id) {
-  for (let i = 0; i < composer.steps.length; i++) {
-    const j = composer.steps[i].findIndex((a) => a.id === id);
-    if (j >= 0) { composer.steps[i].splice(j, 1); if (composer.steps[i].length === 0) composer.steps.splice(i, 1); break; }
-  }
-  composer.feedbacks = composer.feedbacks.filter((f) => f.from !== id && f.to !== id);
-  if (composer.linkFrom === id) composerExitLink();
-  composerRefresh();
-}
-function composerAddFeedback(from, to) {
-  if (from === to) return;
-  const flat = composer.steps.flat();
-  const fromKey = flat.find((n) => n.id === from)?.key;
-  const toKey = flat.find((n) => n.id === to)?.key;
-  const verdict = canConnect(fromKey, toKey, composer.agents);
-  if (!verdict.ok) { composerToast(verdict.reason); return; }
-  if (verdict.warn) composerToast(verdict.warn);
-  if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
-  composerRefresh();
-}
-// Self-cycle toggle: add/remove a SAME-NODE feedback (from===to). The composer's
-// link button rejects from===to, so this is the only way to set a self-loop. It
-// re-runs the step on its own blocking issues (the default's fb_refine).
-function composerToggleSelf(id) {
-  const node = composer.steps.flat().find((n) => n.id === id);
-  const key = node?.key;
-  const verdict = canConnect(key, key, composer.agents);
-  if (!verdict.ok) { composerToast(`${(composer.agents[key]?.displayName) || key} can’t loop to itself`); return; }
-  const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
-  if (i >= 0) composer.feedbacks.splice(i, 1);
-  else composer.feedbacks.push({ from: id, to: id });
-  composerRefresh();
-}
-
-/* ---- feedback linking mode ---- */
-function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
-function composerEnterLink(id) {
-  composer.linkFrom = id;
-  composer.els.banner.hidden = false;
-  const a = composer.steps.flat().find((n) => n.id === id);
-  composer.els.linkText.textContent = `Loop from "${composerAgent(a.key).displayName}" → click a target agent`;
-  composer.els.flow.querySelectorAll('.node').forEach((n) => {
-    n.classList.toggle('linking', n.dataset.id === id);
-    n.classList.toggle('link-target', n.dataset.id !== id);
-  });
-}
-function composerExitLink() {
-  composer.linkFrom = null;
-  if (composer.els.banner) composer.els.banner.hidden = true;
-  if (composer.els.flow) composer.els.flow.querySelectorAll('.node').forEach((n) => n.classList.remove('linking', 'link-target'));
-}
-
-/* ---- wires (shared renderer; ns-namespaced markers) ---- */
-function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
-  opts = opts || {};
-  const ns = opts.ns || 'main';
-  if (flowEl.offsetParent === null) return; // view hidden — skip
-  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
-  // the renderer itself reads the finished count from opts.cycles[fb.from]).
-  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
-  const loopBadge = (cx, cy, color, n) =>
-    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
-    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
-    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
-    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
-  const rect = (id) => {
-    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
-    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
-    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
-  };
-  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
-  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
-  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
-  let s = `<defs>` +
-    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
-    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
-    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
-    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
-  for (let i = 0; i < steps.length - 1; i++) {
-    steps[i].forEach((a) => {
-      steps[i + 1].forEach((b) => {
-        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
-        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
-        const dx = Math.max(36, (x2 - x1) * 0.5);
-        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
-        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
-        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
-      });
-    });
-  }
-  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
-  let maxBottom = 0;
-  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
-  feedbacks.forEach((fb, idx) => {
-    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
-    if (fb.from === fb.to) {
-      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
-      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
-      // toggle owns add/remove (composer); run/history pass cycles for the badge.
-      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
-      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
-      if (opts.cycles && !opts.del) {
-        const n = opts.cycles[fb.from] || 0;
-        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
-      }
-      return;
-    }
-    const p = posOf(fb.from);
-    const below = p.len > 1 && p.i === p.len - 1;
-    let sx, sy, tx, ty, rail, mx, my;
-    if (below) {
-      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
-      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
-      my = rail - (rail - Math.max(sy, ty)) * 0.18;
-    } else {
-      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
-      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
-      my = rail + (Math.min(sy, ty) - rail) * 0.18;
-    }
-    mx = (sx + tx) / 2;
-    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
-    if (opts.del) {
-      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
-        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
-        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
-    } else if (opts.cycles) {
-      const n = opts.cycles[fb.from] || 0;
-      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
-    }
-  });
-  wiresEl.innerHTML = s;
-}
-function composerDrawWires() {
-  if (!composer.els.flow) return;
-  composerPaintWires(composer.els.flow, composer.els.wires, composer.steps, composer.feedbacks, { ns: 'main', del: true });
-}
-
-/* ---- toolbar actions (server-wired) ---- */
-async function composerReset() {
-  const tpl = await getWorkflow('wf_default');
-  const model = defaultTopologyFromTemplate(tpl, composerMk);
-  composer.steps = model.steps;
-  composer.feedbacks = model.feedbacks;
-  composerRefresh();
-}
-// Auto-suggest the workflow domain = the dominant non-`shared` domain among member
-// agents, else 'general'. The user can override in the second save prompt.
-function suggestWorkflowDomain(steps) {
-  const counts = new Map();
-  distinctAgents(steps).forEach((k) => {
-    const d = (composerAgent(k)?.domain) || 'general';   // composerAgent fallback lacks domain → 'general'
-    if (d === 'shared') return;               // shared never dominates
-    counts.set(d, (counts.get(d) || 0) + 1);
-  });
-  let best = 'general', bestN = 0;
-  for (const [d, n] of counts) if (n > bestN) { best = d; bestN = n; }
-  return best;                                 // 'general' when only shared / none
-}
-
-async function composerSave() {
-  if (!composer.steps.length) return;
-  composerExitLink();
-  const name = (window.prompt('Name this pipeline:', '') || '').trim();
-  if (!name) return;
-  const suggested = suggestWorkflowDomain(composer.steps);
-  const domain = (window.prompt('Domain (organizes the picker — e.g. coding, marketing):', suggested) || '').trim() || suggested;
-  const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
-  const saveBtn = document.getElementById('composer-save');
-  let saved, warnings;
-  try {
-    ({ workflow: saved, warnings } = await saveWorkflow({ name, domain, steps: body.steps, feedbacks: body.feedbacks }));
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
-    return;
-  }
-  // Soft validator warnings (reachability/governance): the save succeeded, but
-  // tell the user the topology is questionable. Toast the first, count the rest.
-  if (warnings && warnings.length) {
-    composerToast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''));
-  }
+  composerPaintDirty();
   await composerLoadSaved();
-  // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
-  // expand the first .pl-item (v1 bug: it auto-expanded Default, not the new pipeline).
-  // Expand the row we just saved — match by returned id, then by name; if neither
-  // matches, expand nothing rather than the wrong Default preview.
-  const items = [...composer.els.list.querySelectorAll('.pl-item')];
-  const row = (saved && saved.id && items.find((el) => el.dataset.id === saved.id))
-    || items.find((el) => (el.querySelector('.pl-name')?.textContent || '').trim() === name);
-  if (row) row.querySelector('.pl-row').click();
-  const html = saveBtn.innerHTML;
-  saveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved';
-  saveBtn.style.background = 'var(--green-ink)';
-  setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
 }
+
+/** The editor hands us a v2 body; app.js owns the endpoint (and its 422). */
+async function composerPersist(body) {
+  try {
+    const saved = await saveWorkflow(body);
+    await composerLoadSaved();
+    composerPaintDirty();
+    appendLog({ source: 'ui', level: 'info', text: `Saved pipeline "${saved.workflow.name}"`, ts: Date.now() });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
+// Driven by the editor's onChange (every repaint) — the flag is the editor's,
+// app.js only paints it.
+function composerPaintDirty(change) {
+  if (!composer.els.dirty) return;
+  const dirty = change ? change.dirty : Boolean(composer.editor && composer.editor.isDirty());
+  composer.els.dirty.hidden = !dirty;
+}
+
+/** Replace the canvas contents. `null` starts a fresh Task + End canvas. */
+function composerLoadTemplate(tpl) {
+  if (!composer.els.canvas) return;
+  if (composer.editor) composer.editor.destroy();
+  composer.editor = createComposerEditor({
+    canvas: composer.els.canvas,
+    palette: composer.els.palette,
+    inspector: composer.els.inspector,
+    dialogHost: composer.els.dialog,
+    saveButton: composer.els.save,
+    filter: composer.els.filter,
+    portsFn: composerPortsFn,
+    agents: composer.palette,
+    models: state.models,
+    efforts: state.efforts,
+    savedDomains: composerDomains(),
+    template: tpl,
+    onSave: composerPersist,
+    onChange: composerPaintDirty,
+  });
+  composerPaintDirty();
+}
+
+/* ---- saved pipelines ---- */
 
 async function composerLoadSaved() {
-  await loadEnabledPluginNames();
-  composer.saved = await listWorkflows();
-  composerRenderList();
+  composer.saved = (await listWorkflows()) || [];
+  composerRenderSaved();
 }
 
-function composerRoNode(a) {
-  const ag = composerAgent(a.key);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>`;
-  return d;
-}
+function composerRenderSaved() {
+  const host = composer.els.savedList;
+  if (!host) return;
+  if (composer.els.savedCount) composer.els.savedCount.textContent = String(composer.saved.length);
+  const frag = document.createDocumentFragment();
+  for (const tpl of composer.saved) {
+    const row = document.createElement('div');
+    row.className = 'pl-item';
+    row.dataset.id = tpl.id;
 
-function composerRenderRO(host, item) {
-  const tag = document.createElement('div'); tag.className = 'pl-readonly-tag';
-  tag.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg> Read-only preview';
-  host.appendChild(tag);
-  const scroll = document.createElement('div'); scroll.className = 'ro-scroll';
-  const f = document.createElement('div'); f.className = 'flow ro-flow';
-  const w = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); w.setAttribute('class', 'wires');
-  f.appendChild(w);
-  for (let i = 0; i < item.steps.length; i++) {
-    f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-    const col = document.createElement('div'); col.className = 'col';
-    const ct = document.createElement('div'); ct.className = 'col-tag';
-    ct.innerHTML = `Step ${i + 1}` + (item.steps[i].length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(ct);
-    item.steps[i].forEach((a) => col.appendChild(composerRoNode(a)));
-    f.appendChild(col);
+    const thumb = document.createElement('div');
+    thumb.className = 'pl-thumb';
+    // thumbnail() emits NUMBERS ONLY (no ids, no author text), so this is the
+    // one place raw markup is safe without escaping.
+    thumb.innerHTML = thumbnail(normalizeTemplate(tpl), composerPortsFn);
+
+    const meta = document.createElement('div');
+    meta.className = 'pl-meta';
+    const name = document.createElement('b');
+    name.className = 'pl-name';
+    name.textContent = tpl.name || tpl.id;
+    const sub = document.createElement('small');
+    sub.className = 'pl-sub';
+    const nodes = Array.isArray(tpl.nodes) ? tpl.nodes.length : 0;
+    const wires = Array.isArray(tpl.wires) ? tpl.wires.length : 0;
+    sub.textContent = `${tpl.domain || 'general'} · ${nodes} node${nodes === 1 ? '' : 's'} · ${wires} wire${wires === 1 ? '' : 's'}`;
+    meta.append(name, sub);
+
+    const actions = document.createElement('div');
+    actions.className = 'pl-actions';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn-ghost pl-open';
+    open.dataset.id = tpl.id;
+    open.textContent = 'Open';
+    actions.appendChild(open);
+    if (tpl.id !== 'wf_default') {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn-danger pl-del';
+      del.dataset.id = tpl.id;
+      del.textContent = 'Delete';
+      actions.appendChild(del);
+    }
+
+    row.append(thumb, meta, actions);
+    frag.appendChild(row);
   }
-  f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  scroll.appendChild(f); host.appendChild(scroll);
-  const paint = () => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id });
-  requestAnimationFrame(() => requestAnimationFrame(paint));
-  setTimeout(paint, 60);
-}
-
-let composerWfDomain = 'all';   // current filter
-
-// Dynamic filter set (clarify Q4): distinct domains present among saved workflows,
-// plus 'general', led by an 'all' option. wf_default (coding) participates like any row.
-function composerWfDomains() {
-  const seen = [];
-  composer.saved.forEach((w) => { const d = w.domain || 'general';
-    if (d !== 'general' && !seen.includes(d)) seen.push(d); });
-  seen.push('general');
-  return ['all', ...seen];
-}
-
-function composerRenderList() {
-  const listEl = composer.els.list, cntEl = composer.els.count;
-  listEl.innerHTML = '';
-  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
-  // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
-  // domain shows an empty list under the chips, not the "no pipelines yet" copy.
   if (!composer.saved.length) {
-    listEl.innerHTML = '<div class="pl-empty">No saved pipelines yet — build one above and hit "Save pipeline".</div>';
+    const empty = document.createElement('div');
+    empty.className = 'hist-empty';
+    empty.textContent = 'No saved pipelines yet.';
+    frag.appendChild(empty);
+  }
+  host.replaceChildren(frag);
+}
+
+async function onComposerSavedClick(ev) {
+  const open = ev.target.closest && ev.target.closest('.pl-open');
+  if (open) {
+    const tpl = await getWorkflow(open.dataset.id);
+    if (tpl) composerLoadTemplate(tpl);
     return;
   }
-  // Domain filter chip row, inserted just before the list (reused across renders).
-  const filterDomains = composerWfDomains();
-  const filterEl = listEl.previousElementSibling?.classList?.contains('wf-filter')
-    ? listEl.previousElementSibling
-    : (() => { const el = document.createElement('div'); el.className = 'wf-filter';
-               listEl.parentNode.insertBefore(el, listEl); return el; })();
-  filterEl.innerHTML = '';
-  filterDomains.forEach((d) => {
-    const c = document.createElement('button'); c.type = 'button';
-    c.className = 'pal-chip' + (composerWfDomain === d ? '' : ' off');
-    c.textContent = d; c.addEventListener('click', () => { composerWfDomain = d; composerRenderList(); });
-    filterEl.appendChild(c);
-  });
-  const rows = composerWfDomain === 'all'
-    ? composer.saved
-    : composer.saved.filter((w) => (w.domain || 'general') === composerWfDomain);
-  rows.forEach((item) => {
-    const used = distinctAgents(item.steps);
-    const chips = used.map((k) => {
-      const ag = composerAgent(k);
-      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>`;
-    }).join('');
-    const meta = metaLine(item.steps, item.feedbacks).replace(
-      / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
-    );
-    const wrap = document.createElement('div'); wrap.className = 'pl-item'; wrap.dataset.id = item.id;
-    const isDefault = item.id === 'wf_default';
-    wrap.innerHTML =
-      `<div class="pl-row">` +
-        `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
-        `<div class="pl-main">` +
-          `<div class="pl-name">${escapeHtml(workflowPickerLabel(item, enabledPluginNames) || item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
-          `<div class="pl-meta">${meta}</div>` +
-          `<div class="pl-chips">${chips}</div>` +
-        `</div>` +
-        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
-      `</div>` +
-      `<div class="pl-body"></div>`;
-    listEl.appendChild(wrap);
-    const row = wrap.querySelector('.pl-row');
-    const del = wrap.querySelector('.pl-del');
-    const body = wrap.querySelector('.pl-body');
-    if (del) del.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
-      try { await deleteWorkflow(item.id); } catch (err) {
-        appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
-      }
-      await composerLoadSaved();
-    });
-    row.addEventListener('click', () => {
-      const open = wrap.classList.toggle('open');
-      if (open) {
-        if (!body.dataset.rendered) { composerRenderRO(body, item); body.dataset.rendered = '1'; }
-        else {
-          const f = body.querySelector('.ro-flow'), w = body.querySelector('.wires');
-          if (f && w) requestAnimationFrame(() => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id }));
-        }
-      }
-    });
-  });
+  const del = ev.target.closest && ev.target.closest('.pl-del');
+  if (!del) return;
+  try {
+    await deleteWorkflow(del.dataset.id);
+    await composerLoadSaved();
+  } catch (err) {
+    appendLog({ source: 'ui', level: 'error', text: `Delete failed: ${err.message}`, ts: Date.now() });
+  }
 }
 
 function modelById(id) {
@@ -2366,100 +1834,156 @@ function option(value, text) {
 // paint. Exposed on window.__np so jsdom unit tests can exercise them directly.
 // ---------------------------------------------------------------------------
 
-// Flatten workflow.steps[][] into an ordered list of node rows, joining each
-// node's role `key` to its registry metadata (label/color) and overlaying the
-// run-config's saved {model,effort} for that node-instance id. Order = outer
-// (sequential) then inner (parallel) — exactly the dispatch order.
-function buildNodeConfigRows(workflow, registry, runConfig) {
-  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
+/** Palette names for the flow cards, keyed by kind — agent cards use their
+ *  registry displayName instead. */
+const FLOW_CARD_NAME = Object.fromEntries(FLOW_PILLS.map((p) => [p.kind, p.displayName]));
+
+/** The template's per-loop-wire budget when the run-config carries no override. */
+const DEFAULT_MAX_CYCLES = 3;
+
+// Topological bookkeeping shared by the override rows and the loop-budget rows,
+// so both speak the same node names and the same step numbers.
+//
+// `step` is DENSE over the ranks AGENT nodes actually occupy: Task sits at rank
+// 0 and End at the far end, but the rows the user configures still read Step
+// 1..N. rankNodes excludes loop wires, so a review->implement feedback edge
+// never drags its target forward.
+function topoIndex(workflow, registry) {
+  const template = workflow && Array.isArray(workflow.nodes) ? workflow : { nodes: [], wires: [] };
+  const nodes = template.nodes;
   const reg = registry || {};
-  const nodes = (runConfig && runConfig.nodes) || {};
-  const rows = [];
-  steps.forEach((group, stepIndex) => {
-    const members = Array.isArray(group) ? group : [];
-    members.forEach((node) => {
-      if (!node || !node.id) return;
-      const meta = reg[node.key] || null;
-      const saved = nodes[node.id] || {};
-      const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
-      const metaAsks = !!(meta && meta.asksQuestions);
-      const metaLocked = !!(meta && meta.questionsLocked);
-      const metaQDefault = !!(meta && meta.questionsDefault);
-      rows.push({
-        nodeId: node.id,
-        key: node.key,
-        label: (meta && meta.displayName) || node.key || node.id,
-        color: (meta && meta.color) || '',
-        stepIndex,
-        parallel: members.length > 1,
-        model: typeof saved.model === 'string' ? saved.model : '',
-        effort: typeof saved.effort === 'string' ? saved.effort : '',
-        fanOut: typeof saved.fanOut === 'boolean' ? saved.fanOut : metaFan,
-        // null => the agent has no questions capability (no checkbox rendered).
-        askQuestions: !metaAsks
-          ? null
-          : (metaLocked
-              ? metaQDefault
-              : (typeof saved.askQuestions === 'boolean' ? saved.askQuestions : metaQDefault)),
-        questionsLocked: metaAsks && metaLocked,
-      });
-    });
-  });
-  return rows;
+  const rank = rankNodes(template, composerPortsFn);
+
+  const agents = nodes.filter((n) => n && n.id && n.kind === 'agent');
+  const ranks = [...new Set(agents.map((n) => rank[n.id] || 0))].sort((a, b) => a - b);
+  // One scale for every node: how many AGENT steps precede its rank. For an
+  // agent that IS its dense step index; for a flow card it is the step it sits
+  // after, which keeps two same-kind flow cards apart in the labels below.
+  const stepAt = (nodeId) => {
+    const r = rank[nodeId] || 0;
+    return ranks.filter((x) => x < r).length;
+  };
+  const perRank = new Map();
+  for (const n of agents) {
+    const r = rank[n.id] || 0;
+    perRank.set(r, (perRank.get(r) || 0) + 1);
+  }
+
+  const nameOf = (node) => (node.kind === 'agent'
+    ? ((reg[node.key] && reg[node.key].displayName) || node.key || node.id)
+    : (FLOW_CARD_NAME[node.kind] || node.kind));
+
+  const nameCount = new Map();
+  for (const n of nodes) {
+    if (!n || !n.id) continue;
+    const name = nameOf(n);
+    nameCount.set(name, (nameCount.get(name) || 0) + 1);
+  }
+
+  const byId = new Map(nodes.filter((n) => n && n.id).map((n) => [n.id, n]));
+
+  return {
+    rank,
+    // Agent nodes in dispatch order: by rank, then by canvas row, then by id so
+    // the list never depends on declaration order.
+    orderedAgents: agents.slice().sort((a, b) => (rank[a.id] || 0) - (rank[b.id] || 0)
+      || (Number(a.y) || 0) - (Number(b.y) || 0)
+      || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    stepIndexOf: stepAt,
+    parallelAt: (nodeId) => (perRank.get(rank[nodeId] || 0) || 0) > 1,
+    // Endpoint label: display name, disambiguated with "(step N)" (1-based, over
+    // the AGENT step numbering) when that name is shared by more than one node.
+    // An id absent from the template falls back to the raw id (never blank).
+    labelFor: (nodeId) => {
+      const node = byId.get(nodeId);
+      if (!node) return nodeId;
+      const name = nameOf(node);
+      if ((nameCount.get(name) || 0) <= 1) return name;
+      return `${name} (step ${stepAt(nodeId) + 1})`;
+    },
+  };
 }
 
-// Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
-// overlaying the run-config's saved maxCycles (default 3 when unset). Resolves each
-// loop's endpoints (node ids like "s2_0") to human agent names via the registry +
-// workflow.steps, and precomputes the directional `label`:
-//   - normal loop:  "<toName> ← <fromName>"   (feedback points to <- from)
-//   - self loop:    "<name> ↺ (self loop)"    (from === to)
-// A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
-// by more than one node in the workflow. Unknown ids fall back to the raw id.
-function buildFeedbackRows(workflow, registry, runConfig) {
-  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
-  const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
+// One override row per AGENT node of a v2 graph, in topological order. Flow
+// cards (task/end/and/or/combine) never get a row — they carry no model, effort,
+// fan-out or questions.
+//
+// Every value mirrors resolveGraph's precedence, so the row shows what the NEXT
+// run will actually use: per-run overlay > the node's composer config > the
+// legacy per-key config > the agent's sidecar default.
+function buildNodeConfigRows(workflow, registry, runConfig, roleConfig) {
   const reg = registry || {};
-  const saved = (runConfig && runConfig.feedbacks) || {};
+  const overlay = (runConfig && runConfig.nodes) || {};
+  const roles = roleConfig || {};
+  const topo = topoIndex(workflow, reg);
 
-  // node id -> { name, step } (1-based) + a display-name frequency map so the
-  // "(step N)" suffix is added only when a name is non-unique.
-  const byId = new Map();
-  const nameCount = new Map();
-  steps.forEach((group, stepIndex) => {
-    (Array.isArray(group) ? group : []).forEach((node) => {
-      if (!node || !node.id) return;
-      const meta = reg[node.key] || null;
-      const name = (meta && meta.displayName) || node.key || node.id; // mirror buildNodeConfigRows
-      byId.set(node.id, { name, step: stepIndex + 1 });
-      nameCount.set(name, (nameCount.get(name) || 0) + 1);
-    });
-  });
-
-  // Endpoint label: display name, disambiguated with "(step N)" when that name is
-  // shared by >1 node. Ids absent from steps fall back to the raw id (never blank).
-  const labelFor = (nodeId) => {
-    const info = byId.get(nodeId);
-    if (!info) return nodeId;
-    return (nameCount.get(info.name) || 0) > 1 ? `${info.name} (step ${info.step})` : info.name;
-  };
-
-  return fbs.map((fb) => {
-    const rc = saved[fb.id] || {};
-    const n = Number(rc.maxCycles);
-    const fromLabel = labelFor(fb.from);
-    const toLabel = labelFor(fb.to);
-    const selfLoop = fb.from === fb.to;
-    const label = selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`;
+  return topo.orderedAgents.map((node) => {
+    const meta = reg[node.key] || null;
+    const saved = overlay[node.id] || {};
+    const cfg = node.config || {};
+    const role = roles[node.key] || {};
+    const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
+    const metaAsks = !!(meta && meta.asksQuestions);
+    const metaLocked = !!(meta && meta.questionsLocked);
+    const metaQDefault = !!(meta && meta.questionsDefault);
+    const pickStr = (...vals) => vals.find((v) => typeof v === 'string' && v) || '';
+    const pickBool = (...vals) => vals.find((v) => typeof v === 'boolean');
     return {
-      fbId: fb.id,
-      from: fb.from,
-      to: fb.to,
+      nodeId: node.id,
+      key: node.key,
+      label: (meta && meta.displayName) || node.key || node.id,
+      color: (meta && meta.color) || '',
+      stepIndex: topo.stepIndexOf(node.id),
+      parallel: topo.parallelAt(node.id),
+      model: pickStr(saved.model, cfg.model, role.model),
+      effort: pickStr(saved.effort, cfg.effort, role.effort),
+      fanOut: pickBool(saved.fanOut, cfg.fanOut, role.fanOut, metaFan) ?? false,
+      // null => the agent has no questions capability (no checkbox rendered).
+      askQuestions: !metaAsks
+        ? null
+        : (metaLocked
+            ? metaQDefault
+            : (pickBool(saved.askQuestions, cfg.askQuestions, role.askQuestions, metaQDefault) ?? false)),
+      questionsLocked: metaAsks && metaLocked,
+    };
+  });
+}
+
+// Row data for the per-loop cycle-count inputs, one per LOOP WIRE of a v2 graph
+// (classifyLoops: a wire closing a cycle out of a `when:'blocking'` output — the
+// same rule the engine applies, so the budgets shown are the budgets spent).
+// maxCycles mirrors resolveGraph: run-config overlay > wire.config > 3.
+//
+// The directional `label` is precomputed:
+//   - normal loop:  "<toName> ← <fromName>"   (the loop points to <- from)
+//   - self loop:    "<name> ↺ (self loop)"    (from === to)
+function buildLoopWireRows(workflow, registry, runConfig) {
+  const template = workflow && Array.isArray(workflow.nodes) ? workflow : { nodes: [], wires: [] };
+  const wires = Array.isArray(template.wires) ? template.wires : [];
+  const saved = (runConfig && runConfig.wires) || {};
+  const { loopWires } = classifyLoops(template, composerPortsFn);
+  const topo = topoIndex(template, registry);
+
+  return wires.filter((w) => w && loopWires.has(w.id)).map((wire) => {
+    const declared = Number(wire.config && wire.config.maxCycles);
+    const override = Number((saved[wire.id] || {}).maxCycles);
+    const budget = Number.isFinite(override) && override >= 1
+      ? override
+      : (Number.isFinite(declared) && declared >= 1 ? declared : DEFAULT_MAX_CYCLES);
+    const from = wire.from.node;
+    const to = wire.to.node;
+    const fromLabel = topo.labelFor(from);
+    const toLabel = topo.labelFor(to);
+    const selfLoop = from === to;
+    return {
+      wireId: wire.id,
+      from,
+      to,
       fromLabel,
       toLabel,
       selfLoop,
-      label,
-      maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
+      label: selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`,
+      maxCycles: Math.floor(budget),
     };
   });
 }
@@ -2475,14 +1999,19 @@ function defaultEffortFor(modelId) {
 // reuse) without leaking them into the app's runtime contract.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
-    composer, composerRefresh,
+    composer,
+    composerEditor: () => composer.editor,
+    composerPortsFn,
+    saveWorkflow,
     buildNodeConfigRows,
-    buildFeedbackRows,
+    buildLoopWireRows,
     defaultEffortFor,
     renderModelEffortPair,
     renderNodeRows,
     renderWorkflowConfig,
+    renderTemplatePreview,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
+    _setPalette: (list) => { setComposerPalette(mergePalette(list)); },
     manifestFor,
     manifestSig,
     makeRun,
@@ -2506,12 +2035,11 @@ if (typeof window !== 'undefined') {
     findManifestNode,
     subAgentsForNode,
     composerPaintWires,
-    buildRunGraph,
-    runNode,
-    nodeModelLine,
-    loopCounts,
+    runGraphView,
     paintRunGraph,
-    histNodeCycle,
+    runDecorFor,
+    onExec,
+    onToken,
     subFanHtml,
     subsPillText,
     paintSubsBar,
@@ -2568,45 +2096,6 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   }
 }
 
-function renderStepConfigs() {
-  // The Default workflow's four rows are keyed by data-role; paint each from the
-  // legacy per-role config (state.config.steps). Config always edits the NEXT
-  // run, so selectors are never locked.
-  for (const role of STEP_ROLES) {
-    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-    const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-    const caption = document.querySelector(`.step-current[data-role="${role}"]`);
-    if (!modelSel || !effortSel) continue;
-    renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
-    const fanCb = document.querySelector(`.step-fanout[data-role="${role}"]`);
-    if (fanCb) {
-      const savedFan = (state.config.steps[role] || {}).fanOut;
-      const defFan = (state.stepDefaults[role] || {}).fanOut || false;
-      fanCb.checked = typeof savedFan === 'boolean' ? savedFan : defFan;
-    }
-    const qCb = document.querySelector(`.step-questions[data-role="${role}"]`);
-    if (qCb) {
-      const d = state.stepDefaults[role] || {};
-      const wrap = qCb.closest('.questions-toggle');
-      if (!d.asksQuestions) {
-        if (wrap) wrap.hidden = true;
-      } else {
-        if (wrap) {
-          wrap.hidden = false;
-          wrap.title = d.questionsLocked
-            ? (d.questionsDefault ? 'Always on for this agent' : 'Always off for this agent')
-            : '';
-        }
-        const savedQ = (state.config.steps[role] || {}).askQuestions;
-        qCb.checked = d.questionsLocked
-          ? !!d.questionsDefault
-          : (typeof savedQ === 'boolean' ? savedQ : !!d.questionsDefault);
-        qCb.disabled = !!d.questionsLocked;
-      }
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // New-Pipeline workflow selector. Populates #workflowSelect from
 // GET /api/workflows; on change, renders per-node model/effort pickers + per-
@@ -2631,7 +2120,9 @@ async function getWorkflowApi(id) {
   try {
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
     const data = await safeJson(res);
-    if (!res.ok || !data || !Array.isArray(data.steps)) return null;
+    // v2 graph templates only: a v1 row (steps/feedbacks) has no topology this
+    // view can render, so it is a load failure, not a half-painted form.
+    if (!res.ok || !data || !Array.isArray(data.nodes)) return null;
     state.workflowCache[id] = data;
     return data;
   } catch { return null; }
@@ -2745,34 +2236,63 @@ async function loadGuardrailsInto(selectId) {
   updateGuardrailsHint();
 }
 
-// Render the config UI for one workflow. Default -> show the legacy 4 stage rows
-// and hide the dynamic containers. Saved -> fetch topology + registry, render a
-// node row per node and a cycle input per feedback.
+// Render the run setup for one workflow: the read-only mini-graph of its v2
+// template, plus the collapsed per-run overrides (one row per AGENT node, one
+// cycle input per LOOP wire). Every template is a graph now — wf_default
+// included — so there is no legacy branch.
 async function renderWorkflowConfig(workflowId) {
-  const isDefault = !workflowId || workflowId === 'wf_default';
-  if (el.wfDefaultStages) el.wfDefaultStages.classList.toggle('hidden', !isDefault);
-  if (el.wfNodeConfig) el.wfNodeConfig.classList.toggle('hidden', isDefault);
-  if (el.wfFeedbackConfig) el.wfFeedbackConfig.classList.toggle('hidden', isDefault);
-
-  if (isDefault) {
-    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '';
-    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
-    renderStepConfigs(); // legacy per-role rows
-    return;
-  }
-
+  // Both the preview and the topological row order run through composerPortsFn.
+  await ensureComposerPalette();
   const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
   // An empty registry is a failed /api/agents fetch, not a real state — painting
   // rows against it silently strips capability (labels degrade to raw keys, all
   // questions toggles vanish), so treat it like a failed workflow fetch.
   if (!wf || !Object.keys(registry).length) {
+    renderTemplatePreview(null);
     if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
     return;
   }
-  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
-  renderNodeRows(buildNodeConfigRows(wf, registry, runConfig));
-  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  const template = normalizeTemplate(wf);
+  renderTemplatePreview(template);
+  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, wires: {} };
+  renderNodeRows(buildNodeConfigRows(template, registry, runConfig, state.config.steps));
+  renderLoopWireRows(buildLoopWireRows(template, registry, runConfig));
+}
+
+/** Fallback viewport when the host has not been laid out yet (jsdom, hidden view). */
+const PREVIEW_VIEWPORT = { w: 760, h: 200 };
+const PREVIEW_ZOOM_MIN = 0.1, PREVIEW_ZOOM_MAX = 1;
+
+// Mount the shared graph renderer into #wf-preview and fit the whole template
+// into it. createGraphView owns no interaction of its own — not wrapping it in
+// createComposerEditor IS what makes this read-only — and it paints whatever the
+// template holds, so the End card comes for free.
+function renderTemplatePreview(template) {
+  const host = el.wfPreview;
+  if (!host) return;
+  if (!template || !Array.isArray(template.nodes) || !template.nodes.length) {
+    host.replaceChildren();
+    return;
+  }
+  const view = createGraphView(host, { portsFn: composerPortsFn, agents: composer.agents });
+  view.render(template);
+
+  // The renderer never measures, so the fit is the caller's job (mirrors the
+  // composer's own fit-to-view).
+  const boxes = template.nodes.map((n) => ({
+    x: n.x,
+    y: n.y,
+    ...nodeSize(composerPortsFn(n) || { inputs: [], outputs: [] }, { caption: CAPTION_KINDS.has(n.kind) }),
+  }));
+  const b = fitBounds(boxes, 40);
+  if (!b || !b.w || !b.h) return;
+  const rect = host.getBoundingClientRect();
+  const vw = rect.width || PREVIEW_VIEWPORT.w;
+  const vh = rect.height || PREVIEW_VIEWPORT.h;
+  const raw = Math.round(Math.min(vw / b.w, vh / b.h) * 100) / 100;
+  const zoom = Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, raw));
+  view.setTransform({ x: -b.x * zoom, y: -b.y * zoom, zoom });
 }
 
 // Build one .stage-cfg row per node into #wf-node-config, keyed by data-node-id.
@@ -2857,9 +2377,10 @@ function renderNodeRows(rows) {
   });
 }
 
-// Build one cycle-count input per feedback into #wf-feedback-config, keyed by
-// data-fb-id. Shows the loop's direction (to <- from) as a label.
-function renderFeedbackRows(rows) {
+// Build one cycle-count input per LOOP WIRE into #wf-feedback-config (the id
+// predates the graph engine; the rows are v2 wires now), keyed by data-wire-id.
+// Shows the loop's direction (to <- from) as a label.
+function renderLoopWireRows(rows) {
   const host = el.wfFeedbackConfig;
   if (!host) return;
   host.innerHTML = '';
@@ -2878,16 +2399,16 @@ function renderFeedbackRows(rows) {
 
     const label = document.createElement('label');
     label.textContent = `${row.label} — max cycles`;
-    label.setAttribute('for', `fb-${row.fbId}`);
+    label.setAttribute('for', `wire-${row.wireId}`);
     field.appendChild(label);
 
     const input = document.createElement('input');
-    input.id = `fb-${row.fbId}`;
+    input.id = `wire-${row.wireId}`;
     input.className = 'input';
     input.type = 'number';
     input.min = '1';
     input.value = String(row.maxCycles);
-    input.dataset.fbId = row.fbId;
+    input.dataset.wireId = row.wireId;
     field.appendChild(input);
 
     host.appendChild(field);
@@ -2903,34 +2424,22 @@ if (el.workflowSelect) {
   });
 }
 
+// Per-run overrides disclosure. Node DEFAULTS are the composer inspector's job;
+// this panel only overrides them for the next run, so it opens on request.
+if (el.wfOverridesToggle && el.wfOverrides) {
+  el.wfOverridesToggle.addEventListener('click', () => {
+    const open = el.wfOverridesToggle.getAttribute('aria-expanded') === 'true';
+    el.wfOverridesToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+    el.wfOverrides.hidden = open;
+  });
+}
+
 // Guardrails change: remember the run's set and refresh the summary hint.
 if (el.guardrailsSelect) {
   el.guardrailsSelect.addEventListener('change', () => {
     state.guardrailsId = el.guardrailsSelect.value || 'permissive';
     updateGuardrailsHint();
   });
-}
-
-async function saveStep(role, model, effort, fanOut, askQuestions) {
-  const projectDir = selectedProjectPath();
-  if (!projectDir) return;
-  try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
-      renderStepConfigs(); // revert UI to the last persisted state
-      return;
-    }
-    state.config = data.config || state.config;
-    renderStepConfigs();
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
-  }
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
@@ -2955,16 +2464,17 @@ async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions)
   }
 }
 
-// Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
-// { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
-async function saveFeedback(workflowId, fbId, maxCycles) {
+// Persist one loop WIRE's cycle budget (CONV-2): PATCH /api/config
+// { projectDir, workflowId, wires:{ [wireId]:{maxCycles} } } — the overlay
+// resolveGraph reads at precedence overlay > wire.config.maxCycles > 3.
+async function saveWireCycles(workflowId, wireId, maxCycles) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, feedbacks: { [fbId]: { maxCycles } } }),
+      body: JSON.stringify({ projectDir, workflowId, wires: { [wireId]: { maxCycles } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2994,121 +2504,62 @@ async function saveActiveWorkflow(workflowId) {
   }
 }
 
-async function addModelFlow(role) {
-  const projectDir = selectedProjectPath();
-  if (!projectDir) return;
-  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
-  if (!id) { renderStepConfigs(); return; } // user cancelled -> restore selection
-  const label = (window.prompt('Display name (optional):', id) || '').trim();
-  try {
-    const res = await fetch('/api/config/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, id, label }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
-      renderStepConfigs();
-      return;
-    }
-    state.models = Array.isArray(data.models) ? data.models : state.models;
-    await saveStep(role, id, ''); // select the new model for this step (effort reset)
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
-    renderStepConfigs();
-  }
-}
-
-// Delegated change handler for all config controls inside #pipeline-config:
-//  - legacy default-stage selects carry data-role (persist via saveStep);
-//  - dynamic node selects carry data-node-id (persist via saveNode);
-//  - feedback cycle inputs carry data-fb-id (persist via saveFeedback).
+// Delegated change handler for the per-run override controls inside
+// #pipeline-config: node selects/toggles carry data-node-id (persist via
+// saveNode); loop cycle inputs carry data-wire-id (persist via saveWireCycles).
 el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
 
-  // Feedback cycle inputs (number inputs, not selects).
-  if (t instanceof HTMLInputElement && t.dataset.fbId) {
+  // Loop cycle inputs (number inputs, not selects).
+  if (t instanceof HTMLInputElement && t.dataset.wireId) {
     const n = Math.max(1, Math.round(Number(t.value) || 1));
     t.value = String(n); // normalize the field
-    saveFeedback(state.workflowId, t.dataset.fbId, n);
+    saveWireCycles(state.workflowId, t.dataset.wireId, n);
     return;
   }
 
   // Fan-out toggles (checkboxes). Send the row's current model/effort alongside
-  // fanOut so the replace-on-model/effort setters don't wipe them. Both paths
-  // read the LIVE selects, not state.config — state lags one in-flight save, so
-  // echoing it could revert a model picked moments earlier.
-  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout')) {
-    const fanOut = !!t.checked;
-    if (t.dataset.nodeId) {
-      const nodeId = t.dataset.nodeId;
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
-    } else if (t.dataset.role) {
-      const role = t.dataset.role;
-      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
-    }
+  // fanOut so the replace-on-model/effort setters don't wipe them, reading the
+  // LIVE selects, not state.config — state lags one in-flight save, so echoing
+  // it could revert a model picked moments earlier.
+  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout') && t.dataset.nodeId) {
+    const nodeId = t.dataset.nodeId;
+    const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+    const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+    saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', !!t.checked);
     return;
   }
 
   // Questions toggles (checkboxes). Mirror step-fanout: send the row's current
   // model/effort (live selects) along so the replace-semantics setters don't
   // wipe them; omit fanOut (undefined) so the setters preserve it.
-  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions')) {
-    const askQuestions = !!t.checked;
-    if (t.dataset.nodeId) {
-      const nodeId = t.dataset.nodeId;
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
-    } else if (t.dataset.role) {
-      const role = t.dataset.role;
-      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
-    }
-    return;
-  }
-
-  if (!(t instanceof HTMLSelectElement)) return;
-
-  // Dynamic per-node selects (saved workflow).
-  if (t.dataset.nodeId) {
+  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions') && t.dataset.nodeId) {
     const nodeId = t.dataset.nodeId;
-    if (t.classList.contains('step-model')) {
-      if (t.value === '__add__') return addModelFlowNode(nodeId);
-      // New model -> reset effort + re-render this row's effort options.
-      saveNode(state.workflowId, nodeId, t.value, '');
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
-      if (effortSel) renderModelEffortPair(t, effortSel, caption, { model: t.value, effort: '' });
-    } else if (t.classList.contains('step-effort')) {
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const model = modelSel ? modelSel.value : '';
-      saveNode(state.workflowId, nodeId, model, t.value);
-      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
-      if (caption) {
-        const m = modelById(model);
-        caption.textContent = `${m ? m.label : 'default model'} · ${t.value || 'default effort'}`;
-      }
-    }
+    const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+    const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+    saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, !!t.checked);
     return;
   }
 
-  // Legacy default-stage selects (data-role).
-  const role = t.dataset.role;
-  if (!role) return;
+  if (!(t instanceof HTMLSelectElement) || !t.dataset.nodeId) return;
+
+  const nodeId = t.dataset.nodeId;
   if (t.classList.contains('step-model')) {
-    if (t.value === '__add__') return addModelFlow(role);
-    saveStep(role, t.value, '');
+    if (t.value === '__add__') return addModelFlowNode(nodeId);
+    // New model -> reset effort + re-render this row's effort options.
+    saveNode(state.workflowId, nodeId, t.value, '');
+    const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
+    const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+    if (effortSel) renderModelEffortPair(t, effortSel, caption, { model: t.value, effort: '' });
   } else if (t.classList.contains('step-effort')) {
-    // Live model select, not state.config — state lags one in-flight save.
-    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-    saveStep(role, modelSel ? modelSel.value : '', t.value);
+    const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
+    const model = modelSel ? modelSel.value : '';
+    saveNode(state.workflowId, nodeId, model, t.value);
+    const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
+    if (caption) {
+      const m = modelById(model);
+      caption.textContent = `${m ? m.label : 'default model'} · ${t.value || 'default effort'}`;
+    }
   }
 });
 
@@ -3145,6 +2596,7 @@ async function addModelFlowNode(nodeId) {
 // Log window
 // ---------------------------------------------------------------------------
 const MAX_LOG_LINES = 4000;
+const MAX_TOKENS = 2000;   // published-token ring for the run monitor ledger
 
 // Build one .log-line node from a normalized log record. (Same DOM shape the
 // old global appendLog produced: ts/src/msg spans + lvl class.)
@@ -3210,6 +2662,8 @@ function onLog(r, msg) {
   const rec = {
     ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub,
     ...(msg.nodeId != null ? { nodeId: msg.nodeId } : {}),
+    ...(msg.executionId != null ? { executionId: msg.executionId } : {}),
+    ...(msg.artifactKind != null ? { artifactKind: msg.artifactKind } : {}),
     ...(msg.stepIndex != null ? { stepIndex: msg.stepIndex } : {}),
     ...(msg.cycle != null ? { cycle: msg.cycle } : {}),
   };
@@ -3259,9 +2713,15 @@ function paintLogFilters(r, root = r.el) {
   const selSource = root.querySelector('.log-f-source');
   const selLevel = root.querySelector('.log-f-level');
   const selStep = root.querySelector('.log-f-step');
+  const selExec = root.querySelector('.log-f-execution');
+  const selArtifact = root.querySelector('.log-f-artifact');
   fillFilterSelect(selSource, 'all sources', facets.sources, r.logFilter.source);
   fillFilterSelect(selLevel, 'all levels', facets.levels, r.logFilter.level);
   fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  // Execution ids are opaque (`x:<nodeId>:<ordinal>`); label them the way the
+  // executions footer does, so the dropdown and the rows agree.
+  fillFilterSelect(selExec, 'all executions', facets.executions, r.logFilter.executionId, executionLabelFor(r));
+  fillFilterSelect(selArtifact, 'all artifacts', facets.artifactKinds, r.logFilter.artifactKind);
   r._logFacetKeys = facetKeys(facets);
   // A selection whose value vanished from the facets (log rotation, rebuild)
   // fell back to "all" in the DOM; mirror that into the model and repaint so
@@ -3270,10 +2730,14 @@ function paintLogFilters(r, root = r.el) {
     source: selSource ? selSource.value : r.logFilter.source,
     level: selLevel ? selLevel.value : r.logFilter.level,
     step: selStep ? selStep.value : r.logFilter.step,
+    executionId: selExec ? selExec.value : r.logFilter.executionId,
+    artifactKind: selArtifact ? selArtifact.value : r.logFilter.artifactKind,
   };
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
-    || String(effective.step) !== String(r.logFilter.step)) {
+    || String(effective.step) !== String(r.logFilter.step)
+    || effective.executionId !== r.logFilter.executionId
+    || effective.artifactKind !== r.logFilter.artifactKind) {
     r.logFilter = effective;
     repaintFilteredLog(r, root);
     return true;
@@ -3288,7 +2752,21 @@ function facetKeys(facets) {
     ...facets.sources.map((s) => `s:${s}`),
     ...facets.levels.map((l) => `l:${l}`),
     ...facets.steps.map((i) => `t:${i}`),
+    ...facets.executions.map((x) => `x:${x}`),
+    ...facets.artifactKinds.map((a) => `a:${a}`),
   ]);
+}
+
+// executionId -> the label its executions-footer row carries ("Implementation ·
+// cycle 2 · fix"), so the log dropdown reads like the graph, not like an id.
+function executionLabelFor(r) {
+  const rows = executionRows(manifestFor(r.stepper), runDecorFor(r, { live: false }));
+  const byId = new Map();
+  const labels = nodeLabelLookup(r.stepper);
+  for (const [nodeId, list] of Object.entries(rows)) {
+    for (const row of list) byId.set(row.executionId, `${labels(nodeId)} · ${row.label}`);
+  }
+  return (id) => byId.get(id) || id;
 }
 // Returns paintLogFilters' repaint flag (true when the pane was fully
 // repainted) so onLog can skip its own incremental append.
@@ -3312,6 +2790,18 @@ function clearLogPlaceholder(logEl) {
 // on a filter change and by buildRunCard's hydration; live appends stay
 // incremental via onLog). `root` lets buildRunCard target the freshly-cloned
 // node before r.el is assigned.
+// The whole filter as the DOM currently holds it. One reader so a new dimension
+// cannot be added to the template and silently forgotten by the change handler.
+function readLogFilter(root) {
+  return {
+    source: root.querySelector('.log-f-source')?.value || '',
+    level: root.querySelector('.log-f-level')?.value || '',
+    step: root.querySelector('.log-f-step')?.value || '',
+    executionId: root.querySelector('.log-f-execution')?.value || '',
+    artifactKind: root.querySelector('.log-f-artifact')?.value || '',
+  };
+}
+
 function repaintFilteredLog(r, root = r.el) {
   if (!r || !root) return;
   const logEl = root.querySelector('.log');
@@ -3334,12 +2824,17 @@ function repaintFilteredLog(r, root = r.el) {
   if (r.autoscroll === false && savedTop) logEl.scrollTop = savedTop;
 }
 
+// An artifact row is a log line with two extra dimensions: the producing
+// execution and the output port's artifactKind (orchestrator run() events).
 function onArtifact(r, msg) {
   onLog(r, {
     source: 'artifact',
     level: 'artifact',
     text: `${msg.kind || 'file'}: ${msg.path || ''}`,
     ts: Date.now(),
+    nodeId: msg.nodeId,
+    executionId: msg.executionId,
+    artifactKind: msg.kind || 'file',
   });
 }
 
@@ -3435,7 +2930,7 @@ function renderQpanel(r) {
   } else if (pq.kind === 'questions') {
     title.textContent = `${pq.agent || 'Agent'} has questions`;
   } else {
-    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
+    const phaseLabel = runPhaseLabel(r, 'Pipeline');
     title.textContent = `${phaseLabel} needs your input`;
   }
   head.appendChild(title);
@@ -5041,7 +4536,7 @@ async function loadAgentsList() {
     const res = await fetch('/api/agents?all=1');
     const data = await safeJson(res);
     state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
-    if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
+    if (res.ok && Array.isArray(data.mockWriterRoles)) state.mockWriterRoles = data.mockWriterRoles;
   } catch { state.agentsList = []; }
   return state.agentsList;
 }
@@ -5064,8 +4559,11 @@ function agentChip(text, cls) {
   return s;
 }
 
-function fillChannelRow(container, ids, cls) {
-  const list = Array.isArray(ids) ? ids : [];
+// Port chips on the card head: `plan md`, `review md·blocking`. v2 ports, not
+// v1 channel ids — the synthesized `await` gate is engine surface and never
+// shipped by /api/agents, so nothing filters it out here.
+function fillPortRow(container, ports, cls) {
+  const list = Array.isArray(ports) ? ports : [];
   if (list.length === 0) {
     const none = document.createElement('span');
     none.className = 'agent-io-none';
@@ -5073,7 +4571,13 @@ function fillChannelRow(container, ids, cls) {
     container.appendChild(none);
     return;
   }
-  list.forEach((c) => container.appendChild(agentChip(c, cls)));
+  for (const p of list) {
+    const bits = [p.type];
+    if (p.loop) bits.push('loop');
+    if (p.expands) bits.push('fan-out');
+    if (p.when && p.when !== 'always') bits.push(p.when);
+    container.appendChild(agentChip(`${p.id} ${bits.join('·')}`, cls));
+  }
 }
 
 function buildAgentCard(a) {
@@ -5084,8 +4588,11 @@ function buildAgentCard(a) {
   node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
   node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
   node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
-  fillChannelRow(node.querySelector('.agent-chips-in'), a.consumes, 'cons');   // INPUT row
-  fillChannelRow(node.querySelector('.agent-chips-out'), a.produces, 'prod');  // OUTPUT row
+  // Discoverability guard: an agent the composer will never list should say so
+  // where the user manages it, not just fail to appear on the palette.
+  node.querySelector('.agent-not-placeable').hidden = a.placeable !== false;
+  fillPortRow(node.querySelector('.agent-chips-in'), a.inputs, 'cons');   // INPUT row
+  fillPortRow(node.querySelector('.agent-chips-out'), a.outputs, 'prod'); // OUTPUT row
   const isUser = a.origin === 'user';
   node.querySelector('.agent-edit').hidden = !isUser;
   node.querySelector('.agent-delete').hidden = !isUser;
@@ -5174,9 +4681,35 @@ async function duplicateAgentCard(a) {
   } catch (err) { setAgentsMsg(err.message, 'err'); }
 }
 
-// ---- Shared agent metadata form (used by the card editor AND wizard Step 3) ---
+// ---- Shared agent PORT EDITOR (used by the card editor AND wizard Step 3) ----
+//
+// This is the v2 sidecar surface, end to end: typed port rows with every flag,
+// the per-port `as` renderer and `directive`, plus the agent-level capability
+// panel. The v1 channel vocabulary is GONE — meta v2 has no such fields and the
+// registry no longer derives them, so nothing can reach this form to be PUT back.
+//
+// The form is BUILT rather than authored in index.html because port rows are
+// dynamic. Everything binds through .value / .checked / .textContent; nothing
+// user-supplied is ever interpolated into markup.
+//
+// Fields the editor does not surface (port `label`/`description`,
+// `artifactKind`, `promptHints`, `requiresSkills`, `scope`, `domain`, …) are
+// carried through untouched, so editing a filename never silently drops a
+// sidecar key.
 
-// One checkbox per option into host; values bound via .checked (never innerHTML).
+const PORT_TYPES = ['md', 'json', 'void'];
+const PORT_AS = ['file', 'answers', 'fix-review', 'worktree'];
+const OUTPUT_WHENS = ['always', 'blocking', 'clean'];
+const PORT_STORES = ['run', 'project'];
+const RUNNER_TYPES = ['producer', 'verifier', 'clarifier'];
+const AGENT_COLORS = ['green', 'peach', 'red', 'blue', 'violet', 'amber'];
+const WORKSPACE_STRATEGIES = ['explore', 'task', 'review'];
+// Surfaced per port row; everything else on a port is preserved verbatim.
+const PORT_OWN_KEYS = ['id', 'type', 'required', 'loop', 'expands', 'as', 'directive', 'when', 'filename', 'store'];
+
+// One checkbox per option into host; values bound via .checked (never
+// innerHTML). Still used by the creation wizard's neighbour pickers (Runs
+// after / Runs before), which name AGENT KEYS — not the dead channel vocabulary.
 function buildChipChecks(host, options, selected) {
   host.innerHTML = '';
   const sel = new Set(Array.isArray(selected) ? selected : []);
@@ -5194,6 +4727,131 @@ function buildChipChecks(host, options, selected) {
 }
 const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
 
+/** The `.agent-form` host inside a pane (or the pane itself in older markup). */
+const formHost = (root) => root.querySelector('.agent-form') || root;
+
+function fmField(labelText, control, cls) {
+  const wrap = document.createElement('div');
+  wrap.className = `field${cls ? ` ${cls}` : ''}`;
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  wrap.append(label, control);
+  return wrap;
+}
+
+function fmInput(cls, value, { type = 'text', placeholder = '' } = {}) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.className = `${cls} input`;
+  input.spellcheck = false;
+  input.value = value == null ? '' : String(value);
+  if (placeholder) input.placeholder = placeholder;
+  return input;
+}
+
+function fmSelect(cls, options, value) {
+  const sel = document.createElement('select');
+  sel.className = `${cls} select`;
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = typeof opt === 'string' ? opt : opt.value;
+    o.textContent = typeof opt === 'string' ? opt : opt.text;
+    sel.appendChild(o);
+  }
+  sel.value = value == null ? '' : String(value);
+  return sel;
+}
+
+function fmCheck(cls, labelText, checked) {
+  const label = document.createElement('label');
+  label.className = 'fanout-toggle';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = cls;
+  cb.checked = Boolean(checked);
+  const txt = document.createElement('span');
+  txt.textContent = labelText;
+  label.append(cb, txt);
+  return label;
+}
+
+/** One port row. `side` is 'in' | 'out'; the two sides carry different flags. */
+function buildPortRow(side, port) {
+  const p = port || {};
+  const row = document.createElement('div');
+  row.className = `port-row port-row-${side}`;
+  // Unsurfaced sidecar keys ride along on the row so a save cannot drop them.
+  const extra = {};
+  for (const [k, v] of Object.entries(p)) if (!PORT_OWN_KEYS.includes(k)) extra[k] = v;
+  if (Object.keys(extra).length) row.dataset.extra = JSON.stringify(extra);
+
+  const top = document.createElement('div');
+  top.className = 'port-row-top';
+  top.append(
+    fmField('id', fmInput('pf-id', p.id, { placeholder: 'portId' }), 'pf-f-id'),
+    fmField('type', fmSelect('pf-type', PORT_TYPES, p.type || 'md'), 'pf-f-type'),
+  );
+
+  if (side === 'in') {
+    top.append(fmField('as', fmSelect('pf-as', ['', ...PORT_AS], p.as || ''), 'pf-f-as'));
+  } else {
+    top.append(
+      fmField('when', fmSelect('pf-when', OUTPUT_WHENS, p.when || 'always'), 'pf-f-when'),
+      fmField('filename', fmInput('pf-filename', p.filename, { placeholder: '{base}.md' }), 'pf-f-filename'),
+      fmField('store', fmSelect('pf-store', PORT_STORES, p.store || 'run'), 'pf-f-store'),
+    );
+  }
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'pf-remove btn-ghost btn-mini';
+  remove.title = 'Remove this port';
+  remove.textContent = '×';
+  top.appendChild(remove);
+  row.appendChild(top);
+
+  if (side === 'in') {
+    const flags = document.createElement('div');
+    flags.className = 'port-row-flags';
+    // `loop: true` coerces required:false in the registry — mirror that here so
+    // the form never shows a state the store would rewrite under the user.
+    flags.append(
+      fmCheck('pf-required', 'required', p.required !== false && !p.loop),
+      fmCheck('pf-loop', 'loop', p.loop === true),
+      fmCheck('pf-expands', 'expands', p.expands === true),
+    );
+    const dirToggle = document.createElement('button');
+    dirToggle.type = 'button';
+    dirToggle.className = 'pf-directive-toggle btn-ghost btn-mini';
+    dirToggle.textContent = p.directive ? 'directive ✓' : 'directive';
+    flags.appendChild(dirToggle);
+    row.appendChild(flags);
+
+    // Long-form and rare: collapsed until asked for.
+    const dirWrap = document.createElement('div');
+    dirWrap.className = 'pf-directive-wrap';
+    dirWrap.hidden = true;
+    const dir = document.createElement('textarea');
+    dir.className = 'pf-directive textarea';
+    dir.rows = 4;
+    dir.spellcheck = false;
+    dir.placeholder = 'Markdown appended to the task prompt when this port is bound fresh ({path} substituted)';
+    dir.value = p.directive || '';
+    dirWrap.appendChild(dir);
+    row.appendChild(dirWrap);
+  }
+  return row;
+}
+
+/** The `loop`/`required` mirror + the questions sub-flags, kept in sync live. */
+function syncPortFlags(row) {
+  const loop = row.querySelector('.pf-loop');
+  const required = row.querySelector('.pf-required');
+  if (!loop || !required) return;
+  required.disabled = loop.checked;
+  if (loop.checked) required.checked = false;
+}
+
 // The two questions sub-flags are meaningless (and normalizeMeta force-clears
 // them) when the agent cannot ask; mirror that in the form.
 function syncQuestionFlags(root) {
@@ -5206,70 +4864,232 @@ function syncQuestionFlags(root) {
   if (!asks.checked) { locked.checked = false; def.checked = false; }
 }
 
-// Fill every .agent-f-* field under `root` from meta (+ optional markdown).
+/** Build the whole v2 form under `root` from meta (+ optional markdown). */
 function agentFormFill(root, meta, markdown) {
-  const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
-  // Channels are an open vocabulary: union the server list with the meta's own
-  // ids (known first, then its extra customs) so a stale/closed list can never
-  // drop a custom channel on the edit round-trip.
-  const channels = [...known];
-  const own = [meta.consumes, meta.optionalConsumes, meta.produces];
-  for (const list of own) {
-    for (const id of Array.isArray(list) ? list : []) {
-      if (typeof id === 'string' && id && !channels.includes(id)) channels.push(id);
-    }
-  }
-  const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
-  root.querySelector('.agent-f-name').value = meta.displayName || '';
+  const host = formHost(root);
+  const m = meta || {};
+  host.dataset.agentKey = m.key || '';
+  // Unsurfaced agent-level keys ride along the same way port extras do.
+  const surfaced = new Set([
+    'key', 'displayName', 'description', 'color', 'runnerType', 'order', 'fanOut',
+    'asksQuestions', 'questionsLocked', 'questionsDefault', 'inputs', 'outputs',
+    'verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'metaVersion',
+    'origin', 'agentPath', 'descriptionDerived', 'portSummary',
+  ]);
+  const extra = {};
+  for (const [k, v] of Object.entries(m)) if (!surfaced.has(k)) extra[k] = v;
+  host.dataset.extra = JSON.stringify(extra);
+
+  const frag = document.createDocumentFragment();
+
+  // --- identity -------------------------------------------------------------
+  frag.appendChild(fmField('Display name', fmInput('agent-f-name', m.displayName)));
+  const descInput = fmInput('agent-f-desc', m.descriptionDerived ? '' : (m.description || ''));
   // A description resolved from the .md frontmatter is computed, not authored:
   // show it as a placeholder so the user knows where the blurb comes from, but
   // never as a value — pre-filling it would PUT it straight back and freeze the
   // fallback into the sidecar (and make an empty description unreachable).
-  const descInput = root.querySelector('.agent-f-desc');
-  descInput.value = meta.descriptionDerived ? '' : (meta.description || '');
-  descInput.placeholder = meta.descriptionDerived ? meta.description : '';
-  root.querySelector('.agent-f-color').value = meta.color || 'amber';
-  root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
-  buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
-  buildChipChecks(root.querySelector('.agent-f-optional'), channels, meta.optionalConsumes);
-  buildChipChecks(root.querySelector('.agent-f-produces'), channels, meta.produces);
-  const any = meta.connectsTo === '*' || meta.connectsTo === undefined;
-  root.querySelector('.agent-f-connect-any').checked = any;
-  buildChipChecks(root.querySelector('.agent-f-connects'), agentKeys, any ? [] : meta.connectsTo);
-  root.querySelector('.agent-f-connects').hidden = any;
-  root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
-  root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
-  root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
-  root.querySelector('.agent-f-questions').checked = !!meta.asksQuestions;
-  root.querySelector('.agent-f-questions-locked').checked = !!meta.questionsLocked;
-  root.querySelector('.agent-f-questions-default').checked = !!meta.questionsDefault;
-  syncQuestionFlags(root);
-  root.querySelector('.agent-f-questions').onchange = () => syncQuestionFlags(root);
-  if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
+  if (m.descriptionDerived) descInput.placeholder = m.description || '';
+  frag.appendChild(fmField('Description', descInput));
+
+  const row1 = document.createElement('div');
+  row1.className = 'row-2';
+  row1.append(
+    fmField('Color', fmSelect('agent-f-color', AGENT_COLORS, m.color || 'amber')),
+    fmField('Runner type', fmSelect('agent-f-runner', RUNNER_TYPES, m.runnerType || 'producer')),
+  );
+  frag.appendChild(row1);
+
+  const row2 = document.createElement('div');
+  row2.className = 'row-2';
+  row2.append(
+    fmField('Order', fmInput('agent-f-order', m.order != null ? m.order : 999, { type: 'number' })),
+    fmField('Verdict filename', fmInput('agent-f-verdict', (m.verdict && m.verdict.filename) || '', {
+      placeholder: 'required for verifiers, e.g. review-cycle{cycle}.json',
+    })),
+  );
+  frag.appendChild(row2);
+
+  // --- ports ----------------------------------------------------------------
+  for (const side of ['in', 'out']) {
+    const sec = document.createElement('div');
+    sec.className = `agent-ports agent-ports-${side}`;
+    const head = document.createElement('div');
+    head.className = 'agent-ports-head';
+    const title = document.createElement('b');
+    title.textContent = side === 'in' ? 'Inputs' : 'Outputs';
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = `pf-add-${side} btn-ghost btn-mini`;
+    add.textContent = side === 'in' ? '+ input' : '+ output';
+    head.append(title, add);
+    sec.appendChild(head);
+    const list = document.createElement('div');
+    list.className = 'agent-ports-list';
+    const ports = Array.isArray(side === 'in' ? m.inputs : m.outputs) ? (side === 'in' ? m.inputs : m.outputs) : [];
+    // The synthesized `await` gate is engine surface, never editable — and the
+    // registry never ships it on a sidecar, so this filter is belt-and-braces.
+    for (const p of ports) {
+      if (p && (p.synthetic || p.id === 'await')) continue;
+      list.appendChild(buildPortRow(side, p));
+    }
+    sec.appendChild(list);
+    frag.appendChild(sec);
+  }
+
+  // --- capabilities ---------------------------------------------------------
+  const caps = document.createElement('div');
+  caps.className = 'field agent-caps';
+  const capsLabel = document.createElement('label');
+  capsLabel.textContent = 'Capabilities';
+  caps.appendChild(capsLabel);
+  caps.append(
+    fmCheck('agent-f-fanout', 'Research fan-out', m.fanOut),
+    fmCheck('agent-f-questions', 'Asks questions', m.asksQuestions),
+    fmCheck('agent-f-questions-locked', 'Questions locked', m.questionsLocked),
+    fmCheck('agent-f-questions-default', 'Questions on by default', m.questionsDefault),
+    fmCheck('agent-f-sideeffect', 'Writes code (sideEffect)', m.sideEffect === 'code'),
+    fmCheck('agent-f-wantsrequest', 'Carries the original request', m.wantsRequest === true),
+    fmCheck('agent-f-placeable', 'Placeable on a canvas', m.placeable !== false),
+  );
+  frag.appendChild(caps);
+
+  const mockOptions = [{ value: '', text: 'auto' }, ...state.mockWriterRoles.map((r) => ({ value: r, text: r }))];
+  frag.appendChild(fmField('Mock role', fmSelect('agent-f-mockrole', mockOptions, m.mockRole || '')));
+
+  // --- workspace ------------------------------------------------------------
+  const ws = document.createElement('div');
+  ws.className = 'field agent-workspace';
+  const workspaceLabel = document.createElement('label');
+  workspaceLabel.textContent = 'Workspace runs';
+  ws.appendChild(workspaceLabel);
+  ws.appendChild(fmCheck('agent-f-ws-fanout', 'Force fan-out on workspace runs', m.workspaceFanOut === true));
+  const wsRow = document.createElement('div');
+  wsRow.className = 'row-2';
+  const variantInput = fmInput('agent-f-ws-variantof', m.workspaceVariantOf || '', { placeholder: 'agent key' });
+  const listId = 'agent-f-ws-keys';
+  variantInput.setAttribute('list', listId);
+  const datalist = document.createElement('datalist');
+  datalist.id = listId;
+  for (const k of state.agentsList.map((a) => a.key)) {
+    const o = document.createElement('option');
+    o.value = k;
+    datalist.appendChild(o);
+  }
+  wsRow.append(
+    fmField('Strategy', fmSelect('agent-f-ws-strategy', ['', ...WORKSPACE_STRATEGIES], m.workspaceStrategy || '')),
+    fmField('Variant of', variantInput),
+  );
+  ws.append(wsRow, datalist);
+  frag.appendChild(ws);
+
+  // --- body -----------------------------------------------------------------
+  const md = document.createElement('textarea');
+  md.className = 'agent-f-md textarea';
+  md.rows = 16;
+  md.spellcheck = false;
+  if (typeof markdown === 'string') md.value = markdown; // .value only — never innerHTML
+  frag.appendChild(fmField('System prompt (markdown)', md));
+
+  host.replaceChildren(frag);
+  host.querySelectorAll('.port-row').forEach(syncPortFlags);
+  syncQuestionFlags(host);
+  bindAgentForm(host);
 }
 
-// Read the form back into { meta, markdown }.
+/** ONE delegated listener per form host — rows come and go. */
+function bindAgentForm(host) {
+  if (host.dataset.bound === '1') return;
+  host.dataset.bound = '1';
+  host.addEventListener('click', (ev) => {
+    const add = ev.target.closest && ev.target.closest('.pf-add-in, .pf-add-out');
+    if (add) {
+      const side = add.classList.contains('pf-add-in') ? 'in' : 'out';
+      host.querySelector(`.agent-ports-${side} .agent-ports-list`).appendChild(buildPortRow(side, null));
+      return;
+    }
+    const remove = ev.target.closest && ev.target.closest('.pf-remove');
+    if (remove) { remove.closest('.port-row').remove(); return; }
+    const dir = ev.target.closest && ev.target.closest('.pf-directive-toggle');
+    if (dir) {
+      const wrap = dir.closest('.port-row').querySelector('.pf-directive-wrap');
+      wrap.hidden = !wrap.hidden;
+    }
+  });
+  host.addEventListener('change', (ev) => {
+    if (ev.target.classList.contains('pf-loop')) syncPortFlags(ev.target.closest('.port-row'));
+    if (ev.target.classList.contains('agent-f-questions')) syncQuestionFlags(host);
+  });
+}
+
+function readPortRow(row, side) {
+  const extra = row.dataset.extra ? JSON.parse(row.dataset.extra) : {};
+  const type = row.querySelector('.pf-type').value;
+  const port = { ...extra, id: row.querySelector('.pf-id').value.trim(), type };
+  if (side === 'in') {
+    const loop = row.querySelector('.pf-loop').checked;
+    // loop implies optional — the registry coerces this and warns otherwise.
+    port.required = loop ? false : row.querySelector('.pf-required').checked;
+    if (loop) port.loop = true;
+    if (row.querySelector('.pf-expands').checked) port.expands = true;
+    const as = row.querySelector('.pf-as').value;
+    if (as) port.as = as;
+    const directive = row.querySelector('.pf-directive').value;
+    if (directive.trim()) port.directive = directive;
+  } else {
+    port.when = row.querySelector('.pf-when').value;
+    // void ports carry no filename or store — the store 400s on either.
+    if (type !== 'void') {
+      const filename = row.querySelector('.pf-filename').value.trim();
+      if (filename) port.filename = filename;
+      port.store = row.querySelector('.pf-store').value;
+    }
+  }
+  return port;
+}
+
+/** Read the form back into { meta, markdown } — a v2 sidecar, nothing else. */
 function agentFormRead(root) {
-  const any = root.querySelector('.agent-f-connect-any').checked;
-  return {
-    meta: {
-      displayName: root.querySelector('.agent-f-name').value.trim(),
-      description: root.querySelector('.agent-f-desc').value.trim(),
-      color: root.querySelector('.agent-f-color').value,
-      runnerType: root.querySelector('.agent-f-runner').value,
-      consumes: chipValues(root.querySelector('.agent-f-consumes')),
-      optionalConsumes: chipValues(root.querySelector('.agent-f-optional')),
-      produces: chipValues(root.querySelector('.agent-f-produces')),
-      connectsTo: any ? '*' : chipValues(root.querySelector('.agent-f-connects')),
-      order: Number(root.querySelector('.agent-f-order').value),
-      fanOut: root.querySelector('.agent-f-fanout').checked,
-      loopSource: root.querySelector('.agent-f-loopsource').checked,
-      asksQuestions: root.querySelector('.agent-f-questions').checked,
-      questionsLocked: root.querySelector('.agent-f-questions-locked').checked,
-      questionsDefault: root.querySelector('.agent-f-questions-default').checked,
-    },
-    markdown: root.querySelector('.agent-f-md').value,
+  const host = formHost(root);
+  const extra = host.dataset.extra ? JSON.parse(host.dataset.extra) : {};
+  const val = (cls) => host.querySelector(`.${cls}`).value;
+  const on = (cls) => host.querySelector(`.${cls}`).checked;
+  const meta = {
+    ...extra,
+    metaVersion: 2,
+    key: host.dataset.agentKey || undefined,
+    displayName: val('agent-f-name').trim(),
+    description: val('agent-f-desc').trim(),
+    color: val('agent-f-color'),
+    runnerType: val('agent-f-runner'),
+    order: Number(val('agent-f-order')),
+    fanOut: on('agent-f-fanout'),
+    asksQuestions: on('agent-f-questions'),
+    questionsLocked: on('agent-f-questions-locked'),
+    questionsDefault: on('agent-f-questions-default'),
+    inputs: [...host.querySelectorAll('.agent-ports-in .port-row')].map((r) => readPortRow(r, 'in')),
+    outputs: [...host.querySelectorAll('.agent-ports-out .port-row')].map((r) => readPortRow(r, 'out')),
   };
+  if (meta.key === undefined) delete meta.key;
+
+  // Optional capabilities are ABSENT when off, never `false`/`''` — the schema
+  // reads presence, and an explicit falsy value is a different (invalid) thing.
+  const verdict = val('agent-f-verdict').trim();
+  if (verdict) meta.verdict = { filename: verdict };
+  if (on('agent-f-sideeffect')) meta.sideEffect = 'code';
+  const mockRole = val('agent-f-mockrole');
+  if (mockRole) meta.mockRole = mockRole;
+  if (on('agent-f-wantsrequest')) meta.wantsRequest = true;
+  if (on('agent-f-ws-fanout')) meta.workspaceFanOut = true;
+  const strategy = val('agent-f-ws-strategy');
+  if (strategy) meta.workspaceStrategy = strategy;
+  const variantOf = val('agent-f-ws-variantof').trim();
+  if (variantOf) meta.workspaceVariantOf = variantOf;
+  // `placeable` defaults true, so it is written ONLY to say "false".
+  if (!on('agent-f-placeable')) meta.placeable = false;
+
+  return { meta, markdown: host.querySelector('.agent-f-md').value };
 }
 
 async function openAgentEdit(card, a) {
@@ -5281,8 +5101,6 @@ async function openAgentEdit(card, a) {
   const pane = card.querySelector('.agent-edit-pane');
   agentFormFill(pane, full.meta, full.markdown);
   pane.hidden = false;
-  const anyCb = pane.querySelector('.agent-f-connect-any');
-  anyCb.onchange = () => { pane.querySelector('.agent-f-connects').hidden = anyCb.checked; };
   pane.querySelector('.agent-edit-cancel').onclick = () => { pane.hidden = true; };
   pane.querySelector('.agent-edit-save').onclick = () => saveAgentEdit(card, a, pane);
 }
@@ -5686,8 +5504,6 @@ function onAgentGenEvent(msg) {
     state.agentWizard.draft = msg.draft || null;
     const root = document.getElementById('agw-step-3');
     if (root && msg.draft) agentFormFill(root, msg.draft.meta || {}, msg.draft.markdown || '');
-    const anyCb = root && root.querySelector('.agent-f-connect-any');
-    if (anyCb) anyCb.onchange = () => { root.querySelector('.agent-f-connects').hidden = anyCb.checked; };
     showAgentWizardStep(3);
     return;
   }
@@ -6059,25 +5875,22 @@ const hideInfoTip = () => {
   if (infoTipIcon) { infoTipIcon.removeAttribute('aria-describedby'); infoTipIcon = null; }
 };
 
-// Palette cards share the settings bubble. Hover uses a ~250ms intent delay so
-// dragging across the palette doesn't strobe tooltips; keyboard focus is instant.
-// relatedTarget guards: mouseover/mouseout bubble through child elements (.phead,
-// .pdesc), so a cursor move BETWEEN children of the same trigger must be a no-op
-// — without the guard the bubble hides and re-arms on every crossing (strobe).
-// contains(null/undefined) is false, so events with no relatedTarget still work.
-const TIP_SELECTOR = '.info-tip, #composer-palette .agent-pill';
+// The shared settings bubble. The v1 composer's palette cards also rode this
+// selector, with a ~250ms hover-intent delay so dragging across the rail did
+// not strobe tooltips; v2 pills carry their description in `title` instead, so
+// only `.info-tip` icons remain. The relatedTarget guards stay: mouseover/
+// mouseout bubble through child elements, so a cursor move BETWEEN children of
+// the same trigger must be a no-op — without the guard the bubble hides and
+// re-arms on every crossing (strobe). contains(null/undefined) is false, so
+// events with no relatedTarget still work.
+const TIP_SELECTOR = '.info-tip';
 let pillTipTimer = null;
 document.addEventListener('mouseover', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
   if (!t) return;
   if (t.contains(e.relatedTarget)) return; // moved between children of the same trigger
-  if (t.classList.contains('agent-pill')) {
-    clearTimeout(pillTipTimer);
-    pillTipTimer = setTimeout(() => showInfoTip(t), 250);
-  } else {
-    clearTimeout(pillTipTimer);
-    showInfoTip(t);
-  }
+  clearTimeout(pillTipTimer);
+  showInfoTip(t);
 });
 document.addEventListener('mouseout', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
@@ -6954,20 +6767,51 @@ if (runListEl) {
     if (r) setAutoscroll(r, r.autoscroll === false);
   });
 
-  // Log filter dropdowns (source/level/step). Delegated like the switch above;
-  // read all three so one change event leaves the whole filter consistent.
+  // Log filter dropdowns (source/level/step/execution/artifact). Delegated like
+  // the switch above; read ALL of them so one change event leaves the whole
+  // filter consistent.
   runListEl.addEventListener('change', (e) => {
     const sel = e.target.closest && e.target.closest('.log-f');
     if (!sel) return;
     const card = sel.closest('.run-card');
     const r = card && runs.get(card.dataset.runId);
     if (!r) return;
-    r.logFilter = {
-      source: card.querySelector('.log-f-source')?.value || '',
-      level: card.querySelector('.log-f-level')?.value || '',
-      step: card.querySelector('.log-f-step')?.value || '',
-    };
+    r.logFilter = readLogFilter(card);
     repaintFilteredLog(r);
+  });
+
+  // Executions footer (spec §7). The chevron toggles the node's rows — which
+  // CHANGES the card height, so the graph is repainted, not just the footer —
+  // and a row click narrows the live log to that execution.
+  runListEl.addEventListener('click', (e) => {
+    const card = e.target.closest && e.target.closest('.run-card');
+    const r = card && runs.get(card.dataset.runId);
+    if (!r) return;
+
+    const toggle = e.target.closest('.xtoggle');
+    if (toggle) {
+      const id = toggle.dataset.nodeId;
+      if (r.expandedNodes.has(id)) r.expandedNodes.delete(id);
+      else r.expandedNodes.add(id);
+      paintStepper(r);
+      return;
+    }
+
+    const row = e.target.closest('.xrow');
+    if (row) {
+      // Clicking the selected row clears the narrowing (a toggle, not a trap).
+      const id = row.dataset.executionId;
+      r.logFilter = { ...r.logFilter, executionId: r.logFilter.executionId === id ? '' : id };
+      paintLogFilters(r);
+      repaintFilteredLog(r);
+      return;
+    }
+
+    // Gate pip: the question panel is where the decision is made.
+    if (e.target.closest('.ngate')) {
+      const qpanel = card.querySelector('.qpanel');
+      if (qpanel && qpanel.scrollIntoView) qpanel.scrollIntoView({ block: 'nearest' });
+    }
   });
 }
 
@@ -7988,8 +7832,6 @@ async function loadHistDetail(projectDir, id, detail, record) {
       }
       detail.prepend(banner);
     }
-    const host = detail.querySelector('.run-flow');
-    if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
     paintHistStepper(detail, data.state);
     // Same Map->object projection as the live call-site (see paintRunCard).
     const histSubsBar = detail.querySelector('.subs-bar');
@@ -8162,9 +8004,11 @@ async function loadLiveLogs(panel, logUrl) {
       recs.push({
         source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
         ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
+        ...(rec.executionId != null ? { executionId: rec.executionId } : {}),
+        ...(rec.artifactKind != null ? { artifactKind: rec.artifactKind } : {}),
       });
     }
-    const filter = { source: '', level: '', step: '' };
+    const filter = { source: '', level: '', step: '', executionId: '', artifactKind: '' };
     const paint = () => {
       box.innerHTML = '';
       let n = 0;
@@ -8178,14 +8022,14 @@ async function loadLiveLogs(panel, logUrl) {
       ['log-f-source', 'all sources', facets.sources, null],
       ['log-f-level', 'all levels', facets.levels, null],
       ['log-f-step', 'all steps', facets.steps, (i) => `step ${i + 1}`],
+      ['log-f-execution', 'all executions', facets.executions, null],
+      ['log-f-artifact', 'all artifacts', facets.artifactKinds, null],
     ]) {
       const sel = document.createElement('select');
       sel.className = `log-f ${cls}`;
       fillFilterSelect(sel, allLabel, values, '', labelOf);
       sel.addEventListener('change', () => {
-        filter.source = bar.querySelector('.log-f-source')?.value || '';
-        filter.level = bar.querySelector('.log-f-level')?.value || '';
-        filter.step = bar.querySelector('.log-f-step')?.value || '';
+        Object.assign(filter, readLogFilter(bar));
         paint();
       });
       bar.appendChild(sel);
@@ -8278,64 +8122,18 @@ function buildOverviewPanel(panel, ctx, results) {
   if (ctx.overview) { btn.dataset.ran = '1'; paintOverview(ov, ctx.overview, results); }
 }
 
-// Per-node max cycle from a saved run's steps[] (history's loop-count source).
-function histNodeCycle(st) {
-  const out = {};
-  for (const s of Array.isArray(st && st.steps) ? st.steps : []) {
-    if (!s) continue;
-    const key = stepBucketKey(s);
-    const c = Number(s.cycle);
-    if (key && Number.isFinite(c)) out[key] = Math.max(out[key] || 0, c);
-  }
-  return out;
-}
-
-// Tint a history card's graph from saved state. Reached cell drives coloring
-// (no live events). activeId=null, live=false -> no glow/marching-ants.
+// Render a history card's graph from saved state: the persisted step rows ARE
+// the exec ledger (their key is the executionId), so the same decor layer draws
+// it. live=false -> no glow, no marching ants, no ticking timers.
 function paintHistStepper(detail, st) {
+  paintWarnBanner(detail, st.warnings);
   const host = detail.querySelector('.run-flow');
   if (!host) return;
-  const manifest = manifestFor(st.stepper);
-  const status = String(st.status || '').toLowerCase();
-  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed' || status === 'interrupted';
-  const isDone = status === 'done' || status === 'complete' || status === 'completed';
-  const reached = histReachedCell(manifest, st);
-  const durs = durByNode(st.steps, 0, false);
-  const costs = costByNode(st.steps);
-
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  paintRunGraph(host, manifest, {
-    statusOf: (id) => {
-      const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
-      if (isDone) return 'done';
-      if (cellIdx < reached) return 'done';
-      if (cellIdx === reached) return halted ? 'stopped' : 'done';
-      return 'pending';
-    },
-    activeId: null,
-    cycles: loopCounts(manifest, histNodeCycle(st)),
-    live: false,
-    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsForNode(st, id),
-  });
-}
-
-// Highest cell index the saved run reached. Uses steps[].nodeId when present
-// (new runs), else the scalar phase mapped through the manifest (old runs).
-function histReachedCell(manifest, st) {
-  let reached = -1;
-  const steps = Array.isArray(st.steps) ? st.steps : [];
-  for (const s of steps) {
-    const loc = locateInManifest(manifest, { nodeId: s.nodeId, phase: s.phase });
-    if (loc.cellIdx > reached) reached = loc.cellIdx;
-  }
-  if (reached < 0 && st.phase) {
-    reached = locateInManifest(manifest, { phase: st.phase }).cellIdx;
-  }
-  return reached;
+  paintRunGraph(host, st.stepper, runDecorFor({
+    ...st,
+    executions: execsFromSteps(st.steps),
+    expandedNodes: null,
+  }, { live: false }));
 }
 
 function renderHistoryError(message) {
@@ -8477,11 +8275,24 @@ function cmpTabRuns(a, b) {
   return (b.orderKey || 0) - (a.orderKey || 0);
 }
 
+// The manifest node of the run's FIRST in-flight execution (state.active[0]),
+// or null. With concurrent actives this is the frontier the scalar surfaces —
+// dot colour, status pill, foot chip — speak for; the graph itself glows on all
+// of them. Generic: it reads the manifest, never an agent key or a phase name.
+function activeNode(r) {
+  const id = r && Array.isArray(r.active) && r.active[0] ? r.active[0].nodeId : null;
+  return id ? manifestNodes(manifestFor(r.stepper)).find((n) => n.id === id) || null : null;
+}
+
+// The palette colours a status dot / pill family can take. A manifest colour
+// outside this set (or a flow card, which carries none) falls back to peach.
+const DOT_FAMILIES = new Set(['violet', 'peach', 'blue', 'amber', 'green', 'red']);
+const dotFamily = (color) => (DOT_FAMILIES.has(color) ? color : 'peach');
+
 // Status dot family for a child row (left edge). Reuses existing color tokens.
-// For a LIVE run the dot matches the color of the current agent/phase (same
-// mapping as the status pill), so the dot reads as "who's running now". The
-// awaiting-input state is surfaced separately by the pulsing '?' end marker, so
-// it no longer hijacks the dot color.
+// For a LIVE run the dot matches the colour of the node currently executing, so
+// the dot reads as "who's running now". The awaiting-input state is surfaced
+// separately by the pulsing '?' end marker, so it no longer hijacks the colour.
 function runDotClass(r) {
   if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
   // Paused: parked + resumable. Static amber (NOT the red "did-not-complete" dot,
@@ -8489,15 +8300,7 @@ function runDotClass(r) {
   // because a paused run is _finished.
   if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
-  // running → color by current phase/agent (mirrors statusPill families)
-  switch (r.phaseKey) {
-    case 'plan': return 'violet';
-    case 'refine': return 'peach';
-    case 'implement': return 'blue';
-    case 'review': return 'peach';
-    case 'clarify': return 'red';
-    default: return 'peach';
-  }
+  return dotFamily(nodeColor(manifestFor(r.stepper), activeNode(r)?.id));
 }
 
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
@@ -8516,7 +8319,12 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
-const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
+// The label the scalar surfaces name the run by: the executing node's own
+// manifest label, with a neutral fallback before the first execution lands.
+function runPhaseLabel(r, fallback = 'Running') {
+  const node = activeNode(r);
+  return (node && node.label) || fallback;
+}
 
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 // pausing/paused are checked BEFORE the pendingQuestion state so an in-flight
@@ -8534,15 +8342,8 @@ function statusPill(r) {
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
-  // running
-  switch (r.phaseKey) {
-    case 'plan': return { family: 'violet', text: 'Planning' };
-    case 'refine': return { family: 'peach', text: 'Refining' };
-    case 'implement': return { family: 'blue', text: 'Implementing' };
-    case 'review': return { family: 'peach', text: 'Reviewing' };
-    case 'plan-review': return { family: 'violet', text: 'Plan Review' };
-    default: return { family: 'peach', text: 'Running' };
-  }
+  // running → the executing node names and colours the pill
+  return { family: runDotClass(r), text: runPhaseLabel(r) };
 }
 
 // Render the run-card meta line (project · started · branch). Called from
@@ -8561,10 +8362,6 @@ function buildRunCard(r) {
   const tpl = $('#run-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
-
-  // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
-  const stepHost = node.querySelector('.run-flow');
-  if (stepHost) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) {
@@ -8596,26 +8393,6 @@ function buildRunCard(r) {
   }
 
   return node;
-}
-
-// Running -> graph status per node. done if its cell is behind the frontier or
-// nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
-// else pending. terminalDone (run status 'done') forces all-done.
-function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
-  if (terminalDone) return 'done';
-  if (cellIdx < r.maxCellIdx) return 'done';
-  if (cellIdx > r.maxCellIdx) return 'pending';
-  // Frontier cell.
-  const k = r.nodeStatus[nodeId];
-  if (k === 'done') return 'done';
-  // A halted run (stopped/error/aborted/failed) shows its frontier node as
-  // stopped even if the last live phase left it 'now' — the halt arrives as a
-  // bare state event with no node-level phase to mark the cell.
-  if (halted) return 'stopped';
-  if (k === 'stop') return 'stopped';
-  if (k === 'pause') return 'paused';
-  if (k === 'now') return 'active';
-  return 'pending';
 }
 
 // Pill text + colour from a {nodeId: Array<{status}>} grouping. "active" =
@@ -8827,53 +8604,57 @@ function renderSubsTree(panelEl, byNode, nodeLabel, stepSkills, stepGraphify, st
 // not a pre-normalized manifest — avoids a redundant double manifestFor). Falls
 // back to the raw id for unknown nodes.
 function nodeLabelLookup(stepper) {
-  const m = manifestFor(stepper);
   const map = {};
-  m.steps.forEach((cell) => cell.nodes.forEach((n) => { map[n.id] = n.label || n.id; }));
+  for (const n of manifestNodes(manifestFor(stepper))) map[n.id] = n.label || n.id;
   return (id) => map[id] || id;
+}
+
+// The run-decor bag for a run (live card) or a frozen history state. `live`
+// decides whether timers keep ticking and whether anything is allowed to march.
+function runDecorFor(src, { live = true } = {}) {
+  const gate = src.pendingQuestion && src.pendingQuestion.kind === 'gate'
+    ? src.pendingQuestion.wireId || null
+    : null;
+  return {
+    live,
+    runStatus: src.status || '',
+    active: live ? (src.active || []) : [],
+    executions: src.executions || [],
+    steps: src.steps || [],
+    endReached: !!src.endReached,
+    result: src.result || null,
+    warnings: Array.isArray(src.warnings) ? src.warnings : [],
+    gateWireId: gate,
+    expanded: src.expandedNodes ? [...src.expandedNodes] : [],
+    subsOf: (id) => subAgentsForNode(src, id),
+    now: Date.now(),
+  };
 }
 
 function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
-  const manifest = manifestFor(r.stepper);
-  const terminalDone = r.status === 'done';
-  const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
-  const now = Date.now();
-  const durs = durByNode(r.steps, now, true);
-  const costs = r.costByNode || {};
-
-  // cellIdx per node id (for the frontier comparison).
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  // The active node = the frontier node currently now/pause (drives the live loop).
-  let activeId = null;
-  const frontier = manifest.steps[r.maxCellIdx];
-  if (frontier && !terminalDone) {
-    for (const n of frontier.nodes) {
-      const k = r.nodeStatus[n.id];
-      if (k === 'now' || k === 'pause') { activeId = n.id; break; }
-    }
-  }
-
-  paintRunGraph(host, manifest, {
-    statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
-    activeId,
-    cycles: loopCounts(manifest, r.nodeCycle),
-    live: true,
-    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsForNode(r, id),
-  });
+  paintRunGraph(host, r.stepper, runDecorFor(r, { live: true }));
+  paintWarnBanner(r.el, r.warnings);
 }
 
-// Does the run's current frontier cell contain a cycling node?
+// The run-level warning banner (Amendment f): a run that drained without binding
+// End says so rather than looking like an ordinary completion. It rides both the
+// live card and the history detail, because a run usually only earns the
+// warning as it finishes — by which point the live card has moved to History.
+function paintWarnBanner(root, warnings) {
+  const banner = root && root.querySelector('.run-warn');
+  if (!banner) return;
+  const list = runWarnings({ warnings });
+  banner.hidden = list.length === 0;
+  banner.textContent = list.join(' · ');
+}
+
+// Does the node the run is executing sit on a loop?
 function currentNodeCycles(r) {
-  const m = manifestFor(r.stepper);
-  const cell = m.steps[r.maxCellIdx];
-  return !!(cell && cell.nodes.some((n) => n.cycles));
+  const node = activeNode(r);
+  return !!(node && node.loop);
 }
 
 // The run-card template's stock Resume tooltip. Read from the template rather
@@ -8908,7 +8689,7 @@ function paintRunCard(r) {
   // Foot chip.
   const chip = r.el.querySelector('.chip');
   if (chip) {
-    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Running';
+    const phaseLabel = runPhaseLabel(r);
     if (r.pendingQuestion != null) {
       const n = questionCount(r.pendingQuestion);
       chip.textContent = `${phaseLabel} paused · ${n} question${n === 1 ? '' : 's'}`;
@@ -9010,7 +8791,7 @@ function renderRunningView() {
 // Attach/move one card without losing user scroll state. Re-inserting an
 // attached node is spec'd as remove+insert, which zeroes every scrollable
 // descendant (.log scrollTop, .run-flow-wrap scrollLeft). Save → insert →
-// write back synchronously (before paint), same technique as buildRunGraph's
+// write back synchronously (before paint), same technique as the run graph's
 // scrollLeft preservation across its structural rebuild.
 function insertCardPreservingScroll(list, el, before) {
   const logEl = el.querySelector('.log');
@@ -9368,10 +9149,10 @@ const _timerTick = setInterval(() => {
     const timeEl = r.el.querySelector('.run-time');
     if (timeEl) timeEl.textContent = fmtDuration(liveTotalMs(r.steps, now));
     const durs = durByNode(r.steps, now, true);
-    for (const el of r.el.querySelectorAll('.run-node[data-id]')) {
+    for (const el of r.el.querySelectorAll('.node[data-node-id] > .nrun')) {
       const durEl = el.querySelector('.dur');
       if (!durEl) continue;
-      const d = durs[el.dataset.id];
+      const d = durs[el.parentElement.dataset.nodeId];
       durEl.textContent = d != null ? fmtDuration(d) : '';
     }
   }

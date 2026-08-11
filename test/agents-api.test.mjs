@@ -40,14 +40,15 @@ const META = {
 };
 const MD = '# Agent: Docs Writer\n\nYou write docs.\n';
 
-test('GET /api/agents carries origin + channels and EXCLUDES markdown', async () => {
+test('GET /api/agents carries origin + ports and EXCLUDES markdown', async () => {
   const r = await get('/api/agents');
   assert.equal(r.status, 200);
   const data = await r.json();
   assert.ok(Array.isArray(data.agents) && data.agents.length >= 9);
   assert.ok(data.agents.every((a) => a.origin === 'builtin' || a.origin === 'user'));
   assert.ok(data.agents.every((a) => !('markdown' in a)));
-  assert.ok(Array.isArray(data.channels) && data.channels.includes('plan'));
+  assert.ok(data.agents.every((a) => Array.isArray(a.inputs) && Array.isArray(a.outputs)));
+  assert.equal('channels' in data, false, 'the v1 channel vocabulary is gone from the payload');
   assert.ok(!data.agents.some((a) => a.key === 'workspaceScanner'), 'workspace-only excluded by default');
   const all = await (await get('/api/agents?all=1')).json();
   assert.ok(all.agents.some((a) => a.key === 'workspaceScanner'), '?all=1 includes workspace-only');
@@ -87,15 +88,31 @@ test('built-in guardrails: PUT/DELETE planner -> 409, duplicate POST -> 409, bad
 
 test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a user-agent key', async () => {
   await post('/api/agents', { meta: META, markdown: MD });
-  const wf = await post('/api/workflows', { name: 'Uses Docs', steps: [[{ id: 's0_0', key: 'docsWriter' }]], feedbacks: [] });
+  // A v2 graph: the save route validates topology through validateGraph, so the
+  // reference has to be a real node in a valid template (task -> planner -> docs -> end).
+  const wf = await post('/api/workflows', {
+    name: 'Uses Docs', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 320, y: 200, config: {} },
+      { id: 'n_docs', kind: 'agent', key: 'docsWriter', x: 600, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 880, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_docs', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_docs', port: 'review' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
   assert.equal(wf.status, 201, 'user agent validates in a workflow');
   const r = await del('/api/agents/docsWriter');
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /Uses Docs/);
 });
 
-test('GET /api/agents channels is the open-vocabulary union: built-ins + custom ids from agents', async () => {
-  // v2 derives channelDefs from the output ports — authoring them is gone.
+test('GET /api/agents surfaces a user agent\'s custom port ids verbatim', async () => {
+  // v2 has no channel list to register against: whatever the sidecar declares as a
+  // port id IS the vocabulary, so a custom id needs no allow-listing anywhere.
   const meta = {
     metaVersion: 2, displayName: 'Spec Maker', description: 'emits a spec', color: 'blue',
     runnerType: 'producer', order: 50,
@@ -105,9 +122,9 @@ test('GET /api/agents channels is the open-vocabulary union: built-ins + custom 
   const c = await post('/api/agents', { meta, markdown: '# Agent: Spec Maker\n\nYou emit specs.\n' });
   assert.equal(c.status, 201);
   const data = await (await get('/api/agents')).json();
-  assert.ok(data.channels.includes('plan'), 'built-ins still present');
-  assert.ok(data.channels.includes('spec'), 'custom channel id surfaced');
-  assert.ok(data.channels.indexOf('spec') > data.channels.indexOf('decomposition'), 'customs appended after built-ins');
-  assert.equal(new Set(data.channels).size, data.channels.length, 'deduped');
+  const made = data.agents.find((a) => a.key === 'specMaker');
+  assert.deepEqual(made.outputs.map((p) => p.id), ['spec']);
+  assert.equal(made.outputs[0].filename, 'api-spec.json');
+  assert.deepEqual(made.inputs.map((p) => p.id), ['plan']);
   await del('/api/agents/specMaker');
 });

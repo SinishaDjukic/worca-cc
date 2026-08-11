@@ -64,7 +64,17 @@ test('VIEW_NAMES is the 13-entry array with composer preserved + projects + plug
   assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'\];/);
 });
 
-test('composer-core is imported INSIDE app.js via ES6 import (C7), not a separate script tag', () => {
-  assert.match(js, /import \{[\s\S]*?\} from '\.\/composer-core\.mjs';/);
-  assert.ok(!html.includes('composer-core.mjs'), 'composer-core.mjs must not be a <script> in index.html');
+// Ported from the composer-core assertion this replaces: that module is gone
+// (its survivors moved into graph/agents-meta.mjs), but the RULE it guarded —
+// UI modules load through app.js's ES6 imports, never as extra <script> tags —
+// still holds, and now covers the whole graph/ family.
+test('the graph modules are imported INSIDE app.js via ES6 import (C7), not separate script tags', () => {
+  assert.match(js, /import \{[\s\S]*?\} from '\.\/graph\/graph-model\.mjs';/);
+  assert.match(js, /import \{[\s\S]*?\} from '\.\/graph\/agents-meta\.mjs';/);
+  assert.match(js, /import \{[\s\S]*?\} from '\.\/graph\/composer-editor\.mjs';/);
+  assert.ok(!html.includes('composer-core.mjs'), 'composer-core.mjs is deleted — no stale reference may survive');
+  // app.js is the ONE script tag; a module reference in a comment is fine, a
+  // second <script src> is not.
+  const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(scripts, ['/app.js']);
 });

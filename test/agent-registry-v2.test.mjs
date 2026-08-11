@@ -1,10 +1,9 @@
 // test/agent-registry-v2.test.mjs
 // Sidecar meta v2 (spec §5 + Amendments d/f): typed ports, capability flags, the
-// reserved `await` port id, materialized port defaults, the derived portSummary,
-// and the TEMPORARY v1-compat shim that keeps the live v1 engine's channel view
-// (consumes/optionalConsumes/produces/connectsTo/channelDefs/uiPhase) working
-// until the engine swap. v1 sidecars (no metaVersion:2) are skipped with a loud,
-// actionable warning rather than bricking the registry.
+// reserved `await` port id, materialized port defaults, and the derived
+// portSummary. The v1 channel view a meta used to carry alongside its ports is
+// gone — the graph binds typed ports. v1 sidecars (no metaVersion:2) are skipped
+// with a loud, actionable warning rather than bricking the registry.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -300,96 +299,16 @@ test('portSummary is derived text, and descriptionDerived keeps its boolean mean
   assert.ok(!Object.hasOwn(implementer, 'descriptionDerived'));
 });
 
-// ── v1-compat shim ──────────────────────────────────────────────────────────
-
-test('shim: a v2 reviewer yields the v1 channel view the live engine reads', () => {
-  const m = normalizeMeta(v2({
-    key: 'reviewer', runnerType: 'verifier', verdict: { filename: 'impl-review-cycle{cycle}.json' },
-    inputs: [{ id: 'plan', type: 'md' }, { id: 'done', type: 'void', required: false, as: 'worktree' }],
-    outputs: [
-      { id: 'review', type: 'md', filename: '{base}-impl-review.md', store: 'project', when: 'blocking' },
-      { id: 'pass', type: 'void', when: 'clean' },
-    ],
-  }));
-  assert.deepEqual(m.consumes, ['plan']);
-  assert.deepEqual(m.optionalConsumes, ['code']);   // done:void optional -> the v1 `code` channel
-  assert.deepEqual(m.produces, ['review']);         // pass:void is dropped
-  assert.equal(m.connectsTo, '*');
-  assert.equal(m.uiPhase, 'review');
-});
-
-test('shim: duplicate output channels dedupe (refiner plan+revise -> produces [plan])', () => {
-  const m = normalizeMeta(v2({
-    key: 'refiner', verdict: { filename: 'refine-review-cycle{cycle}.json' },
-    inputs: [{ id: 'plan', type: 'md' }, { id: 'revise', type: 'md', loop: true }],
-    outputs: [
-      { id: 'plan', type: 'md', filename: '{base}{vsuffix}.md', store: 'project', when: 'clean' },
-      { id: 'revise', type: 'md', filename: '{base}{vsuffix}.md', store: 'project', when: 'blocking' },
-    ],
-  }));
-  assert.deepEqual(m.produces, ['plan']);
-  assert.deepEqual(m.consumes, ['plan']);
-  assert.deepEqual(m.optionalConsumes, ['review']);
-  assert.equal(m.uiPhase, 'refine');
-});
-
-test('shim: sideEffect code keeps the v1 `code` channel on produces', () => {
-  const m = normalizeMeta(v2({
-    key: 'implementer', sideEffect: 'code',
-    inputs: [
-      { id: 'plan', type: 'md' },
-      { id: 'fix', type: 'md', loop: true, as: 'fix-review' },
-      { id: 'task', type: 'json', required: false, expands: true },
-    ],
-    outputs: [{ id: 'done', type: 'void' }],
-  }));
-  assert.deepEqual(m.consumes, ['plan']);
-  assert.deepEqual(m.optionalConsumes, ['review', 'decomposition']);
-  assert.deepEqual(m.produces, ['code']);
-  assert.equal(m.uiPhase, 'implement');
-});
-
-test('shim: an md `task` input is the v1 userPrompt channel', () => {
-  const m = normalizeMeta(v2({ key: 'planner', inputs: [{ id: 'task', type: 'md' }, { id: 'answers', type: 'json', required: false, as: 'answers' }] }));
-  assert.deepEqual(m.consumes, ['userPrompt']);
-  assert.deepEqual(m.optionalConsumes, ['clarify']);
-  assert.equal(m.uiPhase, 'plan');
-});
-
-test('shim: custom port ids stay custom channels, and define themselves', () => {
-  const m = normalizeMeta(v2({
-    key: 'specWriter',
-    inputs: [{ id: 'plan', type: 'md' }, { id: 'blueprint', type: 'json', required: false }],
-    outputs: [{ id: 'spec', type: 'json', filename: 'api-spec.json' }],
-  }));
-  assert.deepEqual(m.consumes, ['plan']);
-  assert.deepEqual(m.optionalConsumes, ['blueprint']);
-  assert.deepEqual(m.produces, ['spec']);
-  assert.deepEqual(m.channelDefs, [{ id: 'spec', kind: 'json', filename: 'api-spec.json' }]);
-  assert.equal(m.uiPhase, null);   // no v1 phase for a custom key
-});
-
-test('shim: built-in channels are never redefined by channelDefs', () => {
-  const warned = capturingWarnings(() => {
-    const m = normalizeMeta(v2({ key: 'planner', outputs: [{ id: 'plan', type: 'md', filename: '{base}{vsuffix}.md', store: 'project' }] }));
-    assert.deepEqual(m.channelDefs, []);
-  });
-  assert.deepEqual(warned, []);   // deriving is not authoring: no redefinition warning
-});
-
-test('shim: a void input with no v1 channel is dropped entirely', () => {
-  const m = normalizeMeta(v2({ inputs: [{ id: 'plan', type: 'md' }, { id: 'gate', type: 'void', required: false }] }));
-  assert.deepEqual(m.consumes, ['plan']);
-  assert.deepEqual(m.optionalConsumes, []);
-});
-
 // ── dead v1 fields ──────────────────────────────────────────────────────────
 
 test('the dead v1 fields are gone from a v2 entry', () => {
   const m = normalizeMeta(v2({ loopSource: true, version: 7, uiPhase: 'made-up' }));
   assert.ok(!Object.hasOwn(m, 'loopSource'), 'loopSource is subsumed by output `when`');
   assert.ok(!Object.hasOwn(m, 'version'), 'the free-form version field is replaced by metaVersion');
-  assert.equal(m.uiPhase, null, 'uiPhase is derived from the key map, never authored');
+  // Authored or not, the whole v1 channel view is dropped: a meta is ports + flags.
+  for (const dead of ['uiPhase', 'consumes', 'optionalConsumes', 'produces', 'connectsTo', 'channelDefs']) {
+    assert.ok(!Object.hasOwn(m, dead), `${dead} must not survive onto a v2 entry`);
+  }
 });
 
 test('order is optional in v2 and defaults to 999', () => {

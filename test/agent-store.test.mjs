@@ -110,16 +110,67 @@ test('updateAgent edits meta + markdown for user agents; built-ins are 409-coded
   await assert.rejects(() => updateAgent('ghost', { meta: META }), (e) => e.code === 'NOT_FOUND');
 });
 
-test('deleteAgent: 409-coded while referenced by a saved workflow, then removes the pair', async () => {
-  const wf = await writeWorkflow({
-    name: 'Uses Docs', steps: [[{ id: 's0_0', key: 'docsWriter' }]], feedbacks: [],
-  });
+/** A v2 graph that places one agent key: task -> <key> -> end. */
+function graphUsing(key) {
+  return {
+    name: `Uses ${key}`,
+    domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key, x: 280, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 560, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_a', port: 'review' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+}
+
+test('deleteAgent: 409-coded while a saved v2 GRAPH places the key, then removes the pair', async () => {
+  const wf = await writeWorkflow(graphUsing('docsWriter'));
   await assert.rejects(() => deleteAgent('docsWriter'), (e) => e.code === 'REFERENCED');
   const { deleteWorkflow } = await import('../src/core/workflows.mjs');
   await deleteWorkflow(wf.id);
   assert.deepEqual(await deleteAgent('docsWriter'), { ok: true });
   assert.equal(await readAgent('docsWriter'), null);
   await assert.rejects(() => deleteAgent('planner'), (e) => e.code === 'BUILTIN');
+});
+
+test('deleteAgent: a graph that places NO agent node never blocks the delete', async () => {
+  await createAgent({ meta: META, markdown: MD });                 // docsWriter, again
+  const wf = await writeWorkflow({
+    name: 'No agents',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 280, y: 0, config: {} },
+    ],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_end', port: 'result' } }],
+  });
+  assert.deepEqual(await deleteAgent('docsWriter'), { ok: true });
+  const { deleteWorkflow } = await import('../src/core/workflows.mjs');
+  await deleteWorkflow(wf.id);
+});
+
+test('deleteAgent: a workspace VARIANT is referenced through the key its target node carries', async () => {
+  await createAgent({ meta: META, markdown: MD });                 // docsWriter (the target)
+  await createAgent({
+    meta: {
+      ...META, key: 'docsWsWriter', displayName: 'Docs Writer (workspace)',
+      scope: 'workspace-only', workspaceVariantOf: 'docsWriter',
+    },
+    markdown: MD,
+  });
+  // The saved graph places `docsWriter`; a workspace run substitutes the variant,
+  // so deleting the variant would break that run just as surely.
+  const wf = await writeWorkflow(graphUsing('docsWriter'));
+  await assert.rejects(() => deleteAgent('docsWsWriter'), (e) => e.code === 'REFERENCED');
+  await assert.rejects(() => deleteAgent('docsWriter'), (e) => e.code === 'REFERENCED');
+
+  const { deleteWorkflow } = await import('../src/core/workflows.mjs');
+  await deleteWorkflow(wf.id);
+  assert.deepEqual(await deleteAgent('docsWsWriter'), { ok: true });
+  assert.deepEqual(await deleteAgent('docsWriter'), { ok: true });
 });
 
 test('AGENT_KEY_RE forecloses path traversal', () => {

@@ -13,9 +13,9 @@ import { getDb, prepare, tx } from './db.mjs';
 import { slugify } from './artifacts.mjs';
 import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS, sanitizeGuardrails } from './guardrails.mjs';
 // Shared delete-guard error class (uninstall/delete blocked by live references).
-// Reusing it is safe: plugin-workflows imports only db/artifacts/agent-registry/
-// workflow-validator/plugins-lock (plugin-workflows.mjs:8-15) — a leaf subtree
-// with no cycle back into this module. Its ctor is (message, references); the
+// Reusing it is safe: plugin-workflows imports only db/artifacts/plugins-lock —
+// a leaf subtree with no cycle back into this module. Its ctor is
+// (message, references); the
 // store stamps code:'REFERENCED' at the throw site, and the server ALSO matches
 // structurally (err.name === 'ReferencedError' || err.code === 'REFERENCED').
 import { ReferencedError } from './plugin-workflows.mjs';

@@ -9,8 +9,8 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel,
   listModels, resolveStepModels,
 } from '../src/core/config.mjs';
-import { AGENT_STEPS } from '../src/core/config.mjs';
-import { loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
+import { agentSteps } from '../src/core/config.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
@@ -106,14 +106,13 @@ test('registry surfaces fanOut: every agent role defaults ON, decomposer include
   assert.equal(reg.decomposer.fanOut, true, 'the splitter fans out too');
 });
 
-test('registryToSteps / AGENT_STEPS carry the per-agent fanOut default', () => {
-  const steps = registryToSteps(loadAgentRegistry());
+test('agentSteps() carries the per-agent fanOut default', () => {
+  const steps = agentSteps();
   const planner = steps.find((s) => s.key === 'planner');
   const refiner = steps.find((s) => s.key === 'refiner');
   assert.equal(planner.fanOut, true);
   assert.equal(refiner.fanOut, true);
-  // AGENT_STEPS (config.mjs) is derived from registryToSteps, so it carries it too.
-  assert.equal(AGENT_STEPS.find((s) => s.key === 'planner').fanOut, true);
+  assert.equal(agentSteps().find((s) => s.key === 'planner').fanOut, true);
 });
 
 test('setStep stores fanOut and preserves it when a later model change omits it', async () => {

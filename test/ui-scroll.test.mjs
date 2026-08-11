@@ -52,8 +52,16 @@ function instrumentScroll(el, { scrollHeight = 1000, clientHeight = 200, scrollW
   Object.defineProperty(el, 'scrollLeft', { configurable: true, get: () => left, set: (v) => { left = v; } });
 }
 
-const STEP2 = { steps: [ { label: 'A', nodes: [{ id: 'a' }] }, { label: 'B', nodes: [{ id: 'b' }] } ] };
-const STEP3 = { steps: [ { label: 'A', nodes: [{ id: 'a' }] }, { label: 'B', nodes: [{ id: 'b' }] }, { label: 'C', nodes: [{ id: 'c' }] } ] };
+// v2 run manifests (buildGraphManifest, src/core/workflows.mjs:567). STEP3 adds
+// a node, so the manifest signature changes and the graph is rebuilt.
+const gnode = (id, i) => ({
+  id, kind: 'agent', key: 'planner', label: id.toUpperCase(), color: 'violet', sub: '',
+  x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+  ports: { inputs: [{ id: 'in', type: 'md', required: true, loop: false, expands: false }], outputs: [{ id: 'out', type: 'md', when: 'always' }] },
+});
+const gmanifest = (ids) => ({ version: 2, graph: { nodes: ids.map(gnode), wires: [] }, bookends: { preflight: true, done: true } });
+const STEP2 = gmanifest(['a', 'b']);
+const STEP3 = gmanifest(['a', 'b', 'c']);
 
 // ── 1. ON pins every new line to the bottom (Q1) ──────────────────────────────
 test('log pins to bottom on a new line while Auto-scroll is ON', async () => {
@@ -147,11 +155,12 @@ test('stepper preserves horizontal scroll across a structural rebuild', async ()
   wrap.scrollLeft = 800;                           // user scrolled right
   writes.length = 0;                               // ignore the manual set; watch only the rebuild
 
-  // A new stage → node-id signature changes ('a|b' → 'a|b|c') → buildRunGraph wipes + rebuilds.
+  // A new node → manifest signature changes ('a|b' → 'a|b|c') → the graph view
+  // is torn down and rebuilt, which empties the mount.
   r.stepper = STEP3;
-  np.buildRunGraph(r.el.querySelector('.run-flow'), r.stepper);
+  np.paintRunGraph(r.el.querySelector('.run-flow'), r.stepper, np.runDecorFor(r, { live: true }));
   await tick();
-  assert.deepEqual(writes, [800], 'buildRunGraph restored the saved scrollLeft after the wipe');
+  assert.deepEqual(writes, [800], 'the rebuild restored the saved scrollLeft after the wipe');
   assert.equal(wrap.scrollLeft, 800, 'horizontal scroll preserved across rebuild');
 });
 
@@ -162,7 +171,7 @@ test('WS log frame while OFF does not scroll, through the real dispatch', async 
   selectProject();
   window.location.hash = 'running';
   window.dispatchEvent(new window.Event('hashchange'));
-  recv({ type: 'phase', runId: 'p3', phase: 'plan', cycle: 0 });   // mounts the card via renderRunningView
+  recv({ type: 'exec', runId: 'p3', nodeId: 'a', executionId: 'x:a:1', ordinal: 1, kind: 'cycle', status: 'start' }); // mounts the card via renderRunningView
   await tick();
   const r = np.getRun('p3');
   assert.ok(r && r.el, 'card mounted by the running view');

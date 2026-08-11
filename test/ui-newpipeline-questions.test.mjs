@@ -1,4 +1,7 @@
-// test/ui-newpipeline-questions.test.mjs — New Pipeline per-step Questions toggle.
+// test/ui-newpipeline-questions.test.mjs — New Pipeline per-NODE Questions
+// toggle. The hardcoded per-role stage rows are gone (see
+// test/newpipeline-config.test.mjs); every questions toggle is now painted per
+// agent node of the selected v2 graph, keyed by data-node-id.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -38,92 +41,192 @@ async function boot({ fetchHandler } = {}) {
   return { window };
 }
 
+const tick = () => new Promise((r) => setTimeout(r, 0));
+async function settle() { for (let i = 0; i < 6; i += 1) await tick(); }
+
 const selectProjectAnd = (window) => {
   const s = window.document.querySelector('#projectSelect');
   s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true }));
 };
+const pickWorkflow = (window, id) => {
+  const s = window.document.querySelector('#workflowSelect');
+  s.value = id; s.dispatchEvent(new window.Event('change', { bubbles: true }));
+};
 
-// (after the copied boot() + selectProjectAnd() helpers)
-const STEPS = [
-  { key: 'clarify', label: 'Clarify', fanOut: true, asksQuestions: true, questionsLocked: true, questionsDefault: true },
-  { key: 'planner', label: 'Plan', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
-  { key: 'refiner', label: 'Refine', fanOut: false, asksQuestions: false, questionsLocked: false, questionsDefault: false },
-  { key: 'implementer', label: 'Implement', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
-  { key: 'reviewer', label: 'Review', fanOut: false, asksQuestions: true, questionsLocked: false, questionsDefault: false },
+// Three agents covering the whole capability matrix: editable, locked-on, none.
+const AGENTS = [
+  {
+    key: 'ask', displayName: 'Ask', color: 'violet', order: 1,
+    asksQuestions: true, questionsLocked: false, questionsDefault: false,
+    inputs: [{ id: 'task', type: 'md', required: true }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
+  {
+    key: 'locked', displayName: 'Locked', color: 'red', order: 2,
+    asksQuestions: true, questionsLocked: true, questionsDefault: true,
+    inputs: [{ id: 'task', type: 'md', required: true }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
+  {
+    key: 'plain', displayName: 'Plain', color: 'blue', order: 3,
+    inputs: [{ id: 'task', type: 'md', required: true }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
 ];
-const configFetch = (extraConfig = {}, models = []) => (url, opts) => {
-  if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({
-      config: { steps: {}, customModels: [], ...extraConfig }, models, efforts: [], steps: STEPS,
-    }) });
-  }
-  return null;
+const REGISTRY = Object.fromEntries(AGENTS.map((a) => [a.key, a]));
+
+const WF = {
+  id: 'wf_q', name: 'Questions', version: 2, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'a', kind: 'agent', key: 'ask', x: 300, y: 0, config: {} },
+    { id: 'b', kind: 'agent', key: 'locked', x: 600, y: 0, config: {} },
+    { id: 'c', kind: 'agent', key: 'plain', x: 900, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} },
+  ],
+  wires: [
+    { id: 'w0', from: { node: 'n_task', port: 'task' }, to: { node: 'a', port: 'task' } },
+    { id: 'w1', from: { node: 'a', port: 'out' }, to: { node: 'b', port: 'task' } },
+    { id: 'w2', from: { node: 'b', port: 'out' }, to: { node: 'c', port: 'task' } },
+    { id: 'w3', from: { node: 'c', port: 'out' }, to: { node: 'n_end', port: 'result' } },
+  ],
 };
 const OPUS = [{ id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['high', 'max'] }];
 
-test('default rows: clarify locked-checked; planner editable-unchecked; refiner hidden', async () => {
-  const { window } = await boot({ fetchHandler: configFetch() });
-  await new Promise((r) => setTimeout(r, 0));
-  const doc = window.document;
-  const clarify = doc.querySelector('.step-questions[data-role="clarify"]');
-  assert.ok(clarify, 'clarify questions checkbox exists');
-  assert.equal(clarify.checked, true);
-  assert.equal(clarify.disabled, true);
-  const planner = doc.querySelector('.step-questions[data-role="planner"]');
-  assert.equal(planner.checked, false);
-  assert.equal(planner.disabled, false);
-  const refinerWrap = doc.querySelector('.step-questions[data-role="refiner"]').closest('.questions-toggle');
-  assert.equal(refinerWrap.hidden, true, 'no capability => toggle hidden');
-});
-
-test('toggling a default row posts askQuestions with the row model preserved', async () => {
-  const posts = [];
-  const { window } = await boot({ fetchHandler: (url, opts) => {
-    if (url.includes('/api/config') && opts && opts.method === 'POST') {
-      posts.push(JSON.parse(opts.body));
+function workflowFetch(extraConfig = {}, models = OPUS) {
+  return (url, opts) => {
+    if (url.includes('/api/projects')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) });
+    }
+    if (url.includes('/api/workflows/wf_q')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => WF });
+    }
+    if (url.includes('/api/workflows')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default', version: 2, nodes: WF.nodes, wires: WF.wires }, WF] }) });
+    }
+    if (url.includes('/api/agents')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS }) });
+    }
+    if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
-        config: { steps: { planner: { model: 'claude-opus-4-8', askQuestions: true } }, customModels: [] },
+        config: { steps: {}, customModels: [], ...extraConfig }, models, efforts: ['high', 'max'],
       }) });
     }
-    // The saved model must be in the models list so the row's select can show
-    // it — the toggle echoes the LIVE select (WYSIWYG), not state.config.
-    return configFetch({ steps: { planner: { model: 'claude-opus-4-8' } } }, OPUS)(url, opts);
-  } });
-  selectProjectAnd(window); // saveStep needs a selected project
-  await new Promise((r) => setTimeout(r, 0));
-  const cb = window.document.querySelector('.step-questions[data-role="planner"]');
-  cb.checked = true;
-  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(posts.length, 1, 'POST /api/config fired');
-  assert.equal(posts[0].step, 'planner');
-  assert.equal(posts[0].askQuestions, true);
-  assert.equal(posts[0].model, 'claude-opus-4-8', 'row model preserved');
-  assert.ok(!('fanOut' in posts[0]), 'fanOut omitted so the setter preserves it');
-});
+    return null;
+  };
+}
 
 test('buildNodeConfigRows: hidden / locked / editable matrix', async () => {
   const { window } = await boot();
-  const { buildNodeConfigRows } = window.__np;
-  const wf = { steps: [[{ id: 'a', key: 'ask' }], [{ id: 'b', key: 'locked' }], [{ id: 'c', key: 'plain' }]], feedbacks: [] };
-  const reg = {
-    ask:    { key: 'ask', displayName: 'Ask', asksQuestions: true, questionsLocked: false, questionsDefault: false },
-    locked: { key: 'locked', displayName: 'Locked', asksQuestions: true, questionsLocked: true, questionsDefault: true },
-    plain:  { key: 'plain', displayName: 'Plain' },
-  };
-  const rows = buildNodeConfigRows(wf, reg, { nodes: { a: { askQuestions: true } }, feedbacks: {} });
+  window.__np._setPalette(AGENTS);
+  const rows = window.__np.buildNodeConfigRows(WF, REGISTRY, { nodes: { a: { askQuestions: true } }, wires: {} });
+  assert.deepEqual(rows.map((r) => r.nodeId), ['a', 'b', 'c'], 'agent nodes only');
   assert.equal(rows[0].askQuestions, true, 'saved override wins for unlocked');
   assert.equal(rows[0].questionsLocked, false);
-  assert.equal(rows[1].askQuestions, true, 'locked follows manifest default');
+  assert.equal(rows[1].askQuestions, true, 'locked follows the sidecar default');
   assert.equal(rows[1].questionsLocked, true);
   assert.equal(rows[2].askQuestions, null, 'no capability => no checkbox');
+});
+
+// The node's composer default sits between the per-run overlay and the sidecar,
+// exactly as resolveGraph resolves it.
+test('buildNodeConfigRows: a node config askQuestions beats the sidecar default', async () => {
+  const { window } = await boot();
+  window.__np._setPalette(AGENTS);
+  const wf = { ...WF, nodes: WF.nodes.map((n) => (n.id === 'a' ? { ...n, config: { askQuestions: true } } : n)) };
+  let rows = window.__np.buildNodeConfigRows(wf, REGISTRY, { nodes: {}, wires: {} });
+  assert.equal(rows.find((r) => r.nodeId === 'a').askQuestions, true);
+  rows = window.__np.buildNodeConfigRows(wf, REGISTRY, { nodes: { a: { askQuestions: false } }, wires: {} });
+  assert.equal(rows.find((r) => r.nodeId === 'a').askQuestions, false, 'the per-run overlay still wins');
+});
+
+test('the painted rows reflect capability: editable, locked-disabled, absent', async () => {
+  const { window } = await boot({ fetchHandler: workflowFetch() });
+  selectProjectAnd(window);
+  await settle();
+  pickWorkflow(window, 'wf_q');
+  await settle();
+  const doc = window.document;
+  const a = doc.querySelector('#wf-node-config .step-questions[data-node-id="a"]');
+  assert.ok(a && !a.disabled && !a.checked, 'editable, off by default');
+  const b = doc.querySelector('#wf-node-config .step-questions[data-node-id="b"]');
+  assert.ok(b && b.disabled && b.checked, 'locked-on, not interactable');
+  assert.equal(
+    b.closest('.questions-toggle').title, 'Always on for this agent',
+    'the lock is explained on hover',
+  );
+  assert.equal(doc.querySelector('#wf-node-config .step-questions[data-node-id="c"]'), null,
+    'no capability => no checkbox at all');
+});
+
+test('toggling a node row posts askQuestions with the row model preserved', async () => {
+  const posts = [];
+  const base = workflowFetch();
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && opts && opts.method === 'PATCH') {
+      posts.push(JSON.parse(opts.body));
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] } }) });
+    }
+    return base(url, opts);
+  } });
+  selectProjectAnd(window);
+  await settle();
+  pickWorkflow(window, 'wf_q');
+  await settle();
+  const doc = window.document;
+  doc.querySelector('#wf-node-config .step-model[data-node-id="a"]').value = 'claude-opus-4-8';
+  const cb = doc.querySelector('#wf-node-config .step-questions[data-node-id="a"]');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick();
+  const body = posts.find((p) => p.nodes && p.nodes.a && 'askQuestions' in p.nodes.a);
+  assert.ok(body, 'PATCH /api/config fired');
+  assert.equal(body.workflowId, 'wf_q');
+  assert.equal(body.nodes.a.askQuestions, true);
+  assert.equal(body.nodes.a.model, 'claude-opus-4-8', 'row model preserved');
+  assert.equal(body.nodes.a.fanOut, undefined, 'fanOut omitted so the setter preserves it');
+});
+
+// Toggling questions must echo the LIVE selects, not state.config — state lags
+// one in-flight save, so echoing it can revert a model picked moments earlier.
+test('toggling questions sends the model currently shown in the select, not stale state', async () => {
+  const posts = [];
+  const base = workflowFetch({ workflows: { wf_q: { nodes: { a: { model: 'claude-opus-4-8' } }, wires: {} } } });
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && opts && opts.method === 'PATCH') {
+      posts.push(JSON.parse(opts.body));
+      // Respond with a STALE config (the pre-change model) so state.config lags.
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        config: { steps: {}, customModels: [], workflows: { wf_q: { nodes: { a: { model: 'claude-opus-4-8' } }, wires: {} } },
+        },
+      }) });
+    }
+    return base(url, opts);
+  } });
+  selectProjectAnd(window);
+  await settle();
+  pickWorkflow(window, 'wf_q');
+  await settle();
+  const doc = window.document;
+  // User picks a new model (select now shows it; state.config still has the old one)...
+  const modelSel = doc.querySelector('#wf-node-config .step-model[data-node-id="a"]');
+  modelSel.appendChild(new window.Option('New Model', 'my-new-model'));
+  modelSel.value = 'my-new-model';
+  // ...then immediately toggles Questions.
+  const cb = doc.querySelector('#wf-node-config .step-questions[data-node-id="a"]');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick();
+  const qPost = posts.find((p) => p.nodes && p.nodes.a && 'askQuestions' in p.nodes.a);
+  assert.ok(qPost, 'questions PATCH fired');
+  assert.equal(qPost.nodes.a.model, 'my-new-model', 'live select value sent, not stale state.config');
 });
 
 // Regression: a failing GET /api/config must NOT dead-end the whole form (the
 // live bug: a 500 left the static markup — Default-only dropdown, empty selects,
 // unconfigured Questions toggles). The workflow dropdown must still populate
-// from /api/workflows, and the capability-unknown questions toggles must hide.
-test('GET /api/config failure still populates the workflow dropdown and hides questions toggles', async () => {
+// from /api/workflows, and the error must be visible.
+test('GET /api/config failure still populates the workflow dropdown and surfaces the error', async () => {
   const { window } = await boot({ fetchHandler: (url, opts) => {
     if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
       return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'no such column: ask_questions' }) });
@@ -136,58 +239,22 @@ test('GET /api/config failure still populates the workflow dropdown and hides qu
     return null;
   } });
   selectProjectAnd(window);
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
+  await settle();
   const doc = window.document;
   const options = [...doc.querySelector('#workflowSelect').options].map((o) => o.textContent);
   assert.deepEqual(options, ['Default', 'My Custom Pipeline'], 'dropdown populated despite config failure');
-  for (const cb of doc.querySelectorAll('.step-questions[data-role]')) {
-    assert.equal(cb.closest('.questions-toggle').hidden, true, `${cb.dataset.role} toggle hidden when capability unknown`);
-  }
   const hint = doc.querySelector('#config-error');
   assert.equal(hint.hidden, false, 'error hint visible');
   assert.match(hint.textContent, /no such column: ask_questions/, 'hint carries the server error');
 });
 
-// The static markup must ship the questions toggles hidden: before ANY JS runs
-// (or when it fails), an interactable-looking checkbox would misrepresent
-// capability (refiner has none; clarify is locked-on).
-test('index.html ships the default-stage questions toggles hidden', () => {
+// Capability is known only once the rows are painted, so no questions toggle may
+// exist in the static markup — an interactable-looking checkbox before ANY JS
+// runs (or when it fails) would misrepresent it.
+test('index.html ships no questions toggles of its own', () => {
   const html = readFileSync(htmlPath, 'utf8');
-  const toggles = html.match(/class="fanout-toggle questions-toggle"[^>]*/g) || [];
-  assert.equal(toggles.length, 5, 'five static questions toggles');
-  for (const t of toggles) assert.match(t, /\bhidden\b/, `static toggle not hidden: ${t}`);
-});
-
-// Toggling questions must echo the LIVE selects, not state.config — state lags
-// one in-flight save, so echoing it can revert a model picked moments earlier.
-test('toggling questions sends the model currently shown in the select, not stale state', async () => {
-  const posts = [];
-  const { window } = await boot({ fetchHandler: (url, opts) => {
-    if (url.includes('/api/config') && opts && opts.method === 'POST') {
-      posts.push(JSON.parse(opts.body));
-      // Respond with a STALE config (the pre-change model) so state.config lags.
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({
-        config: { steps: { planner: { model: 'claude-opus-4-8' } }, customModels: [] },
-      }) });
-    }
-    return configFetch({ steps: { planner: { model: 'claude-opus-4-8' } } })(url, opts);
-  } });
-  selectProjectAnd(window);
-  await new Promise((r) => setTimeout(r, 0));
-  const doc = window.document;
-  // User picks a new model (select now shows it; state.config still has the old one)...
-  const modelSel = doc.querySelector('.step-model[data-role="planner"]');
-  modelSel.appendChild(new window.Option('New Model', 'my-new-model'));
-  modelSel.value = 'my-new-model';
-  // ...then immediately toggles Questions.
-  const cb = doc.querySelector('.step-questions[data-role="planner"]');
-  cb.checked = true;
-  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const qPost = posts.find((p) => 'askQuestions' in p);
-  assert.ok(qPost, 'questions POST fired');
-  assert.equal(qPost.model, 'my-new-model', 'live select value sent, not stale state.config');
+  assert.ok(!html.includes('questions-toggle'), 'every toggle is painted per node by app.js');
+  assert.ok(!html.includes('step-questions'), 'no static questions checkbox survives');
 });
 
 test('renderNodeRows: locked checkbox disabled; unsupported row has no checkbox', async () => {

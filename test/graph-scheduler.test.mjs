@@ -842,3 +842,92 @@ test('18 End withdraws a pending gate ask; a late answer is a no-op', async () =
   assert.equal(h.last().wires.w_in1.deliveries, 0);
   assert.deepEqual(h.scheduler.getState().ended, state.ended);
 });
+
+// ---------------------------------------------------------------------------
+// 19 — N concurrently-held gates across a pause/resume
+// ---------------------------------------------------------------------------
+
+test('19 both gates held in one drain survive the snapshot and are re-asked on resume', async () => {
+  const asked = [];
+  const first = harness({
+    template: orLoop(1, 1),                                        // allowance 0 on BOTH in-wires
+    ask: (q) => { asked.push(q); return new Promise(() => {}); },  // never answered — both stay held
+    script: {
+      n_impl: () => ({}),
+      n_a: () => ({ verdict: BLOCKING('a1'), outputs: { review: { path: '/p/rev-a1.md' } } }),
+      n_b: () => ({ verdict: BLOCKING('b1'), outputs: { review: { path: '/p/rev-b1.md' } } }),
+    },
+  });
+  const running = first.scheduler.run();
+  await tick();
+  assert.deepEqual(asked.map((q) => q.wireId).sort(), ['w_in1', 'w_in2'], 'both in-wires block in one drain');
+  first.scheduler.pause();
+  assert.equal(await running, 'paused');
+
+  const captured = first.last();
+  // The snapshot carries EVERY hold, each with its own blocking token — the
+  // singular `gate`/`ask` fields stay as the first hold for back-compat.
+  assert.deepEqual(captured.gates.map((g) => g.wireId).sort(), ['w_in1', 'w_in2']);
+  const byWire = Object.fromEntries(captured.gates.map((g) => [g.wireId, g]));
+  assert.equal(byWire.w_in1.token.path, '/p/rev-a1.md');
+  assert.equal(byWire.w_in2.token.path, '/p/rev-b1.md');
+  assert.deepEqual(captured.asks.map((a) => a.wireId).sort(), ['w_in1', 'w_in2']);
+  assert.equal(captured.asks.every((a) => a.kind === 'gate'), true);
+  assert.equal(captured.gate.wireId, 'w_in1');                     // legacy singular still written
+  assert.equal(captured.ask.wireId, 'w_in1');
+
+  // Resume: reattach re-asks every restored hold, and answering both delivers
+  // both held tokens — neither arm silently stalls to quiescence.
+  const reAsked = [];
+  const second = harness({
+    template: orLoop(1, 1),
+    snapshot: captured,
+    ask: async (q) => { reAsked.push(q); return 'another'; },
+    script: {
+      n_impl: () => ({}),
+      n_a: () => ({ verdict: CLEAN, outputs: {} }),
+      n_b: () => ({ verdict: CLEAN, outputs: {} }),
+    },
+  });
+  assert.equal(await second.scheduler.run(), 'done');
+  assert.deepEqual(reAsked.map((q) => q.wireId).sort(), ['w_in1', 'w_in2'], 'both holds re-ask');
+  assert.equal(second.last().wires.w_in1.deliveries, 1);
+  assert.equal(second.last().wires.w_in2.deliveries, 1, 'the second held token is delivered, not lost');
+  assert.equal(second.callsFor('n_impl').length, 1);               // c2 only — c1 is terminal
+  assert.equal(second.callsFor('n_impl')[0].ordinal, 2);
+  assert.deepEqual(second.last().gates, []);                       // both answered
+});
+
+test('19b a legacy single-gate resume point still restores its hold', async () => {
+  const asked = [];
+  const first = harness({
+    template: orLoop(1, 1),
+    ask: (q) => { asked.push(q); return new Promise(() => {}); },
+    script: {
+      n_impl: () => ({}),
+      n_a: () => ({ verdict: BLOCKING('a1'), outputs: { review: { path: '/p/rev-a1.md' } } }),
+      n_b: () => ({ verdict: CLEAN, outputs: {} }),
+    },
+  });
+  const running = first.scheduler.run();
+  await tick();
+  first.scheduler.pause();
+  assert.equal(await running, 'paused');
+
+  // A resume point written by the pre-plural build: singular `gate`, no `gates`.
+  const legacy = { ...first.last() };
+  delete legacy.gates;
+  delete legacy.asks;
+  assert.equal(legacy.gate.wireId, 'w_in1');
+
+  const reAsked = [];
+  const second = harness({
+    template: orLoop(1, 1),
+    snapshot: legacy,
+    ask: async (q) => { reAsked.push(q); return 'another'; },
+    script: { n_impl: () => ({}), n_a: () => ({ verdict: CLEAN, outputs: {} }), n_b: () => ({ verdict: CLEAN, outputs: {} }) },
+  });
+  assert.equal(await second.scheduler.run(), 'done');
+  assert.deepEqual(reAsked.map((q) => q.wireId), ['w_in1']);
+  assert.equal(second.last().wires.w_in1.deliveries, 1);
+});

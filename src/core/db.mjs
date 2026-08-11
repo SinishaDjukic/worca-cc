@@ -21,6 +21,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -51,7 +52,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 18;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -247,15 +248,17 @@ CREATE TABLE pipelines (
   prompt          TEXT,
   branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
-  stepper         TEXT,  -- JSON: buildStepperManifest() snapshot
+  stepper         TEXT,  -- JSON: buildGraphManifest() snapshot (v2 run manifest)
   tools           TEXT   -- JSON: detectTools()/resolved tool descriptor
   -- resume_point TEXT (added v5): JSON dispatch position of a paused run (NULL otherwise)
+  -- outcome TEXT (added v18): JSON { endReached, result, warnings } — the run's
+  --   Amendment-f outcome, which History renders as the End result card + banner
 );
 CREATE INDEX idx_pipelines_project_started   ON pipelines (project_key, started_at);
 CREATE INDEX idx_pipelines_workspace_started ON pipelines (workspace_key, started_at);
 CREATE INDEX idx_pipelines_status            ON pipelines (status);
 
--- pipeline_steps: one row per state.steps[] entry (orchestrator _nodeStep/
+-- pipeline_steps: one row per state.steps[] entry (orchestrator _execStep/
 -- _recordStep). key is the stable step key "<stepIndex>:<nodeId>[#cycle]".
 -- running_since is the resume timestamp (null when paused); active_ms accumulates.
 CREATE TABLE pipeline_steps (
@@ -272,6 +275,9 @@ CREATE TABLE pipeline_steps (
   running_since TEXT,
   cost_usd      REAL NOT NULL DEFAULT 0,
   -- session_id TEXT (added v5): Claude Code session id from the stream-json init event
+  -- exec_result / exec_trigger TEXT (added v18): JSON — the execution's bound End
+  --   payload and its firing trigger, so a frozen run's ledger keeps its result
+  --   card anchor and its "cycle 2 · fix" row labels
   PRIMARY KEY (pipeline_id, key),
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
@@ -537,6 +543,20 @@ CREATE TABLE IF NOT EXISTS cost_ledger (
 CREATE INDEX IF NOT EXISTS idx_cost_ledger_ts ON cost_ledger (ts);
 `;
 
+/** v17: per-WIRE loop budgets, the graph engine's replacement for
+ *  config_workflow_feedbacks (which becomes unread legacy). Keyed by v2 wire id;
+ *  no foreign key, exactly like the feedbacks table it succeeds — a template can
+ *  be re-seeded or deleted without dropping a project's overlays on the floor. */
+const CONFIG_WORKFLOW_WIRES_DDL = `
+CREATE TABLE IF NOT EXISTS config_workflow_wires (
+  workflow_id TEXT,
+  project_key TEXT,
+  wire_id     TEXT,
+  max_cycles  INTEGER,
+  PRIMARY KEY (workflow_id, project_key, wire_id)
+);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -556,17 +576,22 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT' },
-  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
+                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
+                            outcome: 'TEXT' },
+  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
+                            execution_id: 'TEXT', exec_result: 'TEXT', exec_trigger: 'TEXT' },
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
-  workflows:              { domain: 'TEXT', origin: 'TEXT' },
+  workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER' },
 };
 
 /**
  * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the
- * live schema, plus `stepQuestionsTable`/`guardrailSetsTable: true` flags when
- * those IF-NOT-EXISTS tables are missing (safe to reassert on any stamped DB).
+ * live schema, plus `stepQuestionsTable`/`guardrailSetsTable`/`costLedgerTable`/
+ * `workflowWiresTable: true` flags when those IF-NOT-EXISTS tables are missing
+ * (safe to reassert on any stamped DB). A new flag needs FOUR coordinated edits:
+ * its DDL const, the probe here, the repairSchemaGaps arm, and reconcileSchema's
+ * clean check — miss the last and the fast path never heals it.
  * Cheap and read-only: one PRAGMA table_info per known table + one sqlite_master
  * probe each, no writes. A table absent from INCREMENTAL_COLUMNS' map (table_info
  * returns []) is skipped — creating base tables is the version ladder's job.
@@ -589,11 +614,15 @@ function schemaGaps(db) {
   const hasCostLedger = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
   ).get().n > 0;
+  const hasWorkflowWires = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='config_workflow_wires'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
     guardrailSetsTable: !hasGuardrailSets,
     costLedgerTable: !hasCostLedger,
+    workflowWiresTable: !hasWorkflowWires,
   };
 }
 
@@ -606,6 +635,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
   if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
   if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
+  if (gaps.workflowWiresTable) db.exec(CONFIG_WORKFLOW_WIRES_DDL);
 }
 
 /**
@@ -622,7 +652,7 @@ function repairSchemaGaps(db, gaps) {
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable) return; // clean — no lock
+      && !gaps.costLedgerTable && !gaps.workflowWiresTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -725,6 +755,206 @@ function applySchemaV16(db) {
   }
 }
 
+/** V17's audit trail. The ladder is otherwise silent, but v17 REWRITES and DELETES
+ *  user-owned rows, so every mutation names itself. stderr, not stdout: stdout is
+ *  the UI's channel. Logging must never be able to break a migration. */
+function auditV17(msg) {
+  try { console.warn(`[worca] V17: ${msg}`); } catch { /* never let logging itself throw */ }
+}
+
+/** Flow cards a loop wire can terminate on instead of its real receiver. */
+const V17_VALVE_KINDS = new Set(['and', 'or', 'combine']);
+
+/**
+ * The agent node a v2 wire ultimately feeds. The double-loop seeds fan their two
+ * blocking wires into an OR valve whose single out-wire carries the payload on to
+ * `implementer.fix`, so a v1 feedback's `to` step names the valve's DOWNSTREAM
+ * target, never the valve. Null when the chain is ambiguous (a valve with zero or
+ * several out-wires) or implausibly deep — the caller then falls back to the map.
+ */
+function v17WireTarget(graph, kindById, wire) {
+  let node = wire.to.node;
+  for (let hop = 0; V17_VALVE_KINDS.has(kindById.get(node)); hop++) {
+    if (hop > 4) return null;
+    const outs = graph.wires.filter((w) => w.from.node === node);
+    if (outs.length !== 1) return null;
+    node = outs[0].to.node;
+  }
+  return node;
+}
+
+/**
+ * Resolve one v1 feedback to its v2 wire id DYNAMICALLY: map its from/to STEP ids
+ * through NODE_ID_MAP, then pick the template's UNIQUE maxCycles-bearing wire whose
+ * source node and valve-followed target match that pair (a self-loop when the two
+ * coincide). Null when nothing matches uniquely. This is what makes the migration
+ * self-correcting: the live fb ORDER is only partially observable, but the (from,to)
+ * pair a user's overlay rides on is not — so FB_WIRE_MAP is the pinned expectation
+ * and this is the authority.
+ */
+function v17ResolveWireId(graph, nodeMap, fb) {
+  const from = nodeMap[fb?.from];
+  const to = nodeMap[fb?.to];
+  if (!from || !to) return null;
+  const kindById = new Map(graph.nodes.map((n) => [n.id, n.kind]));
+  const hits = graph.wires.filter((w) => w.config?.maxCycles != null
+    && w.from.node === from && v17WireTarget(graph, kindById, w) === to);
+  return hits.length === 1 ? hits[0].id : null;
+}
+
+/**
+ * v16 -> v17 (node-graph engine swap, spec §8). Gap-repair first, v12-v16 style —
+ * `workflows.graph` / `pipeline_steps.execution_id` live in INCREMENTAL_COLUMNS and
+ * `config_workflow_wires` in the schemaGaps flags, so a divergent stamp can sit at
+ * 16 with any subset of them already present. Then the DATA work, in order:
+ *
+ *  1. RE-SEED: every saved template still at version 1 becomes a version-2 row whose
+ *     `graph` column is the FULL FLAT template ({id,name,version,domain,createdAt,
+ *     nodes,wires}), so the column parses straight back into a validateGraph-ready
+ *     object; the row's own id/name/domain columns stay authoritative on read.
+ *     `created_at` and `origin` are preserved. Ids ABSENT from the DB are skipped —
+ *     only 5 of the 7 exist in the reference DB, and v17 is not a seeder.
+ *  2. OVERLAY migration: config_workflow_nodes.node_id rewrites, then the per-loop
+ *     budgets move from config_workflow_feedbacks into config_workflow_wires keyed
+ *     by the RESOLVED wire id. Both cover the 7 templates AND the wf_default builtin.
+ *     Unmapped node rows stay orphaned (resolveGraph ignores unknown node ids) and
+ *     config_workflow_feedbacks becomes unread legacy rather than being dropped.
+ *  3. DELETE the remaining version-1 rows — after the re-seed those are only the
+ *     un-migratable leftovers (e.g. `wfp_*` plugin imports), one audit line each.
+ *
+ * The feedback topology is SNAPSHOT before step 1 because the re-seed blanks the
+ * `feedbacks` column the resolver reads its (from,to) step ids from.
+ */
+function applySchemaV17(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  const hasTable = (name) => db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(name).n > 0;
+  const wfCols = new Set(db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name));
+  // A hand-built or divergent DB (minimal test seeds, v12/v13-era shapes) can reach
+  // this step with a workflows table that never carried the v1 topology columns.
+  // Such a DB has no saved templates to re-seed, so both row rewrites sit this out.
+  const canReseed = ['version', 'graph', 'steps', 'feedbacks', 'updated_at']
+    .every((c) => wfCols.has(c));
+
+  const v1Feedbacks = new Map();
+  if (canReseed) {
+    for (const r of db.prepare('SELECT id, feedbacks FROM workflows WHERE version = 1').all()) {
+      try { v1Feedbacks.set(r.id, JSON.parse(r.feedbacks ?? '[]')); } catch { v1Feedbacks.set(r.id, []); }
+    }
+    const now = new Date().toISOString();
+    const reseed = db.prepare(`UPDATE workflows SET version = 2, graph = ?, steps = '[]',
+      feedbacks = '[]', updated_at = ? WHERE id = ? AND version = 1`);
+    for (const t of SEED_TEMPLATES) {
+      if (reseed.run(JSON.stringify(t), now, t.id).changes > 0) {
+        auditV17(`re-seeded saved workflow ${t.id} ("${t.name}") as a v2 graph`);
+      }
+    }
+  }
+
+  if (hasTable('config_workflow_nodes')) {
+    const rename = db.prepare(
+      'UPDATE config_workflow_nodes SET node_id = ? WHERE workflow_id = ? AND node_id = ?');
+    for (const [workflowId, map] of Object.entries(NODE_ID_MAP)) {
+      for (const [oldId, newId] of Object.entries(map)) rename.run(newId, workflowId, oldId);
+    }
+  }
+
+  if (hasTable('config_workflow_feedbacks') && hasTable('config_workflow_wires')) {
+    const graphs = new Map(SEED_TEMPLATES.map((t) => [t.id, t]));
+    const move = db.prepare(`INSERT OR REPLACE INTO config_workflow_wires
+      (workflow_id, project_key, wire_id, max_cycles)
+      SELECT workflow_id, project_key, ?, max_cycles
+      FROM config_workflow_feedbacks WHERE workflow_id = ? AND fb_id = ?`);
+    for (const [workflowId, map] of Object.entries(FB_WIRE_MAP)) {
+      const graph = graphs.get(workflowId);
+      const nodeMap = NODE_ID_MAP[workflowId] ?? {};
+      const fbs = v1Feedbacks.get(workflowId);
+      for (const [fbId, pinned] of Object.entries(map)) {
+        // No row to read the topology from (wf_default is a builtin, and a template
+        // the user never saved has no feedbacks): the pinned id IS the answer.
+        const fb = Array.isArray(fbs) ? fbs.find((f) => f?.id === fbId) : null;
+        const resolved = graph && fb ? v17ResolveWireId(graph, nodeMap, fb) : null;
+        let wireId = pinned;
+        if (resolved && resolved !== pinned) {
+          wireId = resolved; // the resolver wins — the (from,to) pair is the ground truth
+          auditV17(`${workflowId}.${fbId} resolves to wire ${resolved} but FB_WIRE_MAP pins ${pinned} — using ${resolved}`);
+        } else if (!resolved && fb) {
+          auditV17(`${workflowId}.${fbId} (${fb.from} -> ${fb.to}) matched no unique loop wire — using pinned ${pinned}`);
+        }
+        move.run(wireId, workflowId, fbId);
+      }
+    }
+  }
+
+  if (canReseed) {
+    const doomed = db.prepare('SELECT id, name FROM workflows WHERE version = 1').all();
+    if (doomed.length > 0) {
+      db.exec('DELETE FROM workflows WHERE version = 1');
+      for (const r of doomed) auditV17(`deleted un-migratable v1 workflow ${r.id} ("${r.name}")`);
+    }
+  }
+
+  sweepV1PausedRuns(db);
+}
+
+/** The reason stamped on a v1-paused run the graph engine cannot re-enter. */
+export const V17_PAUSE_SWEEP_REASON = 'paused before the graph engine rework — not resumable';
+
+/**
+ * The startup sweep of runs that paused on the v1 dispatcher. Their resume point
+ * describes a step-array position (`version: 1`) the graph engine has no way to
+ * re-enter, and `paused` is the ONE status the liveness reconciler never touches —
+ * so without this they would sit "resumable" forever and fail at the click.
+ * Marking them `interrupted` keeps them visible, deletable and honest, and stamps
+ * the reason into the point itself so resume()'s refusal can explain it.
+ *
+ * Runs inside the V17 ladder step AND again from the UI's boot maintenance
+ * (ui/server.mjs), because the ladder fires only for a DB stamped below 17 — a
+ * tree whose DB was migrated by another checkout would otherwise never be swept.
+ * Idempotent: a v2 point is skipped, and a swept row is no longer `paused`.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db  an open handle (the migration's
+ *        own, mid-transaction; or getDb()'s singleton at boot)
+ * @returns {number} how many rows were flipped to `interrupted`
+ */
+export function sweepV1PausedRuns(db) {
+  // A divergent/minimal seed can reach v17 with a pipelines table that never
+  // carried `status` or `resume_point` — it has no paused v1 run to sweep either.
+  const cols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  if (!cols.has('resume_point') || !cols.has('status')) return 0;
+  const rows = db.prepare(
+    "SELECT id, resume_point FROM pipelines WHERE status = 'paused' AND resume_point IS NOT NULL").all();
+  const mark = db.prepare(
+    "UPDATE pipelines SET status = 'interrupted', resume_point = ? WHERE id = ?");
+  let swept = 0;
+  for (const r of rows) {
+    let rp;
+    try { rp = JSON.parse(r.resume_point); } catch { rp = null; }
+    if (rp && Number(rp.version) === 2) continue;          // already a graph point
+    const stamped = { ...(rp && typeof rp === 'object' ? rp : {}), pauseReason: V17_PAUSE_SWEEP_REASON };
+    mark.run(JSON.stringify(stamped), r.id);
+    auditV17(`run ${r.id}: ${V17_PAUSE_SWEEP_REASON} — marked interrupted`);
+    swept += 1;
+  }
+  return swept;
+}
+
+/**
+ * v17 -> v18 (Amendment f run outcome): pipelines.outcome holds the run's
+ * `{ endReached, result, warnings }` and pipeline_steps.exec_result /
+ * exec_trigger hold the per-execution End payload and trigger. Without them the
+ * End result card, the quiescence banner and the `cycle 2 · fix` row labels are
+ * live-only and vanish from History on reload. A CONDITIONAL repair like
+ * v12-v16 — the three columns live in INCREMENTAL_COLUMNS, so a ladder pass
+ * from <12 has already added them and an unconditional ALTER would throw
+ * "duplicate column". Pre-upgrade rows read back as the pre-Amendment-f
+ * defaults (endReached false, no result, no warnings), which is exactly what a
+ * v1 run was.
+ */
+function applySchemaV18(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
@@ -773,6 +1003,8 @@ export function migrate(db) {
     if (current < 14) applySchemaV14(db);
     if (current < 15) applySchemaV15(db);
     if (current < 16) applySchemaV16(db);
+    if (current < 17) applySchemaV17(db);
+    if (current < 18) applySchemaV18(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

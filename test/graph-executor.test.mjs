@@ -16,7 +16,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { FIXTURE_DEFAULT, FIXTURE_FLOW, FIXTURE_PORTS, portsFnFor } from '../src/core/graph/fixtures.mjs';
 import { planPath, reviewPath, readStepQuestions, readClarifyRow } from '../src/core/artifacts.mjs';
-import { renderPromptArtifact } from '../src/core/channels.mjs';
+import { renderPromptArtifact } from '../src/core/phases.mjs';
 import { MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import {
   allocateOutputs,

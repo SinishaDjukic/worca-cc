@@ -1,36 +1,43 @@
 # Worca CC
 
-A **deterministic multi-agent pipeline** that drives Claude Code (headless) through
-**Plan -> Refine -> Implement -> Review** for a software task. It ships three ways to
-run the same pipeline: a **CLI**, an installable **`/worca` skill**, and a **web
-UI**.
+A **deterministic multi-agent pipeline** that drives Claude Code (headless) through a
+**graph of agents** for a software task. You wire the graph; the engine runs it. It
+ships three ways to run the same pipeline: a **CLI**, an installable **`/worca`
+skill**, and a **web UI**.
 
 Plain Node.js ESM (`.mjs`), **Node `>=22.13.0`** — required by the built-in
 `node:sqlite` store (flag-free from Node v22.13 LTS / v23.4+). Minimal dependencies:
 `express` + `ws` only. The frontend is vanilla HTML/CSS/JS — no framework, no build step.
 
-> The full, binding contract for every module, event, and on-disk file lives in
-> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Read it before changing any signature.
-
 ---
 
 ## What it is
 
-You give the orchestrator a **project folder** and a **prompt** (or a markdown brief).
-A deterministic state machine then runs the agents of the selected workflow in sequence, looping until the work
-clears quality gates:
+You give the orchestrator a **project folder** and a **prompt** (or a markdown brief),
+and pick a **pipeline** — a saved graph of agent nodes wired together. The engine is
+fully generic: it knows nothing about any particular agent. It reads each node's
+**typed ports** off that agent's metadata sidecar and fires a node as soon as its
+inputs are satisfied, so the graph you drew *is* the control flow.
 
-1. **Planner** writes an initial plan (with code snippets) and, instead of *assuming*
-   anything, asks you conceptual questions — each with **2–4 options plus a free-text
-   field**. The Q&A is appended to the plan so reviewers see it.
-2. **Plan Refiner** reviews the plan (including its code snippets), writes a refined
-   `-v2`, `-v3`, ... and re-runs until only minor/suggestion issues remain (or you
-   approve continuing past the cycle cap).
-3. **Implementer** follows the latest plan with no deviation, using TDD
+The shipped default graph reproduces the classic sequence — **Clarify -> Plan ->
+Refine -> Implement -> Review** — with the refiner looping on itself and the reviewer
+looping back into the implementer until neither reports a `critical`/`major` issue:
+
+1. **Clarify** asks conceptual questions — each with **2–4 options plus a free-text
+   field** — instead of *assuming* anything. The Q&A is appended to the plan.
+2. **Planner** writes an initial plan with code snippets.
+3. **Plan Refiner** reviews the plan (including its snippets), writes a refined `-v2`,
+   `-v3`, ... and re-runs until only minor/suggestion issues remain (or you approve
+   continuing past the cycle cap).
+4. **Implementer** follows the latest plan with no deviation, using TDD
    (red-green-refactor).
-4. **Code Reviewer** reviews the git diff, writes a review, and hands back to the
-   implementer to fix — looping Implement -> Review until only minor/suggestion issues
-   remain (or you approve continuing past the cap).
+5. **Code Reviewer** reviews the git diff, writes a review, and hands back to the
+   implementer to fix — looping until only minor/suggestion issues remain (or you
+   approve continuing past the cap). Its clean review lands on the **End** node,
+   whose payload is the run's result.
+
+Swap, delete, or re-wire any of those nodes in the Composer and the engine follows
+without a code change.
 
 Run state, history, and configuration are saved in a single **SQLite database**
 (`~/.worca-cc/worca-cc.db`, via the built-in `node:sqlite`), while the agents' **markdown**
@@ -80,9 +87,9 @@ npm run cli -- --project /path/to/your/project --file ./brief.md --title "Search
 ```
 
 Useful flags: `--model <m>`,
-`--permission-mode <m>`, `--yes`/`--non-interactive` (auto-answer clarify with the
-first option and gates with "continue"). See `docs/ARCHITECTURE.md` §4.1 for the full
-list.
+`--permission-mode <m>`, `--workflow <id>` (pick a saved pipeline; default
+`wf_default`), `--yes`/`--non-interactive` (auto-answer clarify with the first option
+and gates with "continue"). Run `worca --help` for the full list.
 
 ### Web UI
 
@@ -94,8 +101,7 @@ Then open the printed URL (default `http://localhost:4317`). The UI lets you:
 
 - start a run from a **prompt or markdown document**, pointed at any **project folder**,
   with optional extra files;
-- watch a **steps tracker** (preflight / plan / refine #N / implement / review #N /
-  done);
+- watch the **run graph** light up node by node, with per-node cycle counts;
 - answer **clarify questions** (2–4 options + free text) and **loop gates** ("Don't have
   another cycle and continue" / "I approve another cycle", with the open critical/major
   issues shown);
@@ -168,57 +174,113 @@ Set `WORCA_MOCK=1` (or pass `--mock`) on any run to use the mock path.
 
 | Agent | File | Role |
 | --- | --- | --- |
-| Planner | `agents/worca-cc-planner.md` | Initial plan with code snippets; asks conceptual questions (2–4 options + free text) instead of assuming; appends Q&A to the plan. |
+| Clarify | `agents/worca-cc-clarify.md` | Asks conceptual questions (2–4 options + free text) before anything is assumed; emits the answers as JSON. |
+| Planner | `agents/worca-cc-planner.md` | Initial plan with code snippets; folds the clarify answers into a Q&A section. |
 | Plan Refiner | `agents/worca-cc-plan-refiner.md` | Reviews + refines the plan (and its code snippets); writes `-vN`; emits a severity-tagged review per cycle. |
 | Plan Review | `agents/worca-cc-plan-reviewer.md` | Reviews the plan (without rewriting it); writes review markdown + JSON; on blocking issues bounces back to the planner for a cold re-plan. |
+| Decomposer | `agents/worca-cc-decomposer.md` | Splits a plan into independent task files; its output **fans the implementer out** into one node run per task. |
 | Implementer | `agents/worca-cc-implementer.md` | Follows the latest plan with no deviation; TDD red-green-refactor; also runs in "fix" mode against a review. |
 | Code Reviewer | `agents/worca-cc-code-reviewer.md` | Reviews the git diff; writes review markdown + JSON; hands back to the implementer to fix. |
+| Manual Tests Checklist | `agents/worca-cc-manual-tests-checklist.md` | Drafts manual test cases from the plan and the implemented diff. |
+| Manual web UI testing | `agents/worca-cc-manual-web-ui-testing.md` | Runs that checklist against the live web UI via Playwright; emits a pass/fail verdict. |
+| Workspace Scan | `agents/worca-cc-workspace-scanner.md` | Off-pipeline: describes how a workspace's member repos interconnect. |
+| Workspace Review | `agents/worca-cc-workspace-reviewer.md` | Reviews a change across every member repo of a workspace run. |
 
-Worca CC now ships **7 runnable agents** and the agent system is **data-driven**:
-each agent is a prompt (`agents/worca-cc-<role>.md`) plus a metadata sidecar
-(`agents/<key>.meta.json`), so new agents drop in without engine edits. Beyond
-the five above, it adds **Manual Tests Checklist** (drafts manual test cases) and
-**Manual web UI testing** (runs them against the live web UI via Playwright and
-emits a pass/fail verdict). To add your own, see
-[`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
+Worca CC ships **11 agents** and the agent system is **data-driven**: an agent is a
+prompt (`agents/worca-cc-<role>.md`) plus a metadata sidecar (`agents/<key>.meta.json`)
+that declares its **typed ports** and its capability flags. The engine never names an
+agent — it reads ports. Dropping a new sidecar in adds a node to the palette with no
+core edit, and the **Agents** view in the web UI writes one for you.
+
+Capabilities a sidecar can declare (all optional): `verdict` (emit a severity-tagged
+review JSON, which unlocks conditional `blocking`/`clean` outputs), `sideEffect: 'code'`
+(the node writes to the working tree), `wantsRequest` (inject the original request text),
+`fanOut` (spawn parallel sub-agents), `workspaceFanOut` / `workspaceStrategy` (how the
+node behaves on a multi-repo workspace run), `askQuestions` (ask-then-resume mid-run),
+and `placeable: false` (usable by the engine, hidden from the palette).
 
 ---
 
-## The phases and loops
+## The pipeline model
 
-- **Clarify** — planner asks one round of conceptual questions (up to four) before
-  planning; answers are persisted and appended to the plan.
-- **Refine loop** — Refiner runs repeatedly. It stops when no `critical`/`major` issues
-  remain. Past the loop's **max cycles** (default 3) it asks you to **continue** or approve
-  **another** cycle, escalating indefinitely.
-- **Review loop** — Reviewer -> Implementer(fix) -> Reviewer ... stops when no
-  `critical`/`major` issues remain. Past the loop's **max cycles** (default 3) it asks the
-  same continue/another gate.
+A pipeline is a **directed graph**, not a list of phases. It has three kinds of parts.
 
-Each feedback loop's max-cycle count is set per loop in the New Pipeline window's
-**Pipeline configuration** (default 3), not via a CLI flag.
+**Nodes.** An **agent node** runs one agent. Five **flow cards** carry no agent:
 
-A run is "blocked" only by `critical` or `major` issues; `minor`/`suggestion` issues do
-not hold up the loop.
+| Card | What it does |
+| --- | --- |
+| **Task** | The source. Holds the user's prompt/brief; exactly one per pipeline. |
+| **End** | The sink. Exactly one per pipeline; whatever lands on its `result` input is the run's result. |
+| **AND** | Pure synchronizer. Fires once every one of its inputs is fresh; emits `void`. |
+| **OR** | Payload valve. Fires when *any* input is fresh and forwards that payload onward. |
+| **Combine** | Concatenates its markdown inputs into one document. |
 
-## Pipeline Composer
+**Ports.** Every node declares typed inputs and outputs — `md`, `json`, `any`, or
+`void`. A wire is legal only when the types agree (`any` accepts anything). Agents
+declare their ports in their sidecar; the flow cards get theirs from their kind. On
+top of its declared inputs, **every agent node also gets a universal `await` gate
+port**: wire anything into it and the node simply waits for that signal before
+running, without consuming a payload. That is how you sequence two nodes that
+exchange no artifact.
 
-The phases above are the **default** pipeline. The **Pipeline Composer** (a view
-in the web UI) lets you compose your own: drag agents onto a canvas to build
-**sequential steps**, **parallel groups** (a step with more than one agent runs
-concurrently), and **feedback loops** (an agent that emits a verdict can loop
-back to an earlier step until it passes or hits a cycle cap). Save a layout by
-name and it becomes selectable from **New Pipeline**, where you also pick each
-agent's model/effort and each loop's cycle count.
+**Wires.** An output may fan out to as many inputs as you like, but **every input
+accepts exactly one wire**. To fan *in*, drop an **OR** card: it takes N inputs and
+forwards whichever payload arrived most recently. That is why the loop templates
+route both the first-pass and the fix-pass edges through an OR rather than wiring two
+sources into the same input.
 
-The engine is data-driven: it executes whatever workflow you select. The default
-workflow reproduces exactly the `Plan → Refine → Implement → Review` behavior
-described above, and **Reset to default** on the canvas redraws it. Workflow topology and
-per-project model/effort/cycle choices are stored in the central SQLite database
-(`~/.worca-cc/worca-cc.db`) — no longer in `~/.worca-cc/workflows/` or
+A node fires when its required inputs are satisfied, so **the graph is the control
+flow** — there is no phase list to keep in sync. Loops are just cycles in the graph:
+an output marked `blocking` wired back into an input marked `loop` is a feedback edge,
+and its wire carries a **`maxCycles`** budget (default 3). When a loop hits its cap the
+run asks you to **continue** or approve **another** cycle. A run is blocked only by
+`critical` or `major` issues; `minor`/`suggestion` never hold up a loop.
+
+Before a pipeline can be saved or run it goes through one shared validator (rules
+**V1–V21**) covering id/type/wiring legality, cardinality, cycle liveness, deadlock
+freedom, and the Task/End bookends. Errors block the save; warnings (unreachable
+node, no-op `awaitAll`, unknown config key, double-fire risk, a blocking output wired
+into a non-loop input) are advisory.
+
+### Pipeline Composer
+
+The **Composer** (a view in the web UI) is where you draw that graph: drag agent
+pills and flow cards from the palette onto the canvas and connect ports. Save a
+layout by name and it becomes selectable from **New Pipeline**, where you also set the
+**run parameters** — per-node model and effort, per-node fan-out and ask-questions
+toggles, and each loop wire's cycle cap. Seven pipelines ship pre-drawn (Full, No
+Clarify, Provided Plan, FULL-NO-Decompose, Quick Fix, Clarify -> Implement, Clarify ->
+Quick Fix) alongside the default.
+
+Custom agents are first-class here: the **Agents** view writes a sidecar with your
+ports and capability flags, and it appears in the palette immediately — the engine
+needs no edit, because it only ever reads ports.
+
+Graph topology and per-project model/effort/cycle choices are stored in the central
+SQLite database (`~/.worca-cc/worca-cc.db`) — no longer in `~/.worca-cc/workflows/` or
 `<projectDir>/.worca-cc/config.json`.
 
-To add a new agent to the palette, see [`docs/ADDING-AGENTS.md`](docs/ADDING-AGENTS.md).
+### v2 changes
+
+Template v1 is removed **except** for the 7 re-seeded pipelines, which are now v2
+graphs with their overlays migrated. Plugin API is now **2**. **v1 paused runs are not
+resumable.**
+
+- Every pipeline now terminates in an **End** node, and its payload is the run result.
+  A run that quiesces without reaching End completes with a warning.
+- The **Await flow node is gone**, replaced by AND/OR cards plus the universal await
+  gate port on every agent — the old checklist `start` port is that await port now.
+- A template hand-edited to remove its End node fails validation (**V21**).
+- **Inputs take exactly one wire**; fan-in goes through the OR card, which forwards the
+  freshest payload. The old two-loops-into-fix templates are re-seeded with an OR.
+- **V22 is retired** — subsumed by the restored V7.
+- v1 **USER sidecars are soft-skipped** at load with a warning naming the fix (they need
+  `metaVersion: 2`). A `worca agents migrate` helper is a possible follow-up, not part
+  of this work.
+- Interleaved-loop **cycle filenames are now monotonic per node**. v1 reused cycle
+  numbers and silently overwrote `impl-review-cycle2.json` and the cycle-2 reviews row;
+  v2 ordinals append `cycle4`, `cycle5`, … (parity divergence D3, accepted as an
+  improvement).
 
 ---
 
@@ -382,20 +444,19 @@ Because state is machine-wide and keyed by repo identity, the web UI has an **"A
 projects"** view (and `GET /api/history`) that lists runs across every project on the
 machine — now backed by indexed SQL queries instead of a directory scan.
 
-The exact table contracts are specified in `docs/ARCHITECTURE.md` §5.
-
 ---
 
 ## Project structure
 
 ```
 src/core/        protocol, store, artifacts, preflight, claude-runner, phases, orchestrator
+src/core/graph/  the v2 engine: validate, ports, executor, scheduler, seed templates
 src/cli/         worca-cc.mjs (CLI entry)
 scripts/         install.mjs (copy agents + skill into a target project)
 agents/          agent prompts + .meta.json sidecars (data-driven set)
 skills/          worca/SKILL.md (the /worca skill)
 ui/              server.mjs + public/ (single-page web UI)
-docs/            ARCHITECTURE.md (single source of truth)
+ui/public/graph/ the Composer + run-graph client (graph-model, view, inspector)
 ```
 
 Generated plans, reviews, and pipeline run folders are **not** part of this repo: they

@@ -22,6 +22,25 @@
 // `rerunPending` coalescing is structural here: a node that is already running
 // is skipped in the walk, and readiness is re-evaluated after every completion,
 // so readiness reached while running re-fires exactly once and never queues.
+//
+// COMPOSITE (fan-out) EXECUTIONS. A fresh token on an `expands` input — and no
+// fresh loop trigger (A3) — turns one firing into a COMPOSITE execution: the
+// scheduler drives phases sequentially and each phase's tasks in parallel, all
+// recorded under the SAME node, and the node publishes ONCE at the end. Because
+// the scheduler does no IO and never reads an agent key, the four steps are asked
+// of the injected `execute` through a `composite` discriminator — one injection
+// point, four modes:
+//
+//   { …args, composite: 'expand', expandsPort }         -> { phases: [ { ordinal, tasks: [ { id, title?, path } ] } ] }
+//   { …args, composite: 'phase', phase, phaseStatus }   -> (ignored; status plumbing only)
+//   { …args, executionId: <slice>, kind: 'task', slice } -> an ordinary execution of one slice
+//   { …args, composite: 'finish', expandsPort, phases } -> { outputs } — the ONE publish
+//
+// `expand` returns absolute task paths (the caller owns the pipeline dir);
+// `phases: []` means "nothing to fan out" and downgrades the firing to one
+// ordinary execution with the expands input left UNBOUND. `finish` is where a
+// `sideEffect:'code'` consumer stages its worktree — after the LAST phase, so the
+// next node's diff sees every slice's files at once.
 import { blockingIssues } from '../protocol.mjs';
 import { classifyLoops, firedOutputs, isReady, makeToken, resolveOrOutType } from './ports.mjs';
 
@@ -30,6 +49,22 @@ const FLOW_KINDS = new Set(['task', 'end', 'and', 'or', 'combine']);
 /** Execution statuses that need no re-invocation on restore. */
 const TERMINAL = new Set(['done', 'error', 'skipped']);
 const DEFAULT_MAX_CYCLES = 3;
+
+/**
+ * The execution id of one composite sub-execution: the parent's id plus the
+ * manifest task id (`x:n_impl:1:p1t1`). Deterministic on purpose — a resumed
+ * composite re-mints the SAME ids, so its ledger entries overwrite rather than
+ * accumulate, and the id is derivable by anyone holding the parent's.
+ * @param {string} parentExecutionId
+ * @param {string} taskId
+ */
+export function sliceExecutionId(parentExecutionId, taskId) {
+  return `${parentExecutionId}:${taskId}`;
+}
+
+/** An abort rejection — a sibling cancelled by a phase-mate's failure, or the
+ *  whole run going down. Never counted as the FIRST genuine failure. */
+const isAbortError = (err) => err?.name === 'AbortError';
 
 /**
  * Build a scheduler over a resolved v2 template.
@@ -117,6 +152,24 @@ export function createScheduler(opts) {
     signalled = false;
   }
 
+  // --- the agent semaphore -------------------------------------------------
+  // A counting semaphore with a FIFO waiter queue. `drainPasses` POLLS it before
+  // launching a node; composite slices AWAIT it, because they are launched from
+  // inside an already-running execution rather than from the walk. The composite
+  // SHELL deliberately holds no slot (it spawns nothing), which is also what keeps
+  // a fan-out from deadlocking behind itself at maxParallel 1.
+  const slotQueue = [];
+  function takeSlot() {
+    if (activeAgents < maxParallel) { activeAgents += 1; return Promise.resolve(); }
+    return new Promise((resolve) => { slotQueue.push(resolve); });
+  }
+  function freeSlot() {
+    const next = slotQueue.shift();
+    if (next) { next(); return; }           // handed straight over: the count is unchanged
+    activeAgents -= 1;
+    wake();                                 // a freed slot may unblock a queued node launch
+  }
+
   // --- small helpers -------------------------------------------------------
   const portsOf = (node) => (typeof portsFn === 'function' ? portsFn(node) : null) || {};
   const isFlow = (node) => FLOW_KINDS.has(node.kind);
@@ -138,6 +191,11 @@ export function createScheduler(opts) {
       ordinal: entry.ordinal,
       status,
       agentKey: node.kind === 'agent' ? (node.key ?? null) : null,   // flow rows carry none
+      // Composite sub-executions carry their slice identity; the UI collapses them
+      // under the node and labels them by title (run-decor's kind:'task' arm).
+      ...(entry.kind === 'task'
+        ? { phase: entry.phase, taskId: entry.taskId, title: entry.title }
+        : null),
       ...(status === 'start' ? { trigger: entry.trigger } : null),
       ...(extra || null),
     });
@@ -208,6 +266,23 @@ export function createScheduler(opts) {
 
   // --- launching -----------------------------------------------------------
 
+  /**
+   * The FRESH `expands` input that makes this firing COMPOSITE, or null.
+   *
+   * A3, parity-mandatory: a fresh LOOP input wins outright — a fix-cycle re-fire
+   * runs ONE ordinary execution on the combined diff, which is v1's `!bus.review`
+   * arm of the same guard. A latched expands token never fans out again either,
+   * because only FRESH ports are considered.
+   */
+  function expandsTrigger(node, b) {
+    if (isFlow(node)) return null;
+    const inputs = portsOf(node).inputs || [];
+    const fresh = new Set(b.trigger.freshPorts || []);
+    if (inputs.some((inp) => inp?.loop && fresh.has(inp.id))) return null;
+    const port = inputs.find((inp) => inp?.expands && fresh.has(inp.id) && b.bindings[inp.id]);
+    return port ? port.id : null;
+  }
+
   function startExecution(node) {
     const ordinal = (ordinals.get(node.id) || 0) + 1;
     const executionId = `x:${node.id}:${ordinal}`;
@@ -224,10 +299,17 @@ export function createScheduler(opts) {
       bindings: b.bindings,
       trigger: b.trigger,
     };
+    const expandsPort = expandsTrigger(node, b);
+    if (expandsPort) entry.expandsPort = expandsPort;
     execs.set(executionId, entry);
     running.set(node.id, executionId);
     emitExec(node, entry, 'start');
-    return { node, entry, args: argsFor(node, entry) };
+    return { node, entry, args: argsFor(node, entry), composite: !!expandsPort };
+  }
+
+  /** Run one started execution: the composite driver, or the plain injected call. */
+  function invoke(h) {
+    return h.composite ? runComposite(h) : execute(h.args);
   }
 
   function argsFor(node, entry) {
@@ -252,12 +334,13 @@ export function createScheduler(opts) {
     settle(h, res, err);
   }
 
-  /** Agent nodes take a semaphore slot; `execute` is called AT the slot. */
+  /** Agent nodes take a semaphore slot; `execute` is called AT the slot. A
+   *  composite shell takes none — its slices each take one instead. */
   function fireAgent(node) {
     const h = startExecution(node);
-    activeAgents += 1;
+    if (!h.composite) activeAgents += 1;
     let p;
-    try { p = execute(h.args); } catch (err) { p = Promise.reject(err); }
+    try { p = invoke(h); } catch (err) { p = Promise.reject(err); }
     Promise.resolve(p).then(
       (res) => { completions.push({ h, res, err: null }); wake(); },
       (err) => { completions.push({ h, res: null, err }); wake(); },
@@ -266,7 +349,7 @@ export function createScheduler(opts) {
 
   function settle(h, res, err) {
     running.delete(h.node.id);
-    if (!isFlow(h.node)) activeAgents -= 1;
+    if (!isFlow(h.node) && !h.composite) freeSlot();
     if (err || res?.error) failExecution(h, err || res.error);
     else completeExecution(h, res || {});
   }
@@ -288,6 +371,137 @@ export function createScheduler(opts) {
     failure = err;
     controller.abort();                       // fail-fast aborts everything in flight
     snap();
+  }
+
+  // --- composite (fan-out) executions --------------------------------------
+
+  /**
+   * Drive ONE composite execution of `h.node` (see the protocol in this file's
+   * header). Phases run in order, each phase's tasks in parallel under the
+   * semaphore, and the single value returned here is what the node PUBLISHES —
+   * so its outputs fire exactly once, after the last phase, never once per task.
+   *
+   * Pause/abort is checked at every phase boundary. A halted run returns the
+   * empty publish (mirroring an execution that unwound as paused) and never calls
+   * `finish`, so no worktree is staged and no phase is falsely marked done.
+   */
+  async function runComposite(h) {
+    const portId = h.entry.expandsPort;
+    const expanded = await execute({ ...h.args, composite: 'expand', expandsPort: portId });
+    const phases = Array.isArray(expanded?.phases) ? expanded.phases : [];
+    if (!phases.length) return runUnexpanded(h, portId);
+
+    for (const ph of phases) {
+      if (halted()) return { outputs: {} };
+      await runPhase(h, portId, ph);
+    }
+    if (halted()) return { outputs: {} };
+    return await execute({ ...h.args, composite: 'finish', expandsPort: portId, phases });
+  }
+
+  /**
+   * Nothing to fan out. Strip the expands binding — so the consumer neither sees
+   * the manifest as an input nor renders its slice directive (A3) — and run the
+   * ONE ordinary execution the firing would have been. The entry is mutated in
+   * place because it is the ledger row a resume would re-invoke from.
+   */
+  async function runUnexpanded(h, portId) {
+    const { node, entry } = h;
+    delete entry.bindings[portId];
+    entry.trigger = {
+      ...entry.trigger,
+      freshPorts: (entry.trigger.freshPorts || []).filter((p) => p !== portId),
+    };
+    delete entry.expandsPort;
+    h.composite = false;                    // ... so settle() frees the slot taken here
+    await takeSlot();
+    h.args = argsFor(node, entry);
+    return await execute(h.args);
+  }
+
+  /**
+   * One phase: every task launched together, each awaiting its own semaphore slot.
+   * The FIRST genuine (non-abort) failure aborts its siblings immediately through
+   * the phase-local controller and fails the whole composite — v1's
+   * abort-on-first-failure, kept.
+   */
+  async function runPhase(h, portId, ph) {
+    const tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
+    const phaseAbort = new AbortController();
+    let firstError = null;
+    await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'running' });
+
+    await Promise.allSettled(tasks.map((task, index) =>
+      runSlice(h, portId, ph, task, index, phaseAbort).catch((err) => {
+        if (!firstError && !isAbortError(err)) {
+          firstError = { task, err };
+          phaseAbort.abort();
+        }
+        throw err;
+      })));
+
+    if (firstError) {
+      await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'error' });
+      const label = firstError.task.title || firstError.task.id;
+      throw new Error(
+        `composite execution failed in phase ${ph.ordinal}: task "${label}": ` +
+        `${firstError.err?.message || firstError.err}`,
+      );
+    }
+    // A halted run leaves the phase RUNNING: the resume re-runs the whole
+    // composite, and a phase that never finished must not read as done.
+    if (halted()) return;
+    await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'done' });
+  }
+
+  /**
+   * One task sub-execution: a CLONE of the consumer node (same key, meta and
+   * ports) with the expands input rebound to this task's own markdown file, still
+   * FRESH so the slice directive renders. Recorded `kind:'task'` under the SAME
+   * node — it publishes nothing; the composite's single `finish` does that.
+   */
+  async function runSlice(h, portId, ph, task, index, phaseAbort) {
+    const { node, entry } = h;
+    await takeSlot();
+    const sub = {
+      executionId: sliceExecutionId(entry.executionId, task.id),
+      nodeId: node.id,
+      kind: 'task',
+      ordinal: entry.ordinal,
+      status: 'start',
+      sessionId: null,
+      phase: ph.ordinal,
+      taskId: task.id,
+      title: task.title || task.id,
+      bindings: {
+        ...entry.bindings,
+        [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null },
+      },
+      trigger: entry.trigger,
+    };
+    execs.set(sub.executionId, sub);
+    emitExec(node, sub, 'start');
+    const args = {
+      ...argsFor(node, sub),
+      node: { ...node },
+      signal: AbortSignal.any([controller.signal, phaseAbort.signal]),
+      kind: 'task',
+      slice: { id: task.id, title: task.title ?? null, phase: ph.ordinal, path: task.path ?? null, index },
+    };
+    try {
+      const res = await execute(args);
+      sub.status = 'done';
+      if (res?.sessionId) sub.sessionId = res.sessionId;
+      emitExec(node, sub, 'done');
+      return res;
+    } catch (err) {
+      sub.status = 'error';
+      sub.error = String(err?.message || err);
+      emitExec(node, sub, 'error', { error: sub.error });
+      throw err;
+    } finally {
+      freeSlot();
+    }
   }
 
   // --- publishing / routing ------------------------------------------------
@@ -442,7 +656,14 @@ export function createScheduler(opts) {
   // --- snapshot ------------------------------------------------------------
 
   function snapshotObject() {
-    const gate = held.values().next().value || null;
+    // `held` is a Map — N loop wires can block in ONE drain (two verifiers into
+    // an OR, both at allowance). Every hold is serialized; `gate`/`ask` keep
+    // their singular spec shape as the FIRST hold so resume points written by
+    // either build stay readable in both directions.
+    const gates = [...held.values()].map((g) => (
+      { wireId: g.wireId, nodeId: g.nodeId, executionId: g.executionId, token: g.token, issues: g.issues }
+    ));
+    const asks = gates.map((g) => ({ kind: 'gate', wireId: g.wireId, issues: g.issues }));
     return {
       version: 2,
       seq,
@@ -454,10 +675,10 @@ export function createScheduler(opts) {
       wires: Object.fromEntries([...wireState].map(([id, st]) => [id, { ...st }])),
       ended: ended ? { ...ended, result: { ...ended.result } } : null,
       execs: [...execs.values()].map((e) => ({ ...e })),
-      gate: gate
-        ? { wireId: gate.wireId, nodeId: gate.nodeId, executionId: gate.executionId, token: gate.token, issues: gate.issues }
-        : null,
-      ask: gate ? { kind: 'gate', wireId: gate.wireId, issues: gate.issues } : null,
+      gates,
+      asks,
+      gate: gates[0] || null,
+      ask: asks[0] || null,
     };
   }
 
@@ -472,7 +693,10 @@ export function createScheduler(opts) {
     for (const [id, st] of Object.entries(s.wires || {})) wireState.set(id, { ...st });
     for (const e of s.execs || []) execs.set(e.executionId, { ...e });
     ended = s.ended ? { ...s.ended, result: { ...s.ended.result } } : null;
-    if (s.gate && !ended) held.set(s.gate.wireId, { ...s.gate });
+    // Every hold comes back (reattach re-asks all of them). A pre-plural resume
+    // point carries only the singular `gate`; read it as a one-element list.
+    const gates = Array.isArray(s.gates) ? s.gates : (s.gate ? [s.gate] : []);
+    if (!ended) for (const g of gates) held.set(g.wireId, { ...g });
   }
 
   /**
@@ -485,13 +709,17 @@ export function createScheduler(opts) {
   function reattach() {
     for (const entry of [...execs.values()]) {
       if (TERMINAL.has(entry.status)) continue;
+      // A composite's slices are re-invoked BY their shell, not from here: the
+      // shell re-runs the whole fan-out (v1 resumed the decomposed stage whole)
+      // and re-mints the same ids, so these stale rows are overwritten in place.
+      if (entry.kind === 'task') continue;
       const node = nodeById.get(entry.nodeId);
       if (!node) continue;
       running.set(node.id, entry.executionId);
-      if (!isFlow(node)) activeAgents += 1;
-      const h = { node, entry, args: argsFor(node, entry) };
+      const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort };
+      if (!isFlow(node) && !h.composite) activeAgents += 1;
       let p;
-      try { p = execute(h.args); } catch (err) { p = Promise.reject(err); }
+      try { p = invoke(h); } catch (err) { p = Promise.reject(err); }
       Promise.resolve(p).then(
         (res) => { completions.push({ h, res, err: null }); wake(); },
         (err) => { completions.push({ h, res: null, err }); wake(); },

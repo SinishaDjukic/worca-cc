@@ -13,6 +13,17 @@ function h(doc, tag, cls, text) {
 
 const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 
+// An API-incompatible plugin is NOT corrupt — its manifest stops normalizing at
+// the engines gate, so it drops out of the registry while its files stay on
+// disk. `broken` alone reads as "reinstall me"; this says what actually happened
+// and what fixes it (spec §5). Rendered from `p.apiMismatch: {builtFor, host}`,
+// which the /api/plugins payload carries alongside `broken`.
+export function apiMismatchMessage(mismatch) {
+  if (!mismatch) return '';
+  const builtFor = mismatch.builtFor ?? 'an unknown version of';
+  return `built for worca-cc-api ${builtFor}; this host requires ${mismatch.host} — update or reinstall`;
+}
+
 // contributions -> "2 agents · 1 source · 1 skill". Arrays (listInstalledPlugins)
 // or plain counts are both tolerated.
 function contribSummary(c) {
@@ -37,7 +48,8 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     head.appendChild(h(doc, 'b', 'pl-name', p.name));
     head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
     if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
-    if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
+    if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge red pl-api-mismatch', 'incompatible'));
+    else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
     const toggle = h(doc, 'label', 'pl-enable');
     const cb = h(doc, 'input', 'pl-toggle');
     cb.type = 'checkbox';
@@ -48,6 +60,7 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     head.appendChild(toggle);
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
+    if (p.apiMismatch) card.appendChild(h(doc, 'small', 'pl-api-note hint', apiMismatchMessage(p.apiMismatch)));
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
       const b = h(doc, 'button', `btn-ghost ${cls}`, label);

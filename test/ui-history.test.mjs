@@ -99,6 +99,25 @@ function runsListResponse(pipelines, live = []) {
   return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 }
 
+// v2 run manifests (buildGraphManifest, src/core/workflows.mjs:567). History
+// renders the graph the run actually ran, through the same graph-view + run-decor
+// pair as the live monitor; the persisted step rows ARE the exec ledger.
+function gnode(id, { key = null, label, color = '', model = '', effort = '', x = 0 } = {}) {
+  return {
+    id, kind: key ? 'agent' : 'task', key, label, color, sub: '', x, y: 200, model, effort, loop: false,
+    ports: {
+      inputs: key ? [{ id: 'in', type: 'md', required: true, loop: false, expands: false }] : [],
+      outputs: [{ id: 'out', type: 'md', when: 'always' }],
+    },
+  };
+}
+const gmanifest = (nodes, wires = []) => ({ version: 2, graph: { nodes, wires }, bookends: { preflight: true, done: true } });
+const gstep = (nodeId, ordinal, o = {}) => ({
+  key: `x:${nodeId}:${ordinal}`, executionId: `x:${nodeId}:${ordinal}`, nodeId,
+  cycle: ordinal, status: 'done', activeMs: 0, runningSince: null, ...o,
+});
+const cardLabels = (detail) => [...detail.querySelectorAll('.node[data-node-id] .nhead .tt')].map((e) => e.textContent);
+
 test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav count=2', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
@@ -156,7 +175,18 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ state: { phase: 'implement', status: 'stopped', cycle: 1 }, auditMarkdown: '' }),
+          json: async () => ({
+            state: {
+              status: 'stopped',
+              stepper: gmanifest([
+                gnode('n_plan', { key: 'planner', label: 'Plan', color: 'violet', x: 0 }),
+                gnode('n_impl', { key: 'implementer', label: 'Implement', color: 'peach', x: 300 }),
+                gnode('n_review', { key: 'reviewer', label: 'Review', color: 'blue', x: 600 }),
+              ]),
+              steps: [gstep('n_plan', 1), gstep('n_impl', 1, { status: 'stopped' })],
+            },
+            auditMarkdown: '',
+          }),
         });
       }
       return null;
@@ -179,17 +209,14 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
   assert.equal(head.getAttribute('aria-expanded'), 'true', 'expanded after click');
   assert.equal(detail.hidden, false, 'detail unhidden after expand');
 
-  // Tinted stepper: phase=implement, status=stopped => preflight/plan/refine done,
-  // implement stopped, review/done pending.
+  // Decorated graph: the ledger says plan completed and the implementer stopped;
+  // the reviewer never ran.
   const byId = {};
-  for (const n of detail.querySelectorAll('.run-node[data-id]')) byId[n.dataset.id] = n;
-  assert.ok(byId.preflight.classList.contains('is-done'), 'preflight done');
-  assert.ok(byId.plan.classList.contains('is-done'), 'plan done');
-  assert.ok(byId.refine.classList.contains('is-done'), 'refine done');
-  assert.ok(byId.implement.classList.contains('is-stopped'), 'implement stopped (halt cell)');
-  assert.ok(byId.implement.querySelector('.nstat.stopped svg'), 'stopped X badge at halt cell');
-  assert.ok(byId.review.classList.contains('is-pending'), 'review pending');
-  assert.ok(!byId.review.classList.contains('is-done'), 'review not done');
+  for (const n of detail.querySelectorAll('.node[data-node-id]')) byId[n.dataset.nodeId] = n;
+  assert.ok(byId.n_plan.classList.contains('is-done'), 'plan done');
+  assert.ok(byId.n_impl.classList.contains('is-stopped'), 'implementer stopped where it halted');
+  assert.ok(byId.n_review.classList.contains('is-pending'), 'review pending');
+  assert.ok(!byId.n_review.classList.contains('is-done'), 'review not done');
 
   // Collapse again toggles aria-expanded back + re-hides.
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -235,7 +262,14 @@ test('keyboard: Enter on the head toggles expand', async () => {
         return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
       }
       if (url.includes('/api/runs/p-done')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { phase: 'done', status: 'done' } }) });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: {
+          status: 'done',
+          stepper: gmanifest([
+            gnode('n_plan', { key: 'planner', label: 'Plan', color: 'violet', x: 0 }),
+            gnode('n_review', { key: 'reviewer', label: 'Review', color: 'blue', x: 300 }),
+          ]),
+          steps: [gstep('n_plan', 1), gstep('n_review', 1)],
+        } }) });
       }
       return null;
     },
@@ -249,12 +283,11 @@ test('keyboard: Enter on the head toggles expand', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(head.getAttribute('aria-expanded'), 'true', 'Enter expands the card');
 
-  // DONE state tints every node done.
+  // Every execution in the ledger completed -> every card reads done.
   const detail = doc.querySelector('#history .hist-detail');
-  const nodes = [...detail.querySelectorAll('.run-node[data-id]')];
-  assert.ok(nodes.length > 0);
-  assert.ok(nodes.every((n) => n.classList.contains('is-done')), 'DONE tints every node done');
-  assert.ok(detail.querySelector('.run-node[data-id="done"] .nstat.done svg'), 'done badge present');
+  const nodes = [...detail.querySelectorAll('.node[data-node-id]')];
+  assert.equal(nodes.length, 2);
+  assert.ok(nodes.every((n) => n.classList.contains('is-done')), 'a done ledger tints every card done');
 });
 
 test('empty history renders a .hist-empty div (no <li>)', async () => {
@@ -298,18 +331,14 @@ const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 2
 
 test('History card renders the persisted manifest nodes on expand', async () => {
   const customState = {
-    status: 'stopped', phase: 'refine', cycle: 1, steps: [],
-    stepper: {
-      version: 1,
-      steps: [
-        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-        { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet', cycles: false }] },
-        { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green', cycles: true }] },
-        { kind: 'agents', nodes: [{ id: 's4_0', uiPhase: 'manual-checklist', label: 'Manual Tests Checklist', color: 'blue', cycles: false }] },
-        { kind: 'agents', nodes: [{ id: 's5_0', uiPhase: 'manual-web', label: 'Manual web UI testing', color: 'violet', cycles: false }] },
-        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-      ],
-    },
+    status: 'stopped',
+    stepper: gmanifest([
+      gnode('s0_0', { key: 'planner', label: 'Plan', color: 'violet', x: 0 }),
+      gnode('s1_0', { key: 'refiner', label: 'Refine Plan', color: 'green', x: 300 }),
+      gnode('s4_0', { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', color: 'blue', x: 600 }),
+      gnode('s5_0', { key: 'manualWebUiTesting', label: 'Manual web UI testing', color: 'violet', x: 900 }),
+    ]),
+    steps: [gstep('s0_0', 1), gstep('s1_0', 1, { status: 'stopped' })],
   };
   const { window, showHistory } = await boot({
     fetchHandler: (url) => {
@@ -324,15 +353,24 @@ test('History card renders the persisted manifest nodes on expand', async () => 
   await new Promise((r) => setTimeout(r, 0));
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
-  assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Manual web UI testing', 'Done']);
-  // stopped at refine (cell idx 2) -> that node is is-stopped, earlier done.
-  assert.ok(detail.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-stopped'));
-  assert.ok(detail.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
+  assert.deepEqual(cardLabels(detail), ['Plan', 'Refine Plan', 'Manual Tests Checklist', 'Manual web UI testing']);
+  assert.ok(detail.querySelector('.node[data-node-id="s1_0"]').classList.contains('is-stopped'));
+  assert.ok(detail.querySelector('.node[data-node-id="s0_0"]').classList.contains('is-done'));
 });
 
-test('History card without a saved manifest still renders the legacy seven', async () => {
-  const legacyState = { status: 'done', phase: 'done', steps: [] }; // no .stepper
+test('a frozen v1 manifest degrades to the flat chip strip (no graph to draw)', async () => {
+  const legacyState = {
+    status: 'done',
+    stepper: {
+      version: 1,
+      steps: [
+        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
+        { kind: 'agents', nodes: [{ id: 'plan', uiPhase: 'plan', label: 'Plan', color: 'violet' }] },
+        { kind: 'agents', nodes: [{ id: 'review', uiPhase: 'review', label: 'Review', color: 'blue' }] },
+      ],
+    },
+    steps: [{ nodeId: 'plan', status: 'done', activeMs: 4000, costUsd: 0.03 }],
+  };
   const { window, showHistory } = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: legacyState, auditMarkdown: '' }) });
@@ -346,9 +384,12 @@ test('History card without a saved manifest still renders the legacy seven', asy
   await new Promise((r) => setTimeout(r, 0));
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
-  assert.deepEqual(labels, ['Preflight', 'Clarify', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
-  assert.ok([...detail.querySelectorAll('.run-node[data-id]')].every((n) => n.classList.contains('is-done')));
+  const chips = [...detail.querySelectorAll('.run-strip .rchip')];
+  assert.deepEqual(chips.map((c) => c.dataset.id), ['preflight', 'plan', 'review']);
+  assert.equal(chips[1].textContent, 'Plan · 4s · $0.03');
+  assert.ok(chips[1].classList.contains('is-done'));
+  assert.ok(chips[2].classList.contains('is-pending'), 'a node with no step row never ran');
+  assert.equal(detail.querySelector('.node[data-node-id]'), null, 'v1 has no graph to render');
 });
 
 test('Refresh shows a busy spinner/disabled affordance, cleared by the final history-pr batch', async () => {
@@ -382,18 +423,12 @@ test('Refresh shows a busy spinner/disabled affordance, cleared by the final his
 
 test('History card shows per-node model·effort from the saved manifest', async () => {
   const customState = {
-    status: 'done', phase: 'done', cycle: 0, steps: [],
-    stepper: {
-      version: 1,
-      steps: [
-        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-        { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', color: 'violet',
-                                    sub: 'architecture & breakdown', model: 'opus', effort: 'high', cycles: false }] },
-        { kind: 'agents', nodes: [{ id: 's1_0', uiPhase: 'refine', label: 'Refine Plan', color: 'green',
-                                    sub: 'tighten the plan', model: '', effort: '', cycles: true }] },
-        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-      ],
-    },
+    status: 'done',
+    stepper: gmanifest([
+      gnode('s0_0', { key: 'planner', label: 'Plan', color: 'violet', model: 'Opus 4.8', effort: 'high', x: 0 }),
+      gnode('s1_0', { key: 'refiner', label: 'Refine Plan', color: 'green', x: 300 }),
+    ]),
+    steps: [gstep('s0_0', 1), gstep('s1_0', 1)],
   };
   const { window, showHistory } = await boot({
     fetchHandler: (url) => {
@@ -419,29 +454,24 @@ test('History card shows per-node model·effort from the saved manifest', async 
   await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
 
   const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  // model · effort renders as a visible .nmodel sub-line (friendly model label,
-  // resolved from state.models loaded at boot via loadConfig); a step with neither
-  // model nor effort shows the "default" placeholder.
-  assert.equal(detail.querySelector('.run-node[data-id="s0_0"] .nmodel').textContent, 'Opus 4.8 · high');
-  assert.equal(detail.querySelector('.run-node[data-id="s1_0"] .nmodel').textContent, 'default');
+  // The shared card's geometry is fixed by its port lists, so model · effort
+  // rides the header as a tooltip; a node with neither shows the "default"
+  // placeholder, exactly as the composer caption does.
+  assert.equal(detail.querySelector('.node[data-node-id="s0_0"] .nhead').title, 'Plan — Opus 4.8 · high');
+  assert.equal(detail.querySelector('.node[data-node-id="s1_0"] .nhead').title, 'Refine Plan — default');
 });
 
-test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice -> count 1)', async () => {
+test('a self-cycling node folds its two executions into one card + a 2-run footer', async () => {
+  const refiner = gnode('s1_0', { key: 'refiner', label: 'Refine', color: 'green', x: 0 });
+  refiner.ports.inputs.push({ id: 'fix', type: 'md', required: false, loop: true, expands: false });
+  refiner.ports.outputs.push({ id: 'review', type: 'md', when: 'blocking' });
+  refiner.loop = true;
   const state = {
-    phase: 'done', status: 'done', cycle: 2,
-    stepper: {
-      version: 1,
-      steps: [
-        { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-        { kind: 'agents', nodes: [{ id: 's1_0', key: 'refiner', uiPhase: 'refine', label: 'Refine', color: 'green', cycles: true }] },
-        { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-      ],
-      feedbacks: [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }],
-    },
-    steps: [
-      { nodeId: 's1_0', phase: 'refine', cycle: 1, activeMs: 1000, costUsd: 0.01 },
-      { nodeId: 's1_0', phase: 'refine', cycle: 2, activeMs: 2000, costUsd: 0.02 },
-    ],
+    status: 'done',
+    stepper: gmanifest([refiner], [
+      { id: 'fb_refine', from: { node: 's1_0', port: 'review' }, to: { node: 's1_0', port: 'fix' }, loop: true, maxCycles: 3 },
+    ]),
+    steps: [gstep('s1_0', 1, { activeMs: 1000, costUsd: 0.01 }), gstep('s1_0', 2, { activeMs: 2000, costUsd: 0.02 })],
   };
   const ctx = await boot({
     fetchHandler: (url) => {
@@ -454,13 +484,14 @@ test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice ->
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  // The adapter's cycle map is the public contract; assert it directly.
-  const counts = ctx.window.__np.loopCounts(state.stepper, ctx.window.__np.histNodeCycle(state));
-  assert.equal(counts.s1_0, 1, 'two cycles -> one loop-back badge');
-  // Summed dur/cost still paint into the graph node.
-  const node = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s1_0"]');
-  assert.equal(node.querySelector('.dur').textContent, '3s');
-  assert.equal(node.querySelector('.cost').textContent, '$0.03');
+  const node = ctx.window.document.querySelector('#history .hist-detail .node[data-node-id="s1_0"]');
+  assert.equal(node.querySelector('.nrun .dur').textContent, '3s', 'both cycles summed');
+  assert.equal(node.querySelector('.nrun .cost').textContent, '$0.03');
+  assert.equal(node.querySelector('.xsum').textContent, '2 runs · $0.03', 'the executions footer counts both');
+  // The wire's budget still renders; a frozen run replays no trigger, so no
+  // fired-count badge is claimed.
+  const badge = ctx.window.document.querySelector('#history .hist-detail .wbadge[data-wire-id="fb_refine"]');
+  assert.equal(badge.textContent, '≤3');
 });
 
 test('expanded history card renders clarify Q&A but not reviews', async () => {

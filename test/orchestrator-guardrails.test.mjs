@@ -4,7 +4,7 @@
 // guardrailsId -> _resolveGuardrails (guardrail-store read) -> claudeOpts ->
 // runClaude opts, on run() AND on resume() (Task 8 appends the resume tests).
 // Tested at the runOpts seam (pure) plus mock runs through the real dispatcher
-// with a _nodeCtx spy (the spyNodeCtxs pattern,
+// with a _execCtx spy (the spyExecCtxs pattern,
 // test/orchestrator-workspace.test.mjs:486-495). No claude spawn anywhere;
 // useTempHome isolates WORCA_HOME + the DB singleton.
 import { test, after } from 'node:test';
@@ -33,14 +33,14 @@ const SET_SETTINGS = {
   protectedPaths: ['.env*'], deny: [],
 };
 
-/** Capture every dispatched node's claudeOpts — the spyNodeCtxs seam
- *  (test/orchestrator-workspace.test.mjs:486-495), widened to the fields under test. */
+/** Capture every EXECUTION's claudeOpts — the spyExecCtxs seam
+ *  (test/orchestrator-workspace.test.mjs), widened to the fields under test. */
 function spyClaudeOpts(orch) {
   const seen = [];
-  const orig = orch._nodeCtx.bind(orch);
-  orch._nodeCtx = (node, pos) => {
-    const ctx = orig(node, pos);
-    seen.push({ key: node.key, claudeOpts: ctx.claudeOpts || {} });
+  const orig = orch._execCtx.bind(orch);
+  orch._execCtx = (node, nc, args) => {
+    const ctx = orig(node, nc, args);
+    if (node.kind === 'agent') seen.push({ key: node.key, claudeOpts: ctx.claudeOpts || {} });
     return ctx;
   };
   return seen;
@@ -207,7 +207,7 @@ test('RESUME re-reads the selected set BY ID (latest definition), rehydrated fro
   });
 
   // Pause -> fresh-instance -> resume() bootstrap (from test/orchestrator-resume.test.mjs);
-  // the runners seam doubles as the spy since runners receive the full _nodeCtx.
+  // the executor seam doubles as the spy since executors receive the full _execCtx.
   let hangOnce = true;
   let orchRef = null;
   const mkRunners = (captured) => ({

@@ -98,18 +98,18 @@ async function main() {
       workspace, prompt: 'add a small feature', auto: true, claude: { mock: true }, branch: { source: 'main' },
     });
 
-    // Capture the resolved plan to prove the review node became `workspaceReviewer`.
-    const origDispatch = orch._dispatch.bind(orch);
-    let seenPlan = null;
-    orch._dispatch = async (plan, runArgs) => { seenPlan = plan; return origDispatch(plan, runArgs); };
+    // Capture the resolved graph to prove the review node became `workspaceReviewer`.
+    const origAdopt = orch._adoptResolvedGraph.bind(orch);
+    let seenResolved = null;
+    orch._adoptResolvedGraph = (resolved) => { origAdopt(resolved); seenResolved = resolved; };
 
-    // §9.2 per-node cwd: `ctx.projectDir` is what phases.mjs passes to runClaude as
-    // `cwd`, so recording every node ctx records every spawn's cwd.
+    // §9.2 per-execution cwd: `ctx.projectDir` is what phases.mjs passes to runClaude
+    // as `cwd`, so recording every execution ctx records every spawn's cwd.
     const nodeCwds = [];
-    const origNodeCtx = orch._nodeCtx.bind(orch);
-    orch._nodeCtx = (node, pos) => {
-      const ctx = origNodeCtx(node, pos);
-      nodeCwds.push({ key: node.key, cwd: ctx.projectDir });
+    const origExecCtx = orch._execCtx.bind(orch);
+    orch._execCtx = (node, nc, args) => {
+      const ctx = origExecCtx(node, nc, args);
+      if (node.kind === 'agent') nodeCwds.push({ key: node.key, cwd: ctx.projectDir });
       return ctx;
     };
 
@@ -137,7 +137,8 @@ async function main() {
     const res = await orch.run();
     if (res.status !== 'done') return die(`workspace run did not complete: status=${res.status} (${JSON.stringify(res).slice(0, 300)})`);
 
-    const keys = (seenPlan?.steps || []).flat().map((n) => n.key);
+    const keys = Object.values(seenResolved?.nodeCtx || {})
+      .filter((nc) => nc.kind === 'agent').map((nc) => nc.key);
     if (!keys.includes('workspaceReviewer')) return die(`review node was not substituted to workspaceReviewer (keys: ${keys.join(',')})`);
     if (keys.includes('reviewer')) return die('single-project reviewer node leaked into a workspace run');
 
@@ -188,13 +189,13 @@ async function main() {
       return die(`sub-agent per-tool pills missing — one server must yield one pill per tool (got ${JSON.stringify(subPills)})`);
     }
     if (!subPills.includes('skill:brainstorming')) return die(`no sub-agent skill pill (got ${JSON.stringify(subPills)})`);
-    // Every step that captured pills must be attributable to a stepper cell of kind
-    // 'agents' (§7.7) — the client's `agentNodeIdSet` (app.js) filters the Agents
-    // dropdown by exactly this set, so a nodeId outside it renders NO pills at all.
-    const agentIds = new Set((stAll.stepper?.steps || [])
-      .filter((cell) => cell && cell.kind === 'agents')
-      .flatMap((cell) => (cell.nodes || []).map((n) => n && n.id)));
-    if (agentIds.size === 0) return die('the run stepper exposes no agents cells — §7.7 attribution is unverifiable');
+    // Every step that captured pills must be attributable to an AGENT node of the v2
+    // graph manifest (§7.7) — the client filters the Agents dropdown by exactly this
+    // set, so a nodeId outside it renders NO pills at all.
+    const agentIds = new Set((stAll.stepper?.graph?.nodes || [])
+      .filter((n) => n && n.kind === 'agent')
+      .map((n) => n.id));
+    if (agentIds.size === 0) return die('the run manifest exposes no agent nodes — §7.7 attribution is unverifiable');
     let pillBearing = 0;
     for (const s of stAll.steps || []) {
       if (!Array.isArray(s.skills) || !s.skills.length || s.nodeId == null) continue;

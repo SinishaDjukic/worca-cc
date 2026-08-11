@@ -920,7 +920,7 @@ async function pluginInit(rest) {
     name,
     version: '0.1.0',
     description: 'Scaffolded worca-cc plugin — edit me',
-    engines: { 'worca-cc-api': '>=1 <2' },
+    engines: { 'worca-cc-api': '>=2 <3' },
   };
   if (withParts.includes('task-source')) {
     manifestObj.taskSources = [{
@@ -937,7 +937,7 @@ async function pluginInit(rest) {
     }];
     files.set('connector/index.mjs', [
       '// Mock-style task source scaffold. Replace the canned data with real API calls.',
-      '// Contract (plugin API v1): validateConfig / listTasks / getTask / reportResult / capabilities.',
+      '// Contract (plugin API v2): validateConfig / listTasks / getTask / reportResult / capabilities.',
       'const TASKS = [',
       "  { id: 'DEMO-1', title: 'First demo task', url: 'https://example.invalid/demo/1', state: 'open', labels: ['demo'], updatedAt: '2026-01-01T00:00:00.000Z' },",
       "  { id: 'DEMO-2', title: 'Second demo task', url: 'https://example.invalid/demo/2', state: 'open', labels: [], updatedAt: '2026-01-02T00:00:00.000Z' },",
@@ -971,14 +971,15 @@ async function pluginInit(rest) {
   }
   if (withParts.includes('agents')) {
     files.set(`agents/${agentKey}.meta.json`, JSON.stringify({
+      metaVersion: 2,
       key: agentKey,
       displayName: 'Example Helper',
       description: `Example agent installed by the ${name} plugin`,
       color: 'amber',
       agentFile: `${agentKey}.md`,
       runnerType: 'producer',
-      consumes: ['userPrompt'],
-      produces: ['code'],
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'notes', type: 'md', filename: `${agentKey}-notes.md`, store: 'run' }],
       ...(withParts.includes('skills') ? { requiresSkills: ['example-skill'] } : {}),
       order: 900,
     }, null, 2) + '\n');
@@ -1010,12 +1011,21 @@ async function pluginInit(rest) {
     files.set('skills/example-skill/helper.sh', '#!/bin/sh\necho "example-skill helper ok"\n');
   }
   if (withParts.includes('workflows')) {
+    // A v2 graph: the task and end cards are mandatory (V20/V21), and every
+    // input takes exactly one wire (V7).
     files.set('workflows/example-flow.json', JSON.stringify({
       name: `${name} example flow`,
-      version: 1,
+      version: 2,
       domain: 'general',
-      steps: [[{ id: 's0_0', key: agentKey }]],
-      feedbacks: [],
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+        { id: 'n_helper', kind: 'agent', key: agentKey, x: 320, y: 200, config: {} },
+        { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_helper', port: 'task' } },
+        { id: 'w2', from: { node: 'n_helper', port: 'notes' }, to: { node: 'n_end', port: 'result' } },
+      ],
     }, null, 2) + '\n');
   }
   files.set('worca-cc-plugin.json', JSON.stringify(manifestObj, null, 2) + '\n');

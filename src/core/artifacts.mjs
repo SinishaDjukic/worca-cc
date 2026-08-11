@@ -216,20 +216,6 @@ export function readStepQuestions(pipelineId) {
 }
 
 /**
- * Map a channels.allocate() review base name to the reviews-table `kind`. A2: the
- * kind is a 5-value OPEN set {refine, impl, plan, ws, webui} derived by stripping the
- * "-review-cycleN.json" suffix from the legacy filename; treat it as free text (an
- * unknown base passes through unchanged so the mapping is lossless).
- * @param {string} base e.g. 'impl-review' | 'plan-review' | 'refine-review' | 'ws-review' | 'webui-review'
- * @returns {string}
- */
-const REVIEW_KIND = {
-  'refine-review': 'refine', 'impl-review': 'impl', 'plan-review': 'plan',
-  'ws-review': 'ws', 'webui-review': 'webui',
-};
-export function reviewKindOf(base) { return REVIEW_KIND[base] || base; }
-
-/**
  * Upsert a per-cycle review verdict. `kind` ∈ refine|impl|plan|ws|webui (free text,
  * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
  * object protocol.readReview returns. The AUTHORITATIVE per-cycle verdict store. The
@@ -992,11 +978,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id)
+        source_type, source_ref, guardrails_id, outcome)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id)
+        @source_type,@source_ref,@guardrails_id,@outcome)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1004,19 +990,21 @@ export async function writeState(pipelineDir, stateObj) {
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
+        outcome=excluded.outcome,
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
 
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
-      INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills, graphify_count)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO pipeline_steps (pipeline_id, key, node_id, execution_id, phase, step_index, cycle,
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills, graphify_count,
+        exec_result, exec_trigger)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       ins.run(
-        id, st.key, st.nodeId ?? null, st.phase ?? null,
+        id, st.key, st.nodeId ?? null, st.executionId ?? null, st.phase ?? null,
         st.stepIndex ?? null, st.cycle ?? null, st.status ?? null,
         st.startedAt ?? null, st.updatedAt ?? null,
         Number.isFinite(st.activeMs) ? st.activeMs : 0,
@@ -1025,6 +1013,11 @@ export async function writeState(pipelineDir, stateObj) {
         st.sessionId ?? null,
         s(st.skills),
         Number.isFinite(st.graphifyCount) ? st.graphifyCount : null,
+        // `result` is an End binding that can legitimately be null ({type:'void'}
+        // aside), so an explicit `undefined` check keeps "no result" (NULL) apart
+        // from "bound to null" — the reader restores the field only when present.
+        st.result === undefined ? null : JSON.stringify(st.result),
+        s(st.trigger),
       );
     }
   });
@@ -1334,6 +1327,14 @@ function toPipelineRow(o) {
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
+    // Amendment f: the run outcome the End result card and the quiescence banner
+    // are drawn from. Always written (never NULL) so a finished run's History
+    // detail reads the same three fields the live card read.
+    outcome: s({
+      endReached: !!o.endReached,
+      result: o.result ?? null,
+      warnings: Array.isArray(o.warnings) ? o.warnings : [],
+    }),
   };
 }
 
@@ -1586,7 +1587,9 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
  * step INSERT in writeState. running_since is stored as TEXT (epoch-ms) and comes
  * back as a Number (null when paused); optional fields (phase/cycle/status/
  * startedAt/updatedAt) collapse to undefined when null so the shape matches what
- * the orchestrator emitted; nodeId/stepIndex are present only when set.
+ * the orchestrator emitted; nodeId/stepIndex are present only when set, and so
+ * are result/trigger — run-decor keys the End result card off `result !== undefined`,
+ * so an absent payload must stay absent rather than read back as null.
  */
 function stepRowToStep(r) {
   const step = {
@@ -1601,7 +1604,10 @@ function stepRowToStep(r) {
     graphifyCount: r.graphify_count ?? undefined,
   };
   if (r.node_id != null) step.nodeId = r.node_id;
+  if (r.execution_id != null) step.executionId = r.execution_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
+  if (r.exec_result != null) step.result = j(r.exec_result, null);
+  if (r.exec_trigger != null) step.trigger = j(r.exec_trigger, null);
   return step;
 }
 
@@ -1635,12 +1641,19 @@ function rowToState(row) {
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
     steps: getDb().prepare(`
-      SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd, session_id, skills, graphify_count
+      SELECT key, node_id, execution_id, phase, step_index, cycle, status, started_at, updated_at,
+             active_ms, running_since, cost_usd, session_id, skills, graphify_count,
+             exec_result, exec_trigger
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
   };
+  // Amendment f: the run outcome. A pre-v18 row has no `outcome`, which reads
+  // back as the pre-Amendment-f defaults — exactly what a v1 run was.
+  const outcome = j(row.outcome, null) || {};
+  state.endReached = !!outcome.endReached;
+  state.result = outcome.result ?? null;
+  state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
   // Workspace superset: spread workspace_meta back onto the top level + target.

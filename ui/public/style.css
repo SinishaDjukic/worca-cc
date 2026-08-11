@@ -30,6 +30,11 @@
   --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
   --shadow-soft:0 2px 12px rgba(25,25,27,.04);
 
+  /* Motion scale (spec §6). The reduced-motion block at :650 already kills
+     every transition globally, so these need no per-token override. */
+  --t-fast:120ms;
+  --t-med:200ms;
+
   --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
 }
@@ -742,141 +747,206 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-delete svg{display:block;}
 
 /* ========================================================================== */
-/* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
-/* (ported from docs/pipeline-composer/mockups; reuses :root tokens)          */
+/* Pipeline Composer v2 — node graph canvas, palette rail, inspector          */
+/* Card geometry is graph-geometry.mjs's, not CSS's: node width/height and     */
+/* every port-row height are set inline from the model so the renderer and the */
+/* hit-tester agree. The rules below are pure appearance — changing a size     */
+/* here without changing graph-geometry.mjs would desync wiring from pixels.   */
 /* ========================================================================== */
-.builder-card{padding:0;overflow:hidden;}
-/* No top padding: sticky pins to the scrollport's PADDING edge, so a 20px inset
-   here would leave a see-through band above the pinned header for cards to
-   scroll through. The header row re-applies the inset itself (same fix shape as
-   body.view-history .main + .hist-filter). */
-.palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:0 24px 20px;border-bottom:1px solid var(--line);background:var(--panel);max-height:320px;overflow-y:auto;}
-.palette .p-label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:100%;margin-bottom:-10px;padding-top:20px;padding-bottom:14px;position:sticky;top:0;z-index:2;background:var(--panel);}
-.palette .p-label svg{width:14px;height:14px;stroke:var(--ink-3);stroke-width:2;}
-.pal-filter{margin-left:auto;width:200px;padding:6px 10px;border:1.5px solid transparent;border-radius:10px;background:var(--field);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;text-transform:none;letter-spacing:normal;}
-.pal-filter::placeholder{color:var(--ink-3);}
-.pal-filter:focus{outline:none;background:#fff;border-color:var(--ink);}
-.pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* min-width:0 lets the grid item shrink under its min-content width and
-   overflow:hidden makes the card the last line of defence: without both, a
-   single unbroken 100-char description paints across its neighbours. */
-.agent-pill{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;overflow:hidden;background:#fff;border:1.5px solid var(--line-2);border-radius:12px;padding:10px 12px;font-weight:600;font-size:12.5px;color:var(--ink);cursor:grab;box-shadow:var(--shadow-soft);transition:transform .12s,box-shadow .12s,border-color .12s;user-select:none;}
-.agent-pill:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
-.agent-pill:active{cursor:grabbing;}
-.agent-pill.dragging{opacity:.35;}
-/* Dot pins to the FIRST name line (flex-start + optical nudge), because the
-   name may wrap to a second line — a centered dot would float between them. */
-.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;margin-top:3px;}
-.agent-pill .phead{display:inline-flex;align-items:flex-start;gap:9px;max-width:100%;min-width:0;overflow-wrap:anywhere;}
-.agent-pill .pname{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere;line-height:1.3;}
-/* align-self:stretch overrides the card's align-items:flex-start — otherwise
-   .pdesc shrink-to-fits to the full string width and its own overflow:hidden
-   clips against that oversized box instead of the card. */
-.agent-pill .pdesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;align-self:stretch;max-width:100%;min-width:0;overflow-wrap:anywhere;font-weight:400;font-size:11.5px;line-height:1.45;color:var(--ink-2);}
-/* 3-line text budget: a name that wrapped to 2 lines (.name-2l, toggled by a
-   ResizeObserver in app.js) leaves only 1 line for the description. */
-.agent-pill.name-2l .pdesc{-webkit-line-clamp:1;}
-.agent-pill .pdesc.derived{font-style:italic;}
+.builder-card{padding:0;overflow:hidden;display:flex;min-height:640px;}
 
-.composer-hint {
-  margin: 0 0 10px;
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--ink-3);
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
-  border-radius: 8px;
-}
-.canvas-wrap{position:relative;overflow:auto;background-color:#FBFBF9;min-height:500px;max-height:640px;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
-.flow{position:relative;display:flex;align-items:center;gap:0;padding:70px 30px 50px;min-height:500px;width:max-content;min-width:100%;}
-.wires{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
+/* ---------- palette rail ---------- */
+.gv-palette{width:264px;flex:0 0 264px;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;}
+.gv-palette-top{padding:16px 16px 12px;border-bottom:1px solid var(--line);}
+.gv-palette-top .pal-filter{width:100%;height:36px;border:none;border-radius:11px;background:var(--field);padding:0 12px;font-size:12.5px;font-weight:500;color:var(--ink);font-family:inherit;}
+.gv-palette-top .pal-filter::placeholder{color:var(--ink-3);}
+.gv-palette-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:14px 16px 8px;}
+.pal-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.pal-chip{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);background:var(--field);border-radius:999px;padding:5px 10px;}
+.pal-chip.off{opacity:.45;}
+.pal-group{margin-bottom:16px;}
+.pal-group[hidden]{display:none;}
+.pal-group .grp{display:flex;align-items:center;gap:8px;margin:0 2px 10px;}
+.pal-group .lab{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);}
+.pal-group .chip{font-family:var(--mono);font-size:9px;border-radius:6px;padding:2.5px 6px;line-height:1.2;background:var(--field);color:var(--ink-3);white-space:nowrap;}
+.pal-group .pinned-tag{background:none;padding-right:0;text-transform:uppercase;letter-spacing:.05em;}
+.pal-pinned{border-top:1px solid var(--line);background:var(--field);margin:0 -16px;padding:13px 16px 15px;}
+.pal-pinned .chip{background:#fff;}
+.pills{display:flex;flex-direction:column;gap:8px;}
+.ap{display:flex;align-items:flex-start;gap:9px;width:100%;text-align:left;background:#fff;border:1.5px solid var(--line-2);border-radius:12px;padding:9px 11px;box-shadow:var(--shadow-soft);cursor:grab;transition:border-color var(--t-fast,120ms),box-shadow var(--t-fast,120ms);}
+.ap:hover:not(:disabled){border-color:var(--ink-3);box-shadow:var(--shadow);}
+.ap:disabled,.ap.dim{opacity:.55;cursor:default;box-shadow:none;}
+.ap[hidden]{display:none;}
+.ap .d{width:8px;height:8px;border-radius:50%;flex:0 0 8px;margin-top:5px;background:var(--ink-3);}
+.ap .d[data-color="green"]{background:var(--green);}
+.ap .d[data-color="peach"]{background:var(--peach);}
+.ap .d[data-color="red"]{background:var(--red);}
+.ap .d[data-color="blue"]{background:var(--blue);}
+.ap .d[data-color="violet"]{background:var(--violet);}
+.ap .d[data-color="amber"]{background:var(--amber);}
+.ap .d[data-color="flow"]{background:var(--ink);}
+.ap .b{min-width:0;flex:1 1 auto;}
+.ap .n{display:block;font-size:13px;font-weight:600;}
+.ap .p{display:block;margin-top:2px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-.strip{flex:0 0 16px;align-self:stretch;border-radius:12px;margin:40px 0;position:relative;transition:flex-basis .14s,background .14s;}
-.strip.full{flex:1;}
-.strip.over{flex-basis:78px;background:rgba(140,127,214,.12);outline:2px dashed var(--violet);outline-offset:-5px;}
-.strip.over::after{content:"+ step";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--violet-ink);white-space:nowrap;text-transform:uppercase;}
+/* ---------- canvas ---------- */
+.gv-canvas{flex:1 1 auto;min-width:0;position:relative;overflow:hidden;touch-action:none;
+  background:#FBFBF9 radial-gradient(var(--line-2) 1px,transparent 1px);background-size:22px 22px;}
+.gv-stage{position:absolute;inset:0;}
+.gv,.gv-world{position:absolute;left:0;top:0;}
+.gv-world{transform-origin:0 0;will-change:transform;}
+.gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
+.gv-empty{position:absolute;left:50%;top:24px;transform:translateX(-50%);z-index:4;
+  background:rgba(255,255,255,.94);border:1px solid var(--line-2);border-radius:999px;
+  padding:8px 18px;font-size:12.5px;font-weight:500;color:var(--ink-2);box-shadow:var(--shadow-soft);}
+.gv-empty[hidden]{display:none;}
+.gv-chip{position:absolute;z-index:6;pointer-events:none;background:var(--red-bg);color:var(--red-ink);
+  border:1px solid var(--red);border-radius:8px;padding:4px 9px;font-size:11px;font-weight:600;white-space:nowrap;}
+.gv-chip[hidden]{display:none;}
+.gv-legend{position:absolute;left:20px;bottom:20px;z-index:4;display:flex;align-items:center;gap:16px;
+  background:rgba(255,255,255,.94);border:1px solid var(--line-2);border-radius:999px;padding:8px 16px;
+  box-shadow:var(--shadow-soft);font-size:11.5px;font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.gv-zoom{position:absolute;right:20px;bottom:20px;z-index:4;display:flex;align-items:center;background:#fff;
+  border:1px solid var(--line-2);border-radius:999px;padding:4px;gap:2px;box-shadow:var(--shadow-soft);}
+.gv-zoom button{width:32px;height:32px;border-radius:999px;color:var(--ink-2);display:grid;place-items:center;
+  font-size:15px;font-weight:600;line-height:1;}
+.gv-zoom button:hover{background:var(--field);}
+.gv-zoom svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.gv-zoom .pct{min-width:52px;text-align:center;font-family:var(--mono);font-size:11.5px;font-weight:500;}
+.gv-zoom .zdiv{width:1px;height:18px;background:var(--line-2);margin:0 3px;}
 
-.col{display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;align-self:center;padding:14px 10px;border-radius:20px;position:relative;z-index:1;transition:background .14s,outline-color .14s;outline:2px dashed transparent;outline-offset:0;}
-.col.over{background:rgba(91,166,204,.10);outline-color:var(--blue);}
-/* left:10px tracks .col padding:14px 10px — tag left edge lines up with card left edge (was centered, causing feedback arcs to cut through text) */
-.col .col-tag{position:absolute;top:8px;left:10px;transform:translateY(-100%);font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap;}
-.col .col-tag em{font-style:normal;color:var(--blue-ink);}
-.col .par-hint{position:absolute;bottom:6px;left:50%;transform:translate(-50%,100%);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--blue-ink);text-transform:uppercase;opacity:0;transition:opacity .14s;white-space:nowrap;}
-.col.over .par-hint{opacity:1;}
+/* ---------- node cards ---------- */
+.gv-world .node{position:absolute;z-index:2;background:#fff;border:1.5px solid var(--line-2);border-radius:16px;
+  box-shadow:var(--shadow-soft);cursor:grab;transition:box-shadow var(--t-fast,120ms);}
+.gv-world .node:hover{box-shadow:var(--shadow);}
+.gv-world .node.sel{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-world .node.pinned{border-style:solid;border-color:var(--ink-3);}
+.nhead{height:34px;display:flex;align-items:center;gap:8px;padding:0 11px;border-radius:14.5px 14.5px 0 0;}
+.nhead .tt{font-size:13px;font-weight:600;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.nhead svg{width:16px;height:16px;flex:0 0 16px;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;}
+.h-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.h-green{background:var(--green-bg);color:var(--green-ink);}
+.h-peach{background:var(--peach-bg);color:var(--peach-ink);}
+.h-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.h-red{background:var(--red-bg);color:var(--red-ink);}
+.h-amber{background:var(--amber-bg);color:var(--amber-ink);}
+/* Flow cards read as "system": dark ink, never an agent tint (spec §4). */
+.h-flow{background:var(--ink);color:#fff;}
+.nbody{padding:8.5px 0 8px;}
+.prow{position:relative;height:24px;display:flex;align-items:center;gap:7px;padding:0 13px;}
+.prow.out{justify-content:flex-end;}
+.prow .pn{font-size:12.5px;font-weight:500;}
+.prow .pt{font-family:var(--mono);font-size:10px;color:var(--ink-3);line-height:1.3;}
+.prow .pt.cond{color:var(--amber-ink);}
+.prow .chip{font-family:var(--mono);font-size:9px;border-radius:6px;padding:2.5px 6px;line-height:1.2;background:var(--field);color:var(--ink-3);white-space:nowrap;}
+.prow .chip.am{background:var(--amber-bg);color:var(--amber-ink);}
+.prow .chip.fan{font-weight:600;color:var(--ink-2);}
+.prow .mla,.prow .chip{margin-left:auto;}
+.psep{height:9px;position:relative;}
+.psep::after{content:"";position:absolute;left:13px;right:13px;top:4px;height:1px;background:var(--line);}
+.prow .dot{position:absolute;top:7px;width:10px;height:10px;border-radius:50%;}
+.prow.in .dot,.prow.in .gdot{left:-6.5px;}
+.prow.out .dot{right:-6.5px;}
+.dot.md{background:var(--ink);}
+.dot.json{background:var(--blue);}
+.dot.void{background:#fff;border:2px solid var(--ink-3);}
+.dot.any{background:#fff;border:2px solid var(--ink);}
+.dia{position:absolute;top:8px;right:-5.5px;width:8px;height:8px;background:var(--amber);border-radius:1.5px;transform:rotate(45deg);}
+/* The synthesized await gate: dashed ring, left edge, subdued until wired. */
+.gdot{position:absolute;top:7px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px dashed var(--ink);}
+.prow.gate.off .pn,.prow.gate.off .pt{color:var(--ink-3);}
+.prow.gate.off .gdot{background:var(--field);border-color:var(--seq);}
+/* Below 0.6 zoom the dots are noise, not affordances. */
+.gv-world.dots-faded .dot,.gv-world.dots-faded .dia,.gv-world.dots-faded .gdot{opacity:.25;}
+.npip{position:absolute;top:-5px;right:-5px;width:11px;height:11px;border-radius:50%;background:var(--red);border:2px solid #fff;}
 
-.node{position:relative;width:230px;background:#fff;border:1.5px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-soft);padding:13px 14px 13px 18px;display:flex;align-items:center;gap:12px;z-index:2;transition:box-shadow .12s,transform .12s;}
-.node:hover{box-shadow:var(--shadow);}
-.node::before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:5px;border-radius:0 5px 5px 0;background:var(--c,#ccc);}
-.node .nic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;}
-.node .nic svg{width:19px;height:19px;stroke-width:1.85;}
-.node .nmeta{min-width:0;flex:1;}
-.node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
-.node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
-.flow .node .nmeta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.node .nx,.node .loop,.node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
-.node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
-.node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
-.node .selfloop{top:-10px;left:-10px;width:25px;height:25px;}
-.node:hover .nx,.node:hover .loop,.node:hover .selfloop{opacity:1;}
-.node .nx:hover{color:var(--red-ink);border-color:var(--red);}
-.node .loop svg{width:13px;height:13px;stroke:var(--ink-2);stroke-width:2;}
-.node .loop:hover{border-color:var(--amber);}
-.node .loop:hover svg{stroke:var(--amber-ink);}
-.node .selfloop svg{width:14px;height:14px;stroke:var(--ink-2);stroke-width:2;}
-.node .selfloop:hover{border-color:var(--violet);}
-.node .selfloop:hover svg{stroke:var(--violet-ink);}
-/* active self-cycle: always visible, violet ring (mirrors the lit toggle in the mockup) */
-.node .selfloop.on{opacity:1;background:var(--violet-bg);border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-bg);}
-.node .selfloop.on svg{stroke:var(--violet-ink);}
-.node.linking{outline:2px solid var(--amber);outline-offset:3px;}
-.node.linking .loop{opacity:1;border-color:var(--amber);background:var(--amber-bg);}
-.node.link-target{outline:2px dashed var(--amber);outline-offset:3px;cursor:pointer;}
-.node.link-target:hover{background:var(--amber-bg);}
+/* ---------- wires ---------- */
+.gv-wires .wire{fill:none;stroke:var(--seq);stroke-width:2;}
+.gv-wires .wire.loop{stroke:var(--amber);}
+.gv-wires .wire.sel{stroke:var(--ink);stroke-width:2.5;}
+.gv-wires .wire.bad{stroke:var(--red);}
+.gv-wires .wire.ghost{stroke:var(--ink-3);stroke-dasharray:5 4;}
+.gv-ghost{position:absolute;left:0;top:0;z-index:3;pointer-events:none;}
+.gv-ghost[hidden]{display:none;}
+.gv-ghost svg{position:absolute;left:0;top:0;overflow:visible;}
+.gv-ghost.legal .wire{stroke:var(--green);stroke-dasharray:none;}
+.gv-ghost.illegal .wire{stroke:var(--red);}
+.wbadge{position:absolute;z-index:3;transform:translate(-50%,-50%);background:#fff;border:1.5px solid var(--amber);
+  border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;color:var(--amber-ink);box-shadow:var(--shadow-soft);}
 
-.builder-foot{display:flex;align-items:center;gap:14px;padding:16px 24px;border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap;}
-.legend{display:flex;align-items:center;gap:20px;font-size:12px;color:var(--ink-2);font-weight:600;}
-.legend .lg{display:flex;align-items:center;gap:8px;}
-.legend .ll{width:12px;height:12px;border-radius:50%;background:var(--seq);display:inline-block;flex:none;}
-.legend .ll.fb{background:var(--amber);}
-.legend .ll.sl{background:var(--violet);}
-.builder-foot .sp{flex:1;}
-.link-banner{display:inline-flex;align-items:center;gap:11px;background:var(--amber-bg);color:var(--amber-ink);font-weight:600;font-size:12.5px;padding:8px 9px 8px 15px;border-radius:999px;}
-.link-banner[hidden]{display:none;}
-.link-banner button{background:#fff;border:none;border-radius:999px;padding:5px 12px;font-family:inherit;font-weight:600;font-size:11.5px;color:var(--amber-ink);cursor:pointer;}
-.empty-flow{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--ink-3);font-weight:600;font-size:14px;pointer-events:none;text-align:center;}
-.empty-flow svg{width:36px;height:36px;stroke:var(--line-2);stroke-width:1.6;}
-.empty-flow small{font-weight:500;font-size:12.5px;}
+/* ---------- inspector ---------- */
+.gv-inspector{width:280px;flex:0 0 280px;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:auto;}
+.ins-panel{display:flex;flex-direction:column;min-height:0;}
+.ins-head{padding:16px 18px 15px;border-bottom:1px solid var(--line);}
+.ins-name{font-size:15px;font-weight:700;letter-spacing:-.02em;}
+.ins-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:2px;word-break:break-all;}
+.ins-body{padding:16px 18px 18px;}
+.ins-blurb{font-size:12px;color:var(--ink-2);margin:0 0 14px;line-height:1.5;}
+.ins-f{margin-bottom:14px;}
+.ins-label{display:block;font-size:12.5px;font-weight:600;margin-bottom:7px;}
+.ins-select,.ins-number{width:100%;height:40px;border:none;border-radius:12px;background:var(--field);
+  padding:0 13px;font-family:var(--mono);font-size:12px;font-weight:500;color:var(--ink);}
+.ins-tog{display:flex;align-items:center;gap:11px;padding:8px 0;}
+.ins-tog input{width:18px;height:18px;flex:0 0 18px;accent-color:var(--green);}
+.ins-tog-b{min-width:0;flex:1 1 auto;}
+.ins-tog-t{display:block;font-size:12.5px;font-weight:500;}
+.ins-tog-h{display:block;font-family:var(--mono);font-size:9.5px;color:var(--ink-3);}
+.ins-sep{height:1px;background:var(--line);margin:14px 0 15px;}
+.ins-resolved{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);background:var(--field);
+  border-radius:9px;padding:8px 11px;margin-bottom:14px;}
+.ins-zone{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;}
+.ins-plist{display:flex;flex-direction:column;gap:3px;margin-bottom:13px;}
+.ins-pitem{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:9px;background:var(--field);}
+.ins-pitem .dot,.ins-pitem .gdot{position:static;flex:0 0 10px;top:auto;left:auto;right:auto;}
+.ins-pitem .pn{font-size:12.5px;font-weight:500;}
+.ins-pitem .pt{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:auto;}
+.ins-pitem.gate .pn{color:var(--ink-2);}
+.ins-hint{display:block;font-size:11px;color:var(--ink-3);line-height:1.45;}
+.ins-empty{padding:22px 18px;}
 
-.saved-card{margin-top:22px;padding:0;overflow:hidden;}
-.saved-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--line);}
-.saved-head b{font-size:15px;font-weight:600;letter-spacing:-.01em;}
-.saved-head .cnt{color:var(--ink-3);font-size:12.5px;font-weight:600;margin-left:9px;}
-.saved-list{display:flex;flex-direction:column;}
-.pl-empty{padding:34px 24px;text-align:center;color:var(--ink-3);font-size:13px;font-weight:500;}
-.pl-item{border-bottom:1px solid var(--line);}
-.pl-item:last-child{border-bottom:none;}
-.pl-row{display:flex;align-items:center;gap:15px;padding:16px 22px;cursor:pointer;transition:background .12s;}
-.pl-row:hover{background:var(--panel);}
-.pl-caret{width:17px;height:17px;flex:0 0 auto;color:var(--ink-3);transition:transform .18s;margin-top:2px;align-self:flex-start;}
-.pl-item.open .pl-caret{transform:rotate(90deg);}
-.pl-main{flex:1;min-width:0;}
-.pl-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);}
-.pl-meta{font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin-top:5px;}
-.pl-meta em{font-style:normal;color:var(--amber-ink);}
-.pl-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;}
-.pl-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ink-2);background:var(--field);border:1px solid var(--line);border-radius:999px;padding:3px 9px 3px 7px;}
-.pl-chip .d{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
-.pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
-.pl-del:hover{border-color:var(--red);color:var(--red-ink);background:var(--red-bg);}
-.pl-del svg{width:16px;height:16px;stroke-width:1.9;}
-.pl-body{display:none;border-top:1px dashed var(--line-2);}
-.pl-item.open .pl-body{display:block;}
-.pl-readonly-tag{display:flex;align-items:center;gap:8px;padding:9px 24px;background:var(--panel);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border-top:1px dashed var(--line-2);}
-.pl-readonly-tag svg{width:13px;height:13px;stroke:var(--ink-3);stroke-width:2;}
-.ro-scroll{overflow:auto;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;max-height:520px;}
-.ro-flow{position:relative;display:flex;align-items:center;padding:26px 30px;min-height:360px;width:max-content;min-width:100%;}
-.ro-flow .strip{flex:0 0 58px;align-self:stretch;margin:40px 0;}
-.ro-flow .col{pointer-events:none;}
-.ro-flow .node{width:218px;}
+/* ---------- save modal ---------- */
+.save-dialog{border:none;border-radius:20px;padding:0;box-shadow:var(--shadow);max-width:420px;width:calc(100vw - 48px);}
+.save-dialog::backdrop{background:rgba(25,25,27,.28);}
+.sd-body{padding:22px 24px 20px;}
+.sd-title{font-size:17px;font-weight:700;letter-spacing:-.02em;margin:0 0 16px;}
+.sd-field{margin-bottom:14px;}
+.sd-field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:7px;}
+.sd-field input{width:100%;height:40px;border:none;border-radius:12px;background:var(--field);padding:0 13px;font-size:13px;color:var(--ink);font-family:inherit;}
+.sd-msg{min-height:16px;margin:0 0 10px;font-size:12px;color:var(--ink-3);}
+.sd-msg.err{color:var(--red-ink);}
+.sd-actions{display:flex;justify-content:flex-end;gap:8px;}
+
+/* ---------- unsaved-changes label + Save error count ---------- */
+.gv-dirty{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--ink-3);font-weight:500;}
+.gv-dirty[hidden]{display:none;}
+#composer-save.has-errors{opacity:.55;}
+
+/* ---------- saved pipelines ---------- */
+.pl-item{display:flex;align-items:center;gap:14px;padding:12px 20px;border-top:1px solid var(--line);}
+.pl-item:first-child{border-top:none;}
+.pl-thumb{flex:0 0 120px;height:64px;border-radius:10px;background:#FBFBF9;border:1px solid var(--line-2);overflow:hidden;display:grid;place-items:center;}
+.pl-meta{flex:1 1 auto;min-width:0;}
+.pl-name{display:block;font-size:13.5px;font-weight:600;}
+.pl-sub{display:block;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:2px;}
+.pl-actions{display:flex;gap:8px;flex:0 0 auto;}
+
+/* ---------- Agents-view port editor ---------- */
+.agent-ports{margin-bottom:16px;}
+.agent-ports-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.agent-ports-head b{font-size:12.5px;font-weight:600;}
+.agent-ports-list{display:flex;flex-direction:column;gap:9px;}
+.port-row{border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;background:var(--panel);}
+.port-row-top{display:flex;align-items:flex-end;gap:9px;}
+.port-row-top .field{margin:0;flex:1 1 0;min-width:0;}
+.port-row-top .pf-f-type,.port-row-top .pf-f-as,.port-row-top .pf-f-when,.port-row-top .pf-f-store{flex:0 0 104px;}
+.port-row-top .field label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px;}
+.port-row-flags{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:9px;}
+.pf-remove{flex:0 0 auto;font-size:16px;line-height:1;padding:8px 11px;}
+.pf-directive-wrap{margin-top:9px;}
+.pf-directive-wrap[hidden]{display:none;}
+.agent-caps,.agent-workspace{display:flex;flex-direction:column;gap:2px;}
+.agent-not-placeable{background:var(--amber-bg);color:var(--amber-ink);}
+.agent-not-placeable[hidden]{display:none;}
 
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
@@ -964,68 +1034,90 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-pill.ws.active::before{background:rgba(255,255,255,.22);color:#fff;}
 
 /* ========================================================================== */
-/* Run-flow — composer-style node graph for Running + History cards            */
-/* (ported from the mockup; reuses :root tokens. Node base look — accent bar,  */
-/*  border, radius, shadow — is inherited from the unscoped `.node` rule.       */
-/*  --c is set per-node inline by runNode(); these rules read it via var(--c).) */
+/* Run graph — the SHARED graph renderer (.gv, ui/public/graph/graph-view.mjs) */
+/* mounted in a run/history card, plus run-decor's live layer: node states,     */
+/* executions footer, ants, loop badges and the gate pip.                      */
+/* (reuses :root tokens; the card look itself comes from the .gv-world rules.)  */
 /* ========================================================================== */
-.run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
-.run-flow{position:relative;display:flex;align-items:center;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
-.run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
-.run-flow .col{padding:14px 8px;}
-.run-flow .col .col-tag{color:var(--ink-3);}
+.run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow:auto;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
+/* The renderer positions .gv/.gv-world absolutely, so the mount needs a
+   positioned box with a real height (the composer gets one from .gv-canvas). */
+.run-flow{position:relative;height:420px;min-width:100%;}
+.run-flow .gv,.run-flow .gv-world{position:absolute;left:0;top:0;}
 
-/* Node sizing overrides — base look (accent bar ::before, border, radius,
-   soft shadow, flex layout) is inherited from the unscoped `.node` rule. */
-.run-flow .node{width:198px;padding:11px 13px 11px 16px;cursor:default;transition:opacity .25s, box-shadow .25s, border-color .25s, transform .25s;}
-.run-flow .node .nic{width:33px;height:33px;border-radius:10px;}
-.run-flow .node .nic svg{width:17px;height:17px;}
-.run-flow .node .nmeta b{font-size:12.5px;}
-.run-flow .node .nmeta small{font-size:10px;}
-.run-flow .node:hover{box-shadow:var(--shadow-soft);transform:none;}
+/* Run-level warning banner (Amendment f: finished at quiescence). */
+.run-warn{margin:0 0 14px;padding:11px 15px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;font-weight:600;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);}
+.run-warn[hidden]{display:none;}
 
-/* Always-visible per-node duration · cost (our decision; not in the mockup). */
-.run-flow .node .nrun{display:flex;align-items:center;gap:5px;margin-top:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
-.run-flow .node .nrun .dur,.run-flow .node .nrun .cost{font-family:var(--mono);color:var(--ink-3);}
-.run-flow .node .nrun .dur:empty,.run-flow .node .nrun .cost:empty{display:none;}
-/* Separator rendered only when cost is present, so a lone duration (e.g. "0s") has no dangling "·". */
-.run-flow .node .nrun .cost:not(:empty)::before{content:"·";margin-right:4px;}
-
-/* Status badge (top-right pip). */
-.run-flow .nstat{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;box-shadow:var(--shadow-soft);z-index:3;}
-.run-flow .nstat svg{width:12px;height:12px;}
-.run-flow .nstat.done{background:var(--green);} .run-flow .nstat.done svg{stroke:#fff;stroke-width:3;}
-.run-flow .nstat.paused{background:var(--amber);} .run-flow .nstat.paused svg{fill:#fff;}
-.run-flow .nstat.stopped{background:var(--red);} .run-flow .nstat.stopped svg{stroke:#fff;stroke-width:3;}
-
-/* Per-status node states. */
+/* Per-status node states (spec §7). `skipped` = .35 + dashed; `error` = red
+   ring + pip. --c is the agent colour, set by the shared renderer's header. */
+.run-flow .node{transition:opacity .25s, box-shadow .25s, border-color .25s, height .18s ease;}
 .run-flow .node.is-pending{opacity:.5;}
-.run-flow .node.is-pending .nmeta small{color:var(--ink-3);}
-.run-flow .node.is-done .nmeta small{color:var(--green-ink);font-weight:600;}
-.run-flow .node.is-active{border-color:color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
-.run-flow .node.is-active .nmeta small{color:var(--c);font-weight:600;}
+.run-flow .node.is-active{border-color:color-mix(in srgb, var(--c, var(--blue)) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
 .run-flow .node.is-paused{border-color:color-mix(in srgb, var(--amber) 55%, var(--line-2));animation:nodeGlowAmber 2.2s ease-in-out infinite;}
-.run-flow .node.is-paused .nmeta small{color:var(--amber-ink);font-weight:600;}
 .run-flow .node.is-stopped{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
-.run-flow .node.is-stopped .nmeta small{color:var(--red-ink);font-weight:600;}
-/* Per-node model · effort sub-line: stays neutral grey across all statuses
-   (matches the New-pipeline .step-current caption) and truncates with ellipsis. */
-.run-flow .node .nmeta small.nmodel{color:var(--ink-3);font-weight:600;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-@keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
+.run-flow .node.is-error{border-color:var(--red);box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent),var(--shadow-soft);}
+.run-flow .node.is-skipped{opacity:.35;border-style:dashed;}
+@keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c, var(--blue)) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c, var(--blue)) 24%, transparent);}}
 @keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
-/* Sub-agent square strip on a run-graph node. The node wraps so the strip
-   drops to its own full-width row under the meta/cost block. PULSE LIVES HERE
-   AND NOWHERE ELSE: sqPulse attaches only to .run-flow .node .fan .sq.on, so
-   the tree/legend squares (.led/.sq) never animate and history (terminal
-   statuses -> no .on) never pulses. */
-.run-flow .node.run-node{flex-wrap:wrap;}
-.run-flow .node .fan{flex:0 0 100%;display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line);}
+/* Gate pip — amber "?" while a loop gate holds on this node's publish. */
+.run-flow .ngate{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;background:var(--amber);color:#fff;font-weight:800;font-size:12px;cursor:pointer;box-shadow:var(--shadow-soft);z-index:4;animation:dotpulse 1.3s ease-in-out infinite;}
+
+/* Node header duration · cost = the sum over that node's executions. */
+.run-flow .node .nrun{position:absolute;right:11px;top:9px;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:600;color:#fff;opacity:.85;z-index:3;}
+.run-flow .node .nrun .dur:empty,.run-flow .node .nrun .cost:empty{display:none;}
+.run-flow .node .nrun .cost:not(:empty)::before{content:"\00b7";margin-right:4px;}
+
+/* End result chip: the bound payload's basename, or the void treatment. */
+.run-flow .xresult{position:absolute;left:0;right:0;bottom:0;padding:5px 11px;font-size:11px;font-weight:600;color:var(--ink-3);border-top:1px solid var(--line);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.run-flow .xresult a{color:var(--blue-ink);text-decoration:none;}
+.run-flow .xresult a:hover{text-decoration:underline;}
+
+/* Executions footer: collapsed = 7px squares + "3 runs · $1.12" + chevron;
+   expanded = 22px in-card rows. Sizes MUST match graph-geometry's FOOTER_H(26)
+   and EXEC_ROW_H(22) — run-decor re-sizes the card from those constants. */
+.run-flow .xfoot{position:absolute;left:0;bottom:0;border-top:1px solid var(--line);background:#FCFCFB;border-radius:0 0 14px 14px;overflow:hidden;}
+.run-flow .xtoggle{display:flex;align-items:center;gap:7px;width:100%;height:26px;padding:0 11px;background:none;border:none;font-family:inherit;font-size:10.5px;font-weight:600;color:var(--ink-3);cursor:pointer;}
+.run-flow .xtoggle:hover{background:var(--field);}
+.run-flow .xsq{display:flex;align-items:center;gap:3px;flex:0 0 auto;}
+.run-flow .xsq .xq{width:7px;height:7px;border-radius:2px;background:var(--ink-3);opacity:.5;}
+.run-flow .xsq .xq.is-done{background:var(--green);opacity:1;}
+.run-flow .xsq .xq.is-error{background:var(--red);opacity:1;}
+.run-flow .xsq .xq.is-active{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
+.run-flow .xsum{flex:1 1 auto;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.run-flow .xtoggle .chev{width:12px;height:12px;flex:0 0 auto;transition:transform .2s;}
+.run-flow .xtoggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.run-flow .xrows[hidden]{display:none;}
+.run-flow .xrow{display:flex;align-items:center;gap:7px;height:22px;padding:0 11px;font-size:10.5px;font-weight:600;color:var(--ink-2);cursor:pointer;}
+.run-flow .xrow:hover{background:var(--field);}
+.run-flow .xrow .led{width:7px;height:7px;border-radius:2px;flex:0 0 auto;background:var(--ink-3);opacity:.55;}
+.run-flow .xrow.is-done .led{background:var(--green);opacity:1;}
+.run-flow .xrow.is-error .led{background:var(--red);opacity:1;}
+.run-flow .xrow.is-active .led{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
+.run-flow .xrow .xl{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.run-flow .xrow .xr{flex:0 0 auto;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+
+/* Sub-agent square strip — the first row of the card's footer zone, above the
+   executions strip (both live inside .xfoot so they stack, never overlap).
+   PULSE LIVES HERE AND NOWHERE ELSE: sqPulse attaches only to
+   .run-flow .node .fan .sq.on, so the tree/legend squares never animate and
+   history (terminal statuses -> no .on) never pulses. */
+.run-flow .node .fan{display:flex;align-items:center;gap:3px;height:26px;padding:0 11px;overflow:hidden;}
+.run-flow .node .fan + .xtoggle{border-top:1px solid var(--line);}
 .run-flow .node .fan .sq{width:7px;height:7px;border-radius:2px;background:var(--ink-3);opacity:.5;}
 .run-flow .node .fan .sq.on{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
 .run-flow .node .fan .fl{font-size:9.5px;font-weight:700;color:var(--ink-3);margin-left:5px;letter-spacing:.02em;}
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
+
+/* Legacy v1 chip strip — frozen runs that predate the graph have no wires. */
+.run-strip{display:flex;flex-wrap:wrap;gap:8px;padding:18px 20px;}
+.run-strip .rchip{font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--field);color:var(--ink-2);}
+.run-strip .rchip.is-done{background:var(--green-bg);color:var(--green-ink);}
+.run-strip .rchip.is-error{background:var(--red-bg);color:var(--red-ink);}
+.run-strip .rchip.is-active{background:var(--blue-bg);color:var(--blue-ink);}
+
 
 /* "Sub-agents" disclosure pill + its tree panel (shared by Run + History). */
 .subs-bar,.clarify-bar,.logs-bar,.diff-bar,.overview-bar{margin-top:14px;}
@@ -1096,20 +1188,23 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    it to its text; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
 .graphify-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--amber-bg);color:var(--amber-ink);}
 
-/* Loop-badge cycle-count text (renderer sizes font-size inline). */
-.run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
+/* Loop badge — the wire's cycle budget (rendered by graph-view) plus the fired
+   count run-decor appends. */
+.run-flow .wbadge .wfired{margin-left:5px;color:var(--amber-ink);font-weight:800;}
 
-/* Wires — dimmed by default; the live (originating) loop marches. */
-.run-flow .wires path.wire-dim{opacity:.26;}
-.run-flow .wires path.wire-live{opacity:1;stroke-width:2.4;animation:wireFlow .9s linear infinite;}
+/* Wires — the trigger edges of the in-flight executions march. */
+.run-flow .gv-wires path.wire-live{stroke-width:2.6;stroke-dasharray:6 5;animation:wireFlow .9s linear infinite;}
 @keyframes wireFlow{to{stroke-dashoffset:-18;}}
 
 @media (prefers-reduced-motion: reduce){
-  .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
+  .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c, var(--blue)) 16%, transparent),var(--shadow-soft);}
   .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
-  .run-flow .wires path.wire-live{animation:none;}
+  .run-flow .gv-wires path.wire-live{animation:none;}
   .run-flow .node .fan .sq.on{animation:none;}
+  .run-flow .xsq .xq.is-active,.run-flow .xrow.is-active .led{animation:none;}
+  .run-flow .ngate{animation:none;}
 }
+
 
 /* ===== Agents view ===== */
 .agent-card .agent-head { display:flex; align-items:center; gap:14px; cursor:pointer; }

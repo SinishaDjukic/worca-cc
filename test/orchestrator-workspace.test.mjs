@@ -17,8 +17,10 @@ import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
-import { listAllPipelines, readPipelineForResume } from '../src/core/artifacts.mjs';
+import { listAllPipelines, readPipelineForResume, readPipelineExtras } from '../src/core/artifacts.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
+import { writeWorkflow } from '../src/core/workflows.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after); // workspace store writes -> isolated temp home, not real ~/.worca-cc
@@ -330,31 +332,201 @@ test('fan-out forcing: a workspace run forces fanOut=true on eligible nodes only
   const b = await freshRepo();
   const ws = workspaceOpts([a, b]);
   const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
-  // Capture the resolved plan the dispatcher runs by spying on _dispatch.
-  const origDispatch = orch._dispatch.bind(orch);
-  let seenPlan = null;
-  orch._dispatch = async (plan, runArgs) => { seenPlan = plan; return origDispatch(plan, runArgs); };
+  // Capture the resolved graph the engine runs by spying on _adoptResolvedGraph
+  // (the forcing itself lives there).
+  const origAdopt = orch._adoptResolvedGraph.bind(orch);
+  let seenResolved = null;
+  orch._adoptResolvedGraph = (resolved) => { origAdopt(resolved); seenResolved = resolved; };
   await orch.run();
-  assert.ok(seenPlan, 'dispatch ran');
-  const FANOUT_ELIGIBLE = new Set(['clarify', 'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer']);
-  for (const group of seenPlan.steps) {
-    for (const node of group) {
-      if (FANOUT_ELIGIBLE.has(node.key)) {
-        assert.equal(node.fanOut, true, `eligible node ${node.key} is forced fanOut`);
-      } else {
-        // Any non-eligible node must NOT be forced (clarify IS eligible — a fan-out research node).
-        assert.equal(node.fanOut, false, `ineligible node ${node.key} is NOT forced`);
-      }
+  assert.ok(seenResolved, 'the graph resolved');
+  // The forcing is META-driven now (`workspaceFanOut` on the sidecar), not a key
+  // set, and it only ever ADDS: a node that declares it MUST come out fanned out on
+  // a workspace run, and a node that does not keeps its own sidecar default.
+  let forced = 0;
+  for (const node of seenResolved.template.nodes) {
+    if (node.kind !== 'agent') continue;
+    const nc = seenResolved.nodeCtx[node.id];
+    if (nc.meta?.workspaceFanOut) {
+      forced += 1;
+      assert.equal(nc.fanOut, true, `node ${node.key} declares workspaceFanOut and must be forced`);
+      assert.equal(node.fanOut, true, `node ${node.key}: ctxFanOut reads the node first`);
+    } else {
+      assert.equal(nc.fanOut, !!nc.meta?.fanOut,
+        `node ${node.key} does NOT declare workspaceFanOut, so it keeps its sidecar default`);
     }
   }
+  assert.ok(forced > 0, 'at least one node was forced');
   // M4: the review node is substituted reviewer -> workspaceReviewer (workflows.mjs),
-  // so the resolved workspace plan carries a fanned-out workspaceReviewer and NO
+  // so the resolved workspace graph carries a fanned-out workspaceReviewer and NO
   // single-project reviewer node.
-  const keys = seenPlan.steps.flat().map((n) => n.key);
-  const wsReviewer = seenPlan.steps.flat().find((n) => n.key === 'workspaceReviewer');
-  assert.ok(wsReviewer, 'workspace plan contains a workspaceReviewer node');
+  const agents = Object.values(seenResolved.nodeCtx).filter((nc) => nc.kind === 'agent');
+  const wsReviewer = agents.find((nc) => nc.key === 'workspaceReviewer');
+  assert.ok(wsReviewer, 'workspace graph contains a workspaceReviewer node');
   assert.equal(wsReviewer.fanOut, true, 'the workspaceReviewer node is forced fanOut');
-  assert.ok(!keys.includes('reviewer'), 'no single-project reviewer node in a workspace plan');
+  assert.ok(!agents.some((nc) => nc.key === 'reviewer'), 'no single-project reviewer node in a workspace graph');
+});
+
+// ── fan-out forcing, BOTH ways, with the flagged builtins named ───────────────
+// `workspaceFanOut` replaced v1's FANOUT_ELIGIBLE key set, so the positive AND the
+// negative branch need a node in one graph: the five builtins that declare the flag
+// (planner, refiner, implementer, planReviewer, and the substituted workspaceReviewer)
+// must come out forced, and a USER agent the engine has never heard of — no flag —
+// must keep its own sidecar default. wf_default places neither planReviewer nor a
+// user agent, so this test writes its own template.
+
+/** The five builtin agent keys whose sidecars declare `workspaceFanOut`. */
+const FLAGGED_BUILTINS = ['implementer', 'planReviewer', 'planner', 'refiner', 'workspaceReviewer'];
+
+/** Register a user producer sidecar with NO `workspaceFanOut` under <worcaHome>/agents. */
+async function writeProbeAgent() {
+  const dir = join(worcaHome(), 'agents');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'wsProbe.md'), '# WS Probe\n\nYou take notes.\n');
+  await writeFile(join(dir, 'wsProbe.meta.json'), JSON.stringify({
+    metaVersion: 2,
+    key: 'wsProbe', displayName: 'WS Probe', description: 'a user producer with no workspace flag',
+    color: 'green', icon: '<p/>', agentFile: 'wsProbe.md', runnerType: 'producer', order: 30,
+    inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'notes', type: 'md', filename: 'ws-probe-notes.md' }],
+  }));
+  return () => Promise.all(['wsProbe.md', 'wsProbe.meta.json']
+    .map((f) => rm(join(dir, f), { force: true })));
+}
+
+/** wf_default's spine plus a planReviewer and the unflagged user probe, both fed
+ *  off `refiner.plan`. Their own outputs stay unwired — nothing downstream depends
+ *  on them, so the run still converges through `reviewer.pass -> End`. */
+const WS_FORCING_GRAPH = {
+  name: 'Workspace forcing probe',
+  version: 2,
+  domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 60, y: 198, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 360, y: 198, config: {} },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 660, y: 198, config: {} },
+    { id: 'n_pr', kind: 'agent', key: 'planReviewer', x: 660, y: 440, config: {} },
+    { id: 'n_probe', kind: 'agent', key: 'wsProbe', x: 660, y: 680, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 960, y: 198, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1260, y: 198, config: {} },
+    { id: 'n_end', kind: 'end', x: 1560, y: 198, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 3 } },
+    { id: 'w4', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_pr', port: 'plan' } },
+    { id: 'w5', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_probe', port: 'plan' } },
+    { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
+
+test('fan-out forcing: the five flagged builtins are forced, an unflagged custom agent is NOT', async () => {
+  const cleanupAgent = await writeProbeAgent();
+  try {
+    const a = await freshRepo();
+    const b = await freshRepo();
+    const wf = await writeWorkflow(structuredClone(WS_FORCING_GRAPH));
+    const orch = createOrchestrator({
+      ...workspaceOpts([a, b]), workflowId: wf.id, prompt: 'x', auto: true, claude: { mock: true },
+    });
+    const origAdopt = orch._adoptResolvedGraph.bind(orch);
+    let seenResolved = null;
+    orch._adoptResolvedGraph = (resolved) => { origAdopt(resolved); seenResolved = resolved; };
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    assert.ok(seenResolved, 'the graph resolved');
+
+    const byKey = {};
+    for (const node of seenResolved.template.nodes) {
+      if (node.kind !== 'agent') continue;
+      byKey[node.key] = { node, nc: seenResolved.nodeCtx[node.id] };
+    }
+    // POSITIVE: every flagged builtin is present in this graph and comes out forced.
+    assert.deepEqual(
+      Object.keys(byKey).filter((k) => byKey[k].nc.meta?.workspaceFanOut).sort(),
+      FLAGGED_BUILTINS,
+      'exactly the five flagged builtins declare workspaceFanOut in this graph',
+    );
+    for (const key of FLAGGED_BUILTINS) {
+      const { node, nc } = byKey[key];
+      assert.equal(nc.fanOut, true, `${key} declares workspaceFanOut and must be forced`);
+      assert.equal(node.fanOut, true, `${key}: ctxFanOut reads the node first`);
+    }
+    // NEGATIVE: the user agent has no flag, so the forcing pass leaves it alone —
+    // its sidecar default (no `fanOut`) stands and the template node is untouched.
+    const probe = byKey.wsProbe;
+    assert.ok(probe, 'the user agent is a real node in the resolved workspace graph');
+    assert.equal(probe.nc.meta.workspaceFanOut, undefined, 'precondition: the probe declares no flag');
+    assert.equal(probe.nc.fanOut, false, 'an unflagged custom agent is NOT forced on a workspace run');
+    assert.equal(probe.node.fanOut, undefined, 'and its template node is never stamped');
+  } finally {
+    await cleanupAgent();
+  }
+});
+
+// ── substitution via workspaceVariantOf + the ws-review filenames ─────────────
+// The workspace review node is not a key branch in the engine: workspaceReviewer
+// declares `workspaceVariantOf: 'reviewer'`, so resolveGraph swaps the key on a
+// workspace run and the run's verdicts land under the VARIANT's own filename
+// template (ws-review-cycleN.json -> reviews.kind 'ws').
+
+/** The META port signature workflows.mjs compares before it accepts a variant:
+ *  ids, types and the required/loop/expands/when flags. Renderer hints, filenames
+ *  and stores are excluded (a variant writes its own files by design), and the
+ *  synthesized `await` input is added ABOVE the meta layer, so it never shows up. */
+function metaPortSignature(meta) {
+  return {
+    inputs: (meta.inputs || []).map((p) => ({
+      id: p.id, type: p.type, required: p.required !== false, loop: !!p.loop, expands: !!p.expands,
+    })),
+    outputs: (meta.outputs || []).map((p) => ({ id: p.id, type: p.type, when: p.when || 'always' })),
+    verdict: !!meta.verdict,
+  };
+}
+
+test('substitution: reviewer -> workspaceReviewer via workspaceVariantOf, with ws-review verdicts', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const orch = createOrchestrator({
+    ...workspaceOpts([a, b]), prompt: 'x', auto: true, claude: { mock: true },
+  });
+  const origAdopt = orch._adoptResolvedGraph.bind(orch);
+  let seenResolved = null;
+  orch._adoptResolvedGraph = (resolved) => { origAdopt(resolved); seenResolved = resolved; };
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+
+  // The node the user DREW is still `reviewer` (templateKey, the config-lookup key);
+  // the node the engine RAN is the declared variant.
+  const nc = Object.values(seenResolved.nodeCtx).find((c) => c.kind === 'agent' && c.templateKey === 'reviewer');
+  assert.ok(nc, 'the authored reviewer node is still identifiable by templateKey');
+  assert.equal(nc.key, 'workspaceReviewer', 'the substituted key is what the run used');
+  assert.equal(nc.meta.workspaceVariantOf, 'reviewer', 'and it substituted because it DECLARES the target');
+  assert.equal(nc.meta.scope, 'workspace-only');
+  assert.equal(seenResolved.template.nodes.find((n) => n.id === nc.nodeId).key, 'workspaceReviewer');
+
+  // The substitution is wiring-safe because the two META port signatures are equal —
+  // a meta-level comparison, unaffected by the `await` port synthesized above it.
+  const reg = loadAgentRegistry();
+  assert.deepEqual(metaPortSignature(reg.workspaceReviewer), metaPortSignature(reg.reviewer),
+    'the variant preserves the port contract of the node it replaces');
+
+  // ws-review filenames: the verdict template is the VARIANT's own, so the review
+  // rows land under kind `ws` (ws-review-cycleN.json -> 'ws'), never `impl`.
+  const { reviews } = readPipelineExtras(orch.getState().id);
+  const ws = reviews.filter((r) => r.kind === 'ws');
+  assert.deepEqual(ws.map((r) => r.cycle), [1, 2], 'both review cycles are recorded as ws-review verdicts');
+  assert.ok(!reviews.some((r) => r.kind === 'impl'), 'no single-project impl-review verdict on a workspace run');
+  // Cycle 1 blocks with the cross-project UNION (one issue per member, prefixed).
+  assert.equal(ws[0].issues.length, 2, JSON.stringify(ws[0].issues));
+  assert.ok(ws[0].issues.every((i) => /^project-[ab]:/.test(i.location)),
+    `every location is projectKey-prefixed: ${JSON.stringify(ws[0].issues.map((i) => i.location))}`);
+  assert.ok(ws[1].issues.every((i) => i.severity !== 'critical' && i.severity !== 'major'),
+    'cycle 2 is clean of blocking issues, which is why the loop terminated');
 });
 
 // ── history walker discovers the workspace run ────────────────────────────────
@@ -481,14 +653,16 @@ test('detached: the workspace mode pin is stamped on state and the run cwd is th
 });
 
 // ── Phase 4: per-node cwd + the §8.21 sub-agent preflight warning ─────────────
-// Every node's cwd is `ctx.projectDir` (phases.mjs runOpts maps it straight to
-// runClaude's `cwd`), so spying on _nodeCtx is the per-node cwd assertion.
+// Every execution's cwd is `ctx.projectDir` (phases.mjs runOpts maps it straight to
+// runClaude's `cwd`), so spying on _execCtx is the per-execution cwd assertion.
 function spyNodeCtxs(orch) {
   const seen = [];
-  const orig = orch._nodeCtx.bind(orch);
-  orch._nodeCtx = (node, pos) => {
-    const ctx = orig(node, pos);
-    seen.push({ key: node.key, cwd: ctx.projectDir, runRoot: ctx.runRoot, workspace: !!ctx.workspace });
+  const orig = orch._execCtx.bind(orch);
+  orch._execCtx = (node, nc, args) => {
+    const ctx = orig(node, nc, args);
+    if (node.kind === 'agent') {
+      seen.push({ key: node.key, cwd: ctx.projectDir, runRoot: ctx.runRoot, workspace: !!ctx.workspace });
+    }
     return ctx;
   };
   return seen;

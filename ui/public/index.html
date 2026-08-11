@@ -204,6 +204,7 @@
 
                   <div id="prompt-pane" class="source-pane">
                     <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
+                    <small class="hint" id="promptHint">This prompt feeds the Task node of the selected pipeline.</small>
                   </div>
 
                   <div id="markdown-pane" class="source-pane hidden">
@@ -230,7 +231,7 @@
                 <!-- Pipeline configuration -->
                 <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
                   <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
-                  <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
+                  <div class="hint" style="margin:0 0 6px">Choose a workflow — its graph is shown below. Per-run overrides change one node for the next run only.</div>
                   <!-- Config-load failure hint; app.js#setConfigError paints/clears it. -->
                   <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
 
@@ -259,75 +260,26 @@
                     <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
                   </div>
 
-                  <!-- Default-workflow stages: Clarify + the original four rows, shown
-                       when the Default workflow is selected (backward-compat). -->
-                  <div id="wf-default-stages">
-                    <div class="stage-cfg">
-                      <div class="acc red"></div>
-                      <div class="meta"><b>Clarify</b><small>Turns hidden decisions into questions before planning</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="clarify" aria-label="Clarify fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="clarify" aria-label="Clarify questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="clarify"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc violet"></div>
-                      <div class="meta"><b>Plan</b><small>Explores the codebase and writes the implementation plan</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="planner" aria-label="Plan fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="planner" aria-label="Plan questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="planner"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc green"></div>
-                      <div class="meta"><b>Refine</b><small>Rewrites the latest plan into a tighter version</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="refiner" aria-label="Refine fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="refiner" aria-label="Refine questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="refiner"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc peach"></div>
-                      <div class="meta"><b>Implement</b><small>Writes the code from the approved plan, strict TDD</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="implementer" aria-label="Implement fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="implementer" aria-label="Implement questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="implementer"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc blue"></div>
-                      <div class="meta"><b>Review</b><small>Reviews the implementation diff against the plan</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="reviewer" aria-label="Review fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="reviewer" aria-label="Review questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="reviewer"></small>
-                    </div>
+                  <!-- Read-only mini-graph of the selected template. app.js mounts the
+                       shared graph renderer here; it owns no interaction, so this is the
+                       same picture the composer draws, minus the editing chrome. The host
+                       must be positioned and sized — .gv/.gv-world are absolute. -->
+                  <div class="field" style="margin-bottom:14px">
+                    <label>Pipeline</label>
+                    <div id="wf-preview" role="img" aria-label="Pipeline graph preview" style="position:relative;height:200px;overflow:hidden;border:1px solid var(--line);border-radius:12px"></div>
                   </div>
 
-                  <!-- Per-node pickers for a non-default (saved) workflow. app.js fills this. -->
-                  <div id="wf-node-config" class="hidden"></div>
+                  <!-- Per-run overrides. A node's DEFAULT model/effort/fan-out/questions
+                       is set once in the composer inspector; this disclosure only
+                       overrides it for the next run, so it stays collapsed. -->
+                  <button type="button" id="wf-overrides-toggle" class="btn-ghost" aria-expanded="false" aria-controls="wf-overrides">Per-run overrides</button>
+                  <div id="wf-overrides" hidden>
+                    <!-- One row per AGENT node, topological order. app.js fills this. -->
+                    <div id="wf-node-config"></div>
 
-                  <!-- Per-feedback cycle-count inputs. app.js fills this. -->
-                  <div id="wf-feedback-config" class="hidden"></div>
+                    <!-- One cycle-count input per LOOP wire. app.js fills this. -->
+                    <div id="wf-feedback-config"></div>
+                  </div>
                 </div>
 
                 <!-- Mock -->
@@ -371,6 +323,7 @@
                 <div><div class="run-title"></div><div class="run-meta"><span class="rm-text"></span><span class="run-time mono"></span><span class="run-cost mono"></span></div></div>
                 <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
               </div>
+              <div class="run-warn" hidden></div>
               <div class="run-flow-wrap"><div class="run-flow"></div></div>
               <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
               <div class="cost-banner" hidden></div>
@@ -384,7 +337,7 @@
                 <div class="subs-panel" hidden></div>
               </div>
               <div class="run-log">
-                <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-execution" title="Filter by execution" aria-label="Filter by execution"></select><select class="log-f log-f-artifact" title="Filter by artifact kind" aria-label="Filter by artifact kind"></select></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
                 <div class="log"></div>
               </div>
               <div class="qpanel hidden"></div>
@@ -428,6 +381,7 @@
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="hist-detail" hidden>
+                <div class="run-warn" hidden></div>
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
                 <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
                 <div class="results-section"></div>
@@ -652,6 +606,7 @@
                 <div class="agent-h-meta">
                   <b class="agent-name"></b>
                   <span class="agent-origin badge"></span>
+                  <span class="agent-not-placeable badge" hidden>not placeable</span>
                   <small class="agent-sub"></small>
                   <div class="agent-io">
                     <div class="agent-io-row agent-io-in">
@@ -673,42 +628,11 @@
               </div>
               <div class="agent-detail" hidden>
                 <pre class="agent-md-view viewer"></pre>
+                <!-- The v2 port editor is BUILT (agentFormRender) rather than
+                     authored: port rows are dynamic, and the same renderer
+                     serves the creation wizard's review step. -->
                 <div class="agent-edit-pane" hidden>
-                  <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-                  <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-                  <div class="row-2">
-                    <div class="field"><label>Color</label>
-                      <div class="select-wrap"><select class="agent-f-color select">
-                        <option>green</option><option>peach</option><option>red</option>
-                        <option>blue</option><option>violet</option><option>amber</option>
-                      </select></div>
-                    </div>
-                    <div class="field"><label>Runner type</label>
-                      <div class="select-wrap"><select class="agent-f-runner select">
-                        <option>producer</option><option>verifier</option>
-                      </select></div>
-                    </div>
-                  </div>
-                  <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-                  <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-                  <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-                  <div class="field"><label>Connects to</label>
-                    <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                    <div class="agent-f-connects chip-select"></div>
-                  </div>
-                  <div class="row-2">
-                    <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                    <div class="field"><label>Flags</label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label>
-                    </div>
-                  </div>
-                  <div class="field"><label>System prompt (markdown)</label>
-                    <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea>
-                  </div>
+                  <div class="agent-form"></div>
                   <p class="agent-edit-msg form-msg" aria-live="polite"></p>
                   <div class="actions" style="justify-content:flex-end">
                     <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
@@ -831,31 +755,11 @@
               </div>
             </div>
 
-            <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
+            <!-- Step 3: review/edit draft — the SAME v2 port editor the Agents
+                 view renders, so a drafted sidecar is reviewed in the shape it
+                 will be saved in. -->
             <div class="wiz-step hidden" id="agw-step-3">
-              <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-              <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-              <div class="row-2">
-                <div class="field"><label>Color</label><div class="select-wrap"><select class="agent-f-color select"><option>green</option><option>peach</option><option>red</option><option>blue</option><option>violet</option><option>amber</option></select></div></div>
-                <div class="field"><label>Runner type</label><div class="select-wrap"><select class="agent-f-runner select"><option>producer</option><option>verifier</option></select></div></div>
-              </div>
-              <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-              <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-              <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-              <div class="field"><label>Connects to</label>
-                <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                <div class="agent-f-connects chip-select"></div></div>
-              <div class="row-2">
-                <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                <div class="field"><label>Flags</label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label></div>
-              </div>
-              <div class="field"><label>System prompt (markdown)</label>
-                <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea></div>
+              <div class="agent-form"></div>
               <p id="agw-msg" class="form-msg" aria-live="polite"></p>
               <div class="actions" style="justify-content:space-between">
                 <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
@@ -874,48 +778,38 @@
           <div class="topbar">
             <div>
               <h1>Pipeline Composer</h1>
-              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a pipeline</div>
+              <div class="sub">Wire agents into a graph — outputs feed inputs, loops carry their own budget</div>
             </div>
-            <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">Reset to default</button>
-          </div>
-
-          <section class="card builder-card">
-            <div class="palette">
-              <span class="p-label">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
-                Agents · drag onto the canvas to build your pipeline
-                <input id="composer-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or description">
-              </span>
-              <div id="composer-palette" style="display:contents"></div>
-            </div>
-
-            <div class="canvas-wrap" id="composer-canvas-wrap">
-              <div id="composer-decomposer-hint" class="composer-hint" hidden>
-                When a Decompose step is present, 1 implementer is started per task it produces — the count varies per run.
-              </div>
-              <div class="flow" id="composer-flow">
-                <svg class="wires" id="composer-wires"></svg>
-              </div>
-            </div>
-
-            <div class="builder-foot">
-              <div class="legend">
-                <span class="lg"><span class="ll"></span> sequential — runs in order</span>
-                <span class="lg"><span class="ll fb"></span> feedback loop</span>
-                <span class="lg"><span class="ll sl"></span> self loop</span>
-              </div>
-              <span class="link-banner" id="composer-link-banner" hidden>
-                <span id="composer-link-text">Click a target agent to draw a feedback loop</span>
-                <button type="button" id="composer-link-cancel">Cancel</button>
-              </span>
-              <span class="sp"></span>
-              <button type="button" class="btn-ghost" id="composer-clear" style="padding:10px 18px">Clear canvas</button>
+            <div class="ctop-r">
+              <span class="gv-dirty" id="composer-dirty" hidden>Unsaved changes</span>
+              <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">New canvas</button>
               <button type="button" class="btn-go" id="composer-save">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                 Save pipeline
               </button>
             </div>
+          </div>
+
+          <section class="card builder-card">
+            <!-- Left rail: filter + the domain-grouped agent pills and the
+                 pinned Flow group (Task · End · AND · OR · Combine). -->
+            <aside class="gv-palette">
+              <div class="gv-palette-top">
+                <input id="composer-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
+              </div>
+              <div id="composer-palette" class="gv-palette-scroll"></div>
+            </aside>
+
+            <!-- The canvas host. composer-editor.mjs owns everything inside it:
+                 the graph-view stage, the empty state, the reason chip, the
+                 legend and the zoom / auto-layout cluster. -->
+            <div class="gv-canvas" id="composer-canvas"></div>
+
+            <!-- Right rail: the selected node's / wire's inspector. -->
+            <aside class="gv-inspector" id="composer-inspector"></aside>
           </section>
+
+          <div id="composer-dialog"></div>
 
           <section class="card saved-card">
             <div class="saved-head">

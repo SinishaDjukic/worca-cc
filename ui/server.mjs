@@ -37,7 +37,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
-  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
+  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow,
 } from '../src/core/config.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -45,13 +45,16 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+  listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow, registryPortsFn,
 } from '../src/core/workflows.mjs';
-import { validateWorkflow } from '../src/core/workflow-validator.mjs';
+import { validateGraph } from '../src/core/graph/validate.mjs';
+import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
+import { getDb, sweepV1PausedRuns } from '../src/core/db.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
 import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import {
@@ -64,7 +67,6 @@ import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
-import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
   setPluginEnabled, doctorPlugin, buildInstallInventory,
@@ -151,7 +153,11 @@ function liveRunIds() {
 // `stepgraphify` (§7.3) was emitted by the orchestrator and handled by the client
 // but missing here, so the graphify badge only appeared after a reload (via the
 // persisted column) and never live. It rides the same pass-through as `stepskills`.
-const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
+//
+// The graph engine replaced v1's `phase` (a step transition) with `exec` (one row
+// per node EXECUTION, start + terminal) and added `token` (one per fired output
+// port). Everything else keeps its name; End arrival is an ordinary `exec`.
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
@@ -413,7 +419,7 @@ function wireRun(entry) {
         entry.status = 'error';
         resolvePending(entry, { reason: 'error' });
       }
-      if (name === 'phase') {
+      if (name === 'exec') {
         entry.status = 'running';
       }
       if (name === 'state' && payload && typeof payload === 'object') {
@@ -1857,15 +1863,20 @@ app.post('/api/config', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// PATCH /api/config -> write run-config: per-node model/effort, per-feedback
-// cycle counts, and the active workflow id. Keyed by workflowId + node/feedback
-// instance ids (see RunConfig in the design). Legacy per-role `steps` are
-// written via POST /api/config and are left untouched here. NOTE: the run-config
-// setters do NOT reject unknown models/efforts, and setFeedbackCycles COERCES
-// maxCycles to >= 1 (it never throws) — so the try/catch below guards I/O, not
-// validation. (Optional hardening: validate model/effort in setNodeModel via
-// listModels + EFFORTS, mirroring setStep at config.mjs:141-153.)
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
+// PATCH /api/config -> write run-config: per-node model/effort, per-WIRE loop
+// budgets, and the active workflow id. Keyed by workflowId + node/wire instance
+// ids (see RunConfig in the design). Legacy per-role `steps` are written via
+// POST /api/config and are left untouched here. `wires` is the graph engine's
+// overlay (config_workflow_wires, read back under config.workflows[wf].wires at
+// precedence overlay > wire.config.maxCycles > 3); `feedbacks` is the v1 shape it
+// succeeds, still accepted so a pre-graph client keeps working. NOTE: the
+// run-config setters do NOT reject unknown models/efforts, and setWireCycles /
+// setFeedbackCycles COERCE maxCycles to >= 1 (they never throw) — so the
+// try/catch below guards I/O, not validation. (Optional hardening: validate
+// model/effort in setNodeModel via listModels + EFFORTS, mirroring setStep at
+// config.mjs:141-153.)
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, wires?:{[wireId]:{maxCycles}},
+//         feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
@@ -1880,6 +1891,12 @@ app.patch('/api/config', async (req, res) => {
           model: sel && sel.model, effort: sel && sel.effort,
           fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
         });
+      }
+    }
+    if (body.wires && typeof body.wires === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set wire config');
+      for (const [wireId, sel] of Object.entries(body.wires)) {
+        await setWireCycles(projectDir, workflowId, wireId, sel && sel.maxCycles);
       }
     }
     if (body.feedbacks && typeof body.feedbacks === 'object') {
@@ -1930,13 +1947,13 @@ app.delete('/api/config/models', async (req, res) => {
 // Workflow templates (global store at ~/.worca-cc/workflows). Topology only;
 // model/effort/cycles live in per-project run-config. CRUD mirrors the
 // /api/projects + /api/config delegation pattern: thin handlers, validation and
-// atomic persistence owned by src/core/workflows.mjs + workflow-validator.mjs.
+// persistence owned by src/core/workflows.mjs + src/core/graph/validate.mjs.
 // ---------------------------------------------------------------------------
 app.get('/api/workflows', async (_req, res) => {
   try {
     // The built-in default is never persisted to the user store; callers
-    // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
-    res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
+    // prepend it (CONTRACT: GET -> { workflows: [GRAPH_DEFAULT_WORKFLOW, ...listWorkflows()] }).
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -1952,21 +1969,40 @@ app.get('/api/workflows/:id', async (req, res) => {
   }
 });
 
+// POST /api/workflows -> validate + upsert one v2 graph template.
+// body: { id?, name, domain?, version, nodes, wires, canvas?, createdAt? }
+// A blocking rule answers 422 with the FULL validator result — {errors, warnings}
+// — so the composer can paint soft findings next to the hard ones; warnings alone
+// never block and ride along on the 201.
 app.post('/api/workflows', async (req, res) => {
   const body = req.body || {};
   // Build the candidate template from the editor payload (topology only).
+  // `version` is forwarded verbatim rather than defaulted: a v1 payload must
+  // fail V1 loudly instead of being silently rewritten into an empty graph.
   const tpl = {
+    ...(typeof body.id === 'string' && body.id.trim() ? { id: body.id.trim() } : {}),
     name: typeof body.name === 'string' ? body.name.trim() : '',
     domain: typeof body.domain === 'string' ? body.domain : undefined, // writeWorkflow normDomain → 'general' if absent/blank/malformed
-    steps: Array.isArray(body.steps) ? body.steps : [],
-    feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
+    version: body.version,
+    nodes: Array.isArray(body.nodes) ? body.nodes : [],
+    wires: Array.isArray(body.wires) ? body.wires : [],
+    ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
+    ...(typeof body.createdAt === 'string' ? { createdAt: body.createdAt } : {}),
   };
   if (!tpl.name) return badRequest(res, 'name is required');
+  // The built-in default lives in code, not the store (readWorkflow short-circuits
+  // on its id). Persisting a row under that id would be an unreachable ghost.
+  if (tpl.id === GRAPH_DEFAULT_WORKFLOW.id) {
+    return badRequest(res, 'the default workflow cannot be overwritten');
+  }
   try {
-    const registry = loadAgentRegistry(AGENTS_DIR);
-    const { ok, errors, warnings } = validateWorkflow(tpl, registry);
-    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
-    // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
+    // registryPortsFn is the SYNTHESIZING ports function — meta ports plus the
+    // universal `await` gate and the flow-card table. A template that is not in
+    // the store yet cannot go through resolveGraph, and without the synthesis its
+    // `pass -> <agent>.await` and End wires would fail V5 here but nowhere else.
+    const { errors, warnings } = validateGraph(tpl, registryPortsFn(loadAgentRegistry()));
+    if (errors.length) return res.status(422).json({ errors, warnings });
+    // writeWorkflow stamps id/createdAt/updatedAt and writes the graph column.
     const workflow = await writeWorkflow(tpl); // CONV-1: await
     res.status(201).json({ workflow, warnings });
   } catch (err) {
@@ -2088,27 +2124,6 @@ app.delete('/api/guardrails/:id', async (req, res) => {
 // src/core/agent-store.mjs (layered builtin + ~/.worca-cc/agents user pairs).
 // GET returns palette render order (.order ascending) with origin stamped; the
 // client builds draggable pills (colored dot + displayName + icon) from this.
-// ---------------------------------------------------------------------------
-// Channel vocabulary for the UI editor/wizard: built-in CHANNEL_IDS first, then
-// every CUSTOM id any registry agent references (produces/consumes/
-// optionalConsumes/channelDefs[].id), appended sorted + deduped. Channels are an
-// open vocabulary — a closed list would silently strip custom ids on edit.
-function collectChannelIds(agents) {
-  const customs = new Set();
-  for (const a of Array.isArray(agents) ? agents : []) {
-    if (!a) continue;
-    const ids = [
-      ...(Array.isArray(a.produces) ? a.produces : []),
-      ...(Array.isArray(a.consumes) ? a.consumes : []),
-      ...(Array.isArray(a.optionalConsumes) ? a.optionalConsumes : []),
-      ...(Array.isArray(a.channelDefs) ? a.channelDefs.map((d) => d && d.id) : []),
-    ];
-    for (const id of ids) {
-      if (typeof id === 'string' && id && !CHANNEL_IDS.includes(id)) customs.add(id);
-    }
-  }
-  return [...CHANNEL_IDS, ...[...customs].sort()];
-}
 
 app.get('/api/agents', async (req, res) => {
   try {
@@ -2116,7 +2131,14 @@ app.get('/api/agents', async (req, res) => {
     // §6.6: workspace-only agents stay out of the Composer palette by default;
     // the Agents management view passes ?all=1 to see them too.
     const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents, channels: collectChannelIds(all) });
+    // Entries carry META ports only — the universal `await` gate is synthesized
+    // per graph node (registryPortsFn) and the client mirrors that synthesis, so
+    // shipping it here would double it. `placeable:false` rides along so the
+    // palette can filter; mockWriterRoles feeds the Agents-view port editor's
+    // mockRole select (ui/public cannot import src/core — there is no build step).
+    res.json({
+      agents, mockWriterRoles: [...MOCK_WRITER_ROLES],
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2142,9 +2164,6 @@ function agentErrorStatus(code) {
 function startAgentGen(input) {
   const orch = createAgentGen({
     ...input,
-    // Same open vocabulary as GET /api/agents (callers pass the registry union);
-    // built-ins-only fallback keeps direct/_testing callers working.
-    channels: Array.isArray(input.channels) && input.channels.length ? input.channels : CHANNEL_IDS,
     claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
@@ -2187,15 +2206,15 @@ app.post('/api/agents/generate', async (req, res) => {
     if (!userMarkdown && !(typeof body.purpose === 'string' && body.purpose.trim())) {
       return badRequest(res, 'purpose is required (or paste your own markdown)');
     }
-    // Resolve neighbor keys to full agent metas (produces/consumes feed the
-    // prompt's neighbor block); unknown keys are silently dropped.
+    // Resolve neighbor keys to full agent metas (their PORTS feed the prompt's
+    // neighbor block); unknown keys are silently dropped.
     const allAgents = await listAgents();
     const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
-      userMarkdown, channels: collectChannelIds(allAgents),
+      userMarkdown,
     });
     res.json({ genId });
   } catch (err) {
@@ -2688,6 +2707,12 @@ app.use((req, res, next) => {
 
 /**
  * Boot maintenance, in the PINNED order (§8.12):
+ *   0. sweepV1PausedRuns    — flips runs paused on the v1 dispatcher (a `version: 1`
+ *      resume point the graph engine cannot re-enter) -> `interrupted`, stamping
+ *      the reason into the point. The V17 ladder runs it too, but only for a DB
+ *      stamped below 17; boot is what catches a tree whose DB another checkout
+ *      already migrated. Status-only, so it changes neither sweep's verdict
+ *      (`paused` and `interrupted` are both KEEP).
  *   1. reconcileStaleRunning — stamps every stale `running` row -> `interrupted`,
  *   2. sweepRunRoots        — reclaims <worcaHome>/runs/* of finished/crashed runs,
  *   3. sweepLegacyWorktrees — over every REGISTERED project, prunes the
@@ -2714,8 +2739,20 @@ app.use((req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null };
+  const summary = { v1Paused: 0, reconciled: 0, runRoots: null, legacy: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
+
+  // Runs paused on the v1 dispatcher: unresumable by the graph engine, and the
+  // one status nothing else here touches. Sweeping them first means the rest of
+  // boot — and the History view — sees only honest statuses.
+  try {
+    summary.v1Paused = sweepV1PausedRuns(getDb());
+    if (summary.v1Paused) {
+      console.log(`[worca-ui] swept ${summary.v1Paused} run(s) paused before the graph engine rework -> interrupted`);
+    }
+  } catch (err) {
+    console.error(`[worca-ui] v1 pause sweep failed: ${err && err.message ? err.message : err}`);
+  }
 
   // Runs left 'running' by a previous process that died before writing a terminal
   // status (crash/kill/restart). At boot this process owns no live runs.

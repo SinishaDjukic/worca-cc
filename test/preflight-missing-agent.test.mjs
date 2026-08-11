@@ -37,19 +37,24 @@ afterEach(async () => {
 
 test('an unknown agent key errors the run BEFORE any pipeline/node work (was: empty-prompt degradation)', async () => {
   const wf = await writeWorkflow({
-    name: 'Ghost',
-    steps: [[{ id: 's0', key: 'planner' }], [{ id: 's1', key: 'ghostAgent' }]],
-    feedbacks: [],
+    name: 'Ghost', version: 2,
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0 },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 200, y: 0 },
+      { id: 'n_ghost', kind: 'agent', key: 'ghostAgent', x: 400, y: 0 },
+      { id: 'n_end', kind: 'end', x: 600, y: 0 },
+    ],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } }],
   });
   const phases = [];
   const orch = createOrchestrator({ projectDir: proj, prompt: 'demo', workflowId: wf.id, auto: true, claude: { mock: true } });
-  orch.on('phase', (p) => phases.push(p));
+  orch.on('exec', (p) => phases.push(p));
   orch.on('error', () => {}); // consume the mirrored error event
   const res = await orch.run();
   assert.equal(res.status, 'error');
   assert.match(res.error, /agent "ghostAgent" is not installed \(removed plugin\?\)/);
   assert.equal(res.pipelineDir, null, 'failed BEFORE createPipeline — no pipeline dir, no node ran');
-  assert.equal(phases.length, 0, 'not even the preflight phase started');
+  assert.equal(phases.length, 0, 'no execution started');
 });
 
 test('a key shipped by a DISABLED plugin gets the "enable it" message naming the plugin', async () => {
@@ -64,7 +69,15 @@ test('a key shipped by a DISABLED plugin gets the "enable it" message naming the
     version: '0.1.0', enabled: false, installedAt: '2026-07-12T00:00:00.000Z',
   } });
 
-  const wf = await writeWorkflow({ name: 'Sleepy', steps: [[{ id: 's0', key: 'ghostAgent' }]], feedbacks: [] });
+  const wf = await writeWorkflow({
+    name: 'Sleepy', version: 2,
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0 },
+      { id: 'n_ghost', kind: 'agent', key: 'ghostAgent', x: 200, y: 0 },
+      { id: 'n_end', kind: 'end', x: 400, y: 0 },
+    ],
+    wires: [],
+  });
   const orch = createOrchestrator({ projectDir: proj, prompt: 'demo', workflowId: wf.id, auto: true, claude: { mock: true } });
   orch.on('error', () => {});
   const res = await orch.run();

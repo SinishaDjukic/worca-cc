@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { effectiveAllowedTools } from '../src/core/phases.mjs';
-import { resolveWorkflow, writeWorkflow } from '../src/core/workflows.mjs';
+import { resolveGraph, writeWorkflow } from '../src/core/workflows.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 // Declared ONCE for the whole module — both the unit and integration tests reuse it.
@@ -72,24 +72,32 @@ test('resolved manualWebUiTesting node + base union grants browser tools AND kee
   const proj = await mkdtemp(join(tmpdir(), 'worca-cc-proj-'));
   const prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = home;            // writeWorkflow/resolveWorkflow store lives under WORCA_HOME (lazy read)
-  _resetForTests();                           // writeWorkflow/resolveWorkflow hit the DB workflows table; reopen at THIS home
+  _resetForTests();                           // writeWorkflow/resolveGraph hit the DB workflows table; reopen at THIS home
   try {
     // Minimal registry; agentFile names resolve against the REAL repo agents/ dir
-    // because resolveWorkflow's 4th arg defaults to DEFAULT_AGENTS_DIR (workflows.mjs:225).
+    // because resolveGraph's 4th arg defaults to DEFAULT_AGENTS_DIR.
     const REGISTRY = {
-      planner: { key: 'planner', runnerType: 'producer', agentFile: 'worca-cc-planner.md', loopSource: false },
+      planner: {
+        key: 'planner', runnerType: 'producer', agentFile: 'worca-cc-planner.md',
+        inputs: [], outputs: [{ id: 'plan', type: 'md', when: 'always' }],
+      },
       manualWebUiTesting: {
         key: 'manualWebUiTesting', runnerType: 'verifier',
-        agentFile: 'worca-cc-manual-web-ui-testing.md', loopSource: true,
+        agentFile: 'worca-cc-manual-web-ui-testing.md',
+        inputs: [{ id: 'checklist', type: 'md' }],
+        outputs: [{ id: 'review', type: 'md', when: 'blocking' }],
       },
     };
     await writeWorkflow({
-      id: 'wf_webui', name: 'WebUI',
-      steps: [[{ id: 'n_plan', key: 'planner' }], [{ id: 'n_web', key: 'manualWebUiTesting' }]],
-      feedbacks: [],
+      id: 'wf_webui', name: 'WebUI', version: 2,
+      nodes: [
+        { id: 'n_plan', kind: 'agent', key: 'planner', x: 0, y: 0 },
+        { id: 'n_web', kind: 'agent', key: 'manualWebUiTesting', x: 200, y: 0 },
+      ],
+      wires: [],
     });
-    const plan = await resolveWorkflow(proj, 'wf_webui', REGISTRY);   // agentsDir defaults to repo agents/
-    const web = plan.steps.flat().find((n) => n.key === 'manualWebUiTesting');
+    const { nodeCtx } = await resolveGraph(proj, 'wf_webui', REGISTRY);  // agentsDir defaults to repo agents/
+    const web = nodeCtx.n_web;
     assert.ok(web.tools.includes(WEBUI_BROWSER_TOOL), 'frontmatter browser tool reached the node');
     // Guard against frontmatter drift: the agent declares 14 browser_* tools.
     const browserTools = web.tools.filter((t) => t.startsWith('mcp__plugin_playwright_playwright__browser_'));

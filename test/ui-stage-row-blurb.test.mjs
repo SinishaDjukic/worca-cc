@@ -3,6 +3,10 @@
 // longer fit the ~235px .meta column, so every row read "Writes the code from
 // the approved pl…"). The stage NAME keeps its single-line ellipsis; only the
 // caption wraps, clamped at 2 lines so the row height stays bounded.
+//
+// The rows are painted per agent node by renderNodeRows now — the five
+// hardcoded stage rows (and their blurbs) are gone from index.html — so what is
+// pinned here is the CSS the painted rows still reuse.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -12,7 +16,6 @@ import { fileURLToPath } from 'node:url';
 // captured as part of its selector list and break the exact-match below.
 const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ');
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 
 // Every rule body whose selector LIST contains `selector` exactly. Unlike the
 // first-match ruleBody() idiom this cannot be fooled by a grouped rule that
@@ -45,16 +48,4 @@ test('the stage-row NAME keeps its single-line ellipsis', () => {
   assert.ok(all, '.stage-cfg .meta b rule must exist');
   assert.match(all, /white-space:\s*nowrap/, 'node label stays on one line');
   assert.match(all, /text-overflow:\s*ellipsis/, 'node label ellipsizes when too long');
-});
-
-test('the five default stage rows carry the full new blurbs', () => {
-  for (const blurb of [
-    'Turns hidden decisions into questions before planning',
-    'Explores the codebase and writes the implementation plan',
-    'Rewrites the latest plan into a tighter version',
-    'Writes the code from the approved plan, strict TDD',
-    'Reviews the implementation diff against the plan',
-  ]) {
-    assert.ok(html.includes(blurb), `#wf-default-stages must carry: ${blurb}`);
-  }
 });

@@ -36,6 +36,54 @@ async function boot({ fetchHandler } = {}) {
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
   return { window, selectProject, showHistory };
 }
+
+// A v2 run manifest (buildGraphManifest, src/core/workflows.mjs:567). The run
+// monitor renders the graph the run actually ran; there is no client-side
+// phase-keyed default any more, so every history fixture carries one.
+function graphManifest(nodes) {
+  return {
+    version: 2,
+    graph: {
+      nodes: nodes.map(([id, key, label, color], i) => ({
+        id, kind: key ? 'agent' : 'task', key: key || null, label, color: color || '', sub: '',
+        x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+        ports: {
+          inputs: key ? [{ id: 'in', type: 'md', required: true, loop: false, expands: false },
+                         { id: 'await', type: 'any', required: false, loop: false, expands: false }] : [],
+          outputs: [{ id: 'out', type: 'md', when: 'always' }],
+        },
+      })),
+      wires: nodes.slice(1).map((n, i) => ({
+        id: `w${i + 1}`, from: { node: nodes[i][0], port: 'out' }, to: { node: n[0], port: 'in' }, loop: false,
+      })),
+    },
+    bookends: { preflight: true, done: true },
+  };
+}
+const STEPPER = graphManifest([
+  ['n_clarify', 'clarify', 'Clarify', 'red'],
+  ['n_plan', 'planner', 'Plan', 'violet'],
+  ['n_refine', 'refiner', 'Refine', 'green'],
+  ['n_impl', 'implementer', 'Implement', 'peach'],
+  ['n_review', 'reviewer', 'Review', 'blue'],
+]);
+// The graph card's totals live in `.nrun`; index them by node id.
+function nodeTotals(doc, scope) {
+  const out = {};
+  for (const el of doc.querySelectorAll(`${scope} .node[data-node-id]`)) {
+    const run = el.querySelector(':scope > .nrun');
+    out[el.dataset.nodeId] = {
+      cost: run ? run.querySelector('.cost').textContent : null,
+      dur: run ? run.querySelector('.dur').textContent : null,
+    };
+  }
+  return out;
+}
+const stepRow = (nodeId, ordinal, o) => ({
+  key: `x:${nodeId}:${ordinal}`, executionId: `x:${nodeId}:${ordinal}`, nodeId,
+  cycle: ordinal, status: 'done', runningSince: null, ...o,
+});
+
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
 test('history card shows total pipeline duration next to the date', async () => {
@@ -61,15 +109,14 @@ test('a pipeline with no timing data renders a blank time chip', async () => {
   assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-time').textContent, '');
 });
 
-test('expanding a card paints per-phase duration from saved steps (refine cycles summed; never-run blank; 0ms -> 0s)', async () => {
+test('expanding a card paints per-node duration from saved steps (cycles summed; never-run blank; 0ms -> 0s)', async () => {
   const state = {
-    phase: 'done', status: 'done', cycle: 2, totalActiveMs: 8500,
+    status: 'done', endReached: true, totalActiveMs: 8500, stepper: STEPPER,
     steps: [
-      { key: 'preflight', phase: 'preflight', activeMs: 500, runningSince: null },
-      { key: 'plan', phase: 'plan', activeMs: 4000, runningSince: null },
-      { key: 'refine#1', phase: 'refine', activeMs: 1500, runningSince: null },
-      { key: 'refine#2', phase: 'refine', activeMs: 1000, runningSince: null }, // two cycles -> 2500
-      { key: 'implement', phase: 'implement', activeMs: 0, runningSince: null }, // ran sub-ms -> 0s
+      stepRow('n_plan', 1, { activeMs: 4000 }),
+      stepRow('n_refine', 1, { activeMs: 1500 }),
+      stepRow('n_refine', 2, { activeMs: 1000 }), // two cycles -> 2500
+      stepRow('n_impl', 1, { activeMs: 0 }),      // ran sub-ms -> 0s
       // no review step recorded -> review stays blank
     ],
   };
@@ -84,24 +131,17 @@ test('expanding a card paints per-phase duration from saved steps (refine cycles
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.dur').textContent, '4s');
-  assert.equal(byStep.refine.querySelector('.dur').textContent, '3s', 'refine cycles summed (2500ms -> 3s)');
-  assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'executed sub-ms phase shows 0s');
-  assert.equal(byStep.review.querySelector('.dur').textContent, '', 'never-run review stays blank');
-  assert.equal(byStep.preflight.querySelector('.dur').textContent, '1s', 'preflight has its own dur chip');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_plan.dur, '4s');
+  assert.equal(byNode.n_refine.dur, '3s', 'refine cycles summed (2500ms -> 3s)');
+  assert.equal(byNode.n_impl.dur, '0s', 'executed sub-ms node shows 0s');
+  assert.equal(byNode.n_review.dur, null, 'never-run review has no totals row');
 });
 
-test('clarify active time shows in its own Clarify stage chip (no longer folds into Plan)', async () => {
-  // normalizePhase now maps clarify -> 'clarify' (its own UI phase), so a clarify
-  // step's activeMs shows in a separate Clarify chip and no longer sums into Plan.
+test('a clarifier is its own graph node, so its time never folds into the planner', async () => {
   const state = {
-    phase: 'done', status: 'done', cycle: 0, totalActiveMs: 3000,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', activeMs: 1000, runningSince: null },
-      { key: 'plan', phase: 'plan', activeMs: 2000, runningSince: null },
-    ],
+    status: 'done', endReached: true, totalActiveMs: 3000, stepper: STEPPER,
+    steps: [stepRow('n_clarify', 1, { activeMs: 1000 }), stepRow('n_plan', 1, { activeMs: 2000 })],
   };
   const ctx = await boot({
     fetchHandler: (url) => {
@@ -114,10 +154,9 @@ test('clarify active time shows in its own Clarify stage chip (no longer folds i
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="plan"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'plan(2000) -> 2s in the Plan chip (clarify no longer folded in)');
-  const clarifyStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="clarify"]');
-  assert.equal(clarifyStage.querySelector('.dur').textContent, '1s', 'clarify(1000) -> 1s in its own Clarify chip');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_plan.dur, '2s', 'plan(2000) -> 2s on the planner card');
+  assert.equal(byNode.n_clarify.dur, '1s', 'clarify(1000) -> 1s on its own card');
 });
 
 test('history ignores a dangling runningSince (saved data is treated as final)', async () => {
@@ -125,10 +164,10 @@ test('history ignores a dangling runningSince (saved data is treated as final)',
   // is still 'running'. History must show the finalized activeMs only — never
   // now - runningSince (which, with a stale epoch, would be a runaway value).
   const state = {
-    phase: 'implement', status: 'running', cycle: 0, totalActiveMs: 2000,
+    status: 'running', totalActiveMs: 2000, stepper: STEPPER,
     steps: [
-      { key: 'plan', phase: 'plan', activeMs: 2000, runningSince: null },
-      { key: 'implement', phase: 'implement', activeMs: 0, runningSince: 1 }, // stale -> huge if added live
+      stepRow('n_plan', 1, { activeMs: 2000 }),
+      stepRow('n_impl', 1, { activeMs: 0, status: 'start', runningSince: 1 }), // stale -> huge if added live
     ],
   };
   const ctx = await boot({
@@ -142,17 +181,15 @@ test('history ignores a dangling runningSince (saved data is treated as final)',
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'finalized 0ms; dangling clock ignored');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_impl.dur, '0s', 'finalized 0ms; dangling clock ignored');
 });
 
-// Phase-label harness (CONV-4): identical jsdom/WS/fetch stubs to boot() above,
-// but the WebSocket stub records its instances + can fire a `message`, so a
-// `phase` event can be driven into the live Running view. We feed a run whose
-// uiPhase is one of the two new agents' buckets ('manual-web'/'manual-checklist')
-// and assert the running card's phase chip is labelled (not the 'Preflight'
-// default that normalizePhase->null leaves it on).
+// Live-chip harness: identical jsdom/WS/fetch stubs to boot() above, but the
+// WebSocket stub records its instances + can fire a `message`, so graph engine
+// events can be driven into the live Running view. The foot chip and the status
+// pill now name the node that is EXECUTING (state.active + the run manifest) —
+// v1's phase keyword is gone from the engine, so there is nothing to map.
 async function bootLive() {
   const wsInstances = [];
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
@@ -180,56 +217,167 @@ async function bootLive() {
   const showRunning = () => { window.location.hash = '#running'; window.dispatchEvent(new window.Event('hashchange')); };
   const emit = (msg) => wsInstances[0]._fire('message', { data: JSON.stringify(msg) });
   const chipText = () => window.document.querySelector('#run-list [data-run-id] .chip').textContent;
-  return { window, selectProject, showRunning, emit, chipText };
+  const pillText = () => window.document.querySelector('#run-list [data-run-id] .pill-text').textContent;
+  return { window, selectProject, showRunning, emit, chipText, pillText };
 }
 
-test('a manual-web phase labels the running chip "Manual web UI" (not the Preflight default)', async () => {
+// The two agents that used to need their own phase keywords ('manual-web',
+// 'manual-checklist') are ordinary graph nodes now: their card labels come
+// straight off the manifest, so no keyword table can swallow or mislabel them.
+const MANUAL = graphManifest([
+  ['n_webui', 'manualWebUiTesting', 'Manual web UI', 'violet'],
+  ['n_check', 'manualTestsChecklist', 'Manual tests', 'blue'],
+]);
+
+async function liveRunOn(nodeId) {
   const ctx = await bootLive();
   ctx.selectProject();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.emit({ type: 'phase', runId: 'r_mw', phase: 'manual-web', status: 'running' });
+  ctx.emit({
+    type: 'state', runId: 'r1', status: 'running', stepper: MANUAL,
+    active: [{ nodeId, executionId: `x:${nodeId}:1` }], steps: [], warnings: [],
+  });
+  ctx.emit({ type: 'exec', runId: 'r1', nodeId, executionId: `x:${nodeId}:1`, ordinal: 1, kind: 'cycle', status: 'start', agentKey: null, trigger: { wireIds: [], freshPorts: [] } });
   ctx.showRunning();
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.chipText(), 'Manual web UI', 'manual-web must map to its label, not null/Preflight');
+  return ctx;
+}
+
+test('the running chip names the EXECUTING node, from the manifest', async () => {
+  const ctx = await liveRunOn('n_webui');
+  assert.equal(ctx.chipText(), 'Manual web UI');
+  assert.equal(ctx.pillText(), 'Manual web UI', 'the status pill agrees with the chip');
 });
 
-test('a manual-checklist phase labels the running chip "Manual tests" (not swallowed by review/implement)', async () => {
+test('a second node executing relabels the chip — no keyword table in the path', async () => {
+  const ctx = await liveRunOn('n_check');
+  assert.equal(ctx.chipText(), 'Manual tests');
+});
+
+test('with nothing executing the chip falls back to a neutral label', async () => {
   const ctx = await bootLive();
   ctx.selectProject();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.emit({ type: 'phase', runId: 'r_mc', phase: 'manual-checklist', status: 'running' });
+  ctx.emit({ type: 'state', runId: 'r2', status: 'running', stepper: MANUAL, active: [], steps: [], warnings: [] });
   ctx.showRunning();
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.chipText(), 'Manual tests', 'manual-checklist must map to its own label');
+  assert.equal(ctx.chipText(), 'Running');
 });
 
-test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', async () => {
+test('a run that finished at quiescence carries the warning banner into History', async () => {
+  const state = {
+    status: 'done', endReached: false, totalActiveMs: 1000, stepper: STEPPER,
+    warnings: ['finished at quiescence — End not reached'],
+    steps: [stepRow('n_plan', 1, { activeMs: 1000 })],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 1000 }]);
+      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const banner = ctx.window.document.querySelector('#history .hist-detail .run-warn');
+  assert.equal(banner.hidden, false);
+  assert.equal(banner.textContent, 'finished at quiescence — End not reached');
+});
+
+// The other half of the same durable surface (sibling of the banner case above):
+// a run that DID reach End must render its result card and its loop badges from
+// the persisted state alone. Both ride the exec ledger History synthesizes out of
+// the step rows, so the payload here is exactly what rowToState hands the client.
+test('a finished v2 run renders its End result card and loop badges in History', async () => {
+  const IN = (id, type, extra = {}) => ({ id, type, required: true, loop: false, expands: false, ...extra });
+  const OUT = (id, type, when = 'always') => ({ id, type, when });
+  const ENDED = {
+    version: 2,
+    graph: {
+      nodes: [
+        { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementation', color: 'peach', sub: '', x: 60, y: 200, model: '', effort: '', loop: true,
+          ports: { inputs: [IN('fix', 'md', { required: false, loop: true })], outputs: [OUT('code', 'md')] } },
+        { id: 'n_review', kind: 'agent', key: 'reviewer', label: 'Review', color: 'blue', sub: '', x: 360, y: 200, model: '', effort: '', loop: false,
+          ports: { inputs: [IN('code', 'md')], outputs: [OUT('pass', 'md', 'clean'), OUT('review', 'json', 'blocking')] } },
+        { id: 'n_end', kind: 'end', key: null, label: 'End', color: '', sub: '', x: 660, y: 200, model: '', effort: '', loop: false,
+          ports: { inputs: [IN('result', 'any')], outputs: [] } },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_impl', port: 'code' }, to: { node: 'n_review', port: 'code' }, loop: false },
+        { id: 'w2', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, loop: true, maxCycles: 3 },
+        { id: 'w3', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' }, loop: false },
+      ],
+    },
+    bookends: { preflight: true, done: true },
+  };
+  const result = { type: 'md', path: '/tmp/pl/reviews/impl-review-cycle2.md' };
+  const state = {
+    status: 'done', endReached: true, result, warnings: [], totalActiveMs: 4000, stepper: ENDED,
+    steps: [
+      stepRow('n_impl', 1, { activeMs: 1000 }),
+      stepRow('n_review', 1, { activeMs: 1000 }),
+      stepRow('n_impl', 2, { activeMs: 1000, trigger: { wireIds: ['w2'], freshPorts: ['fix'] } }),
+      stepRow('n_review', 2, { activeMs: 1000 }),
+      stepRow('n_end', 1, { activeMs: 0, result }),
+    ],
+  };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 4000 }]);
+      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const detail = ctx.window.document.querySelector('#history .hist-detail');
+  assert.equal(detail.querySelector('.run-warn').hidden, true, 'a run that reached End raises no banner');
+  const end = detail.querySelector('.node[data-node-id="n_end"]');
+  assert.ok(end, 'the End node renders in History');
+  assert.equal(end.classList.contains('is-skipped'), false, 'End is not the quiescence treatment');
+  const link = end.querySelector('.xresult a');
+  assert.ok(link, 'the End result card renders from the persisted state');
+  assert.equal(link.textContent, 'impl-review-cycle2.md');
+  assert.equal(link.dataset.path, result.path);
+  // The loop badge proves the persisted trigger reached the ledger, not just the
+  // result: it is counted off the executions the loop wire triggered.
+  const badge = detail.querySelector('.wbadge[data-wire-id="w2"] .wfired');
+  assert.ok(badge, 'the loop wire carries its fired badge');
+  assert.equal(badge.textContent, '1×');
+});
+
+test('a live run carries a run-level warning on its own card banner', async () => {
+  const ctx = await bootLive();
+  ctx.selectProject();
+  await new Promise((r) => setTimeout(r, 0));
+  ctx.emit({ type: 'state', runId: 'r3', status: 'running', stepper: MANUAL, active: [], steps: [], warnings: [] });
+  ctx.showRunning();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(ctx.window.document.querySelector('#run-list [data-run-id] .run-warn').hidden, true);
+  ctx.emit({ type: 'state', runId: 'r3', status: 'running', stepper: MANUAL, active: [], steps: [], warnings: ['worktree drifted'] });
+  await new Promise((r) => setTimeout(r, 0));
+  const banner = ctx.window.document.querySelector('#run-list [data-run-id] .run-warn');
+  assert.equal(banner.hidden, false);
+  assert.equal(banner.textContent, 'worktree drifted');
+});
+
+test('durByNode buckets per nodeId; a step with no nodeId belongs to no card', async () => {
   const { window } = await boot();
   const fn = window.__np.durByNode;
   const a = fn([{ nodeId: 's1_0', phase: 'refiner', activeMs: 1500, runningSince: null }], 0, false);
   assert.equal(a['s1_0'], 1500);
-  const b = fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false);
-  assert.equal(b['refine'], 800); // legacy: node id == uiPhase
+  assert.deepEqual(fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false), {});
 });
 
-test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', async () => {
-  // New runs persist a per-node stepper (plan node id 's0_0') AND tag the clarify
-  // step with that id. normalizePhase can't help here (it maps clarify -> 'plan',
-  // which is NOT the node id 's0_0'); the explicit nodeId is what folds it.
-  const stepper = {
-    version: 1,
-    steps: [
-      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
-      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
-    ],
-  };
+test('several executions of one node fold onto its single card', async () => {
   const state = {
-    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', nodeId: 's0_0', activeMs: 1000, runningSince: null },
-      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
-    ],
+    status: 'done', endReached: true, totalActiveMs: 3000, stepper: STEPPER,
+    steps: [stepRow('n_plan', 1, { activeMs: 1000 }), stepRow('n_plan', 2, { activeMs: 2000 })],
   };
   const ctx = await boot({
     fetchHandler: (url) => {
@@ -242,40 +390,8 @@ test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', 
   await new Promise((r) => setTimeout(r, 0));
   ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s on the s0_0 cell');
-});
-
-test('an untagged clarify step (old run) does NOT fold on a per-node manifest', async () => {
-  // Backward-compat: pre-fix saved runs have clarify#1 with no nodeId. On a
-  // per-node stepper its FIGURE buckets to 'plan' (via normalizePhase), which is not
-  // the node id 's0_0' -> paints on nothing. Exactly today's behavior; must not crash.
-  const stepper = {
-    version: 1,
-    steps: [
-      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
-      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
-    ],
-  };
-  const state = {
-    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', activeMs: 1000, runningSince: null }, // no nodeId (legacy)
-      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'only the plan step (2000) shows; clarify not folded');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_plan.dur, '3s', 'cycle 1 (1000) + cycle 2 (2000) -> 3s on the one card');
+  const rows = ctx.window.document.querySelectorAll('#history .hist-detail .node[data-node-id="n_plan"] .xsum');
+  assert.equal(rows[0].textContent, '2 runs', 'the executions footer counts both, with no cost to show');
 });

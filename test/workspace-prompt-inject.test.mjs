@@ -79,26 +79,10 @@ test('runWorkspaceScan does NOT inject a workspace block (it IS the scanner)', (
   assert.match(sys, /Workspace Scanner/, 'the scanner body is the contract');
 });
 
-test('runWorkspaceReviewer (mock) writes a merged review and returns a protocol review', async () => {
-  const dir = await makeTmpDir();
-  const { runWorkspaceReviewer } = await import('../src/core/phases.mjs');
-  const ctx = ctxFor(dir, {
-    workspace: WS,
-    node: { key: 'workspaceReviewer', runnerType: 'verifier', loopSource: true },
-  });
-  const { review } = await runWorkspaceReviewer(ctx, {
-    planPath: join(dir, 'plan.md'),
-    reviewMdPath: join(dir, 'ws-review.md'),
-    reviewJsonPath: join(dir, 'ws-review-c1.json'),
-    cycle: 1,
-  });
-  assert.ok(review, 'protocol review returned');
-  assert.ok(Array.isArray(review.issues) && review.issues.length >= 1, 'cycle 1 has blocking issues');
-  const md = await readFile(join(dir, 'ws-review.md'), 'utf8');
-  assert.match(md, /Workspace Implementation Review/);
-  // Union of issues with projectKey-prefixed locations (the merge contract).
-  assert.match(md, /project-a:|project-b:/);
-});
+// The v1 `runWorkspaceReviewer` end-to-end case died with the per-role runners: the
+// workspace reviewer is now an ordinary agent node driven by the ONE generic
+// executor, and its mock arm (blocking count decreasing with cycle, one merged md +
+// json) is covered directly against runClaude in test/workspace-mock.test.mjs.
 
 test('runWorkspaceScan (mock) writes a §5.8-template description and returns it', async () => {
   const dir = await makeTmpDir();

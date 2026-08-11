@@ -1,8 +1,7 @@
 // test/fanout-trigger.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ctxFanOut, fanOutDirective, buildClarifyPrompt } from '../src/core/phases.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ctxFanOut, fanOutDirective } from '../src/core/phases.mjs';
 
 test('ctxFanOut: dispatched node fan-out (plan/refine) is honored', () => {
   assert.equal(ctxFanOut({ node: { fanOut: true } }), true);
@@ -37,27 +36,10 @@ test('fanOutDirective: returns the directive when on, empty string when off', ()
   assert.match(d, /Skill tool/);       // skills available to the agent AND its sub-agents
 });
 
-test('buildClarifyPrompt includes the directive only when the ctx has fan-out', () => {
-  // ctx with no node: ctxFanOut reads ctx.fanOut (the clarify pre-step shape).
-  const base = { projectDir: '/tmp/p', pipelineDir: '/tmp/p', taskPrompt: 'Add a delete button' };
-  assert.doesNotMatch(buildClarifyPrompt({ ...base, fanOut: false }), /Fan-out ENABLED/);
-  assert.match(buildClarifyPrompt({ ...base, fanOut: true }), /Fan-out ENABLED/);
-});
-
-test('_phaseCtx forwards fanOut into the node-less clarify ctx', () => {
-  // createOrchestrator fully initializes this.abort / this.claude / this.workDir /
-  // this.stepModels, so the only field _phaseCtx needs that is null until run() is
-  // this.pipeline — stub the minimal shape it reads (dir + promptText).
-  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
-  orch.pipeline = { id: 'p', dir: '/tmp/proj/.worca-cc/p', promptText: 'do x' };
-  assert.equal(orch._phaseCtx('planner').fanOut, false);            // default: off
-  assert.equal(orch._phaseCtx('planner', { fanOut: true }).fanOut, true);
-});
-
-// Pins the exact expression runImplementer inserts: `fanOutDirective(ctxFanOut(ctx))`.
-// Green before and after the runImplementer edit (the helpers are unchanged) — this is a
-// living spec of the inserted line + a regression guard on the helpers, NOT a red->green.
-test('implementer fan-out wiring: the expression runImplementer inserts is gated by the node', () => {
+// Pins the exact expression the generic agent executor inserts:
+// `fanOutDirective(ctxFanOut(ctx), ...)` (graph/executor.mjs buildAgentPrompt). A
+// living spec of that line + a regression guard on the helpers.
+test('implementer fan-out wiring: the expression the executor inserts is gated by the node', () => {
   // Solo (no decomposer): the resolved implementer node carries fanOut.
   assert.match(fanOutDirective(ctxFanOut({ node: { key: 'implementer', fanOut: true } })), /Fan-out ENABLED/);
   // Decomposed: the synthetic task node carries the inherited fanOut (Step 1).

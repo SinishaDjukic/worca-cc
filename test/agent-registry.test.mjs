@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
-import { AGENT_STEPS } from '../src/core/config.mjs';
+import { loadAgentRegistry, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
+import { agentSteps } from '../src/core/config.mjs';
 
 test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
@@ -62,7 +62,7 @@ test('each entry is a well-formed AgentMeta', () => {
     assert.ok(m.icon.length > 0);
     assert.ok(['producer', 'verifier', 'clarifier'].includes(m.runnerType));
     assert.equal(m.metaVersion, 2);
-    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `connectsTo for ${key}: ${JSON.stringify(m.connectsTo)}`);
+    assert.ok(Array.isArray(m.inputs) && Array.isArray(m.outputs), `ports for ${key}`);
     assert.equal(typeof m.order, 'number');
   }
 });
@@ -92,26 +92,23 @@ test('registry insertion order follows .order ascending', () => {
   ]);
 });
 
-test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => {
-  const reg = loadAgentRegistry();
-  const steps = registryToSteps(reg);
-  // clarify is now steps[0]; the original four keep their labels, but the decomposer
-  // (order 2.5) now sits at steps[3] between refiner and implementer. fanOut now
-  // defaults ON for every agent role (planner/refiner/implementer/reviewer AND the
-  // decomposer splitter).
+test('agentSteps() labels every step with the agent\'s own displayName — no key table', () => {
+  const steps = agentSteps();
+  // clarify is steps[0]; the decomposer (order 2.5) sits at steps[3] between refiner
+  // and implementer. fanOut defaults ON for every agent role. The label is whatever the
+  // sidecar calls itself: the v1 short-label table for the original four is gone.
   assert.deepEqual(steps.slice(1, 6), [
     { key: 'planner', label: 'Plan', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
-    { key: 'refiner', label: 'Refine', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
+    { key: 'refiner', label: 'Refine Plan', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
     { key: 'decomposer', label: 'Decompose', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
-    { key: 'implementer', label: 'Implement', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
-    { key: 'reviewer', label: 'Review', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
+    { key: 'implementer', label: 'Implementation', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
+    { key: 'reviewer', label: 'Review Implementation', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false },
   ]);
-  // And config.AGENT_STEPS (derived from the registry in Task 6) stays equal to it.
-  assert.deepEqual(steps, AGENT_STEPS);
+  for (const s of steps) assert.equal(s.label, loadAgentRegistry()[s.key].displayName);
 });
 
-test('registryToSteps appends the new agents with their display names', () => {
-  const steps = registryToSteps(loadAgentRegistry());
+test('agentSteps() appends the new agents with their display names', () => {
+  const steps = agentSteps();
   assert.equal(steps.length, 9);
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true, asksQuestions: true, questionsLocked: true, questionsDefault: true });
   assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false });
@@ -160,23 +157,22 @@ test('conditional routing replaces loopSource: a verdict + when-gated outputs', 
   }
 });
 
-test('registry stamps default channel spec for the six built-ins', () => {
+test('registry entries carry v2 PORTS only — no derived channel view', () => {
+  // v2 legality is a matter of port TYPES, not an authored adjacency allowlist, so
+  // the derived channel view (and the key-mapped tables behind it) is gone entirely.
   const reg = loadAgentRegistry(); // real agents/ dir
-  assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
-  assert.deepEqual(reg.planner.optionalConsumes, ['clarify', 'review']);
-  assert.deepEqual(reg.planner.produces, ['plan']);
-  assert.deepEqual(reg.refiner.produces, ['plan', 'review']);
-  assert.deepEqual(reg.implementer.consumes, ['plan', 'review']);
-  assert.deepEqual(reg.implementer.optionalConsumes, ['review']);
-  assert.deepEqual(reg.implementer.produces, ['code']);
-  assert.deepEqual(reg.reviewer.consumes, ['plan', 'code']);
-  assert.deepEqual(reg.reviewer.produces, ['review']);
-  // connectsTo superset keeps shipped pipelines legal
-  assert.ok(reg.reviewer.connectsTo.includes('implementer'));
-  assert.ok(reg.reviewer.connectsTo.includes('manualTestsChecklist'));
-  assert.ok(reg.refiner.connectsTo.includes('refiner')); // self-loop legal
-  assert.deepEqual(reg.planReviewer.consumes, ['plan']);
-  assert.deepEqual(reg.planReviewer.produces, ['review']);
-  assert.ok(reg.planReviewer.connectsTo.includes('planner'));
-  assert.ok(reg.planner.connectsTo.includes('planReviewer'));
+  assert.deepEqual(reg.planner.inputs.map((p) => p.id), ['task', 'answers', 'revise']);
+  assert.deepEqual(reg.planner.outputs.map((p) => p.id), ['plan']);
+  assert.deepEqual(reg.refiner.inputs.map((p) => p.id), ['plan', 'revise']);
+  assert.deepEqual(reg.refiner.outputs.map((p) => p.id), ['plan', 'revise']);
+  assert.deepEqual(reg.implementer.inputs.map((p) => p.id), ['plan', 'fix', 'task']);
+  assert.deepEqual(reg.implementer.outputs.map((p) => p.id), ['done']);
+  assert.equal(reg.implementer.sideEffect, 'code');
+  assert.deepEqual(reg.reviewer.inputs.map((p) => p.id), ['plan', 'done']);
+  assert.deepEqual(reg.planReviewer.inputs.map((p) => p.id), ['plan']);
+  for (const key of ['planner', 'refiner', 'implementer', 'reviewer', 'planReviewer']) {
+    for (const dead of ['consumes', 'optionalConsumes', 'produces', 'connectsTo']) {
+      assert.equal(Object.hasOwn(reg[key], dead), false, `${key}.${dead} must not exist`);
+    }
+  }
 });

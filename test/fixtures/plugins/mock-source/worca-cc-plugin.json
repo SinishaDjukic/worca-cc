@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Deterministic offline task source + agent + skill + workflow (test fixture)",
   "license": "MIT",
-  "engines": { "worca-cc-api": ">=1 <2" },
+  "engines": { "worca-cc-api": ">=2 <3" },
   "taskSources": [
     {
       "id": "mock",

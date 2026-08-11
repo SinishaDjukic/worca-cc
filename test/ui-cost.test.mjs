@@ -35,6 +35,49 @@ async function boot({ fetchHandler } = {}) {
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
   return { window, selectProject, showHistory };
 }
+
+// A v2 run manifest (buildGraphManifest, src/core/workflows.mjs:567). The run
+// monitor renders the graph the run actually ran; there is no client-side
+// phase-keyed default any more, so every history fixture carries one.
+const P = (id, type, extra = {}) => ({ id, type, required: true, loop: false, expands: false, ...extra });
+function graphManifest(nodes) {
+  return {
+    version: 2,
+    graph: {
+      nodes: nodes.map(([id, key, label, color], i) => ({
+        id, kind: key ? 'agent' : 'task', key: key || null, label, color: color || '', sub: '',
+        x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+        ports: {
+          inputs: key ? [P('in', 'md'), { id: 'await', type: 'any', required: false, loop: false, expands: false }] : [],
+          outputs: [{ id: 'out', type: 'md', when: 'always' }],
+        },
+      })),
+      wires: nodes.slice(1).map((n, i) => ({
+        id: `w${i + 1}`, from: { node: nodes[i][0], port: 'out' }, to: { node: n[0], port: 'in' }, loop: false,
+      })),
+    },
+    bookends: { preflight: true, done: true },
+  };
+}
+const STEPPER = graphManifest([
+  ['n_plan', 'planner', 'Plan', 'violet'],
+  ['n_refine', 'refiner', 'Refine', 'green'],
+  ['n_impl', 'implementer', 'Implement', 'peach'],
+  ['n_review', 'reviewer', 'Review', 'blue'],
+]);
+// The graph card's totals live in `.nrun`; index them by node id.
+function nodeTotals(doc, scope) {
+  const out = {};
+  for (const el of doc.querySelectorAll(`${scope} .node[data-node-id]`)) {
+    const run = el.querySelector(':scope > .nrun');
+    out[el.dataset.nodeId] = {
+      cost: run ? run.querySelector('.cost').textContent : null,
+      dur: run ? run.querySelector('.dur').textContent : null,
+    };
+  }
+  return out;
+}
+
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
 test('history card shows the pipeline total next to the date', async () => {
@@ -63,16 +106,15 @@ test('the history total is tooltip-labelled as an estimate with the exact value'
   assert.match(total.title, /\$0\.4200/, 'tooltip shows the exact 4-dp value');
 });
 
-test('expanding a card paints per-phase cost from saved steps (refine cycles summed)', async () => {
+test('expanding a card paints per-node cost from saved steps (refine cycles summed)', async () => {
   const state = {
-    phase: 'done', status: 'done', cycle: 2, totalCostUsd: 0.30,
+    status: 'done', endReached: true, totalCostUsd: 0.30, stepper: STEPPER,
     steps: [
-      { key: 'preflight', phase: 'preflight', status: 'done' }, // no costUsd field
-      { key: 'plan', phase: 'plan', costUsd: 0.10 },
-      { key: 'refine#1', phase: 'refine', costUsd: 0.05 },
-      { key: 'refine#2', phase: 'refine', costUsd: 0.05 }, // two refine cycles sum to $0.10
-      { key: 'implement', phase: 'implement', costUsd: 0.07 },
-      { key: 'review#1', phase: 'review', costUsd: 0.03 },
+      { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', cycle: 1, status: 'done', costUsd: 0.10 },
+      { key: 'x:n_refine:1', executionId: 'x:n_refine:1', nodeId: 'n_refine', cycle: 1, status: 'done', costUsd: 0.05 },
+      { key: 'x:n_refine:2', executionId: 'x:n_refine:2', nodeId: 'n_refine', cycle: 2, status: 'done', costUsd: 0.05 }, // two cycles sum to $0.10
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', cycle: 1, status: 'done', costUsd: 0.07 },
+      { key: 'x:n_review:1', executionId: 'x:n_review:1', nodeId: 'n_review', cycle: 1, status: 'done', costUsd: 0.03 },
     ],
   };
   const ctx = await boot({
@@ -87,21 +129,19 @@ test('expanding a card paints per-phase cost from saved steps (refine cycles sum
   const head = ctx.window.document.querySelector('#history .hist-head');
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.10');
-  assert.equal(byStep.refine.querySelector('.cost').textContent, '$0.10', 'refine cycles summed');
-  assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.07');
-  assert.equal(byStep.review.querySelector('.cost').textContent, '$0.03');
-  assert.equal(byStep.preflight.querySelector('.cost')?.textContent ?? '', '', 'preflight shows no cost');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_plan.cost, '$0.10');
+  assert.equal(byNode.n_refine.cost, '$0.10', 'refine cycles summed');
+  assert.equal(byNode.n_impl.cost, '$0.07');
+  assert.equal(byNode.n_review.cost, '$0.03');
 });
 
-test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays blank', async () => {
+test('an executed-but-zero node (mock) renders $0.00; a never-run node stays blank', async () => {
   const state = {
-    phase: 'done', status: 'done', cycle: 1, totalCostUsd: 0,
+    status: 'done', endReached: true, totalCostUsd: 0, stepper: STEPPER,
     steps: [
-      { key: 'plan', phase: 'plan', costUsd: 0 },        // ran in mock -> $0.00
-      { key: 'implement', phase: 'implement', costUsd: 0 },
+      { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', cycle: 1, status: 'done', costUsd: 0 }, // ran in mock -> $0.00
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', cycle: 1, status: 'done', costUsd: 0 },
       // no refine / review steps recorded -> those stay blank
     ],
   };
@@ -119,19 +159,18 @@ test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays b
   const head = ctx.window.document.querySelector('#history .hist-head');
   head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.00', 'executed zero shows $0.00');
-  assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.00');
-  assert.equal(byStep.refine.querySelector('.cost').textContent, '', 'never-run refine stays blank');
-  assert.equal(byStep.review.querySelector('.cost').textContent, '', 'never-run review stays blank');
+  const byNode = nodeTotals(ctx.window.document, '#history .hist-detail');
+  assert.equal(byNode.n_plan.cost, '$0.00', 'executed zero shows $0.00');
+  assert.equal(byNode.n_impl.cost, '$0.00');
+  assert.equal(byNode.n_refine.cost, null, 'never-run refine has no totals row');
+  assert.equal(byNode.n_review.cost, null, 'never-run review has no totals row');
 });
 
-test('costByNode buckets per nodeId and by uiPhase fallback', async () => {
+test('costByNode buckets per nodeId; a step with no nodeId belongs to no card', async () => {
   const { window } = await boot();
   const fn = window.__np.costByNode;
   assert.equal(fn([{ nodeId: 's0_0', phase: 'planner', costUsd: 0.12 }])['s0_0'], 0.12);
-  assert.equal(fn([{ phase: 'plan', costUsd: 0.05 }])['plan'], 0.05);
+  assert.deepEqual(fn([{ phase: 'plan', costUsd: 0.05 }]), {}, 'the graph engine always attributes by node');
 });
 
 test('costByNode folds a nodeId-tagged clarify step onto the plan node', async () => {

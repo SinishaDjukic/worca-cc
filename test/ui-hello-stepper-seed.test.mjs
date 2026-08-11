@@ -28,11 +28,20 @@ async function boot() {
   return { window, selectProject, recv };
 }
 
-const STEPPER = { version: 1, steps: [
-  { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-  { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan' }] },
-  { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
-], feedbacks: [] };
+// v2 run manifest (buildGraphManifest, src/core/workflows.mjs:567).
+const gnode = (id, key, label, color, i) => ({
+  id, kind: 'agent', key, label, color, sub: '', x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+  ports: {
+    inputs: [{ id: 'in', type: 'md', required: true, loop: false, expands: false }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
+});
+const gmanifest = (rows) => ({
+  version: 2,
+  graph: { nodes: rows.map((r, i) => gnode(r[0], r[1], r[2], r[3], i)), wires: [] },
+  bookends: { preflight: true, done: true },
+});
+const STEPPER = gmanifest([['s0_0', 'planner', 'Plan', 'violet']]);
 
 test('hello seeds r.stepper so a later subagent paints on the real s0_0 node', async () => {
   const ctx = await boot();
@@ -46,7 +55,7 @@ test('hello seeds r.stepper so a later subagent paints on the real s0_0 node', a
   // No 'state' frame at all; a subagent delta must still land on s0_0.
   ctx.recv({ type: 'subagent', runId: 'p1', transition: 'spawn', id: 't1', nodeId: 's0_0', uiPhase: 'plan', cycle: 0, label: 'research', status: 'running' });
   await new Promise((r) => setTimeout(r, 0));
-  const node = ctx.window.document.querySelector('[data-run-id="p1"] .run-node[data-id="s0_0"]');
+  const node = ctx.window.document.querySelector('[data-run-id="p1"] .node[data-node-id="s0_0"]');
   assert.ok(node, 's0_0 node exists (real stepper)');
   assert.equal(node.querySelectorAll('.fan .sq.on').length, 1, 'running square on s0_0');
 });

@@ -1,16 +1,18 @@
 // src/core/agent-registry.mjs
 // Data-driven agent registry. Scans agents/*.meta.json into an in-memory map
-// keyed by agent key, sorted by `.order`. This replaces what used to be hardcoded
-// across AGENT_FILES (orchestrator.mjs) and AGENT_STEPS (config.mjs): adding an
-// agent is now "drop agents/<key>.md + agents/<key>.meta.json", no core edit.
+// keyed by agent key, sorted by `.order`. Adding an agent is "drop
+// agents/<key>.md + agents/<key>.meta.json", no core edit.
 //
-// Read synchronously so it can back a synchronous AGENT_STEPS constant in
-// config.mjs. Tolerant: a malformed sidecar, or one missing `key`/`order`, is
-// skipped rather than throwing (mirrors the tolerant readers elsewhere).
+// A meta is its v2 PORTS and its capability flags — nothing else. The v1 channel
+// view a meta used to carry, and the key-mapped tables that derived it, died with
+// the v1 engine; the graph binds typed ports, so no channel vocabulary lives here.
+//
+// Read synchronously so config.mjs can build its step list without going async.
+// Tolerant: a malformed sidecar, or one missing `key`/`order`, is skipped rather
+// than throwing (mirrors the tolerant readers elsewhere).
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
 import { MOCK_WRITER_ROLES } from './claude-runner.mjs'; // closed mockRole vocabulary (§5 ⟨d⟩)
@@ -20,7 +22,6 @@ const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
-const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
 
 /** Organizational-only domain tag (coding, marketing, financing, …): lowercase
  *  kebab, ≤32 chars. 'shared' is a recognized sentinel that passes this regex and
@@ -33,105 +34,9 @@ function normalizeDomain(raw) {
   return typeof raw === 'string' && DOMAIN_RE.test(raw) ? raw : 'general';
 }
 
-/**
- * Built-in channel/governance spec per agent key. RETAINED, currently unread:
- * meta v2 derives the v1 channel view from the sidecar's own ports (see the
- * v1-compat shim below), so nothing consults this table any more. It is deleted
- * together with the shim when the v1 engine goes away; keeping it until then
- * makes that one removal, not two.
- */
-const DEFAULT_SPEC = {
-  clarify:              { consumes: ['userPrompt'],                       produces: ['clarify'],         connectsTo: ['planner'] },
-  planner:              { consumes: ['userPrompt', 'clarify', 'review'],  optionalConsumes: ['clarify', 'review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer', 'decomposer'] },
-  refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner', 'decomposer'] },
-  decomposer:           { consumes: ['plan'],              produces: ['decomposition'],   connectsTo: ['implementer'] },
-  implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
-  reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },
-  manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
-  manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
-  planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer', 'decomposer'] },
-  // Workspace agents (scope:'workspace-only', §6.2). The scanner is off-pipeline
-  // (connectsTo:[] -> non-composable); the reviewer slots into the code->review->
-  // implementer loop exactly like `reviewer`.
-  workspaceScanner:     { consumes: ['userPrompt'],        produces: ['workspace'],       connectsTo: [] },
-  workspaceReviewer:    { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer'] },
-};
 
-/** Channel ids: built-ins or any well-formed CUSTOM id (open vocabulary, m1-v2).
- *  Only a malformed id is warned on and dropped — a typo of a built-in becomes a
- *  custom channel. Consumed ids are surfaced by the validator's reachability
- *  warning; a typo'd pre-seeded id in `produces` has no warning net — the
- *  artifact simply lands on the typo'd channel. */
-const CUSTOM_CHANNEL_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
-/**
- * Legacy short labels for the original four roles, so the derived AGENT_STEPS is
- * byte-identical to the hardcoded one the UI/orchestrator have always used. New
- * agents fall back to their `displayName`.
- */
-const LEGACY_LABELS = {
-  planner: 'Plan',
-  refiner: 'Refine',
-  implementer: 'Implement',
-  reviewer: 'Review',
-};
 
-const CHANNEL_DEF_KINDS = new Set(['md', 'json']);
-
-/** Normalize a sidecar's channelDefs: well-formed custom ids only, kind md|json
- *  (default md), filename a plain basename (default <id>.<ext>); built-in channel
- *  ids cannot be redefined. */
-function normalizeChannelDefs(raw, key) {
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const d of raw) {
-    if (!d || typeof d !== 'object') continue;
-    const id = typeof d.id === 'string' ? d.id.trim() : '';
-    if (!CUSTOM_CHANNEL_ID_RE.test(id)) {
-      if (id) console.warn(`[agent-registry] ${key}.channelDefs: bad channel id "${id}" ignored`);
-      continue;
-    }
-    if (CHANNEL_IDS.has(id)) {
-      console.warn(`[agent-registry] ${key}.channelDefs: "${id}" is a built-in channel and cannot be redefined`);
-      continue;
-    }
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const kind = CHANNEL_DEF_KINDS.has(d.kind) ? d.kind : 'md';
-    const fnRaw = typeof d.filename === 'string' ? d.filename.trim() : '';
-    // basename only: a def must never escape the pipeline dir
-    const pathSafe = fnRaw && !/[\\/]/.test(fnRaw) && !fnRaw.includes('..');
-    if (fnRaw && !pathSafe) {
-      console.warn(`[agent-registry] ${key}.channelDefs: filename "${fnRaw}" is not a plain basename; using "${id}.${kind}"`);
-    }
-    const filename = pathSafe ? fnRaw : `${id}.${kind}`;
-    out.push({ id, kind, filename });
-  }
-  return out;
-}
-
-/**
- * Registry-level channel definition collection: merge every agent's channelDefs
- * into { [channelId]: {id, kind, filename} }. Registry order (sorted by .order)
- * makes "first definition wins" deterministic; conflicts warn.
- * @param {Record<string, object>} registry
- */
-export function collectChannelDefs(registry) {
-  const defs = {};
-  for (const m of Object.values(registry || {})) {
-    for (const d of m.channelDefs || []) {
-      if (Object.hasOwn(defs, d.id)) {
-        if (defs[d.id].kind !== d.kind || defs[d.id].filename !== d.filename) {
-          console.warn(`[agent-registry] channel "${d.id}" redefined by "${m.key}"; first definition wins`);
-        }
-        continue;
-      }
-      defs[d.id] = { ...d };
-    }
-  }
-  return defs;
-}
 
 /**
  * Ordered unique domain list for UI section headers. Registry is already sorted
@@ -308,82 +213,6 @@ function derivePortSummary(inputs, outputs) {
   return `Reads ${reads.join(', ')}; produces ${writes.join(', ')}.`;
 }
 
-// ── v1-compat shim (TEMPORARY) ───────────────────────────────────────────────
-// The live v1 engine still binds artifacts by CHANNEL NAME (workflows.mjs,
-// channels.mjs, workflow-validator.mjs, orchestrator.mjs), so a v2 entry also
-// carries the derived v1 view. The port-id -> channel tables below are the one
-// sanctioned piece of key-mapped code outside data files; they die with the
-// shim (and with DEFAULT_SPEC) when the engine swaps over.
-
-const V1_INPUT_CHANNEL = {
-  answers: 'clarify', fix: 'review', revise: 'review', review: 'review',
-  done: 'code', checklist: 'checklist', plan: 'plan', workspace: 'workspace',
-};
-const V1_OUTPUT_CHANNEL = {
-  ...V1_INPUT_CHANNEL,
-  // The refiner's `revise` output writes the PLAN file (artifactKind 'plan'), so
-  // on the output side it is the plan channel — which is also what makes the
-  // refiner's two outputs dedupe to a single `produces: ['plan']`.
-  revise: 'plan',
-  // The decomposer's `tasks` output is v1's `decomposition` channel.
-  tasks: 'decomposition',
-};
-
-/** v1 channel for one port, or null when the port has no channel at all. An
- *  unmapped NON-void port keeps its own id (v1's channel vocabulary is open, so
- *  custom ports stay custom channels); an unmapped void port carries no payload
- *  and is dropped. */
-function v1Channel(port, table) {
-  if (port.id === 'task') return port.type === 'json' ? 'decomposition' : 'userPrompt';
-  if (Object.hasOwn(table, port.id)) return table[port.id];
-  return port.type === 'void' ? null : port.id;
-}
-
-/** The v1 stepper phase per built-in key (mirrors workflows.mjs's CONV-4 map).
- *  A custom agent has no v1 phase and falls back to its key downstream. */
-const V1_UI_PHASE = {
-  clarify: 'clarify', planner: 'plan', refiner: 'refine', decomposer: 'decompose',
-  implementer: 'implement', reviewer: 'review', planReviewer: 'plan-review',
-  manualTestsChecklist: 'manual-checklist', manualWebUiTesting: 'manual-web',
-  workspaceReviewer: 'review',   // shares the single-project review stepper bucket
-};
-
-/** Derive the v1 channel view (consumes/optionalConsumes/produces/connectsTo/
- *  channelDefs/uiPhase) the running engine reads, from the v2 ports. */
-function v1CompatShim(meta) {
-  const consumes = [];
-  const optionalConsumes = [];
-  for (const p of meta.inputs) {
-    const ch = v1Channel(p, V1_INPUT_CHANNEL);
-    if (!ch) continue;
-    const bucket = p.required && p.type !== 'void' ? consumes : optionalConsumes;
-    if (!bucket.includes(ch)) bucket.push(ch);
-  }
-  const produces = [];
-  for (const p of meta.outputs) {
-    if (p.type === 'void') continue;               // void outputs are pure signals
-    const ch = v1Channel(p, V1_OUTPUT_CHANNEL);
-    if (ch && !produces.includes(ch)) produces.push(ch);
-  }
-  // v1 modelled the staged worktree as the `code` channel; v2 models it as the
-  // agent-level sideEffect, so the shim maps it back (implementer -> ['code']).
-  if (meta.sideEffect === 'code' && !produces.includes('code')) produces.push('code');
-  // Only CUSTOM channels need a definition; built-ins already have one, and
-  // deriving is not authoring, so they are filtered before the (warning) check.
-  const defs = meta.outputs
-    .filter((p) => p.type !== 'void')
-    .map((p) => ({ id: v1Channel(p, V1_OUTPUT_CHANNEL), kind: p.type, filename: p.filename }))
-    .filter((d) => d.id && !CHANNEL_IDS.has(d.id));
-  return {
-    consumes,
-    optionalConsumes,
-    produces,
-    connectsTo: '*',
-    channelDefs: normalizeChannelDefs(defs, meta.key),
-    uiPhase: Object.hasOwn(V1_UI_PHASE, meta.key) ? V1_UI_PHASE[meta.key] : null,
-  };
-}
-
 /**
  * Read one parsed sidecar into `{errors, meta}`. `meta` is only meaningful when
  * `errors` is empty. `warn` receives the non-fatal coercions (a `loop` input
@@ -489,7 +318,6 @@ function readMetaV2(raw, warn) {
   if (WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) meta.workspaceStrategy = raw.workspaceStrategy;
   if (workspaceVariantOf) meta.workspaceVariantOf = workspaceVariantOf;
   if (raw.placeable !== undefined && !raw.placeable) meta.placeable = false;
-  Object.assign(meta, v1CompatShim(meta));
   return { errors, meta };
 }
 
@@ -691,28 +519,3 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   return registry;
 }
 
-/**
- * Derive the legacy `[{key,label}]` step list from a registry (replacement source
- * for the hardcoded AGENT_STEPS). The original four roles keep their short legacy
- * labels; any additional agent uses its `displayName`.
- *
- * §6.6/C9: `scope:'workspace-only'` agents are EXCLUDED — they are not part of the
- * single-project UI stepper / per-step config keyspace that AGENT_STEPS drives, so
- * this returns the 9 built-in project-scope steps plus any user-layer project
- * agents (without the exclusion the two workspace sidecars would add 2 more).
- * @param {Record<string, object>} registry
- * @returns {Array<{key:string,label:string,fanOut:boolean,asksQuestions:boolean,questionsLocked:boolean,questionsDefault:boolean}>}
- */
-export function registryToSteps(registry) {
-  return Object.values(registry || {})
-    .filter((m) => m.scope !== 'workspace-only')
-    .sort((a, b) => a.order - b.order)
-    .map((m) => ({
-      key: m.key,
-      label: LEGACY_LABELS[m.key] || m.displayName,
-      fanOut: !!m.fanOut,
-      asksQuestions: !!m.asksQuestions,
-      questionsLocked: !!m.questionsLocked,
-      questionsDefault: !!m.questionsDefault,
-    }));
-}

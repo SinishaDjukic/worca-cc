@@ -41,18 +41,20 @@ async function openSettings(window) {
   await tick();
 }
 
-test('each agent step exposes model + effort selectors in markup', () => {
-  for (const role of ['planner', 'refiner', 'implementer', 'reviewer']) {
-    assert.ok(html.includes(`data-role="${role}"`), `missing step-config for ${role}`);
-  }
-  assert.ok(html.includes('step-model'), 'missing model select class');
-  assert.ok(html.includes('step-effort'), 'missing effort select class');
+// The hardcoded per-role stage rows are gone: model + effort selectors are
+// painted per AGENT NODE of the selected graph, into the per-run overrides
+// disclosure. The markup ships the containers, never the rows.
+test('the pipeline config markup ships the per-run override containers, not per-role rows', () => {
+  assert.ok(!html.includes('data-role='), 'no hardcoded per-role step-config survives');
+  assert.ok(html.includes('id="wf-overrides"'), 'missing the per-run overrides panel');
+  assert.ok(html.includes('id="wf-node-config"'), 'missing the per-node row container');
+  assert.ok(html.includes('id="wf-feedback-config"'), 'missing the loop-budget container');
 });
 
-test('app.js loads, renders, and saves per-step config', () => {
+test('app.js loads, renders, and saves per-node config', () => {
   assert.ok(appjs.includes('/api/config'), 'app.js does not use /api/config');
-  assert.ok(appjs.includes('renderStepConfigs'), 'missing renderStepConfigs');
-  assert.ok(appjs.includes('addModelFlow'), 'missing custom-model add flow');
+  assert.ok(appjs.includes('renderNodeRows'), 'missing renderNodeRows');
+  assert.ok(appjs.includes('addModelFlowNode'), 'missing custom-model add flow');
 });
 
 // ---------------------------------------------------------------------------

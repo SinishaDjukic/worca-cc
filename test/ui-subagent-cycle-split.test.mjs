@@ -57,11 +57,13 @@ test('cycleAwareLabel adds "· cycle N" only for multi-cycle nodes', async () =>
   assert.equal(label(`s1_0${SEP}2`), 'Refine Plan · cycle 2');
 });
 
-test('cycleAwareLabel falls back to uiPhase when the stepper lacks the nodeId', async () => {
+// The uiPhase fallback is gone with the client-side phase-keyed default graph:
+// with no manifest there is no label to resolve, so the raw node id stands in.
+test('cycleAwareLabel falls back to the raw node id when there is no manifest', async () => {
   const { window } = await boot();
   const subs = [{ id: 'x', nodeId: 's1_0', uiPhase: 'refine', cycle: 1, status: 'running' }];
-  const label = window.__np.cycleAwareLabel(null, subs); // null → legacy default manifest
-  assert.equal(label(`s1_0${SEP}1`), 'Refine', 'resolved via uiPhase against the legacy default label');
+  const label = window.__np.cycleAwareLabel(null, subs);
+  assert.equal(label(`s1_0${SEP}1`), 's1_0');
 });
 
 test('renderSubsTree renders one step per cycle group with cycle-suffixed headers', async () => {

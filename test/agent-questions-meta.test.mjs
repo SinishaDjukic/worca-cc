@@ -3,7 +3,8 @@
 // asksQuestions / questionsLocked / questionsDefault normalization + builtin pins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeMeta, loadAgentRegistry, registryToSteps } from '../src/core/agent-registry.mjs';
+import { normalizeMeta, loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { agentSteps } from '../src/core/config.mjs';
 
 const base = {
   metaVersion: 2, key: 'demo', order: 99, runnerType: 'producer',
@@ -49,8 +50,8 @@ test('builtin sidecars: clarify locked-ON; workspaceScanner off; all others capa
   }
 });
 
-test('registryToSteps carries the questions defaults per step', () => {
-  const steps = registryToSteps(loadAgentRegistry(undefined, { userAgentsDir: null }));
+test('agentSteps() carries the questions defaults per step', () => {
+  const steps = agentSteps();
   const clarify = steps.find((s) => s.key === 'clarify');
   assert.deepEqual(
     { asks: clarify.asksQuestions, locked: clarify.questionsLocked, def: clarify.questionsDefault },

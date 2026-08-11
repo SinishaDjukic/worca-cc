@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildClarifyPrompt, runClarify } from '../src/core/phases.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeClarify, readClarifyRow } from '../src/core/artifacts.mjs';
+import { runClarifierExecution } from '../src/core/graph/executor.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
@@ -23,8 +23,19 @@ after(async () => {
   await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
+/** A minimal clarifier EXECUTION ctx: the graph engine's replacement for v1's
+ *  bound clarify runner. `ask` auto-answers with each question's first option. */
 function fakeCtx(dir) {
+  const ports = {
+    runnerType: 'clarifier',
+    displayName: 'Clarify',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'answers', type: 'json', when: 'always', filename: 'clarify.json', store: 'run', artifactKind: 'clarify' }],
+  };
   return {
+    node: { id: 'n_clarify', kind: 'agent', key: 'clarify' },
+    executionId: 'x:n_clarify:1',
+    ordinal: 1,
     projectDir: dir,
     pipelineDir: dir,
     taskPrompt: 'demo task',
@@ -33,36 +44,17 @@ function fakeCtx(dir) {
     claudeOpts: { mock: true },
     signal: undefined,
     onEvent: () => {},
+    ports,
+    meta: ports,
+    bindings: {},
+    trigger: { freshPorts: ['task'] },
+    template: { nodes: [{ id: 'n_clarify', kind: 'agent', key: 'clarify' }], wires: [] },
+    runCtx: { pipelineDir: dir, projectDir: dir, baseName: 'demo', datePrefix: '01-01-26' },
+    ask: async ({ questions }) => ({
+      answers: (questions || []).map((q) => ({ id: q.id, choice: (q.options || ['ok'])[0] })),
+    }),
   };
 }
-
-test('buildClarifyPrompt re-injects prior answers and forbids re-asking', () => {
-  const prompt = buildClarifyPrompt(fakeCtx('/p'), {
-    round: 2,
-    priorAnswers: [{ id: 'sess', question: 'Where to store sessions?', choice: 'Redis' }],
-  });
-  assert.match(prompt, /DO NOT ask these again/);
-  assert.match(prompt, /Where to store sessions\?/);
-  assert.match(prompt, /Redis/);
-  assert.match(prompt, /MOCK_PRIOR: 1/);
-});
-
-test('buildClarifyPrompt omits the answered section on the first round', () => {
-  const prompt = buildClarifyPrompt(fakeCtx('/p'), { round: 1, priorAnswers: [] });
-  assert.doesNotMatch(prompt, /DO NOT ask these again/);
-  assert.match(prompt, /MOCK_PRIOR: 0/);
-});
-
-test('clarify converges once answers are fed back (mock)', async () => {
-  const ctx = fakeCtx(await makeTmpDir());
-  const r1 = await runClarify(ctx, { round: 1, priorAnswers: [] });
-  assert.ok(r1.questions.length > 0, 'round 1 asks at least one question');
-  const r2 = await runClarify(ctx, {
-    round: 2,
-    priorAnswers: [{ id: 'q1', question: 'How handle invalid input?', choice: 'Fail fast' }],
-  });
-  assert.equal(r2.questions.length, 0, 'round 2 with answers asks nothing');
-});
 
 test('orchestrator no longer exposes a clarify round cap', () => {
   const orch = createOrchestrator({});
@@ -79,21 +71,19 @@ test('clarify runs exactly one round (no clarify phase past cycle 1)', async () 
   });
   const clarifyCycles = [];
   let clarifyQuestions = 0;
-  orch.on('phase', ({ phase, cycle }) => {
-    if (phase === 'clarify') clarifyCycles.push(cycle);
+  orch.on('exec', ({ agentKey, ordinal, status }) => {
+    if (agentKey === 'clarify' && status === 'start') clarifyCycles.push(ordinal);
   });
-  // In mock mode the planner always returns questions on the first call
-  // (MOCK_PRIOR === 0), so a single clarify round must fire this exactly once.
+  // In mock mode the clarifier always returns questions on the first call
+  // (MOCK_PRIOR === 0), so a single clarify execution must fire this exactly once.
   orch.on('question', ({ kind }) => {
     if (kind === 'clarify') clarifyQuestions += 1;
   });
   const res = await orch.run();
   assert.equal(res.status, 'done', 'mock pipeline should finish');
-  assert.ok(clarifyCycles.length > 0, 'clarify phase should run');
-  assert.ok(
-    clarifyCycles.every((c) => c === 1),
-    `clarify must stay on cycle 1, saw cycles ${clarifyCycles.join(',')}`,
-  );
+  assert.ok(clarifyCycles.length > 0, 'the clarify node should run');
+  assert.deepEqual(clarifyCycles, [1],
+    `clarify must execute exactly once, saw ordinals ${clarifyCycles.join(',')}`);
   assert.equal(clarifyQuestions, 1, 'clarify must be asked exactly once');
 });
 
@@ -156,27 +146,28 @@ test('writeClarify upserts questions then answers into the clarify row', () => {
   assert.equal(row.answers.answers[0].choice, 'a');
 });
 
-// ── M1.2 — runClarify ingests the agent's clarify into the DB row ─────────
+// ── M1.2 — the clarifier executor ingests its questions into the DB row ────
 import { _resetForTests as _resetDb2 } from '../src/core/db.mjs';
 
-test('runClarify persists questions to the clarify row and returns them from the DB', async () => {
+test('the clarifier executor persists questions to the clarify row', async () => {
   _resetDb2();
   const dir = await makeTmpDir();
   // A pipelines row must exist for the clarify FK (seedPipelineRow inserts it).
   seedPipelineRow({ id: 'clrf0001', projectKey: 'proj-00000001', status: 'running' });
   const ctx = { ...fakeCtx(dir), pipelineId: 'clrf0001' };
-  const r = await runClarify(ctx, { round: 1, priorAnswers: [] });
+  const r = await runClarifierExecution(ctx);
   assert.ok(r.questions.length > 0, 'returns questions');
-  // Authoritative source: the DB row, written by the runner itself.
+  // Authoritative source: the DB row, written by the executor itself.
   const row = readClarifyRow('clrf0001');
-  assert.ok(row.questions, 'clarify row populated by runClarify');
+  assert.ok(row.questions, 'clarify row populated by the executor');
   assert.equal(row.questions.questions[0].id, r.questions[0].id, 'returned questions match the DB row');
+  assert.equal(row.answers.answers.length, r.answers.length, 'the gated answers land too');
 });
 
-test('runClarify still works (FS fallback) when ctx has no pipelineId', async () => {
+test('the clarifier executor still works (FS only) when ctx has no pipelineId', async () => {
   const ctx = fakeCtx(await makeTmpDir()); // no pipelineId
-  const r = await runClarify(ctx, { round: 1, priorAnswers: [] });
-  assert.ok(r.questions.length > 0, 'falls back to the FS-parsed clarify when no pipelineId');
+  const r = await runClarifierExecution(ctx);
+  assert.ok(r.questions.length > 0, 'the answers file is parsed with no DB row to write');
 });
 
 test('protocol no longer exports writeClarifyAnswers (dead FS write removed)', async () => {

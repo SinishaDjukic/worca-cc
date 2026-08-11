@@ -9,11 +9,22 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 
+// Meta v2: the card head reads typed PORTS, not the dead channel vocabulary.
 const AGENTS = [
-  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*' },
-  { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42, origin: 'user', connectsTo: '*' },
+  {
+    key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet',
+    runnerType: 'producer', order: 1, origin: 'builtin', metaVersion: 2,
+    inputs: [{ id: 'task', type: 'md', required: true, as: 'file' }],
+    outputs: [{ id: 'plan', type: 'md', when: 'always', filename: '{base}.md', store: 'project' }],
+  },
+  {
+    key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green',
+    runnerType: 'producer', order: 42, origin: 'user', metaVersion: 2,
+    inputs: [{ id: 'plan', type: 'md', required: true, as: 'file' }],
+    outputs: [{ id: 'review', type: 'md', when: 'always', filename: 'docs.md', store: 'run' }],
+  },
 ];
-const CHANNELS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+const MOCK_ROLES = ['generic-producer', 'generic-verifier'];
 
 class WSStub {
   constructor() { this.readyState = 1; this.sent = []; this._listeners = {}; WSStub.last = this; }
@@ -30,11 +41,11 @@ async function boot({ fetchHandler } = {}) {
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;
   window.confirm = () => true;
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0); // composer paints via rAF (same stub as ui-composer.test.mjs)
+  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   window.fetch = (url, opts) => {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, channels: CHANNELS }) });
+    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, channels: [], mockWriterRoles: MOCK_ROLES }) });
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
@@ -56,7 +67,7 @@ const goAgents = async (window) => {
   await new Promise((r) => setTimeout(r, 0));
 };
 
-test('agents view renders grouped cards with origin badges + produces/consumes chips', async () => {
+test('agents view renders grouped cards with origin badges + port chips', async () => {
   const { window } = await boot();
   await goAgents(window);
   const doc = window.document;
@@ -65,8 +76,8 @@ test('agents view renders grouped cards with origin badges + produces/consumes c
   assert.equal(cards.length, 2);
   const user = cards.find((c) => c.dataset.agentKey === 'docsWriter');
   assert.equal(user.querySelector('.agent-origin').textContent, 'user');
-  assert.ok([...user.querySelectorAll('.agent-chip.prod')].some((n) => n.textContent === 'review'));
-  assert.ok([...user.querySelectorAll('.agent-chip.cons')].some((n) => n.textContent === 'plan'));
+  assert.ok([...user.querySelectorAll('.agent-chip.prod')].some((n) => n.textContent === 'review md'));
+  assert.ok([...user.querySelectorAll('.agent-chip.cons')].some((n) => n.textContent === 'plan md'));
   const builtin = cards.find((c) => c.dataset.agentKey === 'planner');
   assert.equal(builtin.querySelector('.agent-delete').hidden, true, 'no delete for builtin');
   assert.equal(builtin.querySelector('.agent-edit').hidden, true, 'no edit for builtin');
@@ -128,39 +139,7 @@ test('Duplicate on a builtin GETs the full agent then POSTs a copy with a fresh 
   assert.equal(posts[0].markdown, '# planner body');
 });
 
-test('composer save surfaces server warnings via the link-banner toast', async () => {
-  const { window } = await boot({
-    fetchHandler: (u, opts) => {
-      if (u.endsWith('/api/workflows') && opts.method === 'POST') {
-        return Promise.resolve({ ok: true, status: 201, json: async () => ({
-          workflow: { id: 'wf_warny', name: 'Warny', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] },
-          warnings: ['node "s1_0" consumes "checklist" but no upstream step produces it'],
-        }) });
-      }
-      if (u.endsWith('/api/workflows') && (!opts.method || opts.method === 'GET')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [] }) });
-      }
-      if (u.includes('/api/workflows/')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 'wf_default', name: 'Default', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] }) });
-      }
-      return null;
-    },
-  });
-  window.prompt = () => 'Warny';
-  window.location.hash = 'composer';
-  window.dispatchEvent(new window.Event('hashchange'));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  const doc = window.document;
-  assert.ok(window.__composer.steps.length >= 1, 'canvas seeded from default');
-  click(window, doc.querySelector('#composer-save'));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.match(doc.querySelector('#composer-link-text').textContent, /consumes "checklist"/, 'warning toasted');
-  assert.equal(doc.querySelector('#composer-link-banner').hidden, false);
-});
-
-test('agents view splits channel pills into labeled Input and Output rows', async () => {
+test('agents view splits PORT pills into labeled Input and Output rows', async () => {
   const { window } = await boot();
   await goAgents(window);
   const planner = [...window.document.querySelectorAll('#agents-list .agent-card')]
@@ -174,8 +153,8 @@ test('agents view splits channel pills into labeled Input and Output rows', asyn
   assert.equal(outRow.querySelector('.agent-io-label').textContent, 'Output');
 
   // input pills under the Input row, output pills under the Output row
-  assert.deepEqual([...inRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['userPrompt']);
-  assert.deepEqual([...outRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['plan']);
+  assert.deepEqual([...inRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['task md']);
+  assert.deepEqual([...outRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['plan md']);
 
   // no consume pill leaks into the Output row (and vice-versa)
   assert.equal(outRow.querySelector('.agent-chip.cons'), null, 'Output row has no consume pills');
@@ -185,27 +164,28 @@ test('agents view splits channel pills into labeled Input and Output rows', asyn
   assert.ok(planner.querySelector('.agent-head .agent-io'), 'io block is inside .agent-head');
 });
 
-test('agents view shows a placeholder when a channel side is empty', async () => {
+test('agents view shows a placeholder when a port side is empty', async () => {
   const agents = [{
     key: 'sink', displayName: 'Sink', description: 'consumes only', color: 'amber',
-    runnerType: 'verifier', consumes: ['code'], produces: [], order: 1, origin: 'user', connectsTo: '*',
+    runnerType: 'verifier', order: 1, origin: 'user', metaVersion: 2,
+    inputs: [{ id: 'code', type: 'void', required: true }], outputs: [],
   }];
   const { window } = await boot({
     fetchHandler: (u) => u.includes('/api/agents')
-      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ agents, channels: CHANNELS }) })
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ agents, channels: [], mockWriterRoles: MOCK_ROLES }) })
       : null,
   });
   await goAgents(window);
   const card = window.document.querySelector('#agents-list .agent-card');
   const outRow = card.querySelector('.agent-io-out');
-  assert.equal(outRow.querySelector('.agent-chip'), null, 'no output pills for empty produces');
+  assert.equal(outRow.querySelector('.agent-chip'), null, 'no output pills for a portless side');
   assert.equal(outRow.querySelector('.agent-io-none').textContent, '—', 'empty Output row shows muted placeholder');
   // input side still renders its pill
   assert.deepEqual(
-    [...card.querySelectorAll('.agent-io-in .agent-chip')].map((n) => n.textContent), ['code']);
+    [...card.querySelectorAll('.agent-io-in .agent-chip')].map((n) => n.textContent), ['code void']);
 });
 
-test('agent detail body is spaced below the channel pills', () => {
+test('agent detail body is spaced below the port pills', () => {
   // jsdom does not compute layout; assert the spacing RULE exists in the stylesheet.
   const css = readFileSync(cssPath, 'utf8');
   assert.match(css, /\.agent-detail\s*\{[^}]*margin-top\s*:/, '.agent-detail must define margin-top for pill→body spacing');

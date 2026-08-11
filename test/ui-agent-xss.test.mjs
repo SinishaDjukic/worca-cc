@@ -1,6 +1,11 @@
 // test/ui-agent-xss.test.mjs — agent metadata is user-writable (POST /api/agents,
 // wizard Mode B), so the composer must never inject displayName/description/icon
 // raw into innerHTML. Built-in icons stay trusted repo-shipped SVG fragments.
+//
+// Ported to the v2 node composer: the sinks moved (palette pill .ap, node card
+// header, saved-pipeline row, mini-SVG thumbnail) but the rule did not — every
+// user-authored string is textContent, and only `origin !== 'user'` icons are
+// injected as markup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -16,10 +21,35 @@ const EVIL_ICON = '<image href=x onerror=boom()>';
 const PLANNER_ICON = '<path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/>';
 
 const AGENTS = [
-  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*', icon: PLANNER_ICON },
-  { key: 'evil', displayName: EVIL_NAME, description: EVIL_DESC, color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 50, origin: 'user', connectsTo: '*', icon: EVIL_ICON },
+  {
+    key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet',
+    runnerType: 'producer', order: 1, origin: 'builtin', icon: PLANNER_ICON, metaVersion: 2, domain: 'coding',
+    inputs: [{ id: 'task', type: 'md', required: true, as: 'file' }],
+    outputs: [{ id: 'plan', type: 'md', when: 'always', filename: '{base}.md', store: 'project' }],
+  },
+  {
+    key: 'evil', displayName: EVIL_NAME, description: EVIL_DESC, color: 'green',
+    runnerType: 'producer', order: 50, origin: 'user', icon: EVIL_ICON, metaVersion: 2, domain: 'coding',
+    inputs: [{ id: 'plan', type: 'md', required: true, as: 'file' }],
+    outputs: [{ id: 'review', type: 'md', when: 'always', filename: 'r.md', store: 'run' }],
+  },
 ];
-const CHANNELS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+
+/** A v2 template that PLACES the hostile agent, so the canvas renders its card. */
+const EVIL_TEMPLATE = {
+  id: 'wf_evil', name: 'Has Evil', version: 2, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 60, y: 200, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 360, y: 200, config: {} },
+    { id: 'n_evil', kind: 'agent', key: 'evil', x: 660, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_evil', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_evil', port: 'review' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
 
 class WSStub {
   constructor() { this.readyState = 1; this.sent = []; this._listeners = {}; WSStub.last = this; }
@@ -30,114 +60,91 @@ class WSStub {
   deliver(obj) { (this._listeners.message || []).forEach((fn) => fn({ data: JSON.stringify(obj) })); }
 }
 
-async function boot({ fetchHandler } = {}) {
+async function boot() {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;
   window.confirm = () => true;
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0); // composer paints via rAF (same stub as ui-composer.test.mjs)
+  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   window.fetch = (url, opts) => {
     const u = String(url);
-    if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, channels: CHANNELS }) });
-    if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
-    if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
+    const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+    if (u.endsWith('/api/workflows') && (!opts || !opts.method || opts.method === 'GET')) {
+      return json({ workflows: [EVIL_TEMPLATE] });
+    }
+    if (u.includes('/api/workflows/')) return json(EVIL_TEMPLATE);
+    if (u.includes('/api/agents')) return json({ agents: AGENTS, channels: [], mockWriterRoles: [] });
+    if (u.includes('/api/projects')) return json({ projects: [] });
+    if (u.includes('/api/workspaces')) return json({ workspaces: [] });
+    return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* jsdom-only key */ }
   }
   globalThis.window = window; globalThis.document = window.document;
   await import(appPath + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   if (WSStub.last) WSStub.last._open();
-  return { window, ws: () => WSStub.last };
+  return window;
 }
+
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true }));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const goComposer = async (window) => {
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));
-  for (let i = 0; i < 4; i++) await tick();
+  for (let i = 0; i < 4; i += 1) await tick();
 };
 
-// Stub the workflows API so the default canvas + saved list both reference the
-// user agent (covers the canvas node, palette pill, pl-chip and RO-preview sinks).
-const workflowsHandler = (u, opts) => {
-  if (u.endsWith('/api/workflows') && (!opts.method || opts.method === 'GET')) {
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({
-      workflows: [{ id: 'wf_evil', name: 'Has Evil', steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'evil' }]], feedbacks: [] }],
-    }) });
-  }
-  if (u.includes('/api/workflows/')) {
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({
-      id: 'wf_default', name: 'Default', steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'evil' }]], feedbacks: [],
-    }) });
-  }
-  return null;
-};
-
-test('composer never injects user-agent meta as markup: palette, canvas, saved chips, RO preview', async () => {
-  const { window } = await boot({ fetchHandler: workflowsHandler });
+test('the palette rail renders hostile agent meta as text, never markup', async () => {
+  const window = await boot();
   await goComposer(window);
   const doc = window.document;
-
-  // palette pill: displayName renders literally, no <img> parsed from it
-  const pill = doc.querySelector('#composer-palette .agent-pill[data-key="evil"]');
+  const pill = doc.querySelector('#composer-palette .ap[data-key="evil"]');
   assert.ok(pill, 'user agent pill present');
   assert.equal(pill.querySelector('img'), null, 'no <img> parsed from displayName');
-  assert.ok(pill.textContent.includes(EVIL_NAME), 'displayName renders as literal text');
+  assert.equal(pill.querySelector('b'), null, 'no markup parsed from description');
+  assert.equal(pill.querySelector('.n').textContent, EVIL_NAME, 'displayName renders as literal text');
+  assert.equal(pill.title, EVIL_DESC, 'the description rides in title — an attribute, not markup');
+});
 
-  // canvas node: no <img>/<image> anywhere; name + description are literal text
-  const flow = doc.querySelector('#composer-flow');
-  assert.equal(flow.querySelector('img'), null, 'no <img> in the canvas');
-  assert.equal(flow.querySelector('image'), null, 'no SVG <image> in the canvas');
-  const evilNode = [...flow.querySelectorAll('.node')].find((n) => (n.querySelector('.nmeta b') || {}).textContent === EVIL_NAME);
-  assert.ok(evilNode, 'user agent node renders its displayName literally');
-  assert.equal(evilNode.querySelector('.nmeta small').textContent, EVIL_DESC, 'description literal');
-  assert.equal(evilNode.querySelector('.nmeta small b'), null, 'description markup inert');
-  const evilSvg = evilNode.querySelector('.nic svg');
+test('a canvas card gives a user agent the fixed glyph and a literal title', async () => {
+  const window = await boot();
+  await goComposer(window);
+  const doc = window.document;
+  click(window, doc.querySelector('#composer-saved-list .pl-open'));
+  for (let i = 0; i < 4; i += 1) await tick();
+
+  const canvas = doc.querySelector('#composer-canvas');
+  assert.equal(canvas.querySelector('img'), null, 'no <img> anywhere on the canvas');
+  assert.equal(canvas.querySelector('image'), null, 'no SVG <image> either');
+
+  const evilCard = canvas.querySelector('.node[data-node-id="n_evil"]');
+  assert.ok(evilCard, 'the hostile agent has a card');
+  assert.equal(evilCard.querySelector('.nhead .tt').textContent, EVIL_NAME, 'displayName literal');
+  const evilSvg = evilCard.querySelector('.nhead svg');
   assert.ok(!evilSvg.innerHTML.includes('onerror'), 'user icon markup never injected');
   assert.ok(evilSvg.querySelector('circle'), 'user agent gets the fixed default glyph');
 
-  // builtin regression guard: planner keeps its real repo-shipped icon
-  const planNode = [...flow.querySelectorAll('.node')].find((n) => (n.querySelector('.nmeta b') || {}).textContent === 'Plan');
-  assert.ok(planNode, 'builtin node present');
-  assert.ok(planNode.querySelector('.nic svg').innerHTML.includes('M8 6h11'), 'builtin icon still raw-rendered');
-
-  // saved-pipelines chip row: displayName escaped there too
-  const item = doc.querySelector('.pl-item[data-id="wf_evil"]');
-  assert.ok(item, 'saved pipeline listed');
-  const chips = [...item.querySelectorAll('.pl-chip')];
-  assert.ok(chips.some((c) => c.textContent.includes(EVIL_NAME)), 'chip shows literal displayName');
-  assert.equal(item.querySelector('.pl-chips img'), null, 'no <img> parsed in chips');
-
-  // read-only preview: same pair + icon via composerRoNode
-  click(window, item.querySelector('.pl-row'));
-  for (let i = 0; i < 3; i++) await tick();
-  const body = item.querySelector('.pl-body');
-  const roEvil = [...body.querySelectorAll('.node')].find((n) => (n.querySelector('.nmeta b') || {}).textContent === EVIL_NAME);
-  assert.ok(roEvil, 'RO preview renders the displayName literally');
-  assert.equal(body.querySelector('img'), null, 'no <img> in RO preview');
-  assert.equal(body.querySelector('image'), null, 'no SVG <image> in RO preview');
-  assert.equal(roEvil.querySelector('.nmeta small b'), null, 'RO description markup inert');
-  assert.ok(!roEvil.querySelector('.nic svg').innerHTML.includes('onerror'), 'RO icon never injected');
+  // Builtin regression guard: planner keeps its real repo-shipped icon.
+  const planCard = canvas.querySelector('.node[data-node-id="n_plan"]');
+  assert.equal(planCard.querySelector('.nhead .tt').textContent, 'Plan');
+  assert.ok(planCard.querySelector('.nhead svg').innerHTML.includes('M8 6h11'), 'builtin icon still raw-rendered');
 });
-test('palette card description + hover bubble render hostile meta as text', async () => {
-  const { window } = await boot({ fetchHandler: workflowsHandler });
+
+test('the saved-pipeline row and its thumbnail carry no author-controlled markup', async () => {
+  const window = await boot();
   await goComposer(window);
   const doc = window.document;
-  const pill = doc.querySelector('#composer-palette .agent-pill[data-key="evil"]');
-  assert.ok(pill, 'hostile agent card present');
-  const pdesc = pill.querySelector('.pdesc');
-  assert.equal(pdesc.textContent, EVIL_DESC, 'description renders literally in the card');
-  assert.equal(pdesc.querySelector('b'), null, 'description markup inert in the card');
-  assert.equal(pill.querySelector('img'), null, 'no <img> parsed anywhere in the card');
-  pill.dispatchEvent(new window.Event('focusin', { bubbles: true }));
-  const bubble = doc.getElementById('info-bubble');
-  assert.ok(bubble && !bubble.classList.contains('hidden'), 'bubble shown on focus');
-  assert.ok(bubble.textContent.includes(EVIL_DESC), 'bubble shows the literal description');
-  assert.equal(bubble.querySelector('img'), null, 'no <img> in the bubble');
-  assert.equal(bubble.querySelector('b'), null, 'no injected markup in the bubble');
+  const row = doc.querySelector('#composer-saved-list .pl-item[data-id="wf_evil"]');
+  assert.ok(row, 'saved pipeline listed');
+  assert.equal(row.querySelector('.pl-name').textContent, 'Has Evil');
+  assert.equal(row.querySelector('img'), null, 'no <img> in the row');
+  // thumbnail() emits NUMBERS ONLY — that is why it is safe as innerHTML.
+  const thumb = row.querySelector('.pl-thumb');
+  assert.ok(thumb.querySelector('svg'), 'a mini-SVG thumbnail renders');
+  assert.equal(thumb.querySelector('image'), null, 'no SVG <image> in the thumbnail');
+  assert.ok(!thumb.innerHTML.includes('onerror'));
+  assert.ok(!thumb.innerHTML.includes('evil'), 'the thumbnail names nothing');
 });

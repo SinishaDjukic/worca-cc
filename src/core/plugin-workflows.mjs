@@ -4,15 +4,21 @@
 // origin 'plugin:<plugin>' — column added by SCHEMA_V13); uninstall removes
 // plugin-origin rows behind a reference guard. User duplicates (origin NULL)
 // are separate rows and are NEVER touched here.
+//
+// Templates are v2 GRAPHS (worca-cc-api 2): the same flat {version, nodes, wires}
+// document a composed template is, stored in the same `graph` column (SCHEMA_V17)
+// and gated by the same validateGraph — a plugin template is a first-class
+// template, never a second dialect.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { slugify } from './artifacts.mjs';
-import { loadAgentRegistry } from './agent-registry.mjs';
-import { validateWorkflow } from './workflow-validator.mjs';
 import { pluginCurrentDir } from './plugins-lock.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
+import { registryPortsFn } from './workflows.mjs';
+import { validateGraph } from './graph/validate.mjs';
 
 /** Uninstall guard error: plugin workflows are still referenced by project state. */
 export class ReferencedError extends Error {
@@ -33,9 +39,10 @@ const normDomain = (raw) => {
 /**
  * Upsert every <versionDir>/workflows/*.json into the workflows table.
  * id = wfp_<plugin>_<slug(filename)>, origin = 'plugin:<plugin>'. Each template
- * is validated (workflow-validator) against the MERGED registry — importing runs
- * AFTER the symlink swap + lock write, so the plugin's own agents resolve. An
- * invalid/unreadable template is skipped with a warning, never thrown (spec §9.3).
+ * is a v2 GRAPH and goes through the shared validator before it lands.
+ * Importing runs AFTER the symlink swap + lock write, so the plugin's own agents
+ * resolve against the MERGED registry. An unreadable, v1 or invalid template is
+ * skipped with a warning, never thrown (spec §9.3).
  * No workflows/ dir => { imported: [], skipped: [] } (feature-off no-op).
  * @param {string} name       plugin name (kebab-case; id stays SAFE_WORKFLOW_ID-legal)
  * @param {string} versionDir the exported version dir (or current/ — same tree)
@@ -49,9 +56,17 @@ export async function importPluginWorkflows(name, versionDir) {
   const imported = [];
   const skipped = [];
   if (!files.length) return { imported, skipped };
-  getDb(); // open + migrate: workflows.origin exists (SCHEMA_V13, Task 10)
-  const registry = loadAgentRegistry(); // merged builtin+user+plugin (Task 6)
+  getDb(); // open + migrate: workflows.origin/graph exist (SCHEMA_V13/V17)
   const now = new Date().toISOString();
+  // ONE registry load for the whole import, and the SHARED port synthesis over
+  // it: agent meta ports plus the universal `await` gate and the flow-card
+  // table. Templates are not in the DB yet, so resolveGraph is unavailable —
+  // registryPortsFn exists for exactly this caller and the server save route.
+  const portsFn = registryPortsFn(loadAgentRegistry());
+  const skip = (f, errors) => {
+    skipped.push({ file: f, errors });
+    console.warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${errors.join('; ')})`);
+  };
   for (const f of files) {
     let raw;
     try {
@@ -61,28 +76,45 @@ export async function importPluginWorkflows(name, versionDir) {
       console.warn(`[plugin-workflows] ${name}/${f}: unreadable JSON — skipped`);
       continue;
     }
-    const tpl = {
-      steps: Array.isArray(raw?.steps) ? raw.steps : [],
-      feedbacks: Array.isArray(raw?.feedbacks) ? raw.feedbacks : [],
-    };
-    const v = validateWorkflow(tpl, registry);
-    if (!v.ok) {
-      skipped.push({ file: f, errors: v.errors });
-      console.warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${v.errors.join('; ')})`);
+    const id = `wfp_${name}_${slugify(basename(f, '.json'))}`;
+    const rowName = typeof raw?.name === 'string' && raw.name.trim() ? raw.name.trim() : basename(f, '.json');
+    const domain = normDomain(raw?.domain);
+    // A v1 `steps` template is called out by name rather than left to V1's
+    // generic "version must be 2": the plugin author needs to know their
+    // template needs porting, not that a field is off by one.
+    if (Number(raw?.version) !== 2) {
+      skip(f, [`not a version-2 graph template (got version ${JSON.stringify(raw?.version)}) — `
+        + 'port the "steps" pipeline to nodes/wires']);
       continue;
     }
-    const id = `wfp_${name}_${slugify(basename(f, '.json'))}`;
-    const rowName = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : basename(f, '.json');
+    // createdAt is preserved across re-imports the same way the row column is:
+    // the graph document carries it, so a re-save must not restamp it.
+    const existing = prepare('SELECT created_at FROM workflows WHERE id = ?').get(id);
+    const createdAt = (typeof raw.createdAt === 'string' && raw.createdAt) || existing?.created_at || now;
+    const graph = {
+      id, name: rowName, version: 2, domain, createdAt,
+      nodes: Array.isArray(raw.nodes) ? raw.nodes : [],
+      wires: Array.isArray(raw.wires) ? raw.wires : [],
+    };
+    if (raw.canvas && typeof raw.canvas === 'object') graph.canvas = raw.canvas; // view state, engine-ignored
+    // The FULL kind set {agent, task, and, or, combine, end} and every rule
+    // V1-V21 — including V20/V21's mandatory task + end nodes and V7's
+    // one-wire-per-input — apply to a plugin template exactly as they do to a
+    // hand-composed one. Warnings never block an import (they do not block a
+    // save either); they are logged so a template that will misbehave at run
+    // time says so at install.
+    const { errors, warnings } = validateGraph(graph, portsFn);
+    if (errors.length) { skip(f, errors.map((e) => `${e.code}: ${e.msg}`)); continue; }
+    for (const w of warnings) console.warn(`[plugin-workflows] ${name}/${f}: ${w.code}: ${w.msg}`);
     tx(() => {
       prepare(`
-        INSERT INTO workflows (id, name, version, domain, steps, feedbacks, origin, created_at, updated_at)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+        INSERT INTO workflows (id, name, version, domain, graph, steps, feedbacks, origin, created_at, updated_at)
+        VALUES (?, ?, 2, ?, ?, '[]', '[]', ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name, version = 1, domain = excluded.domain,
-          steps = excluded.steps, feedbacks = excluded.feedbacks,
+          name = excluded.name, version = 2, domain = excluded.domain,
+          graph = excluded.graph, steps = '[]', feedbacks = '[]',
           origin = excluded.origin, updated_at = excluded.updated_at
-      `).run(id, rowName, normDomain(raw.domain), JSON.stringify(tpl.steps),
-             JSON.stringify(tpl.feedbacks), origin, now, now);
+      `).run(id, rowName, domain, JSON.stringify(graph), origin, createdAt, now);
     });
     imported.push(id);
   }
@@ -141,8 +173,14 @@ export async function removePluginWorkflows(name) {
 
 /**
  * Uninstall guard input (spec §6.3): NON-plugin workflows (user rows and other
- * plugins' rows — anything not origin 'plugin:<name>') whose steps JSON references
- * one of THIS plugin's agent keys. Keys come from current/agents/*.meta.json.
+ * plugins' rows — anything not origin 'plugin:<name>') whose GRAPH references one
+ * of THIS plugin's agent keys. Keys come from current/agents/*.meta.json.
+ *
+ * The walk is over `graph.nodes[]`, not the v1 `steps` column: every v2 writer
+ * blanks `steps` to '[]', so the pre-V17 scan matched nothing and the guard let
+ * `worca plugin remove` rip an agent out from under a user's saved template.
+ * Only `kind: 'agent'` nodes carry a key (V3), so no other kind can match.
+ *
  * Synchronous, never throws: no current/agents (already-broken install) => [].
  * @param {string} name
  * @returns {Array<{workflowId: string, name: string, keys: string[]}>}
@@ -163,15 +201,13 @@ export function referencedPluginAgents(name) {
   getDb();
   const out = [];
   for (const row of prepare(
-    'SELECT id, name, steps FROM workflows WHERE origin IS NULL OR origin != ?',
+    'SELECT id, name, graph FROM workflows WHERE origin IS NULL OR origin != ?',
   ).all(`plugin:${name}`)) {
-    let steps;
-    try { steps = JSON.parse(row.steps); } catch { continue; }
+    let graph;
+    try { graph = JSON.parse(row.graph); } catch { continue; }
     const found = new Set();
-    for (const group of Array.isArray(steps) ? steps : []) {
-      for (const node of Array.isArray(group) ? group : []) {
-        if (node && keys.has(node.key)) found.add(node.key);
-      }
+    for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+      if (node && node.kind === 'agent' && keys.has(node.key)) found.add(node.key);
     }
     if (found.size) out.push({ workflowId: row.id, name: row.name, keys: [...found].sort() });
   }

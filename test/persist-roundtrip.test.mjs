@@ -27,6 +27,7 @@ import { join } from 'node:path';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { readPipeline, listArtifacts } from '../src/core/artifacts.mjs';
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -43,11 +44,12 @@ async function runMockToDone() {
   const prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = home;
   _resetForTests();                                    // fresh DB singleton at this home
-  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer']]
-    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
-  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']]
-    .map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
-  const tpl = await writeWorkflow({ name: 'roundtrip', steps, feedbacks });
+  // The v2 clarify-implement seed: Clarify -> Plan -> Refine -> Implement ->
+  // Review, both loops wired, End on the reviewer's pass, and NO decomposer (the
+  // expands fan-out is not on the engine yet). Saved under its own id so the run
+  // reads it back out of the DB exactly as a user template would be.
+  const seed = SEED_TEMPLATES.find((t) => t.id === 'wf_clarify-implement');
+  const tpl = await writeWorkflow({ ...structuredClone(seed), id: 'wf_roundtrip', name: 'roundtrip' });
   const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-persist-proj-'));
   const orch = createOrchestrator({
     projectDir, prompt: PROMPT, auto: true, claude: { mock: true }, workflowId: tpl.id,
@@ -123,6 +125,75 @@ test('a step\'s skills round-trips through writeState -> readPipeline; absent re
   const byKey = (k) => saved.state.steps.find((s) => s.key === k);
   assert.deepEqual(byKey('2:n1').skills, ['skill:graphify'], 'step skills survived the round-trip');
   assert.deepEqual(byKey('3:n2').skills, [], 'a step with no skills reads back as []');
+});
+
+// Amendment f: the run OUTCOME is durable. The End result card and the
+// quiescence banner are history surfaces — a run usually only earns them as it
+// finishes, by which point the live card has already moved to History — so
+// endReached/result/warnings and the End execution's own result payload have to
+// survive the round-trip, not just ride the live `done` event.
+test('the run outcome (endReached / result / warnings) round-trips into history state', async () => {
+  const { prevHome, projectDir, orch, id } = await runMockToDone();
+  cleanups.push(() => restoreHome(prevHome));
+  const live = orch.getState();
+  assert.equal(live.endReached, true, 'the seed converges through End');
+
+  const saved = await readPipeline(projectDir, id);
+  const st = saved.state;
+  assert.equal(st.endReached, true, 'endReached survived the round-trip');
+  assert.deepEqual(st.result, live.result, 'the End payload survived verbatim');
+  assert.deepEqual(st.warnings, [], 'a clean run persists an empty warning list');
+
+  // The End execution's row carries its own result, so run-decor can anchor the
+  // result card on the End node from history alone (plan Task 13 note 3).
+  const endStep = st.steps.find((s) => s.result !== undefined);
+  assert.ok(endStep, 'the End execution row carries the bound result');
+  assert.match(endStep.executionId, /^x:.+:1$/);
+  assert.deepEqual(endStep.result, live.result);
+
+  // And a loop re-execution keeps its trigger, which is what turns a history row
+  // label into `cycle 2 · fix` instead of a bare `cycle 2`.
+  const looped = st.steps.find((s) => (s.trigger?.freshPorts || []).includes('fix'));
+  assert.ok(looped, 'a fix-triggered execution persisted its trigger');
+  assert.ok(Array.isArray(looped.trigger.wireIds), 'trigger.wireIds rides along for the loop badges');
+});
+
+test('a quiescent run persists endReached false and its warning for the history banner', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'worca-cc-quiesce-home-'));
+  const prevHome = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  _resetForTests();
+  cleanups.push(() => restoreHome(prevHome));
+
+  // reviewer.pass is the only wire into End and the mock reviewer blocks at c1,
+  // so the graph drains and goes quiet without ever binding End (the same shape
+  // orchestrator-graph.test.mjs pins for the live warning).
+  const tpl = await writeWorkflow({
+    id: 'wf_quiesce_rt', name: 'quiesce', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_review', kind: 'agent', key: 'reviewer', x: 320, y: 200, config: {} },
+      { id: 'n_x', kind: 'agent', key: 'manualTestsChecklist', x: 600, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 880, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_review', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_review', port: 'review' }, to: { node: 'n_x', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-quiesce-proj-'));
+  const orch = createOrchestrator({
+    projectDir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id,
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done');
+  assert.equal(res.endReached, false);
+
+  const saved = await readPipeline(projectDir, orch.getState().id);
+  assert.equal(saved.state.endReached, false, 'history knows End was never reached');
+  assert.equal(saved.state.result, null);
+  assert.deepEqual(saved.state.warnings, ['finished at quiescence — End not reached']);
 });
 
 test('A16: a completed mock run indexes the shared review md; deletePipeline unlinks it', async () => {

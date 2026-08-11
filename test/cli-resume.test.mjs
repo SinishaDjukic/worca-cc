@@ -279,8 +279,9 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
     const { id } = await seedPipeline(projDir, {
       title: 'paused cwd run', status: 'paused',
       branch: { source: 'main', feature: 'f', worktreeDir: goneWt, reusedExisting: false },
-      resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-        bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
+      resumePoint: { version: 2, snapshot: null, nodes: [], planVersion: 0,
+        stepModels: null, workflowId: 'wf_default', checkpointRef: null, checkpointRefs: {},
+        workspace: null, toolInstruction: '',
         pipelineDir: projDir, pausedAt: '2026-06-09T00:00:00Z' },
     });
     const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });

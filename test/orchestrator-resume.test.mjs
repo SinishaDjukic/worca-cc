@@ -1,6 +1,13 @@
 // test/orchestrator-resume.test.mjs
-// Full cycle: run -> pause mid-node -> NEW orchestrator instance (restart simulation)
-// -> resume() -> done. The interrupted node must receive resumeSessionId.
+// Full cycle: run -> pause mid-execution -> NEW orchestrator instance (restart
+// simulation) -> resume() -> done. The interrupted EXECUTION must receive
+// resumeSessionId.
+//
+// This drives the graph engine through its ONE injection seam: `opts.runners`,
+// keyed by runnerType (never by an agent key). The end-to-end mock variant of the
+// same cycle lives in orchestrator-graph.test.mjs; this one exists to pin the
+// executor ABI (ctx.executionId / ctx.signal / ctx.resumeSessionId) and the
+// resume-v2 point's shape.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -24,10 +31,13 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
   const seen = [];
   let hangOnce = true;
   let orchRef = null;
+  // Executors are selected by runnerType; the injected pair covers every agent in
+  // wf_default (clarify is a clarifier, so it takes the built-in executor).
   const mkRunners = () => ({
+    clarifier: async () => ({ outputs: {}, questions: [], answers: [] }),
     producer: async (ctx) => {
-      ctx.onEvent({ type: 'session', sessionId: `sess-${ctx.nodeId}` });
-      if (hangOnce) {
+      ctx.onEvent({ type: 'session', sessionId: `sess-${ctx.executionId}` });
+      if (hangOnce && ctx.node.key === 'implementer') {
         hangOnce = false;
         queueMicrotask(() => orchRef.pause());
         return new Promise((_r, rej) => {
@@ -35,12 +45,13 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
           if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
         });
       }
-      seen.push({ nodeId: ctx.nodeId, resume: ctx.resumeSessionId || null });
-      return { status: 'ok', summary: 'ok' };
+      seen.push({ executionId: ctx.executionId, resume: ctx.resumeSessionId || null });
+      return { outputs: {}, summary: 'ok' };
     },
+    // A clean verdict fires every `when: 'clean'` output, so the run converges to End.
     verifier: async (ctx) => {
-      seen.push({ nodeId: ctx.nodeId, resume: ctx.resumeSessionId || null });
-      return { status: 'ok', issues: [], review: { issues: [] }, summary: '' };
+      seen.push({ executionId: ctx.executionId, resume: ctx.resumeSessionId || null });
+      return { outputs: {}, verdict: { issues: [], summary: '' } };
     },
   });
 
@@ -54,9 +65,11 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
   const saved = readPipelineForResume(pipelineId);
   assert.ok(saved, 'reader returns the paused pipeline');
   assert.equal(saved.row.status, 'paused');
-  assert.ok(saved.resumePoint, 'resume point parsed');
-  assert.ok(saved.steps.some((s) => s.sessionId === 'sess-' + saved.resumePoint.nodes[0]?.nodeId
-    || s.sessionId), 'reader surfaces per-step session ids');
+  assert.equal(saved.resumePoint?.version, 2, 'the resume point is v2');
+  assert.ok(saved.resumePoint.snapshot, 'it carries the scheduler snapshot');
+  const interrupted = saved.steps.find((s) => s.status === 'paused');
+  assert.ok(interrupted?.sessionId, 'the interrupted execution captured a session id');
+  assert.equal(interrupted.executionId, interrupted.key, 'the executionId IS the step key');
 
   const orch2 = createOrchestrator({
     projectDir: dir, claude: { mock: true }, auto: true, runners: mkRunners(),
@@ -66,11 +79,11 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
   const r2 = await orch2.resume();
   assert.equal(r2.status, 'done');
 
-  // The interrupted node re-ran WITH its captured session id.
-  const interrupted = saved.resumePoint.nodes.find((n) => n.sessionId && !n.completed);
-  assert.ok(interrupted, 'resume point recorded the interrupted node');
-  assert.ok(seen.some((s) => s.nodeId === interrupted.nodeId && s.resume === interrupted.sessionId),
-    'interrupted node received resumeSessionId');
+  // The interrupted execution re-ran WITH its captured session id.
+  assert.ok(
+    seen.some((s) => s.executionId === interrupted.key && s.resume === interrupted.sessionId),
+    'interrupted execution received resumeSessionId',
+  );
 
   // History row went back to a terminal done status under the SAME id.
   const afterRun = readPipelineForResume(pipelineId);
@@ -82,7 +95,7 @@ test('resume() refuses a non-paused pipeline', async () => {
   const dir = gitDir();
   const orch = createOrchestrator({
     projectDir: dir, claude: { mock: true }, auto: true,
-    resume: { row: { id: 'x', status: 'done' }, resumePoint: { version: 1 }, steps: [] },
+    resume: { row: { id: 'x', status: 'done' }, resumePoint: { version: 2 }, steps: [] },
   });
   await assert.rejects(() => orch.resume(), /not resumable/);
 });

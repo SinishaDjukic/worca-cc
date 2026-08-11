@@ -1,15 +1,13 @@
 // test/agent-registry-schema-v2.test.mjs
-// The registry-wide channel view under sidecar meta v2. Channels are no longer
-// authored: they are DERIVED from the sidecar's typed ports by the v1-compat
-// shim, so the open channel vocabulary now means "a custom port id stays a
-// custom channel", and channelDefs follow each non-void output's type +
-// filename. collectChannelDefs() still merges them registry-wide.
+// Sidecar meta v2 at the registry level: a sidecar's typed PORTS are the whole
+// artifact vocabulary. There is no channel layer left to derive — a custom port id
+// is simply a custom port, carrying its own type and filename.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAgentRegistry, collectChannelDefs } from '../src/core/agent-registry.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const scratch = [];
 function tmp() { const d = mkdtempSync(join(tmpdir(), 'worca-cc-schema-')); scratch.push(d); return d; }
@@ -36,15 +34,16 @@ function capturingWarnings(fn) {
   return warned;
 }
 
-test('custom port ids stay custom channels in the derived v1 view (open vocabulary)', () => {
+test('custom port ids survive verbatim (open vocabulary, no built-in list to pass)', () => {
   const dir = tmp();
   writeMeta(dir, 'specWriter', {
     inputs: [{ id: 'plan', type: 'md' }],
     outputs: [{ id: 'spec', type: 'md', filename: 'spec.md' }],
   });
   const m = load(dir).specWriter;
-  assert.deepEqual(m.produces, ['spec']);
-  assert.deepEqual(m.consumes, ['plan']);
+  assert.deepEqual(m.outputs.map((p) => p.id), ['spec']);
+  assert.deepEqual(m.inputs.map((p) => p.id), ['plan']);
+  assert.equal(m.outputs[0].filename, 'spec.md');
 });
 
 test('a malformed port id fails validation: the sidecar is skipped with a warning naming it', () => {
@@ -56,50 +55,36 @@ test('a malformed port id fails validation: the sidecar is skipped with a warnin
   assert.ok(warned.some((w) => /not a channel!/.test(w)), warned.join('; '));
 });
 
-test('channelDefs derive from the non-void outputs; built-in channels are never redefined', () => {
+test('every output keeps its own type + filename; a void output carries no artifact', () => {
   const dir = tmp();
   writeMeta(dir, 'specWriter', {
     verdict: { filename: 'v.json' },
     outputs: [
       { id: 'spec', type: 'json', filename: 'api-spec.json' },
       { id: 'metrics', type: 'md', filename: 'metrics.md' },
-      { id: 'plan', type: 'md', filename: '{base}.md' },  // built-in channel: no def needed
-      { id: 'pass', type: 'void', when: 'clean' },         // void: no artifact, no def
+      { id: 'plan', type: 'md', filename: '{base}.md' },
+      { id: 'pass', type: 'void', when: 'clean' },         // void: no artifact
     ],
   });
-  assert.deepEqual(load(dir).specWriter.channelDefs, [
-    { id: 'spec', kind: 'json', filename: 'api-spec.json' },
-    { id: 'metrics', kind: 'md', filename: 'metrics.md' },
+  const outs = load(dir).specWriter.outputs;
+  assert.deepEqual(outs.map((p) => [p.id, p.type, p.filename]), [
+    ['spec', 'json', 'api-spec.json'],
+    ['metrics', 'md', 'metrics.md'],
+    ['plan', 'md', '{base}.md'],
+    ['pass', 'void', undefined],
   ]);
 });
 
-test('promptHints surfaces; uiPhase is derived from the built-in key map; version is gone', () => {
+test('promptHints surfaces; version is gone; no v1 phase is stamped', () => {
   const dir = tmp();
   writeMeta(dir, 'implementer', { promptHints: 'Always cite file paths.', sideEffect: 'code', outputs: [{ id: 'done', type: 'void' }] });
   writeMeta(dir, 'b', {});
   const reg = load(dir);
   assert.equal(reg.implementer.promptHints, 'Always cite file paths.');
-  assert.equal(reg.implementer.uiPhase, 'implement');
   assert.equal(reg.b.promptHints, '');
-  assert.equal(reg.b.uiPhase, null, 'a custom key has no v1 stepper phase');
+  assert.ok(!Object.hasOwn(reg.implementer, 'uiPhase'), 'no key->phase map survives');
   assert.ok(!Object.hasOwn(reg.b, 'version'), 'the free-form version field is replaced by metaVersion');
   assert.equal(reg.b.metaVersion, 2);
-});
-
-test('collectChannelDefs merges registry-wide; first definition wins on conflict', () => {
-  const dir = tmp();
-  writeMeta(dir, 'a', { order: 1, outputs: [{ id: 'spec', type: 'json', filename: 's.json' }] });
-  writeMeta(dir, 'b', {
-    order: 2,
-    outputs: [{ id: 'spec', type: 'md', filename: 'spec.md' }, { id: 'metrics', type: 'md', filename: 'metrics.md' }],
-  });
-  const warned = capturingWarnings(() => {
-    assert.deepEqual(collectChannelDefs(load(dir)), {
-      spec: { id: 'spec', kind: 'json', filename: 's.json' },
-      metrics: { id: 'metrics', kind: 'md', filename: 'metrics.md' },
-    });
-  });
-  assert.ok(warned.some((w) => /spec/.test(w) && /first definition wins/.test(w)), warned.join('; '));
 });
 
 test('the shipped agents/ dir loads clean — no skip warning, no coercion', () => {

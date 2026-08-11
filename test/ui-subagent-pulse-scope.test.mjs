@@ -65,15 +65,20 @@ async function bootHist({ fetchHandler } = {}) {
 }
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
-const STEPPER = {
-  version: 1,
-  steps: [
-    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-    { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan', color: 'violet' }] },
-    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-  ],
-  feedbacks: [],
-};
+// v2 run manifest (buildGraphManifest, src/core/workflows.mjs:567).
+const gnode = (id, key, label, color, i) => ({
+  id, kind: 'agent', key, label, color, sub: '', x: 60 + i * 300, y: 200, model: '', effort: '', loop: false,
+  ports: {
+    inputs: [{ id: 'in', type: 'md', required: true, loop: false, expands: false }],
+    outputs: [{ id: 'out', type: 'md', when: 'always' }],
+  },
+});
+const gmanifest = (rows) => ({
+  version: 2,
+  graph: { nodes: rows.map((r, i) => gnode(r[0], r[1], r[2], r[3], i)), wires: [] },
+  bookends: { preflight: true, done: true },
+});
+const STEPPER = gmanifest([['s0_0', 'planner', 'Plan', 'violet']]);
 
 // jsdom does not run CSS animations; assert on the class hook that the stylesheet
 // scopes sqPulse to. The CSS test (ui-run-flow-css) proves only that hook animates.

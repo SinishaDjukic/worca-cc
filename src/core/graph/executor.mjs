@@ -13,6 +13,35 @@
 // The prompt machinery deliberately REUSES phases.mjs (taskHeader, runOpts,
 // buildSystemPrompt, mockMarkers, the fan-out directives) rather than forking
 // it, so the v2 prompts keep today's load-bearing bytes.
+//
+// ── THE DECOMPOSITION CONTRACT (spec §3, "Decomposer fan-out") ────────────────
+//
+// One document, no owner: ANY producer may emit it on a json output port, and ANY
+// node with an `expands` input may consume it. Neither side is named anywhere in
+// the engine — the relationship IS the wire, which is what `expandsOutputPort`
+// below reads and what `resolveMockRole` step 3 keys the offline decomposer role
+// off. The v1 code this replaces tested `key === 'implementer'`; nothing of that
+// kind returns.
+//
+//   { "phases": [ { "ordinal": <int>,
+//                   "tasks": [ { "id": <string>,
+//                                "title": <string?>,
+//                                "file": <pipelineDir-relative markdown path> } ] } ] }
+//
+// Each `file` is a SELF-CONTAINED task markdown: a consumer sub-execution binds
+// that one file to its expands port (as `md`), so the slice needs nothing else.
+//
+// The parse is TOLERANT (v1 `readDecomposition` semantics, generalized): a missing
+// file, invalid JSON, a non-array `phases`, a phase without a usable ordinal or
+// without runnable tasks, and a task missing `id` or `file` are all DROPPED rather
+// than thrown on. `phases.length === 0` — including every malformed case — means
+// "there is nothing to fan out": the consumer then runs ONE ordinary execution
+// with its expands input left UNBOUND (and therefore its slice directive
+// unrendered), which is v1's `bus.decomposition.phases.length` guard expressed in
+// the token model.
+//
+// The composite DRIVER is scheduler.mjs — it owns execution ids, the ledger and
+// the semaphore. This module owns the document.
 
 import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -23,10 +52,9 @@ import {
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
 import { readReview, normalizeClarify } from '../protocol.mjs';
-import { renderPromptArtifact } from '../channels.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
-  fanOutDirective, ctxFanOut, workspaceFanOutDirective,
+  fanOutDirective, ctxFanOut, workspaceFanOutDirective, renderPromptArtifact,
 } from '../phases.mjs';
 
 /** The reserved synthesized gate input. It is a scheduler-only binding: it never
@@ -106,9 +134,16 @@ function resolveTemplate(port, { ordinal, runCtx, prefix }) {
  * graphs (every builtin and seed template) allocate byte-identically to today.
  * Without it two instances of one verifier would clobber each other's
  * `*-review-cycleN.json`.
+ *
+ * `runCtx.slice` extends the same rule to a COMPOSITE fan-out: every sub-execution
+ * of one composite shares its parent's ordinal, so without a per-task prefix the
+ * parallel slices would resolve to one filename and clobber each other. Absent on
+ * every ordinary execution, so nothing else moves.
  */
 function dupPrefix(node, runCtx) {
-  return runCtx && runCtx.duplicateKey ? `${node.id}-` : '';
+  const dup = runCtx && runCtx.duplicateKey ? `${node.id}-` : '';
+  const slice = runCtx && runCtx.slice ? `${runCtx.slice}-` : '';
+  return dup + slice;
 }
 
 /** The combine card's own allocation: one md artifact per emission. */
@@ -291,6 +326,54 @@ export function expandsOutputPort(template, portsFn, nodeId) {
   return null;
 }
 
+// ── the decomposition document ────────────────────────────────────────────────
+
+/**
+ * Normalize a decomposition document into the engine's canonical shape (see the
+ * contract in this file's header). PURE and TOTAL: every input — including null,
+ * a bare array, a number — resolves to `{ phases: [...] }`, dropping whatever
+ * cannot be run rather than throwing. Phases come back ordinal-sorted, so the
+ * consumer's phase order is the document's stated order, not its array order.
+ *
+ * @param {*} raw the parsed JSON, or anything at all
+ * @returns {{phases: Array<{ordinal:number, tasks:Array<{id:string,title:string|null,file:string}>}>}}
+ */
+export function normalizeDecomposition(raw) {
+  const phases = [];
+  for (const ph of Array.isArray(raw?.phases) ? raw.phases : []) {
+    const ordinal = Number(ph?.ordinal);
+    if (!Number.isFinite(ordinal)) continue;
+    const tasks = (Array.isArray(ph?.tasks) ? ph.tasks : [])
+      .filter((t) => t && t.id && t.file)
+      .map((t) => ({
+        id: String(t.id),
+        title: t.title == null ? null : String(t.title),
+        file: String(t.file),
+      }));
+    if (!tasks.length) continue;                  // a phase with nothing to run is not a phase
+    phases.push({ ordinal, tasks });
+  }
+  phases.sort((a, b) => a.ordinal - b.ordinal);
+  return { phases };
+}
+
+/**
+ * Read a decomposition document off disk through the tolerant parse. Never
+ * throws and never rejects: a missing path, an unreadable file and invalid JSON
+ * all read as `{ phases: [] }`, which the composite driver treats as "nothing to
+ * fan out".
+ * @param {string|null|undefined} path
+ * @returns {Promise<{phases: Array}>}
+ */
+export async function readDecomposition(path) {
+  if (!path) return { phases: [] };
+  try {
+    return normalizeDecomposition(JSON.parse(await readFile(path, 'utf8')));
+  } catch {
+    return { phases: [] };
+  }
+}
+
 // ── the generic MOCK_ROLE resolution chain ────────────────────────────────────
 
 /**
@@ -443,7 +526,7 @@ function prepare(ctx) {
   if (!String(body || '').trim()) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, meta);
   const prompt = buildAgentPrompt({ ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole });
   const allowedTools = meta.sideEffect === 'code' ? CODE_TOOLS : READ_WRITE_TOOLS;
   return { ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools };

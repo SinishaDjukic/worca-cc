@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   workspaceContextBlock, workspaceFanOutDirective, buildSystemPrompt, taskHeader,
-  fanOutDirective, workspaceDiffInstruction, genericIoBlock,
+  fanOutDirective, workspaceDiffInstruction,
 } from '../src/core/phases.mjs';
 
 const WS = {
@@ -105,7 +105,7 @@ test('workspaceFanOutDirective: unknown strategy / no workspace -> "" (safe)', (
 const baseCtx = { projectDir: '/p', pipelineDir: '/pipe', taskPrompt: 'BUILD' };
 
 test('taskHeader: with ctx.workspace lists each member worktree dir + checkpoint ref', () => {
-  const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} }, workspace: WS }, 'Plan');
+  const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, isEntry: true, workspace: WS }, 'Plan');
   assert.match(h, /## Workspace projects/);
   assert.match(h, /iam/);
   assert.match(h, /\/wt\/iam/, 'iam worktree dir');
@@ -115,7 +115,7 @@ test('taskHeader: with ctx.workspace lists each member worktree dir + checkpoint
 });
 
 test('taskHeader: no ctx.workspace -> no Workspace projects block (single-project byte-identity)', () => {
-  const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} } }, 'Plan');
+  const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, isEntry: true }, 'Plan');
   assert.doesNotMatch(h, /## Workspace projects/);
 });
 
@@ -159,7 +159,7 @@ const WS_D = {
   ],
 };
 const wsCtx = (extra = {}) => ({
-  ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} }, workspace: WS_D, ...extra,
+  ...baseCtx, node: { key: 'planner' }, isEntry: true, workspace: WS_D, ...extra,
 });
 
 // ── taskHeader: detached workspace variant ───────────────────────────────────
@@ -216,14 +216,14 @@ const SINGLE_LEGACY_BYTES =
 
 test('taskHeader: single-project under LEGACY is BYTE-identical to today (§10 rollback contract)', () => {
   withMode('legacy', () => {
-    const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} } }, 'Plan');
+    const h = taskHeader({ ...baseCtx, node: { key: 'planner' }, isEntry: true }, 'Plan');
     assert.equal(h, SINGLE_LEGACY_BYTES);        // bytes, not a regex
   });
 });
 
 test('taskHeader: single-project under DETACHED differs by EXACTLY the skills-hint sentence', () => {
   const detached = withMode('detached', () =>
-    taskHeader({ ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} }, runRoot: RUN_ROOT }, 'Plan'));
+    taskHeader({ ...baseCtx, node: { key: 'planner' }, isEntry: true, runRoot: RUN_ROOT }, 'Plan'));
   // The new sentence is truthful only under detached: project + root skills are
   // MOUNTED at <cwd>/.claude/skills for the run (§5.7), which legacy never does.
   assert.match(detached, /mounted at `?\.claude\/skills`? for this run/);
@@ -306,26 +306,4 @@ test('workspaceDiffInstruction: "" for single-project and for legacy workspace r
     assert.equal(workspaceDiffInstruction(wsCtx({ projectDir: '/wt/iam' })), '', 'legacy workspace');
   });
   assert.equal(workspaceDiffInstruction(undefined), '', 'never throws');
-});
-
-// ── genericIoBlock: the runroot handle renders per member (§5.8) ──────────────
-test('genericIoBlock: a runroot code handle names each member checkout + its diff base', () => {
-  const block = genericIoBlock({
-    code: {
-      kind: 'runroot', dir: RUN_ROOT,
-      repos: [
-        { projectKey: 'iam-1a2b3c4d', projectName: 'iam', relDir: 'repos/iam-1a2b3c4d', checkpointRef: 'sha-iam' },
-        { projectKey: 'ui-5e6f7a8b', projectName: 'ui', relDir: 'repos/ui-5e6f7a8b', checkpointRef: 'sha-ui' },
-      ],
-    },
-  }, {});
-  assert.match(block, /git -C repos\/<key> diff/);
-  assert.match(block, /repos\/iam-1a2b3c4d \(diff base sha-iam\)/);
-  assert.match(block, /repos\/ui-5e6f7a8b \(diff base sha-ui\)/);
-  assert.doesNotMatch(block, /in your cwd/, 'the scalar working-tree hint is meaningless at a run root');
-});
-
-test('genericIoBlock: the worktree handle hint is unchanged (single-project byte-identity)', () => {
-  const block = genericIoBlock({ code: { kind: 'worktree' } }, {});
-  assert.match(block, /- code: \(the working tree — inspect with `git diff` \/ `git status` in your cwd\)/);
 });

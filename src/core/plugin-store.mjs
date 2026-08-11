@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
-import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
+import { normalizeManifest, validatePluginDir, apiSatisfies, apiMismatch } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
@@ -33,6 +33,19 @@ function readManifestAt(dir) {
     return res.ok ? res.manifest : null;
   } catch {
     return null;
+  }
+}
+
+/** Why a manifest failed to normalize, when the reason is the engines gate:
+ *  { builtFor, host }, else null. Read from the RAW json — a manifest that
+ *  fails the gate never normalizes, so `readManifestAt` has already thrown its
+ *  engines range away by the time the caller sees null. */
+function apiMismatchAt(dir) {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8'));
+    return apiMismatch(raw?.engines?.['worca-cc-api']);
+  } catch {
+    return null; // missing / unparseable manifest: genuinely broken, not incompatible
   }
 }
 
@@ -364,6 +377,9 @@ export function listInstalledPlugins() {
       enabled: e.enabled !== false,
       linked: e.linked === true,
       broken: !manifest,
+      // `broken` alone conflates "corrupt" with "built for an older host API".
+      // Only the second has an actionable fix, so the view gets it separately.
+      apiMismatch: manifest ? null : apiMismatchAt(cur),
       contributions: inv
         ? { agents: inv.agents.length, taskSources: inv.taskSources.length, skills: inv.skills.length, workflows: inv.workflows.length }
         : { agents: 0, taskSources: 0, skills: 0, workflows: 0 },

@@ -24,9 +24,9 @@ useTempHome(after);
 const cols = (db, table) =>
   db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-test('fresh DB lands on user_version 16 with cost_ledger and the six new pipelines columns', () => {
+test('fresh DB lands on user_version 18 with cost_ledger and the six new pipelines columns', () => {
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
   const ledger = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='cost_ledger'").get();
   assert.ok(ledger, 'cost_ledger exists');
@@ -59,5 +59,5 @@ test('idempotent double-open: no error, version stays 16', () => {
   getDb();
   _resetForTests();
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
 });

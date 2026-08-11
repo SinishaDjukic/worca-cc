@@ -50,12 +50,18 @@ test('pause mid-node -> paused status, resume_point persisted, worktree kept', a
   const row = getDb().prepare('SELECT status, resume_point, branch FROM pipelines WHERE id = ?').get(orch.state.id);
   assert.equal(row.status, 'paused');
   const rp = JSON.parse(row.resume_point);
-  assert.equal(rp.version, 1);
-  assert.equal(rp.kind, 'node');
+  assert.equal(rp.version, 2);
   assert.equal(rp.workflowId, 'wf_default');
-  assert.ok(Array.isArray(rp.plan?.steps) && rp.plan.steps.length > 0, 'frozen plan stored');
-  assert.ok(rp.bus && typeof rp.bus === 'object', 'bus snapshot stored');
-  assert.ok(rp.nodes.some((n) => n.sessionId === 'sess-hang'), 'interrupted node session recorded');
+  assert.ok(rp.snapshot && typeof rp.snapshot === 'object', 'scheduler snapshot stored');
+  assert.equal(rp.snapshot.version, 2);
+  assert.ok(Array.isArray(rp.snapshot.graph?.nodes) && rp.snapshot.graph.nodes.length > 0,
+    'the snapshot carries the runtime graph');
+  // The interrupted execution's session rides the persisted STEP row (which is what
+  // resume() rebuilds its one-shot re-attach map from), not the point.
+  const steps = getDb().prepare(
+    'SELECT session_id, status FROM pipeline_steps WHERE pipeline_id = ?').all(orch.state.id);
+  assert.ok(steps.some((st) => st.session_id === 'sess-hang' && st.status === 'paused'),
+    'interrupted execution session recorded');
   // The EFFECTIVE tool instruction (post graph-build, possibly '' when the build was
   // skipped/failed) must ride the resume point — resume() must not fall back to the
   // detect-time tools.instruction and tell agents a graph exists that was never built.
@@ -130,7 +136,7 @@ test('stop while pausing: stop wins and no resume_point is persisted', async () 
   assert.equal(orch.state.status, 'stopped');
 
   // Stopped runs are not resumable: the worktree is torn down, so a leftover
-  // resume_point (assigned by _dispatch before stop won) must never be persisted.
+  // resume_point (assigned by _runGraph before stop won) must never be persisted.
   const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.state.id);
   assert.equal(row.status, 'stopped');
   assert.equal(row.resume_point, null, 'stopped row carries no resume point');

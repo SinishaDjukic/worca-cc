@@ -5,7 +5,7 @@
   "author": "Denislav Prinov",
   "homepage": "https://github.com/denislavprinov/maestro-plugins",
   "license": "MIT",
-  "engines": { "worca-cc-api": ">=1 <2" },
+  "engines": { "worca-cc-api": ">=2 <3" },
   "taskSources": [
     {
       "id": "github",

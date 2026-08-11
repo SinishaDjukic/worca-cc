@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
-  renderOrphanList,
+  renderOrphanList, apiMismatchMessage,
 } from '../ui/public/plugins-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -93,6 +93,25 @@ test('plugin list shows enabled toggle, disabled state, broken badge, contributi
   assert.ok(cards[1].querySelector('.pl-broken'), 'broken badge must render');
   assert.equal(cards[1].querySelector('.pl-version').textContent, 'deadbee', 'sha7 stands in for a missing version');
   assert.equal(cards[1].querySelector('.pl-remove').dataset.name, 'jira-source'); // delegation hook
+});
+
+test('an API-mismatched plugin says what broke and how to fix it, not just "broken"', () => {
+  assert.equal(
+    apiMismatchMessage({ builtFor: 1, host: 2 }),
+    'built for worca-cc-api 1; this host requires 2 — update or reinstall',
+  );
+  assert.equal(apiMismatchMessage(null), '', 'no mismatch, no message');
+  const el = renderPluginList([
+    { name: 'legacy-source', version: '0.1.0', enabled: true, broken: true,
+      apiMismatch: { builtFor: 1, host: 2 }, contributions: {} },
+  ], { doc });
+  const card = el.querySelector('.plugin-card');
+  assert.equal(card.querySelector('.pl-api-mismatch').textContent, 'incompatible');
+  assert.equal(card.querySelector('.pl-broken'), null, 'the specific badge replaces the generic one');
+  assert.equal(
+    card.querySelector('.pl-api-note').textContent,
+    'built for worca-cc-api 1; this host requires 2 — update or reinstall',
+  );
 });
 
 test('doctor report + references-409 render rows', () => {

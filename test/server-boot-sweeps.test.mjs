@@ -154,3 +154,52 @@ test('boot: reconcile runs BEFORE the sweeps, so a stale `running` row is KEPT a
   assert.ok(existsSync(crashed.worktreeDir),
     'the boot that made the run resumable must not delete the work it would resume');
 });
+
+// --------------------------------------------------------------------------
+// Task 19: the v1-pause sweep, wired into the SAME boot path. The V17 migration
+// runs it once; boot re-runs it so a DB stamped v17 by an older build (or by a
+// second checkout's ladder) still gets its v1 pauses told the truth. It runs
+// FIRST: `paused` is the one status the liveness reconciler never touches, and
+// both later sweeps KEEP `paused` and `interrupted` alike, so the flip is
+// invisible to them either way.
+// --------------------------------------------------------------------------
+
+/** Stamp a resume point onto a seeded row (seedPipelineRow owns no resume_point). */
+const setResumePoint = (id, point) =>
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(point == null ? null : JSON.stringify(point), id);
+
+const resumePointOf = (id) => {
+  const raw = getDb().prepare('SELECT resume_point FROM pipelines WHERE id = ?').get(id)?.resume_point;
+  return raw ? JSON.parse(raw) : null;
+};
+
+test('boot: a run paused on the v1 dispatcher is swept to interrupted with the reason', async () => {
+  seedPipelineRow({ id: 'v1paused1', status: 'paused' });
+  setResumePoint('v1paused1', { version: 1, phase: 'implement', cycle: 2 });
+  seedPipelineRow({ id: 'v2paused1', status: 'paused' });
+  setResumePoint('v2paused1', { version: 2, seq: 7 });
+
+  const res = await withMode('detached', () => bootMaintenance({ log: () => {} }));
+
+  assert.equal(res.v1Paused, 1, 'exactly the v1 pause was swept');
+  assert.equal(statusOf('v1paused1'), 'interrupted');
+  assert.equal(resumePointOf('v1paused1').pauseReason,
+    'paused before the graph engine rework — not resumable');
+  assert.equal(resumePointOf('v1paused1').phase, 'implement', 'the frozen point is kept, not erased');
+
+  assert.equal(statusOf('v2paused1'), 'paused', 'a graph resume point is left resumable');
+  assert.equal(resumePointOf('v2paused1').pauseReason, undefined);
+});
+
+test('boot: the v1-pause sweep is idempotent across boots', async () => {
+  seedPipelineRow({ id: 'v1paused2', status: 'paused' });
+  setResumePoint('v1paused2', { version: 1 });
+
+  const first = await withMode('detached', () => bootMaintenance({ log: () => {} }));
+  const second = await withMode('detached', () => bootMaintenance({ log: () => {} }));
+
+  assert.ok(first.v1Paused >= 1);
+  assert.equal(second.v1Paused, 0, 'the second boot finds nothing left to sweep');
+  assert.equal(statusOf('v1paused2'), 'interrupted');
+});

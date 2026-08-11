@@ -10,10 +10,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { FIXTURE_PORTS } from '../src/core/graph/fixtures.mjs';
-import { implementerBody } from '../src/core/phases.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
-const PHASES_SRC = fileURLToPath(new URL('../src/core/phases.mjs', import.meta.url));
 
 /** Builtin layer only: the user/plugin layers are ambient state, and this guard
  *  is about the 11 files in agents/. */
@@ -89,22 +87,11 @@ test('no directive placeholder survives in the sidecars or the fixtures', () => 
   assert.ok(!readFileSync(fileURLToPath(new URL('../src/core/graph/fixtures.mjs', import.meta.url)), 'utf8').includes('<verbatim'));
 });
 
-test('the copied directives are the verbatim phases.mjs prose', () => {
-  // The path lines that followed each arm in v1 are NOT part of the copy: the
-  // generic port-io block binds every port to its absolute path now.
-  const fix = implementerBody({ mode: 'fix', planPath: '/p/plan.md', reviewPath: '/p/review.md' });
-  assert.ok(fix.includes(directiveOf('implementer', 'inputs', 'fix')));
-  const slice = implementerBody({ planPath: '/p/plan.md', taskPath: '/p/task.md' });
-  assert.ok(slice.includes(directiveOf('implementer', 'inputs', 'task')));
-
-  // The planner's REVISE arm is inline in runPlannerPlan, so it is checked
-  // against the source text with the `'a ' + 'b'` concatenation glue joined.
-  // This assertion dies together with phases.mjs at the engine swap.
-  const prose = readFileSync(PHASES_SRC, 'utf8')
-    .replace(/['`]\s*\+\s*\s*['`]/g, '')
-    .replace(/\\n/g, '\n');
-  assert.ok(prose.includes(directiveOf('planner', 'inputs', 'revise')));
-});
+// The v1 prose-parity case ("the copied directives are the verbatim phases.mjs
+// prose") died here with the engine swap, exactly as its own comment predicted:
+// implementerBody and runPlannerPlan's inline REVISE arm were deleted with the
+// per-role runners, so the sidecar `directive` strings are now the ONLY copy of
+// that prose and there is nothing left to compare them against.
 
 // ── pins the drift guard cannot see ─────────────────────────────────────────
 

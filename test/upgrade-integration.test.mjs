@@ -34,7 +34,7 @@ import { listProjects } from '../src/core/projects.mjs';
 import { listWorkspaces, readWorkspace } from '../src/core/workspaces.mjs';
 import { readConfig, readRunConfig } from '../src/core/config.mjs';
 import { listPipelines, listAllPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
-import { listWorkflows } from '../src/core/workflows.mjs';
+import { listWorkflows, readWorkflow } from '../src/core/workflows.mjs';
 import { projectKey, projectStorePath } from '../src/core/store.mjs';
 
 let home, prevHome, repoA, repoB;
@@ -156,7 +156,7 @@ test('first getDb() auto-runs the fs->db migration (DB is empty + legacy JSON pr
   const db = getDb(); // triggers migrate(db) then maybeMigrateFromFs(db)
   const n = db.prepare('SELECT COUNT(*) AS c FROM pipelines').get().c;
   assert.ok(n >= 1, 'the legacy pipeline was imported into the pipelines table');
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 16, 'schema stamped');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18, 'schema stamped');
   // every relevant table populated by the one-time importer
   const count = (t) => db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c;
   assert.equal(count('projects'), 2, 'projects.json -> projects');
@@ -187,13 +187,23 @@ test('readConfig() returns the migrated legacy {steps, customModels} view', asyn
   assert.ok(cfg.customModels.some((m) => m.id === 'my-fork-4-9'), 'custom model preserved');
 });
 
-test('listWorkflows() returns the migrated user workflow template', async () => {
+test('a legacy user workflow template is imported as a v1 row and NOT surfaced by listWorkflows()', async () => {
+  // Clean break: V17 re-seeds only the 7 KNOWN seed ids as v2 graphs and there is no
+  // generic v1 -> graph converter, so a user-authored template like `wf_quickfix`
+  // (not a seed id — the seeds use `wf_quick-fix`) has no v2 representation. The fs
+  // importer still lands the row (its JSON is consumed and archived), but every v2
+  // read path ignores a version-1 row, so the template does not survive the upgrade.
+  const row = prepare('SELECT id, name, version, graph FROM workflows WHERE id = ?').get('wf_quickfix');
+  assert.ok(row, 'the legacy workflows/<id>.json was still imported into the table');
+  assert.equal(row.name, 'Quick Fix', 'the row keeps its authored name');
+  assert.equal(row.version, 1, 'imported as a version-1 row');
+  assert.equal(row.graph, null, 'no v2 graph is synthesized for a user-authored v1 template');
+
   const list = await listWorkflows();
-  const wf = list.find((w) => w.id === 'wf_quickfix');
-  assert.ok(wf, 'wf_quickfix imported');
-  assert.equal(wf.name, 'Quick Fix');
-  assert.equal(wf.steps.length, 2, 'two-stage topology preserved');
-  assert.equal(wf.feedbacks.length, 1, 'feedback edge preserved');
+  assert.equal(list.find((w) => w.id === 'wf_quickfix'), undefined,
+    'a version-1 row is not a template — listWorkflows drops it');
+  assert.equal(await readWorkflow('wf_quickfix'), null,
+    'readWorkflow() ignores the version-1 row as well');
 });
 
 test('listWorkspaces() + readWorkspace() return the migrated workspace + ordered members', async () => {
