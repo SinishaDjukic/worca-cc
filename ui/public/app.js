@@ -73,6 +73,9 @@ import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
+import {
+  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, deleteRefsSummary,
+} from './models-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
@@ -252,6 +255,11 @@ const el = {
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
   guardrailCreateBtn: $('#guardrail-create-btn'),
+
+  // Models view
+  modelsList: $('#models-list'),
+  modelsMsg: $('#models-msg'),
+  modelCreateBtn: $('#model-create-btn'),
 
   // Statistics view
   statsBody: $('#stats-body'),
@@ -832,6 +840,9 @@ function runNode(node, status, isSelf) {
   d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
   const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
   // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
+  // A node with NO configured model carries data-nomodel (+ its effort), so
+  // paintRunGraph can resolve the opaque "default" to the session's ACTUAL
+  // model once the CLI's init event reports it (design §4.7). Display-only.
   const meLine = nodeModelLine(node);
   d.innerHTML =
     `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
@@ -842,6 +853,13 @@ function runNode(node, status, isSelf) {
       (meLine ? `<small class="nmodel">${escapeHtml(meLine)}</small>` : '') +
     `</div>` +
     (STAT_BADGE[status] || '');
+  if (meLine && !node.model) {
+    // dataset assignment, not attribute interpolation — node.effort is
+    // enum-validated server-side, but never trust it into an HTML string.
+    const modelEl = d.querySelector('.nmodel');
+    modelEl.dataset.nomodel = '1';
+    modelEl.dataset.effort = node.effort || '';
+  }
   return d;
 }
 
@@ -952,6 +970,18 @@ function paintRunGraph(host, manifest, view) {
     if (durEl) durEl.textContent = view.durText(id) || '';
     const costEl = el.querySelector('.cost');
     if (costEl) costEl.textContent = view.costText(id) || '';
+
+    // Resolve the "default" model caption to the session's actual model once
+    // the init event reported it (design §4.7). Only nodes with NO configured
+    // model carry data-nomodel; explicit selections never change.
+    const modelEl = el.querySelector('.nmodel[data-nomodel]');
+    if (modelEl && view.modelUsedOf) {
+      const used = view.modelUsedOf(id);
+      if (used) {
+        const eff = modelEl.dataset.effort || '';
+        modelEl.textContent = `default (${used})` + (eff ? ` · ${eff}` : '');
+      }
+    }
 
     // Sub-agent square strip (graph view only; optional adapter). Idempotent:
     // drop the old strip, inject the current one. Empty -> no strip / no row.
@@ -1220,6 +1250,19 @@ function costByNode(steps) {
     if (!Number.isFinite(c) || c < 0) continue;
     const key = stepBucketKey(s);
     if (key) out[key] = (out[key] || 0) + c;
+  }
+  return out;
+}
+
+// nodeId -> the session's ACTUAL model, stamped on the step by the orchestrator
+// from the CLI's init event (design §4.7). Last cycle wins — later attempts of
+// a looping node may run a different resolved model.
+function modelUsedByNode(steps) {
+  const out = {};
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s || !s.modelUsed) continue;
+    const key = stepBucketKey(s);
+    if (key) out[key] = s.modelUsed;
   }
   return out;
 }
@@ -2548,7 +2591,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // Model dropdown: "(default model)" + every model + "+ Add model…".
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
-  state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom ? ' ·custom' : ''))));
+  state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom === 'project' ? ' ·project' : m.custom ? ' ·custom' : ''))));
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
@@ -2994,30 +3037,15 @@ async function saveActiveWorkflow(workflowId) {
   }
 }
 
-async function addModelFlow(role) {
-  const projectDir = selectedProjectPath();
-  if (!projectDir) return;
-  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
-  if (!id) { renderStepConfigs(); return; } // user cancelled -> restore selection
-  const label = (window.prompt('Display name (optional):', id) || '').trim();
-  try {
-    const res = await fetch('/api/config/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, id, label }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
-      renderStepConfigs();
-      return;
-    }
-    state.models = Array.isArray(data.models) ? data.models : state.models;
-    await saveStep(role, id, ''); // select the new model for this step (effort reset)
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
-    renderStepConfigs();
-  }
+// "+ Add model…" in any model dropdown: restore the selection and jump to the
+// global Models view with the create editor open (models are added GLOBALLY —
+// configurable-models-design.md §4.9; the old per-project window.prompt flow
+// is gone).
+function goAddModel(restore) {
+  if (typeof restore === 'function') restore();
+  mvState.editing = null;
+  mvState.openCreate = true;
+  showView('models'); // loadModelsView renders the open editor
 }
 
 // Delegated change handler for all config controls inside #pipeline-config:
@@ -3080,7 +3108,7 @@ el.pipelineConfig.addEventListener('change', (e) => {
   if (t.dataset.nodeId) {
     const nodeId = t.dataset.nodeId;
     if (t.classList.contains('step-model')) {
-      if (t.value === '__add__') return addModelFlowNode(nodeId);
+      if (t.value === '__add__') return goAddModel(() => renderWorkflowConfig(state.workflowId));
       // New model -> reset effort + re-render this row's effort options.
       saveNode(state.workflowId, nodeId, t.value, '');
       const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
@@ -3103,7 +3131,7 @@ el.pipelineConfig.addEventListener('change', (e) => {
   const role = t.dataset.role;
   if (!role) return;
   if (t.classList.contains('step-model')) {
-    if (t.value === '__add__') return addModelFlow(role);
+    if (t.value === '__add__') return goAddModel(renderStepConfigs);
     saveStep(role, t.value, '');
   } else if (t.classList.contains('step-effort')) {
     // Live model select, not state.config — state lags one in-flight save.
@@ -3111,35 +3139,6 @@ el.pipelineConfig.addEventListener('change', (e) => {
     saveStep(role, modelSel ? modelSel.value : '', t.value);
   }
 });
-
-// "+ Add model…" picked on a per-node select: add the custom model, then select
-// it for that node (mirrors addModelFlow for the legacy role selects).
-async function addModelFlowNode(nodeId) {
-  const projectDir = selectedProjectPath();
-  if (!projectDir) { renderWorkflowConfig(state.workflowId); return; }
-  const id = (window.prompt('New model id (e.g. claude-opus-4-8 or a fine-tune id):') || '').trim();
-  if (!id) { renderWorkflowConfig(state.workflowId); return; }
-  const label = (window.prompt('Display name (optional):', id) || '').trim();
-  try {
-    const res = await fetch('/api/config/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, id, label }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      appendLog({ source: 'ui', level: 'error', text: `add model: ${data.error || res.status}`, ts: Date.now() });
-      renderWorkflowConfig(state.workflowId);
-      return;
-    }
-    state.models = Array.isArray(data.models) ? data.models : state.models;
-    await saveNode(state.workflowId, nodeId, id, ''); // select the new model (effort reset)
-    renderWorkflowConfig(state.workflowId);           // repaint with the new model in the list
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `add model error: ${e.message}`, ts: Date.now() });
-    renderWorkflowConfig(state.workflowId);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Log window
@@ -6535,6 +6534,158 @@ async function loadGuardrailsView(param = '') {
 }
 
 // ---------------------------------------------------------------------------
+// Models view (configurable-models-design.md §4.10). Global catalog CRUD over
+// /api/models; the selected project's legacy custom models are listed with a
+// Promote action. The editor renders inline at the top of the list; env values
+// arrive MASKED and are write-only (unchanged masked echoes mean "keep").
+// ---------------------------------------------------------------------------
+const mvState = { data: null, editing: null, openCreate: false };
+
+function setModelsMsg(text, kind) {
+  if (!el.modelsMsg) return;
+  el.modelsMsg.textContent = text || '';
+  el.modelsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function renderModelsViewBody() {
+  if (!el.modelsList) return;
+  const d = mvState.data || { models: [], predefined: [], efforts: [] };
+  const pp = selectedProjectPath();
+  const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
+  const frag = document.createDocumentFragment();
+  if (mvState.editing || mvState.openCreate) {
+    frag.appendChild(renderModelEditor(mvState.editing, d.efforts || []));
+  }
+  frag.appendChild(renderModelsList({
+    globals: d.models || [],
+    legacy,
+    predefined: d.predefined || [],
+    efforts: d.efforts || [],
+    projectName: pp ? pp.split('/').pop() : '',
+  }));
+  el.modelsList.replaceChildren(frag);
+}
+
+async function loadModelsView() {
+  if (!el.modelsList) return;
+  setModelsMsg('');
+  try {
+    const res = await fetch('/api/models');
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.data = data;
+    renderModelsViewBody();
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+// Any catalog mutation must repaint BOTH surfaces: this view and the composer's
+// model dropdowns (state.models comes from /api/config).
+async function refreshModelsEverywhere() {
+  await loadModelsView();
+  try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
+}
+
+async function saveModelEditorFlow() {
+  const rootEl = el.modelsList && el.modelsList.querySelector('.mv-editor');
+  if (!rootEl) return;
+  const msg = rootEl.querySelector('.mv-editor-msg');
+  const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mv-editor-msg err'; } };
+  const { id, body } = collectModelEditor(rootEl);
+  if (!id && !body.id) return say('model id is required');
+  try {
+    const res = await fetch(id ? `/api/models/${encodeURIComponent(id)}` : '/api/models', {
+      method: id ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return say(data.error || `HTTP ${res.status}`);
+    mvState.editing = null;
+    mvState.openCreate = false;
+    setModelsMsg(id ? 'Saved.' : 'Model added.', 'ok');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    say(e.message);
+  }
+}
+
+async function deleteModelFlow(id) {
+  let refs = null;
+  try {
+    const r = await fetch(`/api/models/${encodeURIComponent(id)}/refs`);
+    refs = await safeJson(r);
+  } catch { /* preview is best-effort; the confirm still names the model */ }
+  const ok = await confirmModal({
+    title: refs && refs.predefinedShadow ? 'Remove override' : 'Delete model',
+    message: deleteRefsSummary(id, refs),
+    confirmLabel: refs && refs.predefinedShadow ? 'Remove override' : 'Delete',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    setModelsMsg('Deleted.', 'ok');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+async function promoteModelFlow(id) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/models/promote', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, id }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    setModelsMsg(`"${id}" is now global.`, 'ok');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+if (el.modelsList) {
+  el.modelsList.addEventListener('click', (ev) => {
+    const t = ev.target.closest('button');
+    if (!t) return;
+    if (t.classList.contains('mv-edit')) {
+      mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
+      mvState.openCreate = false;
+      renderModelsViewBody();
+    } else if (t.classList.contains('mv-delete')) {
+      deleteModelFlow(t.dataset.id);
+    } else if (t.classList.contains('mv-promote')) {
+      promoteModelFlow(t.dataset.id);
+    } else if (t.classList.contains('mv-cancel')) {
+      mvState.editing = null; mvState.openCreate = false;
+      renderModelsViewBody();
+    } else if (t.classList.contains('mv-env-add')) {
+      const wrap = el.modelsList.querySelector('.mv-editor .mv-env');
+      if (wrap) wrap.appendChild(makeEnvRow());
+    } else if (t.classList.contains('mv-env-rm')) {
+      const row = t.closest('.mv-env-row');
+      if (row) row.remove();
+    } else if (t.classList.contains('mv-save')) {
+      saveModelEditorFlow();
+    }
+  });
+}
+if (el.modelCreateBtn) {
+  el.modelCreateBtn.addEventListener('click', () => {
+    mvState.editing = null;
+    mvState.openCreate = true;
+    renderModelsViewBody();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Statistics view
 // ---------------------------------------------------------------------------
 const statsState = { range: null };
@@ -8302,6 +8453,7 @@ function paintHistStepper(detail, st) {
   const reached = histReachedCell(manifest, st);
   const durs = durByNode(st.steps, 0, false);
   const costs = costByNode(st.steps);
+  const modelsUsed = modelUsedByNode(st.steps);
 
   const cellOf = {};
   manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
@@ -8320,6 +8472,7 @@ function paintHistStepper(detail, st) {
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
     subsOf: (id) => subAgentsForNode(st, id),
+    modelUsedOf: (id) => modelsUsed[id],
   });
 }
 
@@ -8843,6 +8996,7 @@ function paintStepper(r) {
   const now = Date.now();
   const durs = durByNode(r.steps, now, true);
   const costs = r.costByNode || {};
+  const modelsUsed = modelUsedByNode(r.steps);
 
   // cellIdx per node id (for the frontier comparison).
   const cellOf = {};
@@ -8866,6 +9020,7 @@ function paintStepper(r) {
     durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
     costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
     subsOf: (id) => subAgentsForNode(r, id),
+    modelUsedOf: (id) => modelsUsed[id],
   });
 }
 
@@ -9243,7 +9398,7 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'];
 
 function showView(name, param = '') {
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
@@ -9313,6 +9468,7 @@ function showView(name, param = '') {
   if (name === 'agents') loadAgentsView();
   if (name === 'plugins') loadPluginsView();
   if (name === 'guardrails') loadGuardrailsView(param);
+  if (name === 'models') loadModelsView();
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();

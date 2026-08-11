@@ -2851,6 +2851,15 @@ class Orchestrator extends EventEmitter {
     // model (parity with worca's `[init] model=<model>`) instead of dropping it.
     if (e.raw && e.raw.type === 'system' && e.raw.subtype === 'init') {
       this._log(source, 'debug', `[init] model=${e.raw.model || '?'}`, logAttr);
+      // §4.7: stamp the session's ACTUAL model on the step (mirrors the
+      // sessionId stamp above) so the UI can resolve the "default" caption to
+      // a concrete name. Display-only; sub-agent events never carry init.
+      const step = !sub && e.raw.model && attr?.stepKey
+        ? this.state.steps.find((s) => s.key === attr.stepKey) : null;
+      if (step && step.modelUsed !== e.raw.model) {
+        step.modelUsed = e.raw.model;
+        this._persist().catch(() => {});
+      }
     }
 
     // Concrete tool calls the agent made this turn (assistant.tool_use blocks).

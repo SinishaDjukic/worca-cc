@@ -52,7 +52,8 @@ test('each agent step exposes model + effort selectors in markup', () => {
 test('app.js loads, renders, and saves per-step config', () => {
   assert.ok(appjs.includes('/api/config'), 'app.js does not use /api/config');
   assert.ok(appjs.includes('renderStepConfigs'), 'missing renderStepConfigs');
-  assert.ok(appjs.includes('addModelFlow'), 'missing custom-model add flow');
+  // The add flow navigates to the global Models view (configurable-models §4.9).
+  assert.ok(appjs.includes('goAddModel'), 'missing add-model navigation flow');
 });
 
 // ---------------------------------------------------------------------------

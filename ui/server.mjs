@@ -38,7 +38,7 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
-  globalModelRefs, removeGlobalModelAndRefs,
+  globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef } from '../src/core/model-env.mjs';
@@ -1949,6 +1949,23 @@ app.post('/api/models', async (req, res) => {
   } catch (err) {
     // addGlobalModel throws only on validation (empty/dup id, unknown effort,
     // reserved env key, non-string env value) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Promote a legacy per-project custom model to the global catalog (§4.9).
+// Refs survive by construction — see promoteCustomModel. Registered before the
+// :id routes only for readability; POST /api/models/promote shares no method
+// with them, so there is no capture conflict.
+app.post('/api/models/promote', async (req, res) => {
+  const b = req.body || {};
+  const projectDir = resolveProjectDir(b.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const config = await promoteCustomModel(projectDir, b.id);
+    res.json({ config, models: maskedGlobalModels() });
+  } catch (err) {
+    // Throws only on validation (unknown project model) -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
 });

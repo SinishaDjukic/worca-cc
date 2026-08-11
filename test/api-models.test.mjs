@@ -141,3 +141,20 @@ test('refs preview + DELETE /api/models/:id clears cross-project refs', async ()
 
   assert.equal((await jfetch(`/api/models/${encodeURIComponent('glm-4.7')}`, { method: 'DELETE' })).status, 400, 'second delete: unknown id');
 });
+
+test('POST /api/models/promote moves a legacy entry global; its refs SURVIVE (unlike delete)', async () => {
+  const { addCustomModel } = await import('../src/core/config.mjs');
+  await addCustomModel(proj, { id: 'legacy-m', label: 'Legacy M' });
+  await setNodeModel(proj, 'wf_p', 's1_0', { model: 'legacy-m' });
+
+  const r = await post('/api/models/promote', { projectDir: proj, id: 'legacy-m' });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.models.some((m) => m.id === 'legacy-m'), 'now in the global catalog');
+  assert.deepEqual(r.body.config.customModels, [], 'project copy dropped');
+
+  const cfg = await jfetch(`/api/config?${q({ projectDir: proj })}`);
+  assert.equal(cfg.body.models.find((m) => m.id === 'legacy-m').custom, 'global');
+  assert.deepEqual(cfg.body.config.workflows.wf_p.nodes.s1_0, { model: 'legacy-m' }, 'node ref survived promotion');
+
+  assert.equal((await post('/api/models/promote', { projectDir: proj, id: 'nope' })).status, 400);
+});

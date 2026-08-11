@@ -16,7 +16,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, prepareModelEnv } from './model-env.mjs';
-import { listGlobalModels, removeGlobalModel } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel } from './settings.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -370,6 +370,29 @@ export async function removeCustomModel(projectDir, id) {
       'DELETE FROM config_workflow_nodes WHERE project_key = ? AND model = ? COLLATE NOCASE'
     ).run(key, target);
   });
+  return updated;
+}
+
+/**
+ * Promote a legacy per-project custom model into the GLOBAL catalog (design
+ * §4.9): create the global entry (skipped when one with that id already
+ * exists) and drop only the project-local entry. Deliberately NOT
+ * addGlobalModel + removeCustomModel — the latter purges node/step refs, and
+ * promotion must be invisible to refs (the id keeps resolving, now globally).
+ * @returns {Promise<{steps:object, customModels:Array}>} the updated legacy view
+ * @throws {Error} when the project has no such custom model
+ */
+export async function promoteCustomModel(projectDir, id) {
+  const target = (typeof id === 'string' ? id : '').trim();
+  const lc = target.toLowerCase();
+  const cfg = readRaw(projectDir);
+  const entry = cfg.customModels.find((m) => m.id.toLowerCase() === lc);
+  if (!entry) throw new Error(`unknown project model "${target}"`);
+  if (!listGlobalModels().some((m) => m.id.toLowerCase() === lc)) {
+    await addGlobalModel({ id: entry.id, label: entry.label });
+  }
+  const updated = { ...cfg, customModels: cfg.customModels.filter((m) => m !== entry) };
+  writeLegacy(projectKey(projectDir), updated);
   return updated;
 }
 

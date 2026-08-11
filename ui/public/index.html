@@ -54,6 +54,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
             <span>Guardrails</span>
           </button>
+          <button type="button" data-nav="models">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M12 2v3M12 19v3M2 12h3M19 12h3M6 2.5v2M18 2.5v2M6 19.5v2M18 19.5v2"></path></svg>
+            <span>Models</span>
+          </button>
           <button type="button" data-nav="plugins">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8Z"></path><path d="M12 17v4"></path></svg>
             <span>Plugins</span>
@@ -96,6 +100,7 @@
           <button type="button" data-nav="composer">Composer</button>
           <button type="button" data-nav="agents">Agents</button>
           <button type="button" data-nav="guardrails">Guardrails</button>
+          <button type="button" data-nav="models">Models</button>
           <button type="button" data-nav="plugins">Plugins</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="projects">Projects</button>
@@ -761,6 +766,23 @@
           <div class="run-list" id="guardrails-list"></div>
         </section>
         <!-- /view guardrails -->
+
+        <!-- ===== VIEW: MODELS ===== -->
+        <section class="view hidden" data-view="models">
+          <div class="topbar">
+            <div>
+              <h1>Models</h1>
+              <div class="sub">Global model catalog — available in every project; entries can override built-ins and carry per-model routing env</div>
+            </div>
+            <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Add model
+            </button>
+          </div>
+          <p id="models-msg" class="form-msg" aria-live="polite"></p>
+          <div class="run-list" id="models-list"></div>
+        </section>
+        <!-- /view models -->
 
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
