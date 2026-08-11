@@ -92,6 +92,7 @@ function paletteDomains(pal) {
  * @param {Element} [opts.dialogHost] where the save <dialog> is mounted
  * @param {HTMLButtonElement} [opts.saveButton]
  * @param {HTMLInputElement} [opts.filter]
+ * @param {Function} [opts.canvasInsetTop] px of canvas hidden under open chrome (the top drawer)
  * @param {Function} opts.portsFn     the SYNTHESIZING ports function
  * @param {Array} [opts.agents]       mergePalette entries
  * @param {object|null} [opts.template] a template to load; null = new canvas
@@ -106,6 +107,7 @@ export function createComposerEditor({
   dialogHost = null,
   saveButton = null,
   filter = null,
+  canvasInsetTop = () => 0,
   portsFn,
   agents = [],
   template = null,
@@ -295,7 +297,13 @@ export function createComposerEditor({
       sec.hidden = !g.flow && collapsed.has(g.domain);
       frag.appendChild(sec);
     }
+    // paletteHost IS the 240px drawer scroll container now. replaceChildren()
+    // collapses scrollHeight, which clamps scrollTop to 0 — so a pill click
+    // would bounce the panel to the top and throw the pinned Flow group out of
+    // reach, after every single spawn. The emitted markup is unchanged.
+    const keepScroll = paletteHost.scrollTop;
     paletteHost.replaceChildren(frag);
+    if (keepScroll) paletteHost.scrollTop = keepScroll;
     applyFilter();
   }
 
@@ -422,8 +430,34 @@ export function createComposerEditor({
   }
 
   // -------------------------------------------------------------- public ops
+  /** Successive pill clicks would otherwise stack every card on one pixel —
+   *  centerWorld() is a pure function of the rect and the transform, and spawn()
+   *  changes neither. Step off anything already sitting on the slot — anything
+   *  SNAPPED, that is: loaded templates, and newCanvas()'s own Task at x:60 and
+   *  End at x:960, render at unsnapped authored coordinates
+   *  (graph-geometry.mjs:107) and are invisible to this test. It de-stacks
+   *  successive spawns, which is what it is for; it is not a general overlap
+   *  avoider. The step is
+   *  SNAP*2 so the snapped result moves by exactly one dot-grid cell each time.
+   *  The 24-try ceiling keeps a pathological template from looping, and it IS
+   *  reachable: 25 consecutive default spawns fill slots 0..24 and the 26th
+   *  exhausts the loop and stacks on slot 24. Accepted — 25 cards spawned without
+   *  ever moving one is not a real session, the alternative is an unbounded loop,
+   *  and the step is diagonal, so slot 24 is already 528px down and right of
+   *  centre and off-canvas anyway. */
+  function freeSlot(p) {
+    let { x, y } = p;
+    for (let i = 0; i < 24; i += 1) {
+      const taken = tpl.nodes.some((n) => n.x === snap(x) && n.y === snap(y));
+      if (!taken) break;
+      x += SNAP * 2;
+      y += SNAP * 2;
+    }
+    return { x, y };
+  }
+
   function spawn(entry, at) {
-    const p = at || centerWorld();
+    const p = at || freeSlot(centerWorld());
     pushUndo();
     const node = entry.kind
       ? newNode(entry.kind, { x: snap(p.x), y: snap(p.y), config: entry.kind === 'and' || entry.kind === 'or' || entry.kind === 'combine' ? { arity: 2 } : {} })
@@ -434,9 +468,15 @@ export function createComposerEditor({
     return node;
   }
 
+  // The top drawer OVERLAYS the canvas, so the raw rect's centre can sit behind
+  // it — a pill-spawned node would land under the panel that was just clicked.
+  // Centre on the VISIBLE band instead. The default inset is 0, which is the
+  // pre-drawer arithmetic exactly.
   function centerWorld() {
     const r = canvas.getBoundingClientRect();
-    const c = toWorld(r.left + (r.width || 0) / 2, r.top + (r.height || 0) / 2);
+    const h = r.height || 0;
+    const inset = Math.min(Math.max(canvasInsetTop() || 0, 0), h);
+    const c = toWorld(r.left + (r.width || 0) / 2, r.top + inset + (h - inset) / 2);
     return { x: c.x - NODE_W / 2, y: c.y - 60 };
   }
 
@@ -498,8 +538,14 @@ export function createComposerEditor({
     const r = canvas.getBoundingClientRect();
     const vw = r.width || 960;
     const vh = r.height || 600;
-    const zoom = clamp(Math.round(Math.min(vw / b.w, vh / b.h) * 100) / 100, ZOOM_MIN, ZOOM_MAX);
-    setTransform({ x: -b.x * zoom, y: -b.y * zoom, zoom });
+    // Same overlay problem as centerWorld: without the inset, "fit to screen"
+    // parks the top of the graph under the open panel — and the zoom cluster is
+    // bottom-right, so it is exactly the button a stuck user reaches for. Fit
+    // into the visible band, then push the origin below the panel. Under jsdom
+    // r.height is 0, so the clamp yields 0 and this is the old arithmetic.
+    const inset = Math.min(Math.max(canvasInsetTop() || 0, 0), r.height || 0);
+    const zoom = clamp(Math.round(Math.min(vw / b.w, (vh - inset) / b.h) * 100) / 100, ZOOM_MIN, ZOOM_MAX);
+    setTransform({ x: -b.x * zoom, y: -b.y * zoom + inset, zoom });
   }
 
   function runAutoLayout() {

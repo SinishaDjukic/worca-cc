@@ -35,7 +35,7 @@ const SHELL = `<!doctype html><body>
   <button id="save" type="button">Save pipeline</button>
 </body>`;
 
-function boot({ template = null, onSave = () => {}, agents = palette } = {}) {
+function boot({ template = null, onSave = () => {}, agents = palette, canvasInsetTop } = {}) {
   const dom = new JSDOM(SHELL, { url: 'http://localhost:4317/' });
   const { window } = dom;
   const doc = window.document;
@@ -59,6 +59,7 @@ function boot({ template = null, onSave = () => {}, agents = palette } = {}) {
     agents,
     template,
     onSave,
+    canvasInsetTop,
   });
   return { window, doc, els, editor };
 }
@@ -738,4 +739,70 @@ test('dirty tracking flips on the first edit and clears after a save', async () 
   dialog.querySelector('.sd-confirm').click();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(ctx.editor.isDirty(), false);
+});
+
+// --- the top drawer overlays the canvas --------------------------------------
+// The drawer added in this change is an OVERLAY (it does not reflow the card),
+// so everything that assumed "the canvas rect is the visible region" needs the
+// inset. jsdom zeroes every rect, so each case stubs a real box.
+
+test('a palette spawn clears the drawer overlay when canvasInsetTop reports one', () => {
+  // A new canvas has no persisted view state, so the transform is identity and
+  // client coords are world coords. snap() is the 11px half-grid.
+  const spawnY = (inset) => {
+    const ctx = boot({ canvasInsetTop: inset });
+    ctx.els.canvas.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600,
+    });
+    return ctx.editor.spawn({ key: 'planner' }).y;
+  };
+
+  // inset 0  -> centre y 300, minus the 60px header lead -> snap(240) = 242
+  assert.equal(spawnY(undefined), 242, 'the default is byte-for-byte the old behaviour');
+  // inset 200 -> centre of the VISIBLE band is 200 + (600-200)/2 = 400 -> snap(340) = 341
+  assert.equal(spawnY(() => 200), 341, 'the node lands below the open overlay');
+});
+
+test('fit() fits into the band the drawer leaves visible', () => {
+  // Deliberately assertion-by-property, not by magic number: what matters is
+  // that the topmost card paints BELOW the panel, whatever the zoom works out to.
+  const rect = { left: 0, top: 0, width: 800, height: 640, right: 800, bottom: 640 };
+  const fitted = (inset) => {
+    const ctx = boot({ canvasInsetTop: inset });
+    ctx.els.canvas.getBoundingClientRect = () => rect;
+    ctx.editor.fit();
+    const t = ctx.editor.transform();
+    const topWorldY = Math.min(...ctx.editor.template().nodes.map((n) => n.y));
+    return { t, screenTop: topWorldY * t.zoom + t.y };
+  };
+
+  // A literal, NOT fitted(() => 0): both of those run the NEW code with inset 0,
+  // so comparing them to each other could never fail. These are the numbers
+  // today's fit() produces for a fresh Task+End canvas in an 800x640 rect —
+  // b = {x:0, y:140, w:1240, h:230.5}, zoom = round(min(800/1240, 640/230.5)*100)/100
+  // = 0.65, y = -140*0.65. `x` is -0 (`-b.x * zoom` with b.x === 0) and deepEqual
+  // is SameValue on zeros, so write it as -0.
+  assert.deepEqual(fitted(undefined).t, { x: -0, y: -91, zoom: 0.65 },
+    'no inset is byte-for-byte the pre-drawer fit');
+  assert.ok(fitted(() => 0).screenTop < 240,
+    'guard: without the inset the graph really does start under the panel');
+  assert.ok(fitted(() => 240).screenTop >= 240,
+    'with the inset the highest card paints below the 240px panel');
+});
+
+test('successive pill spawns cascade instead of stacking on one pixel', () => {
+  // centerWorld() is a pure function of the rect and the transform, and spawn()
+  // changes neither — so without a cascade the second card would fully cover the
+  // first, and hitTest (topmost-first) would make the first unreachable.
+  const ctx = boot();
+  const a = ctx.editor.spawn({ key: 'planner' });
+  const b = ctx.editor.spawn({ key: 'planner' });
+  assert.notDeepEqual({ x: b.x, y: b.y }, { x: a.x, y: a.y },
+    'the second card is not hidden underneath the first');
+
+  // An explicit position is still honoured verbatim — the cascade is only for
+  // the centre-of-canvas default.
+  const c = ctx.editor.spawn({ key: 'planner' }, { x: a.x, y: a.y });
+  assert.deepEqual({ x: c.x, y: c.y }, { x: a.x, y: a.y },
+    'spawn(entry, at) still places exactly where it is told');
 });
