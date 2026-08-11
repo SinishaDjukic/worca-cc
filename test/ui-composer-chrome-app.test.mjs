@@ -1,8 +1,8 @@
-// test/ui-composer-chrome-app.test.mjs — the drawer against the REAL index.html
-// and the REAL app.js. The chrome's unit tests drive the factory directly, so
-// they cannot see a wiring mistake: a missing createComposerChrome() call, a
-// syncDefault() that never runs against a real template, or a chrome that gets
-// constructed twice and double-binds its toggle.
+// test/ui-composer-chrome-app.test.mjs — the composer chrome against the REAL
+// index.html and the REAL app.js. The chrome's unit tests drive the factory
+// directly, so they cannot see a wiring mistake: a missing
+// createComposerChrome() call, or a chrome that gets constructed twice and
+// double-binds its inspector handle.
 //
 // The harness is the one test/ui-agent-xss.test.mjs uses (jsdom + a stubbed
 // fetch + a WebSocket stub), trimmed to what the composer needs.
@@ -23,7 +23,7 @@ const AGENTS = [{
   outputs: [{ id: 'plan', type: 'md', when: 'always', filename: '{base}.md', store: 'project' }],
 }];
 
-/** A saved pipeline that PLACES an agent — the state D5 collapses the drawer on. */
+/** A saved pipeline that PLACES an agent, so an editor rebuild is observable. */
 const SAVED_TEMPLATE = {
   id: 'wf_demo', name: 'Demo', version: 2, domain: 'coding',
   nodes: [
@@ -82,21 +82,42 @@ const goComposer = async (window) => {
   for (let i = 0; i < 4; i += 1) await tick();
 };
 
-test('the chrome is constructed and the blank first-visit canvas opens the drawer', async () => {
+test('the chrome is constructed and the inspector opens by default', async () => {
   const window = await boot();
   await goComposer(window);
   const doc = window.document;
-  const drawer = doc.querySelector('#composer-drawer');
 
   assert.ok(doc.querySelector('#composer-palette .ap'),
     'guard: the palette actually rendered, so the composer really booted');
-  assert.equal(drawer.dataset.open, 'true', 'a new canvas has no agents (D5)');
-  assert.equal(doc.querySelector('#composer-drawer-toggle').getAttribute('aria-expanded'), 'true');
-  assert.equal(window.localStorage.getItem('worca-cc.composer.drawer'), null,
+  assert.equal(doc.querySelector('#composer-body').dataset.inspector, 'open');
+  assert.equal(doc.querySelector('#composer-inspector-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(window.localStorage.getItem('worca-cc.composer.inspector'), null,
     'a first-visit default is not a stored preference');
 });
 
-test('opening a saved pipeline re-runs the default against the loaded template', async () => {
+test('the chrome outlives the editor swap and is bound exactly once', async () => {
+  const window = await boot();
+  await goComposer(window);
+  const doc = window.document;
+  const body = doc.querySelector('#composer-body');
+
+  click(window, doc.querySelector('#composer-saved-list .pl-open'));
+  for (let i = 0; i < 4; i += 1) await tick();
+  assert.ok(doc.querySelector('#composer-canvas .node[data-node-id="n_plan"]'),
+    'guard: the template really loaded, so the editor was destroyed and rebuilt');
+
+  // ONE construction means ONE listener: a single click must flip the state
+  // exactly once. A second binding would flip it twice and leave it open.
+  click(window, doc.querySelector('#composer-inspector-toggle'));
+  assert.equal(body.dataset.inspector, 'collapsed',
+    'the handle still works after the editor was rebuilt');
+  assert.equal(window.localStorage.getItem('worca-cc.composer.inspector'), 'collapsed',
+    'and a manual toggle persists');
+});
+
+test('loading a template never touches the palette', async () => {
+  // The old drawer collapsed itself whenever the loaded graph already had an
+  // agent. Nothing may do that any more.
   const window = await boot();
   await goComposer(window);
   const doc = window.document;
@@ -105,63 +126,17 @@ test('opening a saved pipeline re-runs the default against the loaded template',
   for (let i = 0; i < 4; i += 1) await tick();
 
   assert.ok(doc.querySelector('#composer-canvas .node[data-node-id="n_plan"]'),
-    'guard: the template really loaded');
-  assert.equal(doc.querySelector('#composer-drawer').dataset.open, 'false',
-    'composerLoadTemplate() re-ran syncDefault() and the graph has an agent');
-});
-
-test('the chrome outlives the editor swap and is bound exactly once', async () => {
-  const window = await boot();
-  await goComposer(window);
-  const doc = window.document;
-  const drawer = doc.querySelector('#composer-drawer');
-
-  click(window, doc.querySelector('#composer-saved-list .pl-open'));
-  for (let i = 0; i < 4; i += 1) await tick();
-  assert.equal(drawer.dataset.open, 'false');
-
-  // ONE construction means ONE listener: a single click must flip the state
-  // exactly once. A second binding would flip it twice and leave it collapsed.
-  click(window, doc.querySelector('#composer-drawer-toggle'));
-  assert.equal(drawer.dataset.open, 'true', 'the toggle still works after the editor was rebuilt');
-  assert.equal(window.localStorage.getItem('worca-cc.composer.drawer'), 'open',
-    'and a manual toggle persists');
-});
-
-test('re-entering the composer re-syncs the default against the LIVE editor', async () => {
-  // The bug this pins is B1: composerLoadTemplate() has two callers, both bound
-  // inside the `if (!_composerReady)` block, so it never runs on the initial view
-  // entry; and the factory's own syncDefault() runs BEFORE composer.editor
-  // exists, so hasAgents() is false by accident rather than by fact. Only the
-  // syncDefault() call at the END of initComposer() ever reads a real template.
-  //
-  // The drawer is first re-opened by a NON-persisting gesture (the filter
-  // auto-open) while the loaded graph HAS an agent, so a missing re-sync is
-  // visible: with the call the re-entry collapses it, without it nothing moves.
-  const window = await boot();
-  const doc = window.document;
-  await goComposer(window);
-
-  click(window, doc.querySelector('#composer-saved-list .pl-open'));
-  for (let i = 0; i < 4; i += 1) await tick();
-  assert.equal(doc.querySelector('#composer-drawer').dataset.open, 'false',
-    'guard: the agent-bearing template collapsed it');
-
-  const filter = doc.querySelector('#composer-agent-filter');
-  filter.value = 'pl';
-  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
-  assert.equal(doc.querySelector('#composer-drawer').dataset.open, 'true',
-    'guard: the filter auto-open reveals it WITHOUT persisting');
+    'guard: an agent-bearing template really loaded');
+  assert.ok(doc.querySelector('#composer-palette .ap'), 'the pills are still on screen');
   assert.equal(window.localStorage.getItem('worca-cc.composer.drawer'), null,
-    'guard: still no stored preference, so the default is still live');
+    'and no disclosure preference was written');
+});
 
-  window.location.hash = 'overview';
-  window.dispatchEvent(new window.Event('hashchange'));
-  await tick();
-  await goComposer(window);
-
-  assert.equal(doc.querySelector('#composer-drawer').dataset.open, 'false',
-    'initComposer() re-ran syncDefault() against the editor that is actually loaded');
+test('app.js no longer owns a drawer', () => {
+  const APP = readFileSync(appPath, 'utf8');
+  assert.equal(/syncDefault/.test(APP), false, 'the template-derived default is gone');
+  assert.equal(/composer-drawer/.test(APP), false, 'and every drawer element lookup with it');
+  assert.equal(/hasAgents/.test(APP), false, 'and the predicate that fed the default');
 });
 
 test('app.js hands canvasInsetRight to BOTH createComposerEditor call sites', () => {
