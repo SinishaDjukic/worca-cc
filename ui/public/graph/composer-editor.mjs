@@ -622,6 +622,7 @@ export function createComposerEditor({
   // -------------------------------------------------------------- listeners
   function onPointerDown(ev) {
     if (ev.button !== 0 && ev.button !== 1) return;
+    ev.preventDefault?.();                      // no native text-selection drag off a port
     canvas.setPointerCapture?.(ev.pointerId);   // jsdom has no setPointerCapture
     const pt = toWorld(ev.clientX, ev.clientY);
     const panning = ev.button === 1 || spaceDown;

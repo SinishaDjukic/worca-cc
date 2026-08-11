@@ -859,7 +859,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ap .p{display:block;margin-top:2px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* ---------- canvas ---------- */
+/* user-select:none — card labels are real text, so a wire/node drag would
+   otherwise paint a native selection across every card it sweeps over. */
 .gv-canvas{flex:1 1 auto;min-width:0;position:relative;overflow:hidden;touch-action:none;
+  user-select:none;-webkit-user-select:none;
   background:#FBFBF9 radial-gradient(var(--line-2) 1px,transparent 1px);background-size:22px 22px;}
 .gv-stage{position:absolute;inset:0;}
 .gv,.gv-world{position:absolute;left:0;top:0;}
