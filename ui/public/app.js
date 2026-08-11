@@ -69,6 +69,7 @@ import {
   fmtUsd as fmtUsdGraph,
 } from './graph/run-decor.mjs';
 import { createComposerEditor } from './graph/composer-editor.mjs';
+import { createComposerChrome } from './graph/composer-chrome.mjs';
 import { thumbnail } from './graph/thumbnail.mjs';
 import { logLineClass } from './log-line.mjs';
 import { logLineVisible, logFacets } from './log-filter.mjs';
@@ -1608,6 +1609,7 @@ const composer = {
   palette: [],         // the same entries as an ordered list
   saved: [],           // WorkflowTemplate[] (v2) from the server
   editor: null,
+  chrome: null,        // createComposerChrome() — constructed once, never destroyed
   els: {},
 };
 
@@ -1663,6 +1665,28 @@ async function initComposer() {
   composer.els.dirty = $('#composer-dirty');
   composer.els.savedList = $('#composer-saved-list');
   composer.els.savedCount = $('#composer-saved-count');
+  composer.els.drawer    = $('#composer-drawer');
+  composer.els.drawerTog = $('#composer-drawer-toggle');
+  composer.els.body      = $('#composer-body');
+
+  // Constructed ONCE, and BEFORE the palette await: a stored 'closed' preference
+  // has to be applied on the first paint, not after a network round-trip. The
+  // `!composer.chrome` guard is its own idempotence — unlike _composerReady it is
+  // set before any await, so a fast double view-entry cannot double-bind the
+  // toggle. The chrome owns no graph state, so it is never destroyed and it
+  // survives every editor swap composerLoadTemplate() performs.
+  if (!composer.chrome) {
+    composer.chrome = createComposerChrome({
+      drawer: composer.els.drawer,
+      toggle: composer.els.drawerTog,
+      panel: composer.els.palette,
+      canvas: composer.els.canvas,
+      filter: composer.els.filter,
+      hasAgents: () => Boolean(
+        composer.editor?.template?.()?.nodes?.some((n) => n.kind === 'agent'),
+      ),
+    });
+  }
 
   if (!_composerReady || _composerPaletteDirty) await refreshComposerPalette();
 
@@ -1675,6 +1699,7 @@ async function initComposer() {
       dialogHost: composer.els.dialog,
       saveButton: composer.els.save,
       filter: composer.els.filter,
+      canvasInsetTop: () => (composer.chrome ? composer.chrome.canvasInsetTop() : 0),
       portsFn: composerPortsFn,
       agents: composer.palette,
       models: state.models,
@@ -1689,6 +1714,7 @@ async function initComposer() {
     if (composer.els.savedList) composer.els.savedList.addEventListener('click', onComposerSavedClick);
   }
   composerPaintDirty();
+  composer.chrome.syncDefault();   // the editor exists now, so D5's default is real
   await composerLoadSaved();
 }
 
@@ -1724,6 +1750,7 @@ function composerLoadTemplate(tpl) {
     dialogHost: composer.els.dialog,
     saveButton: composer.els.save,
     filter: composer.els.filter,
+    canvasInsetTop: () => (composer.chrome ? composer.chrome.canvasInsetTop() : 0),
     portsFn: composerPortsFn,
     agents: composer.palette,
     models: state.models,
@@ -1734,6 +1761,7 @@ function composerLoadTemplate(tpl) {
     onChange: composerPaintDirty,
   });
   composerPaintDirty();
+  composer.chrome?.syncDefault();   // first-visit default only; a stored key wins
 }
 
 /* ---- saved pipelines ---- */

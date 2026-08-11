@@ -13,6 +13,8 @@
 // against an empty syncDefault() and prove nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { createComposerChrome, DRAWER_KEY } from '../ui/public/graph/composer-chrome.mjs';
 
@@ -318,4 +320,85 @@ test('destroy() unbinds the toggle, Escape, the canvas and the filter', () => {
   els.filter.value = 'plan';
   els.filter.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.equal(isOpen(els), false, 'filter auto-open is inert after destroy');
+});
+
+// --- the real index.html and style.css --------------------------------------
+// The drawer is only a layout change: #composer-palette keeps its id and its
+// rendered subtree, so renderPalette/applyFilter/onPaletteClick are untouched
+// and ui-agent-xss's `#composer-palette .ap[data-key]` query still resolves.
+//
+// Two of these read style.css as text. That is the house pattern for rules that
+// cannot be exercised under jsdom (see test/ui-run-flow-css.test.mjs,
+// test/ui-pinned-sidebar.test.mjs) — jsdom applies no stylesheet, so a DOM
+// assertion here would be a tautology.
+
+const REAL_HTML = readFileSync(
+  fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8',
+);
+const REAL_CSS = readFileSync(
+  fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8',
+);
+const realDoc = new JSDOM(REAL_HTML).window.document;
+
+test('index.html: the 264px palette rail is gone', () => {
+  assert.ok(!realDoc.querySelector('.gv-palette'), '.gv-palette is gone');
+  assert.ok(!realDoc.querySelector('.gv-palette-top'), '.gv-palette-top is gone');
+});
+
+test('index.html: the palette host lives inside the drawer, with its id intact', () => {
+  const panel = realDoc.querySelector('#composer-palette');
+  assert.ok(panel, '#composer-palette still exists');
+  assert.ok(panel.closest('#composer-drawer'), 'it is inside the drawer');
+  assert.ok(panel.classList.contains('gv-palette-scroll'));
+});
+
+test('index.html: the filter is in the bar, OUTSIDE the panel renderPalette() replaces', () => {
+  const filter = realDoc.querySelector('#composer-agent-filter');
+  assert.ok(filter, '#composer-agent-filter still exists');
+  assert.ok(filter.closest('.gv-drawer-bar'), 'it is in the bar');
+  assert.equal(filter.closest('#composer-palette'), null,
+    'renderPalette() calls replaceChildren() on #composer-palette on every repaint');
+});
+
+test('index.html: the toggle is wired to the panel for assistive tech', () => {
+  const toggle = realDoc.querySelector('#composer-drawer-toggle');
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute('aria-controls'), 'composer-palette');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.querySelector('svg').getAttribute('aria-hidden'), 'true',
+    'the chevron is decorative — the name comes from the button text');
+});
+
+test('index.html: canvas and inspector are siblings inside the body row', () => {
+  const body = realDoc.querySelector('#composer-body');
+  assert.ok(body, '#composer-body exists');
+  assert.ok(realDoc.querySelector('#composer-canvas').closest('#composer-body'));
+  assert.ok(realDoc.querySelector('#composer-inspector').closest('#composer-body'));
+});
+
+test('index.html: the drawer is the body row\'s previous sibling', () => {
+  // The empty-state clearance rule below is a `~` sibling selector, so this
+  // ordering is load-bearing, not cosmetic.
+  assert.equal(realDoc.querySelector('#composer-drawer').nextElementSibling.id, 'composer-body');
+});
+
+test('style.css: the open panel does not bury the canvas empty state', () => {
+  assert.match(REAL_CSS, /\.gv-drawer\[data-open="true"\]\s*~\s*\.gv-body\s+\.gv-empty\{[^}]*top:264px/,
+    '.gv-empty sits at top:24px and the panel covers the canvas\'s top 239px');
+});
+
+test('style.css: the drawer outranks everything the canvas paints', () => {
+  // .gv-chip is z-index:6 and NOTHING between it and the root creates a
+  // stacking context, so the drawer has to be >= 7 or the reason chip paints
+  // over the open palette.
+  assert.match(REAL_CSS, /\.gv-drawer\{[^}]*z-index:7/, 'the drawer is z-index:7');
+});
+
+test('style.css: the two rules the whole goal rests on', () => {
+  // Neither is observable at runtime — jsdom has no layout — and both are the
+  // difference between "the canvas got wider" and "nothing visibly changed".
+  assert.match(REAL_CSS, /\.builder-card\{[^}]*flex-direction:column[^}]*min-height:685px/,
+    'the card is a column and grew by the drawer bar');
+  assert.match(REAL_CSS, /\.pills\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(196px,100%\),1fr\)\)/,
+    'the pills wrap across the width instead of stacking in a column');
 });

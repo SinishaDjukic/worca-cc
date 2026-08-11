@@ -747,20 +747,81 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-delete svg{display:block;}
 
 /* ========================================================================== */
-/* Pipeline Composer v2 — node graph canvas, palette rail, inspector          */
+/* Pipeline Composer v2 — node graph canvas, top agent drawer, inspector      */
 /* Card geometry is graph-geometry.mjs's, not CSS's: node width/height and     */
 /* every port-row height are set inline from the model so the renderer and the */
 /* hit-tester agree. The rules below are pure appearance — changing a size     */
 /* here without changing graph-geometry.mjs would desync wiring from pixels.   */
 /* ========================================================================== */
-.builder-card{padding:0;overflow:hidden;display:flex;min-height:640px;}
+/* Column: the drawer bar sits above the canvas + inspector row. The bar is 44px
+   of content PLUS .gv-drawer's own 1px border-bottom — the drawer's height is
+   auto, so that border is additive (*{box-sizing:border-box} at style.css:43
+   governs SPECIFIED heights only). 640 + 45 = 685 preserves the canvas height
+   exactly: min-height is a BORDER box under that same rule, so .card's 1px
+   borders make today's canvas 638px, and 685 - 2 - 45 is 638 again. .gv-canvas
+   declares no height anywhere in this stylesheet — its size is pure
+   align-items:stretch — and .builder-card{padding:0} already beats
+   .card{padding:24px} on source order. NOTE: spec §4.1 says 684; it is off by
+   the drawer's border. */
+.builder-card{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:685px;}
+.gv-body{flex:1 1 auto;display:flex;min-height:0;}
 
-/* ---------- palette rail ---------- */
-.gv-palette{width:264px;flex:0 0 264px;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;}
-.gv-palette-top{padding:16px 16px 12px;border-bottom:1px solid var(--line);}
-.gv-palette-top .pal-filter{width:100%;height:36px;border:none;border-radius:11px;background:var(--field);padding:0 12px;font-size:12.5px;font-weight:500;color:var(--ink);font-family:inherit;}
-.gv-palette-top .pal-filter::placeholder{color:var(--ink-3);}
-.gv-palette-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:14px 16px 8px;}
+/* ---------- top agent drawer ---------- */
+/* z-index 7, not 5: .gv-chip is z-index:6 (style.css:803) and NOTHING between it
+   and the root creates a stacking context — .gv-canvas is position:relative with
+   z-index:auto, .gv-body is unpositioned, and .builder-card/.card set no
+   position, transform, opacity or filter. At 5 the illegal-drop reason chip
+   would paint over the open palette. Nothing else in the composer reaches 7. */
+.gv-drawer{position:relative;z-index:7;flex:0 0 auto;border-bottom:1px solid var(--line);}
+.gv-drawer-bar{height:44px;display:flex;align-items:center;gap:12px;padding:0 16px;}
+.gv-drawer-toggle{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
+  color:var(--ink-2);background:none;border:0;padding:4px 6px;border-radius:9px;cursor:pointer;
+  font-family:inherit;}
+.gv-drawer-toggle:hover{background:var(--field);color:var(--ink);}
+.gv-drawer-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-drawer-toggle .chev{width:14px;height:14px;flex:0 0 auto;transition:transform var(--t-fast,120ms);}
+.gv-drawer[data-open="false"] .gv-drawer-toggle .chev{transform:rotate(-90deg);}
+/* Re-homed from `.gv-palette-top .pal-filter` (old line 761): width:100% becomes
+   flex + max-width, and 36px becomes 32px to sit in the 44px bar. Every other
+   declaration, and the ::placeholder rule, carry over verbatim.
+   input[type=search] is NOT matched by the generic control rules at 278-299, so
+   the focus ring has to be declared here. min-width:0 lets the field shrink
+   instead of pushing the bar past .builder-card's overflow:hidden. */
+.gv-drawer-bar .pal-filter{flex:1 1 auto;min-width:0;max-width:320px;height:32px;border:none;
+  border-radius:11px;background:var(--field);padding:0 12px;font-size:12.5px;font-weight:500;
+  color:var(--ink);font-family:inherit;}
+.gv-drawer-bar .pal-filter::placeholder{color:var(--ink-3);}
+.gv-drawer-bar .pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Fixed height + internal scroll, and absolute so it OVERLAYS rather than
+   reflows. height, not max-height: the panel stays 240px however many custom
+   agents a user registers. top:100% resolves against the drawer's PADDING box
+   (44px — the border-bottom sits outside it), so the panel spans card y 44..284,
+   well inside the 685px card: .builder-card's overflow:hidden never clips it.
+   It covers canvas y 0..239. canvasInsetTop() reports the panel's own 240px box
+   — one pixel more than the true overlap, which is one pixel of extra clearance,
+   not a bug. */
+.gv-palette-scroll{position:absolute;top:100%;left:0;right:0;height:240px;overflow-y:auto;
+  padding:14px 16px 8px;background:var(--panel);border-bottom:1px solid var(--line);
+  box-shadow:var(--shadow);}
+.gv-drawer[data-open="false"] .gv-palette-scroll{display:none;}
+/* The chips are renderPalette()'s first child inside the scroll box, so they
+   would scroll away. Pin them, cancelling the container's 14px top padding so
+   they sit flush once stuck.
+   PLACEMENT: `.gv-palette-scroll .pal-chips` is specificity (0,2,0) and BOTH
+   bare `.pal-chips` declarations — style.css:764 and the duplicate near the
+   bottom of the file — are (0,1,0), so this wins wherever it sits and belongs
+   here, in the composer block. It sets margin-top, never the margin shorthand,
+   so the duplicate's margin-bottom survives untouched. */
+.gv-palette-scroll .pal-chips{position:sticky;top:-14px;z-index:1;
+  background:var(--panel);padding-top:14px;margin-top:-14px;}
+/* The empty-state pill is position:absolute;top:24px inside the canvas
+   (style.css:799) and D5 opens the drawer by default on exactly the agent-free
+   canvas that shows it — without this, the onboarding copy is invisible on every
+   first visit. 264 = the panel's 240px box (canvasInsetTop's number) plus the
+   original 24px lead — a pixel more clearance than the true 239px overlap needs.
+   The selector is (0,4,0) against the base rule's (0,1,0), so where it sits in
+   the file does not matter. */
+.gv-drawer[data-open="true"] ~ .gv-body .gv-empty{top:264px;}
 .pal-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
 .pal-chip{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);background:var(--field);border-radius:999px;padding:5px 10px;}
 .pal-chip.off{opacity:.45;}
@@ -772,7 +833,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pal-group .pinned-tag{background:none;padding-right:0;text-transform:uppercase;letter-spacing:.05em;}
 .pal-pinned{border-top:1px solid var(--line);background:var(--field);margin:0 -16px;padding:13px 16px 15px;}
 .pal-pinned .chip{background:#fff;}
-.pills{display:flex;flex-direction:column;gap:8px;}
+/* Was a single column in the 264px rail; now wraps across the card width.
+   1046px usable / minmax(196px) with an 8px gap = 5 pills per row at 1440.
+   auto-fill, NOT auto-fit: several domains hold only one or two agents, and
+   auto-fit would collapse the empty tracks and stretch those pills to ~500px.
+   min() guards the track floor so a narrow card can never force a horizontal
+   scrollbar. Known cost: a 196px cell leaves `.ap .b` 154px against the rail's
+   190px, so the mono port line (.ap .p, already ellipsised) truncates about 19%
+   earlier. Accepted — D2 keeps the port line. */
+.pills{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(196px,100%),1fr));gap:8px;}
 .ap{display:flex;align-items:flex-start;gap:9px;width:100%;text-align:left;background:#fff;border:1.5px solid var(--line-2);border-radius:12px;padding:9px 11px;box-shadow:var(--shadow-soft);cursor:grab;transition:border-color var(--t-fast,120ms),box-shadow var(--t-fast,120ms);}
 .ap:hover:not(:disabled){border-color:var(--ink-3);box-shadow:var(--shadow);}
 .ap:disabled,.ap.dim{opacity:.55;cursor:default;box-shadow:none;}
