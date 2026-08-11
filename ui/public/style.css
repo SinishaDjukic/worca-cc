@@ -775,8 +775,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    in either state — only its bottom — so every pointer handler that reads
    rect.top/rect.left is unaffected, including during a light dismiss that
    collapses the drawer mid-pointerdown. */
-.gv-body{flex:1 1 auto;display:flex;min-height:638px;}
+.gv-body{position:relative;flex:1 1 auto;display:flex;min-height:638px;--ins-w:280px;}
 .gv-drawer[data-open="true"] ~ .gv-body{min-height:878px;}
+/* --ins-w is how much of the canvas's right edge the floating rail covers. It
+   inherits into .gv-canvas, so the decorations inside it can offset themselves
+   without any JS. */
+.gv-body[data-inspector="collapsed"]{--ins-w:28px;}
 
 /* ---------- top agent drawer ---------- */
 /* z-index 7, not 5: .gv-chip is z-index:6 (style.css:803) and NOTHING between it
@@ -813,8 +817,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    — one pixel more than the true overlap, which is one pixel of extra clearance,
    not a bug. */
 .gv-palette-scroll{position:absolute;top:100%;left:0;right:0;height:240px;overflow-y:auto;
-  padding:14px 16px 8px;background:var(--panel);border-bottom:1px solid var(--line);
-  box-shadow:var(--shadow);}
+  padding:14px 16px 8px;background:var(--panel);border-bottom:2px solid var(--line-2);
+  box-shadow:0 10px 32px rgba(25,25,27,.10);}
 .gv-drawer[data-open="false"] .gv-palette-scroll{display:none;}
 /* The chips are renderPalette()'s first child inside the scroll box, so they
    would scroll away. Pin them, cancelling the container's 14px top padding so
@@ -880,7 +884,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .gv,.gv-world{position:absolute;left:0;top:0;}
 .gv-world{transform-origin:0 0;will-change:transform;}
 .gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
-.gv-empty{position:absolute;left:50%;top:24px;transform:translateX(-50%);z-index:4;
+.gv-empty{position:absolute;left:calc(50% - var(--ins-w) / 2);top:24px;transform:translateX(-50%);z-index:4;
   background:rgba(255,255,255,.94);border:1px solid var(--line-2);border-radius:999px;
   padding:8px 18px;font-size:12.5px;font-weight:500;color:var(--ink-2);box-shadow:var(--shadow-soft);}
 .gv-empty[hidden]{display:none;}
@@ -890,7 +894,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .gv-legend{position:absolute;left:20px;bottom:20px;z-index:4;display:flex;align-items:center;gap:16px;
   background:rgba(255,255,255,.94);border:1px solid var(--line-2);border-radius:999px;padding:8px 16px;
   box-shadow:var(--shadow-soft);font-size:11.5px;font-weight:500;color:var(--ink-2);white-space:nowrap;}
-.gv-zoom{position:absolute;right:20px;bottom:20px;z-index:4;display:flex;align-items:center;background:#fff;
+.gv-zoom{position:absolute;right:calc(var(--ins-w) + 20px);bottom:20px;z-index:4;display:flex;align-items:center;background:#fff;
   border:1px solid var(--line-2);border-radius:999px;padding:4px;gap:2px;box-shadow:var(--shadow-soft);}
 .gv-zoom button{width:32px;height:32px;border-radius:999px;color:var(--ink-2);display:grid;place-items:center;
   font-size:15px;font-weight:600;line-height:1;}
@@ -966,13 +970,24 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    width / flex / border-left move up to the wrapper. .ins-panel (the next rule
    down) is written as a column-flex child of a column-flex parent, so dropping
    display:flex here would be a silent regression.
-   The transition is on flex-basis, which is what actually sizes a flex item
-   whose basis is not auto. It is safe for pointer maths: the canvas is
-   LEFT-anchored, so getBoundingClientRect().left is invariant while the right
-   edge animates and toWorld() stays accurate at every frame. The reduced-motion
-   block at style.css:655 already neutralises it for users who ask. */
-.gv-ins-rail{position:relative;flex:0 0 280px;width:280px;border-left:1px solid var(--line);
-  display:flex;flex-direction:column;min-height:0;transition:flex-basis var(--t-fast,120ms);}
+   Absolute, not a flex item: the canvas keeps its FULL width and collapsing the
+   rail never reflows it — which also means toWorld() is invariant across a
+   collapse, not merely safe. `width` is what animates now; the old transition
+   was on flex-basis, which no longer sizes anything.
+   z-index 6 paints the rail over the wires and cards it now covers, and over
+   the canvas decorations (.gv-empty/.gv-legend/.gv-zoom are 4). It ties with
+   .gv-chip (6) and wins on source order, which is right: the rail is a
+   persistent surface, the chip a transient cursor-follower. It stays under the
+   drawer (7), so the open palette still covers the rail's top 240px, exactly as
+   it did when the rail was in flow.
+   display:flex / flex-direction:column / min-height:0 carry over VERBATIM —
+   .gv-inspector below is written as a column-flex child of a column-flex
+   parent, and dropping them would be a silent regression.
+   The reduced-motion block at style.css:655 already neutralises the transition
+   for users who ask. */
+.gv-ins-rail{position:absolute;top:0;right:0;bottom:0;width:280px;z-index:6;
+  background:var(--panel);border-left:2px solid var(--line-2);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;min-height:0;transition:width var(--t-fast,120ms);}
 .gv-inspector{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto;}
 /* The handle straddles the rail's left edge, OVERHANGING the canvas. It cannot
    sit flush: absolute offsets resolve against the rail's PADDING box, so
@@ -991,7 +1006,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .gv-ins-handle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .gv-ins-handle svg{transition:transform var(--t-fast,120ms);}
 
-.gv-body[data-inspector="collapsed"] .gv-ins-rail{flex:0 0 28px;width:28px;}
+.gv-body[data-inspector="collapsed"] .gv-ins-rail{width:28px;}
 .gv-body[data-inspector="collapsed"] .gv-inspector{display:none;}
 /* 3px each side inside the 28px strip: `left` resolves against the padding box,
    which starts 1px in, so 2px — not 3 — is the centred value. */

@@ -520,3 +520,32 @@ test('style.css: an open palette grows the card instead of eating the canvas', (
   assert.match(REAL_CSS, /\.gv-drawer\[data-open="true"\]\s*~\s*\.gv-body\{[^}]*min-height:878px/,
     'and it grows by exactly the panel height while the drawer is open');
 });
+
+test('style.css: the inspector floats over the canvas instead of shrinking it', () => {
+  // position:absolute, not a flex item: the canvas keeps its full width and
+  // collapsing the rail never reflows it. z-index 6 puts the rail over the
+  // canvas decorations (.gv-empty/.gv-legend/.gv-zoom are 4) while staying under
+  // the drawer (7), so the open palette still covers the rail's top 240px.
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*position:absolute/, 'the rail is out of flow');
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*right:0/, 'flush to the canvas right edge');
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*z-index:6/, 'over the canvas, under the drawer');
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*width:280px/, 'width, not flex-basis, now sizes it');
+  assert.match(REAL_CSS, /\.gv-body\{[^}]*position:relative/,
+    'the row is the containing block the rail resolves against');
+  assert.match(REAL_CSS, /\.gv-body\[data-inspector="collapsed"\] \.gv-ins-rail\{width:28px;\}/,
+    'the collapsed rule sizes by width too — flex-basis no longer applies');
+});
+
+test('style.css: both seams read as deliberate 2px edges', () => {
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*border-left:2px solid var\(--line-2\)/);
+  assert.match(REAL_CSS, /\.gv-palette-scroll\{[^}]*border-bottom:2px solid var\(--line-2\)/);
+});
+
+test('style.css: the canvas decorations clear the floating rail', () => {
+  // .gv-zoom is the control a lost user reaches for; at right:20px it would sit
+  // BEHIND the rail now that the canvas runs the full width.
+  assert.match(REAL_CSS, /\.gv-body\{[^}]*--ins-w:280px/);
+  assert.match(REAL_CSS, /\.gv-body\[data-inspector="collapsed"\]\{--ins-w:28px;\}/);
+  assert.match(REAL_CSS, /\.gv-zoom\{[^}]*right:calc\(var\(--ins-w\) \+ 20px\)/);
+  assert.match(REAL_CSS, /\.gv-empty\{[^}]*left:calc\(50% - var\(--ins-w\) \/ 2\)/);
+});
