@@ -164,25 +164,24 @@ test('re-entering the composer re-syncs the default against the LIVE editor', as
     'initComposer() re-ran syncDefault() against the editor that is actually loaded');
 });
 
-test('app.js hands canvasInsetTop to BOTH createComposerEditor call sites', () => {
+test('app.js hands canvasInsetRight to BOTH createComposerEditor call sites', () => {
   // composerLoadTemplate() destroys the editor and builds a fresh one on every
-  // "New canvas" and every saved-pipeline open. Miss it and the spawn and fit
-  // fixes silently stop applying — and no DOM assertion can see it, because
-  // jsdom reports a zero-height canvas rect, which clamps the inset to 0.
-  // Source text is the house pattern for exactly this (test/ui-run-flow-css.test.mjs).
+  // "New canvas" and every saved-pipeline open. Miss it and the fix silently
+  // stops applying — and no DOM assertion can see it, because jsdom reports a
+  // zero-width rail, which clamps the inset to 0. Source text is the house
+  // pattern for exactly this (test/ui-run-flow-css.test.mjs).
   const APP = readFileSync(appPath, 'utf8');
   const sites = APP.match(/createComposerEditor\(\{/g) || [];
   assert.equal(sites.length, 2, 'initComposer() and composerLoadTemplate()');
-  const wired = APP.match(/canvasInsetTop: \(\) => \(composer\.chrome \? composer\.chrome\.canvasInsetTop\(\) : 0\)/g) || [];
-  assert.equal(wired.length, 2, 'both sites, or the fix stops applying after a template load');
-  assert.match(APP, /import \{ createComposerChrome \} from '\.\/graph\/composer-chrome\.mjs';/);
-});
-
-test('app.js hands canvasInsetRight to BOTH createComposerEditor call sites', () => {
-  // Same trap as canvasInsetTop above, and equally invisible to a DOM
-  // assertion: jsdom reports a zero-width rail, which clamps the inset to 0.
-  const APP = readFileSync(appPath, 'utf8');
   const wired = APP.match(/canvasInsetRight: \(\) => \(composer\.chrome \? composer\.chrome\.canvasInsetRight\(\) : 0\)/g) || [];
   assert.equal(wired.length, 2, 'both sites, or the fix stops applying after a template load');
+  assert.match(APP, /import \{ createComposerChrome \} from '\.\/graph\/composer-chrome\.mjs';/);
   assert.match(APP, /insRail: composer\.els\.insRail/, 'and the chrome can measure the rail');
+});
+
+test('app.js no longer corrects for a top overlay', () => {
+  // The palette moved into its own in-flow card, so there is no overlay left to
+  // clear. A returning `canvasInsetTop:` here would mean the drawer came back.
+  const APP = readFileSync(appPath, 'utf8');
+  assert.equal(/canvasInsetTop/.test(APP), false, 'nothing covers the canvas from above');
 });

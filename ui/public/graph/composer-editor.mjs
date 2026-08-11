@@ -92,7 +92,6 @@ function paletteDomains(pal) {
  * @param {Element} [opts.dialogHost] where the save <dialog> is mounted
  * @param {HTMLButtonElement} [opts.saveButton]
  * @param {HTMLInputElement} [opts.filter]
- * @param {Function} [opts.canvasInsetTop] px of canvas hidden under open chrome (the top drawer)
  * @param {Function} [opts.canvasInsetRight] px of canvas hidden under the floating inspector rail
  * @param {Function} opts.portsFn     the SYNTHESIZING ports function
  * @param {Array} [opts.agents]       mergePalette entries
@@ -108,7 +107,6 @@ export function createComposerEditor({
   dialogHost = null,
   saveButton = null,
   filter = null,
-  canvasInsetTop = () => 0,
   canvasInsetRight = () => 0,
   portsFn,
   agents = [],
@@ -470,17 +468,15 @@ export function createComposerEditor({
     return node;
   }
 
-  // The top drawer OVERLAYS the canvas, so the raw rect's centre can sit behind
-  // it — a pill-spawned node would land under the panel that was just clicked.
-  // Centre on the VISIBLE band instead. The default inset is 0, which is the
-  // pre-drawer arithmetic exactly.
+  // The palette lives in its own card BELOW the canvas card, so nothing covers
+  // the canvas from above and the rect's vertical centre IS the visible centre.
+  // The inspector rail still floats over the RIGHT edge, so that inset stays.
   function centerWorld() {
     const r = canvas.getBoundingClientRect();
     const h = r.height || 0;
     const w = r.width || 0;
-    const inset = Math.min(Math.max(canvasInsetTop() || 0, 0), h);
     const insetR = Math.min(Math.max(canvasInsetRight() || 0, 0), w);
-    const c = toWorld(r.left + (w - insetR) / 2, r.top + inset + (h - inset) / 2);
+    const c = toWorld(r.left + (w - insetR) / 2, r.top + h / 2);
     return { x: c.x - NODE_W / 2, y: c.y - 60 };
   }
 
@@ -540,17 +536,15 @@ export function createComposerEditor({
     const b = fitBounds(boxes, 60);
     if (!b || !b.w || !b.h) return;
     const r = canvas.getBoundingClientRect();
+    // Only the right edge is covered now — the floating inspector rail. Fit into
+    // the band it leaves, then park the graph at the true top of the canvas.
+    // Under jsdom r.width is 0, so the clamp yields 0 and the `|| 960` fallback
+    // is the old arithmetic.
     const insetR = Math.min(Math.max(canvasInsetRight() || 0, 0), r.width || 0);
     const vw = (r.width || 960) - insetR;
     const vh = r.height || 600;
-    // Same overlay problem as centerWorld: without the inset, "fit to screen"
-    // parks the top of the graph under the open panel — and the zoom cluster is
-    // bottom-right, so it is exactly the button a stuck user reaches for. Fit
-    // into the visible band, then push the origin below the panel. Under jsdom
-    // r.height is 0, so the clamp yields 0 and this is the old arithmetic.
-    const inset = Math.min(Math.max(canvasInsetTop() || 0, 0), r.height || 0);
-    const zoom = clamp(Math.round(Math.min(vw / b.w, (vh - inset) / b.h) * 100) / 100, ZOOM_MIN, ZOOM_MAX);
-    setTransform({ x: -b.x * zoom, y: -b.y * zoom + inset, zoom });
+    const zoom = clamp(Math.round(Math.min(vw / b.w, vh / b.h) * 100) / 100, ZOOM_MIN, ZOOM_MAX);
+    setTransform({ x: -b.x * zoom, y: -b.y * zoom, zoom });
   }
 
   function runAutoLayout() {
