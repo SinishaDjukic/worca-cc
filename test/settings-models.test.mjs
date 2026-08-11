@@ -14,14 +14,20 @@ import { EFFORTS } from '../src/core/model-env.mjs';
 
 // Sandbox the home so settingsFile() resolves into a temp dir. These tests
 // never open the DB, so (unlike settings.test.mjs) no WORCA_HOME/db handling
-// is needed — the settings module reads HOME fresh per call.
+// is needed — the settings module reads HOME fresh per call. The catalog
+// read/write guard requires WORCA_TEST_ALLOW_HOME_FALLBACK once HOME is
+// sandboxed (same contract as settings.test.mjs).
 async function withSandbox(fn) {
   const home = await mkdtemp(join(tmpdir(), 'worca-cc-models-'));
-  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const prev = {
+    HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE,
+    WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK,
+  };
   process.env.HOME = home; process.env.USERPROFILE = home;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   try { return await fn(home); }
   finally {
-    for (const k of ['HOME', 'USERPROFILE']) {
+    for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
       if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
     }
     await rm(home, { recursive: true, force: true });

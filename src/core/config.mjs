@@ -204,6 +204,7 @@ function composeCatalog(projectCustom = []) {
  * raw id); global entries advertise their configured subset.
  */
 export async function listModels(projectDir) {
+  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global only
   const { customModels } = readRaw(projectDir);
   return composeCatalog(customModels);
 }

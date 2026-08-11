@@ -38,7 +38,10 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
+  globalModelRefs, removeGlobalModelAndRefs,
 } from '../src/core/config.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
+import { modelEnvRef } from '../src/core/model-env.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -1805,13 +1808,14 @@ app.post('/api/settings', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/config', async (req, res) => {
   const raw = req.query.projectDir;
-  // No project selected yet (e.g. a fresh clone): still return the built-in
-  // models so the picker is never empty. Custom models are per-project, so the
-  // project-less response carries only the predefined Opus/Sonnet/Haiku set.
+  // No project selected yet (e.g. a fresh clone): still return the catalog so
+  // the picker is never empty. The project-less catalog is predefined ⊕ GLOBAL
+  // entries (the global catalog is project-independent by design §4.2); only
+  // legacy per-project custom models need a projectDir.
   if (raw == null || raw === '') {
-    const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
     return res.json({
-      config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS,
+      config: { steps: {}, customModels: [] },
+      models: await listModels(''), steps: agentSteps(), efforts: EFFORTS,
     });
   }
   const projectDir = resolveProjectDir(raw);
@@ -1860,11 +1864,10 @@ app.post('/api/config', async (req, res) => {
 // PATCH /api/config -> write run-config: per-node model/effort, per-feedback
 // cycle counts, and the active workflow id. Keyed by workflowId + node/feedback
 // instance ids (see RunConfig in the design). Legacy per-role `steps` are
-// written via POST /api/config and are left untouched here. NOTE: the run-config
-// setters do NOT reject unknown models/efforts, and setFeedbackCycles COERCES
-// maxCycles to >= 1 (it never throws) — so the try/catch below guards I/O, not
-// validation. (Optional hardening: validate model/effort in setNodeModel via
-// listModels + EFFORTS, mirroring setStep at config.mjs:141-153.)
+// written via POST /api/config and are left untouched here. setNodeModel now
+// validates model/effort against the effective catalog exactly like setStep
+// (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
+// maxCycles to >= 1 (it never throws).
 // body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
@@ -1900,19 +1903,10 @@ app.patch('/api/config', async (req, res) => {
   }
 });
 
-app.post('/api/config/models', async (req, res) => {
-  const body = req.body || {};
-  const projectDir = resolveProjectDir(body.projectDir);
-  if (!projectDir) return badRequest(res, 'projectDir is required');
-  try {
-    await addCustomModel(projectDir, { id: body.id, label: body.label });
-    res.json({ models: await listModels(projectDir) });
-  } catch (err) {
-    // addCustomModel throws only on validation (empty/duplicate/shadow) -> 400.
-    return badRequest(res, err && err.message ? err.message : String(err));
-  }
-});
-
+// POST /api/config/models (the per-project ADD) is deliberately GONE: new
+// models are added to the GLOBAL catalog via POST /api/models (design §4.9 —
+// the add flow moves entirely to the global Models view). DELETE stays so
+// legacy per-project entries can still be cleaned up.
 app.delete('/api/config/models', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -1923,6 +1917,74 @@ app.delete('/api/config/models', async (req, res) => {
     res.json({ config, models: await listModels(projectDir) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Global model catalog (configurable-models-design.md §4.10). Project-less by
+// design — the catalog lives in ~/.worca-cc/settings.json (settings.mjs) and
+// applies to every project. Env VALUES are secrets-adjacent: responses carry
+// them MASKED (write-only editing; a whole-value ${VAR} ref is config, not a
+// secret, and passes through readable), and a PATCH that echoes a masked value
+// back means "keep" and is dropped from the write.
+// ---------------------------------------------------------------------------
+
+const maskEnvValue = (v) =>
+  (modelEnvRef(v) ? v : (v.length > 8 ? `••••••${v.slice(-4)}` : '••••••'));
+const maskedGlobalModel = (m) => (m.env
+  ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
+  : m);
+const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
+const maskedGlobalModels = () => listGlobalModels().map(maskedGlobalModel);
+
+app.get('/api/models', (req, res) => {
+  res.json({ models: maskedGlobalModels(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });
+});
+
+app.post('/api/models', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env });
+    res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
+  } catch (err) {
+    // addGlobalModel throws only on validation (empty/dup id, unknown effort,
+    // reserved env key, non-string env value) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+app.patch('/api/models/:id', async (req, res) => {
+  const b = req.body || {};
+  // Write-only env: strip masked echoes (unchanged values a client sent back)
+  // so they read as "keep", never as a literal '••…' secret. env: null still
+  // means "clear the whole map" and passes through untouched.
+  let env = b.env;
+  if (env && typeof env === 'object' && !Array.isArray(env)) {
+    env = Object.fromEntries(Object.entries(env).filter(([, v]) => !isMaskedEcho(v)));
+  }
+  try {
+    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env });
+    res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
+  } catch (err) {
+    // updateGlobalModel throws only on validation (unknown id, unknown effort,
+    // reserved env key) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Preview what deleting a global entry would clear (feeds the confirmation
+// dialog; design §4.5). Unknown ids just report empty refs — preview never 400s.
+app.get('/api/models/:id/refs', (req, res) => {
+  res.json(globalModelRefs(req.params.id));
+});
+
+app.delete('/api/models/:id', async (req, res) => {
+  try {
+    const result = await removeGlobalModelAndRefs(req.params.id);
+    res.json({ ...result, models: maskedGlobalModels() });
+  } catch (err) {
+    // Throws only on an unknown id -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 

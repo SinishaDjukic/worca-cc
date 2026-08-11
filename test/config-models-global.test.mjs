@@ -23,7 +23,10 @@ import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
 const dirs = [];
-const prevEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_HOME: process.env.WORCA_HOME };
+const prevEnv = {
+  HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_HOME: process.env.WORCA_HOME,
+  WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK,
+};
 async function freshStores() {
   const home = await mkdtemp(join(tmpdir(), 'worca-cc-gm-home-'));
   const whome = await mkdtemp(join(tmpdir(), 'worca-cc-gm-whome-'));
@@ -31,6 +34,7 @@ async function freshStores() {
   _resetForTests();
   process.env.HOME = home; process.env.USERPROFILE = home;
   process.env.WORCA_HOME = whome;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1'; // catalog guard: HOME is sandboxed above
 }
 async function freshProject() {
   const d = await mkdtemp(join(tmpdir(), 'worca-cc-gm-proj-'));
@@ -40,7 +44,7 @@ async function freshProject() {
 beforeEach(freshStores);
 after(async () => {
   _resetForTests();
-  for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME']) {
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));

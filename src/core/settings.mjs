@@ -459,6 +459,12 @@ function sanitizeGlobalModel(raw) {
  * throws.
  */
 export function listGlobalModels() {
+  // Under the node:test runner the real ~/.worca-cc/settings.json must not
+  // leak models into tests (mirrors projects.mjs#worcaHome's guard): treat the
+  // catalog as EMPTY unless the test sandboxes HOME/USERPROFILE itself and
+  // says so via WORCA_TEST_ALLOW_HOME_FALLBACK. Reads never throw, so empty —
+  // not an error — is the degradation.
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return [];
   const raw = readSettings().models;
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
@@ -514,6 +520,17 @@ function assertEnvPairs(env, { allowNull = false } = {}) {
   return { ...env };
 }
 
+/** Catalog WRITES under node:test would hit the user's REAL settings.json —
+ *  throw unless the test sandboxes HOME and opts in (worcaHome-guard mirror). */
+function assertTestSettingsAccess() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) {
+    throw new Error(
+      'global model catalog write under the node:test runner — sandbox HOME/USERPROFILE ' +
+      'and set WORCA_TEST_ALLOW_HOME_FALLBACK=1 (tests must never touch the real ~/.worca-cc)'
+    );
+  }
+}
+
 /** The MINIMAL stored shape for validated parts (see section comment). */
 function storedModelShape(id, label, efforts, env) {
   return {
@@ -543,6 +560,7 @@ function rawModels(settings) {
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
 export async function addGlobalModel({ id, label, efforts, env } = {}) {
+  assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
   const vefforts = assertEfforts(efforts);
@@ -565,6 +583,7 @@ export async function addGlobalModel({ id, label, efforts, env } = {}) {
  * @throws {Error} on an unknown id or invalid input
  */
 export async function updateGlobalModel(id, { label, efforts, env } = {}) {
+  assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -603,6 +622,7 @@ export async function updateGlobalModel(id, { label, efforts, env } = {}) {
  * @throws {Error} on an unknown id
  */
 export async function removeGlobalModel(id) {
+  assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
   const models = rawModels(settings);

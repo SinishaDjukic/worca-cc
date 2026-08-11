@@ -14,7 +14,10 @@ import { addGlobalModel } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 const dirs = [];
-const prevEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_HOME: process.env.WORCA_HOME };
+const prevEnv = {
+  HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_HOME: process.env.WORCA_HOME,
+  WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK,
+};
 beforeEach(async () => {
   const home = await mkdtemp(join(tmpdir(), 'worca-cc-med-home-'));
   const whome = await mkdtemp(join(tmpdir(), 'worca-cc-med-whome-'));
@@ -22,10 +25,11 @@ beforeEach(async () => {
   _resetForTests();
   process.env.HOME = home; process.env.USERPROFILE = home;
   process.env.WORCA_HOME = whome;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1'; // catalog guard: HOME is sandboxed above
 });
 after(async () => {
   _resetForTests();
-  for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME']) {
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
