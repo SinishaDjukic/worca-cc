@@ -70,7 +70,7 @@ import {
   probeClaudeCapabilities,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels } from './config.mjs';
+import { resolveStepModels, observeModelCost } from './config.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
@@ -2689,7 +2689,9 @@ class Orchestrator extends EventEmitter {
       cycle,
       isEntry: stepIndex === 0,
       extras: this.extrasFiles || [],
-      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey, uiPhase: node.uiPhase || node.key }),
+      // `model` rides along so the result-event handler can attribute cost
+      // reliability (§4.6) to the DISPATCHED model without re-resolving it.
+      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey, uiPhase: node.uiPhase || node.key, model: node.model || this.claude.model }),
       claudeOpts: {
         bin: this.claude.bin,
         permissionMode: this.claude.permissionMode,
@@ -2789,6 +2791,22 @@ class Orchestrator extends EventEmitter {
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
       this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
+    }
+
+    // §4.6 cost-reliability observation: only terminal result events of REAL
+    // runs, only for the dispatched model (attr.model — the legacy role path
+    // carries no attr and is skipped), and only env-routed models inside
+    // observeModelCost. One warning per model per run; the observation itself
+    // is derived state and must never fail the run.
+    if (e.raw && e.raw.type === 'result' && !this.claude.mock && attr?.model) {
+      try {
+        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.raw.usage);
+        if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
+          this._costUnreliableWarned.add(attr.model);
+          this._log('orchestrator', 'warn',
+            `model "${attr.model}" reported no cost despite token usage (custom endpoint) — USD budget enforcement cannot see this spend`, attr);
+        }
+      } catch { /* derived state — never fail the run over it */ }
     }
 
     // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id

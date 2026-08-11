@@ -38,7 +38,7 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
-  globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel,
+  globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef } from '../src/core/model-env.mjs';
@@ -1935,7 +1935,13 @@ const maskedGlobalModel = (m) => (m.env
   ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
   : m);
 const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
-const maskedGlobalModels = () => listGlobalModels().map(maskedGlobalModel);
+const maskedGlobalModels = () => {
+  const flagged = costUnreliableModelIds(); // §4.6 observed flag, merged for the editor's badge
+  return listGlobalModels().map((m) => ({
+    ...maskedGlobalModel(m),
+    ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
+  }));
+};
 
 app.get('/api/models', (req, res) => {
   res.json({ models: maskedGlobalModels(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });

@@ -175,19 +175,23 @@ export async function readConfig(projectDir) {
 function composeCatalog(projectCustom = []) {
   const globals = listGlobalModels();
   const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
+  const flagged = costUnreliableModelIds();
   const out = [];
   const seen = new Set();
+  const unreliable = (lc) => (flagged.has(lc) ? { costUnreliable: true } : {});
   for (const m of PREDEFINED_MODELS) {
-    const shadow = globalByIdLc.get(m.id.toLowerCase());
+    const lc = m.id.toLowerCase();
+    const shadow = globalByIdLc.get(lc);
     out.push(shadow
-      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env }
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, ...unreliable(lc) }
       : { ...m, custom: false, hasEnv: false });
-    seen.add(m.id.toLowerCase());
+    seen.add(lc);
   }
   for (const m of globals) {
-    if (seen.has(m.id.toLowerCase())) continue; // predefined shadow, already emitted
-    seen.add(m.id.toLowerCase());
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env });
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc)) continue; // predefined shadow, already emitted
+    seen.add(lc);
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, ...unreliable(lc) });
   }
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global wins
@@ -195,6 +199,67 @@ function composeCatalog(projectCustom = []) {
     out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false });
   }
   return out;
+}
+
+// ── cost-reliability observations (design §4.6) ───────────────────────────────
+// DERIVED state in the central DB (model_cost_flags): an env-routed endpoint
+// that reports no cost while consuming tokens gets flagged; a later positive-
+// cost run of the same model auto-clears it. Never assumed from config alone —
+// a proxy that reports real costs is never badged.
+
+/** Whether the model's GLOBAL entry declares an ANTHROPIC_BASE_URL override
+ *  (directly or as a ${VAR} ref — key presence is the signal). Only such
+ *  models are ever observed; the direct Anthropic path is never flagged. */
+export function modelHasBaseUrlRouting(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return false;
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === id.toLowerCase());
+  return !!(entry && entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
+}
+
+/** Lowercased ids currently flagged cost-unreliable. Never throws ({} on any
+ *  DB trouble) — reads feed catalog composition, which must never fail. */
+export function costUnreliableModelIds() {
+  try {
+    getDb();
+    return new Set(prepare('SELECT model_id FROM model_cost_flags').all()
+      .map((r) => String(r.model_id).toLowerCase()));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Evaluate one terminal result event for cost reliability (design §4.6).
+ * Applies ONLY to models with base-URL routing; the caller must already have
+ * excluded mock runs. `usage` is the raw result event's usage object.
+ * @param {string} modelId
+ * @param {number|null} costUsd  the reported cost (null when absent)
+ * @param {object} [usage]
+ * @returns {'flagged'|'cleared'|null} what changed — 'flagged' asks the caller
+ *   to surface its one-per-run warning; null = no observation recorded
+ */
+export function observeModelCost(modelId, costUsd, usage) {
+  if (!modelHasBaseUrlRouting(modelId)) return null;
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const tokens = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+    .reduce((n, k) => n + (Number(u[k]) || 0), 0);
+  const id = String(modelId).trim();
+  getDb();
+  if (Number.isFinite(costUsd) && costUsd > 0) {
+    // Positive cost = the endpoint reports real spend — auto-clear.
+    const cleared = prepare('DELETE FROM model_cost_flags WHERE model_id = ?').run(id).changes > 0;
+    return cleared ? 'cleared' : null;
+  }
+  if (tokens > 0) {
+    // Tokens consumed, cost absent/zero — the USD budget cannot see this spend.
+    prepare(`
+      INSERT INTO model_cost_flags (model_id, flagged_at) VALUES (?, ?)
+      ON CONFLICT(model_id) DO NOTHING
+    `).run(id, new Date().toISOString());
+    return 'flagged';
+  }
+  return null; // no cost AND no tokens (e.g. an errored run) — no signal either way
 }
 
 /**

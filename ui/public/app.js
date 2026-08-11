@@ -811,7 +811,10 @@ function nodeModelLine(node) {
   const effort = node.effort || '';
   if (!model && !effort) return 'default';
   const m = modelById(model);
-  const modelLabel = model ? (m ? m.label : model) : 'default';
+  // ⚠ = the model has an OBSERVED cost-unreliable flag (§4.6): its endpoint
+  // reported no cost while consuming tokens, so this node's cost readout may
+  // under-report.
+  const modelLabel = model ? (m ? m.label : model) + (m && m.costUnreliable ? ' ⚠' : '') : 'default';
   return `${modelLabel} · ${effort || 'default'}`;
 }
 
@@ -2591,7 +2594,10 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // Model dropdown: "(default model)" + every model + "+ Add model…".
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
-  state.models.forEach((m) => modelSel.appendChild(option(m.id, m.label + (m.custom === 'project' ? ' ·project' : m.custom ? ' ·custom' : ''))));
+  state.models.forEach((m) => modelSel.appendChild(option(m.id,
+    m.label
+    + (m.custom === 'project' ? ' ·project' : m.custom ? ' ·custom' : '')
+    + (m.costUnreliable ? ' ⚠cost' : '')))); // §4.6 observed "cost not verified"
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 

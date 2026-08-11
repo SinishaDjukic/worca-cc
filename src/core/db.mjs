@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -537,6 +537,18 @@ CREATE TABLE IF NOT EXISTS cost_ledger (
 CREATE INDEX IF NOT EXISTS idx_cost_ledger_ts ON cost_ledger (ts);
 `;
 
+/** v17: per-model cost-reliability observations (configurable-models-design.md
+ *  §4.6). DERIVED state, not user config (which is why it lives here and not in
+ *  settings.json): a row means an env-routed model reported no/zero cost while
+ *  consuming tokens; the row is deleted when a later run reports a positive
+ *  cost. COLLATE NOCASE mirrors the catalog's case-insensitive id semantics. */
+const MODEL_COST_FLAGS_DDL = `
+CREATE TABLE IF NOT EXISTS model_cost_flags (
+  model_id   TEXT PRIMARY KEY COLLATE NOCASE,
+  flagged_at TEXT NOT NULL
+);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -589,11 +601,15 @@ function schemaGaps(db) {
   const hasCostLedger = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
   ).get().n > 0;
+  const hasModelCostFlags = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='model_cost_flags'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
     guardrailSetsTable: !hasGuardrailSets,
     costLedgerTable: !hasCostLedger,
+    modelCostFlagsTable: !hasModelCostFlags,
   };
 }
 
@@ -606,6 +622,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
   if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
   if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
+  if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
 }
 
 /**
@@ -622,7 +639,7 @@ function repairSchemaGaps(db, gaps) {
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable) return; // clean — no lock
+      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -773,6 +790,7 @@ export function migrate(db) {
     if (current < 14) applySchemaV14(db);
     if (current < 15) applySchemaV15(db);
     if (current < 16) applySchemaV16(db);
+    if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
