@@ -45,7 +45,10 @@ class WSStub {
   _open() { (this._listeners.open || []).forEach((fn) => fn({})); }
 }
 
-async function boot() {
+/** @param {object} [opts]
+ *  @param {object} [opts.storage] localStorage seed, written BEFORE app.js is
+ *    evaluated so it is in place however early initComposer() runs. */
+async function boot({ storage = null } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -68,6 +71,7 @@ async function boot() {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* jsdom-only key */ }
   }
   globalThis.window = window; globalThis.document = window.document;
+  if (storage) for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
   await import(appPath + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   if (WSStub.last) WSStub.last._open();
@@ -82,17 +86,38 @@ const goComposer = async (window) => {
   for (let i = 0; i < 4; i += 1) await tick();
 };
 
-test('the chrome is constructed and the inspector opens by default', async () => {
+test('the inspector opens by default without writing a preference', async () => {
   const window = await boot();
   await goComposer(window);
   const doc = window.document;
 
   assert.ok(doc.querySelector('#composer-palette .ap'),
     'guard: the palette actually rendered, so the composer really booted');
+  // index.html already SHIPS open/true, so these two only pin the fixture and
+  // the default agreeing — deleting createComposerChrome() would not move them.
+  // The seeded sibling below is what proves the module ran; the last assertion
+  // here is the live one, and it covers the no-storage path that seeding cannot.
   assert.equal(doc.querySelector('#composer-body').dataset.inspector, 'open');
   assert.equal(doc.querySelector('#composer-inspector-toggle').getAttribute('aria-expanded'), 'true');
   assert.equal(window.localStorage.getItem('worca-cc.composer.inspector'), null,
     'a first-visit default is not a stored preference');
+});
+
+test('the chrome is constructed: a stored collapse is restored on the first paint', async () => {
+  // Every assertion here is the OPPOSITE of what index.html ships, the same
+  // trick the chrome's own unit SHELL uses. Delete the createComposerChrome()
+  // call in initComposer() and all three fail — which is the wiring mistake
+  // this file exists to catch and which the default-path test above cannot see.
+  const window = await boot({ storage: { 'worca-cc.composer.inspector': 'collapsed' } });
+  await goComposer(window);
+  const doc = window.document;
+
+  assert.ok(doc.querySelector('#composer-palette .ap'),
+    'guard: the palette actually rendered, so the composer really booted');
+  const toggle = doc.querySelector('#composer-inspector-toggle');
+  assert.equal(doc.querySelector('#composer-body').dataset.inspector, 'collapsed');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.getAttribute('aria-label'), 'Expand inspector');
 });
 
 test('the chrome outlives the editor swap and is bound exactly once', async () => {

@@ -297,10 +297,11 @@ export function createComposerEditor({
       sec.hidden = !g.flow && collapsed.has(g.domain);
       frag.appendChild(sec);
     }
-    // paletteHost IS the 240px drawer scroll container now. replaceChildren()
+    // paletteHost IS the palette card's own 300px scroll container
+    // (.gv-palette-scroll), not a wrapper inside it. replaceChildren()
     // collapses scrollHeight, which clamps scrollTop to 0 — so a pill click
-    // would bounce the panel to the top and throw the pinned Flow group out of
-    // reach, after every single spawn. The emitted markup is unchanged.
+    // would bounce the list back to the top and throw the pinned Flow group out
+    // of reach, after every single spawn. The emitted markup is unchanged.
     const keepScroll = paletteHost.scrollTop;
     paletteHost.replaceChildren(frag);
     if (keepScroll) paletteHost.scrollTop = keepScroll;

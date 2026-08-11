@@ -62,11 +62,20 @@ export function createComposerChrome({
 
   /** Escape inside a non-empty filter clears it and stops there.
    *
-   *  Bound on the FILTER, not the document: the editor already owns a
-   *  document-level Escape (deselect, composer-editor.mjs:686), and a second
-   *  document listener would fire both. stopPropagation runs ONLY when this
-   *  handler actually consumed the key, so an Escape in an empty field still
-   *  reaches the editor and still deselects.
+   *  Bound on the FILTER, not the document, so it runs in the TARGET phase and
+   *  decides per keystroke whether the key travels on. stopPropagation runs
+   *  ONLY when this handler actually consumed the key, and that condition is
+   *  load-bearing: app.js owns document-level Escape handlers for the viewer
+   *  modal, the confirm dialog, the project-add modal, the info tip, the plugin
+   *  wizard and the folder browser among others, and none of them skip typing
+   *  targets. Swallowing every Escape the focused filter sees would strand all
+   *  of them open. Those listeners are all BUBBLE-phase, which is the only
+   *  reason stopPropagation() from here suppresses them when it does fire.
+   *
+   *  What the pass-through does NOT preserve is the editor's deselect: its
+   *  onKeyDown (composer-editor.mjs) bails at isTyping(ev.target) before ever
+   *  reaching its Escape branch for any INPUT, so an Escape on this filter
+   *  never deselects — empty field or not. Confirmed in a real browser.
    *
    *  preventDefault is load-bearing: the field is input[type=search], which
    *  Blink and WebKit clear on Escape themselves. Suppressing that keeps the

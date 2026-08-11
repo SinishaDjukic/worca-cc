@@ -97,7 +97,7 @@ test('Escape clears a non-empty filter and goes no further', () => {
   assert.equal(ev.defaultPrevented, true,
     'preventDefault stops the UA clearing input[type=search] a second time');
   assert.equal(reachedDocument, 0,
-    'and it does not also reach the editor document-level deselect');
+    'and no document-level Escape handler sees it');
 });
 
 test('the clear fires a synthetic input so the editor re-filters', () => {
@@ -109,10 +109,13 @@ test('the clear fires a synthetic input so the editor re-filters', () => {
   assert.equal(inputs, 1, 'applyFilter() re-runs exactly once');
 });
 
-test('Escape in an EMPTY filter passes straight through to the editor', () => {
-  // The editor owns a document-level Escape (deselect). Swallowing it here
-  // whenever the field has focus would break deselect for anyone who tabbed
-  // into the filter and back out of their selection.
+test('Escape in an EMPTY filter still reaches the document', () => {
+  // app.js owns document-level Escape handlers for the viewer modal, the
+  // confirm dialog, the project-add modal, the info tip, the plugin wizard and
+  // the folder browser among others, and none of them skip typing targets.
+  // Swallowing every Escape the focused filter sees would strand all of them
+  // open. NOT the editor's deselect: its onKeyDown bails at isTyping() before
+  // its Escape branch for any INPUT, so this key never deselects either way.
   const { window, els } = boot();
   els.filter.value = '';
   let reachedDocument = 0;
@@ -120,7 +123,7 @@ test('Escape in an EMPTY filter passes straight through to the editor', () => {
 
   const ev = esc(window, els.filter);
   assert.equal(ev.defaultPrevented, false);
-  assert.equal(reachedDocument, 1, 'the editor still gets its deselect');
+  assert.equal(reachedDocument, 1, 'the modal and dialog handlers still get their Escape');
 });
 
 test('the inspector defaults to open when nothing is stored', () => {
@@ -261,11 +264,19 @@ test('index.html: the body row is the canvas card\'s only child', () => {
 });
 
 test('style.css: the palette is in flow, fixed height, with its own scrollbar', () => {
-  assert.equal(/\.gv-drawer/.test(REAL_CSS), false, 'every drawer rule is gone');
+  // Comments are stripped first: the guard is about SELECTORS, so prose stays
+  // free to name the drawer when explaining what replaced it.
+  assert.equal(/\.gv-drawer/.test(REAL_CSS.replace(/\/\*[\s\S]*?\*\//g, '')), false,
+    'every drawer rule is gone');
   assert.match(REAL_CSS, /\.gv-palette-card\{padding:0;overflow:hidden;display:flex;flex-direction:column;\}/,
     'same column-flex shape as .builder-card, and padding:0 beats .card{padding:24px}');
   assert.match(REAL_CSS, /\.gv-palette-scroll\{height:300px;overflow-y:auto;padding:14px 18px 8px;\}/,
     'height, NOT max-height, and no position/top/left/right/shadow — it overlays nothing');
+  // Paired constants: .pal-pinned bleeds sideways by exactly the scroll
+  // container's gutter to reach the card edge. Change one number without the
+  // other and the pinned band sits inset or overhangs.
+  assert.match(REAL_CSS, /\.pal-pinned\{[^}]*margin:0 -18px;padding:13px 18px 15px/,
+    "the pinned band's bleed matches .gv-palette-scroll's 18px gutter");
 });
 
 test('style.css: the three composer cards are 22px apart', () => {
@@ -285,8 +296,10 @@ test('style.css: the canvas keeps exactly the height it had', () => {
 });
 
 test('style.css: nothing pushes the canvas empty state down any more', () => {
+  // No whole-file negative on the old `top:264px` here: it was a bare magic
+  // number any unrelated rule could legitimately reuse, and the `.gv-drawer`
+  // guard above already covers the selector that carried it.
   assert.match(REAL_CSS, /\.gv-empty\{[^}]*top:24px/);
-  assert.equal(/top:264px/.test(REAL_CSS), false, 'the drawer clearance override is gone');
 });
 
 test('index.html: the collapse handle is a SIBLING of the inspector host', () => {
@@ -327,7 +340,7 @@ test('style.css: the inspector floats over the canvas instead of shrinking it', 
   // above it now that the drawer is gone.
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*position:absolute/, 'the rail is out of flow');
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*right:0/, 'flush to the canvas right edge');
-  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*z-index:6/, 'over the canvas, under the drawer');
+  assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*z-index:6/, 'over the canvas decorations');
   assert.match(REAL_CSS, /\.gv-ins-rail\{[^}]*width:280px/, 'width, not flex-basis, now sizes it');
   assert.match(REAL_CSS, /\.gv-body\{[^}]*position:relative/,
     'the row is the containing block the rail resolves against');

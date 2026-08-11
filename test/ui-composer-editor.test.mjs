@@ -791,9 +791,9 @@ test('successive pill spawns cascade instead of stacking on one pixel', () => {
 });
 
 // --- the inspector floats over the canvas ------------------------------------
-// The rail is position:absolute (style.css:978), so the canvas rect is WIDER
-// than the visible band by the rail's width. Same shape of fix as the drawer's
-// top inset, and the same jsdom caveat: every rect is stubbed.
+// The rail is position:absolute (.gv-ins-rail in style.css), so the canvas rect
+// is WIDER than the visible band by the rail's width, and spawn/fit have to
+// subtract the difference. The jsdom caveat: every rect here is stubbed.
 
 test('a palette spawn clears the floating rail when canvasInsetRight reports one', () => {
   // Identity transform on a fresh canvas, so client coords are world coords.
