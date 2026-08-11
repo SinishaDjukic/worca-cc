@@ -764,7 +764,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    .card{padding:24px} on source order. NOTE: spec §4.1 says 684; it is off by
    the drawer's border. */
 .builder-card{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:685px;}
-.gv-body{flex:1 1 auto;display:flex;min-height:0;}
+/* The row owns the height, not the card. min-height:0 is gone on purpose: that
+   flag exists to let a flex child shrink below its content, and nothing in this
+   row wants to — the canvas is overflow:hidden and the rail is absolutely
+   positioned (see the inspector block below).
+   638 is the collapsed canvas height the card's 685px was built around
+   (685 - 2 card borders - 45 drawer). The open panel is absolute and covers the
+   row's top 240px, so the row grows by 240 for the UNCOVERED band to stay 638:
+   the card then measures 2 + 45 + 878 = 925. The canvas's TOP edge never moves
+   in either state — only its bottom — so every pointer handler that reads
+   rect.top/rect.left is unaffected, including during a light dismiss that
+   collapses the drawer mid-pointerdown. */
+.gv-body{flex:1 1 auto;display:flex;min-height:638px;}
+.gv-drawer[data-open="true"] ~ .gv-body{min-height:878px;}
 
 /* ---------- top agent drawer ---------- */
 /* z-index 7, not 5: .gv-chip is z-index:6 (style.css:803) and NOTHING between it

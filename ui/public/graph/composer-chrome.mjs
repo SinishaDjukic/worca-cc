@@ -102,9 +102,12 @@ export function createComposerChrome({
    *  editor binds pointerdown on the canvas only (composer-editor.mjs:745), so
    *  without this a third of the canvas cannot start a gesture. Deliberately
    *  does NOT persist: a canvas press is a statement about the graph, not a
-   *  disclosure decision — the same rule as a pill click. Closing does not
-   *  reflow (the panel is absolutely positioned), so the editor's own
-   *  onPointerDown, running next on this same event, reads an unchanged rect. */
+   *  disclosure decision — the same rule as a pill click. Closing now DOES
+   *  reflow (the body row is 240px shorter with the drawer shut,
+   *  style.css:778), but only its BOTTOM edge moves: the canvas still starts
+   *  45px below the card top, so the editor's own onPointerDown, running next
+   *  on this same event, reads an unchanged rect.left/rect.top and toWorld()
+   *  stays accurate. */
   function onCanvasPointerDown() {
     if (isOpen()) setDrawer(false);
   }

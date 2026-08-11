@@ -508,3 +508,15 @@ test('index.html: the collapse arrow points the way the panel travels', () => {
   assert.ok(path, 'the handle still ships an inline chevron');
   assert.equal(path.getAttribute('d'), 'M9 6l6 6-6 6');
 });
+
+test('style.css: an open palette grows the card instead of eating the canvas', () => {
+  // The panel is position:absolute and covers the body row's top 240px. For the
+  // UNCOVERED band to equal the collapsed height, the row itself has to be 240
+  // taller: 638 + 240 = 878, and 45 (bar + its border) + 878 + 2 card borders
+  // = 925. The `~` selector is why index.html's drawer-before-body ordering is
+  // load-bearing — the test above pins that ordering.
+  assert.match(REAL_CSS, /\.gv-body\{[^}]*min-height:638px/,
+    'the body row, not the card, owns the collapsed height');
+  assert.match(REAL_CSS, /\.gv-drawer\[data-open="true"\]\s*~\s*\.gv-body\{[^}]*min-height:878px/,
+    'and it grows by exactly the panel height while the drawer is open');
+});
