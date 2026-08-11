@@ -1669,6 +1669,7 @@ async function initComposer() {
   composer.els.drawerTog = $('#composer-drawer-toggle');
   composer.els.body      = $('#composer-body');
   composer.els.insTog = $('#composer-inspector-toggle');
+  composer.els.insRail = $('#composer-ins-rail');
 
   // Constructed ONCE, and BEFORE the palette await: a stored 'closed' preference
   // has to be applied on the first paint, not after a network round-trip. The
@@ -1685,6 +1686,7 @@ async function initComposer() {
       filter: composer.els.filter,
       body: composer.els.body,
       insToggle: composer.els.insTog,
+      insRail: composer.els.insRail,
       hasAgents: () => Boolean(
         composer.editor?.template?.()?.nodes?.some((n) => n.kind === 'agent'),
       ),
@@ -1703,6 +1705,7 @@ async function initComposer() {
       saveButton: composer.els.save,
       filter: composer.els.filter,
       canvasInsetTop: () => (composer.chrome ? composer.chrome.canvasInsetTop() : 0),
+      canvasInsetRight: () => (composer.chrome ? composer.chrome.canvasInsetRight() : 0),
       portsFn: composerPortsFn,
       agents: composer.palette,
       models: state.models,
@@ -1754,6 +1757,7 @@ function composerLoadTemplate(tpl) {
     saveButton: composer.els.save,
     filter: composer.els.filter,
     canvasInsetTop: () => (composer.chrome ? composer.chrome.canvasInsetTop() : 0),
+    canvasInsetRight: () => (composer.chrome ? composer.chrome.canvasInsetRight() : 0),
     portsFn: composerPortsFn,
     agents: composer.palette,
     models: state.models,

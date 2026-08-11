@@ -52,7 +52,7 @@ function memStorage(seed = {}) {
   };
 }
 
-function boot({ storage = memStorage(), hasAgents = () => false, panelHeight = 240 } = {}) {
+function boot({ storage = memStorage(), hasAgents = () => false, panelHeight = 240, railWidth = 280 } = {}) {
   const dom = new JSDOM(SHELL, { url: 'http://localhost:4317/' });
   const { window } = dom;
   const doc = window.document;
@@ -66,15 +66,20 @@ function boot({ storage = memStorage(), hasAgents = () => false, panelHeight = 2
     body: doc.getElementById('body'),
     insToggle: doc.getElementById('ins-toggle'),
     inspector: doc.getElementById('inspector'),
+    rail: doc.getElementById('rail'),
   };
   // jsdom answers zeros for every rect, so the panel's height is stubbed.
   els.panel.getBoundingClientRect = () => ({
     height: panelHeight, width: 1046, top: 44, left: 0, right: 1046, bottom: 44 + panelHeight,
   });
+  // …and so is the floating rail's width.
+  els.rail.getBoundingClientRect = () => ({
+    width: railWidth, height: 638, top: 0, left: 1046 - railWidth, right: 1046, bottom: 638,
+  });
   const chrome = createComposerChrome({
     drawer: els.drawer, toggle: els.toggle, panel: els.panel,
     canvas: els.canvas, filter: els.filter,
-    body: els.body, insToggle: els.insToggle, storage, hasAgents,
+    body: els.body, insToggle: els.insToggle, insRail: els.rail, storage, hasAgents,
   });
   return { window, doc, els, chrome, storage };
 }
@@ -548,4 +553,22 @@ test('style.css: the canvas decorations clear the floating rail', () => {
   assert.match(REAL_CSS, /\.gv-body\[data-inspector="collapsed"\]\{--ins-w:28px;\}/);
   assert.match(REAL_CSS, /\.gv-zoom\{[^}]*right:calc\(var\(--ins-w\) \+ 20px\)/);
   assert.match(REAL_CSS, /\.gv-empty\{[^}]*left:calc\(50% - var\(--ins-w\) \/ 2\)/);
+});
+
+test('canvasInsetRight() reports the floating rail width, collapsed or not', () => {
+  // Deliberately NOT gated on data-inspector: the rail is always present, and
+  // its collapsed 28px still covers the canvas's right edge. The number comes
+  // off the live element, so the two states need no duplicated constants here.
+  const { chrome } = boot({ railWidth: 280 });
+  assert.equal(chrome.canvasInsetRight(), 280);
+
+  const narrow = boot({ railWidth: 28 });
+  assert.equal(narrow.chrome.canvasInsetRight(), 28);
+});
+
+test('canvasInsetRight() is 0 when no rail is wired', () => {
+  // app.js passes null for a partial DOM, and every pre-inset test constructs
+  // the chrome without one — 0 has to mean "the old arithmetic".
+  const chrome = createComposerChrome({ storage: memStorage() });
+  assert.equal(chrome.canvasInsetRight(), 0);
 });

@@ -177,3 +177,12 @@ test('app.js hands canvasInsetTop to BOTH createComposerEditor call sites', () =
   assert.equal(wired.length, 2, 'both sites, or the fix stops applying after a template load');
   assert.match(APP, /import \{ createComposerChrome \} from '\.\/graph\/composer-chrome\.mjs';/);
 });
+
+test('app.js hands canvasInsetRight to BOTH createComposerEditor call sites', () => {
+  // Same trap as canvasInsetTop above, and equally invisible to a DOM
+  // assertion: jsdom reports a zero-width rail, which clamps the inset to 0.
+  const APP = readFileSync(appPath, 'utf8');
+  const wired = APP.match(/canvasInsetRight: \(\) => \(composer\.chrome \? composer\.chrome\.canvasInsetRight\(\) : 0\)/g) || [];
+  assert.equal(wired.length, 2, 'both sites, or the fix stops applying after a template load');
+  assert.match(APP, /insRail: composer\.els\.insRail/, 'and the chrome can measure the rail');
+});

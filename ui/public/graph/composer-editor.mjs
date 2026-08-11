@@ -93,6 +93,7 @@ function paletteDomains(pal) {
  * @param {HTMLButtonElement} [opts.saveButton]
  * @param {HTMLInputElement} [opts.filter]
  * @param {Function} [opts.canvasInsetTop] px of canvas hidden under open chrome (the top drawer)
+ * @param {Function} [opts.canvasInsetRight] px of canvas hidden under the floating inspector rail
  * @param {Function} opts.portsFn     the SYNTHESIZING ports function
  * @param {Array} [opts.agents]       mergePalette entries
  * @param {object|null} [opts.template] a template to load; null = new canvas
@@ -108,6 +109,7 @@ export function createComposerEditor({
   saveButton = null,
   filter = null,
   canvasInsetTop = () => 0,
+  canvasInsetRight = () => 0,
   portsFn,
   agents = [],
   template = null,
@@ -475,8 +477,10 @@ export function createComposerEditor({
   function centerWorld() {
     const r = canvas.getBoundingClientRect();
     const h = r.height || 0;
+    const w = r.width || 0;
     const inset = Math.min(Math.max(canvasInsetTop() || 0, 0), h);
-    const c = toWorld(r.left + (r.width || 0) / 2, r.top + inset + (h - inset) / 2);
+    const insetR = Math.min(Math.max(canvasInsetRight() || 0, 0), w);
+    const c = toWorld(r.left + (w - insetR) / 2, r.top + inset + (h - inset) / 2);
     return { x: c.x - NODE_W / 2, y: c.y - 60 };
   }
 
@@ -536,7 +540,8 @@ export function createComposerEditor({
     const b = fitBounds(boxes, 60);
     if (!b || !b.w || !b.h) return;
     const r = canvas.getBoundingClientRect();
-    const vw = r.width || 960;
+    const insetR = Math.min(Math.max(canvasInsetRight() || 0, 0), r.width || 0);
+    const vw = (r.width || 960) - insetR;
     const vh = r.height || 600;
     // Same overlay problem as centerWorld: without the inset, "fit to screen"
     // parks the top of the graph under the open panel — and the zoom cluster is

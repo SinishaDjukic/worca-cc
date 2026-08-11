@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { portsFnFor, validateGraph, resolveOrOutType } from '../ui/public/graph/graph-model.mjs';
 import { EMBEDDED_AGENTS, mergePalette } from '../ui/public/graph/agents-meta.mjs';
-import { portAnchor, SNAP } from '../ui/public/graph/graph-geometry.mjs';
+import { portAnchor, SNAP, NODE_W } from '../ui/public/graph/graph-geometry.mjs';
 import { LEGEND_TEXT } from '../ui/public/graph/graph-view.mjs';
 import { createComposerEditor } from '../ui/public/graph/composer-editor.mjs';
 
@@ -35,7 +35,7 @@ const SHELL = `<!doctype html><body>
   <button id="save" type="button">Save pipeline</button>
 </body>`;
 
-function boot({ template = null, onSave = () => {}, agents = palette, canvasInsetTop } = {}) {
+function boot({ template = null, onSave = () => {}, agents = palette, canvasInsetTop, canvasInsetRight } = {}) {
   const dom = new JSDOM(SHELL, { url: 'http://localhost:4317/' });
   const { window } = dom;
   const doc = window.document;
@@ -60,6 +60,7 @@ function boot({ template = null, onSave = () => {}, agents = palette, canvasInse
     template,
     onSave,
     canvasInsetTop,
+    canvasInsetRight,
   });
   return { window, doc, els, editor };
 }
@@ -805,4 +806,53 @@ test('successive pill spawns cascade instead of stacking on one pixel', () => {
   const c = ctx.editor.spawn({ key: 'planner' }, { x: a.x, y: a.y });
   assert.deepEqual({ x: c.x, y: c.y }, { x: a.x, y: a.y },
     'spawn(entry, at) still places exactly where it is told');
+});
+
+// --- the inspector floats over the canvas ------------------------------------
+// The rail is position:absolute (style.css:978), so the canvas rect is WIDER
+// than the visible band by the rail's width. Same shape of fix as the drawer's
+// top inset, and the same jsdom caveat: every rect is stubbed.
+
+test('a palette spawn clears the floating rail when canvasInsetRight reports one', () => {
+  // Identity transform on a fresh canvas, so client coords are world coords.
+  // centerWorld() subtracts NODE_W/2 = 110, then spawn() snaps to the 11px
+  // half-grid. freeSlot() cannot perturb these: it only steps off nodes sitting
+  // on the EXACT snapped slot, and newCanvas()'s Task (x:60) and End (x:960)
+  // are unsnapped authored coordinates.
+  const spawnX = (insetR) => {
+    const ctx = boot({ canvasInsetRight: insetR });
+    ctx.els.canvas.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600,
+    });
+    return ctx.editor.spawn({ key: 'planner' }).x;
+  };
+
+  // inset 0   -> centre x 400, minus 110 -> snap(290) = 286
+  assert.equal(spawnX(undefined), 286, 'the default is byte-for-byte the old behaviour');
+  // inset 200 -> centre of the VISIBLE band is (800-200)/2 = 300 -> snap(190) = 187
+  assert.equal(spawnX(() => 200), 187, 'the node lands left of the floating rail');
+});
+
+test('fit() fits into the band the floating rail leaves visible', () => {
+  // Assertion-by-property, not by magic number: what matters is that the
+  // rightmost card paints CLEAR of the rail, whatever the zoom works out to.
+  const rect = { left: 0, top: 0, width: 800, height: 640, right: 800, bottom: 640 };
+  const fitted = (insetR) => {
+    const ctx = boot({ canvasInsetRight: insetR });
+    ctx.els.canvas.getBoundingClientRect = () => rect;
+    ctx.editor.fit();
+    const t = ctx.editor.transform();
+    const right = Math.max(...ctx.editor.template().nodes.map((n) => n.x + NODE_W));
+    return { t, screenRight: right * t.zoom + t.x };
+  };
+
+  // A literal, NOT fitted(() => 0): both of those run the NEW code with inset 0,
+  // so comparing them to each other could never fail. This is the number
+  // today's fit() produces for a fresh Task+End canvas in an 800x640 rect.
+  assert.deepEqual(fitted(undefined).t, { x: -0, y: -91, zoom: 0.65 },
+    'no inset is byte-for-byte the pre-rail fit');
+  assert.ok(fitted(() => 0).screenRight > 600,
+    'guard: without the inset the graph really does run under a 200px rail');
+  assert.ok(fitted(() => 200).screenRight <= 600,
+    'with the inset the rightmost card clears it');
 });

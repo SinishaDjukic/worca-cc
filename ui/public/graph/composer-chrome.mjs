@@ -39,9 +39,10 @@ function writeKey(storage, key, value) {
  * @param {Element}  [opts.filter]    #composer-agent-filter — Escape stage 1, auto-open
  * @param {Element}  [opts.body]      #composer-body — carries data-inspector
  * @param {Element}  [opts.insToggle] #composer-inspector-toggle
+ * @param {Element}  [opts.insRail]  #composer-ins-rail — measured for the right inset
  * @param {Storage}  [opts.storage]   defaults to globalThis.localStorage
  * @param {Function} [opts.hasAgents] () => boolean, consulted ONLY while no key is stored
- * @returns {{ canvasInsetTop(): number, syncDefault(): void, destroy(): void }}
+ * @returns {{ canvasInsetTop(): number, canvasInsetRight(): number, syncDefault(): void, destroy(): void }}
  */
 export function createComposerChrome({
   drawer = null,
@@ -51,6 +52,7 @@ export function createComposerChrome({
   filter = null,
   body = null,
   insToggle = null,
+  insRail = null,
   storage = defaultStorage(),
   hasAgents = () => false,
 } = {}) {
@@ -151,6 +153,14 @@ export function createComposerChrome({
     canvasInsetTop() {
       if (!panel || !isOpen() || !panel.getBoundingClientRect) return 0;
       return panel.getBoundingClientRect().height || 0;
+    },
+    /** The rail FLOATS over the canvas's right edge (style.css:978), so the
+     *  canvas rect is wider than the visible band. No isOpen()-style guard:
+     *  unlike the palette the rail is always present, and its collapsed 28px is
+     *  a real inset. jsdom answers 0, which is the pre-inset arithmetic. */
+    canvasInsetRight() {
+      if (!insRail || !insRail.getBoundingClientRect) return 0;
+      return insRail.getBoundingClientRect().width || 0;
     },
     syncDefault,
     destroy() {
