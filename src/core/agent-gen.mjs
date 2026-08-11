@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { worcaHome } from './projects.mjs';
 import { runClaude } from './claude-runner.mjs';
+import { resolveModelEnv } from './config.mjs';
 import { normalizeMeta } from './agent-registry.mjs';
 
 const SYSTEM_PROMPT =
@@ -75,6 +76,7 @@ class AgentGen extends EventEmitter {
         allowedTools: ['Read', 'Write'],
         permissionMode: this.claude.permissionMode || 'acceptEdits',
         model: this.claude.model,
+        modelEnv: resolveModelEnv(this.claude.model), // catalog routing env (design §4.8)
         bin: this.claude.bin,
         mock: this.claude.mock,
         signal: this.abort.signal,

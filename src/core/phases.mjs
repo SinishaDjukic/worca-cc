@@ -14,6 +14,7 @@
 // prompt so the system prompt is never empty. Interface is locked by docs/ARCHITECTURE.md §3.5.
 
 import { runClaude } from './claude-runner.mjs';
+import { resolveModelEnv } from './config.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
@@ -420,6 +421,12 @@ function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     permissionMode: c.permissionMode || 'acceptEdits',
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
+    // Per-model routing env (design §4.4), resolved HERE — the one funnel every
+    // dispatched node/role passes through — so _phaseCtx/_nodeCtx and the
+    // workspace-scan path all inherit it without per-caller edits. undefined
+    // when the model carries no env (or no model is set), keeping the spawn
+    // env byte-identical.
+    modelEnv: resolveModelEnv(c.model),
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical

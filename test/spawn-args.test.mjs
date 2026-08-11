@@ -360,3 +360,92 @@ test('runClaude with envScrub off inherits the parent env (legacy parity)', asyn
   }
   assert.ok((await readFile(out, 'utf8')).includes('WORCA_TEST_LEAK=inherited'));
 });
+
+// ── configurable models: modelEnv (design §4.4) ──────────────────────────────
+// Same drop-at-runClaude hazard as every other field, PLUS the merge table:
+//   scrub off + modelEnv -> { ...process.env, ...modelEnv } (still inherits)
+//   scrub on  + modelEnv -> { ...scrubbed, ...modelEnv }   (survives scrub)
+//   reserved keys        -> re-dropped defensively at the spawn
+//   absent/empty         -> byte-identical env (inherit / scrub as before)
+
+/** Run against the env-dumping fake bin with WORCA_MOCK cleared; returns the dump. */
+async function runWithEnvDump(extraOpts, { leak } = {}) {
+  const dir = await tmp();
+  const out = join(dir, 'env.txt');
+  const bin = await fakeEnvBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  const prevLeak = process.env.WORCA_TEST_LEAK;
+  delete process.env.WORCA_MOCK;
+  if (leak !== undefined) process.env.WORCA_TEST_LEAK = leak;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', ...extraOpts });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevLeak === undefined) delete process.env.WORCA_TEST_LEAK; else process.env.WORCA_TEST_LEAK = prevLeak;
+  }
+  return readFile(out, 'utf8');
+}
+
+test('runClaude FORWARDS modelEnv into the spawn env; parent env still inherited (scrub off)', async () => {
+  const dump = await runWithEnvDump(
+    { modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' } },
+    { leak: 'inherited' },
+  );
+  assert.ok(dump.includes('ANTHROPIC_BASE_URL=https://proxy.test/v1'), 'modelEnv reached the child');
+  assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), 'still inherits process.env around it');
+});
+
+test('modelEnv SURVIVES env scrub and WINS collisions with the ambient env', async () => {
+  const prevUrl = process.env.ANTHROPIC_BASE_URL;
+  process.env.ANTHROPIC_BASE_URL = 'https://ambient.example';
+  let dump;
+  try {
+    dump = await runWithEnvDump(
+      { envScrub: true, envAllowlist: [], modelEnv: { ANTHROPIC_BASE_URL: 'https://model.example' } },
+      { leak: 'should-not-appear' },
+    );
+  } finally {
+    if (prevUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
+    else process.env.ANTHROPIC_BASE_URL = prevUrl;
+  }
+  assert.ok(dump.includes('ANTHROPIC_BASE_URL=https://model.example'), 'model env wins the collision');
+  assert.ok(!dump.includes('https://ambient.example'), 'ambient value is gone');
+  assert.ok(!dump.includes('WORCA_TEST_LEAK'), 'scrub still applies to everything else');
+  assert.ok(dump.includes('PATH='), 'scrub base env intact');
+});
+
+test('reserved modelEnv keys are re-dropped at the spawn (defense-in-depth, with a warning)', async () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  let dump;
+  try {
+    dump = await runWithEnvDump({
+      modelEnv: { WORCA_MOCK: '1', PATH: '/evil', ANTHROPIC_BASE_URL: 'https://ok.example' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.ok(dump.includes('ANTHROPIC_BASE_URL=https://ok.example'), 'legit key still lands');
+  assert.ok(!dump.includes('WORCA_MOCK=1'), 'reserved WORCA_ key dropped (would subvert mock mode)');
+  assert.ok(!dump.includes('PATH=/evil'), 'PATH override dropped');
+  assert.ok(dump.includes(`PATH=${process.env.PATH}`), 'parent PATH intact');
+  assert.equal(warnings.filter((w) => w.includes('modelEnv')).length, 2, `one warn per dropped key: ${JSON.stringify(warnings)}`);
+});
+
+test('absent/empty modelEnv keeps the spawn env byte-identical (inherit path)', async () => {
+  for (const extra of [{}, { modelEnv: {} }, { modelEnv: undefined }]) {
+    const dump = await runWithEnvDump(extra, { leak: 'inherited' });
+    assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), `inherits for ${JSON.stringify(extra)}`);
+  }
+});
+
+test('runClaude mock path is unaffected by modelEnv (no spawn, no error)', async () => {
+  const dir = await tmp();
+  const r = await runClaude({
+    cwd: dir, mock: true, onEvent: () => {},
+    prompt: 'MOCK_ROLE: implementer\nMOCK_IN: /plan.md',
+    modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test' },
+  });
+  assert.equal(r.exitCode, 0);
+});
