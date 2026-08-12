@@ -6593,6 +6593,73 @@ async function refreshModelsEverywhere() {
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
+// Copy a stored env value to the clipboard — the REAL value, not the mask.
+// The user already owns it on disk (~/.worca-cc/settings.json); the reveal is
+// a deliberate single-value GET, keyed by the row's STORED key (dataset.key,
+// frozen at render), so it works even after the key input was edited.
+async function copyModelEnvValue(btn) {
+  const row = btn.closest('.mv-env-row');
+  const editor = btn.closest('.mv-editor');
+  const id = editor && editor.dataset.id;
+  const key = row && row.dataset.key;
+  if (!id || !key) return;
+  const flash = (text) => {
+    const prev = btn.textContent;
+    btn.textContent = text;
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  };
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value?key=${encodeURIComponent(key)}`);
+    const data = await safeJson(res);
+    if (!res.ok) return flash('!');
+    await navigator.clipboard.writeText(data.value);
+    flash('✓');
+  } catch {
+    flash('!');
+  }
+}
+
+// "Show values" toggle: swap every UNTOUCHED masked input to the real stored
+// value (fetched raw), and back. User-edited inputs are never clobbered in
+// either direction. dataset.original tracks what "untouched" means so the
+// write-only PATCH semantics keep working: a revealed raw value echoed on
+// save just rewrites the same value.
+async function toggleModelEnvReveal(btn) {
+  const editor = btn.closest('.mv-editor');
+  const id = editor && editor.dataset.id;
+  if (!id) return;
+  const rows = editor.querySelectorAll('.mv-env-row[data-key]');
+  if (btn.dataset.on) {
+    for (const row of rows) {
+      const v = row.querySelector('.mv-env-val');
+      if (v && v.dataset.masked !== undefined && v.value === v.dataset.original) {
+        v.value = v.dataset.masked;
+        v.dataset.original = v.dataset.masked;
+        delete v.dataset.masked;
+      }
+    }
+    delete btn.dataset.on;
+    btn.textContent = 'Show values';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value`);
+    const data = await safeJson(res);
+    if (!res.ok || !data.env) return;
+    for (const row of rows) {
+      const v = row.querySelector('.mv-env-val');
+      const key = row.dataset.key;
+      if (!v || !(key in data.env)) continue;
+      if (v.value !== v.dataset.original) continue; // user edited — keep their text
+      v.dataset.masked = v.dataset.original;
+      v.value = data.env[key];
+      v.dataset.original = data.env[key];
+    }
+    btn.dataset.on = '1';
+    btn.textContent = 'Hide values';
+  } catch { /* reveal is best-effort */ }
+}
+
 async function saveModelEditorFlow() {
   const rootEl = el.modelsList && el.modelsList.querySelector('.mv-editor');
   if (!rootEl) return;
@@ -6678,6 +6745,10 @@ if (el.modelsList) {
     } else if (t.classList.contains('mv-env-rm')) {
       const row = t.closest('.mv-env-row');
       if (row) row.remove();
+    } else if (t.classList.contains('mv-env-copy')) {
+      copyModelEnvValue(t);
+    } else if (t.classList.contains('mv-env-reveal')) {
+      toggleModelEnvReveal(t);
     } else if (t.classList.contains('mv-save')) {
       saveModelEditorFlow();
     }

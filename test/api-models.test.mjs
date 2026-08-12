@@ -113,6 +113,24 @@ test('PATCH /api/models/:id: write-only env — masked echoes mean KEEP, null de
   assert.equal(raw.env.X_REF, undefined, 'null deleted the key');
 });
 
+test('GET /api/models/:id/env-value reveals raw values (per key and whole map); GET surface stays masked', async () => {
+  const one = await jfetch(`/api/models/glm-4.7/env-value?${q({ key: 'ANTHROPIC_AUTH_TOKEN' })}`);
+  assert.equal(one.status, 200);
+  assert.deepEqual(one.body, { key: 'ANTHROPIC_AUTH_TOKEN', value: 'sk-live-abcdef1234' });
+
+  const all = await jfetch('/api/models/glm-4.7/env-value');
+  assert.equal(all.status, 200);
+  assert.equal(all.body.env.ANTHROPIC_AUTH_TOKEN, 'sk-live-abcdef1234');
+  assert.equal(all.body.env.ANTHROPIC_BASE_URL, 'https://new.example', 'reflects the earlier PATCH');
+
+  assert.equal((await jfetch(`/api/models/nope/env-value`)).status, 400);
+  assert.equal((await jfetch(`/api/models/glm-4.7/env-value?${q({ key: 'NOT_THERE' })}`)).status, 400);
+
+  // The reveal endpoint does not weaken the default surface.
+  const masked = (await jfetch('/api/models')).body.models.find((m) => m.id === 'glm-4.7');
+  assert.match(masked.env.ANTHROPIC_AUTH_TOKEN, /^••/);
+});
+
 test('PATCH /api/models/:id: unknown id and reserved key -> 400', async () => {
   assert.equal((await patch('/api/models/nope', { label: 'x' })).status, 400);
   assert.equal((await patch('/api/models/glm-4.7', { env: { WORCA_MOCK: '1' } })).status, 400);

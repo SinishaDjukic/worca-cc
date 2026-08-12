@@ -113,7 +113,10 @@ export function renderModelsList({ globals = [], legacy = [], predefined = [], e
 }
 
 /** One env key/value editor row. Existing values arrive MASKED; leaving a
- *  masked value untouched means "keep" (the server drops masked echoes). */
+ *  masked value untouched means "keep" (the server drops masked echoes).
+ *  STORED rows (a key was persisted) also get a copy button that fetches the
+ *  RAW value — the user owns it on disk anyway (design note: same trust
+ *  boundary as ~/.worca-cc/settings.json, made deliberate by the click). */
 function envRow(doc, key = '', value = '') {
   const row = h(doc, 'div', 'mv-env-row');
   const k = h(doc, 'input', 'input mv-env-key');
@@ -121,9 +124,19 @@ function envRow(doc, key = '', value = '') {
   const v = h(doc, 'input', 'input mv-env-val');
   v.type = 'text'; v.placeholder = 'value, or ${VAR} to read your shell env'; v.value = value;
   if (value) v.dataset.original = value; // masked echo detection on collect
+  row.appendChild(k); row.appendChild(v);
+  if (key) {
+    // The STORED key, frozen at render time — the copy must reveal what is on
+    // disk even after the user edits the key input.
+    row.dataset.key = key;
+    const cp = h(doc, 'button', 'btn-ghost mv-env-copy', '⧉');
+    cp.type = 'button';
+    cp.title = 'Copy the real (unmasked) value';
+    row.appendChild(cp);
+  }
   const rm = h(doc, 'button', 'btn-ghost mv-env-rm', '✕');
   rm.type = 'button';
-  row.appendChild(k); row.appendChild(v); row.appendChild(rm);
+  row.appendChild(rm);
   return row;
 }
 
@@ -186,7 +199,17 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
     'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved.'));
-  grid.appendChild(add);
+  const envBtns = h(doc, 'div', 'mv-env-btns');
+  envBtns.appendChild(add);
+  if (rows.length) {
+    // Reveal toggle: swaps the masked inputs to the REAL stored values (the
+    // user owns them on disk in ~/.worca-cc/settings.json). app.js wires it.
+    const reveal = h(doc, 'button', 'btn-ghost mv-env-reveal', 'Show values');
+    reveal.type = 'button';
+    reveal.title = 'Reveal the real stored values';
+    envBtns.appendChild(reveal);
+  }
+  grid.appendChild(envBtns);
 
   root.appendChild(grid);
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');

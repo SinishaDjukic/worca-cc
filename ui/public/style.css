@@ -1392,3 +1392,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mv-env-row .mv-env-rm{flex:0 0 auto;padding:6px 10px;}
 .mv-env-add{justify-self:start;padding:7px 12px;font-size:12px;}
 .mv-editor-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+.mv-env-row .mv-env-copy{flex:0 0 auto;padding:6px 10px;}
+.mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
+.mv-env-btns .btn-ghost{padding:7px 12px;font-size:12px;}

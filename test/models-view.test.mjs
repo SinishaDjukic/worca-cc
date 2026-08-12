@@ -89,6 +89,24 @@ test('editor (edit): id locked, efforts reflect the entry, masked env rows carry
   assert.equal(el.dataset.envKeys, 'ANTHROPIC_BASE_URL\nANTHROPIC_AUTH_TOKEN\nX_REF');
 });
 
+test('editor (edit): stored env rows carry a copy button + frozen data-key and a reveal toggle; create mode has neither', () => {
+  const el = renderModelEditor(GLOBAL, EFFORTS, { doc });
+  const rows = [...el.querySelectorAll('.mv-env-row')];
+  for (const row of rows) {
+    assert.ok(row.dataset.key, 'stored row keeps its persisted key');
+    assert.ok(row.querySelector('.mv-env-copy'), 'stored row gets a copy button');
+  }
+  assert.equal(rows[1].dataset.key, 'ANTHROPIC_AUTH_TOKEN');
+  assert.ok(el.querySelector('.mv-env-reveal'), 'reveal toggle present when stored rows exist');
+  assert.equal(el.querySelector('.mv-env-reveal').textContent, 'Show values');
+
+  const created = renderModelEditor(null, EFFORTS, { doc });
+  assert.equal(created.querySelector('.mv-env-reveal'), null, 'nothing to reveal in create mode');
+  const fresh = makeEnvRow({ doc });
+  assert.equal(fresh.querySelector('.mv-env-copy'), null, 'a NEW row has no stored value to copy');
+  assert.equal(fresh.dataset.key, undefined);
+});
+
 test('collect (create): id from input, partial efforts, env rows as typed; full effort set collapses to []', () => {
   const el = renderModelEditor(null, EFFORTS, { doc });
   el.querySelector('.mv-id').value = '  my-model  ';

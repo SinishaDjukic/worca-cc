@@ -2001,6 +2001,20 @@ app.get('/api/models/:id/refs', (req, res) => {
   res.json(globalModelRefs(req.params.id));
 });
 
+// Reveal raw env value(s) for the editor's copy button and Show-values toggle.
+// The default GET surface stays masked (accidental exposure in screenshots/
+// devtools); this is a deliberate read of what the user already owns on disk
+// in ~/.worca-cc/settings.json — same trust boundary, explicit action.
+// ?key=K -> { key, value }; no key -> { env } (the whole raw map).
+app.get('/api/models/:id/env-value', (req, res) => {
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === String(req.params.id).toLowerCase());
+  if (!entry) return badRequest(res, `unknown model id ${JSON.stringify(req.params.id)}`);
+  const key = typeof req.query.key === 'string' ? req.query.key : '';
+  if (!key) return res.json({ env: { ...(entry.env || {}) } });
+  if (!entry.env || !(key in entry.env)) return badRequest(res, `model has no env key ${JSON.stringify(key)}`);
+  res.json({ key, value: entry.env[key] });
+});
+
 app.delete('/api/models/:id', async (req, res) => {
   try {
     const result = await removeGlobalModelAndRefs(req.params.id);
