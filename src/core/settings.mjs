@@ -394,6 +394,54 @@ export const setPipelineCostLimitUsd = (input) => setUsdCap('pipelineCostLimitUs
 /** @throws {Error} unless `input` is a positive number (or empty, which clears). */
 export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', input);
 
+// ── chat notification preferences (chat-connectivity-design.md §4.5) ─────────
+
+const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
+
+/**
+ * Effective chat notification prefs. Every event defaults ON; channels default
+ * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
+ * {enabled:false} is the opt-out record).
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>}}
+ */
+export function chatPrefs() {
+  const raw = readSettings().chat;
+  const chat = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const notify = {};
+  for (const ev of CHAT_NOTIFY_EVENTS) notify[ev] = chat.notify?.[ev] !== false;
+  const channels = {};
+  for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
+    channels[key] = { enabled: v?.enabled !== false };
+  }
+  return { notify, channels };
+}
+
+/**
+ * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?},
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}}. Unknown notify keys are
+ * rejected (400 at the API layer); channels merge per key.
+ */
+export async function setChatPrefs(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
+  for (const k of Object.keys(patch.notify || {})) {
+    if (!CHAT_NOTIFY_EVENTS.includes(k)) throw new Error(`unknown chat notify event "${k}"`);
+  }
+  const settings = readSettings();
+  const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
+  settings.chat = {
+    ...cur,
+    ...(patch.notify ? { notify: { ...cur.notify, ...Object.fromEntries(Object.entries(patch.notify).map(([k, v]) => [k, v !== false])) } } : {}),
+    ...(patch.channels ? {
+      channels: {
+        ...cur.channels,
+        ...Object.fromEntries(Object.entries(patch.channels).map(([k, v]) => [k, { enabled: v?.enabled !== false }])),
+      },
+    } : {}),
+  };
+  await persistSettings(settings);
+  return chatPrefs();
+}
+
 /** @throws {Error} unless `input` is 'weekly' | 'monthly' (or empty, which resets). */
 export async function setCostLimitResetPeriod(input) {
   assertResetPeriodInput(input);

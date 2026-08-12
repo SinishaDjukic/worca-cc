@@ -29,6 +29,7 @@ import {
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  chatPrefs, setChatPrefs,
 } from '../src/core/settings.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
@@ -75,6 +76,8 @@ import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core
 import { createChannelHost } from '../src/core/chat/channel-host.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
+import { createNotifier } from '../src/core/chat/notifier.mjs';
+import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
@@ -384,6 +387,14 @@ function subscribe(orch, name, handler) {
 
 function wireRun(entry) {
   const { id, orch } = entry;
+
+  // Chat notifications ride the same per-run subscription (design §4.5): every
+  // creation site that wires a run gets chat fan-out for free. Scans/agent-gens
+  // use their own wire* helpers and are deliberately not notified.
+  if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
+    try { chatNotifier.attach(orch, { runId: id, entry }); }
+    catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
+  }
 
   const record = (event) => {
     // bufferEvent tags runId LAST so the runs-Map key always wins. The
@@ -958,6 +969,13 @@ const channelHost = createChannelHost({
   logger: (level, msg) => console.error(`[worca-ui] ${msg}`),
   onInbound: (ev) => { handleChatInbound(ev); },
   onStatus: (ev) => { try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ } },
+});
+
+const chatNotifier = createNotifier({
+  channelHost,
+  getPrefs: chatPrefs,
+  chatContext,
+  logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
 });
 
 /** Best-effort worker restart after any plugin mutation (enable/disable,
@@ -1862,7 +1880,7 @@ const settingsState = () => ({
 });
 
 app.get('/api/settings', (_req, res) => {
-  res.json(settingsState());
+  res.json({ ...settingsState(), chat: chatPrefs() });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -1886,6 +1904,7 @@ app.post('/api/settings', async (req, res) => {
   }
   try {
     assertCostLimitInputs(budget);
+    if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
     }
@@ -1894,11 +1913,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     // Legacy contract: a POST that names no known key clears root. Budget keys
     // must not trip it — a budget-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey)) {
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey || has('chat'))) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (hasBudgetKey) emitChanged('budget-changed');
-    res.json(settingsState());
+    res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
     return badRequest(res, err && err.message ? err.message : String(err));
@@ -2786,6 +2805,31 @@ function isTruthy(v) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
+// ---------------------------------------------------------------------------
+// /api/chat* -> channel worker status + test delivery (design §4.8). Prefs ride
+// GET/POST /api/settings; per-plugin channel CONFIG rides /api/plugins/:name/config.
+// ---------------------------------------------------------------------------
+app.get('/api/chat/status', (_req, res) => {
+  try {
+    res.json({ channels: channelHost.status() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/chat/test', async (req, res) => {
+  const { plugin, channelId } = req.body || {};
+  if (!plugin || !channelId) return badRequest(res, 'plugin and channelId are required');
+  try {
+    res.json(await chatNotifier.sendTest(plugin, channelId, renderTest()));
+  } catch (err) {
+    // Connector-outcome convention: caller correctness -> HTTP status; delivery
+    // outcomes ride a 200 envelope elsewhere, but a missing channel/config is
+    // the caller's mistake here.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
 // SPA fallback: any unmatched GET that is not an /api or /ws path serves
 // index.html. Implemented as middleware (not a route pattern) so it does not
 // depend on path-to-regexp wildcard syntax, which differs between Express 4
@@ -2918,4 +2962,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound, chatNotifier };

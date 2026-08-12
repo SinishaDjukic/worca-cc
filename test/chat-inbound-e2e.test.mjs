@@ -23,7 +23,7 @@ const SCHEMA = [
   { key: 'allowedChatIds', type: 'text', label: 'Allowed', secret: false, required: false },
 ];
 
-let channelHost, runs;
+let channelHost, runs, app, srv, base;
 
 before(async () => {
   const cur = pluginCurrentDir(NAME);
@@ -40,12 +40,15 @@ before(async () => {
   writePluginConfig(NAME, SCHEMA, { botToken: 'sekret', allowedChatIds: '42' });
 
   const server = await import('../ui/server.mjs');
-  ({ runs } = server);
+  ({ runs, app } = server);
   ({ channelHost } = server._testing);
   channelHost.start();
+  srv = app.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  base = `http://127.0.0.1:${srv.address().port}`;
 });
 
-after(async () => { await channelHost?.stop(); delete process.env.WORCA_MOCK; });
+after(async () => { srv?.close(); await channelHost?.stop(); delete process.env.WORCA_MOCK; });
 
 const lastReplyText = () => {
   const sent = mockSentMessages();
@@ -106,4 +109,41 @@ test('a live run is visible and a gate answered from chat clears pendingQuestion
   } finally {
     runs.delete('run-e2e-77');
   }
+});
+
+test('GET /api/chat/status lists channels; POST /api/chat/test needs notifyChatIds', async () => {
+  const status = await (await fetch(`${base}/api/chat/status`)).json();
+  assert.equal(status.channels.length, 1);
+  assert.equal(status.channels[0].plugin, NAME);
+  assert.equal(status.channels[0].state, 'connected');
+
+  // no notifyChatIds configured on the fixture -> caller error 400
+  const bad = await fetch(`${base}/api/chat/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plugin: NAME, channelId: 'main' }),
+  });
+  assert.equal(bad.status, 400);
+  const missing = await fetch(`${base}/api/chat/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+  assert.equal(missing.status, 400);
+});
+
+test('settings round-trip: chat prefs ride GET/POST /api/settings without clearing root', async () => {
+  const before0 = await (await fetch(`${base}/api/settings`)).json();
+  assert.deepEqual(before0.chat.notify, { done: true, error: true, question: true, paused: true });
+  const posted = await (await fetch(`${base}/api/settings`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat: { notify: { question: false } } }),
+  })).json();
+  assert.equal(posted.chat.notify.question, false);
+  assert.equal(posted.chat.notify.done, true);
+  const after1 = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(after1.chat.notify.question, false);
+  assert.equal(after1.root, before0.root, 'a chat-only POST must not clear root (legacy contract)');
+  // restore
+  await fetch(`${base}/api/settings`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat: { notify: { question: true } } }),
+  });
 });
