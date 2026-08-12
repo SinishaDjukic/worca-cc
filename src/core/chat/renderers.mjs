@@ -106,7 +106,9 @@ export function renderQuestion(meta, payload = {}) {
     if (kind === 'recovery' && payload.recovery?.message) {
       parts.push(`   **Cause:** ${String(payload.recovery.message).slice(0, 200)}`);
     }
-    parts.push(`   Reply: /approve ${ref} to continue · /retry ${ref} for another cycle`);
+    parts.push(kind === 'gate'
+      ? `   Reply: /approve ${ref} to continue · /retry ${ref} for another cycle`
+      : `   Reply: /approve ${ref} to retry · /abort ${ref} to abort`);
     return mdMsg(parts.join('\n'), 'warning');
   }
 

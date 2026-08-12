@@ -71,7 +71,10 @@ import {
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
 import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
-import { redactedConfig, writePluginConfig } from '../src/core/plugin-config.mjs';
+import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core/plugin-config.mjs';
+import { createChannelHost } from '../src/core/chat/channel-host.mjs';
+import { createCommandRouter } from '../src/core/chat/command-router.mjs';
+import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
@@ -883,6 +886,117 @@ app.post('/api/run', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Chat connectivity (chat-connectivity-design.md): persistent channel workers
+// + inbound command router. Workers are dumb transports; every command
+// resolves here against the runs Map / DB through chatActions.
+// ---------------------------------------------------------------------------
+// Lazy: worcaHome() must not resolve at import time (tests import the app
+// before their temp WORCA_HOME hook runs); the file loads on first chat use.
+let _chatContext = null;
+const chatCtx = () => (_chatContext ??= createChatContext());
+const chatContext = {
+  get: (k) => chatCtx().get(k),
+  set: (k, patch) => chatCtx().set(k, patch),
+  isMuted: (k) => chatCtx().isMuted(k),
+  incrementMuted: (k) => chatCtx().incrementMuted(k),
+};
+
+const chatActions = {
+  listRuns: () => summarizeRuns(),
+  runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
+  pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
+  answer: (runId, id, payload) => answerRun(runId, id, payload),
+  stop: (runId) => stopRun(runId),
+  pause: (runId) => pauseRun(runId),
+  // /api/resume owns a long chain of budget/worktree/double-resume guards;
+  // reuse it verbatim over loopback (the old integrations' rest_client seam).
+  resume: async (pipelineId) => {
+    try {
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/resume`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pipelineId }),
+      });
+      const body = await r.json().catch(() => ({}));
+      return r.ok ? { ok: true, ...body } : { ok: false, error: body.error || `HTTP ${r.status}` };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  },
+  history: async ({ limit = 50 } = {}) => ((await listAllPipelines()) || []).slice(0, limit),
+  listProjects: async () => (await listProjects()).map((p) => ({ name: p.name || path.basename(p.path || ''), path: p.path })),
+};
+
+const chatRouter = createCommandRouter({
+  actions: chatActions,
+  chatContext,
+  logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+});
+
+async function handleChatInbound({ plugin, channelId, platform, msg }) {
+  const entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId);
+  if (!entry) return;
+  let replyMsg;
+  try {
+    replyMsg = await chatRouter.handleIncoming({
+      plugin, channelId, platform,
+      channelConfig: readPluginConfig(plugin, entry.configSchema),
+      msg,
+    });
+  } catch (err) {
+    console.error(`[worca-ui] chat inbound failed: ${err && err.message ? err.message : err}`);
+    return;
+  }
+  if (!replyMsg) return;
+  try {
+    await channelHost.sendMessage({ plugin, channelId, chatId: msg.chatId, message: replyMsg });
+  } catch (err) {
+    console.error(`[worca-ui] chat reply delivery failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+const channelHost = createChannelHost({
+  logger: (level, msg) => console.error(`[worca-ui] ${msg}`),
+  onInbound: (ev) => { handleChatInbound(ev); },
+  onStatus: (ev) => { try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ } },
+});
+
+/** Best-effort worker restart after any plugin mutation (enable/disable,
+ *  config save, install, update, uninstall). Never blocks the route. */
+function reloadChatWorkers(name) {
+  channelHost.reloadPlugin(name).catch((err) => {
+    console.error(`[worca-ui] chat worker reload failed for ${name}: ${err && err.message ? err.message : err}`);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Run control actions — ONE implementation shared by the HTTP routes and the
+// chat command router (chat-connectivity-design.md §4.6), so answering a gate
+// from Discord clears the question card in every browser tab exactly like the
+// UI button does (resolvePending is part of the action, not the route).
+// ---------------------------------------------------------------------------
+function answerRun(runId, id, payload) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  entry.orch.answer(id, payload);
+  resolvePending(entry, { id, reason: 'answered' });
+}
+function stopRun(runId) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  entry.orch.stop();
+  entry.status = 'stopped';
+  resolvePending(entry, { reason: 'stopped' });
+}
+function pauseRun(runId) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+  if (!ok) throw new Error('cannot pause in the current state');
+  entry.status = 'pausing';
+  resolvePending(entry, { reason: 'paused' });
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/answer  -> resolve a pending question for a run
 // body: { runId, id, payload }
 // ---------------------------------------------------------------------------
@@ -890,10 +1004,8 @@ app.post('/api/answer', (req, res) => {
   const { runId, id, payload } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
-  const entry = runs.get(runId);
   try {
-    entry.orch.answer(id, payload);
-    resolvePending(entry, { id, reason: 'answered' });
+    answerRun(runId, id, payload);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -907,11 +1019,8 @@ app.post('/api/answer', (req, res) => {
 app.post('/api/stop', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
-  const entry = runs.get(runId);
   try {
-    entry.orch.stop();
-    entry.status = 'stopped';
-    resolvePending(entry, { reason: 'stopped' });
+    stopRun(runId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -926,14 +1035,11 @@ app.post('/api/stop', (req, res) => {
 app.post('/api/pause', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
-  const entry = runs.get(runId);
   try {
-    const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
-    if (!ok) return badRequest(res, 'cannot pause in the current state');
-    entry.status = 'pausing';
-    resolvePending(entry, { reason: 'paused' });
+    pauseRun(runId);
     res.json({ ok: true });
   } catch (err) {
+    if (/cannot pause/.test(err?.message || '')) return badRequest(res, err.message);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -2372,6 +2478,7 @@ app.post('/api/plugins/install', async (req, res) => {
     const out = await installPlugin({
       repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(),
     });
+    reloadChatWorkers(body.name.trim());
     res.json(out); // { ok: true, inventory }
   } catch (err) {
     sendPluginError(res, err);
@@ -2388,7 +2495,9 @@ app.post('/api/plugins/:name/update', async (req, res) => {
     if (!(req.body && req.body.confirm === true)) {
       return res.json({ preview: await fetchCandidate(name) });
     }
-    res.json(await updatePlugin(name));
+    const updated = await updatePlugin(name);
+    reloadChatWorkers(name);
+    res.json(updated);
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -2402,6 +2511,7 @@ app.post('/api/plugins/:name/enable', (req, res) => {
   }
   try {
     setPluginEnabled(name, req.body.enabled);
+    reloadChatWorkers(name);
     res.json({ ok: true, enabled: req.body.enabled });
   } catch (err) {
     sendPluginError(res, err);
@@ -2417,6 +2527,7 @@ app.delete('/api/plugins/:name', async (req, res) => {
   const purge = isTruthy(req.query.purge) || !!(req.body && req.body.purge === true);
   try {
     await uninstallPlugin(name, { purge });
+    reloadChatWorkers(name);
     res.json({ ok: true, purged: purge });
   } catch (err) {
     sendPluginError(res, err);
@@ -2489,6 +2600,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
   if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
   try {
     writePluginConfig(name, source.configSchema, body.values);
+    reloadChatWorkers(name);
     res.json({ ok: true });
   } catch (err) {
     sendPluginError(res, err);
@@ -2788,8 +2900,22 @@ if (isMain) {
     const url = `http://${shown}:${PORT}`;
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
     console.log(`[worca-ui] WebSocket on ws://${shown}:${PORT}/ws`);
+    try { channelHost.start(); } catch (err) {
+      console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
+    }
   });
+
+  // Channel workers must die with the server (design §9: persistent-process
+  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit.
+  let shuttingDown = false;
+  const shutdownChat = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    channelHost.stop().finally(() => process.exit(signal === 'SIGINT' ? 130 : 143));
+  };
+  process.on('SIGINT', () => shutdownChat('SIGINT'));
+  process.on('SIGTERM', () => shutdownChat('SIGTERM'));
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound };

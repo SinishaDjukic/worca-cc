@@ -810,6 +810,9 @@ Usage:
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
   worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
   worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]   Debug one connector op
+  worca plugin channel <name> <channelId> [--check] [--inspect]            Run a chat channel worker in the
+                                                  foreground (typed lines = simulated inbound); --check runs
+                                                  the module's validateConfig once and exits
 
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
@@ -1270,6 +1273,44 @@ async function cmdPlugin(argv) {
         const { callSource } = await import('../core/plugin-shim.mjs');
         const result = await callSource({ plugin: name, sourceId, op, args });
         process.stdout.write(JSON.stringify(result, null, 2) + '\n'); // stdout = result ONLY
+        return 0;
+      }
+
+      case 'channel': {
+        const a = pluginArgs(rest, [], ['--check', '--inspect']);
+        const [name, channelId] = a._;
+        if (!name || !channelId) fail('Usage: worca plugin channel <name> <channelId> [--check] [--inspect]');
+        if (a.inspect) process.env.WORCA_PLUGIN_INSPECT = '1';
+        const { createChannelHost } = await import('../core/chat/channel-host.mjs');
+        if (a.check) {
+          const host = createChannelHost({ logger: () => {} });
+          const result = await host.checkChannel(name, channelId);
+          process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+          return result && result.ok ? 0 : 1;
+        }
+        // Foreground worker: redacted frames echo to stderr; typed lines become
+        // simulated inbound text so the command loop is testable offline.
+        const host = createChannelHost({
+          logger: (level, msg) => process.stderr.write(`${level}: ${msg}\n`),
+          onInbound: (ev) => process.stderr.write(`inbound: ${JSON.stringify(ev.msg)}\n`),
+          onStatus: (ev) => process.stderr.write(`status: ${ev.state}${ev.detail ? ` (${ev.detail})` : ''}\n`),
+        });
+        host.start();
+        const row = host.status().find((r) => r.plugin === name && r.channelId === channelId);
+        if (!row) { await host.stop(); fail(`no chat channel "${name}/${channelId}" — is the plugin installed and enabled?`); }
+        process.stderr.write(`worker for ${name}/${channelId} running — type text to simulate inbound, Ctrl-C to exit\n`);
+        const { createInterface } = await import('node:readline');
+        const rl = createInterface({ input: process.stdin });
+        rl.on('line', (line) => {
+          if (!line.trim()) return;
+          try { host.injectInboundMessage(name, channelId, { chatId: 'CLI', userId: 'cli', text: line.trim(), meta: {} }); }
+          catch (err) { process.stderr.write(`inject failed: ${err?.message || err}\n`); }
+        });
+        await new Promise((resolve) => {
+          process.on('SIGINT', resolve);
+          rl.on('close', resolve);
+        });
+        await host.stop();
         return 0;
       }
 
