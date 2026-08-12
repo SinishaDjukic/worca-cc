@@ -1,0 +1,67 @@
+{
+  "name": "teams-chat",
+  "version": "0.1.0",
+  "description": "Two-way Microsoft Teams channel via Bot Framework: pipeline notifications + chat commands (webhook ingress through a tunnel)",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=2 <3" },
+  "chatChannels": [
+    {
+      "id": "main",
+      "displayName": "Microsoft Teams",
+      "platform": "teams",
+      "module": "./channel/worker.mjs",
+      "ingress": "webhook",
+      "capabilities": { "inbound": true, "outbound": true },
+      "configSchema": [
+        {
+          "key": "appId",
+          "type": "text",
+          "label": "Microsoft App ID",
+          "required": true,
+          "help": "The bot's Azure app registration (Application/Client ID)."
+        },
+        {
+          "key": "appPassword",
+          "type": "text",
+          "label": "Client secret",
+          "secret": true,
+          "required": true,
+          "help": "App registration → Certificates & secrets. Or {\"$env\":\"TEAMS_APP_PASSWORD\"}."
+        },
+        {
+          "key": "tenantType",
+          "type": "select",
+          "label": "Tenant type",
+          "default": "multi-tenant",
+          "options": ["multi-tenant", "single-tenant"]
+        },
+        {
+          "key": "tenantId",
+          "type": "text",
+          "label": "Tenant ID",
+          "help": "Required for single-tenant apps: the Entra tenant GUID."
+        },
+        {
+          "key": "ingressToken",
+          "type": "text",
+          "label": "Ingress token",
+          "secret": true,
+          "required": true,
+          "help": "Any long random string — it becomes part of the public webhook URL (capability URL). e.g. `openssl rand -hex 24`."
+        },
+        {
+          "key": "notifyChatIds",
+          "type": "text",
+          "label": "Notify conversation IDs",
+          "help": "Comma-separated Teams conversation IDs for notifications. Message the bot once; the ID appears in `worca plugin channel teams-chat main` inbound frames."
+        },
+        {
+          "key": "allowedChatIds",
+          "type": "text",
+          "label": "Allowed conversation IDs (commands)",
+          "help": "Comma-separated conversation IDs allowed to send commands. EMPTY = nobody: anyone in an allowed conversation controls worca-cc."
+        }
+      ]
+    }
+  ]
+}
