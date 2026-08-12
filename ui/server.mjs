@@ -42,6 +42,7 @@ import {
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef } from '../src/core/model-env.mjs';
+import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -76,7 +77,7 @@ import {
 import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
 import { redactedConfig, writePluginConfig } from '../src/core/plugin-config.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
-import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
+import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 // discoveryInventory below needs these four — server.mjs currently imports NONE
@@ -1943,8 +1944,28 @@ const maskedGlobalModels = () => {
   }));
 };
 
+/** Read-only plugin model entries (design §9.7): literals masked with the
+ *  standard masker, ${VAR} refs readable, {secret} placeholders surfaced as
+ *  display markers with their set-ness. */
+const pluginModelsPayload = () => {
+  const flagged = costUnreliableModelIds();
+  const statusByPlugin = new Map();
+  return listPluginModels().map((m) => {
+    if (!statusByPlugin.has(m.plugin)) statusByPlugin.set(m.plugin, pluginModelSecretStatus(m.plugin));
+    const status = statusByPlugin.get(m.plugin);
+    return {
+      id: m.id, label: m.label, efforts: m.efforts, plugin: m.plugin,
+      env: Object.fromEntries(Object.entries(m.env ?? {}).map(([k, v]) => [
+        k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
+      ])),
+      secrets: status.filter((s) => m.secrets.includes(s.key)),
+      ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
+    };
+  });
+};
+
 app.get('/api/models', (req, res) => {
-  res.json({ models: maskedGlobalModels(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });
+  res.json({ models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });
 });
 
 app.post('/api/models', async (req, res) => {
@@ -1974,6 +1995,123 @@ app.post('/api/models/promote', async (req, res) => {
     // Throws only on validation (unknown project model) -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
+});
+
+// Export selected global models as a plugin scaffold (design §9.5). Body:
+// { name, description?, version?, dest, models: [{ id, env: {KEY: mode} }] }
+// with mode 'include' (stored value verbatim — literal or ${VAR} ref text),
+// 'secret' (strip the value; declare a modelSecrets placeholder the importer
+// fills at install), or 'omit'. Reads RAW env values server-side — same trust
+// boundary as GET /api/models/:id/env-value (the user's own settings.json,
+// deliberate action). Distribution is git-only: the scaffold folder is what
+// gets pushed; no zip.
+app.post('/api/models/export-plugin', async (req, res) => {
+  const b = req.body || {};
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!MANIFEST_PLUGIN_NAME_RE.test(name) || name.length > 64) {
+    return badRequest(res, 'name must be kebab-case (e.g. "discretestack-models")');
+  }
+  const picks = Array.isArray(b.models) ? b.models : [];
+  if (!picks.length) return badRequest(res, 'models must be a non-empty array');
+  const destRaw = typeof b.dest === 'string' ? b.dest.trim() : '';
+  if (!destRaw) return badRequest(res, 'dest is required');
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const dest = path.resolve(destRaw.startsWith('~') ? path.join(home, destRaw.slice(1)) : destRaw);
+  try {
+    if (fs.existsSync(dest)) {
+      if (!fs.statSync(dest).isDirectory()) return badRequest(res, 'dest exists and is not a directory');
+      if (fs.readdirSync(dest).length) return badRequest(res, 'dest folder is not empty');
+    }
+  } catch (err) {
+    return badRequest(res, `dest is not usable: ${err.message}`);
+  }
+
+  const globals = listGlobalModels();
+  const secretKeyFor = (envKey) => envKey.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const models = [];
+  const modelSecrets = new Map(); // secret key -> { key, label }
+  for (const pick of picks) {
+    const id = pick && typeof pick.id === 'string' ? pick.id.trim() : '';
+    const entry = globals.find((m) => m.id.toLowerCase() === id.toLowerCase());
+    if (!entry) return badRequest(res, `unknown global model id ${JSON.stringify(id)}`);
+    const modes = pick.env && typeof pick.env === 'object' && !Array.isArray(pick.env) ? pick.env : {};
+    const env = {};
+    for (const [k, mode] of Object.entries(modes)) {
+      if (!entry.env || !(k in entry.env)) return badRequest(res, `model ${JSON.stringify(entry.id)} has no env key ${JSON.stringify(k)}`);
+      if (mode === 'omit') continue;
+      if (mode === 'include') { env[k] = entry.env[k]; continue; }
+      if (mode === 'secret') {
+        const skey = secretKeyFor(k);
+        if (!skey) return badRequest(res, `cannot derive a secret key from ${JSON.stringify(k)}`);
+        if (!modelSecrets.has(skey)) modelSecrets.set(skey, { key: skey, label: k });
+        env[k] = { secret: skey };
+        continue;
+      }
+      return badRequest(res, `env mode for ${JSON.stringify(k)} must be include | secret | omit`);
+    }
+    models.push({
+      id: entry.id,
+      ...(entry.label !== entry.id ? { label: entry.label } : {}),
+      ...(entry.efforts.length && entry.efforts.length !== EFFORTS.length ? { efforts: entry.efforts } : {}),
+      ...(Object.keys(env).length ? { env } : {}),
+    });
+  }
+
+  const manifest = {
+    name,
+    ...(typeof b.version === 'string' && b.version.trim() ? { version: b.version.trim() } : { version: '0.1.0' }),
+    ...(typeof b.description === 'string' && b.description.trim() ? { description: b.description.trim() } : {}),
+    models,
+    ...(modelSecrets.size ? { modelSecrets: [...modelSecrets.values()] } : {}),
+  };
+  // Belt: the scaffold must install anywhere this host would — validate before writing.
+  const norm = normalizeManifest(manifest);
+  if (!norm.ok) return badRequest(res, `generated manifest is invalid: ${norm.errors.join('; ')}`);
+
+  const readme = [
+    `# ${name}`,
+    '',
+    manifest.description || 'Worca CC model plugin.',
+    '',
+    '## Models',
+    '',
+    ...models.map((m) => `- \`${m.id}\`${m.label ? ` — ${m.label}` : ''}`),
+    ...(modelSecrets.size ? [
+      '',
+      '## Secrets requested at install',
+      '',
+      ...[...modelSecrets.values()].map((s) => `- \`${s.key}\` (${s.label})`),
+      '',
+      'Teammates set these under the plugin\'s **Model secrets** after installing;',
+      'values live in their local `data/secrets.json` (0600) and never in this repo.',
+    ] : []),
+    '',
+    '## Publish',
+    '',
+    '```sh',
+    `cd ${dest}`,
+    'git init -b main && git add -A && git commit -m "model plugin"',
+    'git remote add origin <your-team-repo-url> && git push -u origin main',
+    '```',
+    '',
+    '## Install (teammates)',
+    '',
+    'Worca CC → Plugins → Add repo → paste the repo URL → Install.',
+    'Model secrets are prompted in the plugin\'s configuration panel.',
+    '',
+  ].join('\n');
+
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, 'worca-cc-plugin.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(path.join(dest, 'README.md'), readme, 'utf8');
+  } catch (err) {
+    return res.status(500).json({ error: `could not write the scaffold: ${err.message}` });
+  }
+  res.json({
+    ok: true, dir: dest, files: ['worca-cc-plugin.json', 'README.md'],
+    modelSecrets: [...modelSecrets.values()],
+  });
 });
 
 app.patch('/api/models/:id', async (req, res) => {
@@ -2562,7 +2700,13 @@ app.get('/api/plugins/:name/config', (req, res) => {
       schema: s.configSchema,
       values: redactedConfig(name, s.configSchema),
     }));
-    res.json({ sources });
+    // Model secrets (design §9.7): same redaction contract — { set: true|false }
+    // markers only, never values.
+    const msSchema = modelSecretsSchema(name);
+    res.json({
+      sources,
+      ...(msSchema.length ? { models: { schema: msSchema, values: redactedConfig(name, msSchema) } } : {}),
+    });
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -2580,6 +2724,18 @@ app.put('/api/plugins/:name/config', (req, res) => {
   }
   const manifest = readInstalledManifest(name);
   if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  // { target: 'modelSecrets', values } writes the plugin-level model secrets
+  // (design §9.7) — same write-only semantics, routed by the synthesized schema.
+  if (body.target === 'modelSecrets') {
+    const schema = modelSecretsSchema(name);
+    if (!schema.length) return badRequest(res, 'plugin declares no modelSecrets');
+    try {
+      writePluginConfig(name, schema, body.values);
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendPluginError(res, err);
+    }
+  }
   const sources = manifest.taskSources || [];
   const sourceId = typeof body.sourceId === 'string' && body.sourceId
     ? body.sourceId

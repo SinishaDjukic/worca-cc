@@ -176,3 +176,115 @@ test('POST /api/models/promote moves a legacy entry global; its refs SURVIVE (un
 
   assert.equal((await post('/api/models/promote', { projectDir: proj, id: 'nope' })).status, 400);
 });
+
+// ── plugin model entries + export scaffold (design §9.5, §9.7) ───────────────
+
+test('GET /api/models: plugin entries — masked literals, readable refs, secret markers + set-ness', async () => {
+  const { writePluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('ds-models');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'ds-models',
+    modelSecrets: [{ key: 'ds-token', label: 'DS token' }],
+    models: [{
+      id: 'ds-plugged', label: 'DS Plugged', efforts: ['medium', 'high'],
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.ds.example',
+        X_REF: '${MY_VAR}',
+        ANTHROPIC_AUTH_TOKEN: { secret: 'ds-token' },
+      },
+    }],
+  }));
+  writePluginsLock({ 'ds-models': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true } });
+
+  const { body } = await jfetch('/api/models');
+  const pm = body.plugin.find((m) => m.id === 'ds-plugged');
+  assert.ok(pm, 'plugin entry surfaced');
+  assert.equal(pm.plugin, 'ds-models');
+  assert.deepEqual(pm.efforts, ['medium', 'high']);
+  assert.equal(pm.env.ANTHROPIC_BASE_URL, '••••••mple', 'literal masked');
+  assert.equal(pm.env.X_REF, '${MY_VAR}', 'ref readable');
+  assert.equal(pm.env.ANTHROPIC_AUTH_TOKEN, '(secret: ds-token)');
+  assert.deepEqual(pm.secrets, [{ key: 'ds-token', label: 'DS token', set: false }]);
+
+  // The plugin model is selectable: it reaches the /api/config catalog.
+  const cfg = await jfetch(`/api/config?${q({ projectDir: proj })}`);
+  const inCatalog = cfg.body.models.find((m) => m.id === 'ds-plugged');
+  assert.equal(inCatalog.custom, 'plugin');
+  assert.equal(inCatalog.plugin, 'ds-models');
+});
+
+test('PUT /api/plugins/:name/config { target: modelSecrets } round-trips set-ness, never values', async () => {
+  const put = (path, body) => jfetch(path, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const r = await put('/api/plugins/ds-models/config', { target: 'modelSecrets', values: { 'ds-token': 'sk-team-secret' } });
+  assert.equal(r.status, 200);
+
+  const cfg = await jfetch('/api/plugins/ds-models/config');
+  assert.equal(cfg.status, 200);
+  assert.deepEqual(cfg.body.models.schema.map((f) => f.key), ['ds-token']);
+  assert.deepEqual(cfg.body.models.values, { 'ds-token': { set: true } }, 'redacted marker only');
+
+  const models = await jfetch('/api/models');
+  assert.deepEqual(models.body.plugin.find((m) => m.id === 'ds-plugged').secrets,
+    [{ key: 'ds-token', label: 'DS token', set: true }]);
+
+  // No modelSecrets declared -> 400 on the target write.
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('bare-plug');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({ name: 'bare-plug' }));
+  writePluginsLock({ ...readPluginsLock(), 'bare-plug': { repo: 'r', subdir: '', pinnedSha: 'y'.repeat(40), version: '1', enabled: true } });
+  const bad = await put('/api/plugins/bare-plug/config', { target: 'modelSecrets', values: { x: 'y' } });
+  assert.equal(bad.status, 400);
+});
+
+test('POST /api/models/export-plugin: scaffold with value stripping; rejections', async () => {
+  const { readFileSync, existsSync, writeFileSync, mkdirSync } = await import('node:fs');
+  await post('/api/models', {
+    id: 'exp-m', label: 'Exportable', efforts: ['medium'],
+    env: { ANTHROPIC_BASE_URL: 'https://x.example', ANTHROPIC_AUTH_TOKEN: 'sk-live-strip-me', X_REF: '${VV}' },
+  });
+  const dest = join(proj, 'export', 'team-models');
+  const r = await post('/api/models/export-plugin', {
+    name: 'team-models', description: 'Team routing', dest,
+    models: [{ id: 'EXP-M', env: { ANTHROPIC_BASE_URL: 'include', ANTHROPIC_AUTH_TOKEN: 'secret', X_REF: 'include' } }],
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.dir, dest);
+  assert.deepEqual(r.body.modelSecrets, [{ key: 'anthropic-auth-token', label: 'ANTHROPIC_AUTH_TOKEN' }]);
+
+  const manifest = JSON.parse(readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8'));
+  assert.equal(manifest.name, 'team-models');
+  assert.equal(manifest.version, '0.1.0');
+  const [m] = manifest.models;
+  assert.equal(m.id, 'exp-m', 'stored id casing, not the request casing');
+  assert.equal(m.label, 'Exportable');
+  assert.deepEqual(m.efforts, ['medium']);
+  assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://x.example', 'include -> verbatim');
+  assert.equal(m.env.X_REF, '${VV}', 'ref text travels as-is');
+  assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'anthropic-auth-token' });
+  assert.deepEqual(manifest.modelSecrets, [{ key: 'anthropic-auth-token', label: 'ANTHROPIC_AUTH_TOKEN' }]);
+  const blob = readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8') + readFileSync(join(dest, 'README.md'), 'utf8');
+  assert.doesNotMatch(blob, /sk-live-strip-me/, 'secret value stripped from every scaffold file');
+  assert.ok(existsSync(join(dest, 'README.md')));
+
+  // Rejections.
+  const cases = [
+    [{ name: 'Bad Name', dest: join(proj, 'x1'), models: [{ id: 'exp-m' }] }, /kebab-case/],
+    [{ name: 'ok-name', dest: join(proj, 'x2'), models: [] }, /non-empty array/],
+    [{ name: 'ok-name', dest: join(proj, 'x3'), models: [{ id: 'nope' }] }, /unknown global model id/],
+    [{ name: 'ok-name', dest: join(proj, 'x4'), models: [{ id: 'exp-m', env: { NOT_THERE: 'include' } }] }, /has no env key/],
+    [{ name: 'ok-name', dest: join(proj, 'x5'), models: [{ id: 'exp-m', env: { X_REF: 'wat' } }] }, /include \| secret \| omit/],
+    [{ name: 'ok-name', dest: '', models: [{ id: 'exp-m' }] }, /dest is required/],
+    [{ name: 'ok-name', dest, models: [{ id: 'exp-m' }] }, /not empty/],
+  ];
+  for (const [bodyIn, re] of cases) {
+    const bad = await post('/api/models/export-plugin', bodyIn);
+    assert.equal(bad.status, 400, JSON.stringify(bodyIn));
+    assert.match(bad.body.error, re);
+  }
+});
