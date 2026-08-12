@@ -2650,15 +2650,23 @@ app.get('/api/plugins/:name/config', (req, res) => {
       schema: s.configSchema,
       values: redactedConfig(name, s.configSchema),
     }));
-    res.json({ sources });
+    const channels = (manifest.chatChannels || []).map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      platform: c.platform,
+      schema: c.configSchema,
+      values: redactedConfig(name, c.configSchema),
+    }));
+    res.json({ sources, channels });
   } catch (err) {
     sendPluginError(res, err);
   }
 });
 
-// PUT /api/plugins/:name/config { sourceId, values } -> writePluginConfig
-// routes secret:true keys to data/secrets.json (0600, atomic). Request values
-// are NEVER logged and NEVER echoed back (the response is a bare receipt).
+// PUT /api/plugins/:name/config { sourceId | channelId, values } ->
+// writePluginConfig routes secret:true keys to data/secrets.json (0600,
+// atomic). Request values are NEVER logged and NEVER echoed back (the response
+// is a bare receipt). A channelId save also hot-restarts the channel worker.
 app.put('/api/plugins/:name/config', (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
@@ -2668,14 +2676,22 @@ app.put('/api/plugins/:name/config', (req, res) => {
   }
   const manifest = readInstalledManifest(name);
   if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
-  const sources = manifest.taskSources || [];
-  const sourceId = typeof body.sourceId === 'string' && body.sourceId
-    ? body.sourceId
-    : (sources.length === 1 ? sources[0].id : '');
-  const source = sources.find((s) => s.id === sourceId);
-  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  let schema;
+  if (typeof body.channelId === 'string' && body.channelId) {
+    const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
+    if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
+    schema = channel.configSchema;
+  } else {
+    const sources = manifest.taskSources || [];
+    const sourceId = typeof body.sourceId === 'string' && body.sourceId
+      ? body.sourceId
+      : (sources.length === 1 ? sources[0].id : '');
+    const source = sources.find((s) => s.id === sourceId);
+    if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+    schema = source.configSchema;
+  }
   try {
-    writePluginConfig(name, source.configSchema, body.values);
+    writePluginConfig(name, schema, body.values);
     reloadChatWorkers(name);
     res.json({ ok: true });
   } catch (err) {

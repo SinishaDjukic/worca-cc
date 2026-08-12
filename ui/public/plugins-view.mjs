@@ -19,15 +19,19 @@ function contribSummary(c) {
   const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
   const parts = [
     [n(c && c.agents), 'agent'], [n(c && c.taskSources), 'source'],
-    [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
+    [n(c && c.chatChannels), 'chat channel'], [n(c && c.skills), 'skill'],
+    [n(c && c.workflows), 'workflow'],
   ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
   return parts.join(' · ') || 'no contributions';
 }
 
-// renderPluginList(plugins) -> <div.pl-list> of cards. Action buttons + the
-// enable checkbox carry data-name and a pl-* class so app.js can wire ONE
-// delegated listener on the list container.
-export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
+// renderPluginList(plugins, {channelStatus}) -> <div.pl-list> of cards.
+// Action buttons + the enable checkbox carry data-name and a pl-* class so
+// app.js can wire ONE delegated listener on the list container. channelStatus
+// rows (GET /api/chat/status) add per-channel live badges; the badge carries
+// data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
+// in place.
+export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
   const root = h(doc, 'div', 'pl-list');
   for (const p of plugins || []) {
     const card = h(doc, 'section', 'card plugin-card');
@@ -48,6 +52,12 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     head.appendChild(toggle);
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
+    const chRows = (channelStatus || []).filter((c) => c.plugin === p.name);
+    if (chRows.length) {
+      const chans = h(doc, 'div', 'pl-channels');
+      for (const c of chRows) chans.appendChild(channelBadge(doc, c));
+      card.appendChild(chans);
+    }
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
       const b = h(doc, 'button', `btn-ghost ${cls}`, label);
@@ -62,6 +72,16 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Add a GitHub repo to get started.'));
   }
   return root;
+}
+
+// One live channel badge: dot color by connection state + platform label.
+// Exported so app.js can re-render a single badge on a channel-status event.
+export function channelBadge(doc, c) {
+  const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting' }[c.state] || 'red';
+  const b = h(doc, 'span', `badge ${stateCls} pl-channel`, `${c.displayName || c.channelId} · ${c.state}`);
+  b.dataset.channelKey = `${c.plugin}/${c.channelId}`;
+  if (c.detail) b.title = c.detail;
+  return b;
 }
 
 // renderOrphanList(orphans) -> <div.pl-orphans> of "leftover data" rows.
@@ -171,15 +191,29 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
   return root;
 }
 
-// renderConfigForm(sources: [{id, schema, values}]) — one <form.pl-config-form>
+// renderConfigForm(sections) — one <form.pl-config-form>
 // per task source. secret:true fields (text-only per normalizeManifest) render
 // type=password, NEVER prefilled; a stored value arrives redacted as {set:true}
 // -> placeholder '(set)' + data-set="1" so collect can skip it untouched.
-export function renderConfigForm(sources, { doc = globalThis.document } = {}) {
+// Accepts the legacy array of sources OR the full { sources, channels } config
+// payload. Channel forms carry data-channel-id (collectConfigForm routes the
+// PUT accordingly) and a small platform heading so mixed plugins stay legible.
+export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'pl-config');
-  for (const src of sources || []) {
+  const sources = Array.isArray(sections) ? sections : (sections?.sources || []);
+  const channels = Array.isArray(sections) ? [] : (sections?.channels || []);
+  const rows = [
+    ...sources.map((x) => ({ ...x, _kind: 'source' })),
+    ...channels.map((x) => ({ ...x, _kind: 'channel' })),
+  ];
+  for (const src of rows) {
     const form = h(doc, 'form', 'pl-config-form');
-    form.dataset.sourceId = src.id || '';
+    if (src._kind === 'channel') {
+      form.dataset.channelId = src.id || '';
+      form.appendChild(h(doc, 'div', 'pl-config-h', `${src.displayName || src.id} (${src.platform || 'chat'} channel)`));
+    } else {
+      form.dataset.sourceId = src.id || '';
+    }
     for (const f of src.schema || []) {
       const field = h(doc, 'div', 'field');
       field.appendChild(h(doc, 'label', '', f.label || f.key));
@@ -214,14 +248,16 @@ export function renderConfigForm(sources, { doc = globalThis.document } = {}) {
   return root;
 }
 
-// collectConfigForm(formEl) -> { sourceId, values }. An untouched {set:true}
-// secret (data-set="1", still empty) is OMITTED — saving never wipes a secret.
+// collectConfigForm(formEl) -> { sourceId | channelId, values }. An untouched
+// {set:true} secret (data-set="1", still empty) is OMITTED — saving never
+// wipes a secret. Channel forms carry data-channel-id instead of data-source-id.
 export function collectConfigForm(formEl) {
   const values = {};
   for (const input of formEl.querySelectorAll('[data-key]')) {
     if (input.dataset.set === '1' && input.value === '') continue;
     values[input.dataset.key] = input.value;
   }
+  if (formEl.dataset.channelId) return { channelId: formEl.dataset.channelId, values };
   return { sourceId: formEl.dataset.sourceId || '', values };
 }
 

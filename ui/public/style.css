@@ -1365,3 +1365,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .stat-row{grid-template-columns:repeat(2,1fr);}
   .charts-grid{grid-template-columns:1fr;}
 }
+
+/* ── Chat connectivity (chat-connectivity-design.md §4.8) ─────────────────── */
+.pl-channels { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
+.pl-channel-warn { color: var(--red, #e5484d); font-weight: 600; }
+.pl-config-h { font-weight: 600; margin: 10px 0 4px; }
+.chat-events, .chat-channels { margin: 8px 0; }
+.chat-event-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; cursor: pointer; }
+.chat-event-row .hint { margin-left: 4px; }
+.chat-channel-row { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+.chat-channel-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.chat-state { text-transform: none; }

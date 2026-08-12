@@ -67,8 +67,9 @@ import {
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
-  renderOrphanList,
+  renderOrphanList, channelBadge,
 } from './plugins-view.mjs';
+import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
@@ -248,6 +249,11 @@ const el = {
   pluginModalActions: $('#plugin-modal-actions'),
   pluginModalClose: $('#plugin-modal-close'),
 
+  // Chat notifications (Settings card)
+  chatSettingsHost: $('#chat-settings-host'),
+  chatSettingsSave: $('#chatSettingsSave'),
+  chatSettingsMsg: $('#chatSettingsMsg'),
+
   // Guardrails view
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
@@ -423,6 +429,11 @@ function handleServerMessage(msg) {
 
   if (msg.type === 'hello') {
     onHello(msg);
+    return;
+  }
+
+  if (msg.type === 'channel-status') {
+    onChannelStatus(msg);
     return;
   }
 
@@ -5968,8 +5979,79 @@ async function loadSettings() {
     paintBudgetSettings(data);
     paintBudgetReadout();
     refreshBudget();
+    paintChatSettings(data.chat);
     setSettingsMsg('');
   } catch (e) { setSettingsMsg(e.message, 'err'); }
+}
+
+// ── Chat notifications card (chat-connectivity-design.md §4.8) ────────────────
+
+function setChatSettingsMsg(text, cls) {
+  if (!el.chatSettingsMsg) return;
+  el.chatSettingsMsg.textContent = text || '';
+  el.chatSettingsMsg.className = `hint${cls ? ` ${cls}` : ''}`;
+}
+
+async function paintChatSettings(prefs) {
+  if (!el.chatSettingsHost) return;
+  let channels = [];
+  try {
+    const cs = await safeJson(await fetch('/api/chat/status'));
+    channels = cs.channels || [];
+  } catch { /* render prefs-only */ }
+  el.chatSettingsHost.replaceChildren(renderChatSettings({ prefs, channels }));
+}
+
+if (el.chatSettingsSave) el.chatSettingsSave.addEventListener('click', async () => {
+  el.chatSettingsSave.disabled = true;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat: collectChatSettings(el.chatSettingsHost) }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setChatSettingsMsg(data.error || `HTTP ${res.status}`, 'err');
+    setChatSettingsMsg('Saved.');
+  } catch (e) { setChatSettingsMsg(e.message, 'err');
+  } finally { el.chatSettingsSave.disabled = false; }
+});
+
+// Delegated Test buttons: explicit user action -> POST /api/chat/test.
+if (el.chatSettingsHost) el.chatSettingsHost.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains('chat-test')) return;
+  t.disabled = true;
+  setChatSettingsMsg('Sending test message…');
+  try {
+    const res = await fetch('/api/chat/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: t.dataset.plugin, channelId: t.dataset.channelId }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setChatSettingsMsg(data.error || `HTTP ${res.status}`, 'err');
+    const failed = (data.results || []).filter((r) => !r.ok);
+    setChatSettingsMsg(failed.length
+      ? `Delivery failed for ${failed.map((f) => f.chatId).join(', ')}: ${failed[0].error?.message || failed[0].error?.kind}`
+      : 'Test message delivered.', failed.length ? 'err' : '');
+  } catch (err) { setChatSettingsMsg(err.message, 'err');
+  } finally { t.disabled = false; }
+});
+
+// Live channel-status events patch every visible badge in place (plugins view
+// cards + the settings card) without a refetch.
+function onChannelStatus(msg) {
+  const key = `${msg.plugin}/${msg.channelId}`;
+  for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${CSS.escape(key)}"]`)) {
+    b.replaceWith(channelBadge(document, { ...msg, displayName: b.textContent.split(' · ')[0] }));
+  }
+  for (const b of document.querySelectorAll(`.chat-state[data-channel-key="${CSS.escape(key)}"]`)) {
+    const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting', unconfigured: 'waiting' }[msg.state] || 'red';
+    b.className = `badge ${stateCls} chat-state`;
+    b.textContent = msg.state;
+    if (msg.detail) b.title = msg.detail;
+  }
 }
 
 // POSTs both keys; the route writes only the keys present in the body, and an
@@ -6232,7 +6314,12 @@ async function loadPluginsView() {
     const res = await fetch('/api/plugins');
     const data = await safeJson(res);
     if (!res.ok) return setPluginsMsg(data.error || `HTTP ${res.status}`, 'err');
-    const parts = [renderPluginList(data.plugins || [])];
+    let channelStatus = [];
+    try {
+      const cs = await safeJson(await fetch('/api/chat/status'));
+      channelStatus = cs.channels || [];
+    } catch { /* chat host unavailable: cards render without badges */ }
+    const parts = [renderPluginList(data.plugins || [], { channelStatus })];
     if (Array.isArray(data.orphans) && data.orphans.length) parts.push(renderOrphanList(data.orphans));
     el.pluginsList.replaceChildren(...parts);
   } catch (e) { setPluginsMsg(e.message, 'err'); }
@@ -6286,7 +6373,7 @@ async function openPluginSettings(name) {
   // Multi-source { sources:[{id,schema,values}] }, single-source { schema, values } tolerated.
   const sources = Array.isArray(data.sources) ? data.sources
     : [{ id: data.sourceId || '', schema: data.schema || [], values: data.values || {} }];
-  const body = renderConfigForm(sources);
+  const body = renderConfigForm({ sources, channels: data.channels || [] });
   pluginModal(`Settings: ${name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
     ['Save', 'btn btn-primary btn-mini', async () => {
@@ -6295,8 +6382,8 @@ async function openPluginSettings(name) {
       // server only infers sourceId when the plugin has exactly one source).
       let failed = null;
       for (const f of body.querySelectorAll('.pl-config-form')) {
-        const { sourceId, values } = collectConfigForm(f);
-        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, { sourceId, values });
+        const collected = collectConfigForm(f); // { sourceId | channelId, values }
+        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, collected);
         if (!r.ok) { failed = r.data.error || 'save failed'; break; }
       }
       closePluginModal();

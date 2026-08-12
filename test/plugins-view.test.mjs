@@ -152,3 +152,47 @@ test('orphan list: row per orphan with Purge button; empty input -> empty contai
   assert.equal(renderOrphanList([], { doc }).childElementCount, 0);
   assert.equal(renderOrphanList(undefined, { doc }).childElementCount, 0);
 });
+
+test('plugin cards show live channel badges when channelStatus rows match', () => {
+  const el = renderPluginList([
+    { name: 'telegram-chat', enabled: true, contributions: { agents: 0, taskSources: 0, chatChannels: 1, skills: 0, workflows: 0 } },
+    { name: 'github-source', enabled: true, contributions: { agents: 1, taskSources: 1, skills: 0, workflows: 0 } },
+  ], {
+    doc,
+    channelStatus: [
+      { plugin: 'telegram-chat', channelId: 'main', displayName: 'Telegram', platform: 'telegram', state: 'connected', detail: null },
+    ],
+  });
+  const badge = el.querySelector('.pl-channel');
+  assert.ok(badge);
+  assert.equal(badge.dataset.channelKey, 'telegram-chat/main');
+  assert.match(badge.className, /green/);
+  assert.match(badge.textContent, /Telegram · connected/);
+  const cards = el.querySelectorAll('.plugin-card');
+  assert.equal(cards[1].querySelector('.pl-channel'), null, 'no badges without matching rows');
+  assert.match(cards[0].querySelector('.pl-contrib').textContent, /1 chat channel/);
+});
+
+test('config form renders channel sections with data-channel-id; collect routes accordingly', () => {
+  const schema = [
+    { key: 'botToken', type: 'text', label: 'Bot token', secret: true, required: true, default: null, help: null, options: [] },
+    { key: 'notifyChatIds', type: 'text', label: 'Notify', secret: false, required: false, default: null, help: null, options: [] },
+  ];
+  const root = renderConfigForm({
+    sources: [{ id: 'gh', schema: [{ key: 'token', type: 'text', label: 'T', secret: true, required: true, default: null, help: null, options: [] }], values: {} }],
+    channels: [{ id: 'main', displayName: 'Telegram', platform: 'telegram', schema, values: { botToken: { set: true }, notifyChatIds: '42' } }],
+  }, { doc });
+
+  const forms = [...root.querySelectorAll('.pl-config-form')];
+  assert.equal(forms.length, 2);
+  assert.equal(forms[0].dataset.sourceId, 'gh');
+  assert.equal(forms[1].dataset.channelId, 'main');
+  assert.match(forms[1].querySelector('.pl-config-h').textContent, /Telegram \(telegram channel\)/);
+
+  const tokenInput = forms[1].querySelector('[data-key="botToken"]');
+  assert.equal(tokenInput.type, 'password');
+  assert.equal(tokenInput.placeholder, '(set)');
+  forms[1].querySelector('[data-key="notifyChatIds"]').value = '42, 77';
+  assert.deepEqual(collectConfigForm(forms[1]), { channelId: 'main', values: { notifyChatIds: '42, 77' } });
+  assert.deepEqual(collectConfigForm(forms[0]).sourceId, 'gh', 'legacy source forms unchanged');
+});

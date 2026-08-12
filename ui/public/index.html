@@ -1018,6 +1018,20 @@
             </div>
             <small class="hint" id="budgetMsg"></small>
           </section>
+
+          <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+               events ping which chat channels. Body rendered by
+               chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+          <section class="card" id="chat-settings-card">
+            <div class="label-row">
+              <h2>Chat notifications</h2>
+            </div>
+            <div id="chat-settings-host"></div>
+            <div class="add-project-actions">
+              <button id="chatSettingsSave" class="btn btn-primary" type="button">Save</button>
+            </div>
+            <small class="hint" id="chatSettingsMsg"></small>
+          </section>
         </section>
         <!-- /view settings -->
       </main>
