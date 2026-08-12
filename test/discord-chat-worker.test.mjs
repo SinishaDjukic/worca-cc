@@ -1,0 +1,206 @@
+// test/discord-chat-worker.test.mjs — the discord-chat example plugin:
+// gateway state machine (hello->identify->ready, heartbeat ACK loss -> resume,
+// RECONNECT/INVALID_SESSION, close-code mapping 4004/4014) with a scripted
+// FakeWebSocket, plus the ported REST send path (429 retry_after, kind
+// mapping) and validateConfig.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createDiscordWorker, validateConfig, renderToMarkdown } from '../examples/plugins/discord-chat/channel/worker.mjs';
+import { createGatewayClient, INTENTS } from '../examples/plugins/discord-chat/channel/gateway.mjs';
+
+const json = (obj, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => obj });
+
+class FakeWebSocket {
+  static instances = [];
+  constructor(url) {
+    this.url = url;
+    this.sent = [];
+    this.handlers = { message: [], close: [], error: [] };
+    FakeWebSocket.instances.push(this);
+  }
+  addEventListener(type, cb, opts) { this.handlers[type].push({ cb, once: !!opts?.once }); }
+  send(data) { this.sent.push(JSON.parse(data)); }
+  close(code) { this.dispatch('close', { code: code ?? 1000 }); }
+  dispatch(type, ev) {
+    const hs = this.handlers[type];
+    this.handlers[type] = hs.filter((h) => !h.once);
+    for (const h of hs) h.cb(ev);
+  }
+  frame(obj) { this.dispatch('message', { data: JSON.stringify(obj) }); }
+}
+
+const waitFor = async (fn, timeoutMs = 3000) => {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const v = await fn();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('waitFor timed out');
+};
+
+function gatewayFixture() {
+  const seen = { messages: [], states: [], fatals: [], logs: [] };
+  const client = createGatewayClient({
+    token: 'tok',
+    gatewayUrl: 'wss://gw.test',
+    WebSocketImpl: FakeWebSocket,
+    _sleep: async () => {},
+    random: () => 0.5,
+    log: (l, m) => seen.logs.push(`${l}:${m}`),
+    onMessage: (m) => seen.messages.push(m),
+    onState: (s, d) => seen.states.push({ s, d: d ?? null }),
+    onFatal: (d, k) => seen.fatals.push({ d, k }),
+  });
+  return { client, seen };
+}
+
+test('gateway: hello -> identify (intents 33281) -> READY connected; dispatch flows', async () => {
+  FakeWebSocket.instances = [];
+  const { client, seen } = gatewayFixture();
+  client.start();
+  const s = await waitFor(() => FakeWebSocket.instances[0]);
+  s.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  const identify = await waitFor(() => s.sent.find((f) => f.op === 2));
+  assert.equal(identify.d.token, 'tok');
+  assert.equal(identify.d.intents, INTENTS);
+  assert.equal(INTENTS, 33281);
+  s.frame({ op: 0, t: 'READY', s: 1, d: { session_id: 'sess1', resume_gateway_url: 'wss://resume.test', user: { id: 'BOT1', username: 'worca' } } });
+  await waitFor(() => seen.states.some((x) => x.s === 'connected'));
+  assert.equal(client.identity(), 'worca');
+  s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 2, d: { id: 'm1', channel_id: 'C1', content: '/status', author: { id: 'U1', username: 'sam' } } });
+  assert.equal(seen.messages[0].content, '/status');
+  client.stop();
+});
+
+test('gateway: RECONNECT resumes with session+seq against resume_gateway_url', async () => {
+  FakeWebSocket.instances = [];
+  const { client } = gatewayFixture();
+  client.start();
+  const s1 = await waitFor(() => FakeWebSocket.instances[0]);
+  s1.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  s1.frame({ op: 0, t: 'READY', s: 5, d: { session_id: 'sess1', resume_gateway_url: 'wss://resume.test', user: {} } });
+  s1.frame({ op: 7 }); // RECONNECT -> close -> reconnect via resume url
+  const s2 = await waitFor(() => FakeWebSocket.instances[1]);
+  assert.match(s2.url, /^wss:\/\/resume\.test/);
+  s2.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  const resume = await waitFor(() => s2.sent.find((f) => f.op === 6));
+  assert.deepEqual(resume.d, { token: 'tok', session_id: 'sess1', seq: 5 });
+  client.stop();
+});
+
+test('gateway: missed heartbeat ACK closes and resumes; heartbeat carries seq', async () => {
+  FakeWebSocket.instances = [];
+  const { client, seen } = gatewayFixture();
+  client.start();
+  const s = await waitFor(() => FakeWebSocket.instances[0]);
+  s.frame({ op: 10, d: { heartbeat_interval: 30 } }); // fast beats
+  s.frame({ op: 0, t: 'READY', s: 9, d: { session_id: 'x', resume_gateway_url: null, user: {} } });
+  await waitFor(() => s.sent.some((f) => f.op === 1 && f.d === 9), 2000);
+  // never ACK -> next beat detects the zombie and closes -> reconnect
+  await waitFor(() => FakeWebSocket.instances.length >= 2, 2000);
+  assert.ok(seen.logs.some((l) => /ACK missed/.test(l)));
+  client.stop();
+});
+
+test('gateway: 4004 -> fatal auth; 4014 -> fatal plugin naming the intent toggle; no retry', async () => {
+  for (const [code, kind, re] of [[4004, 'auth', /rejected the bot token/], [4014, 'plugin', /MESSAGE CONTENT INTENT/]]) {
+    FakeWebSocket.instances = [];
+    const { client, seen } = gatewayFixture();
+    client.start();
+    const s = await waitFor(() => FakeWebSocket.instances[0]);
+    s.close(code);
+    await waitFor(() => seen.fatals.length === 1);
+    assert.equal(seen.fatals[0].k, kind);
+    assert.match(seen.fatals[0].d, re);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(FakeWebSocket.instances.length, 1, 'no reconnect after a fatal close');
+    client.stop();
+  }
+});
+
+function workerCtx(config = {}) {
+  const events = { inbound: [], status: [], logs: [] };
+  const ac = new AbortController();
+  return {
+    ctx: {
+      apiVersion: 2, platform: 'discord', mock: false,
+      config: { botToken: 'tok', ...config },
+      state: { get: async () => null, set: async () => {} },
+      log: (l, m) => events.logs.push(`${l}:${m}`),
+      emitMessage: (m) => events.inbound.push(m),
+      setStatus: (s, d) => events.status.push({ state: s, detail: d ?? null }),
+      shutdownSignal: ac.signal,
+    },
+    events,
+  };
+}
+
+test('worker: identity via /users/@me; bot/self/off-list messages filtered; empty-content hint', async () => {
+  FakeWebSocket.instances = [];
+  const { ctx, events } = workerCtx({ channelAllowlist: 'C1' });
+  const fetchFn = async (url) => {
+    if (url.endsWith('/users/@me')) return json({ id: 'BOT1', username: 'worca' });
+    if (url.endsWith('/gateway/bot')) return json({ url: 'wss://gw.test', session_start_limit: { remaining: 100 } });
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  const info = await w.start();
+  assert.equal(info.identity, '@worca');
+  const s = await waitFor(() => FakeWebSocket.instances[0]);
+  s.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  s.frame({ op: 0, t: 'READY', s: 1, d: { session_id: 'x', user: { id: 'BOT1' } } });
+  for (const m of [
+    { id: 'm1', channel_id: 'C1', content: '/status', author: { id: 'U1', username: 'sam' }, guild_id: 'G1' },
+    { id: 'm2', channel_id: 'C1', content: 'from bot', author: { id: 'B9', bot: true } },
+    { id: 'm3', channel_id: 'C1', content: 'self', author: { id: 'BOT1' } },
+    { id: 'm4', channel_id: 'C9', content: 'off-list', author: { id: 'U1' } },
+    { id: 'm5', channel_id: 'C1', content: '', author: { id: 'U1' } },
+  ]) s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 2, d: m });
+  assert.deepEqual(events.inbound.map((m) => m.text), ['/status', '']);
+  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam' });
+  assert.ok(events.logs.some((l) => /MESSAGE CONTENT INTENT/.test(l)), 'empty-content hint logged once');
+  await w.stop();
+});
+
+test('worker send: markdown render, 2000 split, 429 retry_after, kind mapping', async () => {
+  const { ctx } = workerCtx();
+  let mode = 'ok';
+  const posts = [];
+  const fetchFn = async (url, opts) => {
+    if (url.includes('/channels/')) {
+      posts.push(JSON.parse(opts.body));
+      if (mode === '429') return json({ retry_after: 0.5 }, 429);
+      if (mode === '403') return json({ message: 'Missing Access' }, 403);
+      return json({ id: 'sent' });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  const msg = { title: 'Run done', body: [{ kind: 'markdown', value: '**bold**' }], severity: 'success' };
+  assert.equal(renderToMarkdown(msg), '**Run done**\n**bold**');
+  await w.send('C1', msg);
+  assert.equal(posts[0].content, '**Run done**\n**bold**');
+
+  posts.length = 0;
+  await w.send('C1', { title: null, body: [{ kind: 'text', value: `${'a'.repeat(1900)}\n${'b'.repeat(1900)}` }], severity: 'info' });
+  assert.equal(posts.length, 2, '2000-char split');
+
+  mode = '429';
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'rate-limit');
+  mode = '403';
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && /invite the bot/.test(e.message));
+});
+
+test('validateConfig: ok, 401 pins botToken, gateway failure reported', async () => {
+  const ok = await validateConfig({ botToken: 't' }, {
+    fetchFn: async (url) => (url.endsWith('/users/@me') ? json({ username: 'worca' }) : json({ url: 'wss://x' })),
+  });
+  assert.deepEqual(ok, { ok: true, identity: '@worca' });
+  const bad = await validateConfig({ botToken: 't' }, { fetchFn: async () => json({}, 401) });
+  assert.equal(bad.errors[0].field, 'botToken');
+  const gw = await validateConfig({ botToken: 't' }, {
+    fetchFn: async (url) => (url.endsWith('/users/@me') ? json({ username: 'worca' }) : json({}, 500)),
+  });
+  assert.match(gw.errors[0].message, /gateway\/bot failed: HTTP 500/);
+});

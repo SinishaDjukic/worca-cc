@@ -1,0 +1,45 @@
+{
+  "name": "discord-chat",
+  "version": "0.1.0",
+  "description": "Two-way Discord channel via Gateway: pipeline notifications + chat commands (/status, /pause, /approve…)",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=2 <3" },
+  "chatChannels": [
+    {
+      "id": "main",
+      "displayName": "Discord",
+      "platform": "discord",
+      "module": "./channel/worker.mjs",
+      "ingress": "connect",
+      "capabilities": { "inbound": true, "outbound": true },
+      "configSchema": [
+        {
+          "key": "botToken",
+          "type": "text",
+          "label": "Bot token",
+          "secret": true,
+          "required": true,
+          "help": "Developer Portal → Bot → Token. Or {\"$env\":\"DISCORD_BOT_TOKEN\"}. Inbound needs the MESSAGE CONTENT INTENT toggle enabled."
+        },
+        {
+          "key": "notifyChatIds",
+          "type": "text",
+          "label": "Notify channel IDs",
+          "help": "Comma-separated text-channel IDs that receive run notifications (right-click channel → Copy Channel ID with Developer Mode on)."
+        },
+        {
+          "key": "allowedChatIds",
+          "type": "text",
+          "label": "Allowed channel IDs (commands)",
+          "help": "Comma-separated channel IDs allowed to send commands. EMPTY = nobody: anyone in an allowed channel can control worca-cc."
+        },
+        {
+          "key": "channelAllowlist",
+          "type": "text",
+          "label": "Listen filter (optional)",
+          "help": "Optional comma-separated channel IDs to listen on; empty = every channel the bot can read (commands are still gated by Allowed channel IDs)."
+        }
+      ]
+    }
+  ]
+}
