@@ -145,7 +145,7 @@ test('setPluginEnabled toggles the lock flag; listInstalledPlugins reflects it',
     { enabled: row.enabled, linked: row.linked, version: row.version, pinnedSha: row.pinnedSha },
     { enabled: true, linked: false, version: '0.1.0', pinnedSha: origin.sha },
   );
-  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, skills: 1, workflows: 1 });
+  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, models: 0, skills: 1, workflows: 1 });
   assert.throws(() => setPluginEnabled('ghost-plugin', true), /not installed/);
 });
 
@@ -311,4 +311,70 @@ test('purgePluginData: removes orphan dir; refuses installed; unknown throws', (
 
   // safeName-invalid name -> same "nothing to purge" contract, never "invalid plugin name"
   assert.throws(() => purgePluginData('9ghost'), /nothing to purge/);
+});
+
+// --- model contributions (design §9.4): inventory, uninstall guard, doctor ---
+
+const MODELFUL_FILES = (name) => ({
+  'worca-cc-plugin.json': JSON.stringify({
+    name, version: '0.1.0',
+    modelSecrets: [{ key: 'ds-token', label: 'DS token' }],
+    models: [
+      {
+        id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+        env: { ANTHROPIC_BASE_URL: 'https://api.ds.example', ANTHROPIC_AUTH_TOKEN: { secret: 'ds-token' } },
+      },
+      { id: 'ds-plain', label: 'DS Plain' },
+    ],
+  }),
+});
+
+test('buildInstallInventory: models section — base URL verbatim, env keys, model secrets', () => {
+  const dir = join(scratch, 'inv-models');
+  writeTree(dir, MODELFUL_FILES('modelful-plugin'));
+  const inv = buildInstallInventory(dir);
+  assert.deepEqual(inv.models, [
+    {
+      id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+      envKeys: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'],
+      baseUrl: 'https://api.ds.example',
+    },
+    { id: 'ds-plain', label: 'DS Plain', efforts: ['medium', 'high', 'xhigh', 'max'], envKeys: [], baseUrl: null },
+  ]);
+  assert.deepEqual(inv.modelSecrets, [{ key: 'ds-token', label: 'DS token' }]);
+});
+
+test('doctor + uninstall guard for plugin models: block-with-list, clear, then uninstall', async () => {
+  const dev = join(scratch, 'dev-modelful');
+  writeTree(dev, MODELFUL_FILES('modelful-plugin'));
+  linkPlugin('modelful-plugin', dev);
+  const row = listInstalledPlugins().find((p) => p.name === 'modelful-plugin');
+  assert.equal(row.contributions.models, 2);
+
+  // Doctor: unset model secret is a named failing check; setting it heals.
+  let doc = await doctorPlugin('modelful-plugin');
+  const sick = doc.checks.find((c) => c.id === 'model-secret:ds-token');
+  assert.equal(sick.ok, false);
+  assert.match(sick.detail, /not set/);
+  writePluginConfig('modelful-plugin', [{ key: 'ds-token', secret: true }], { 'ds-token': 'sk-team' });
+  doc = await doctorPlugin('modelful-plugin');
+  assert.equal(doc.checks.find((c) => c.id === 'model-secret:ds-token').ok, true);
+
+  // A pipeline node selection blocks uninstall with the references list.
+  const { setNodeModel } = await import('../src/core/config.mjs');
+  const proj = join(scratch, 'proj-modelful');
+  mkdirSync(proj, { recursive: true });
+  await setNodeModel(proj, 'wf_m', 's1_0', { model: 'ds-stable', effort: 'high' });
+  await assert.rejects(() => uninstallPlugin('modelful-plugin'), (err) => {
+    assert.match(err.message, /models are still selected in pipeline configuration: ds-stable \(1 selection\)/);
+    assert.equal(err.code, 'REFERENCED');
+    assert.equal(err.references[0].id, 'ds-stable');
+    assert.equal(err.references[0].nodes.length, 1);
+    return true;
+  });
+  assert.ok(readPluginsLock()['modelful-plugin'], 'nothing uninstalled');
+
+  await setNodeModel(proj, 'wf_m', 's1_0', { model: '', effort: '' });
+  const r = await uninstallPlugin('modelful-plugin', { purge: true });
+  assert.equal(r.ok, true);
 });

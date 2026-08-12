@@ -22,6 +22,8 @@ import {
 } from './plugins-lock.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
 import { importPluginWorkflows, removePluginWorkflows, referencedPluginAgents } from './plugin-workflows.mjs';
+import { pluginModelSecretStatus } from './plugin-models.mjs';
+import { referencedPluginModels } from './config.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -49,11 +51,14 @@ function frontmatterTools(text) {
   return line.replace(/^tools\s*:/, '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-/** The "Will install" consent inventory (spec §6.1): agents + their frontmatter
- *  tools, sources + their secret fields, skills, workflows, npm dep count from
- *  the lockfile, and the exact setup commands that would run. */
+/** The "Will install" consent inventory (spec §6.1, design §9.4): agents +
+ *  their frontmatter tools, sources + their secret fields, models with their
+ *  base-URL value VERBATIM (a model env can redirect all API traffic — the
+ *  reviewer must see where) + requested model secrets, skills, workflows, npm
+ *  dep count from the lockfile, and the exact setup commands that would run. */
 export function buildInstallInventory(versionDir) {
-  const manifest = readManifestAt(versionDir) ?? { taskSources: [], setup: { node: false, python: null } };
+  const manifest = readManifestAt(versionDir)
+    ?? { taskSources: [], models: [], modelSecrets: [], setup: { node: false, python: null } };
   const agents = [];
   const aDir = join(versionDir, 'agents');
   if (existsSync(aDir)) {
@@ -68,6 +73,15 @@ export function buildInstallInventory(versionDir) {
     id: s.id, displayName: s.displayName,
     secrets: (s.configSchema || []).filter((x) => x.secret).map((x) => x.key),
   }));
+  const models = (manifest.models || []).map((m) => {
+    const bu = m.env?.ANTHROPIC_BASE_URL;
+    return {
+      id: m.id, label: m.label, efforts: m.efforts,
+      envKeys: Object.keys(m.env ?? {}),
+      baseUrl: typeof bu === 'string' ? bu : bu ? `(from secret "${bu.secret}")` : null,
+    };
+  });
+  const modelSecrets = (manifest.modelSecrets || []).map((f) => ({ key: f.key, label: f.label }));
   const skills = [];
   const sDir = join(versionDir, 'skills');
   if (existsSync(sDir)) {
@@ -88,7 +102,7 @@ export function buildInstallInventory(versionDir) {
   const setupCommands = [];
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
-  return { agents, taskSources, skills: skills.sort(), workflows, depCount, setupCommands };
+  return { agents, taskSources, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
@@ -289,6 +303,18 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
       { code: 'REFERENCED', references: refs },
     );
   }
+  // Block-with-list model guard (design §9.4): same code/payload contract as
+  // the agents guard above. Only ids that would actually stop resolving block —
+  // referencedPluginModels applies the shadow/other-plugin/legacy carve-outs.
+  const modelRefs = referencedPluginModels(name);
+  if (modelRefs.length) {
+    const lines = modelRefs.map((r) =>
+      `${r.id} (${r.nodes.length + r.steps.length} selection${r.nodes.length + r.steps.length === 1 ? '' : 's'})`);
+    throw Object.assign(
+      new Error(`plugin "${name}" models are still selected in pipeline configuration: ${lines.join(', ')} — clear those selections (or copy the model to your catalog) first`),
+      { code: 'REFERENCED', references: modelRefs },
+    );
+  }
   await removePluginWorkflows(name); // throws its ReferencedError with the referencing list
   rmSync(pluginCurrentDir(name), { force: true });
   rmSync(join(pluginDir(name), 'versions'), { recursive: true, force: true });
@@ -365,8 +391,8 @@ export function listInstalledPlugins() {
       linked: e.linked === true,
       broken: !manifest,
       contributions: inv
-        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, skills: inv.skills.length, workflows: inv.workflows.length }
-        : { agents: 0, taskSources: 0, skills: 0, workflows: 0 },
+        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
+        : { agents: 0, taskSources: 0, models: 0, skills: 0, workflows: 0 },
     };
   });
 }
@@ -401,6 +427,10 @@ export async function doctorPlugin(name) {
     c('uv', onPath, onPath ? 'uv on PATH' : 'uv not found on PATH (required by setup.python)');
   }
   if (entry.linked) c('linked', true, 'dev-linked plugin — pin/hash checks reduced');
+  for (const s of pluginModelSecretStatus(name)) {
+    c(`model-secret:${s.key}`, s.set,
+      s.set ? `"${s.label}" set` : `model secret "${s.key}" is not set — configure it under Model secrets`);
+  }
   if (manifest && (manifest.taskSources || []).length) {
     let shim = null;
     try { shim = await import('./plugin-shim.mjs'); } // Task 11 module — may not exist yet
