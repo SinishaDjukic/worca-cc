@@ -306,7 +306,10 @@ export function collectModelEditor(rootEl) {
 
 // ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────
 
-const SECRETISH_RE = /token|key|secret|password|auth/i;
+// Credential-looking env keys default to "Require at install". Word-ish
+// boundaries keep limits like MAX_OUTPUT_TOKENS or MAX_THINKING_TOKENS (a
+// count, not a credential) out of the net.
+const SECRETISH_RE = /auth|secret|password|credential|api_?key|(?:^|_)key(?:_|$)|(?:^|_)token(?:_|$)/i;
 
 /**
  * The export wizard: pick global models, set the per-env-key policy, name the

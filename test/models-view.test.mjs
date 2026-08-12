@@ -227,3 +227,15 @@ test('export wizard: renders picks + env policy (secret-ish defaults) and collec
   assert.equal(body2.version, '1.0.0');
   assert.equal(body2.models[0].env.ANTHROPIC_AUTH_TOKEN, 'omit');
 });
+
+test('export wizard: token LIMITS are not credentials (MAX_OUTPUT_TOKENS defaults to include)', () => {
+  const el = renderExportWizard([{
+    id: 'm', label: 'M', efforts: EFFORTS,
+    env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192', MAX_THINKING_TOKENS: '8191', ANTHROPIC_AUTH_TOKEN: '••1234', API_KEY: '••5678' },
+  }], { doc });
+  const mode = (k) => [...el.querySelectorAll('.mvx-env-row')].find((r) => r.dataset.key === k).querySelector('.mvx-mode').value;
+  assert.equal(mode('CLAUDE_CODE_MAX_OUTPUT_TOKENS'), 'include');
+  assert.equal(mode('MAX_THINKING_TOKENS'), 'include');
+  assert.equal(mode('ANTHROPIC_AUTH_TOKEN'), 'secret');
+  assert.equal(mode('API_KEY'), 'secret');
+});
