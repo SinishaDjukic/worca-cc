@@ -860,6 +860,7 @@ function contribSummary(x) {
   const b = x || {};
   const parts = [
     [n(b.taskSources), 'source', 'sources'],
+    [n(b.chatChannels), 'chat channel', 'chat channels'],
     [n(b.agents), 'agent', 'agents'],
     [n(b.skills), 'skill', 'skills'],
     [n(b.workflows), 'workflow', 'workflows'],
@@ -874,6 +875,11 @@ function printInventory(inv) {
   const i = inv || {};
   for (const s of i.taskSources || []) {
     out(`  task source: ${s.id} (${s.displayName})${s.secrets?.length ? ` — secrets: ${s.secrets.join(', ')}` : ''}`);
+  }
+  for (const ch of i.chatChannels || []) {
+    const dirs = [ch.inbound && 'inbound', ch.outbound && 'outbound'].filter(Boolean).join('+');
+    out(`  chat channel: ${ch.id} (${ch.platform}, ${dirs}, persistent worker)${ch.secrets?.length ? ` — secrets: ${ch.secrets.join(', ')}` : ''}`);
+    if (ch.inbound) out('    WARNING: inbound chat can pause/stop/approve runs — bot token or allowed-chat membership controls worca-cc');
   }
   for (const a of i.agents || []) {
     out(`  agent: ${a.key}${a.tools?.length ? ` (tools: ${a.tools.join(', ')})` : ''}`);

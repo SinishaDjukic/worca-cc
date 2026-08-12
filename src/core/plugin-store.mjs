@@ -14,7 +14,7 @@ import {
   mkdirSync, rmSync, symlinkSync, renameSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
@@ -68,6 +68,14 @@ export function buildInstallInventory(versionDir) {
     id: s.id, displayName: s.displayName,
     secrets: (s.configSchema || []).filter((x) => x.secret).map((x) => x.key),
   }));
+  // Channel consent is security-loud by design: a chat channel is remote
+  // control of worca-cc (approve gates, stop/pause runs) for anyone holding
+  // the bot token or sitting in an allow-listed chat (design §4.6).
+  const chatChannels = (manifest.chatChannels || []).map((c) => ({
+    id: c.id, displayName: c.displayName, platform: c.platform, ingress: c.ingress,
+    inbound: c.capabilities?.inbound !== false, outbound: c.capabilities?.outbound !== false,
+    secrets: (c.configSchema || []).filter((x) => x.secret).map((x) => x.key),
+  }));
   const skills = [];
   const sDir = join(versionDir, 'skills');
   if (existsSync(sDir)) {
@@ -88,7 +96,7 @@ export function buildInstallInventory(versionDir) {
   const setupCommands = [];
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
-  return { agents, taskSources, skills: skills.sort(), workflows, depCount, setupCommands };
+  return { agents, taskSources, chatChannels, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
@@ -117,8 +125,9 @@ function dirChecks(dir, manifest) {
   c('manifest', !!manifest, manifest ? `plugin "${manifest.name}"` : 'worca-cc-plugin.json missing or invalid');
   if (manifest) {
     const range = manifest.engines?.worcaApi;
-    c('api', apiSatisfies(range), range ? `requires "${range}", host is ${WORCA_PLUGIN_API}` : 'no engines constraint');
+    c('api', apiSatisfies(range), range ? `requires "${range}", host APIs [${WORCA_PLUGIN_APIS.join(', ')}]` : 'no engines constraint');
     for (const s of manifest.taskSources || []) c(`module:${s.id}`, existsSync(join(dir, s.module)), s.module);
+    for (const ch of manifest.chatChannels || []) c(`channel-module:${ch.id}`, existsSync(join(dir, ch.module)), ch.module);
     if (manifest.setup?.node) c('node-deps', existsSync(join(dir, 'node_modules')), 'node_modules present (setup.node)');
     if (manifest.setup?.python === 'pyproject') c('python-venv', existsSync(join(dir, '.venv')), '.venv present (setup.python)');
   }
@@ -365,8 +374,8 @@ export function listInstalledPlugins() {
       linked: e.linked === true,
       broken: !manifest,
       contributions: inv
-        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, skills: inv.skills.length, workflows: inv.workflows.length }
-        : { agents: 0, taskSources: 0, skills: 0, workflows: 0 },
+        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, skills: inv.skills.length, workflows: inv.workflows.length }
+        : { agents: 0, taskSources: 0, chatChannels: 0, skills: 0, workflows: 0 },
     };
   });
 }

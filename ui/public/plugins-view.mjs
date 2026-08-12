@@ -109,6 +109,18 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     for (const key of s.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
     sources.appendChild(row);
   }
+  if ((inv.chatChannels || []).length) {
+    const channels = section(`Chat channels (${inv.chatChannels.length})`);
+    for (const ch of inv.chatChannels) {
+      const dirs = [ch.inbound && 'inbound', ch.outbound && 'outbound'].filter(Boolean).join(' + ');
+      const row = h(doc, 'div', 'pl-consent-row',
+        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}) — runs a persistent worker`);
+      for (const key of ch.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
+      channels.appendChild(row);
+    }
+    channels.appendChild(h(doc, 'div', 'pl-consent-row pl-channel-warn',
+      'Inbound chat can pause/stop/approve runs: anyone holding the bot token or in an allowed chat controls worca-cc.'));
+  }
   const skills = section(`Skills (${(inv.skills || []).length})`);
   for (const s of inv.skills || []) skills.appendChild(h(doc, 'div', 'pl-consent-row mono', s));
   const wfs = section(`Workflows (${(inv.workflows || []).length})`);

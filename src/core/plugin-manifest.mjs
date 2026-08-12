@@ -5,7 +5,7 @@
 
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
-import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -15,32 +15,51 @@ const KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SOURCE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const FIELD_TYPES = new Set(['text', 'select']);
 const INPUT_TYPES = new Set(['text', 'select', 'remote-select', 'task-browser']);
-const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'setup']);
+const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'chatChannels', 'setup']);
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs']);
+const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
+const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
 
 /**
- * Tiny '>=N <M' / '>=N' / exact 'N' range check against the integer host API.
+ * Tiny '>=N <M' / '>=N' / exact 'N' range check against the integer host APIs.
  * NO npm semver dep (repo rule: runtime deps are express+ws only). Clauses are
  * whitespace-separated and AND-ed; minor/patch digits are tolerated but ignored
- * (the API version is an integer). Unset/blank -> true (no constraint); any
- * unparseable token -> false (fail CLOSED: an unintelligible constraint must
- * not install).
+ * (the API version is an integer). The host advertises an API SET
+ * (WORCA_PLUGIN_APIS) — the range is satisfied if ANY member satisfies all
+ * clauses, so old ">=1 <2" manifests keep installing after an API bump.
+ * Unset/blank -> true (no constraint); any unparseable token -> false (fail
+ * CLOSED: an unintelligible constraint must not install). A number `apis` arg
+ * is accepted for back-compat with callers/tests that pass a single API.
  */
-export function apiSatisfies(range, api = WORCA_PLUGIN_API) {
+export function apiSatisfies(range, apis = WORCA_PLUGIN_APIS) {
+  return negotiatedApi(range, apis) !== null;
+}
+
+/**
+ * Highest host API satisfying `range`, or null. Drives the apiVersion handed
+ * to plugin children: an API-1 connector keeps receiving 1 after a host bump.
+ */
+export function negotiatedApi(range, apis = WORCA_PLUGIN_APIS) {
+  const list = typeof apis === 'number' ? [apis] : apis;
   const spec = typeof range === 'string' ? range.trim() : '';
-  if (!spec) return true;
-  for (const tok of spec.split(/\s+/)) {
-    const m = /^(>=|<=|>|<|=)?(\d+)(?:\.\d+){0,2}$/.exec(tok);
-    if (!m) return false;
-    const op = m[1] || '=';
-    const n = Number(m[2]);
-    const ok = op === '>=' ? api >= n : op === '<=' ? api <= n
-      : op === '>' ? api > n : op === '<' ? api < n : api === n;
-    if (!ok) return false;
+  const clauses = [];
+  if (spec) {
+    for (const tok of spec.split(/\s+/)) {
+      const m = /^(>=|<=|>|<|=)?(\d+)(?:\.\d+){0,2}$/.exec(tok);
+      if (!m) return null; // fail closed
+      clauses.push({ op: m[1] || '=', n: Number(m[2]) });
+    }
   }
-  return true;
+  let best = null;
+  for (const api of list) {
+    const ok = clauses.every(({ op, n }) => (
+      op === '>=' ? api >= n : op === '<=' ? api <= n
+        : op === '>' ? api > n : op === '<' ? api < n : api === n));
+    if (ok && (best === null || api > best)) best = api;
+  }
+  return best;
 }
 
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
@@ -58,6 +77,30 @@ function collectUnknown(obj, known, where, warnings) {
   for (const k of Object.keys(obj)) {
     if (!known.has(k)) warnings.push(`${where}: unknown field "${k}" ignored`);
   }
+}
+
+/** Shared configSchema field normalizer — identical semantics for taskSources
+ *  and chatChannels, so plugin-config.mjs (secrets, $env, defaults) needs no
+ *  per-contribution knowledge. Appends to errors/warnings, returns the list. */
+function normConfigSchema(rawList, at, errors, warnings) {
+  const configSchema = [];
+  (Array.isArray(rawList) ? rawList : []).forEach((f, j) => {
+    const fat = `${at}.configSchema[${j}]`;
+    if (!f || typeof f !== 'object') { errors.push(`${fat} must be an object`); return; }
+    collectUnknown(f, KNOWN_FIELD, fat, warnings);
+    const key = str(f.key);
+    if (!KEY_RE.test(key)) { errors.push(`${fat}: "key" must be an identifier, got "${key}"`); return; }
+    const type = str(f.type) || 'text';
+    if (!FIELD_TYPES.has(type)) { errors.push(`${fat} ("${key}"): type must be text|select, got "${type}"`); return; }
+    const options = normOptions(f.options);
+    if (type === 'select' && !options.length) errors.push(`${fat} ("${key}"): select fields need "options"`);
+    configSchema.push({
+      key, type, label: str(f.label) || key,
+      secret: f.secret === true, required: f.required === true,
+      default: f.default ?? null, help: str(f.help) || null, options,
+    });
+  });
+  return configSchema;
 }
 
 function badModulePath(mod) {
@@ -94,7 +137,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
   const enginesRaw = raw.engines && typeof raw.engines === 'object' ? raw.engines : {};
   const worcaApi = str(enginesRaw['worca-cc-api']) || null;
   if (worcaApi && !apiSatisfies(worcaApi)) {
-    errors.push(`${where}: engines.worca-cc-api "${worcaApi}" is not satisfied by host plugin API ${WORCA_PLUGIN_API}`);
+    errors.push(`${where}: engines.worca-cc-api "${worcaApi}" is not satisfied by host plugin APIs [${WORCA_PLUGIN_APIS.join(', ')}]`);
   }
 
   const setupRaw = raw.setup && typeof raw.setup === 'object' ? raw.setup : {};
@@ -118,23 +161,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       const modErr = badModulePath(module);
       if (modErr) errors.push(`${at} ("${id}"): "module" ${modErr}`);
 
-      const configSchema = [];
-      (Array.isArray(s.configSchema) ? s.configSchema : []).forEach((f, j) => {
-        const fat = `${at}.configSchema[${j}]`;
-        if (!f || typeof f !== 'object') { errors.push(`${fat} must be an object`); return; }
-        collectUnknown(f, KNOWN_FIELD, fat, warnings);
-        const key = str(f.key);
-        if (!KEY_RE.test(key)) { errors.push(`${fat}: "key" must be an identifier, got "${key}"`); return; }
-        const type = str(f.type) || 'text';
-        if (!FIELD_TYPES.has(type)) { errors.push(`${fat} ("${key}"): type must be text|select, got "${type}"`); return; }
-        const options = normOptions(f.options);
-        if (type === 'select' && !options.length) errors.push(`${fat} ("${key}"): select fields need "options"`);
-        configSchema.push({
-          key, type, label: str(f.label) || key,
-          secret: f.secret === true, required: f.required === true,
-          default: f.default ?? null, help: str(f.help) || null, options,
-        });
-      });
+      const configSchema = normConfigSchema(s.configSchema, at, errors, warnings);
 
       const inputs = [];
       (Array.isArray(s.inputs) ? s.inputs : []).forEach((inp, j) => {
@@ -170,6 +197,47 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
     errors.push(`${where}: duplicate taskSources id "${dup}"`);
   }
 
+  // chatChannels (API 2): persistent channel workers. Same configSchema field
+  // semantics as taskSources; deliberately NO task-browser/inputs machinery.
+  const channelsRaw = raw.chatChannels ?? [];
+  const chatChannels = [];
+  if (!Array.isArray(channelsRaw)) {
+    errors.push(`${where}: "chatChannels" must be an array`);
+  } else {
+    channelsRaw.forEach((c, i) => {
+      const at = `${where}: chatChannels[${i}]`;
+      if (!c || typeof c !== 'object') { errors.push(`${at} must be an object`); return; }
+      collectUnknown(c, KNOWN_CHANNEL, at, warnings);
+      const id = str(c.id);
+      if (!SOURCE_ID_RE.test(id)) errors.push(`${at}: "id" must be kebab-case, got "${id}"`);
+      const platform = str(c.platform).toLowerCase();
+      if (!platform || !SOURCE_ID_RE.test(platform)) {
+        errors.push(`${at} ("${id}"): "platform" must be a non-empty kebab-case hint (e.g. "telegram")`);
+      }
+      const module = str(c.module);
+      const modErr = badModulePath(module);
+      if (modErr) errors.push(`${at} ("${id}"): "module" ${modErr}`);
+      const ingress = str(c.ingress) || 'connect';
+      if (!CHANNEL_INGRESS.has(ingress)) {
+        errors.push(`${at} ("${id}"): "ingress" must be connect|webhook, got "${ingress}"`);
+      }
+      const capsRaw = c.capabilities && typeof c.capabilities === 'object' ? c.capabilities : {};
+      const capabilities = {
+        inbound: capsRaw.inbound !== false,
+        outbound: capsRaw.outbound !== false,
+      };
+      if (!capabilities.inbound && !capabilities.outbound) {
+        errors.push(`${at} ("${id}"): capabilities cannot disable both inbound and outbound`);
+      }
+      const configSchema = normConfigSchema(c.configSchema, at, errors, warnings);
+      chatChannels.push({ id, displayName: str(c.displayName) || id, platform, module, ingress, capabilities, configSchema });
+    });
+  }
+  const chIds = chatChannels.map((c) => c.id);
+  for (const dup of new Set(chIds.filter((v, i) => v && chIds.indexOf(v) !== i))) {
+    errors.push(`${where}: duplicate chatChannels id "${dup}"`);
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
@@ -178,7 +246,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       name, version,
       description: str(raw.description), author: str(raw.author),
       homepage: str(raw.homepage), license: str(raw.license),
-      engines: { worcaApi }, setup, taskSources,
+      engines: { worcaApi }, setup, taskSources, chatChannels,
     },
   };
 }
@@ -241,6 +309,9 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
   if (manifest) {
     for (const s of manifest.taskSources) {
       if (!existsSync(join(absDir, s.module))) push('error', `taskSources "${s.id}": module ${s.module} not found`);
+    }
+    for (const c of manifest.chatChannels) {
+      if (!existsSync(join(absDir, c.module))) push('error', `chatChannels "${c.id}": module ${c.module} not found`);
     }
   }
 

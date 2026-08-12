@@ -31,6 +31,33 @@ test('install consent lists a requested secret (.pl-secret) + setup commands ver
   assert.match(el.querySelector('.pl-setup-cmd').textContent, /npm ci --prefix <dir> --ignore-scripts --omit=dev/);
 });
 
+test('install consent: chat channels render security-loud with secrets; absent -> no section', () => {
+  const el = renderInstallConsent(
+    { name: 'telegram-chat', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    {
+      agents: [], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [],
+      chatChannels: [{
+        id: 'main', displayName: 'Telegram', platform: 'telegram',
+        ingress: 'connect', inbound: true, outbound: true, secrets: ['botToken'],
+      }],
+    },
+    { doc },
+  );
+  assert.match(el.textContent, /Chat channels \(1\)/);
+  assert.match(el.textContent, /Telegram \(telegram, inbound \+ outbound\) — runs a persistent worker/);
+  assert.match(el.querySelector('.pl-secret').textContent, /botToken/);
+  const warn = el.querySelector('.pl-channel-warn');
+  assert.ok(warn, 'security warning must render');
+  assert.match(warn.textContent, /pause\/stop\/approve runs/);
+
+  const none = renderInstallConsent(
+    { name: 'github-source', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    { agents: [], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [] },
+    { doc },
+  );
+  assert.doesNotMatch(none.textContent, /Chat channels/);
+});
+
 test('config form masks secrets; collect skips untouched {set:true} markers', () => {
   const schema = [
     { key: 'token', type: 'text', label: 'GitHub token', secret: true, required: true, default: null, help: null, options: [] },
