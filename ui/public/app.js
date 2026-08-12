@@ -2591,13 +2591,23 @@ if (typeof window !== 'undefined') {
 // {model,effort}. Shared by the legacy default-stage rows and the dynamic
 // per-node rows so the dropdown contents + effort filtering live in one place.
 function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
-  // Model dropdown: "(default model)" + every model + "+ Add model…".
+  // Model dropdown: "(default model)", then the models grouped — user-defined
+  // (global + legacy project) first, built-ins second, each group sorted
+  // alphabetically by label — then "+ Add model…". Provenance is carried by
+  // the optgroup label, not a per-option suffix; only the observed §4.6
+  // "cost not verified" flag still marks an option.
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
-  state.models.forEach((m) => modelSel.appendChild(option(m.id,
-    m.label
-    + (m.custom === 'project' ? ' ·project' : m.custom ? ' ·custom' : '')
-    + (m.costUnreliable ? ' ⚠cost' : '')))); // §4.6 observed "cost not verified"
+  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  const optgroup = (label, models) => {
+    if (!models.length) return;
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const m of models) og.appendChild(option(m.id, m.label + (m.costUnreliable ? ' ⚠cost' : '')));
+    modelSel.appendChild(og);
+  };
+  optgroup('Your models', state.models.filter((m) => m.custom).sort(byLabel));
+  optgroup('Built-in', state.models.filter((m) => !m.custom).sort(byLabel));
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 

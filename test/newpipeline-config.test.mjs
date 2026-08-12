@@ -204,6 +204,29 @@ test('renderModelEffortPair fills a model dropdown (default + models + add) and 
   assert.match(caption.textContent, /Haiku 4\.5 · high/);
 });
 
+test('model dropdown: grouped (Your models first, Built-in second), alphabetical, no provenance suffix', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const modelSel = doc.createElement('select');
+  const effortSel = doc.createElement('select');
+  window.__np._setModels([
+    { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium'], custom: false },
+    { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium'], custom: false },
+    { id: 'zz-model', label: 'Zeta', efforts: ['medium'], custom: 'global' },
+    { id: 'aa-model', label: 'Alpha', efforts: ['medium'], custom: 'project' },
+  ]);
+  window.__np.renderModelEffortPair(modelSel, effortSel, null, {});
+  const groups = [...modelSel.querySelectorAll('optgroup')];
+  assert.deepEqual(groups.map((g) => g.label), ['Your models', 'Built-in']);
+  // Alphabetical by label inside each group; provenance carried by the group,
+  // never a ·custom/·project suffix on the option text.
+  assert.deepEqual([...groups[0].querySelectorAll('option')].map((o) => o.textContent), ['Alpha', 'Zeta']);
+  assert.deepEqual([...groups[1].querySelectorAll('option')].map((o) => o.textContent), ['Haiku 4.5', 'Sonnet 4.6']);
+  // The default + add affordances bracket the groups.
+  assert.equal(modelSel.options[0].value, '');
+  assert.equal(modelSel.options[modelSel.options.length - 1].value, '__add__');
+});
+
 // A saved workflow served by the mocked API for the selector tests below.
 const SAVED_WF = {
   id: 'wf_x', name: 'Demo',
