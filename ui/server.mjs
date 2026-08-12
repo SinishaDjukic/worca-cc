@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -77,6 +77,7 @@ import { createChannelHost } from '../src/core/chat/channel-host.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createNotifier } from '../src/core/chat/notifier.mjs';
+import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
@@ -512,6 +513,62 @@ function wireAgentGen(entry) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Teams ingress (chat-connectivity-design.md §4.7) — the ONE deliberate,
+// auditable exemption from the loopback guard below: Bot Framework can only
+// deliver inbound Teams activities to a public HTTPS endpoint (via a
+// user-supplied tunnel), so this route is mounted BEFORE express.json and
+// BEFORE the guard. Hardening: capability-URL token (per-channel ingressToken
+// secret, timingSafeEqual, uniform 404 on ANY mismatch), 256 KB raw body cap,
+// 60 req/min bucket, worker-down 503, 10 s forward timeout 504. The worker
+// validates the Bot Framework JWT (issuer/audience/exp/serviceUrl) — bodies
+// and Authorization headers are NEVER logged host-side. Everything outside
+// /api/ingress stays loopback-guarded even through the tunnel.
+// ---------------------------------------------------------------------------
+const ingressBucket = new TokenBucket(60);
+const INGRESS_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
+
+app.post('/api/ingress/teams/:plugin/:channelId/:token',
+  express.raw({ type: '*/*', limit: '256kb' }),
+  async (req, res) => {
+    const notFound = () => res.status(404).json({ error: 'not found' });
+    if (!ingressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+    const { plugin, channelId, token } = req.params;
+    if (!INGRESS_ID_RE.test(plugin) || !INGRESS_ID_RE.test(channelId) || typeof token !== 'string' || !token) {
+      return notFound();
+    }
+    let entry;
+    try {
+      entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId && e.ingress === 'webhook');
+    } catch { entry = null; }
+    if (!entry) return notFound();
+    let expected = '';
+    try { expected = String(readPluginConfig(plugin, entry.configSchema).ingressToken || ''); }
+    catch { return notFound(); }
+    const got = Buffer.from(token);
+    const want = Buffer.from(expected);
+    if (!expected || got.length !== want.length || !timingSafeEqual(got, want)) return notFound();
+
+    try {
+      const out = await channelHost.handleWebhook({
+        plugin,
+        channelId,
+        method: req.method,
+        path: req.path,
+        headers: req.headers,
+        bodyB64: Buffer.isBuffer(req.body) ? req.body.toString('base64') : '',
+        timeoutMs: 10000,
+      });
+      res.status(out.statusCode || 200);
+      for (const [k, v] of Object.entries(out.headers || {})) res.set(k, v);
+      if (out.bodyB64) return res.send(Buffer.from(out.bodyB64, 'base64'));
+      return res.end();
+    } catch (err) {
+      if (err?.kind === 'timeout') return res.status(504).json({ error: 'worker timeout' });
+      return res.status(503).json({ error: 'channel worker unavailable' });
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Express middleware + static
