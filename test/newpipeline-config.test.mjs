@@ -204,7 +204,7 @@ test('renderModelEffortPair fills a model dropdown (default + models + add) and 
   assert.match(caption.textContent, /Haiku 4\.5 · high/);
 });
 
-test('model dropdown: grouped (Your models first, Built-in second), alphabetical, no provenance suffix', async () => {
+test('model dropdown: grouped (Your models / Plugins / Built-in), alphabetical, collision-only plugin suffix', async () => {
   const { window } = await boot();
   const doc = window.document;
   const modelSel = doc.createElement('select');
@@ -214,14 +214,19 @@ test('model dropdown: grouped (Your models first, Built-in second), alphabetical
     { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium'], custom: false },
     { id: 'zz-model', label: 'Zeta', efforts: ['medium'], custom: 'global' },
     { id: 'aa-model', label: 'Alpha', efforts: ['medium'], custom: 'project' },
+    // Same LABEL as the user's Zeta -> this plugin option gets its plugin name;
+    // Beta is unambiguous and stays clean (design §9.6, collision-only).
+    { id: 'plug-zeta', label: 'Zeta', efforts: ['medium'], custom: 'plugin', plugin: 'team-models' },
+    { id: 'plug-beta', label: 'Beta', efforts: ['medium'], custom: 'plugin', plugin: 'team-models' },
   ]);
   window.__np.renderModelEffortPair(modelSel, effortSel, null, {});
   const groups = [...modelSel.querySelectorAll('optgroup')];
-  assert.deepEqual(groups.map((g) => g.label), ['Your models', 'Built-in']);
+  assert.deepEqual(groups.map((g) => g.label), ['Your models', 'Plugins', 'Built-in']);
   // Alphabetical by label inside each group; provenance carried by the group,
   // never a ·custom/·project suffix on the option text.
   assert.deepEqual([...groups[0].querySelectorAll('option')].map((o) => o.textContent), ['Alpha', 'Zeta']);
-  assert.deepEqual([...groups[1].querySelectorAll('option')].map((o) => o.textContent), ['Haiku 4.5', 'Sonnet 4.6']);
+  assert.deepEqual([...groups[1].querySelectorAll('option')].map((o) => o.textContent), ['Beta', 'Zeta (team-models)']);
+  assert.deepEqual([...groups[2].querySelectorAll('option')].map((o) => o.textContent), ['Haiku 4.5', 'Sonnet 4.6']);
   // The default + add affordances bracket the groups.
   assert.equal(modelSel.options[0].value, '');
   assert.equal(modelSel.options[modelSel.options.length - 1].value, '__add__');

@@ -35,9 +35,10 @@ export function envSummary(env) {
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
  * built-ins currently overridden by a global entry.
  */
-export function renderModelsList({ globals = [], legacy = [], predefined = [], efforts = [], projectName = '' } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], predefined = [], efforts = [], projectName = '' } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
+  const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
 
   const section = (title, hint) => {
     const s = h(doc, 'div', 'mv-section');
@@ -58,6 +59,7 @@ export function renderModelsList({ globals = [], legacy = [], predefined = [], e
     const head = h(doc, 'div', 'mv-head');
     head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
     if (predefLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides built-in'));
+    else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
     if (m.costUnreliable) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
     body.appendChild(head);
     const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
@@ -97,14 +99,46 @@ export function renderModelsList({ globals = [], legacy = [], predefined = [], e
     root.appendChild(leg);
   }
 
-  // ── Built-ins (read-only) ──
+  // ── From plugins (read-only; design §9.6) ──
   const globalLc = new Set(globals.map((m) => m.id.toLowerCase()));
+  if (plugins.length) {
+    const plug = section('From plugins',
+      'Installed by plugins — read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.');
+    for (const m of plugins) {
+      const card = h(doc, 'section', 'card mv-card mv-plugin');
+      card.dataset.id = m.id;
+      card.dataset.plugin = m.plugin;
+      const body = h(doc, 'div', 'mv-body');
+      const head = h(doc, 'div', 'mv-head');
+      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+      head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
+      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      if (m.costUnreliable) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+      body.appendChild(head);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
+      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+      for (const s of m.secrets || []) {
+        body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
+          s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET — configure it in the plugin's settings`));
+      }
+      card.appendChild(body);
+      const copy = h(doc, 'button', 'btn-ghost mv-copy', 'Edit a copy');
+      copy.type = 'button'; copy.dataset.id = m.id; copy.dataset.plugin = m.plugin;
+      card.appendChild(copy);
+      plug.appendChild(card);
+    }
+    root.appendChild(plug);
+  }
+
+  // ── Built-ins (read-only) ──
   const builtins = section('Built-in models', 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.');
   for (const m of predefined) {
     const row = h(doc, 'div', 'mv-builtin');
     row.dataset.id = m.id;
     row.appendChild(h(doc, 'b', 'mv-name', m.label));
-    if (globalLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden'));
+    if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
+      row.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden'));
+    }
     row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id} — ${effortsSummary(m.efforts, efforts)}`));
     builtins.appendChild(row);
   }
@@ -268,6 +302,115 @@ export function collectModelEditor(rootEl) {
     env,
   };
   return { id: editing ? id : null, body };
+}
+
+// ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────
+
+const SECRETISH_RE = /token|key|secret|password|auth/i;
+
+/**
+ * The export wizard: pick global models, set the per-env-key policy, name the
+ * plugin, choose a destination folder. `globals` are MASKED entries from
+ * GET /api/models (only KEYS matter here — values are read server-side at
+ * export). Detached DOM; app.js wires mvx-export / mvx-cancel.
+ */
+export function renderExportWizard(globals, { doc = globalThis.document } = {}) {
+  const root = h(doc, 'section', 'card mv-editor mvx');
+  root.appendChild(h(doc, 'h3', 'mv-editor-title', 'Share models as a plugin'));
+
+  const step = (title, hint) => {
+    const s = h(doc, 'div', 'mvx-step');
+    s.appendChild(h(doc, 'h4', 'mvx-step-title', title));
+    if (hint) s.appendChild(h(doc, 'small', 'hint', hint));
+    root.appendChild(s);
+    return s;
+  };
+
+  const pick = step('1 — Models to include', 'Only your global models can be shared.');
+  for (const m of globals) {
+    const lab = h(doc, 'label', 'mvx-model');
+    const cb = h(doc, 'input', 'mvx-model-cb');
+    cb.type = 'checkbox'; cb.value = m.id;
+    cb.dataset.envKeys = Object.keys(m.env || {}).join('\n');
+    lab.appendChild(cb);
+    lab.appendChild(h(doc, 'span', null, `${m.label || m.id} `));
+    lab.appendChild(h(doc, 'small', 'hint', m.id));
+    pick.appendChild(lab);
+  }
+  if (!globals.length) pick.appendChild(h(doc, 'div', 'hist-empty', 'No global models to share yet.'));
+
+  const envKeys = [...new Set(globals.flatMap((m) => Object.keys(m.env || {})))];
+  const pol = step('2 — Env var policy',
+    'Include value commits the stored value to the plugin (it will live in a git repo). ' +
+    'Require at install strips it — teammates are prompted once and the value stays on their machine.');
+  for (const k of envKeys) {
+    const row = h(doc, 'div', 'mvx-env-row');
+    row.dataset.key = k;
+    row.appendChild(h(doc, 'span', 'mono mvx-env-key', k));
+    const sel = h(doc, 'select', 'select mvx-mode');
+    for (const [v, label] of [['include', 'Include value'], ['secret', 'Require at install'], ['omit', 'Omit']]) {
+      const opt = h(doc, 'option', null, label);
+      opt.value = v;
+      sel.appendChild(opt);
+    }
+    sel.value = SECRETISH_RE.test(k) ? 'secret' : 'include';
+    row.appendChild(sel);
+    if (SECRETISH_RE.test(k)) row.appendChild(h(doc, 'small', 'hint mvx-warn', 'looks like a credential'));
+    pol.appendChild(row);
+  }
+  if (!envKeys.length) pol.appendChild(h(doc, 'small', 'hint', 'No env vars on your models — nothing to decide.'));
+
+  const meta = step('3 — Plugin metadata + destination');
+  const field = (labelText, cls, placeholder, hint) => {
+    const wrap = h(doc, 'label', 'mv-field');
+    wrap.appendChild(h(doc, 'span', 'mv-field-label', labelText));
+    const input = h(doc, 'input', `input ${cls}`);
+    input.type = 'text'; input.placeholder = placeholder;
+    wrap.appendChild(input);
+    if (hint) wrap.appendChild(h(doc, 'small', 'hint', hint));
+    meta.appendChild(wrap);
+    return input;
+  };
+  field('Plugin name', 'mvx-name', 'discretestack-models', 'kebab-case; becomes the folder + install name');
+  field('Description', 'mvx-desc', 'Team routing for …');
+  field('Version', 'mvx-version', '0.1.0');
+  field('Destination folder', 'mvx-dest', '~/dev/discretestack-models',
+    'Must be new or empty. The scaffold goes here — git init + push it to share.');
+
+  const msg = h(doc, 'p', 'form-msg mvx-msg');
+  msg.setAttribute('aria-live', 'polite');
+  root.appendChild(msg);
+  const btns = h(doc, 'div', 'mv-editor-btns');
+  const go = h(doc, 'button', 'btn-go mvx-export', 'Export scaffold');
+  go.type = 'button';
+  const cancel = h(doc, 'button', 'btn-ghost mvx-cancel', 'Cancel');
+  cancel.type = 'button';
+  btns.appendChild(go); btns.appendChild(cancel);
+  root.appendChild(btns);
+  return root;
+}
+
+/** Collect the wizard into the POST /api/models/export-plugin body. */
+export function collectExportWizard(rootEl) {
+  const modes = {};
+  for (const row of rootEl.querySelectorAll('.mvx-env-row')) {
+    modes[row.dataset.key] = row.querySelector('.mvx-mode')?.value || 'include';
+  }
+  const models = [...rootEl.querySelectorAll('.mvx-model-cb')]
+    .filter((cb) => cb.checked)
+    .map((cb) => ({
+      id: cb.value,
+      env: Object.fromEntries((cb.dataset.envKeys || '').split('\n').filter(Boolean)
+        .map((k) => [k, modes[k] || 'include'])),
+    }));
+  const val = (cls) => (rootEl.querySelector(`.${cls}`)?.value || '').trim();
+  return {
+    name: val('mvx-name'),
+    description: val('mvx-desc'),
+    ...(val('mvx-version') ? { version: val('mvx-version') } : {}),
+    dest: val('mvx-dest'),
+    models,
+  };
 }
 
 /** Human summary of what deleting `id` clears, for the confirmation prompt. */

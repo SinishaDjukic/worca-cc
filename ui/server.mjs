@@ -2750,6 +2750,26 @@ app.put('/api/plugins/:name/config', (req, res) => {
   }
 });
 
+// GET /api/plugins/:name/model-env?id=<modelId> — the RAW manifest env of one
+// plugin model, for the Models view "Edit a copy" prefill (design §9.6).
+// Literals and ${VAR} ref text return verbatim (they came from a shared repo,
+// not this user's secrets); {secret} placeholders are NEVER resolved — their
+// env keys are listed in `secretKeys` so the editor renders empty rows.
+app.get('/api/plugins/:name/model-env', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  const model = listPluginModels().find((m) => m.plugin === name && m.id.toLowerCase() === id.toLowerCase());
+  if (!model) return badRequest(res, `plugin "${name}" provides no model ${JSON.stringify(id)}`);
+  const env = {};
+  const secretKeys = [];
+  for (const [k, v] of Object.entries(model.env ?? {})) {
+    if (typeof v === 'string') env[k] = v;
+    else secretKeys.push(k);
+  }
+  res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
+});
+
 // ---------------------------------------------------------------------------
 // /api/sources* -> task-source discovery + browser-driven connector calls.
 // ---------------------------------------------------------------------------

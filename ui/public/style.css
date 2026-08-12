@@ -1395,3 +1395,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mv-env-row .mv-env-copy{flex:0 0 auto;padding:6px 10px;}
 .mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
 .mv-env-btns .btn-ghost{padding:7px 12px;font-size:12px;}
+
+/* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
+.mv-secret{display:block;margin:4px 0 0;}
+.mv-secret.err{color:var(--red,#c0392b);}
+.mvx-step{display:grid;gap:8px;margin:0 0 16px;}
+.mvx-step-title{margin:0;font-size:13px;}
+.mvx-model{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;}
+.mvx-env-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mvx-env-key{flex:0 0 34%;font-size:12.5px;word-break:break-all;}
+.mvx-env-row .select{flex:0 0 auto;}
+.mvx-warn{color:var(--red,#c0392b);}
+.pl-baseurl{word-break:break-all;}
+.pl-config-h{margin:14px 0 6px;font-size:13px;}

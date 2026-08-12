@@ -288,3 +288,17 @@ test('POST /api/models/export-plugin: scaffold with value stripping; rejections'
     assert.match(bad.body.error, re);
   }
 });
+
+test('GET /api/plugins/:name/model-env: raw literals/refs for Edit-a-copy; secrets listed, never resolved', async () => {
+  const r = await jfetch(`/api/plugins/ds-models/model-env?${q({ id: 'DS-Plugged' })}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.id, 'ds-plugged');
+  assert.equal(r.body.env.ANTHROPIC_BASE_URL, 'https://api.ds.example', 'literal RAW, not masked');
+  assert.equal(r.body.env.X_REF, '${MY_VAR}');
+  assert.equal(r.body.env.ANTHROPIC_AUTH_TOKEN, undefined, 'secret value never present');
+  assert.deepEqual(r.body.secretKeys, ['ANTHROPIC_AUTH_TOKEN']);
+  assert.doesNotMatch(JSON.stringify(r.body), /sk-team-secret/, 'the stored plugin secret does not leak');
+
+  assert.equal((await jfetch(`/api/plugins/ds-models/model-env?${q({ id: 'nope' })}`)).status, 400);
+  assert.equal((await jfetch(`/api/plugins/ghost/model-env?${q({ id: 'x' })}`)).status, 404);
+});

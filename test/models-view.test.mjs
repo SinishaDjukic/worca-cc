@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import {
   effortsSummary, envSummary, renderModelsList, renderModelEditor,
   collectModelEditor, makeEnvRow, deleteRefsSummary,
+  renderExportWizard, collectExportWizard,
 } from '../ui/public/models-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -150,4 +151,79 @@ test('deleteRefsSummary wording', () => {
     steps: [{ projectKey: 'a', step: 'implementer' }],
   };
   assert.match(deleteRefsSummary('x', refs), /2 node selections and 1 role selection across 2 projects/);
+});
+
+// ── plugin section + export wizard (design §9.5–§9.6) ────────────────────────
+
+const PLUGINS = [
+  {
+    id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'], plugin: 'team-models',
+    env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '(secret: ds-token)' },
+    secrets: [{ key: 'ds-token', label: 'DS token', set: false }],
+  },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet via plugin', efforts: ['medium'], plugin: 'team-models', env: {}, secrets: [] },
+];
+
+test('list: plugin cards are read-only with provenance + secret status + Edit-a-copy; shadows badge both ways', () => {
+  const el = renderModelsList({
+    globals: [{ ...GLOBAL, id: 'ds-stable' }],
+    plugins: PLUGINS,
+    predefined: PREDEFINED,
+    efforts: EFFORTS,
+  }, { doc });
+
+  const cards = [...el.querySelectorAll('.mv-plugin')];
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].dataset.plugin, 'team-models');
+  assert.equal(cards[0].querySelector('.mv-origin').textContent, 'plugin: team-models');
+  assert.equal(cards[0].querySelector('.mv-edit'), null, 'no Edit on plugin cards');
+  assert.equal(cards[0].querySelector('.mv-delete'), null, 'no Delete on plugin cards');
+  const copy = cards[0].querySelector('.mv-copy');
+  assert.equal(copy.dataset.id, 'ds-stable');
+  assert.equal(copy.dataset.plugin, 'team-models');
+  assert.match(cards[0].querySelector('.mv-secret').textContent, /NOT SET/);
+  assert.match(cards[0].querySelector('.mv-shadowed').textContent, /overridden by your copy/,
+    'the user global with the same id shadows this plugin entry');
+
+  // The user's global card says it overrides the plugin (not a built-in).
+  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
+  assert.equal(globalCard.querySelector('.mv-shadow').textContent, 'overrides plugin');
+
+  // A plugin entry with a predefined id marks the built-in overridden.
+  const sonnetRow = [...el.querySelectorAll('.mv-builtin')].find((r) => r.dataset.id === 'claude-sonnet-4-6');
+  assert.equal(sonnetRow.querySelector('.mv-shadowed').textContent, 'overridden');
+});
+
+test('export wizard: renders picks + env policy (secret-ish defaults) and collects the POST body', () => {
+  const globals = [
+    { id: 'ds-stable', label: 'DS Stable', efforts: EFFORTS, env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '••••••1234' } },
+    { id: 'other', label: 'Other', efforts: EFFORTS },
+  ];
+  const el = renderExportWizard(globals, { doc });
+  const cbs = [...el.querySelectorAll('.mvx-model-cb')];
+  assert.deepEqual(cbs.map((c) => c.value), ['ds-stable', 'other']);
+  assert.equal(cbs[0].dataset.envKeys, 'ANTHROPIC_BASE_URL\nANTHROPIC_AUTH_TOKEN');
+
+  const rows = [...el.querySelectorAll('.mvx-env-row')];
+  assert.deepEqual(rows.map((r) => r.dataset.key), ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+  assert.equal(rows[0].querySelector('.mvx-mode').value, 'include', 'base URL defaults to include');
+  assert.equal(rows[1].querySelector('.mvx-mode').value, 'secret', 'TOKEN-ish key defaults to require-at-install');
+  assert.ok(rows[1].querySelector('.mvx-warn'), 'credential-looking key is called out');
+
+  cbs[0].checked = true;
+  el.querySelector('.mvx-name').value = ' team-models ';
+  el.querySelector('.mvx-desc').value = 'Team routing';
+  el.querySelector('.mvx-dest').value = '~/dev/team-models';
+  const body = collectExportWizard(el);
+  assert.deepEqual(body, {
+    name: 'team-models', description: 'Team routing', dest: '~/dev/team-models',
+    models: [{ id: 'ds-stable', env: { ANTHROPIC_BASE_URL: 'include', ANTHROPIC_AUTH_TOKEN: 'secret' } }],
+  });
+
+  // Version is included only when set; mode changes flow into the body.
+  el.querySelector('.mvx-version').value = '1.0.0';
+  rows[1].querySelector('.mvx-mode').value = 'omit';
+  const body2 = collectExportWizard(el);
+  assert.equal(body2.version, '1.0.0');
+  assert.equal(body2.models[0].env.ANTHROPIC_AUTH_TOKEN, 'omit');
 });

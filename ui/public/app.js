@@ -75,6 +75,7 @@ import {
 } from './guardrails-view.mjs';
 import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, deleteRefsSummary,
+  renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
@@ -260,6 +261,7 @@ const el = {
   modelsList: $('#models-list'),
   modelsMsg: $('#models-msg'),
   modelCreateBtn: $('#model-create-btn'),
+  modelShareBtn: $('#model-share-btn'),
 
   // Statistics view
   statsBody: $('#stats-body'),
@@ -2592,21 +2594,33 @@ if (typeof window !== 'undefined') {
 // per-node rows so the dropdown contents + effort filtering live in one place.
 function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // Model dropdown: "(default model)", then the models grouped — user-defined
-  // (global + legacy project) first, built-ins second, each group sorted
-  // alphabetically by label — then "+ Add model…". Provenance is carried by
-  // the optgroup label, not a per-option suffix; only the observed §4.6
+  // (global + legacy project) first, plugin-provided second, built-ins third,
+  // each group sorted alphabetically by label — then "+ Add model…".
+  // Provenance is carried by the optgroup label, not a per-option suffix; only
+  // when the same LABEL appears more than once does a plugin option get its
+  // plugin name appended (design §9.6, collision-only), and the observed §4.6
   // "cost not verified" flag still marks an option.
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  const labelCounts = new Map();
+  for (const m of state.models) {
+    const lc = (m.label || m.id).toLowerCase();
+    labelCounts.set(lc, (labelCounts.get(lc) || 0) + 1);
+  }
   const optgroup = (label, models) => {
     if (!models.length) return;
     const og = document.createElement('optgroup');
     og.label = label;
-    for (const m of models) og.appendChild(option(m.id, m.label + (m.costUnreliable ? ' ⚠cost' : '')));
+    for (const m of models) {
+      const ambiguous = m.custom === 'plugin' && labelCounts.get((m.label || m.id).toLowerCase()) > 1;
+      og.appendChild(option(m.id,
+        m.label + (ambiguous ? ` (${m.plugin})` : '') + (m.costUnreliable ? ' ⚠cost' : '')));
+    }
     modelSel.appendChild(og);
   };
-  optgroup('Your models', state.models.filter((m) => m.custom).sort(byLabel));
+  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
   optgroup('Built-in', state.models.filter((m) => !m.custom).sort(byLabel));
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
@@ -3061,6 +3075,8 @@ function goAddModel(restore) {
   if (typeof restore === 'function') restore();
   mvState.editing = null;
   mvState.openCreate = true;
+  mvState.openShare = false;
+  mvState.prefill = null;
   showView('models'); // loadModelsView renders the open editor
 }
 
@@ -6302,6 +6318,18 @@ async function openPluginSettings(name) {
   const sources = Array.isArray(data.sources) ? data.sources
     : [{ id: data.sourceId || '', schema: data.schema || [], values: data.values || {} }];
   const body = renderConfigForm(sources);
+  // Model secrets (design §9.7): one extra form, marked with data-target so the
+  // save loop routes it through the { target: 'modelSecrets' } write.
+  if (data.models && Array.isArray(data.models.schema) && data.models.schema.length) {
+    const head = document.createElement('h4');
+    head.className = 'pl-config-h';
+    head.textContent = 'Model secrets';
+    body.appendChild(head);
+    const msForm = renderConfigForm([{ id: '', schema: data.models.schema, values: data.models.values }])
+      .querySelector('.pl-config-form');
+    msForm.dataset.target = 'modelSecrets';
+    body.appendChild(msForm);
+  }
   pluginModal(`Settings: ${name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
     ['Save', 'btn btn-primary btn-mini', async () => {
@@ -6311,7 +6339,10 @@ async function openPluginSettings(name) {
       let failed = null;
       for (const f of body.querySelectorAll('.pl-config-form')) {
         const { sourceId, values } = collectConfigForm(f);
-        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, { sourceId, values });
+        const payload = f.dataset.target === 'modelSecrets'
+          ? { target: 'modelSecrets', values }
+          : { sourceId, values };
+        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, payload);
         if (!r.ok) { failed = r.data.error || 'save failed'; break; }
       }
       closePluginModal();
@@ -6555,7 +6586,7 @@ async function loadGuardrailsView(param = '') {
 // Promote action. The editor renders inline at the top of the list; env values
 // arrive MASKED and are write-only (unchanged masked echoes mean "keep").
 // ---------------------------------------------------------------------------
-const mvState = { data: null, editing: null, openCreate: false };
+const mvState = { data: null, editing: null, openCreate: false, openShare: false, prefill: null };
 
 function setModelsMsg(text, kind) {
   if (!el.modelsMsg) return;
@@ -6569,17 +6600,93 @@ function renderModelsViewBody() {
   const pp = selectedProjectPath();
   const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
   const frag = document.createDocumentFragment();
-  if (mvState.editing || mvState.openCreate) {
-    frag.appendChild(renderModelEditor(mvState.editing, d.efforts || []));
+  if (mvState.openShare) {
+    frag.appendChild(renderExportWizard(d.models || []));
+  } else if (mvState.editing || mvState.openCreate) {
+    const editor = renderModelEditor(mvState.editing, d.efforts || []);
+    if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
+    frag.appendChild(editor);
   }
   frag.appendChild(renderModelsList({
     globals: d.models || [],
     legacy,
+    plugins: d.plugin || [],
     predefined: d.predefined || [],
     efforts: d.efforts || [],
     projectName: pp ? pp.split('/').pop() : '',
   }));
   el.modelsList.replaceChildren(frag);
+}
+
+// "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
+// model — id/label/efforts plus its literal/${VAR} env values; each {secret}
+// key becomes an EMPTY row the user must fill (the plugin's secret is never
+// copied). Saving POSTs a global entry that shadows the plugin one.
+function prefillModelEditor(editor, pre) {
+  const idInput = editor.querySelector('.mv-id');
+  if (idInput) idInput.value = pre.id;
+  const labelInput = editor.querySelector('.mv-label');
+  if (labelInput) labelInput.value = pre.label && pre.label !== pre.id ? pre.label : '';
+  const efforts = new Set(pre.efforts || []);
+  if (efforts.size) {
+    for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
+  }
+  const wrap = editor.querySelector('.mv-env');
+  if (!wrap) return;
+  for (const [k, v] of Object.entries(pre.env || {})) {
+    const row = makeEnvRow();
+    row.querySelector('.mv-env-key').value = k;
+    row.querySelector('.mv-env-val').value = v;
+    wrap.appendChild(row);
+  }
+  for (const k of pre.secretKeys || []) {
+    const row = makeEnvRow();
+    row.querySelector('.mv-env-key').value = k;
+    row.querySelector('.mv-env-val').placeholder = 'value required — the plugin secret is not copied';
+    wrap.appendChild(row);
+  }
+  const msg = editor.querySelector('.mv-editor-msg');
+  if (msg && (pre.secretKeys || []).length) {
+    msg.textContent = `Fill in ${pre.secretKeys.join(', ')} — secret values never leave the plugin.`;
+  }
+}
+
+async function editPluginCopyFlow(plugin, id) {
+  try {
+    const res = await fetch(`/api/plugins/${encodeURIComponent(plugin)}/model-env?id=${encodeURIComponent(id)}`);
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.editing = null;
+    mvState.openCreate = true;
+    mvState.openShare = false;
+    mvState.prefill = data;
+    renderModelsViewBody();
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+async function exportPluginFlow() {
+  const wiz = el.modelsList && el.modelsList.querySelector('.mvx');
+  if (!wiz) return;
+  const msg = wiz.querySelector('.mvx-msg');
+  const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mvx-msg err'; } };
+  const body = collectExportWizard(wiz);
+  if (!body.models.length) return say('pick at least one model');
+  if (!body.name) return say('plugin name is required');
+  if (!body.dest) return say('destination folder is required');
+  try {
+    const res = await fetch('/api/models/export-plugin', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return say(data.error || `HTTP ${res.status}`);
+    mvState.openShare = false;
+    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Plugins view.`, 'ok');
+    renderModelsViewBody();
+  } catch (e) {
+    say(e.message);
+  }
 }
 
 async function loadModelsView() {
@@ -6687,6 +6794,7 @@ async function saveModelEditorFlow() {
     if (!res.ok) return say(data.error || `HTTP ${res.status}`);
     mvState.editing = null;
     mvState.openCreate = false;
+    mvState.prefill = null;
     setModelsMsg(id ? 'Saved.' : 'Model added.', 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
@@ -6741,13 +6849,22 @@ if (el.modelsList) {
     if (t.classList.contains('mv-edit')) {
       mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
       mvState.openCreate = false;
+      mvState.openShare = false;
+      mvState.prefill = null;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-delete')) {
       deleteModelFlow(t.dataset.id);
     } else if (t.classList.contains('mv-promote')) {
       promoteModelFlow(t.dataset.id);
+    } else if (t.classList.contains('mv-copy')) {
+      editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
+    } else if (t.classList.contains('mvx-export')) {
+      exportPluginFlow();
+    } else if (t.classList.contains('mvx-cancel')) {
+      mvState.openShare = false;
+      renderModelsViewBody();
     } else if (t.classList.contains('mv-cancel')) {
-      mvState.editing = null; mvState.openCreate = false;
+      mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-env-add')) {
       const wrap = el.modelsList.querySelector('.mv-editor .mv-env');
@@ -6768,6 +6885,17 @@ if (el.modelCreateBtn) {
   el.modelCreateBtn.addEventListener('click', () => {
     mvState.editing = null;
     mvState.openCreate = true;
+    mvState.openShare = false;
+    mvState.prefill = null;
+    renderModelsViewBody();
+  });
+}
+if (el.modelShareBtn) {
+  el.modelShareBtn.addEventListener('click', () => {
+    mvState.editing = null;
+    mvState.openCreate = false;
+    mvState.prefill = null;
+    mvState.openShare = true;
     renderModelsViewBody();
   });
 }

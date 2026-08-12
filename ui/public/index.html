@@ -774,10 +774,13 @@
               <h1>Models</h1>
               <div class="sub">Global model catalog — available in every project; entries can override built-ins and carry per-model routing env</div>
             </div>
-            <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add model
-            </button>
+            <div style="display:flex;gap:8px">
+              <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px">Share as plugin…</button>
+              <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                Add model
+              </button>
+            </div>
           </div>
           <p id="models-msg" class="form-msg" aria-live="polite"></p>
           <div class="run-list" id="models-list"></div>

@@ -125,3 +125,56 @@ test('orphan list: row per orphan with Purge button; empty input -> empty contai
   assert.equal(renderOrphanList([], { doc }).childElementCount, 0);
   assert.equal(renderOrphanList(undefined, { doc }).childElementCount, 0);
 });
+
+// ── model contributions in the plugin surfaces (design §9.4, §9.6) ───────────
+
+test('install consent: models section — base URL verbatim + model secrets red', () => {
+  const el = renderInstallConsent(
+    { name: 'team-models', repoUrl: 'https://example.com/r', sha: 'a1b2c3d4e5f6' },
+    {
+      agents: [], taskSources: [], skills: [], workflows: [],
+      models: [
+        { id: 'ds-stable', label: 'DS Stable', efforts: ['medium'], envKeys: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'], baseUrl: 'https://api.ds.example' },
+        { id: 'ds-plain', label: 'DS Plain', efforts: [], envKeys: [], baseUrl: null },
+      ],
+      modelSecrets: [{ key: 'ds-token', label: 'DS token' }],
+    },
+    { doc },
+  );
+  const text = el.textContent;
+  assert.match(text, /Models \(2\)/);
+  assert.match(text, /routes to: https:\/\/api\.ds\.example/, 'base URL shown verbatim');
+  assert.match(text, /requests model secret: ds-token \(DS token\)/);
+  assert.ok([...el.querySelectorAll('.pl-secret')].length >= 2, 'base URL + model secret render red');
+});
+
+test('update preview: model delta flags — env change and new model secret are red', () => {
+  const el = renderUpdatePreview({
+    pinnedSha: 'a'.repeat(12), candidateSha: 'b'.repeat(12),
+    commits: [{ sha: 'b'.repeat(12), subject: 'reroute' }],
+    manifestDelta: {
+      newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
+      newModels: ['ds-new'], removedModels: ['ds-old'],
+      envChangedModels: ['ds-stable'], newModelSecrets: ['ds-token'],
+    },
+  }, { doc });
+  const reds = [...el.querySelectorAll('.pl-delta-secret')].map((n) => n.textContent);
+  assert.ok(reds.some((t) => /MODEL ENV CHANGED .*ds-stable/.test(t)));
+  assert.ok(reds.some((t) => /NEW MODEL SECRET requested: ds-token/.test(t)));
+  const infos = [...el.querySelectorAll('.pl-delta')].map((n) => n.textContent);
+  assert.ok(infos.includes('new model: ds-new'));
+  assert.ok(infos.includes('removed model: ds-old'));
+});
+
+test('plugin list card counts models; references409 renders model guard entries', () => {
+  const list = renderPluginList([{
+    name: 'team-models', version: '1', enabled: true,
+    contributions: { agents: 0, taskSources: 0, models: 3, skills: 0, workflows: 0 },
+  }], { doc });
+  assert.match(list.querySelector('.pl-contrib').textContent, /3 models/);
+
+  const refs = renderReferences409([
+    { id: 'ds-stable', steps: [{ projectKey: 'a', step: 'planner' }], nodes: [{ projectKey: 'a', workflowId: 'w', nodeId: 'n' }] },
+  ], { doc });
+  assert.match(refs.querySelector('li').textContent, /model: ds-stable \(2 pipeline selections\)/);
+});
