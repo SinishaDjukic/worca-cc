@@ -6,6 +6,7 @@
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -15,10 +16,15 @@ const KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SOURCE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const FIELD_TYPES = new Set(['text', 'select']);
 const INPUT_TYPES = new Set(['text', 'select', 'remote-select', 'task-browser']);
-const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'setup']);
+const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'setup', 'models', 'modelSecrets']);
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
+const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env']);
+const KNOWN_MODEL_SECRET = new Set(['key', 'label']);
+/** A manifest env value that defers to the plugin's secrets store (design §9.1). */
+const isSecretRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+  && typeof v.secret === 'string' && Object.keys(v).length === 1;
 
 /**
  * Tiny '>=N <M' / '>=N' / exact 'N' range check against the integer host API.
@@ -170,6 +176,78 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
     errors.push(`${where}: duplicate taskSources id "${dup}"`);
   }
 
+  // models + modelSecrets (design §9.1). Manifest-only contribution: no files
+  // to check, so ALL validation lives here. Write-time env rules mirror the
+  // global-catalog setters (settings.mjs assertEnvPairs): reserved keys are a
+  // hard error — the spawn-time prepareModelEnv drop stays as the second gate.
+  const secretsRaw = raw.modelSecrets ?? [];
+  const modelSecrets = [];
+  if (!Array.isArray(secretsRaw)) {
+    errors.push(`${where}: "modelSecrets" must be an array`);
+  } else {
+    secretsRaw.forEach((f, i) => {
+      const at = `${where}: modelSecrets[${i}]`;
+      if (!f || typeof f !== 'object') { errors.push(`${at} must be an object`); return; }
+      collectUnknown(f, KNOWN_MODEL_SECRET, at, warnings);
+      const key = str(f.key);
+      if (!KEY_RE.test(key)) { errors.push(`${at}: "key" must be an identifier, got "${key}"`); return; }
+      modelSecrets.push({ key, label: str(f.label) || key });
+    });
+    const skeys = modelSecrets.map((f) => f.key);
+    for (const dup of new Set(skeys.filter((v, i) => skeys.indexOf(v) !== i))) {
+      errors.push(`${where}: duplicate modelSecrets key "${dup}"`);
+    }
+  }
+  const secretKeys = new Set(modelSecrets.map((f) => f.key));
+
+  const modelsRaw = raw.models ?? [];
+  const models = [];
+  if (!Array.isArray(modelsRaw)) {
+    errors.push(`${where}: "models" must be an array`);
+  } else {
+    modelsRaw.forEach((m, i) => {
+      const at = `${where}: models[${i}]`;
+      if (!m || typeof m !== 'object') { errors.push(`${at} must be an object`); return; }
+      collectUnknown(m, KNOWN_MODEL, at, warnings);
+      const id = str(m.id);
+      if (!id) { errors.push(`${at}: "id" is required`); return; }
+      const efforts = [];
+      if (m.efforts !== undefined) {
+        if (!Array.isArray(m.efforts)) { errors.push(`${at} ("${id}"): "efforts" must be an array`); return; }
+        for (const e of m.efforts) {
+          if (!EFFORTS.includes(e)) { errors.push(`${at} ("${id}"): unknown effort ${JSON.stringify(e)} — must be one of ${EFFORTS.join(' | ')}`); return; }
+        }
+        efforts.push(...EFFORTS.filter((e) => m.efforts.includes(e))); // canonical order, deduped
+      }
+      const env = {};
+      const envRaw = m.env && typeof m.env === 'object' && !Array.isArray(m.env) ? m.env : {};
+      if (m.env !== undefined && (typeof m.env !== 'object' || Array.isArray(m.env))) {
+        errors.push(`${at} ("${id}"): "env" must be an object`);
+        return;
+      }
+      for (const [k, v] of Object.entries(envRaw)) {
+        if (isReservedModelEnvKey(k)) { errors.push(`${at} ("${id}"): env key ${JSON.stringify(k)} is reserved and cannot be set on a model`); continue; }
+        if (isSecretRef(v)) {
+          if (!secretKeys.has(v.secret)) { errors.push(`${at} ("${id}"): env ${k} references undeclared modelSecrets key ${JSON.stringify(v.secret)}`); continue; }
+          env[k] = { secret: v.secret };
+        } else if (typeof v === 'string' && v) {
+          env[k] = v;
+        } else {
+          errors.push(`${at} ("${id}"): env value for ${JSON.stringify(k)} must be a non-empty string or {"secret": "<key>"}`);
+        }
+      }
+      models.push({
+        id, label: str(m.label) || id,
+        efforts: efforts.length ? efforts : [...EFFORTS],
+        ...(Object.keys(env).length ? { env } : {}),
+      });
+    });
+    const mids = models.map((m) => m.id.toLowerCase());
+    for (const dup of new Set(mids.filter((v, i) => mids.indexOf(v) !== i))) {
+      errors.push(`${where}: duplicate models id "${dup}" (ids are case-insensitive)`);
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
@@ -178,7 +256,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       name, version,
       description: str(raw.description), author: str(raw.author),
       homepage: str(raw.homepage), license: str(raw.license),
-      engines: { worcaApi }, setup, taskSources,
+      engines: { worcaApi }, setup, taskSources, models, modelSecrets,
     },
   };
 }
