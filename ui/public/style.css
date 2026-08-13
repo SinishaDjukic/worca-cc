@@ -90,9 +90,12 @@ body{
 .nav-count.n-amber{background:var(--amber);color:#fff;}
 .nav-count.n-grey{background:var(--field);color:var(--ink-3);}
 .nav button.active .nav-count{background:rgba(255,255,255,.18);color:#fff;}
-/* Running split-badges: green = running count, amber = paused count. Both keep
-   their colour on the dark active fill (the generic active rule above would
-   wash them into translucent white). */
+/* Running split-badges: green = work in flight, amber = paused count. Green is
+   applied by app.js ONLY while the count is >0 — at zero the badge falls back to
+   n-grey, the inert-inventory treatment History/Projects/Workspaces use, so a
+   permanently green pill cannot dilute the green that should catch the eye.
+   Both keep their colour on the dark active fill (the generic active rule above
+   would wash them into translucent white). */
 .nav-count.n-run{background:var(--green);color:#fff;}
 .nav-count.n-paused{background:var(--amber);color:#fff;position:relative;margin-left:6px;}
 .nav-count[hidden]{display:none;}   /* author display:grid beats the UA [hidden] rule */

@@ -205,6 +205,37 @@ test('paused pipelines get their own badge; running badge excludes them', async 
   assert.ok(window.document.querySelector('#nav-paused-badge .pause-flag'), 'pause flag icon present');
 });
 
+// Green is spent only on work in flight. At zero the running badge takes the
+// sidebar's inert-inventory grey (the treatment History/Projects/Workspaces
+// get), so a permanently green pill cannot dilute the green that should catch
+// the eye. It is greyed, not hidden: History et al. show a grey 0 too, and
+// Running would otherwise be the only nav item bare at rest.
+test('the running badge is green only while something is running, grey at zero', async () => {
+  const { window, recv } = await boot();
+  const badge = window.document.querySelector('#nav-running-count');
+  assert.equal(badge.textContent, '0');
+  assert.ok(badge.classList.contains('n-grey'), 'zero is inert — grey, like History');
+  assert.ok(!badge.classList.contains('n-run'), 'no green when nothing runs');
+  assert.equal(badge.hidden, false, 'greyed, not hidden');
+
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  assert.equal(badge.textContent, '1');
+  assert.ok(badge.classList.contains('n-run'), 'green once work is in flight');
+  assert.ok(!badge.classList.contains('n-grey'));
+
+  // ...and back to grey when the last run finishes.
+  recv({ type: 'done', runId: 'auth-fix', status: 'done' });
+  assert.equal(badge.textContent, '0');
+  assert.ok(badge.classList.contains('n-grey'), 'green must not linger past the work');
+  assert.ok(!badge.classList.contains('n-run'));
+});
+
+test('index.html ships the running badge grey — zero is its resting state', () => {
+  const html = readFileSync(htmlPath, 'utf8');
+  assert.match(html, /<span class="nav-count n-grey" id="nav-running-count">0<\/span>/,
+    'the static badge must not be green before any run exists');
+});
+
 // Workspace runs list every member project in the child hint (clamped by CSS).
 test('a workspace run lists all member projects in the child hint', async () => {
   const { window, recv } = await boot();

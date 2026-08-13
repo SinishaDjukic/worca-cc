@@ -9990,8 +9990,17 @@ function renderPipelineTabs() {
 }
 
 function updateNavCounts() {
+  const live = liveRuns().length;
   const c = $('#nav-running-count');
-  if (c) c.textContent = String(liveRuns().length);
+  if (c) {
+    c.textContent = String(live);
+    // Green means "work in flight", so it is only spent when it carries that
+    // signal: at zero the badge drops to the sidebar's inert-inventory grey,
+    // the same treatment History/Projects/Workspaces get. A permanently green
+    // pill reads as active and dilutes the green that should catch the eye.
+    c.classList.toggle('n-run', live > 0);
+    c.classList.toggle('n-grey', live === 0);
+  }
   // Paused pipelines get their own amber badge (hidden at zero); liveRuns()
   // excludes status 'paused', so the two counts never overlap.
   const paused = [...runs.values()].filter((r) => isPipelineRun(r) && isPaused(r)).length;

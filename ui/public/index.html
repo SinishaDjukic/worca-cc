@@ -27,7 +27,9 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
             <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
-            <span class="nav-count n-run" id="nav-running-count">0</span>
+            <!-- Starts grey: zero running IS the resting state, and app.js
+                 (updateNavCounts) swaps in n-run as soon as anything is live. -->
+            <span class="nav-count n-grey" id="nav-running-count">0</span>
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
