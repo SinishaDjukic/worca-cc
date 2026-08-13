@@ -986,6 +986,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* New-Pipeline target panes (mutually exclusive). */
 .target-pane.hidden{display:none;}
 .ws-members{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
+/* With no workspace picked the container is empty, but a flex box still holds
+   its margin — 10px of nothing that made the workspace pane taller than the
+   project pane and relaid the form out on every target flip. */
+.ws-members:empty{display:none;}
 .ws-members .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);}
 .ws-members .chip.missing{background:var(--red-bg);color:var(--red-ink);border-color:var(--red);}
 .ws-source-branches{display:flex;flex-direction:column;gap:12px;margin-top:6px;}

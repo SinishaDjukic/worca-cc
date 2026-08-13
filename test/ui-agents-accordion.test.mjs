@@ -496,6 +496,56 @@ test('the target switch shares one row with the picker it selects', async () => 
     'workspace pane starts hidden');
 });
 
+// Flipping the target must not relayout the form below it. jsdom has no layout
+// engine, so pin the two things that made the workspace pane taller than the
+// project pane: a second hint line, and an empty flex container still holding
+// its 10px top margin.
+test('the workspace pane is no taller than the project pane: one hint, no empty-container margin', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  // Direct children only, and not the add-project form's message line.
+  const hints = (sel) => [...doc.querySelectorAll(`${sel} > .hint`)];
+  assert.equal(hints('#target-workspace-pane').length, 1, 'one hint line, matching the project pane');
+  assert.equal(hints('#target-project-pane').length, 1);
+  assert.equal(doc.querySelector('#workspaceHintConfig'), null, 'the second line must be gone');
+
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.match(css, /\.ws-members:empty\{[^}]*display:\s*none/,
+    'an empty .ws-members keeps its margin unless it is display:none');
+});
+
+// Workspace mode used to blank the source-branch field entirely, leaving an
+// empty column that read as a broken control (and moved the row).
+test('workspace mode keeps the source-branch field, disabled, stating what will happen', async () => {
+  const { window } = await boot({ fetchHandler: (url) => {
+    if (url.includes('/api/branches')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ branches: ['dev', 'main'], current: 'dev' }) });
+    }
+    return null;
+  } });
+  selectProjectAnd(window);
+  await tick(); await tick();
+  const doc = window.document;
+  const sel = doc.querySelector('#sourceBranch');
+  assert.equal(sel.disabled, false, 'project mode: a real, editable picker');
+
+  [...doc.querySelectorAll('#target-seg button')].find((b) => b.dataset.target === 'workspace')
+    .dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(); await tick();
+  assert.equal(doc.querySelector('#sourceBranchWrap').classList.contains('hidden'), false,
+    'the field must stay put, not vanish');
+  assert.equal(sel.disabled, true, 'but not be editable — branches are chosen per member');
+  assert.equal(sel.options.length, 1);
+  assert.match(sel.options[0].textContent, /current branch \(auto\)/);
+  assert.match(sel.title, /per project/i, 'and say why it is disabled');
+
+  // Flipping back restores a working picker.
+  [...doc.querySelectorAll('#target-seg button')].find((b) => b.dataset.target === 'project')
+    .dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(); await tick();
+  assert.equal(sel.disabled, false, 'project mode must not inherit the disabled state');
+});
+
 test('flipping the target swaps the picker in place, leaving the switch put', async () => {
   const { window } = await boot();
   const doc = window.document;

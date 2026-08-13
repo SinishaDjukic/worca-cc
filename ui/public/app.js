@@ -4614,7 +4614,13 @@ async function populateBranchSelect(select, projectDir) {
 // Back-compat shim for the single #sourceBranch (existing call sites in
 // onProjectChanged are unchanged). setBranchPlaceholder is no longer needed
 // (its callers move to seedBranchPlaceholder / are removed in setRunTarget).
-function refreshBranches(projectDir) { return populateBranchSelect(el.sourceBranch, projectDir); }
+function refreshBranches(projectDir) {
+  // In workspace mode the single select is the disabled "current branch (auto)"
+  // stand-in; filling it with ONE project's branches would claim a source the
+  // run will not use (each member branches off its own HEAD).
+  if (state.runTarget === 'workspace') return showWorkspaceBranchPlaceholder();
+  return populateBranchSelect(el.sourceBranch, projectDir);
+}
 
 el.projectSelect.addEventListener('change', () => {
   if (el.projectSelect.value === '__add__') {
@@ -4827,8 +4833,11 @@ function setRunTarget(target) {
   // Source-branch field: in workspace mode swap the single dropdown for one
   // per-project dropdown each defaulting to that project's current branch (HEAD).
   if (t === 'workspace') {
-    // Per-project source branches: hide the single dropdown, show one per member.
-    if (el.sourceBranchWrap) el.sourceBranchWrap.classList.add('hidden');
+    // The single dropdown STAYS, disabled, stating what will happen ("current
+    // branch (auto)") until a workspace with members replaces it with one
+    // picker each — an empty column reads as a broken control, and the field
+    // vanishing entirely made the row jump.
+    showWorkspaceBranchPlaceholder();
     if (el.sourceBranchHint) el.sourceBranchHint.textContent = "One per project; each defaults to its current branch.";
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
     loadConfig('');
@@ -4836,11 +4845,23 @@ function setRunTarget(target) {
   } else {
     // Restore the single project-driven dropdown; clear the per-project list.
     if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
+    if (el.sourceBranch) el.sourceBranch.disabled = false;
     if (el.wsSourceBranches) { el.wsSourceBranches.classList.add('hidden'); el.wsSourceBranches.innerHTML = ''; }
     if (el.sourceBranchHint) el.sourceBranchHint.textContent = "The worktree branches off this. Defaults to the current branch.";
     // Restore the project-driven branch list + config for the selected project.
     onProjectChanged();
   }
+}
+
+// Workspace mode with nothing to pick per member yet: keep the field occupied by
+// a disabled dropdown that says what the run will do. Its value is never read —
+// the submit handler deletes sourceBranch in workspace mode.
+function showWorkspaceBranchPlaceholder() {
+  if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
+  if (!el.sourceBranch) return;
+  seedBranchPlaceholder(el.sourceBranch, 'current branch (auto)');
+  el.sourceBranch.disabled = true;
+  el.sourceBranch.title = "Set per project once a workspace is chosen; each defaults to its current branch.";
 }
 
 // Render the member chips for the currently-selected workspace.
@@ -4869,9 +4890,13 @@ function renderWorkspaceSourceBranches() {
   const ws = state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId);
   if (!ws || !Array.isArray(ws.projectPaths) || !ws.projectPaths.length) {
     host.classList.add('hidden');
+    showWorkspaceBranchPlaceholder(); // nothing per-member to show: keep the field occupied
     return;
   }
   host.classList.remove('hidden');
+  // Real per-member pickers now exist, so the disabled stand-in would only be a
+  // dead control sitting above live ones.
+  if (el.sourceBranchWrap) el.sourceBranchWrap.classList.add('hidden');
   ws.projectPaths.forEach((p, i) => {
     const key = (Array.isArray(ws.projectKeys) && ws.projectKeys[i]) || '';
     const missing = Array.isArray(ws.exists) && ws.exists[i] === false;

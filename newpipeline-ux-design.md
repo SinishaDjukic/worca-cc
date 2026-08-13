@@ -194,6 +194,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
 - **D15 — The workflow picker and its agents live apart**, so the accordion header carries a chip with the workflow's name. Without it, "Agents · all defaults" inside Advanced would not say *whose* defaults.
+- **D17 — Flipping the target must not relayout the form.** The two panes are kept the same height: one hint line each, no empty flex container holding a margin, and the source-branch field stays present (disabled) in workspace mode rather than vanishing.
 - **D16 — Advanced is always collapsed and its header is bare.** A disclosure that opens itself, or annotates itself, is doing a job the section's own contents already do. An error that must be seen belongs outside it.
 - **D14 — A control that cannot work says why.** No-project disables the accordion with a reason; effort names its dependency on the model. Both previously failed silently, which is indistinguishable from a bug.
 - **D13 — The target switch shares a row with its picker**, and destructive management lives in the management views, not inline in a picker used every run (§4.1).
