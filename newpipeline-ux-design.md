@@ -3,7 +3,7 @@
 Status: **implemented** (branch `feat/newpipeline-ux`)
 Scope decided: **inline accordion** for per-agent config + **workflow-level per-node defaults** with delta-based run config. Explicitly out of scope: a multi-step wizard, a slide-over panel, and graph-popover editing (see §7 for why and §8 for future paths).
 
-Measured result at 1280×900, project selected: the run form went from **1947px to 1056px** on the Default workflow and from **1992px to 1056px** on a 5-node saved workflow (−46%/−47%); the Start button moved from 1845px below the form's top to 954px. The new height no longer grows with the workflow, because a collapsed row is fixed-height.
+Measured result at 1280×900, project selected: the run form went from **1947px to 1329px** on the Default workflow (−32%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
 
 ## 1. Problem
 
@@ -41,11 +41,16 @@ Two structural defects make any redesign harder than it should be:
 ### 4.1 Page layout (top to bottom)
 
 1. **Target / Project** — unchanged (segmented Project/Workspace + pickers).
-2. **Task** — prompt/markdown segmented control + textarea, unchanged mechanics; visually the centerpiece of the page.
-3. **Workflow** — existing picker (`#workflowSelect`).
-4. **Agents accordion** — replaces `#pipeline-config`'s stage/node/feedback blocks (§4.2).
-5. **Advanced** (collapsed `<details>`-style disclosure) — title, source branch, feature branch, extra files, guardrails, mock mode (§4.6).
-6. **Start run.**
+2. **Title** — names the run, so it belongs with the task rather than behind a disclosure.
+3. **Task** — prompt/markdown segmented control + textarea, unchanged mechanics; visually the centerpiece of the page.
+4. **Extra files** — directly under the task source, because they are more of the same input, just as files. Labelled `Extra files (optional)` to match the `Feature branch (optional)` convention.
+5. **Source branch | Feature branch** — one two-column row (`.field-grid-2`): they are a single decision (branch from → into), so they read better paired than stacked.
+6. **Workflow** — existing picker (`#workflowSelect`).
+7. **Agents accordion** — replaces `#pipeline-config`'s stage/node/feedback blocks (§4.2).
+8. **Advanced** (collapsed `<details>`-style disclosure) — guardrails and mock mode only (§4.6).
+9. **Start run.**
+
+Items 2, 4 and 5 were briefly inside Advanced and were promoted back out: they are edited often enough that a disclosure was the wrong home. They carry `.field-compact` (12px labels, 40px controls, 12px gaps) so the four of them cost ~275px instead of the ~340px full-size fields would have.
 
 ### 4.2 Agents accordion
 
@@ -109,16 +114,14 @@ The accordion always displays the **resolved** value and marks the row modified 
 
 ### 4.6 Advanced disclosure
 
-Collapsed by default; contains, unchanged in behavior:
+Collapsed by default; contains the two settings that are genuinely set-and-forget:
 
-- Title (optional; Claude titles the run when empty),
-- Source branch (defaults to the project's current branch) + workspace per-member variants,
-- Feature branch (empty → Claude proposes a name),
-- Optional extra files,
 - Guardrails (default Permissive),
 - Mock mode (default off).
 
-The disclosure auto-expands when any contained field is non-default at render time (e.g. restored state), so nothing active is ever hidden. Open/closed state is otherwise ephemeral.
+The disclosure auto-expands when either is non-default at render time — including a guardrail set restored from a previous session — so nothing active is ever hidden. Open/closed state is otherwise ephemeral.
+
+The first cut also parked title, both branches and extra files here. That was wrong: "has a safe default" is not the same as "rarely touched", and those four are edited most runs. They moved back into the main column (§4.1) and Advanced kept only what survives the stricter test. `advancedIsNonDefault` shrank accordingly, and with it the `data-default` marker `populateBranchSelect` was stamping on the current-branch option.
 
 ### 4.7 Render-path consolidation
 
@@ -171,6 +174,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D7 — Two PRs**, UI-first — *superseded during implementation*: see §6.
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
+- **D11 — Advanced holds only guardrails + mock.** A safe default is not the same as an infrequent edit; title, the branch pair and extra files fail the second test and live in the main column, compacted (§4.1/§4.6).
 - **D10 — The Default workflow keeps writing through the legacy per-role path.** Rendering was unified; storage was not. The CLI and every existing install write `steps[role]`, and switching the UI to node-keyed writes would have split the truth across two tables for the most-used workflow.
 
 ## 8. Out of scope / future

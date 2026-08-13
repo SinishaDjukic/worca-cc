@@ -335,14 +335,48 @@ test('the collapsed caption follows the controls immediately, without waiting fo
 
 // ── Advanced disclosure (§4.6) ──────────────────────────────────────────────
 
-test('Advanced starts collapsed and holds the safe-default fields', async () => {
+test('Advanced holds only the set-and-forget settings; the often-used fields are promoted', async () => {
   const { window } = await boot();
-  const details = window.document.querySelector('#advanced-config');
+  const doc = window.document;
+  const details = doc.querySelector('#advanced-config');
   assert.ok(details, 'missing the Advanced disclosure');
   assert.equal(details.open, false, 'Advanced must start collapsed');
-  for (const id of ['title', 'sourceBranch', 'featureBranch', 'guardrailsSelect', 'extras', 'mock']) {
+  for (const id of ['guardrailsSelect', 'mock']) {
     assert.ok(details.querySelector(`#${id}`), `#${id} must live inside Advanced`);
   }
+  // Title, the branch pair and extra files are edited often enough to earn a
+  // place in the main column — burying them behind a disclosure was the bug.
+  for (const id of ['title', 'sourceBranch', 'featureBranch', 'extras']) {
+    assert.ok(doc.querySelector(`#${id}`), `#${id} must exist`);
+    assert.ok(!details.contains(doc.querySelector(`#${id}`)), `#${id} must NOT be inside Advanced`);
+  }
+});
+
+test('the promoted fields sit in the intended order around the task box', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const form = doc.querySelector('#run-form');
+  const posOf = (sel) => [...form.querySelectorAll('*')].indexOf(form.querySelector(sel));
+  const title = posOf('#title');
+  const taskSeg = posOf('#source-seg');
+  const extras = posOf('#extras');
+  const source = posOf('#sourceBranch');
+  const workflow = posOf('#workflowSelect');
+  assert.ok(title < taskSeg, 'Title sits above the task source');
+  assert.ok(taskSeg < extras, 'Extra files sit under the task source, grouped with it');
+  assert.ok(extras < source, 'the branch pair follows the extra files');
+  assert.ok(source < workflow, 'everything promoted stays above the workflow picker');
+  // Source + feature branch share one compact row.
+  const pair = doc.querySelector('.field-grid-2');
+  assert.ok(pair, 'missing the two-column row');
+  assert.ok(pair.querySelector('#sourceBranch') && pair.querySelector('#featureBranch'),
+    'both branch fields must share the row');
+});
+
+test('Extra files is labelled like the other optional fields', () => {
+  const html = readFileSync(htmlPath, 'utf8');
+  assert.match(html, /Extra files <span class="opt">\(optional\)<\/span>/, 'label drifted from the "(optional)" convention');
+  assert.ok(!html.includes('Optional extra files'), 'the old label must be gone');
 });
 
 test('Advanced force-opens when something inside it is non-default, and says what', async () => {
@@ -350,70 +384,23 @@ test('Advanced force-opens when something inside it is non-default, and says wha
   const doc = window.document;
   const details = doc.querySelector('#advanced-config');
   assert.equal(details.open, false);
-  doc.querySelector('#featureBranch').value = 'feat/x';
-  doc.querySelector('#featureBranch').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.querySelector('#mock-switch').dispatchEvent(new window.Event('click', { bubbles: true }));
   assert.equal(details.open, true, 'active state must never be hidden');
-  assert.match(doc.querySelector('#advancedSummary').textContent, /feature branch/);
+  assert.match(doc.querySelector('#advancedSummary').textContent, /mock mode/);
 });
 
-test('advancedIsNonDefault names each deviating field (and stays empty at rest)', async () => {
+test('advancedIsNonDefault names each deviating setting (and stays empty at rest)', async () => {
   const { window } = await boot();
   const doc = window.document;
   const { advancedIsNonDefault } = window.__np;
   assert.deepEqual(advancedIsNonDefault(), []);
+  // A promoted field is no longer Advanced's business, however it is set.
   doc.querySelector('#title').value = 'run me';
+  doc.querySelector('#featureBranch').value = 'feat/x';
+  assert.deepEqual(advancedIsNonDefault(), [], 'promoted fields must not reopen Advanced');
   doc.querySelector('#mock').checked = true;
   const gr = doc.querySelector('#guardrailsSelect');
   gr.appendChild(new window.Option('Strict', 'secure'));
   gr.value = 'secure';
-  assert.deepEqual(advancedIsNonDefault().sort(), ['guardrails', 'mock mode', 'title']);
-});
-
-test('the source branch counts as non-default only when it differs from the repo HEAD', async () => {
-  const { window } = await boot({ fetchHandler: (url) => {
-    if (url.includes('/api/branches')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ branches: ['dev', 'main'], current: 'dev' }) });
-    }
-    return null;
-  } });
-  selectProjectAnd(window);
-  await tick(); await tick();
-  const doc = window.document;
-  const sel = doc.querySelector('#sourceBranch');
-  assert.equal(sel.value, 'dev', 'the current branch is preselected');
-  assert.ok(!window.__np.advancedIsNonDefault().includes('source branch'), 'HEAD is the default, not a choice');
-  sel.value = 'main';
-  assert.ok(window.__np.advancedIsNonDefault().includes('source branch'));
-});
-
-test('in workspace mode the per-member branch pickers are what counts as non-default', async () => {
-  const { window } = await boot({ fetchHandler: (url) => {
-    if (url.includes('/api/branches')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ branches: ['dev', 'main'], current: 'dev' }) });
-    }
-    return null;
-  } });
-  selectProjectAnd(window);
-  await tick(); await tick();
-  const doc = window.document;
-  // Hide the single picker exactly as setRunTarget('workspace') does, and stand
-  // in two member pickers built the same way populateBranchSelect builds them.
-  doc.querySelector('#sourceBranchWrap').classList.add('hidden');
-  doc.querySelector('#sourceBranch').value = 'main'; // must now be ignored
-  const host = doc.querySelector('#ws-source-branches');
-  for (const picked of ['dev', 'dev']) {
-    const sel = doc.createElement('select');
-    sel.className = 'select ws-src-select';
-    for (const b of ['dev', 'main']) {
-      const o = new window.Option(b, b);
-      if (b === 'dev') o.dataset.default = '1';
-      sel.appendChild(o);
-    }
-    sel.value = picked;
-    host.appendChild(sel);
-  }
-  assert.ok(!window.__np.advancedIsNonDefault().includes('source branch'),
-    'the hidden single picker must not leak into workspace mode');
-  host.querySelector('select').value = 'main';
-  assert.ok(window.__np.advancedIsNonDefault().includes('source branch'), 'one deviating member is enough');
+  assert.deepEqual(advancedIsNonDefault(), ['guardrails', 'mock mode']);
 });

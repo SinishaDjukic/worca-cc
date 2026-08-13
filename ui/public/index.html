@@ -174,6 +174,12 @@
                   <small class="hint" id="workspaceHintConfig">Per-agent models resolve per project from each project's own config.</small>
                 </div>
 
+                <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
+                <div class="field field-compact">
+                  <label for="title">Title <span class="opt">(optional)</span></label>
+                  <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                </div>
+
                 <!-- Task source -->
                 <div class="field">
                   <label>Task source</label>
@@ -198,6 +204,35 @@
                     </div>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
+                </div>
+
+                <!-- Extra files belong WITH the task: they are more of the same
+                     input, just as files. -->
+                <div class="field field-compact">
+                  <label>Extra files <span class="opt">(optional)</span></label>
+                  <div class="file">
+                    <button type="button" class="pick" data-pick="extras">Choose files</button>
+                    <span class="state" id="extrasNote">Reference files uploaded and copied into the pipeline's extras/ folder.</span>
+                    <input id="extras" type="file" multiple hidden />
+                  </div>
+                </div>
+
+                <!-- Branch pair: one decision (from → into), so one compact row. -->
+                <div class="field-grid-2">
+                  <div class="field field-compact">
+                    <label for="sourceBranch">Source branch</label>
+                    <div class="select-wrap" id="sourceBranchWrap">
+                      <select id="sourceBranch" class="select"></select>
+                    </div>
+                    <!-- Workspace mode: one source-branch dropdown per member project. -->
+                    <div class="ws-source-branches hidden" id="ws-source-branches"></div>
+                    <small class="hint" id="sourceBranchHint">The worktree branches off this. Defaults to the current branch.</small>
+                  </div>
+
+                  <div class="field field-compact">
+                    <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
+                    <input id="featureBranch" class="input" type="text" placeholder="leave empty — Claude will propose a name" spellcheck="false" />
+                  </div>
                 </div>
 
                 <!-- Pipeline configuration. The workflow picker stays visible; every
@@ -234,35 +269,17 @@
                   </div>
                 </div>
 
-                <!-- Advanced: everything with a safe default (§4.6). Collapsed unless
-                     something inside is already non-default. -->
+                <!-- Advanced: the two settings that are genuinely set-and-forget
+                     (§4.6). The other safe-default fields were promoted back up —
+                     they are edited often enough to earn their place. Collapsed
+                     unless something inside is already non-default. -->
                 <details class="advanced" id="advanced-config">
                   <summary>
                     <span class="adv-chev" aria-hidden="true"></span>
                     <span>Advanced</span>
-                    <span class="adv-sub" id="advancedSummary">title, branches, guardrails, extra files, mock mode</span>
+                    <span class="adv-sub" id="advancedSummary">guardrails, mock mode</span>
                   </summary>
                   <div class="advanced-body">
-                    <div class="field">
-                      <label for="title">Title <span class="opt">(optional)</span></label>
-                      <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
-                    </div>
-
-                    <div class="field">
-                      <label for="sourceBranch">Source branch</label>
-                      <div class="select-wrap" id="sourceBranchWrap">
-                        <select id="sourceBranch" class="select"></select>
-                      </div>
-                      <!-- Workspace mode: one source-branch dropdown per member project. -->
-                      <div class="ws-source-branches hidden" id="ws-source-branches"></div>
-                      <small class="hint" id="sourceBranchHint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
-                    </div>
-
-                    <div class="field">
-                      <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
-                      <input id="featureBranch" class="input" type="text" placeholder="leave empty — Claude will propose a name" spellcheck="false" />
-                    </div>
-
                     <!-- Guardrails picker (built-ins + named sets; the selection IS the
                          run's policy, applied uniformly to every member). app.js populates
                          from GET /api/guardrails. Applies to Project and Workspace targets
@@ -275,15 +292,6 @@
                         </select>
                       </div>
                       <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
-                    </div>
-
-                    <div class="field">
-                      <label>Optional extra files</label>
-                      <div class="file">
-                        <button type="button" class="pick" data-pick="extras">Choose files</button>
-                        <span class="state" id="extrasNote">Reference files uploaded and copied into the pipeline's extras/ folder.</span>
-                        <input id="extras" type="file" multiple hidden />
-                      </div>
                     </div>
 
                     <div class="switch-row">

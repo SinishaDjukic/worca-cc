@@ -2949,6 +2949,8 @@ async function loadGuardrailsInto(selectId) {
   }
   sel.value = state.guardrailsId;
   updateGuardrailsHint();
+  // A restored non-Permissive set is active state, so Advanced must not hide it.
+  syncAdvancedDisclosure();
 }
 
 // Render the config UI for one workflow. Default -> show the legacy 4 stage rows
@@ -4326,34 +4328,20 @@ async function mountPluginSourcePane(src) {
 }
 
 // ---------------------------------------------------------------------------
-// Advanced disclosure (§4.6): title, branches, guardrails, extra files and mock
-// mode all have a safe default, so they stay collapsed — but collapsing must
-// never HIDE active state, so the panel force-opens whenever anything inside it
-// is already non-default (a restored feature branch, a picked guardrail set, a
-// source branch other than the project's current one, mock left on).
+// Advanced disclosure (§4.6). Only the two genuinely set-and-forget settings
+// live here: guardrails (default Permissive) and mock mode (default off). Title,
+// the branch pair and extra files were promoted back into the main column —
+// they are edited often enough to earn the space. Collapsing must never HIDE
+// active state, so the panel force-opens when either setting is non-default.
 // ---------------------------------------------------------------------------
 
-/** Which Advanced fields currently deviate from their default. Pure-ish (reads the DOM). */
+/** Which Advanced settings currently deviate from their default. Reads the DOM. */
 function advancedIsNonDefault() {
   const on = [];
-  if (el.title && el.title.value.trim()) on.push('title');
-  if (el.featureBranch && el.featureBranch.value.trim()) on.push('feature branch');
-  if (el.mock && el.mock.checked) on.push('mock mode');
-  if (el.extras && el.extras.files && el.extras.files.length) on.push('extra files');
   if (el.guardrailsSelect && el.guardrailsSelect.value && el.guardrailsSelect.value !== 'permissive') {
     on.push('guardrails');
   }
-  // The source branch defaults to the project's current branch, which is the
-  // option the picker preselects — anything else is a deliberate choice. In
-  // workspace mode the single picker is hidden and there is one per member.
-  const branchPickers = el.sourceBranchWrap && el.sourceBranchWrap.classList.contains('hidden')
-    ? [...(el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : [])]
-    : [el.sourceBranch];
-  if (branchPickers.some((sel) => {
-    if (!sel || !sel.options.length) return false;
-    const def = sel.querySelector('option[data-default="1"]');
-    return def && sel.value && sel.value !== def.value;
-  })) on.push('source branch');
+  if (el.mock && el.mock.checked) on.push('mock mode');
   return on;
 }
 
@@ -4363,9 +4351,7 @@ function syncAdvancedDisclosure() {
   if (!details) return;
   const active = advancedIsNonDefault();
   if (el.advancedSummary) {
-    el.advancedSummary.textContent = active.length
-      ? active.join(', ')
-      : 'title, branches, guardrails, extra files, mock mode';
+    el.advancedSummary.textContent = active.length ? active.join(', ') : 'guardrails, mock mode';
     el.advancedSummary.classList.toggle('on', active.length > 0);
   }
   if (active.length) details.open = true; // never hide something the user turned on
@@ -4598,9 +4584,7 @@ async function populateBranchSelect(select, projectDir) {
     for (const b of branches) {
       const opt = document.createElement('option');
       opt.value = b; opt.textContent = b;
-      // Marked so the Advanced disclosure can tell "the project's current branch"
-      // (the default) from a branch the user deliberately picked.
-      if (b === data.current) { opt.selected = true; opt.dataset.default = '1'; }
+      if (b === data.current) opt.selected = true;
       select.appendChild(opt);
     }
   } catch {
@@ -4848,7 +4832,7 @@ function setRunTarget(target) {
   if (t === 'workspace') {
     // Per-project source branches: hide the single dropdown, show one per member.
     if (el.sourceBranchWrap) el.sourceBranchWrap.classList.add('hidden');
-    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "Pick a source branch per project. Each defaults to that project's current branch.";
+    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "One per project; each defaults to its current branch.";
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
     loadConfig('');
     ensureWorkspaceOptions();
@@ -4856,7 +4840,7 @@ function setRunTarget(target) {
     // Restore the single project-driven dropdown; clear the per-project list.
     if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
     if (el.wsSourceBranches) { el.wsSourceBranches.classList.add('hidden'); el.wsSourceBranches.innerHTML = ''; }
-    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "The new worktree is created off this branch. Defaults to the project's current branch.";
+    if (el.sourceBranchHint) el.sourceBranchHint.textContent = "The worktree branches off this. Defaults to the current branch.";
     // Restore the project-driven branch list + config for the selected project.
     onProjectChanged();
   }

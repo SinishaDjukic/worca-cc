@@ -449,6 +449,26 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .fb-field{margin-bottom:10px;}
 .fb-field:last-child{margin-bottom:0;}
 
+/* Two fields sharing one row (New pipeline: source + feature branch). Equal
+   columns with min-width:0 so a long branch name ellipsizes inside its own
+   column instead of widening it; stacks below the narrow breakpoint. */
+.field-grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;}
+.field-grid-2 > .field{min-width:0;}
+@media (max-width:760px){ .field-grid-2{grid-template-columns:1fr;} }
+
+/* Compact rhythm for the run-detail fields promoted out of Advanced (title,
+   extra files, the branch pair). They are frequent enough to stay visible but
+   secondary to the task box, so they get tighter labels, shorter controls and
+   less breathing room — full-size fields would have cost ~340px of page. */
+.field-compact{margin-bottom:12px;}
+.field-compact > label{font-size:12px;margin-bottom:5px;}
+.field-compact .input,.field-compact .select{padding:11px 14px;font-size:13px;}
+.field-compact .select{padding-right:36px;}
+.field-compact .file{padding:9px 13px;gap:11px;}
+.field-compact .file .pick{padding:6px 12px;font-size:12px;}
+.field-compact .file .state{font-size:12px;}
+.field-compact .hint{margin-top:5px;font-size:11.5px;}
+
 /* ---------- Advanced disclosure (New pipeline) ---------- */
 .advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;}
 .advanced>summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;
