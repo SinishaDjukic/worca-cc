@@ -3,7 +3,7 @@
 Status: **implemented** (branch `feat/newpipeline-ux`)
 Scope decided: **inline accordion** for per-agent config + **workflow-level per-node defaults** with delta-based run config. Explicitly out of scope: a multi-step wizard, a slide-over panel, and graph-popover editing (see §7 for why and §8 for future paths).
 
-Measured result at 1280×900, project selected: the run form went from **1947px to 1352px** on the Default workflow (−31%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
+Measured result at 1280×900, project selected: the run form went from **1947px to 1244px** on the Default workflow (−36%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
 
 ## 1. Problem
 
@@ -40,7 +40,8 @@ Two structural defects make any redesign harder than it should be:
 
 ### 4.1 Page layout (top to bottom)
 
-1. **Target / Project** — unchanged (segmented Project/Workspace + pickers).
+1. **Target + picker, on one row** (`.target-row`) — the segmented Project/Workspace switch in a left column sized to itself, and the picker it selects in the right. Both target panes live in that one right-hand cell, so flipping the switch swaps the picker without the switch moving. Saves ~108px over the stacked version.
+   The project pane's inline `[×]` (which **deleted** the project, not the selection) is gone: removal is rare and destructive, so it lives in the Projects view with the app's own confirm dialog — exactly where workspace removal has always lived. Both panes now link to their manager from the hint ("Manage projects" / "Manage workspaces"), and the two panes finally read the same. `deleteProject` in the Projects view is untouched; only the second, native-`confirm()` path is retired.
 2. **Title** — names the run, so it belongs with the task rather than behind a disclosure.
 3. **Task** — prompt/markdown segmented control + textarea, unchanged mechanics; visually the centerpiece of the page.
 4. **Extra files** — directly under the task source, because they are more of the same input, just as files. Labelled `Extra files (optional)` to match the `Feature branch (optional)` convention.
@@ -191,6 +192,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D7 — Two PRs**, UI-first — *superseded during implementation*: see §6.
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
+- **D13 — The target switch shares a row with its picker**, and destructive management lives in the management views, not inline in a picker used every run (§4.1).
 - **D12 — One sentence answers "what if I skip this?"** for every optional field (§4.6b); the placeholder holds an example, never a duplicate of the hint.
 - **D11 — Advanced holds only guardrails + mock.** A safe default is not the same as an infrequent edit; title, the branch pair and extra files fail the second test and live in the main column, compacted (§4.1/§4.6).
 - **D10 — The Default workflow keeps writing through the legacy per-role path.** Rendering was unified; storage was not. The CLI and every existing install write `steps[role]`, and switching the UI to node-keyed writes would have split the truth across two tables for the most-used workflow.

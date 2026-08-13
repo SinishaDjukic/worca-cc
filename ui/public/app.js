@@ -82,7 +82,6 @@ import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCost
 const el = {
   form: $('#run-form'),
   projectSelect: $('#projectSelect'),
-  projectDelete: $('#project-delete'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
   newProjectName: $('#newProjectName'),
@@ -4539,7 +4538,6 @@ function renderProjectOptions(selectName) {
 
 function onProjectChanged() {
   const path = selectedProjectPath();
-  el.projectDelete.disabled = !path;
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
@@ -4767,30 +4765,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) closeFolderBrowser();
 });
 
-el.projectDelete.addEventListener('click', async () => {
-  const name = selectedProjectName();
-  if (!name) return;
-  if (!confirm(`Remove "${name}" from the project list? Files on disk are not touched.`)) return;
-  el.projectDelete.disabled = true;
-  try {
-    const res = await fetch(`/api/projects?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
-    const data = await safeJson(res);
-    if (!res.ok) {
-      setFormMsg(`Delete failed: ${data.error || res.status}`, 'err');
-      el.projectDelete.disabled = false;
-      return;
-    }
-    state.projects = Array.isArray(data.projects) ? data.projects : [];
-    if (localStorage.getItem(LAST_PROJECT_KEY) === name) localStorage.removeItem(LAST_PROJECT_KEY);
-    state.projectDir = '';
-    el.history.innerHTML = '';
-    el.history.appendChild(histEmpty('Select a project to load history.'));
-    renderProjectOptions('');
-  } catch (e) {
-    setFormMsg(`Delete error: ${e.message}`, 'err');
-    el.projectDelete.disabled = false;
-  }
-});
+// NOTE: New Pipeline has no inline project-delete. Removing a project is rare
+// and destructive, so it lives in the Projects view (deleteProject, with the
+// app's confirmModal) — mirroring workspaces, whose removal has always lived in
+// the Workspaces view. The picker's hint links there.
 
 // ===========================================================================
 // WORKSPACES — target selector, management view, creation wizard, scan WS.

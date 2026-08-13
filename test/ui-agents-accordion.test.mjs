@@ -352,6 +352,35 @@ test('Advanced holds only the set-and-forget settings; the often-used fields are
   }
 });
 
+test('the target switch shares one row with the picker it selects', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const row = doc.querySelector('.target-row');
+  assert.ok(row, 'missing the target row');
+  assert.ok(row.querySelector('#target-seg'), 'the switch must be in the row');
+  // Both panes live in the SECOND cell, so flipping the switch swaps the picker
+  // without the switch itself moving.
+  const panes = row.querySelector('.target-panes');
+  assert.ok(panes, 'missing the panes cell');
+  for (const id of ['target-project-pane', 'target-workspace-pane']) {
+    assert.ok(panes.querySelector(`#${id}`), `#${id} must sit in the panes cell`);
+  }
+  assert.equal(doc.querySelector('#target-workspace-pane').classList.contains('hidden'), true,
+    'workspace pane starts hidden');
+});
+
+test('flipping the target swaps the picker in place, leaving the switch put', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const segBefore = doc.querySelector('#target-seg').closest('.field');
+  [...doc.querySelectorAll('#target-seg button')].find((b) => b.dataset.target === 'workspace')
+    .dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick();
+  assert.equal(doc.querySelector('#target-project-pane').classList.contains('hidden'), true);
+  assert.equal(doc.querySelector('#target-workspace-pane').classList.contains('hidden'), false);
+  assert.equal(doc.querySelector('#target-seg').closest('.field'), segBefore, 'the switch must not move');
+});
+
 test('the promoted fields sit in the intended order around the task box', async () => {
   const { window } = await boot();
   const doc = window.document;

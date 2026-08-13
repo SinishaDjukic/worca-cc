@@ -449,6 +449,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .fb-field{margin-bottom:10px;}
 .fb-field:last-child{margin-bottom:0;}
 
+/* Target switch + the picker it selects, on one row. The switch column is only
+   as wide as the segmented control; the picker takes the rest (minmax(0,…) so a
+   long project path cannot widen the column). Both panes live in the second
+   cell, so switching target swaps the content without moving the switch. */
+.target-row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:18px;align-items:start;}
+.target-panes{min-width:0;}
+@media (max-width:760px){ .target-row{grid-template-columns:1fr;} }
+
 /* Two fields sharing one row (New pipeline: source + feature branch). Equal
    columns with min-width:0 so a long branch name ellipsizes inside its own
    column instead of widening it; stacks below the narrow breakpoint. */

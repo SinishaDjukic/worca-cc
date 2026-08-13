@@ -121,31 +121,36 @@
           <div class="grid single">
             <section class="card">
               <form id="run-form" autocomplete="off">
-                <!-- Target: single project vs workspace -->
-                <div class="field">
-                  <label>Target</label>
-                  <div class="seg" id="target-seg">
-                    <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
-                    <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                <!-- Target switch and the thing it selects share one row: they are one
+                     decision, and the switch is only meaningful next to its picker. -->
+                <div class="target-row">
+                  <div class="field field-compact">
+                    <label>Target</label>
+                    <div class="seg" id="target-seg">
+                      <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
+                      <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                    </div>
+                    <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="target" value="project" checked hidden />
+                    <input type="radio" name="target" value="workspace" hidden />
                   </div>
-                  <!-- hidden radios kept as the source of truth read at submit -->
-                  <input type="radio" name="target" value="project" checked hidden />
-                  <input type="radio" name="target" value="workspace" hidden />
-                </div>
+
+                  <!-- One cell, two panes: whichever the switch selects. -->
+                  <div class="target-panes">
 
                 <!-- Project (target = project) -->
-                <div class="field target-pane" id="target-project-pane">
+                <div class="field field-compact target-pane" id="target-project-pane">
                   <label for="projectSelect">Project</label>
-                  <div class="row-2">
-                    <div class="select-wrap with-x">
-                      <select id="projectSelect" name="projectSelect">
-                        <option value="" disabled selected>No projects yet</option>
-                        <option value="__add__">+ Add project&hellip;</option>
-                      </select>
-                    </div>
-                    <button type="button" id="project-delete" class="icon-btn" title="Remove the selected project from the list" disabled>&#10005;</button>
+                  <div class="select-wrap">
+                    <select id="projectSelect" name="projectSelect">
+                      <option value="" disabled selected>No projects yet</option>
+                      <option value="__add__">+ Add project&hellip;</option>
+                    </select>
                   </div>
-                  <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+                  <!-- Removing a project is a rare, destructive action: it lives in the
+                       Projects view (with the app's own confirm), exactly as removing a
+                       workspace lives in the Workspaces view. -->
+                  <small class="hint" id="projectHint">Runs happen inside this folder. <a href="#projects" data-nav="projects">Manage projects</a></small>
 
                   <div id="add-project" class="add-project hidden">
                     <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
@@ -162,7 +167,7 @@
                 </div>
 
                 <!-- Workspace (target = workspace) -->
-                <div class="field target-pane hidden" id="target-workspace-pane">
+                <div class="field field-compact target-pane hidden" id="target-workspace-pane">
                   <label for="workspaceSelect">Workspace</label>
                   <div class="select-wrap">
                     <select id="workspaceSelect" name="workspaceSelect">
@@ -170,9 +175,12 @@
                     </select>
                   </div>
                   <div class="ws-members" id="ws-members"></div>
-                  <small class="hint">A run fans out across the workspace's member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
+                  <small class="hint">A run fans out across the member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
                   <small class="hint" id="workspaceHintConfig">Per-agent models resolve per project from each project's own config.</small>
                 </div>
+
+                  </div><!-- /.target-panes -->
+                </div><!-- /.target-row -->
 
                 <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
                 <div class="field field-compact">
