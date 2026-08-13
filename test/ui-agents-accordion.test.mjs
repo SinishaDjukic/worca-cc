@@ -379,6 +379,46 @@ test('Extra files is labelled like the other optional fields', () => {
   assert.ok(!html.includes('Optional extra files'), 'the old label must be gone');
 });
 
+// Every optional field answers the same question — "what happens if I skip
+// this?" — with the same sentence, so the answer is learned once.
+const PROPOSE_HINT = 'Leave empty and Worca will propose one.';
+const EXTRAS_EMPTY = 'Leave empty and the run gets no extra files.';
+
+test('the fields Worca fills in for you carry the identical hint', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  for (const id of ['title', 'featureBranch']) {
+    const field = doc.querySelector(`#${id}`).closest('.field');
+    const hint = field.querySelector('.hint');
+    assert.ok(hint, `#${id} must carry a hint`);
+    assert.equal(hint.textContent, PROPOSE_HINT, `#${id} hint drifted from the shared sentence`);
+  }
+  // The instruction lives in the hint now, so the placeholder is a plain example.
+  assert.ok(!doc.querySelector('#featureBranch').placeholder.includes('leave empty'),
+    'the placeholder must not repeat the hint');
+});
+
+test('extra files uses the same opener but does not claim Worca proposes files', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const note = doc.querySelector('#extrasNote');
+  assert.equal(note.textContent, EXTRAS_EMPTY);
+  assert.ok(!note.textContent.includes('propose'), 'nothing is proposed here — the copy must not say so');
+
+  // Picking files then clearing them must land back on the SAME empty-state
+  // sentence the markup ships (these two strings had drifted apart).
+  const extras = doc.querySelector('#extras');
+  Object.defineProperty(extras, 'files', { value: [], configurable: true });
+  extras.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(note.textContent, EXTRAS_EMPTY, 'the reset path must reuse the markup\'s wording');
+});
+
+test('one verb across the app: no field says "Leave blank"', () => {
+  const html = readFileSync(htmlPath, 'utf8');
+  assert.ok(!/Leave blank/i.test(html), 'mixing "leave blank" with "leave empty" is the inconsistency');
+  assert.ok(html.includes('Leave empty'), 'the shared opener must be present');
+});
+
 test('Advanced force-opens when something inside it is non-default, and says what', async () => {
   const { window } = await boot();
   const doc = window.document;

@@ -4409,7 +4409,7 @@ el.extras.addEventListener('change', () => {
     const names = [...files].map((f) => f.name).join(', ');
     el.extrasNote.textContent = `${files.length} file(s) will be uploaded and copied into the pipeline's extras/ folder: ${names}`;
   } else {
-    el.extrasNote.textContent = 'Reference files for context (kept with the pipeline record).';
+    el.extrasNote.textContent = 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
   }
 });
 

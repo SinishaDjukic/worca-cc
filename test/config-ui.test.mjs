@@ -63,7 +63,7 @@ test('app.js loads, renders, and saves per-step config', () => {
 // ---------------------------------------------------------------------------
 const PROJECTS_ROOT_HINT =
   'The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and '
-  + '.mcp.json are made available to every pipeline agent. Leave blank to use your home folder.';
+  + '.mcp.json are made available to every pipeline agent. Leave empty to use your home folder.';
 
 test('settings markup carries a Projects root folder field, its picker, and the tooltip hint', () => {
   assert.ok(html.includes('id="settingsProjectsRoot"'), 'missing #settingsProjectsRoot input');

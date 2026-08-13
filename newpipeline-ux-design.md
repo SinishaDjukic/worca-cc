@@ -3,7 +3,7 @@
 Status: **implemented** (branch `feat/newpipeline-ux`)
 Scope decided: **inline accordion** for per-agent config + **workflow-level per-node defaults** with delta-based run config. Explicitly out of scope: a multi-step wizard, a slide-over panel, and graph-popover editing (see §7 for why and §8 for future paths).
 
-Measured result at 1280×900, project selected: the run form went from **1947px to 1329px** on the Default workflow (−32%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
+Measured result at 1280×900, project selected: the run form went from **1947px to 1352px** on the Default workflow (−31%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
 
 ## 1. Problem
 
@@ -123,6 +123,23 @@ The disclosure auto-expands when either is non-default at render time — includ
 
 The first cut also parked title, both branches and extra files here. That was wrong: "has a safe default" is not the same as "rarely touched", and those four are edited most runs. They moved back into the main column (§4.1) and Advanced kept only what survives the stricter test. `advancedIsNonDefault` shrank accordingly, and with it the `data-default` marker `populateBranchSelect` was stamping on the current-branch option.
 
+### 4.6b Copy convention for optional fields
+
+An `(optional)` label says a field *may* be skipped; it does not say what happens if you do. Every optional field answers that with the same sentence, so the answer is learned once:
+
+> **Leave empty and Worca will propose one.**
+
+It is used verbatim on **Title** (the title agent writes one from the prompt) and **Feature branch** (`suggestBranchName` derives one). Both statements are literally true, which is why the sentence can be shared.
+
+**Extra files** keeps the opener but not the promise — nothing is proposed there, so claiming it would be a lie: *"Leave empty and the run gets no extra files."* That string had drifted into two different versions (one in the markup, another in `app.js`'s deselect path); both now use the one sentence, pinned by a test.
+
+Two supporting rules:
+
+- The hint carries the instruction, so the **placeholder is a plain example** (`e.g. feat/rate-limiter`) rather than a second copy of it.
+- **One verb across the app**: the Settings hints said "Leave blank" while New Pipeline said "leave empty". All now say "Leave empty".
+
+Cost: ~23px total. The Feature-branch hint is free — it shares a grid row with the Source-branch hint, which sets the row height — and it balances that row visually.
+
 ### 4.7 Render-path consolidation
 
 - `#wf-default-stages` (the five static cards) and `renderStepConfigs` are **deleted**. The Default workflow is resolved to its node list and rendered through `buildNodeConfigRows` → `renderAgentRows`, same as any saved workflow. `renderModelEffortPair` remains the single place dropdown contents + effort filtering live.
@@ -174,6 +191,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D7 — Two PRs**, UI-first — *superseded during implementation*: see §6.
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
+- **D12 — One sentence answers "what if I skip this?"** for every optional field (§4.6b); the placeholder holds an example, never a duplicate of the hint.
 - **D11 — Advanced holds only guardrails + mock.** A safe default is not the same as an infrequent edit; title, the branch pair and extra files fail the second test and live in the main column, compacted (§4.1/§4.6).
 - **D10 — The Default workflow keeps writing through the legacy per-role path.** Rendering was unified; storage was not. The CLI and every existing install write `steps[role]`, and switching the UI to node-keyed writes would have split the truth across two tables for the most-used workflow.
 
