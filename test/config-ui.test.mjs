@@ -41,17 +41,19 @@ async function openSettings(window) {
   await tick();
 }
 
-test('each agent step exposes model + effort selectors in markup', () => {
-  for (const role of ['planner', 'refiner', 'implementer', 'reviewer']) {
-    assert.ok(html.includes(`data-role="${role}"`), `missing step-config for ${role}`);
-  }
-  assert.ok(html.includes('step-model'), 'missing model select class');
-  assert.ok(html.includes('step-effort'), 'missing effort select class');
+test('the agents accordion hosts the model + effort selectors app.js builds', () => {
+  // The per-step controls are no longer static markup — index.html supplies the
+  // accordion shell and app.js fills one row per node (newpipeline-ux-design.md §4.7).
+  assert.ok(html.includes('id="agents-config"'), 'missing the accordion shell');
+  assert.ok(html.includes('id="agents-rows"'), 'missing the accordion row host');
+  assert.ok(appjs.includes('step-model'), 'missing model select class');
+  assert.ok(appjs.includes('step-effort'), 'missing effort select class');
 });
 
 test('app.js loads, renders, and saves per-step config', () => {
   assert.ok(appjs.includes('/api/config'), 'app.js does not use /api/config');
-  assert.ok(appjs.includes('renderStepConfigs'), 'missing renderStepConfigs');
+  assert.ok(appjs.includes('renderAgentRows'), 'missing renderAgentRows');
+  assert.ok(appjs.includes('saveAgentRow'), 'missing the accordion save path');
   // The add flow navigates to the global Models view (configurable-models §4.9).
   assert.ok(appjs.includes('goAddModel'), 'missing add-model navigation flow');
 });

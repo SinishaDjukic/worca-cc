@@ -402,23 +402,66 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .form-msg.err{color:var(--red-ink);}
 
 /* ---------- Pipeline config ---------- */
-.stage-cfg{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:15px 0;border-top:1px solid var(--line);}
-.stage-cfg:first-of-type{border-top:none;padding-top:4px;}
-.stage-cfg .acc{width:10px;height:38px;border-radius:6px;flex:0 0 auto;}
-/* .meta keeps a floor width so long node labels can't collapse under .picks;
-   past the floor the row wraps (.stage-cfg is flex-wrap) instead of overlapping. */
-.stage-cfg .meta{flex:1 1 150px;min-width:150px;}
-/* The label stays one ellipsized line; the caption WRAPS (clamped at 2 lines) —
-   forcing nowrap on it cut every stage blurb mid-sentence once the copy grew
-   past the ~235px column. */
-.stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.stage-cfg .meta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;color:var(--ink-3);font-size:12px;line-height:1.35;}
-.stage-cfg .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;flex:0 1 auto;min-width:0;}
-.stage-cfg .select-wrap{width:180px;}
-.stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
+/* The always-open .stage-cfg card is gone: every per-agent control now lives in
+   an accordion row below (newpipeline-ux-design.md §4.7). Only the colour
+   swatch classes survive — the run-graph and the accordion head share them. */
 .acc.violet{background:var(--violet);} .acc.green{background:var(--green);}
 .acc.peach{background:var(--peach);} .acc.blue{background:var(--blue);}
 .acc.amber{background:var(--amber);} .acc.red{background:var(--red);}
+
+/* ---------- Agents accordion (New pipeline) ----------
+   One collapsed row per agent showing its effective config; the controls only
+   exist once a row is opened, so the page height no longer grows with the
+   workflow. (newpipeline-ux-design.md §4.2) */
+.agents-cfg{margin-top:6px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--field);}
+.agents-head{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);}
+.agents-title{font-weight:700;font-size:13px;}
+.agents-summary{color:var(--ink-3);font-size:12px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agents-actions{display:flex;gap:6px;flex:0 0 auto;}
+.agents-actions .btn-mini{font-size:11.5px;padding:5px 10px;}
+
+.agent-row{border-top:1px solid var(--line);background:#fff;}
+.agent-row:first-child{border-top:none;}
+.agent-row-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;
+  background:none;border:none;font-family:inherit;font-size:13px;text-align:left;cursor:pointer;color:inherit;}
+.agent-row-head:hover{background:var(--field);}
+.agent-row-head:focus-visible{outline:2px solid var(--violet);outline-offset:-2px;}
+.agent-chev{flex:0 0 auto;width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
+.agent-row.open .agent-chev{transform:rotate(90deg);}
+/* Sizing only — the colour comes from the shared .acc.<name> classes below, which
+   would otherwise be tied on specificity and lose to a background set here. */
+.agent-row-head .acc{width:8px;height:20px;border-radius:4px;flex:0 0 auto;}
+.acc.neutral{background:var(--line-2);}
+/* The agent name stays on one line and ellipsizes when a display name is long;
+   its full blurb is in .agent-desc inside the opened body, where it can wrap. */
+.agent-name{font-weight:600;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agent-step{color:var(--ink-3);font-size:11px;flex:0 0 auto;}
+.agent-sum{color:var(--ink-3);font-size:12px;margin-left:auto;text-align:right;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.agent-mod{color:var(--violet);font-size:9px;flex:0 0 auto;line-height:1;}
+.agent-row-body{padding:4px 14px 14px 37px;}
+.agent-desc{display:block;margin-bottom:9px;color:var(--ink-3);font-size:12px;line-height:1.45;overflow-wrap:anywhere;}
+.agent-row-body .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
+.agent-row-body .select-wrap{width:180px;}
+.agent-row-body .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
+.agent-origin{display:block;margin-top:4px;color:var(--ink-3);font-size:11.5px;}
+.fb-field{margin-bottom:10px;}
+.fb-field:last-child{margin-bottom:0;}
+
+/* ---------- Advanced disclosure (New pipeline) ---------- */
+.advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;}
+.advanced>summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;
+  font-weight:600;font-size:13px;padding:2px 0;}
+.advanced>summary::-webkit-details-marker{display:none;}
+.advanced>summary:focus-visible{outline:2px solid var(--violet);outline-offset:3px;border-radius:6px;}
+.adv-chev{width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
+.advanced[open] .adv-chev{transform:rotate(90deg);}
+.adv-sub{color:var(--ink-3);font-weight:400;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.adv-sub.on{color:var(--violet-ink);font-weight:600;}
+.advanced-body{padding-top:12px;}
+.advanced-body .switch-row{margin-top:4px;}
 
 /* per-step model/effort controls (app.js: .step-config / .step-model / .step-effort / .step-current) */
 .step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}

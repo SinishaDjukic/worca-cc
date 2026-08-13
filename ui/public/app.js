@@ -44,10 +44,6 @@ const state = {
   activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
 };
 
-// UI tracker step roles, in order. (Mirrors the server's AGENT_STEPS keys; the
-// server is authoritative — see loadConfig, which also receives data.steps.)
-const STEP_ROLES = ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'];
-
 import {
   topology,
   metaLine,
@@ -126,9 +122,14 @@ const el = {
   workflowSelect: $('#workflowSelect'),
   guardrailsSelect: $('#guardrailsSelect'),
   guardrailsHint: $('#guardrailsHint'),
-  wfDefaultStages: $('#wf-default-stages'),
-  wfNodeConfig: $('#wf-node-config'),
+  agentsConfig: $('#agents-config'),
+  agentRows: $('#agents-rows'),
+  agentsSummary: $('#agentsSummary'),
+  agentsPromote: $('#agentsPromote'),
+  agentsReset: $('#agentsReset'),
   wfFeedbackConfig: $('#wf-feedback-config'),
+  advancedConfig: $('#advanced-config'),
+  advancedSummary: $('#advancedSummary'),
 
   history: $('#history'),
   historyFilter: $('#historyFilter'),
@@ -1605,6 +1606,19 @@ function onStepGraphify(r, msg) {
 // Per-step model + effort config
 // ---------------------------------------------------------------------------
 
+// Rows currently expanded in the agents accordion, by node id. Ephemeral (§4.2):
+// kept across a re-render so saving a value does not slam the row shut under the
+// user, dropped when the workflow changes.
+const openAgentRows = new Set();
+
+/** Accordion key for the feedback-loops row (never a real node id). */
+const FEEDBACK_ROW_ID = '__feedbacks__';
+
+// The row data behind the currently painted accordion, keyed by node id. Rebuilt
+// on every render; the change handlers read it so they never have to re-derive
+// the default layers from the DOM.
+let agentRowsById = {};
+
 // Paint (or clear) the config-panel error hint (#config-error), the visible
 // counterpart of appendLog for config-load failures (mirrors the inline
 // "Could not load this workflow." hint in renderWorkflowConfig).
@@ -1654,9 +1668,9 @@ async function loadConfig(projectDir) {
     setConfigError('Could not load saved config (network error) — showing defaults.');
   }
   // Seed the active workflow from per-project run-config (activeWorkflowId),
-  // then populate the dropdown + render the chosen workflow's config. This
-  // supersedes the bare renderStepConfigs() call: the default branch still calls
-  // renderStepConfigs() internally for backward-compat.
+  // then populate the dropdown + render the chosen workflow's accordion. The
+  // Default workflow goes through the SAME renderer as a saved one; only its
+  // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   await loadGuardrailsInto(state.guardrailsId);
@@ -2415,45 +2429,153 @@ function option(value, text) {
 // ---------------------------------------------------------------------------
 
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each
-// node's role `key` to its registry metadata (label/color) and overlaying the
-// run-config's saved {model,effort} for that node-instance id. Order = outer
-// (sequential) then inner (parallel) — exactly the dispatch order.
-function buildNodeConfigRows(workflow, registry, runConfig) {
+// node's role `key` to its registry metadata (label/color) and resolving every
+// setting through the four layers (newpipeline-ux-design.md §4.3):
+//   1. the per-project override — run-config nodes[nodeId], or, for the built-in
+//      Default workflow, the legacy per-role opts.legacySteps[key];
+//   2. the workflow's own node.defaults;
+//   3. the agent-registry sidecar (fanOut / questionsDefault);
+//   4. nothing configured — the CLI default.
+// Order = outer (sequential) then inner (parallel) — exactly the dispatch order.
+//
+// model/effort/fanOut/askQuestions on the returned row are the EFFECTIVE values
+// (what the run will use). `def` carries the same four resolved WITHOUT layer 1,
+// so the renderer can mark deviation and the writer can prune a redundant save
+// back to "inherit". `override` is layer 1 verbatim.
+function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
+  const legacySteps = opts.legacySteps || null; // wf_default only: per-ROLE storage
   const rows = [];
   steps.forEach((group, stepIndex) => {
     const members = Array.isArray(group) ? group : [];
     members.forEach((node) => {
       if (!node || !node.id) return;
       const meta = reg[node.key] || null;
-      const saved = nodes[node.id] || {};
+      // The Default workflow's overrides live under the role key; a saved
+      // workflow's under the node-instance id. Both can exist for wf_default
+      // (a node write wins, mirroring resolveWorkflow's firstDefined order).
+      const role = legacySteps ? node.key : null;
+      const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
+      const wfDef = (node.defaults && typeof node.defaults === 'object') ? node.defaults : {};
       const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
       const metaAsks = !!(meta && meta.asksQuestions);
       const metaLocked = !!(meta && meta.questionsLocked);
       const metaQDefault = !!(meta && meta.questionsDefault);
+
+      const override = {};
+      if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
+      if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
+      if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
+      if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
+
+      // Layers 2-4 alone: what this row falls back to once its override is gone.
+      const def = {
+        model: typeof wfDef.model === 'string' ? wfDef.model : '',
+        effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
+        fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : metaFan,
+        askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : metaQDefault,
+      };
+
+      // An effort is only meaningful for the model that advertises it, so an
+      // override naming its own model does not inherit the default's effort.
+      const model = override.model !== undefined ? override.model : def.model;
+      const effort = override.effort !== undefined
+        ? override.effort
+        : (override.model !== undefined ? '' : def.effort);
+      const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
+      const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+
       rows.push({
         nodeId: node.id,
         key: node.key,
+        role, // non-null => persist via the legacy per-role path (saveStep)
         label: (meta && meta.displayName) || node.key || node.id,
         color: (meta && meta.color) || '',
+        description: (meta && meta.description) || '',
         stepIndex,
         parallel: members.length > 1,
-        model: typeof saved.model === 'string' ? saved.model : '',
-        effort: typeof saved.effort === 'string' ? saved.effort : '',
-        fanOut: typeof saved.fanOut === 'boolean' ? saved.fanOut : metaFan,
+        model,
+        effort,
+        fanOut,
         // null => the agent has no questions capability (no checkbox rendered).
-        askQuestions: !metaAsks
-          ? null
-          : (metaLocked
-              ? metaQDefault
-              : (typeof saved.askQuestions === 'boolean' ? saved.askQuestions : metaQDefault)),
+        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : askQuestions),
         questionsLocked: metaAsks && metaLocked,
+        def,
+        override,
+        // A locked questions toggle is never the user's doing, so it never counts
+        // as a modification (it cannot be reset either).
+        modified: modifiedFieldsOf({ model, effort, fanOut, askQuestions }, def,
+          { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
       });
     });
   });
   return rows;
+}
+
+// Which of the four settings deviate from the row's resolved default. Pure; the
+// single definition of "modified" for both the row dot and the header count.
+function modifiedFieldsOf(effective, def, caps = {}) {
+  const out = [];
+  if ((effective.model || '') !== (def.model || '')) out.push('model');
+  if ((effective.effort || '') !== (def.effort || '')) out.push('effort');
+  if (!!effective.fanOut !== !!def.fanOut) out.push('fanOut');
+  if (caps.asksQuestions && !caps.questionsLocked && !!effective.askQuestions !== !!def.askQuestions) {
+    out.push('askQuestions');
+  }
+  return out;
+}
+
+// One row's collapsed caption: the effective config in one line. "default" when
+// nothing deviates from the CLI/registry baseline; otherwise model · effort and
+// any active flag. Mirrors nodeModelLine's vocabulary so the New-Pipeline row and
+// the run-graph node read the same.
+function agentSummaryText(row) {
+  const parts = [];
+  if (row.model) {
+    const m = modelById(row.model);
+    parts.push(m ? m.label : row.model, row.effort || 'default effort');
+  }
+  if (row.fanOut) parts.push('fan-out');
+  if (row.askQuestions) parts.push('questions');
+  if (!parts.length) return 'default';
+  if (!row.model) parts.unshift('default');
+  return parts.join(' · ');
+}
+
+// The accordion header's one-line state: how many rows carry an override.
+function agentsHeaderText(rows) {
+  const n = rows.filter((r) => r.modified).length;
+  if (!rows.length) return '';
+  return n === 0 ? 'all defaults' : `${n} modified`;
+}
+
+// Prune a row's would-be selection against its resolved default (§4.5): a value
+// equal to the default is stored as "inherit" instead — '' clears a model/effort,
+// null clears a boolean toggle (config.mjs#inheritOr). Returns the patch to send.
+// `next` carries only the fields the caller is changing; the rest ride along at
+// their current effective value so the setters' replace semantics cannot wipe them.
+function pruneNodeSelection(row, next = {}) {
+  const eff = {
+    model: next.model !== undefined ? next.model : row.model,
+    effort: next.effort !== undefined ? next.effort : row.effort,
+    fanOut: next.fanOut !== undefined ? next.fanOut : row.fanOut,
+    askQuestions: next.askQuestions !== undefined ? next.askQuestions : row.askQuestions,
+  };
+  // model+effort prune as a PAIR: an effort is only interpretable against the
+  // model that advertises it, so storing one without the other is rejected by
+  // the setters ("select a model before choosing an effort").
+  const inheritPair = (eff.model || '') === (row.def.model || '')
+    && (eff.effort || '') === (row.def.effort || '');
+  return {
+    model: inheritPair ? '' : (eff.model || ''),
+    effort: inheritPair || !eff.model ? '' : eff.effort,
+    fanOut: !!eff.fanOut === !!row.def.fanOut ? null : !!eff.fanOut,
+    askQuestions: row.askQuestions === null || row.questionsLocked
+      ? undefined // no capability / locked: never persist a value for it
+      : (!!eff.askQuestions === !!row.def.askQuestions ? null : !!eff.askQuestions),
+  };
 }
 
 // Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
@@ -2528,8 +2650,17 @@ if (typeof window !== 'undefined') {
     buildFeedbackRows,
     defaultEffortFor,
     renderModelEffortPair,
-    renderNodeRows,
+    renderAgentRows,
+    renderFeedbackRows,
     renderWorkflowConfig,
+    modifiedFieldsOf,
+    agentSummaryText,
+    agentsHeaderText,
+    pruneNodeSelection,
+    effectiveDefaultsOf,
+    advancedIsNonDefault,
+    syncAdvancedDisclosure,
+    openAgentRows,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
     manifestSig,
@@ -2641,43 +2772,45 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   }
 }
 
-function renderStepConfigs() {
-  // The Default workflow's four rows are keyed by data-role; paint each from the
-  // legacy per-role config (state.config.steps). Config always edits the NEXT
-  // run, so selectors are never locked.
-  for (const role of STEP_ROLES) {
-    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-    const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-    const caption = document.querySelector(`.step-current[data-role="${role}"]`);
-    if (!modelSel || !effortSel) continue;
-    renderModelEffortPair(modelSel, effortSel, caption, state.config.steps[role] || {});
-    const fanCb = document.querySelector(`.step-fanout[data-role="${role}"]`);
-    if (fanCb) {
-      const savedFan = (state.config.steps[role] || {}).fanOut;
-      const defFan = (state.stepDefaults[role] || {}).fanOut || false;
-      fanCb.checked = typeof savedFan === 'boolean' ? savedFan : defFan;
-    }
-    const qCb = document.querySelector(`.step-questions[data-role="${role}"]`);
-    if (qCb) {
-      const d = state.stepDefaults[role] || {};
-      const wrap = qCb.closest('.questions-toggle');
-      if (!d.asksQuestions) {
-        if (wrap) wrap.hidden = true;
-      } else {
-        if (wrap) {
-          wrap.hidden = false;
-          wrap.title = d.questionsLocked
-            ? (d.questionsDefault ? 'Always on for this agent' : 'Always off for this agent')
-            : '';
-        }
-        const savedQ = (state.config.steps[role] || {}).askQuestions;
-        qCb.checked = d.questionsLocked
-          ? !!d.questionsDefault
-          : (typeof savedQ === 'boolean' ? savedQ : !!d.questionsDefault);
-        qCb.disabled = !!d.questionsLocked;
-      }
-    }
+// The built-in Default workflow, client-side. Two jobs: (1) it is the topology
+// the accordion paints when GET /api/workflows/wf_default cannot be reached, so a
+// server hiccup never leaves the page without agent rows; (2) its labels/colors/
+// descriptions are the fallback registry for those five keys when /api/agents
+// fails — this is the markup the static #wf-default-stages block used to hold.
+const DEFAULT_WF_TOPOLOGY = Object.freeze({
+  id: 'wf_default',
+  name: 'Default',
+  steps: [
+    [{ id: 's_clarify', key: 'clarify' }],
+    [{ id: 's0_0', key: 'planner' }],
+    [{ id: 's1_0', key: 'refiner' }],
+    [{ id: 's2_0', key: 'implementer' }],
+    [{ id: 's3_0', key: 'reviewer' }],
+  ],
+  feedbacks: [
+    { id: 'fb_refine', from: 's1_0', to: 's1_0' },
+    { id: 'fb_review', from: 's3_0', to: 's2_0' },
+  ],
+});
+
+const DEFAULT_STAGE_META = Object.freeze({
+  clarify: { displayName: 'Clarify', color: 'red', description: 'Turns hidden decisions into questions before planning' },
+  planner: { displayName: 'Plan', color: 'violet', description: 'Explores the codebase and writes the implementation plan' },
+  refiner: { displayName: 'Refine', color: 'green', description: 'Rewrites the latest plan into a tighter version' },
+  implementer: { displayName: 'Implement', color: 'peach', description: 'Writes the code from the approved plan, strict TDD' },
+  reviewer: { displayName: 'Review', color: 'blue', description: 'Reviews the implementation diff against the plan' },
+});
+
+// Registry for the Default workflow's rows, layered weakest-first: the static
+// label/color map, then the per-step sidecar flags /api/config already delivered
+// (fanOut / questions capability), then the live /api/agents entry. Any one layer
+// can be missing and the rows still paint with real names and real capabilities.
+function defaultWorkflowRegistry(fetched) {
+  const out = {};
+  for (const [key, base] of Object.entries(DEFAULT_STAGE_META)) {
+    out[key] = { key, ...base, ...(state.stepDefaults[key] || {}), ...((fetched || {})[key] || {}) };
   }
+  return { ...(fetched || {}), ...out };
 }
 
 // ---------------------------------------------------------------------------
@@ -2823,55 +2956,119 @@ async function loadGuardrailsInto(selectId) {
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
   const isDefault = !workflowId || workflowId === 'wf_default';
-  if (el.wfDefaultStages) el.wfDefaultStages.classList.toggle('hidden', !isDefault);
-  if (el.wfNodeConfig) el.wfNodeConfig.classList.toggle('hidden', isDefault);
-  if (el.wfFeedbackConfig) el.wfFeedbackConfig.classList.toggle('hidden', isDefault);
-
-  if (isDefault) {
-    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '';
-    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
-    renderStepConfigs(); // legacy per-role rows
-    return;
-  }
-
-  const [wf, registry] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
-  // An empty registry is a failed /api/agents fetch, not a real state — painting
-  // rows against it silently strips capability (labels degrade to raw keys, all
-  // questions toggles vanish), so treat it like a failed workflow fetch.
+  const [fetchedWf, fetchedReg] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
+  // The Default workflow has offline fallbacks for both halves (topology + the
+  // five stage metas), so it always paints. A saved workflow has neither: an
+  // empty registry is a failed /api/agents fetch, not a real state, and painting
+  // rows against it would silently strip capability (labels degrade to raw keys,
+  // every questions toggle vanishes), so it is treated like a failed fetch.
+  const wf = isDefault ? (fetchedWf || DEFAULT_WF_TOPOLOGY) : fetchedWf;
+  const registry = isDefault ? defaultWorkflowRegistry(fetchedReg) : fetchedReg;
   if (!wf || !Object.keys(registry).length) {
-    if (el.wfNodeConfig) el.wfNodeConfig.innerHTML = '<div class="hint">Could not load this workflow.</div>';
-    if (el.wfFeedbackConfig) el.wfFeedbackConfig.innerHTML = '';
+    if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
+    if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
+    setAgentsHeader(null);
     return;
   }
   const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
-  renderNodeRows(buildNodeConfigRows(wf, registry, runConfig));
+  // wf_default stores its overrides per ROLE (the legacy `steps` blob the CLI and
+  // every older install write); saved workflows store them per node id.
+  const rows = buildNodeConfigRows(wf, registry, runConfig,
+    isDefault ? { legacySteps: state.config.steps || {} } : {});
+  renderAgentRows(rows);
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  setAgentsHeader(rows);
 }
 
-// Build one .stage-cfg row per node into #wf-node-config, keyed by data-node-id.
-// Mirrors the legacy markup (acc bar + meta + picks + caption) so it reuses the
-// existing .stage-cfg styles and renderModelEffortPair.
-function renderNodeRows(rows) {
-  const host = el.wfNodeConfig;
+// Paint the accordion header: the "all defaults / N modified" summary plus the
+// two actions, which only appear when they would do something.
+function setAgentsHeader(rows) {
+  if (el.agentsSummary) el.agentsSummary.textContent = rows ? agentsHeaderText(rows) : '';
+  const anyModified = !!rows && rows.some((r) => r.modified);
+  if (el.agentsReset) el.agentsReset.hidden = !anyModified;
+  if (el.agentsPromote) {
+    // The built-in Default is frozen and never persisted, so it has no row to
+    // carry defaults (design D6) — offering the button there would only fail.
+    const canPromote = anyModified && state.workflowId && state.workflowId !== 'wf_default';
+    el.agentsPromote.hidden = !canPromote;
+  }
+}
+
+// Build the agents accordion into #agents-rows: one collapsed .agent-row per node
+// (accent + name + effective-config caption + modified dot), whose body holds the
+// same model/effort/fan-out/questions controls the old always-open .stage-cfg card
+// did — same classes and data-node-id, so the delegated change handler and
+// renderModelEffortPair are unchanged (newpipeline-ux-design.md §4.2).
+function renderAgentRows(rows) {
+  const host = el.agentRows;
   if (!host) return;
   host.innerHTML = '';
+  agentRowsById = Object.fromEntries(rows.map((r) => [r.nodeId, r]));
+  // Rows that vanished (workflow switched) must not keep the accordion open.
+  const ids = new Set(rows.map((r) => r.nodeId));
+  for (const id of [...openAgentRows]) if (!ids.has(id)) openAgentRows.delete(id);
+
   rows.forEach((row) => {
+    const open = openAgentRows.has(row.nodeId);
+    const bodyId = `agent-body-${row.nodeId}`;
+
     const card = document.createElement('div');
-    card.className = 'stage-cfg';
+    card.className = 'agent-row' + (open ? ' open' : '');
+    card.dataset.nodeId = row.nodeId;
 
-    const acc = document.createElement('div');
+    // --- collapsed head (the whole row is one button: click or Enter/Space) ---
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'agent-row-head';
+    head.dataset.nodeId = row.nodeId;
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    head.setAttribute('aria-controls', bodyId);
+
+    const chev = document.createElement('span');
+    chev.className = 'agent-chev';
+    chev.setAttribute('aria-hidden', 'true');
+
+    const acc = document.createElement('span');
     acc.className = 'acc' + (row.color ? ' ' + row.color : '');
-    card.appendChild(acc);
 
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const b = document.createElement('b');
-    b.textContent = row.label;
-    b.title = row.label; // full name on hover when the label ellipsizes
-    const small = document.createElement('small');
-    small.textContent = row.parallel ? `Step ${row.stepIndex + 1} · parallel` : `Step ${row.stepIndex + 1}`;
-    meta.append(b, small);
-    card.appendChild(meta);
+    const name = document.createElement('span');
+    name.className = 'agent-name';
+    name.textContent = row.label;
+    name.title = row.description || row.label;
+
+    const step = document.createElement('span');
+    step.className = 'agent-step';
+    step.textContent = row.parallel ? `step ${row.stepIndex + 1} · parallel` : `step ${row.stepIndex + 1}`;
+
+    const sum = document.createElement('span');
+    sum.className = 'agent-sum';
+    sum.dataset.nodeId = row.nodeId;
+    sum.textContent = agentSummaryText(row);
+
+    head.append(chev, acc, name, step, sum);
+    if (row.modified) {
+      const dot = document.createElement('span');
+      dot.className = 'agent-mod';
+      dot.title = 'Overrides this workflow’s default';
+      dot.textContent = '●';
+      head.appendChild(dot);
+    }
+    card.appendChild(head);
+
+    // --- expanded body: the controls, unchanged in class + data contract ---
+    const body = document.createElement('div');
+    body.className = 'agent-row-body';
+    body.id = bodyId;
+    body.hidden = !open;
+
+    // What this agent does, in full. The collapsed head has no room for it, so
+    // the blurb lives here where it can wrap instead of being ellipsized away.
+    if (row.description) {
+      const desc = document.createElement('small');
+      desc.className = 'agent-desc';
+      desc.textContent = row.description;
+      body.appendChild(desc);
+    }
 
     const picks = document.createElement('div');
     picks.className = 'picks';
@@ -2880,6 +3077,7 @@ function renderNodeRows(rows) {
     const modelSel = document.createElement('select');
     modelSel.className = 'step-model select';
     modelSel.dataset.nodeId = row.nodeId;
+    if (row.role) modelSel.dataset.role = row.role;
     modelSel.setAttribute('aria-label', `${row.label} model`);
     mWrap.appendChild(modelSel);
     const eWrap = document.createElement('div');
@@ -2887,6 +3085,7 @@ function renderNodeRows(rows) {
     const effortSel = document.createElement('select');
     effortSel.className = 'step-effort select';
     effortSel.dataset.nodeId = row.nodeId;
+    if (row.role) effortSel.dataset.role = row.role;
     effortSel.setAttribute('aria-label', `${row.label} effort`);
     eWrap.appendChild(effortSel);
     const fanWrap = document.createElement('label');
@@ -2895,6 +3094,8 @@ function renderNodeRows(rows) {
     fanCb.type = 'checkbox';
     fanCb.className = 'step-fanout';
     fanCb.dataset.nodeId = row.nodeId;
+    if (row.role) fanCb.dataset.role = row.role;
+    fanCb.setAttribute('aria-label', `${row.label} fan-out`);
     fanCb.checked = !!row.fanOut;
     const fanTxt = document.createElement('span');
     fanTxt.textContent = 'Fan-out';
@@ -2910,6 +3111,7 @@ function renderNodeRows(rows) {
       qCb.type = 'checkbox';
       qCb.className = 'step-questions';
       qCb.dataset.nodeId = row.nodeId;
+      if (row.role) qCb.dataset.role = row.role;
       qCb.setAttribute('aria-label', `${row.label} questions`);
       qCb.checked = !!row.askQuestions;
       qCb.disabled = !!row.questionsLocked;
@@ -2918,36 +3120,92 @@ function renderNodeRows(rows) {
       qWrap.append(qCb, qTxt);
       picks.appendChild(qWrap);
     }
-    card.appendChild(picks);
+    body.appendChild(picks);
 
-    const caption = document.createElement('small');
-    caption.className = 'step-current';
-    caption.dataset.nodeId = row.nodeId;
-    card.appendChild(caption);
+    // Where this row's values come from when nothing is overridden — the answer
+    // to "what does 'default' actually mean here", without opening a doc.
+    const origin = document.createElement('small');
+    origin.className = 'agent-origin';
+    origin.textContent = defaultOriginText(row);
+    body.appendChild(origin);
 
-    renderModelEffortPair(modelSel, effortSel, caption, { model: row.model, effort: row.effort });
+    card.appendChild(body);
+    // The collapsed head IS this row's caption (`sum` above), so the controls get
+    // no second one — renderModelEffortPair's caption slot stays empty and
+    // paintRowSummary keeps the head in step with the live selects.
+    renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
     host.appendChild(card);
   });
 }
 
-// Build one cycle-count input per feedback into #wf-feedback-config, keyed by
-// data-fb-id. Shows the loop's direction (to <- from) as a label.
+// Repaint one row's collapsed caption from what its controls currently show, so
+// the head never lags the selects between a change and the save's re-render.
+function paintRowSummary(row, body) {
+  const head = el.agentRows && el.agentRows.querySelector(`.agent-sum[data-node-id="${row.nodeId}"]`);
+  if (!head) return;
+  head.textContent = agentSummaryText({ ...row, ...liveRowValues(row, body) });
+}
+
+// One line naming what this row falls back to once its override is gone — the
+// answer to "what does 'default' actually mean here", without opening a doc.
+function defaultOriginText(row) {
+  if (!row.def.model) return 'No model set for this workflow — falls back to the CLI’s own default.';
+  const m = modelById(row.def.model);
+  const label = m ? m.label : row.def.model;
+  return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
+}
+
+// Build the feedback-loop cycle counts as the accordion's LAST row (§4.2, D4):
+// one number input per loop, keyed by data-fb-id, collapsed by default because 3
+// cycles is the sensible default nobody needs to see. A workflow with no loops
+// renders no row at all.
 function renderFeedbackRows(rows) {
   const host = el.wfFeedbackConfig;
   if (!host) return;
   host.innerHTML = '';
+  host.hidden = !rows.length;
   if (!rows.length) return;
+
+  const open = openAgentRows.has(FEEDBACK_ROW_ID);
+  const card = document.createElement('div');
+  card.className = 'agent-row' + (open ? ' open' : '');
+  card.dataset.nodeId = FEEDBACK_ROW_ID;
+
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'agent-row-head';
+  head.dataset.nodeId = FEEDBACK_ROW_ID;
+  head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  head.setAttribute('aria-controls', 'agent-body-feedbacks');
+
+  const chev = document.createElement('span');
+  chev.className = 'agent-chev';
+  chev.setAttribute('aria-hidden', 'true');
+  const acc = document.createElement('span');
+  acc.className = 'acc neutral'; // not an agent: no registry colour to carry
+  const name = document.createElement('span');
+  name.className = 'agent-name';
+  name.textContent = 'Feedback loops';
+  const sum = document.createElement('span');
+  sum.className = 'agent-sum';
+  sum.textContent = rows.map((r) => `${r.label} ×${r.maxCycles}`).join(' · ');
+  head.append(chev, acc, name, sum);
+  card.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'agent-row-body';
+  body.id = 'agent-body-feedbacks';
+  body.hidden = !open;
 
   const h = document.createElement('div');
   h.className = 'hint';
-  h.style.margin = '10px 0 6px';
-  h.textContent = 'Feedback loops — max cycles before gating to you.';
-  host.appendChild(h);
+  h.style.margin = '0 0 8px';
+  h.textContent = 'Max cycles before the loop gates to you.';
+  body.appendChild(h);
 
   rows.forEach((row) => {
     const field = document.createElement('div');
-    field.className = 'field';
-    field.style.marginBottom = '10px';
+    field.className = 'field fb-field';
 
     const label = document.createElement('label');
     label.textContent = `${row.label} — max cycles`;
@@ -2963,8 +3221,11 @@ function renderFeedbackRows(rows) {
     input.dataset.fbId = row.fbId;
     field.appendChild(input);
 
-    host.appendChild(field);
+    body.appendChild(field);
   });
+
+  card.appendChild(body);
+  host.appendChild(card);
 }
 
 // Workflow change: remember the selection and re-render its config.
@@ -2996,14 +3257,50 @@ async function saveStep(role, model, effort, fanOut, askQuestions) {
     const data = await safeJson(res);
     if (!res.ok) {
       appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
-      renderStepConfigs(); // revert UI to the last persisted state
+      await renderWorkflowConfig(state.workflowId); // revert UI to the last persisted state
       return;
     }
     state.config = data.config || state.config;
-    renderStepConfigs();
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
   }
+}
+
+// What a row's controls CURRENTLY show. The visible state is the truth: reading
+// it back (rather than the last-rendered row data, or state.config, which lags an
+// in-flight save) is what keeps a toggle from reverting a model picked a moment
+// earlier. A disabled questions box is the agent's locked value, never the user's.
+function liveRowValues(row, body) {
+  const host = body || (el.agentRows
+    && el.agentRows.querySelector(`.agent-row[data-node-id="${row.nodeId}"] .agent-row-body`));
+  if (!host) return {};
+  const out = {};
+  const m = host.querySelector('.step-model');
+  const e = host.querySelector('.step-effort');
+  const f = host.querySelector('.step-fanout');
+  const q = host.querySelector('.step-questions');
+  if (m) out.model = m.value === '__add__' ? row.model : m.value;
+  if (e) out.effort = e.value;
+  if (f) out.fanOut = f.checked;
+  if (q && !q.disabled) out.askQuestions = q.checked;
+  return out;
+}
+
+// Persist one accordion row, pruning any value that matches its resolved default
+// back to "inherit" (§4.5) so the stored run-config stays sparse and the row
+// stops showing as modified. Routes to the per-ROLE writer for the built-in
+// Default workflow and the per-NODE writer for a saved one. `next` carries only
+// what the user just changed; everything else rides along at what the row's
+// controls currently show.
+async function saveAgentRow(row, next, body) {
+  if (!row) return;
+  const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
+  if (row.role) {
+    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+  } else {
+    await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+  }
+  await renderWorkflowConfig(state.workflowId); // repaint captions, dots + header
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
@@ -3080,10 +3377,11 @@ function goAddModel(restore) {
   showView('models'); // loadModelsView renders the open editor
 }
 
-// Delegated change handler for all config controls inside #pipeline-config:
-//  - legacy default-stage selects carry data-role (persist via saveStep);
-//  - dynamic node selects carry data-node-id (persist via saveNode);
-//  - feedback cycle inputs carry data-fb-id (persist via saveFeedback).
+// Delegated change handler for every config control inside #pipeline-config.
+// Each control carries the node id of its accordion row; agentRowsById supplies
+// that row's resolved defaults, so saveAgentRow can prune a redundant selection
+// back to "inherit" and route to the right writer (per-role for wf_default, per
+// node id for a saved workflow). Feedback cycle inputs carry data-fb-id instead.
 el.pipelineConfig.addEventListener('change', (e) => {
   const t = e.target;
 
@@ -3091,86 +3389,129 @@ el.pipelineConfig.addEventListener('change', (e) => {
   if (t instanceof HTMLInputElement && t.dataset.fbId) {
     const n = Math.max(1, Math.round(Number(t.value) || 1));
     t.value = String(n); // normalize the field
-    saveFeedback(state.workflowId, t.dataset.fbId, n);
+    saveFeedback(state.workflowId, t.dataset.fbId, n).then(() => renderWorkflowConfig(state.workflowId));
     return;
   }
 
-  // Fan-out toggles (checkboxes). Send the row's current model/effort alongside
-  // fanOut so the replace-on-model/effort setters don't wipe them. Both paths
-  // read the LIVE selects, not state.config — state lags one in-flight save, so
-  // echoing it could revert a model picked moments earlier.
-  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-fanout')) {
-    const fanOut = !!t.checked;
-    if (t.dataset.nodeId) {
-      const nodeId = t.dataset.nodeId;
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
-    } else if (t.dataset.role) {
-      const role = t.dataset.role;
-      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', fanOut);
-    }
-    return;
-  }
+  const row = agentRowsById[t.dataset ? t.dataset.nodeId : ''];
+  if (!row) return;
 
-  // Questions toggles (checkboxes). Mirror step-fanout: send the row's current
-  // model/effort (live selects) along so the replace-semantics setters don't
-  // wipe them; omit fanOut (undefined) so the setters preserve it.
-  if (t instanceof HTMLInputElement && t.type === 'checkbox' && t.classList.contains('step-questions')) {
-    const askQuestions = !!t.checked;
-    if (t.dataset.nodeId) {
-      const nodeId = t.dataset.nodeId;
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      saveNode(state.workflowId, nodeId, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
-    } else if (t.dataset.role) {
-      const role = t.dataset.role;
-      const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-      const effortSel = document.querySelector(`.step-effort[data-role="${role}"]`);
-      saveStep(role, modelSel ? modelSel.value : '', effortSel ? effortSel.value : '', undefined, askQuestions);
-    }
-    return;
+  const body = t.closest ? t.closest('.agent-row-body') : null;
+
+  if (t instanceof HTMLInputElement && t.type === 'checkbox') {
+    if (!t.classList.contains('step-fanout') && !t.classList.contains('step-questions')) return;
+    paintRowSummary(row, body);
+    return void saveAgentRow(row, t.classList.contains('step-fanout')
+      ? { fanOut: !!t.checked }
+      : { askQuestions: !!t.checked }, body);
   }
 
   if (!(t instanceof HTMLSelectElement)) return;
 
-  // Dynamic per-node selects (saved workflow).
-  if (t.dataset.nodeId) {
-    const nodeId = t.dataset.nodeId;
-    if (t.classList.contains('step-model')) {
-      if (t.value === '__add__') return goAddModel(() => renderWorkflowConfig(state.workflowId));
-      // New model -> reset effort + re-render this row's effort options.
-      saveNode(state.workflowId, nodeId, t.value, '');
-      const effortSel = el.wfNodeConfig.querySelector(`.step-effort[data-node-id="${nodeId}"]`);
-      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
-      if (effortSel) renderModelEffortPair(t, effortSel, caption, { model: t.value, effort: '' });
-    } else if (t.classList.contains('step-effort')) {
-      const modelSel = el.wfNodeConfig.querySelector(`.step-model[data-node-id="${nodeId}"]`);
-      const model = modelSel ? modelSel.value : '';
-      saveNode(state.workflowId, nodeId, model, t.value);
-      const caption = el.wfNodeConfig.querySelector(`.step-current[data-node-id="${nodeId}"]`);
-      if (caption) {
-        const m = modelById(model);
-        caption.textContent = `${m ? m.label : 'default model'} · ${t.value || 'default effort'}`;
-      }
-    }
-    return;
-  }
-
-  // Legacy default-stage selects (data-role).
-  const role = t.dataset.role;
-  if (!role) return;
   if (t.classList.contains('step-model')) {
-    if (t.value === '__add__') return goAddModel(renderStepConfigs);
-    saveStep(role, t.value, '');
+    if (t.value === '__add__') return goAddModel(() => renderWorkflowConfig(state.workflowId));
+    // A new model invalidates the old effort (the dropdown is filtered by it), so
+    // the effort resets and the row's options are repainted immediately — the
+    // save's own re-render lands a moment later.
+    saveAgentRow(row, { model: t.value, effort: '' }, body);
+    const effortSel = body && body.querySelector('.step-effort');
+    if (effortSel) renderModelEffortPair(t, effortSel, null, { model: t.value, effort: '' });
+    paintRowSummary(row, body);
   } else if (t.classList.contains('step-effort')) {
-    // Live model select, not state.config — state lags one in-flight save.
-    const modelSel = document.querySelector(`.step-model[data-role="${role}"]`);
-    saveStep(role, modelSel ? modelSel.value : '', t.value);
+    saveAgentRow(row, { effort: t.value }, body);
+    paintRowSummary(row, body);
   }
 });
+
+// Expand/collapse one accordion row. The whole head is a <button>, so keyboard
+// activation (Enter/Space) arrives here as a click for free.
+if (el.agentsConfig) {
+  el.agentsConfig.addEventListener('click', (e) => {
+    const head = e.target.closest ? e.target.closest('.agent-row-head') : null;
+    if (!head || !el.agentsConfig.contains(head)) return;
+    const card = head.closest('.agent-row');
+    const body = card && card.querySelector('.agent-row-body');
+    if (!body) return;
+    const open = body.hidden; // about to open
+    body.hidden = !open;
+    card.classList.toggle('open', open);
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) openAgentRows.add(head.dataset.nodeId);
+    else openAgentRows.delete(head.dataset.nodeId);
+  });
+}
+
+// "Reset": drop every per-project override for this workflow, so each row falls
+// back to the workflow's defaults and then the agent registry (§4.5).
+if (el.agentsReset) {
+  el.agentsReset.addEventListener('click', async () => {
+    const projectDir = selectedProjectPath();
+    if (!projectDir) return;
+    const workflowId = state.workflowId || 'wf_default';
+    try {
+      const res = await fetch(
+        `/api/config/workflow?projectDir=${encodeURIComponent(projectDir)}&workflowId=${encodeURIComponent(workflowId)}`,
+        { method: 'DELETE' },
+      );
+      const data = await safeJson(res);
+      if (!res.ok) {
+        appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
+        return;
+      }
+      if (data.config) state.config = data.config;
+      await renderWorkflowConfig(workflowId);
+    } catch (err) {
+      appendLog({ source: 'ui', level: 'error', text: `config error: ${err.message}`, ts: Date.now() });
+    }
+  });
+}
+
+// "Save as workflow defaults": promote this project's overrides into the
+// workflow itself (§4.4/§4.8), then clear them — the effective config is
+// unchanged, but it now travels with the workflow to every other project and
+// through export/share. Disabled for wf_default, which cannot store defaults.
+if (el.agentsPromote) {
+  el.agentsPromote.addEventListener('click', async () => {
+    const projectDir = selectedProjectPath();
+    const workflowId = state.workflowId;
+    if (!projectDir || !workflowId || workflowId === 'wf_default') return;
+    const rows = Object.values(agentRowsById);
+    if (!rows.length) return;
+    const defaults = Object.fromEntries(rows.map((r) => [r.nodeId, effectiveDefaultsOf(r)]));
+    try {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/defaults`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaults }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) {
+        appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
+        return;
+      }
+      // The cached template still carries the OLD defaults; drop it so the
+      // reset below repaints against what was just persisted.
+      delete state.workflowCache[workflowId];
+      el.agentsReset.click(); // clearing the now-redundant overrides is the second half
+    } catch (err) {
+      appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
+    }
+  });
+}
+
+// One row's effective settings as a workflow-defaults block: only what deviates
+// from the agent registry is worth storing, and a locked/absent questions toggle
+// is never the user's to promote.
+function effectiveDefaultsOf(row) {
+  const out = {};
+  if (row.model) {
+    out.model = row.model;
+    if (row.effort) out.effort = row.effort;
+  }
+  out.fanOut = !!row.fanOut;
+  if (row.askQuestions !== null && !row.questionsLocked) out.askQuestions = !!row.askQuestions;
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Log window
@@ -3984,6 +4325,58 @@ async function mountPluginSourcePane(src) {
   host.appendChild(renderSourcePane(src, { call }));
 }
 
+// ---------------------------------------------------------------------------
+// Advanced disclosure (§4.6): title, branches, guardrails, extra files and mock
+// mode all have a safe default, so they stay collapsed — but collapsing must
+// never HIDE active state, so the panel force-opens whenever anything inside it
+// is already non-default (a restored feature branch, a picked guardrail set, a
+// source branch other than the project's current one, mock left on).
+// ---------------------------------------------------------------------------
+
+/** Which Advanced fields currently deviate from their default. Pure-ish (reads the DOM). */
+function advancedIsNonDefault() {
+  const on = [];
+  if (el.title && el.title.value.trim()) on.push('title');
+  if (el.featureBranch && el.featureBranch.value.trim()) on.push('feature branch');
+  if (el.mock && el.mock.checked) on.push('mock mode');
+  if (el.extras && el.extras.files && el.extras.files.length) on.push('extra files');
+  if (el.guardrailsSelect && el.guardrailsSelect.value && el.guardrailsSelect.value !== 'permissive') {
+    on.push('guardrails');
+  }
+  // The source branch defaults to the project's current branch, which is the
+  // option the picker preselects — anything else is a deliberate choice. In
+  // workspace mode the single picker is hidden and there is one per member.
+  const branchPickers = el.sourceBranchWrap && el.sourceBranchWrap.classList.contains('hidden')
+    ? [...(el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : [])]
+    : [el.sourceBranch];
+  if (branchPickers.some((sel) => {
+    if (!sel || !sel.options.length) return false;
+    const def = sel.querySelector('option[data-default="1"]');
+    return def && sel.value && sel.value !== def.value;
+  })) on.push('source branch');
+  return on;
+}
+
+/** Repaint the Advanced summary and force it open when it holds active state. */
+function syncAdvancedDisclosure() {
+  const details = el.advancedConfig;
+  if (!details) return;
+  const active = advancedIsNonDefault();
+  if (el.advancedSummary) {
+    el.advancedSummary.textContent = active.length
+      ? active.join(', ')
+      : 'title, branches, guardrails, extra files, mock mode';
+    el.advancedSummary.classList.toggle('on', active.length > 0);
+  }
+  if (active.length) details.open = true; // never hide something the user turned on
+}
+
+if (el.advancedConfig) {
+  // Any edit inside the panel can change what the summary should say.
+  el.advancedConfig.addEventListener('change', syncAdvancedDisclosure);
+  el.advancedConfig.addEventListener('input', syncAdvancedDisclosure);
+}
+
 // Mock switch. The visible .switch mirrors the hidden #mock checkbox, which is
 // what the submit handler reads (el.mock.checked).
 const mockSwitch = $('#mock-switch');
@@ -3992,6 +4385,7 @@ function toggleMock() {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
+  syncAdvancedDisclosure();
 }
 if (mockSwitch) {
   mockSwitch.addEventListener('click', toggleMock);
@@ -4204,7 +4598,9 @@ async function populateBranchSelect(select, projectDir) {
     for (const b of branches) {
       const opt = document.createElement('option');
       opt.value = b; opt.textContent = b;
-      if (b === data.current) opt.selected = true;
+      // Marked so the Advanced disclosure can tell "the project's current branch"
+      // (the default) from a branch the user deliberately picked.
+      if (b === data.current) { opt.selected = true; opt.dataset.default = '1'; }
       select.appendChild(opt);
     }
   } catch {

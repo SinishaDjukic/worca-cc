@@ -1,7 +1,9 @@
 # New Pipeline UX — Design
 
-Status: draft
+Status: **implemented** (branch `feat/newpipeline-ux`)
 Scope decided: **inline accordion** for per-agent config + **workflow-level per-node defaults** with delta-based run config. Explicitly out of scope: a multi-step wizard, a slide-over panel, and graph-popover editing (see §7 for why and §8 for future paths).
+
+Measured result at 1280×900, project selected: the run form went from **1947px to 1056px** on the Default workflow and from **1992px to 1056px** on a 5-node saved workflow (−46%/−47%); the Start button moved from 1845px below the form's top to 954px. The new height no longer grows with the workflow, because a collapsed row is fixed-height.
 
 ## 1. Problem
 
@@ -51,10 +53,11 @@ Header line: `Agents · all defaults` or `Agents · 2 modified`, plus a **Reset 
 
 One row per node, in dispatch order (outer sequential, inner parallel — same ordering as `buildNodeConfigRows`):
 
-- **Collapsed**: color accent, display name, effective summary caption — `default` when nothing deviates, else e.g. `Opus · high · fan-out`. The caption logic reuses the existing `renderModelEffortPair` caption + `nodeModelLine` (`app.js:803-820`) conventions: friendly model label, raw effort, `default` when fully inherited.
-- **Modified dot** on any row whose stored override differs from the resolved workflow default.
-- **Expanded**: the existing controls — model select, effort select (filtered to the model's efforts), fan-out toggle, questions toggle. Questions stays hidden unless the agent's registry entry has `asksQuestions`, and renders disabled when `questionsLocked` — the gating logic in `buildNodeConfigRows` (`app.js:2433-2452`) is unchanged, only re-homed.
-- Multiple rows may be open at once; all start collapsed. Open/closed state is ephemeral (not persisted).
+- **Collapsed**: color accent, display name, step number, effective summary caption — `default` when nothing deviates, else e.g. `Opus 4.8 · high · fan-out` (`agentSummaryText`). The vocabulary matches `nodeModelLine` (`app.js:803-820`) so the New-Pipeline row and the run-graph node read the same.
+- **Modified dot** on any row whose stored override differs from the resolved workflow default. A locked questions toggle never counts — it is not the user's doing and cannot be reset.
+- **Expanded**: the agent's blurb, then the existing controls — model select, effort select (filtered to the model's efforts), fan-out toggle, questions toggle — then a "Default: …" line naming what the row falls back to. Questions is omitted entirely for an agent without `asksQuestions` (stronger than the old hidden wrapper) and disabled when `questionsLocked`; the gating logic in `buildNodeConfigRows` is unchanged, only re-homed.
+- The collapsed caption is the row's ONLY caption: the head updates live from the controls (`paintRowSummary`), so the old in-body `.step-current` line would only have duplicated it a few pixels lower.
+- Multiple rows may be open at once; all start collapsed. Open/closed state is ephemeral (`openAgentRows`) but survives a save's re-render, so a row never slams shut under the user.
 
 **Feedback loops** become one final accordion row, collapsed by default (the default of 3 cycles is sensible). Expanded, it lists the existing `buildFeedbackRows` output (`app.js:2467`) — directional label + max-cycles number input per loop.
 
@@ -88,18 +91,21 @@ The accordion always displays the **resolved** value and marks the row modified 
 }
 ```
 
-- **Additive, no migration.** Existing workflow rows have no `defaults` and resolve exactly as today. `saveWorkflow` (`workflows.mjs:157-189`) sanitizes the new field the same loud-and-lenient way as topology: drop malformed sub-fields with a `console.warn`, throw only on setter misuse.
+- **Additive, no migration.** Existing workflow rows have no `defaults` and resolve exactly as today. `writeWorkflow` runs every node through `sanitizeWorkflowSteps`, which is loud-and-lenient per FIELD (a bad `effort` is dropped with a `console.warn` while its siblings survive) and passes unknown node fields through untouched, so a plugin template's own extras are never eaten.
+- An `effort` with no `model` never survives sanitization: an effort is only interpretable against the model that advertises it.
 - The "topology only" contract comment (`workflows.mjs:5`) is updated: templates are **topology + per-node defaults**; per-project overrides remain in run config.
-- Validation of `defaults.model`/`effort` mirrors run-config write validation (the `setStep`-style checks; note `setNodeModel` currently skips validation — `config.mjs:601` vs `:382` — this design does not fix that pre-existing gap but must not widen it: workflow `defaults` are validated at save time).
-- The **Default workflow** (`wf_default`) gets its `defaults` from the agent registry exactly as today — i.e. it needs no stored `defaults`; layer 3 covers it. Built-in behavior is unchanged.
+- `defaults.model`/`effort` are validated at the API boundary against the **project-less** catalog (predefined ⊕ global ⊕ plugin), matching `setStep`/`setNodeModel`'s rules — both on `PATCH .../defaults` and on `POST /api/workflows`, so an imported template cannot smuggle in a model id a per-project override would be refused.
+- The **Default workflow** (`wf_default`) gets its `defaults` from the agent registry exactly as today — i.e. it needs no stored `defaults`; layer 3 covers it. It is frozen and never persisted, so `setWorkflowNodeDefaults` refuses it outright (decision D6).
 - Plugin-shipped workflow templates may include `defaults`; the same sanitizer applies on import.
 
 ### 4.5 Run config becomes deltas (prune-on-save)
 
-- Semantically, run-config values are already overrides; this design makes them **sparse**. On every save from the accordion, any value equal to the resolved default (layers 2–4) is pruned instead of stored.
+- Semantically, run-config values are already overrides; this design makes them **sparse**. On every save from the accordion (`pruneNodeSelection`), any value equal to the resolved default (layers 2–4) is stored as "inherit" instead: `''` for a model/effort, and an explicit `null` for a boolean toggle.
+- `null` is a new third state for the toggles, shared by `setStep` and `setNodeModel` via `inheritOr`: boolean sets, `null` clears, absent preserves. Without it there was no way to walk a fan-out override back to "follow the default" — omitting the field means "keep what you have".
+- `model` and `effort` prune as a **pair**: if either deviates, both are stored, because the setters reject an effort with no model.
 - No data rewrite/migration: existing dense configs remain valid (layer 1 simply matches layer 2-4 resolution and the row shows unmodified — pruning happens lazily on next save).
-- **Reset to workflow defaults** = delete the run-config node entries (and feedback overrides) for the selected workflow in the selected project.
-- Workspace target keeps its existing semantics: per-agent models resolve per project from each project's own config (`index.html:174`); layers 2–4 are project-independent, layer 1 is per-project.
+- **Reset to defaults** = `DELETE /api/config/workflow` → drop the run-config node + feedback rows for that workflow. For `wf_default` it also clears the legacy per-role `steps` blob, which is where that workflow's overrides actually live; skipping it would leave the page reading "all defaults" while the run still used the old models.
+- Workspace target keeps its existing semantics: per-agent models resolve per project from each project's own config; layers 2–4 are project-independent, layer 1 is per-project.
 
 ### 4.6 Advanced disclosure
 
@@ -116,32 +122,43 @@ The disclosure auto-expands when any contained field is non-default at render ti
 
 ### 4.7 Render-path consolidation
 
-- Delete `#wf-default-stages` (static rows, `index.html:269-329`) and the `data-role`-driven code that feeds it.
-- The Default workflow is resolved to its node list and rendered through `buildNodeConfigRows` → the (new) accordion renderer, same as saved workflows. `renderModelEffortPair` remains the single place dropdown contents + effort filtering live.
-- Legacy per-role run-config storage (`steps[role]`, `config.mjs setStep:382`) keeps working as layer-1 input for the Default workflow's rows; no storage migration.
+- `#wf-default-stages` (the five static cards) and `renderStepConfigs` are **deleted**. The Default workflow is resolved to its node list and rendered through `buildNodeConfigRows` → `renderAgentRows`, same as any saved workflow. `renderModelEffortPair` remains the single place dropdown contents + effort filtering live.
+- Legacy per-role run-config storage (`steps[role]`) keeps working as layer-1 input for the Default workflow's rows, and keeps being the **write** path for them: a row carries `role` when the workflow is `wf_default`, and `saveAgentRow` routes to `setStep` rather than `setNodeModel`. That preserves compatibility with the CLI and every existing install; no storage migration.
+- The Default workflow gets two offline fallbacks so deleting the static markup cannot make a server hiccup fatal: `DEFAULT_WF_TOPOLOGY` (its five nodes) when `GET /api/workflows/wf_default` fails, and `DEFAULT_STAGE_META` (the labels/colors/blurbs that used to be in the HTML) layered under the `/api/agents` registry and the per-step sidecar flags. A saved workflow keeps the existing "Could not load this workflow." behavior, since it has no such fallback.
+- The controls read their values from the **live DOM** (`liveRowValues`), not from the last-rendered row data or `state.config` — state lags an in-flight save, so echoing it could revert a model picked moments earlier.
 
-### 4.8 Workflow editor integration
+### 4.8 Authoring the defaults: promote from where you tuned them
 
-The workflow editor gains the same accordion component (read/write against `defaults` instead of run config) so authors bake tuning into the workflow at creation time. Same validation, same captions, no separate implementation. This is what makes "workflows ship with sensible defaults" real for export/share/plugins.
+Defaults are set from the **accordion header**, not from a second editor: once at least one row deviates, a **Save as workflow defaults** button appears next to Reset. It promotes every row's *effective* config onto the workflow (`PATCH /api/workflows/:id/defaults`) and then clears the now-redundant per-project overrides (the same `DELETE` Reset uses). The effective pipeline is unchanged; what changes is that the tuning now travels with the workflow — to every other project, and through export/share.
+
+This supersedes the original plan of teaching the Composer canvas to edit `defaults`. Promotion is discoverable exactly where the user is already tuning, needs no new editing surface, and is one click instead of "leave New Pipeline → find the workflow → click each node". The Composer path stays available as future work (§8).
+
+The button is hidden for `wf_default`: the built-in is frozen and never persisted, so it has no row to carry defaults. Its sensible defaults come from the agent registry instead (D6); duplicating it in Composer yields a saved workflow that can store them.
 
 ## 5. Testing
 
-House style: jsdom unit tests against the pure helpers exposed on `window.__np` (`app.js:2524`).
+House style: jsdom unit tests against the pure helpers exposed on `window.__np`, plus in-process HTTP tests for the endpoints.
 
-- **New pure helpers**: effective-value resolution (layers 1–4, per setting), modified-detection, prune-on-save, header summary ("all defaults" / "N modified"). Each gets direct unit coverage.
-- `buildNodeConfigRows` grows a `defaults` overlay test matrix (workflow default present/absent × override present/absent × registry default).
-- **Updated**: `test/newpipeline-config.test.mjs` (accordion rows replace flat rows), `test/config-ui.test.mjs` (static stage rows gone), `test/ui-shell.test.mjs` / `test/ui-boot.test.mjs` (DOM structure), feedback-row tests (now inside the accordion).
-- **Schema**: `saveWorkflow` sanitization of `defaults` (malformed sub-fields dropped + warned; valid ones round-trip), plugin-template import path.
-- Manual/UI check: keyboard operability of the accordion (rows are buttons with `aria-expanded`), Advanced auto-expand on non-default restore.
+**New files**
+
+- `test/workflow-node-defaults.test.mjs` (13) — `sanitizeNodeDefaults` / `sanitizeWorkflowSteps` / `workflowNodeDefaults`, the `setWorkflowNodeDefaults` writer (set, clear, ignore-unknown-node, refuse `wf_default`), and the resolution layer inside `resolveWorkflow`: default supplies model/effort, an override beats it and does *not* inherit its effort, defaults outrank the registry for `fanOut`/`askQuestions`, a locked agent ignores them, and a defaults-free workflow resolves byte-identically to before.
+- `test/api-workflow-defaults.test.mjs` (7) — `PATCH .../defaults` happy path + the three validation refusals + 400/404/frozen-default cases, defaults smuggled through `POST /api/workflows`, and `DELETE /api/config/workflow` (scoped to one workflow, clears wf_default's legacy steps, idempotent, 400s without its ids).
+- `test/ui-agents-accordion.test.mjs` (17) — the four-layer resolution as the UI sees it, the modified dot and header count, `agentSummaryText`/`agentsHeaderText`, `pruneNodeSelection` (including the model+effort pair rule and the never-persist-a-locked-toggle rule), the full re-pick-the-default round trip against a **stateful** config mock, Reset, Save-as-defaults, promote-hidden-for-`wf_default`, open-row survives a save, live caption before the save lands, and the Advanced disclosure (starts collapsed, force-opens on non-default, names each deviating field, single vs per-member branch pickers).
+
+**Extended**: `test/config.test.mjs` — `null` clears a toggle while `undefined` preserves and `false` stores; an emptied node drops its row; `resetWorkflowConfig` scoping.
+
+**Updated for the new DOM**: `newpipeline-config`, `config-ui`, `ui-newpipeline-questions`, `ui-stage-row-blurb`, `newpipeline-selector-width`.
+
+Suite: **2312 passing / 2316**. The 4 failures (`imagegen` skill bundling ×2, `skills-gate-wiring` ×2) reproduce unchanged on `dev` and are unrelated to this work.
 
 ## 6. Implementation order
 
-Two independently shippable PRs, in this order:
+Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned below, because the accordion needs the `def`/`override` split that only layer 2 gives it — splitting would have meant writing the resolution helper twice. The original split is kept here as the record of the plan:
 
-1. **PR 1 — UI restructure (no schema change).** Accordion + Advanced disclosure + render-path consolidation. Resolution layers are 1 → 3 → 4 (no workflow defaults yet). Biggest height win, zero storage risk.
-2. **PR 2 — Workflow defaults + deltas.** `defaults` field + save-time validation, resolution layer 2, prune-on-save, Reset button, workflow-editor accordion.
+1. **PR 1 — UI restructure (no schema change).** Accordion + Advanced disclosure + render-path consolidation.
+2. **PR 2 — Workflow defaults + deltas.** `defaults` field + save-time validation, resolution layer 2, prune-on-save, Reset button.
 
-**Coordination flag:** PR #359 (graph v2) rewrites large parts of `ui/public/app.js`. Decide merge order before PR 1 lands, or the second one in pays a painful rebase.
+**Coordination flag:** PR #359 (graph v2) rewrites large parts of `ui/public/app.js`. Decide merge order before this lands, or the second one in pays a painful rebase.
 
 ## 7. Decision log
 
@@ -150,12 +167,16 @@ Two independently shippable PRs, in this order:
 - **D3 — Prune-on-save** rather than a one-shot migration of existing dense run configs. Convergence is lazy and safe; dense legacy values stay valid.
 - **D4 — Feedback loops live as one accordion row**, not a separate section — same disclosure logic, default 3 cycles stays invisible until someone cares.
 - **D5 — Advanced disclosure auto-expands when non-default**, so collapsing never hides active state.
-- **D6 — Default workflow needs no stored `defaults`**; the agent registry (layer 3) already encodes its sensible defaults. Avoids double-maintaining built-ins.
-- **D7 — Two PRs**, UI-first: the presentation win must not wait on schema plumbing, and each PR stays reviewable.
+- **D6 — Default workflow needs no stored `defaults`**; the agent registry (layer 3) already encodes its sensible defaults. Avoids double-maintaining built-ins, and keeps the frozen built-in genuinely frozen.
+- **D7 — Two PRs**, UI-first — *superseded during implementation*: see §6.
+- **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
+- **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
+- **D10 — The Default workflow keeps writing through the legacy per-role path.** Rendering was unified; storage was not. The CLI and every existing install write `steps[role]`, and switching the UI to node-keyed writes would have split the truth across two tables for the most-used workflow.
 
 ## 8. Out of scope / future
 
 - **Graph-popover editing** on New pipeline (click a node in a mini-graph to tune it) — revisit after graph v2 (PR #359) lands; the accordion's resolution helpers are reusable as-is.
+- **Composer-side defaults editing** (§4.8) — promotion covers the need; direct editing on the canvas is additive whenever it is wanted.
 - **Slide-over panel** as a home for future per-run options if the accordion outgrows one column.
 - **Named tuning presets** ("cheap run" / "thorough run") applied across a workflow — builds naturally on `defaults` + deltas, not designed here.
-- Fixing `setNodeModel`'s missing write-time validation (`config.mjs:601`) — pre-existing, tracked by the configurable-models design's §2 consistency goal.
+- **Defaults for `wf_default`** would need somewhere to persist a frozen built-in (a settings key, or a real row shadowing the constant). Not built: the registry already gives it sensible defaults, and "duplicate it in Composer" is the honest answer.
