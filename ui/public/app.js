@@ -2656,6 +2656,8 @@ if (typeof window !== 'undefined') {
     agentSummaryText,
     agentsHeaderText,
     pruneNodeSelection,
+    saveAgentRow,
+    setAgentRowsEnabled,
     effectiveDefaultsOf,
     advancedIsNonDefault,
     syncAdvancedDisclosure,
@@ -2755,15 +2757,19 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
-  // Effort dropdown: filtered to the selected model's supported efforts.
+  // Effort dropdown: filtered to the selected model's supported efforts. With no
+  // model there is no list to offer — which efforts are valid is a property of
+  // the model — so the control is disabled. It SAYS so rather than just greying
+  // out, because a dead dropdown next to a live one reads as a broken UI.
   const model = modelById(modelSel.value);
   effortSel.innerHTML = '';
-  effortSel.appendChild(option('', '(default effort)'));
+  effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
   (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
   effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
 
   modelSel.disabled = false;
-  effortSel.disabled = !model; // no model picked => effort is meaningless
+  effortSel.disabled = !model;
+  effortSel.title = model ? '' : 'Pick a model first — the effort levels on offer are that model’s own.';
 
   if (caption) {
     const mLabel = model ? model.label : 'default model';
@@ -2979,13 +2985,44 @@ async function renderWorkflowConfig(workflowId) {
   renderAgentRows(rows);
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
   setAgentsHeader(rows);
+  setAgentRowsEnabled(agentsEditable());
+}
+
+// Per-agent config is stored PER PROJECT, so with no project selected there is
+// nowhere to write it. Rows still render (seeing what a workflow will do is
+// useful on its own) but every control is disabled and the header says why —
+// previously an edit was accepted, silently dropped by the save, and then
+// reverted by the re-render, which read as "the control doesn't work".
+function agentsEditable() {
+  return !!selectedProjectPath();
+}
+
+/** Disable (or re-enable) every control in the accordion. */
+function setAgentRowsEnabled(enabled) {
+  const host = el.agentRows;
+  if (!host) return;
+  for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions')) {
+    c.disabled = !enabled || (c.classList.contains('step-questions') && c.dataset.locked === '1');
+  }
+  for (const e of host.querySelectorAll('.step-effort')) {
+    // Keep the model-dependency rule: effort stays disabled without a model.
+    if (!enabled) e.disabled = true;
+  }
+  if (el.wfFeedbackConfig) {
+    for (const i of el.wfFeedbackConfig.querySelectorAll('input[data-fb-id]')) i.disabled = !enabled;
+  }
 }
 
 // Paint the accordion header: the "all defaults / N modified" summary plus the
 // two actions, which only appear when they would do something.
 function setAgentsHeader(rows) {
-  if (el.agentsSummary) el.agentsSummary.textContent = rows ? agentsHeaderText(rows) : '';
-  const anyModified = !!rows && rows.some((r) => r.modified);
+  const editable = agentsEditable();
+  if (el.agentsSummary) {
+    el.agentsSummary.textContent = !rows ? ''
+      : (editable ? agentsHeaderText(rows) : 'select a project to change these');
+    el.agentsSummary.classList.toggle('muted', !editable);
+  }
+  const anyModified = editable && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
     // The built-in Default is frozen and never persisted, so it has no row to
@@ -3116,6 +3153,9 @@ function renderAgentRows(rows) {
       qCb.setAttribute('aria-label', `${row.label} questions`);
       qCb.checked = !!row.askQuestions;
       qCb.disabled = !!row.questionsLocked;
+      // Marked so re-enabling the accordion (project selected) cannot un-lock an
+      // agent whose questions setting is fixed by its manifest.
+      if (row.questionsLocked) qCb.dataset.locked = '1';
       const qTxt = document.createElement('span');
       qTxt.textContent = 'Questions';
       qWrap.append(qCb, qTxt);
@@ -3295,6 +3335,14 @@ function liveRowValues(row, body) {
 // controls currently show.
 async function saveAgentRow(row, next, body) {
   if (!row) return;
+  // Defence in depth: the controls are disabled without a project, but if one
+  // is ever reached anyway, say so rather than letting the save no-op and the
+  // re-render quietly undo the edit. Same wording as the submit guard.
+  if (!agentsEditable()) {
+    setFormMsg('Select a project first (or add one).', 'err');
+    await renderWorkflowConfig(state.workflowId);
+    return;
+  }
   const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
   if (row.role) {
     await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions);

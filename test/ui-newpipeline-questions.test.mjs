@@ -63,6 +63,11 @@ const OPUS = [{ id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['high', 'max
 
 test('default rows: clarify locked-checked; planner editable-unchecked; refiner hidden', async () => {
   const { window } = await boot({ fetchHandler: configFetch() });
+  // A project must be selected for capability to be observable: without one the
+  // whole accordion is read-only, so every box reads disabled regardless of its
+  // agent's manifest.
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
   const clarify = doc.querySelector('.step-questions[data-role="clarify"]');

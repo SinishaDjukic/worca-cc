@@ -417,6 +417,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agents-head{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);}
 .agents-title{font-weight:700;font-size:13px;}
 .agents-summary{color:var(--ink-3);font-size:12px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agents-summary.muted{font-style:italic;}
+/* Read-only accordion (no project selected): the rows still show what the
+   workflow will do, but nothing in them can be edited. */
+.agent-row-body select:disabled,.agent-row-body input:disabled{opacity:.55;cursor:not-allowed;}
+.agent-row-body .fanout-toggle:has(input:disabled){opacity:.6;cursor:not-allowed;}
 .agents-actions{display:flex;gap:6px;flex:0 0 auto;}
 .agents-actions .btn-mini{font-size:11.5px;padding:5px 10px;}
 

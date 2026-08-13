@@ -333,6 +333,83 @@ test('the collapsed caption follows the controls immediately, without waiting fo
     'the head drops "fan-out" as soon as the box is unticked');
 });
 
+// ── no project selected: read-only, and it SAYS so ──────────────────────────
+// Per-agent config is stored per project. With none selected the save no-ops
+// and the re-render undoes the edit — which reads as "this control is broken".
+
+test('with no project the accordion renders but every control is disabled, and the header says why', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  await tick(); await tick(); // no selectProjectAnd: this IS the empty state
+  const doc = window.document;
+  assert.ok(doc.querySelectorAll('#agents-rows .agent-row').length > 0, 'rows still render — seeing the plan is useful');
+  assert.equal(doc.querySelector('#agentsSummary').textContent, 'select a project to change these');
+  for (const sel of ['.step-model', '.step-effort', '.step-fanout', '.step-questions']) {
+    const c = doc.querySelector(`#agents-rows ${sel}`);
+    if (c) assert.equal(c.disabled, true, `${sel} must be disabled without a project`);
+  }
+  // The two header actions would have nothing to act on.
+  assert.equal(doc.querySelector('#agentsReset').hidden, true);
+  assert.equal(doc.querySelector('#agentsPromote').hidden, true);
+});
+
+test('an edit that reaches the save without a project reports it instead of silently reverting', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  await tick(); await tick();
+  const doc = window.document;
+  const row = window.__np.buildNodeConfigRows(WF_TUNED, Object.fromEntries(AGENTS.map((a) => [a.key, a])),
+    { nodes: {}, feedbacks: {} })[0];
+  await window.__np.saveAgentRow(row, { fanOut: false });
+  assert.match(doc.querySelector('#form-msg').textContent, /Select a project first/,
+    'a silent no-op is what made the control look broken');
+});
+
+test('selecting a project re-enables the controls', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  await tick(); await tick();
+  const doc = window.document;
+  assert.equal(doc.querySelector('#agents-rows .step-model').disabled, true, 'precondition: disabled');
+  await openTuned(window);
+  assert.equal(doc.querySelector('.step-model[data-node-id="n0"]').disabled, false);
+  assert.equal(doc.querySelector('.step-fanout[data-node-id="n0"]').disabled, false);
+  assert.notEqual(doc.querySelector('#agentsSummary').textContent, 'select a project to change these');
+});
+
+test('re-enabling the accordion never un-locks an agent whose questions are fixed', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const def = { model: '', effort: '', fanOut: false, askQuestions: true };
+  window.__np.renderAgentRows([
+    { nodeId: 'free', key: 'ask', label: 'Ask', color: '', stepIndex: 0, parallel: false,
+      model: '', effort: '', fanOut: false, askQuestions: false, questionsLocked: false, def, override: {} },
+    { nodeId: 'lockd', key: 'locked', label: 'Locked', color: '', stepIndex: 1, parallel: false,
+      model: '', effort: '', fanOut: false, askQuestions: true, questionsLocked: true, def, override: {} },
+  ]);
+  window.__np.setAgentRowsEnabled(false);
+  assert.equal(doc.querySelector('.step-questions[data-node-id="free"]').disabled, true);
+  window.__np.setAgentRowsEnabled(true);
+  assert.equal(doc.querySelector('.step-questions[data-node-id="free"]').disabled, false, 'the editable one comes back');
+  assert.equal(doc.querySelector('.step-questions[data-node-id="lockd"]').disabled, true,
+    'the manifest-locked one must stay locked');
+});
+
+test('effort explains its dependency on the model instead of just greying out', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const modelSel = doc.createElement('select');
+  const effortSel = doc.createElement('select');
+  window.__np._setModels(MODELS);
+
+  window.__np.renderModelEffortPair(modelSel, effortSel, null, {});
+  assert.equal(effortSel.disabled, true, 'no model -> no effort list to offer');
+  assert.equal(effortSel.options[0].textContent, '(pick a model first)');
+  assert.match(effortSel.title, /Pick a model first/);
+
+  window.__np.renderModelEffortPair(modelSel, effortSel, null, { model: 'claude-opus-4-8' });
+  assert.equal(effortSel.disabled, false);
+  assert.equal(effortSel.options[0].textContent, '(default effort)');
+  assert.equal(effortSel.title, '', 'no explanation needed once it works');
+});
+
 // ── Advanced disclosure (§4.6) ──────────────────────────────────────────────
 
 test('Advanced holds only the set-and-forget settings; the often-used fields are promoted', async () => {
