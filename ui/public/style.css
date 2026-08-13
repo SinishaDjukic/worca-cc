@@ -1365,3 +1365,46 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .stat-row{grid-template-columns:repeat(2,1fr);}
   .charts-grid{grid-template-columns:1fr;}
 }
+
+/* ---- Models view (configurable-models-design.md §4.10) ---- */
+.mv-list{display:grid;gap:18px;}
+.mv-section{display:grid;gap:10px;}
+.mv-section-title{margin:4px 0 0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;opacity:.75;}
+.mv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
+.mv-body{flex:1 1 auto;min-width:0;}
+.mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mv-name{font-size:14.5px;}
+.mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
+.mv-card .btn-ghost{flex:0 0 auto;padding:7px 12px;font-size:12px;}
+.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line-2,#e6e6ec);border-radius:10px;}
+.mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
+.mv-editor{padding:18px 22px;}
+.mv-editor-title{margin:0 0 14px;font-size:15px;}
+.mv-editor-grid{display:grid;gap:14px;}
+.mv-field{display:grid;gap:6px;}
+.mv-field-label{font-size:12.5px;font-weight:600;}
+.mv-efforts{display:flex;gap:14px;flex-wrap:wrap;}
+.mv-effort{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-env{display:grid;gap:8px;}
+.mv-env-row{display:flex;gap:8px;align-items:center;}
+.mv-env-row .mv-env-key{flex:0 0 34%;font-family:var(--mono);font-size:12.5px;}
+.mv-env-row .mv-env-val{flex:1 1 auto;font-family:var(--mono);font-size:12.5px;}
+.mv-env-row .mv-env-rm{flex:0 0 auto;padding:6px 10px;}
+.mv-env-add{justify-self:start;padding:7px 12px;font-size:12px;}
+.mv-editor-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+.mv-env-row .mv-env-copy{flex:0 0 auto;padding:6px 10px;}
+.mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
+.mv-env-btns .btn-ghost{padding:7px 12px;font-size:12px;}
+
+/* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
+.mv-secret{display:block;margin:4px 0 0;}
+.mv-secret.err{color:var(--red,#c0392b);}
+.mvx-step{display:grid;gap:8px;margin:0 0 16px;}
+.mvx-step-title{margin:0;font-size:13px;}
+.mvx-model{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;}
+.mvx-env-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mvx-env-key{flex:0 0 34%;font-size:12.5px;word-break:break-all;}
+.mvx-env-row .select{flex:0 0 auto;}
+.mvx-warn{color:var(--red,#c0392b);}
+.pl-baseurl{word-break:break-all;}
+.pl-config-h{margin:14px 0 6px;font-size:13px;}

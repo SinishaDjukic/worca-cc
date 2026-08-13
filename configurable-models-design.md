@@ -92,7 +92,7 @@ Model env **wins over** inherited/allowlisted values and **survives scrub**: it 
 - Prefix: `WORCA_` — protects `WORCA_MOCK`, `WORCA_CLAUDE_BIN`, `WORCA_EFFORT_FLAG`, `WORCA_SUBAGENT_HOOKS`, `WORCA_RUN_ROOT`, all of which the runner reads from `process.env` and any of which injection could otherwise subvert (mock mode, binary path).
 - Everything else — including all `ANTHROPIC_*` / `CLAUDE_*` — is allowed: routing them is the point.
 
-The list lives in one exported constant in `claude-runner.mjs` next to `SPAWN_ENV_BASE`, used by both the settings validator and the spawn-time filter.
+The policy lives in `src/core/model-env.mjs`, a zero-import leaf module, imported by both the settings validator and the runner's spawn-time filter. (It cannot live next to `SPAWN_ENV_BASE` in `claude-runner.mjs` as originally drafted: `settings.mjs` is bound to a no-core-graph-imports contract and must validate against the same list.) `EFFORTS` moves there too, re-exported from `config.mjs` for import-compat, for the same reason.
 
 ### 4.5 Validation
 
@@ -149,7 +149,7 @@ No destructive auto-migration. Transition plan:
 
 ## 6. Implementation order
 
-1. `settings.mjs` catalog storage + sanitization + reserved-key constant in `claude-runner.mjs` (pure, fully unit-testable).
+1. `settings.mjs` catalog storage + sanitization + the `model-env.mjs` leaf (reserved-key policy, `${VAR}` refs, spawn-time filter) (pure, fully unit-testable).
 2. `config.mjs` effective catalog + `resolveModelEnv` + validation parity + removal semantics.
 3. `claude-runner.mjs` `modelEnv` seam + spawn-env merge; orchestrator dispatch wiring + aux call sites.
 4. API endpoints + masking.
@@ -175,3 +175,105 @@ Each lands as its own PR against `dev`, tests first, per repo workflow.
 ## 8. Out of scope / future
 
 Named profiles (would layer cleanly on this catalog), per-model pricing for budget correctness, `/orchestrate` skill unification, OS-keychain secret storage, per-project catalog overrides.
+
+## 9. Model plugins (team dissemination)
+
+A team member configures a custom model locally, adapts pipelines to it, and wants teammates to reuse it without hand-copying `settings.json` snippets. Distribution rides the **existing plugin subsystem** (spec §4–§9: git repo + `worca-cc-plugin.json`, pinned-SHA install with consent inventory, update diff preview, per-plugin secrets store). Models become a fifth contribution type next to task sources, agents, skills, and workflows. **Git-only** distribution — no zip/tarball import path; the pinned-SHA update/consent trust model is the point.
+
+### 9.1 Manifest: `models` + `modelSecrets`
+
+```json
+{
+  "name": "discretestack-models",
+  "description": "Team routing for the DiscreteStack endpoint",
+  "models": [
+    { "id": "discretestack-stable", "label": "DiscreteStack Stable",
+      "efforts": ["medium", "high"],
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.discretestack.com",
+        "API_TIMEOUT_MS": "3000000",
+        "ANTHROPIC_AUTH_TOKEN": { "secret": "discretestack-token" }
+      } }
+  ],
+  "modelSecrets": [
+    { "key": "discretestack-token", "label": "DiscreteStack API token" }
+  ]
+}
+```
+
+Env values take three forms: a **literal** string (travels verbatim — base URLs, timeouts, tier remaps), a whole-value **`${VAR}` ref** (travels as text, expanded from the teammate's process env at spawn resolution — existing `model-env.mjs` semantics), or a **secret placeholder** `{"secret": "<key>"}` referencing a plugin-level `modelSecrets` entry. Secrets are plugin-level, not per-model, so N models sharing one token prompt for it once.
+
+Validation (`plugin-manifest.mjs`, install fails on error): model ids non-empty + case-insensitively unique within the plugin, efforts a subset of `EFFORTS`, env keys pass `isReservedModelEnvKey` (the same write-time gate as `POST /api/models` — the spawn-time `prepareModelEnv` drop stays as the second gate), every `{"secret"}` ref names a declared `modelSecrets` key, `modelSecrets` keys match the config-field `KEY_RE` and are unique. Unknown fields warn (error under `--strict`), like everything else in the manifest.
+
+### 9.2 Catalog composition: a fourth layer
+
+Precedence: **predefined < plugin < global (user) < — legacy project lowest, unchanged**. Plugin entries come from *enabled* installed plugins' `current/worca-cc-plugin.json` (read fresh per composition, like `listGlobalModels`); a new `src/core/plugin-models.mjs` module owns the read (imports: `plugins-lock.mjs`, `plugin-manifest.mjs`, `plugin-config.mjs` — no cycle; `config.mjs` imports it). Catalog shape: `custom: 'plugin'` (truthy string, so existing `m.custom` checks keep working) plus `plugin: '<name>'`; `hasEnv` as usual.
+
+- A **user global entry with the same id shadows the plugin entry** (badge: `overrides plugin`) — plugin content stays immutable/versioned; local tweaks go through "Edit a copy" (below).
+- A plugin entry with a **predefined id** shadows the built-in (same rule as global shadows, `overridden` badge on the built-in card).
+- **Two plugins shipping the same id**: alphabetical plugin-name order wins deterministically; the loser is dropped with a warning (doctor/list surface it).
+- Disabled/uninstalled plugin → its models leave the catalog; selections referencing them behave like any unknown id (write-time validation, runtime pass-through — §4.5 unchanged).
+- Test hermeticity is inherited: `readPluginsLock` resolves through `worcaHome()`, whose `NODE_TEST_CONTEXT` guard already makes plugin reads return empty in unsandboxed tests.
+
+### 9.3 Env resolution and secrets
+
+`resolveModelEnv(modelId)` extends: user global entry first (current behavior); else the winning enabled plugin entry. Placeholders resolve from the plugin's **existing secrets store** (`plugin-config.mjs`: `data/secrets.json`, 0600, atomic, `{"$env":"VAR"}` indirection honored, values never echoed to the browser) via a schema synthesized from `modelSecrets` (`secret: true` fields). An unset secret drops that key with a warning naming the plugin and key — same degradation as an unresolvable `${VAR}`. The assembled map then flows through `prepareModelEnv` unchanged (reserved-key drop + ref expansion).
+
+`modelHasBaseUrlRouting` extends to plugin entries (key presence in any form), so §4.6 cost observation works for plugin models with no further changes.
+
+### 9.4 Lifecycle integration
+
+- **Install consent** (`buildInstallInventory`): a `models` section listing each model's id, label, efforts, env keys, and the `ANTHROPIC_BASE_URL` value **verbatim** (a model env can redirect all API traffic — the reviewer must see where), plus requested `modelSecrets`. The install flow then prompts for secrets (plugins view config panel).
+- **Update delta** (`fetchCandidate`/`computeManifestDelta`): `newModels`, `removedModels`, `envChangedModels` (ids whose env map differs — base-URL changes called out explicitly), `newModelSecrets`. Red-highlighted like `newSecrets`, turning a malicious routing change into a human review event.
+- **Uninstall guard** — **block-with-list** (decision): `referencedPluginModels(name)` computes, for each of the plugin's model ids, the cross-project step/node refs (reusing `globalModelRefs` machinery) *minus* ids shadowed by a user global entry (those keep resolving after uninstall). Non-empty → `REFERENCED`-code error with the list, same shape as the plugin-agents guard; the user clears selections (or copies the model) first. Disable is not guarded — it is reversible.
+- **Doctor**: per `modelSecrets` key, a check whether it is set (unset → failing check naming the key).
+
+### 9.5 Export wizard ("Share as plugin…", Models page)
+
+Three steps, server does the packing:
+
+1. **Pick models** — checkboxes over the user's global entries.
+2. **Env policy** — one row per distinct env key across the selection: *Include value* / *Require at install* (→ secret placeholder + `modelSecrets` entry) / *Keep as `${VAR}` ref* (only offered where the stored value already is one). Keys matching `/TOKEN|KEY|SECRET|PASSWORD|AUTH/i` default to *Require at install*; choosing *Include value* on such a key shows a "this value will be committed to a git repo" warning. A key shared by several selected models is decided once.
+3. **Metadata + destination** — plugin name (kebab-case, `PLUGIN_NAME_RE`), description, version; a **destination folder path** (must not exist or be empty). Export writes the scaffold: `worca-cc-plugin.json` + a README with `git init`/push and `worca plugin add` instructions. No zip: distribution is git-only, and the scaffold folder is what gets pushed.
+
+The export endpoint reads raw env values server-side (same trust model as `GET /api/models/:id/env-value` — the user's own values, deliberate action); *Require at install* strips the value entirely.
+
+### 9.6 UI
+
+- **Models page**: a read-only **"From plugins"** card section (provenance badge `plugin: <name>`, env summary, secret status, `overrides built-in` / shadowed states) with an **"Edit a copy"** action → create-mode editor prefilled with id/label/efforts and literal/`${VAR}` env values; secret-placeholder keys become empty rows the user must fill. Saving creates the global entry, which shadows the plugin one. Plus the **"Share as plugin…"** toolbar button (wizard above).
+- **New Pipeline dropdown**: a third optgroup between the existing two — **Your models / Plugins / Built-in** (one combined group; alphabetical within, per the existing sort). Provenance suffixes stay removed; when the same *label* appears in more than one group (or twice within Plugins), the ambiguous options get ` (<plugin-name>)` appended — collision-only, no steady-state noise. `⚠cost` marker semantics unchanged.
+- **Plugins view**: contributions count gains `models`; the config panel gains a "Model secrets" section (masked `{set:true}` markers, write-only — exactly the task-source secret UX).
+
+### 9.7 API
+
+- `GET /api/models` gains `plugin: [...]` entries (read-only; literals masked with the standard masker, `${VAR}` refs readable, placeholders as `{secret: key, set: bool}`).
+- `GET /api/plugins/:name/config` gains a `models: {schema, values}` section synthesized from `modelSecrets`; `PUT` accepts `{target: 'modelSecrets', values}` alongside the per-source shape.
+- `POST /api/models/export-plugin` `{name, description, version, dest, models: [{id, env: {KEY: 'value'|'ref'|'secret'}}]}` → writes the scaffold, returns the path + next-step instructions.
+- Install/update/uninstall/doctor routes are unchanged — richer payloads only (inventory `models`, delta fields, `REFERENCED` list).
+
+### 9.8 Testing
+
+- **plugin-manifest**: models/modelSecrets normalization + every rejection (reserved env key, dup id, unknown effort, dangling secret ref, bad secret key), strict-mode warnings.
+- **plugin-models**: composition precedence (all four layers + both shadow directions + two-plugin collision), disabled-plugin exclusion, secret resolution (set / unset-drop / `$env` indirection), refs guard incl. the shadowed-id carve-out.
+- **plugin-store**: inventory `models` section, update delta fields, uninstall `REFERENCED` block + success after clearing, doctor secret checks.
+- **server**: plugin entries in `GET /api/models`, modelSecrets config round-trip (write-only), export endpoint (scaffold content, value-stripping, dest guards, name validation).
+- **UI (jsdom)**: plugin cards read-only + Edit-a-copy prefill, wizard collect (env policy modes, secret defaulting heuristic), dropdown third group + collision-only suffix.
+
+### 9.9 Implementation order (stacked on phases 1–6)
+
+7. Manifest: `models`/`modelSecrets` normalization + `validatePluginDir` checks.
+8. `plugin-models.mjs` + catalog composition layer + `resolveModelEnv`/`modelHasBaseUrlRouting` extension.
+9. Lifecycle: consent inventory, update delta, uninstall block-with-list, doctor secret checks.
+10. API: plugin entries in `/api/models`, modelSecrets config routes, export endpoint.
+11. UI: Models-page plugin section + Edit-a-copy + export wizard, plugins-view secrets panel, dropdown grouping.
+
+### 9.10 Decision log
+
+| Decision | Choice | Why |
+|---|---|---|
+| Distribution | **Git-only** (existing plugin flow) | Pinned-SHA consent/update trust model; zip import has no update story |
+| Secrets | **Full placeholder + install-time prompt** (plugin secrets store) | Storage and redaction already exist; strictly better UX than shell-env conventions |
+| Uninstall with refs | **Block with references list** | Mirrors the plugin-agents guard; uninstall is rare and the block is actionable |
+| Dropdown grouping | **One combined "Plugins" group** | Per-plugin groups add noise for the common one-plugin case; collision-only suffix disambiguates |
+| Precedence | predefined < plugin < user global | User sovereignty: a local copy always wins; plugin entries stay immutable |
+| Same-label collision | Suffix ` (<plugin-name>)` only when ambiguous | Consistent with the provenance-suffix removal |

@@ -1,5 +1,6 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
+import { resolveModelEnv } from './config.mjs';
 
 // A fast, cheap model is enough for a one-line summary. Overridable for tests/cost tuning.
 const DEFAULT_TITLE_MODEL =
@@ -39,6 +40,10 @@ export async function generateTitle(prompt, opts = {}) {
       systemPrompt: SYSTEM,
       prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
       model: opts.model || DEFAULT_TITLE_MODEL,
+      // Aux calls keep their model choice but still route through the catalog's
+      // env (design §4.8) — a global entry matching this id carries its routing
+      // env everywhere the id is used.
+      modelEnv: resolveModelEnv(opts.model || DEFAULT_TITLE_MODEL),
       effort: 'low',
       permissionMode: 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen

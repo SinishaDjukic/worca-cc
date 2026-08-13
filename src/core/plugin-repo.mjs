@@ -88,6 +88,14 @@ function manifestSecretKeys(manifest) {
     (s.configSchema || []).filter((f) => f && f.secret === true).map((f) => `${s.id}.${f.key}`));
 }
 
+/** Normalized models/modelSecrets view of a RAW manifest ({} on any failure —
+ *  a manifest invalid to THIS host contributes no models here either). */
+function manifestModels(raw) {
+  if (!raw) return { models: [], modelSecrets: [] };
+  const r = normalizeManifest(raw);
+  return r.ok ? { models: r.manifest.models, modelSecrets: r.manifest.modelSecrets } : { models: [], modelSecrets: [] };
+}
+
 async function showManifest(cache, sha, subdir, exec) {
   const p = subdir ? `${subdir}/worca-cc-plugin.json` : 'worca-cc-plugin.json';
   try { return JSON.parse(await gitDir(cache, ['show', `${sha}:${p}`], exec)); } catch { return null; }
@@ -113,11 +121,26 @@ async function computeManifestDelta(cache, entry, pinnedSha, candidateSha, exec)
       .filter((l) => l.startsWith('A') && l.endsWith('.meta.json'))
       .map((l) => l.split('\t').pop().split('/').pop().replace(/\.meta\.json$/, ''));
   } catch { newAgents = []; }
+  // Model delta (design §9.4): env changes — a base-URL swap redirects ALL API
+  // traffic for that model — are the red-highlight review inputs.
+  const pinM = manifestModels(pin);
+  const candM = manifestModels(cand);
+  const byLc = (list) => new Map(list.map((m) => [m.id.toLowerCase(), m]));
+  const pinModels = byLc(pinM.models);
+  const candModels = byLc(candM.models);
+  const envOf = (m) => JSON.stringify(m.env ?? {});
   return {
     newSecrets: candSecrets.filter((k) => !pinSecrets.includes(k)),
     newTaskSources: candIds.filter((id) => !pinIds.includes(id)),
     newAgents,
     setupChanged: JSON.stringify(pin?.setup ?? null) !== JSON.stringify(cand?.setup ?? null),
+    newModels: [...candModels.values()].filter((m) => !pinModels.has(m.id.toLowerCase())).map((m) => m.id),
+    removedModels: [...pinModels.values()].filter((m) => !candModels.has(m.id.toLowerCase())).map((m) => m.id),
+    envChangedModels: [...candModels.values()]
+      .filter((m) => pinModels.has(m.id.toLowerCase()) && envOf(pinModels.get(m.id.toLowerCase())) !== envOf(m))
+      .map((m) => m.id),
+    newModelSecrets: candM.modelSecrets.map((f) => f.key)
+      .filter((k) => !pinM.modelSecrets.some((f) => f.key === k)),
   };
 }
 
@@ -136,7 +159,10 @@ export async function fetchCandidate(name, { exec = defaultExec, fullDiff = fals
   let commits = [];
   let diffstat = '';
   let diffFull = '';
-  let manifestDelta = { newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false };
+  let manifestDelta = {
+    newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
+    newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
+  };
   if (candidateSha !== pinnedSha) {
     const log = await gitDir(cache, ['log', '--format=%H%x09%s', `${pinnedSha}..${candidateSha}`], exec);
     commits = log.split('\n').filter(Boolean).map((l) => {
