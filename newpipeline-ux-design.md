@@ -46,7 +46,7 @@ Two structural defects make any redesign harder than it should be:
 3. **Task** — prompt/markdown segmented control + textarea, unchanged mechanics; visually the centerpiece of the page.
 4. **Extra files** — directly under the task source, because they are more of the same input, just as files. Labelled `Extra files (optional)` to match the `Feature branch (optional)` convention.
 5. **Source branch | Feature branch** — one two-column row (`.field-grid-2`): they are a single decision (branch from → into), so they read better paired than stacked.
-6. **Advanced** (collapsed `<details>`) — the agents accordion (§4.2), guardrails, mock mode (§4.6).
+6. **Advanced** (`<details>`, always collapsed) — the agents accordion (§4.2), guardrails, mock mode (§4.6).
 7. **Start run.**
 
 The **Task source switch and the Workflow picker share one row**, using the same `.split-row` proportion as Target/Project — one CSS class for both, so the two rows cannot drift apart. The task panes span the full width below, so the prompt box is never squeezed into a column.
@@ -119,14 +119,11 @@ The accordion always displays the **resolved** value and marks the row modified 
 
 ### 4.6 Advanced disclosure
 
-Collapsed by default; contains the two settings that are genuinely set-and-forget:
+Holds the agents accordion (§4.2), guardrails (default Permissive) and mock mode (default off). **Always collapsed on arrival**, with a header that says only "Advanced" — it never opens itself and carries no summary line.
 
-- Guardrails (default Permissive),
-- Mock mode (default off).
+An earlier cut did both: a sub-line listing what was inside, switching to a violet list of what deviated. Both were wrong. The line used one slot for two different meanings (contents vs deviations), so it could not be read at a glance; violet is the link colour, so a status read as clickable; and when the section was open — exactly when the auto-open put it — the line restated what was already visible an inch below, with lowercase "agents" sitting above the bold "Agents" header.
 
-The disclosure auto-expands when either is non-default at render time — including a guardrail set restored from a previous session — so nothing active is ever hidden. Open/closed state is otherwise ephemeral.
-
-The first cut also parked title, both branches and extra files here. That was wrong: "has a safe default" is not the same as "rarely touched", and those four are edited most runs. They moved back into the main column (§4.1) and Advanced kept only what survives the stricter test. `advancedIsNonDefault` shrank accordingly, and with it the `data-default` marker `populateBranchSelect` was stamping on the current-branch option.
+Nothing is lost by staying shut: an agent override is stated by the accordion the moment it is opened, and the **config-load error hint moved to the main column** precisely because this section no longer opens itself. `advancedIsNonDefault` / `syncAdvancedDisclosure` are gone with the mechanism.
 
 ### 4.6b Copy convention for optional fields
 
@@ -197,6 +194,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
 - **D15 — The workflow picker and its agents live apart**, so the accordion header carries a chip with the workflow's name. Without it, "Agents · all defaults" inside Advanced would not say *whose* defaults.
+- **D16 — Advanced is always collapsed and its header is bare.** A disclosure that opens itself, or annotates itself, is doing a job the section's own contents already do. An error that must be seen belongs outside it.
 - **D14 — A control that cannot work says why.** No-project disables the accordion with a reason; effort names its dependency on the model. Both previously failed silently, which is indistinguishable from a bug.
 - **D13 — The target switch shares a row with its picker**, and destructive management lives in the management views, not inline in a picker used every run (§4.1).
 - **D12 — One sentence answers "what if I skip this?"** for every optional field (§4.6b); the placeholder holds an example, never a duplicate of the hint.

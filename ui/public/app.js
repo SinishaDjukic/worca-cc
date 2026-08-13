@@ -129,7 +129,6 @@ const el = {
   agentsReset: $('#agentsReset'),
   wfFeedbackConfig: $('#wf-feedback-config'),
   advancedConfig: $('#advanced-config'),
-  advancedSummary: $('#advancedSummary'),
 
   history: $('#history'),
   historyFilter: $('#historyFilter'),
@@ -1626,9 +1625,6 @@ function setConfigError(text) {
   if (!el.configError) return;
   el.configError.textContent = text || '';
   el.configError.hidden = !text;
-  // The hint lives inside Advanced now; an error there would otherwise be
-  // invisible until someone happened to expand the section.
-  if (text && el.advancedConfig) el.advancedConfig.open = true;
 }
 
 async function loadConfig(projectDir) {
@@ -2663,8 +2659,6 @@ if (typeof window !== 'undefined') {
     saveAgentRow,
     setAgentRowsEnabled,
     effectiveDefaultsOf,
-    advancedIsNonDefault,
-    syncAdvancedDisclosure,
     openAgentRows,
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
@@ -2959,7 +2953,6 @@ async function loadGuardrailsInto(selectId) {
   sel.value = state.guardrailsId;
   updateGuardrailsHint();
   // A restored non-Permissive set is active state, so Advanced must not hide it.
-  syncAdvancedDisclosure();
 }
 
 // Render the config UI for one workflow. Default -> show the legacy 4 stage rows
@@ -2990,7 +2983,6 @@ async function renderWorkflowConfig(workflowId) {
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
-  syncAdvancedDisclosure(); // a modified agent is active state Advanced must show
 }
 
 // Per-agent config is stored PER PROJECT, so with no project selected there is
@@ -4383,43 +4375,12 @@ async function mountPluginSourcePane(src) {
 }
 
 // ---------------------------------------------------------------------------
-// Advanced disclosure (§4.6). Only the two genuinely set-and-forget settings
-// live here: guardrails (default Permissive) and mock mode (default off). Title,
-// the branch pair and extra files were promoted back into the main column —
-// they are edited often enough to earn the space. Collapsing must never HIDE
-// active state, so the panel force-opens when either setting is non-default.
+// Advanced disclosure (§4.6): the agents accordion, guardrails and mock mode.
+// It is ALWAYS collapsed on arrival — it never opens itself and carries no
+// summary line. Nothing in it is lost by being closed: an agent override is
+// stated by the accordion the moment you open it, and the config-load error
+// hint lives in the main column precisely because this section stays shut.
 // ---------------------------------------------------------------------------
-
-/** Which Advanced settings currently deviate from their default. Reads the DOM. */
-function advancedIsNonDefault() {
-  const on = [];
-  // A tuned agent changes what the run does just as much as a guardrail set
-  // does, and the accordion lives in here now — so it counts.
-  if (el.agentRows && el.agentRows.querySelector('.agent-mod')) on.push('agents');
-  if (el.guardrailsSelect && el.guardrailsSelect.value && el.guardrailsSelect.value !== 'permissive') {
-    on.push('guardrails');
-  }
-  if (el.mock && el.mock.checked) on.push('mock mode');
-  return on;
-}
-
-/** Repaint the Advanced summary and force it open when it holds active state. */
-function syncAdvancedDisclosure() {
-  const details = el.advancedConfig;
-  if (!details) return;
-  const active = advancedIsNonDefault();
-  if (el.advancedSummary) {
-    el.advancedSummary.textContent = active.length ? active.join(', ') : 'agents, guardrails, mock mode';
-    el.advancedSummary.classList.toggle('on', active.length > 0);
-  }
-  if (active.length) details.open = true; // never hide something the user turned on
-}
-
-if (el.advancedConfig) {
-  // Any edit inside the panel can change what the summary should say.
-  el.advancedConfig.addEventListener('change', syncAdvancedDisclosure);
-  el.advancedConfig.addEventListener('input', syncAdvancedDisclosure);
-}
 
 // Mock switch. The visible .switch mirrors the hidden #mock checkbox, which is
 // what the submit handler reads (el.mock.checked).
@@ -4429,7 +4390,6 @@ function toggleMock() {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
-  syncAdvancedDisclosure();
 }
 if (mockSwitch) {
   mockSwitch.addEventListener('click', toggleMock);

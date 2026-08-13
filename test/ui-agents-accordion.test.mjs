@@ -422,7 +422,6 @@ test('the agents accordion sits inside Advanced, while the workflow picker stays
   assert.ok(adv.contains(doc.querySelector('#wf-feedback-config')), 'so do the feedback loops');
   // Choosing a workflow is a run decision; tuning its agents is not.
   assert.ok(!adv.contains(doc.querySelector('#workflowSelect')), 'the picker must stay in the main column');
-  assert.match(doc.querySelector('#advancedSummary').textContent, /agents/);
 });
 
 test('the agents header names the workflow the rows come from', async () => {
@@ -436,18 +435,19 @@ test('the agents header names the workflow the rows come from', async () => {
   assert.equal(doc.querySelector('#agentsWorkflow').textContent, 'Default', 'and follow the selection');
 });
 
-test('a modified agent counts as active state, so Advanced does not hide it', async () => {
+test('Advanced stays collapsed even when an agent is modified', async () => {
   const config = { workflows: { wf_t: { nodes: { n0: { model: 'claude-haiku-4-5' } }, feedbacks: {} } } };
   const { window } = await boot({ fetchHandler: apiFetch({ config }) });
   const doc = window.document;
-  assert.equal(doc.querySelector('#advanced-config').open, false, 'starts collapsed');
   await openTuned(window);
   assert.ok(doc.querySelector('.agent-mod'), 'precondition: a row is modified');
-  assert.equal(doc.querySelector('#advanced-config').open, true, 'a tuned agent must not be buried');
-  assert.match(doc.querySelector('#advancedSummary').textContent, /agents/);
+  assert.equal(doc.querySelector('#advanced-config').open, false,
+    'the section never opens itself — the accordion states the override once you open it');
 });
 
-test('a config-load failure force-opens Advanced, where the hint now lives', async () => {
+// The hint reports that the model catalog and saved agent config could not be
+// read. Advanced never opens itself, so the hint cannot live inside it.
+test('a config-load failure is reported in the main column, not inside Advanced', async () => {
   const { window } = await boot({ fetchHandler: (url, opts) => {
     if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
       return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
@@ -459,8 +459,8 @@ test('a config-load failure force-opens Advanced, where the hint now lives', asy
   const doc = window.document;
   const hint = doc.querySelector('#config-error');
   assert.equal(hint.hidden, false, 'the hint is painted');
-  assert.ok(doc.querySelector('#advanced-config').contains(hint), 'it lives inside Advanced');
-  assert.equal(doc.querySelector('#advanced-config').open, true, 'so Advanced must open to show it');
+  assert.match(hint.textContent, /boom/);
+  assert.ok(!doc.querySelector('#advanced-config').contains(hint), 'it must not be buried in a collapsed section');
 });
 
 test('Advanced holds only the set-and-forget settings; the often-used fields are promoted', async () => {
@@ -588,28 +588,19 @@ test('one verb across the app: no field says "Leave blank"', () => {
   assert.ok(html.includes('Leave empty'), 'the shared opener must be present');
 });
 
-test('Advanced force-opens when something inside it is non-default, and says what', async () => {
+// The header is a plain "Advanced": a summary line restated what opening the
+// section already shows, and its two modes (contents vs deviations) shared one
+// slot, so it could not be read at a glance.
+test('the Advanced header carries no summary line, and the section never opens itself', async () => {
   const { window } = await boot();
   const doc = window.document;
   const details = doc.querySelector('#advanced-config');
+  const summary = details.querySelector('summary');
+  assert.equal(summary.textContent.trim(), 'Advanced', 'the header says only "Advanced"');
+  assert.equal(doc.querySelector('#advancedSummary'), null, 'the sub-line must be gone');
   assert.equal(details.open, false);
+  // Turning on the settings inside it must not spring it open.
   doc.querySelector('#mock-switch').dispatchEvent(new window.Event('click', { bubbles: true }));
-  assert.equal(details.open, true, 'active state must never be hidden');
-  assert.match(doc.querySelector('#advancedSummary').textContent, /mock mode/);
-});
-
-test('advancedIsNonDefault names each deviating setting (and stays empty at rest)', async () => {
-  const { window } = await boot();
-  const doc = window.document;
-  const { advancedIsNonDefault } = window.__np;
-  assert.deepEqual(advancedIsNonDefault(), []);
-  // A promoted field is no longer Advanced's business, however it is set.
-  doc.querySelector('#title').value = 'run me';
-  doc.querySelector('#featureBranch').value = 'feat/x';
-  assert.deepEqual(advancedIsNonDefault(), [], 'promoted fields must not reopen Advanced');
-  doc.querySelector('#mock').checked = true;
-  const gr = doc.querySelector('#guardrailsSelect');
-  gr.appendChild(new window.Option('Strict', 'secure'));
-  gr.value = 'secure';
-  assert.deepEqual(advancedIsNonDefault(), ['guardrails', 'mock mode']);
+  assert.equal(doc.querySelector('#mock').checked, true, 'the switch still works');
+  assert.equal(details.open, false, 'collapsed by default means collapsed, always');
 });

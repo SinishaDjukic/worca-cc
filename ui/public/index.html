@@ -235,6 +235,12 @@
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                 </div>
 
+                <!-- Config-load failure hint; app.js#setConfigError paints/clears it.
+                     Lives in the main column: it reports that the model catalog and
+                     saved agent config could not be read, and Advanced never opens
+                     itself, so inside it the message would go unseen. -->
+                <div id="config-error" class="hint" style="margin:-6px 0 14px;color:var(--red-ink)" hidden></div>
+
                 <!-- Extra files belong WITH the task: they are more of the same
                      input, just as files. -->
                 <div class="field field-compact">
@@ -273,14 +279,10 @@
                   <summary>
                     <span class="adv-chev" aria-hidden="true"></span>
                     <span>Advanced</span>
-                    <span class="adv-sub" id="advancedSummary">agents, guardrails, mock mode</span>
                   </summary>
                   <div class="advanced-body">
 
                 <div id="pipeline-config">
-                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it
-                       (and force-opens Advanced, so a failure is never buried). -->
-                  <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
 
                   <!-- Agents accordion: one collapsed row per node, showing its
                        EFFECTIVE model/effort. app.js#renderAgentRows fills it. The

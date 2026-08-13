@@ -500,8 +500,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .adv-chev{width:0;height:0;border-left:5px solid var(--ink-3);
   border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
 .advanced[open] .adv-chev{transform:rotate(90deg);}
-.adv-sub{color:var(--ink-3);font-weight:400;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.adv-sub.on{color:var(--violet-ink);font-weight:600;}
 .advanced-body{padding-top:12px;}
 .advanced-body .switch-row{margin-top:4px;}
 
