@@ -123,7 +123,7 @@
               <form id="run-form" autocomplete="off">
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
-                <div class="target-row">
+                <div class="split-row">
                   <div class="field field-compact">
                     <label>Target</label>
                     <div class="seg" id="target-seg">
@@ -180,7 +180,7 @@
                 </div>
 
                   </div><!-- /.target-panes -->
-                </div><!-- /.target-row -->
+                </div><!-- /.split-row -->
 
                 <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
                 <div class="field field-compact">
@@ -189,17 +189,35 @@
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Task source -->
-                <div class="field">
-                  <label>Task source</label>
-                  <div class="seg" id="source-seg">
-                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
-                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                <!-- Task source switch and the workflow that will act on it, on one
+                     row — same proportion as Target/Project above. The panes below
+                     span the full width. -->
+                <div class="split-row">
+                  <div class="field field-compact">
+                    <label>Task source</label>
+                    <div class="seg" id="source-seg">
+                      <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                      <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                    </div>
+                    <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="source" value="prompt" checked hidden />
+                    <input type="radio" name="source" value="markdown" hidden />
                   </div>
-                  <!-- hidden radios kept as the source of truth read at submit -->
-                  <input type="radio" name="source" value="prompt" checked hidden />
-                  <input type="radio" name="source" value="markdown" hidden />
 
+                  <!-- Workflow picker (Default + saved). app.js populates from GET
+                       /api/workflows. Choosing a workflow is a run decision, so it
+                       stays here; tuning its agents is not, and lives in Advanced. -->
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field">
                   <div id="prompt-pane" class="source-pane">
                     <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
                   </div>
@@ -245,29 +263,31 @@
                   </div>
                 </div>
 
-                <!-- Pipeline configuration. The workflow picker stays visible; every
-                     per-agent knob lives in the collapsed accordion below it, because
-                     a tuned workflow is the common case and editing it is not
-                     (newpipeline-ux-design.md §4.1/§4.2). -->
+                <!-- Advanced: how the run is executed, as opposed to what it runs.
+                     A workflow ships tuned, so its per-agent knobs belong here with
+                     guardrails and mock mode; the workflow PICKER stays above.
+                     Collapsed unless something inside is already non-default. -->
+                <details class="advanced" id="advanced-config">
+                  <summary>
+                    <span class="adv-chev" aria-hidden="true"></span>
+                    <span>Advanced</span>
+                    <span class="adv-sub" id="advancedSummary">agents, guardrails, mock mode</span>
+                  </summary>
+                  <div class="advanced-body">
+
                 <div id="pipeline-config">
-                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it. -->
+                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it
+                       (and force-opens Advanced, so a failure is never buried). -->
                   <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
 
-                  <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
-                  <div class="field">
-                    <label for="workflowSelect">Workflow</label>
-                    <div class="select-wrap">
-                      <select id="workflowSelect" class="select" aria-label="Workflow">
-                        <option value="wf_default">Default</option>
-                      </select>
-                    </div>
-                  </div>
-
                   <!-- Agents accordion: one collapsed row per node, showing its
-                       EFFECTIVE model/effort. app.js#renderAgentRows fills it. -->
+                       EFFECTIVE model/effort. app.js#renderAgentRows fills it. The
+                       header names the workflow these agents come from — the picker
+                       is no longer beside them. -->
                   <div class="agents-cfg" id="agents-config">
                     <div class="agents-head">
                       <span class="agents-title">Agents</span>
+                      <span class="agents-wf" id="agentsWorkflow"></span>
                       <span class="agents-summary" id="agentsSummary">all defaults</span>
                       <span class="agents-actions">
                         <button type="button" id="agentsPromote" class="btn-ghost btn-mini" hidden>Save as workflow defaults</button>
@@ -279,17 +299,6 @@
                   </div>
                 </div>
 
-                <!-- Advanced: the two settings that are genuinely set-and-forget
-                     (§4.6). The other safe-default fields were promoted back up —
-                     they are edited often enough to earn their place. Collapsed
-                     unless something inside is already non-default. -->
-                <details class="advanced" id="advanced-config">
-                  <summary>
-                    <span class="adv-chev" aria-hidden="true"></span>
-                    <span>Advanced</span>
-                    <span class="adv-sub" id="advancedSummary">guardrails, mock mode</span>
-                  </summary>
-                  <div class="advanced-body">
                     <!-- Guardrails picker (built-ins + named sets; the selection IS the
                          run's policy, applied uniformly to every member). app.js populates
                          from GET /api/guardrails. Applies to Project and Workspace targets

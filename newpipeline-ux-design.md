@@ -3,7 +3,7 @@
 Status: **implemented** (branch `feat/newpipeline-ux`)
 Scope decided: **inline accordion** for per-agent config + **workflow-level per-node defaults** with delta-based run config. Explicitly out of scope: a multi-step wizard, a slide-over panel, and graph-popover editing (see §7 for why and §8 for future paths).
 
-Measured result at 1280×900, project selected: the run form went from **1947px to 1244px** on the Default workflow (−36%), and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
+Measured result at 1280×900, project selected: the run form went from **1947px to 866px** with Advanced collapsed (−56%), or 1321px with it open, and no longer grows with the workflow, because a collapsed agent row is fixed-height. (It reached 1056px with title/branches/extra files behind Advanced; promoting those four back into the main column — §4.6 — spent ~275px of that win deliberately, on the fields that are actually edited every run.)
 
 ## 1. Problem
 
@@ -40,16 +40,18 @@ Two structural defects make any redesign harder than it should be:
 
 ### 4.1 Page layout (top to bottom)
 
-1. **Target + picker, on one row** (`.target-row`) — the segmented Project/Workspace switch in a left column sized to itself, and the picker it selects in the right. Both target panes live in that one right-hand cell, so flipping the switch swaps the picker without the switch moving. Saves ~108px over the stacked version.
+1. **Target + picker, on one row** (`.split-row`) — the segmented Project/Workspace switch in a left column sized to itself, and the picker it selects in the right. Both target panes live in that one right-hand cell, so flipping the switch swaps the picker without the switch moving. Saves ~108px over the stacked version.
    The project pane's inline `[×]` (which **deleted** the project, not the selection) is gone: removal is rare and destructive, so it lives in the Projects view with the app's own confirm dialog — exactly where workspace removal has always lived. Both panes now link to their manager from the hint ("Manage projects" / "Manage workspaces"), and the two panes finally read the same. `deleteProject` in the Projects view is untouched; only the second, native-`confirm()` path is retired.
 2. **Title** — names the run, so it belongs with the task rather than behind a disclosure.
 3. **Task** — prompt/markdown segmented control + textarea, unchanged mechanics; visually the centerpiece of the page.
 4. **Extra files** — directly under the task source, because they are more of the same input, just as files. Labelled `Extra files (optional)` to match the `Feature branch (optional)` convention.
 5. **Source branch | Feature branch** — one two-column row (`.field-grid-2`): they are a single decision (branch from → into), so they read better paired than stacked.
-6. **Workflow** — existing picker (`#workflowSelect`).
-7. **Agents accordion** — replaces `#pipeline-config`'s stage/node/feedback blocks (§4.2).
-8. **Advanced** (collapsed `<details>`-style disclosure) — guardrails and mock mode only (§4.6).
-9. **Start run.**
+6. **Advanced** (collapsed `<details>`) — the agents accordion (§4.2), guardrails, mock mode (§4.6).
+7. **Start run.**
+
+The **Task source switch and the Workflow picker share one row**, using the same `.split-row` proportion as Target/Project — one CSS class for both, so the two rows cannot drift apart. The task panes span the full width below, so the prompt box is never squeezed into a column.
+
+Choosing a workflow is a run decision and stays in the main column; **tuning its agents is not, and moved into Advanced** — which is the logical end of "workflows ship tuned". Advanced now reads as *how the run executes* against a main column of *what it runs*. With Advanced collapsed the whole form is **866px**: one screen, no scrolling, which was Goal 1.
 
 Items 2, 4 and 5 were briefly inside Advanced and were promoted back out: they are edited often enough that a disclosure was the wrong home. They carry `.field-compact` (12px labels, 40px controls, 12px gaps) so the four of them cost ~275px instead of the ~340px full-size fields would have.
 
@@ -194,6 +196,7 @@ Built as one branch (`feat/newpipeline-ux`) rather than the two PRs planned belo
 - **D7 — Two PRs**, UI-first — *superseded during implementation*: see §6.
 - **D8 — Defaults are promoted from the accordion, not authored in the Composer** (§4.8). Same result, no second editing surface, and it lives where the tuning already happens.
 - **D9 — An override never inherits the default's effort** when it names its own model. `Opus·max` + an override to Haiku must not silently become `Haiku·max`; enforced identically in `resolveWorkflow` and `buildNodeConfigRows`.
+- **D15 — The workflow picker and its agents live apart**, so the accordion header carries a chip with the workflow's name. Without it, "Agents · all defaults" inside Advanced would not say *whose* defaults.
 - **D14 — A control that cannot work says why.** No-project disables the accordion with a reason; effort names its dependency on the model. Both previously failed silently, which is indistinguishable from a bug.
 - **D13 — The target switch shares a row with its picker**, and destructive management lives in the management views, not inline in a picker used every run (§4.1).
 - **D12 — One sentence answers "what if I skip this?"** for every optional field (§4.6b); the placeholder holds an example, never a duplicate of the hint.

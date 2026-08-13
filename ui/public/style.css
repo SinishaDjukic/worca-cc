@@ -413,9 +413,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    One collapsed row per agent showing its effective config; the controls only
    exist once a row is opened, so the page height no longer grows with the
    workflow. (newpipeline-ux-design.md §4.2) */
-.agents-cfg{margin-top:6px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--field);}
+.agents-cfg{margin:6px 0 18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--field);}
 .agents-head{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);}
 .agents-title{font-weight:700;font-size:13px;}
+.agents-wf{flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--ink-2);
+  background:#fff;border:1px solid var(--line-2);border-radius:999px;padding:2px 9px;
+  max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agents-wf:empty{display:none;}
 .agents-summary{color:var(--ink-3);font-size:12px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .agents-summary.muted{font-style:italic;}
 /* Read-only accordion (no project selected): the rows still show what the
@@ -454,13 +458,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .fb-field{margin-bottom:10px;}
 .fb-field:last-child{margin-bottom:0;}
 
-/* Target switch + the picker it selects, on one row. The switch column is only
-   as wide as the segmented control; the picker takes the rest (minmax(0,…) so a
-   long project path cannot widen the column). Both panes live in the second
-   cell, so switching target swaps the content without moving the switch. */
-.target-row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:18px;align-items:start;}
+/* A segmented switch + the picker it qualifies, on one row: Target/Project and
+   Task source/Workflow share this proportion. The switch column sizes to itself
+   but may shrink (a plugin task source adds buttons); the picker keeps at least
+   200px so a long project path or workflow name never squeezes it away. */
+.split-row{display:grid;grid-template-columns:minmax(0,auto) minmax(200px,1fr);column-gap:18px;align-items:start;}
+.split-row > *{min-width:0;}
+.split-row .seg{flex-wrap:wrap;}
 .target-panes{min-width:0;}
-@media (max-width:760px){ .target-row{grid-template-columns:1fr;} }
+@media (max-width:760px){ .split-row{grid-template-columns:1fr;} }
 
 /* Two fields sharing one row (New pipeline: source + feature branch). Equal
    columns with min-width:0 so a long branch name ellipsizes inside its own

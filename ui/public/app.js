@@ -123,6 +123,7 @@ const el = {
   guardrailsHint: $('#guardrailsHint'),
   agentsConfig: $('#agents-config'),
   agentRows: $('#agents-rows'),
+  agentsWorkflow: $('#agentsWorkflow'),
   agentsSummary: $('#agentsSummary'),
   agentsPromote: $('#agentsPromote'),
   agentsReset: $('#agentsReset'),
@@ -1625,6 +1626,9 @@ function setConfigError(text) {
   if (!el.configError) return;
   el.configError.textContent = text || '';
   el.configError.hidden = !text;
+  // The hint lives inside Advanced now; an error there would otherwise be
+  // invisible until someone happened to expand the section.
+  if (text && el.advancedConfig) el.advancedConfig.open = true;
 }
 
 async function loadConfig(projectDir) {
@@ -2974,7 +2978,7 @@ async function renderWorkflowConfig(workflowId) {
   if (!wf || !Object.keys(registry).length) {
     if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
-    setAgentsHeader(null);
+    setAgentsHeader(null, '');
     return;
   }
   const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
@@ -2984,8 +2988,9 @@ async function renderWorkflowConfig(workflowId) {
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
-  setAgentsHeader(rows);
+  setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
+  syncAdvancedDisclosure(); // a modified agent is active state Advanced must show
 }
 
 // Per-agent config is stored PER PROJECT, so with no project selected there is
@@ -3015,8 +3020,11 @@ function setAgentRowsEnabled(enabled) {
 
 // Paint the accordion header: the "all defaults / N modified" summary plus the
 // two actions, which only appear when they would do something.
-function setAgentsHeader(rows) {
+function setAgentsHeader(rows, workflowName) {
   const editable = agentsEditable();
+  // The picker sits up with the task now, so the header has to say which
+  // workflow these rows belong to.
+  if (el.agentsWorkflow) el.agentsWorkflow.textContent = workflowName || '';
   if (el.agentsSummary) {
     el.agentsSummary.textContent = !rows ? ''
       : (editable ? agentsHeaderText(rows) : 'select a project to change these');
@@ -4385,6 +4393,9 @@ async function mountPluginSourcePane(src) {
 /** Which Advanced settings currently deviate from their default. Reads the DOM. */
 function advancedIsNonDefault() {
   const on = [];
+  // A tuned agent changes what the run does just as much as a guardrail set
+  // does, and the accordion lives in here now — so it counts.
+  if (el.agentRows && el.agentRows.querySelector('.agent-mod')) on.push('agents');
   if (el.guardrailsSelect && el.guardrailsSelect.value && el.guardrailsSelect.value !== 'permissive') {
     on.push('guardrails');
   }
@@ -4398,7 +4409,7 @@ function syncAdvancedDisclosure() {
   if (!details) return;
   const active = advancedIsNonDefault();
   if (el.advancedSummary) {
-    el.advancedSummary.textContent = active.length ? active.join(', ') : 'guardrails, mock mode';
+    el.advancedSummary.textContent = active.length ? active.join(', ') : 'agents, guardrails, mock mode';
     el.advancedSummary.classList.toggle('on', active.length > 0);
   }
   if (active.length) details.open = true; // never hide something the user turned on

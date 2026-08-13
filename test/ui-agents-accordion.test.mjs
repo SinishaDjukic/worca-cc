@@ -412,13 +412,64 @@ test('effort explains its dependency on the model instead of just greying out', 
 
 // ── Advanced disclosure (§4.6) ──────────────────────────────────────────────
 
+// ── agents live under Advanced, and say which workflow they belong to ───────
+
+test('the agents accordion sits inside Advanced, while the workflow picker stays out', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const adv = doc.querySelector('#advanced-config');
+  assert.ok(adv.contains(doc.querySelector('#agents-config')), 'the accordion belongs to Advanced');
+  assert.ok(adv.contains(doc.querySelector('#wf-feedback-config')), 'so do the feedback loops');
+  // Choosing a workflow is a run decision; tuning its agents is not.
+  assert.ok(!adv.contains(doc.querySelector('#workflowSelect')), 'the picker must stay in the main column');
+  assert.match(doc.querySelector('#advancedSummary').textContent, /agents/);
+});
+
+test('the agents header names the workflow the rows come from', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  await openTuned(window);
+  const doc = window.document;
+  assert.equal(doc.querySelector('#agentsWorkflow').textContent, 'Tuned',
+    'with the picker elsewhere, the header must say which workflow these are');
+  pickWorkflow(window, 'wf_default');
+  await tick(); await tick();
+  assert.equal(doc.querySelector('#agentsWorkflow').textContent, 'Default', 'and follow the selection');
+});
+
+test('a modified agent counts as active state, so Advanced does not hide it', async () => {
+  const config = { workflows: { wf_t: { nodes: { n0: { model: 'claude-haiku-4-5' } }, feedbacks: {} } } };
+  const { window } = await boot({ fetchHandler: apiFetch({ config }) });
+  const doc = window.document;
+  assert.equal(doc.querySelector('#advanced-config').open, false, 'starts collapsed');
+  await openTuned(window);
+  assert.ok(doc.querySelector('.agent-mod'), 'precondition: a row is modified');
+  assert.equal(doc.querySelector('#advanced-config').open, true, 'a tuned agent must not be buried');
+  assert.match(doc.querySelector('#advancedSummary').textContent, /agents/);
+});
+
+test('a config-load failure force-opens Advanced, where the hint now lives', async () => {
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && (!opts || !opts.method || opts.method === 'GET')) {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+    }
+    return null;
+  } });
+  selectProjectAnd(window);
+  await tick(); await tick();
+  const doc = window.document;
+  const hint = doc.querySelector('#config-error');
+  assert.equal(hint.hidden, false, 'the hint is painted');
+  assert.ok(doc.querySelector('#advanced-config').contains(hint), 'it lives inside Advanced');
+  assert.equal(doc.querySelector('#advanced-config').open, true, 'so Advanced must open to show it');
+});
+
 test('Advanced holds only the set-and-forget settings; the often-used fields are promoted', async () => {
   const { window } = await boot();
   const doc = window.document;
   const details = doc.querySelector('#advanced-config');
   assert.ok(details, 'missing the Advanced disclosure');
   assert.equal(details.open, false, 'Advanced must start collapsed');
-  for (const id of ['guardrailsSelect', 'mock']) {
+  for (const id of ['agents-config', 'guardrailsSelect', 'mock']) {
     assert.ok(details.querySelector(`#${id}`), `#${id} must live inside Advanced`);
   }
   // Title, the branch pair and extra files are edited often enough to earn a
@@ -432,9 +483,8 @@ test('Advanced holds only the set-and-forget settings; the often-used fields are
 test('the target switch shares one row with the picker it selects', async () => {
   const { window } = await boot();
   const doc = window.document;
-  const row = doc.querySelector('.target-row');
+  const row = doc.querySelector('#target-seg').closest('.split-row');
   assert.ok(row, 'missing the target row');
-  assert.ok(row.querySelector('#target-seg'), 'the switch must be in the row');
   // Both panes live in the SECOND cell, so flipping the switch swaps the picker
   // without the switch itself moving.
   const panes = row.querySelector('.target-panes');
@@ -458,6 +508,19 @@ test('flipping the target swaps the picker in place, leaving the switch put', as
   assert.equal(doc.querySelector('#target-seg').closest('.field'), segBefore, 'the switch must not move');
 });
 
+test('the task-source switch shares its row with the workflow picker, same proportion', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const row = doc.querySelector('#source-seg').closest('.split-row');
+  assert.ok(row, 'the task source must sit in a split row');
+  assert.ok(row.querySelector('#workflowSelect'), 'the workflow picker shares that row');
+  // Both rows use one class, so the two proportions cannot drift apart.
+  assert.equal(doc.querySelector('#target-seg').closest('.split-row').className,
+    row.className, 'target and task rows must use the same row class');
+  // The textarea is NOT in the row — it spans the full width below it.
+  assert.ok(!row.querySelector('#prompt'), 'the prompt box must not be squeezed into the row');
+});
+
 test('the promoted fields sit in the intended order around the task box', async () => {
   const { window } = await boot();
   const doc = window.document;
@@ -467,11 +530,11 @@ test('the promoted fields sit in the intended order around the task box', async 
   const taskSeg = posOf('#source-seg');
   const extras = posOf('#extras');
   const source = posOf('#sourceBranch');
-  const workflow = posOf('#workflowSelect');
+  const advanced = posOf('#advanced-config');
   assert.ok(title < taskSeg, 'Title sits above the task source');
   assert.ok(taskSeg < extras, 'Extra files sit under the task source, grouped with it');
   assert.ok(extras < source, 'the branch pair follows the extra files');
-  assert.ok(source < workflow, 'everything promoted stays above the workflow picker');
+  assert.ok(source < advanced, 'everything promoted stays above Advanced');
   // Source + feature branch share one compact row.
   const pair = doc.querySelector('.field-grid-2');
   assert.ok(pair, 'missing the two-column row');
