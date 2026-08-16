@@ -101,6 +101,38 @@ test('listAllPipelines returns [] when the store is absent', async () => {
   }
 });
 
+test('listAllPipelines limit: bounded rows, ordered by recency of update', async () => {
+  // Chat history asks for a handful of the newest runs, so the LIMIT lives in SQL
+  // (no point building rows nobody reads). It must select the SAME top-n the callers
+  // see after the mtime sort — hence the ORDER BY keys on COALESCE(updated_at, started_at).
+  const home = await mkdtemp(join(tmpdir(), 'worca-cc-all-limit-'));
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  _resetForTests();
+  try {
+    const a = await seed('Alpha', 'Alpha run');
+    const b = await seed('Beta', 'Beta run');
+    const c = await seed('Gamma', 'Gamma run');
+    // seed() stamps IDENTICAL timestamps (and writeState re-stamps updated_at to "now"),
+    // so pin explicit DISTINCT times — equal stamps would make which rows survive the
+    // LIMIT tie-order-dependent. A is the OLDEST-started but the NEWEST-updated row: a
+    // LIMIT keyed on started_at would drop it, the mtime order the callers see keeps it.
+    const stamp = prepare('UPDATE pipelines SET started_at = ?, updated_at = ? WHERE id = ?');
+    stamp.run('2026-06-01T00:00:00Z', '2026-06-09T00:00:00Z', a.pid);
+    stamp.run('2026-06-05T00:00:00Z', '2026-06-05T00:00:00Z', b.pid);
+    stamp.run('2026-06-08T00:00:00Z', '2026-06-08T00:00:00Z', c.pid);
+    const rows = await listAllPipelines({ limit: 2, lite: true });
+    assert.equal(rows.length, 2, 'SQL LIMIT bounds how many rows are built');
+    assert.equal(rows[0].id, a.pid,
+      'SQL LIMIT must agree with the mtime (updated_at) sort the callers see — LIMIT on started_at would drop this row');
+    assert.equal(rows[1].id, c.pid, 'next-newest by updated_at');
+    assert.equal((await listAllPipelines()).length, 3, 'no limit -> every row, as before');
+  } finally {
+    _resetForTests();
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
 test('listAllPipelines orders equal-mtime rows deterministically by (projectKey,id)', async () => {
   // The build runs in parallel batches, so equal-mtime rows must not reorder
   // run-to-run. The sort tiebreaker keys on (projectKey, id). Seeding both rows

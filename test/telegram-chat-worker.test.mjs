@@ -11,6 +11,7 @@ import {
   createTelegramWorker, validateConfig, renderToHtml,
 } from '../examples/plugins/telegram-chat/channel/worker.mjs';
 import { splitText, withRetryLadder } from '../examples/plugins/telegram-chat/lib/send-util.mjs';
+import { toTelegramHtml, toSlackMrkdwn } from '../examples/plugins/telegram-chat/lib/markdown.mjs';
 
 const json = (obj, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -193,4 +194,43 @@ test('lib: splitText line preference; withRetryLadder exhausts to rate-limit; HT
     withRetryLadder(async () => ({ retryAfterMs: 1 }), async () => {}),
     (err) => err.kind === 'rate-limit',
   );
+});
+
+test('splitText never emits a chunk longer than limit (newline-at-limit off-by-one)', () => {
+  const s = 'a'.repeat(10) + '\n' + 'b'.repeat(9); // newline at index 10 === limit → today [11, 9]
+  for (const c of splitText(s, 10)) assert.ok(c.length <= 10, `chunk ${c.length} > 10`);
+});
+
+test('splitText never splits a surrogate pair', () => {
+  const s = 'x'.repeat(9) + '😀' + 'y'.repeat(9); // pair straddles limit 10
+  for (const c of splitText(s, 10)) assert.ok(c.isWellFormed(), 'ill-formed chunk');
+});
+
+test('send(): a "can\'t parse entities" 400 falls back to plain text instead of losing the message', async () => {
+  const calls = [];
+  const fetchFn = async (url, opts) => {
+    if (!opts?.method) return { ok: true, status: 200, json: async () => ({ ok: true, result: { username: 'b' } }) };
+    const body = JSON.parse(opts.body);
+    calls.push(body);
+    if (body.parse_mode === 'HTML') return { ok: false, status: 400, json: async () => ({ description: "Bad Request: can't parse entities" }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  const w = createTelegramWorker(fakeCtx().ctx, { fetchFn, _sleep: async () => {} });
+  const r = await w.send('7', { title: null, body: [{ kind: 'code_block', value: 'x' }], severity: 'info' });
+  assert.equal(r.ok, true);
+  assert.equal(calls.at(-1).parse_mode, undefined, 'fallback resend is plain text');
+});
+
+test('code spans containing $-replacement patterns survive markdown conversion verbatim', () => {
+  const out = toTelegramHtml('run `sed s/a/$&/` now');
+  assert.match(out, /sed s\/a\/\$(&|&amp;)\//); // $& must not duplicate text or leak a \x00PH marker
+  assert.ok(!/\x00/.test(out), 'no placeholder marker leaks');
+  const out2 = toSlackMrkdwn("pattern `$'` and ```$`\n``` end");
+  assert.ok(out2.includes("$'"), 'inline $-pattern survives');
+});
+
+test('bold content with $-patterns survives toSlackMrkdwn (second restore site)', () => {
+  const out = toSlackMrkdwn('a **b$&c** d');
+  assert.match(out, /\*b\$(&|&amp;)c\*/); // T6 escapes & → &amp; in Slack output; both spellings prove no $-interpretation
+  assert.ok(!/\x01/.test(out), 'no bold marker leaks');
 });

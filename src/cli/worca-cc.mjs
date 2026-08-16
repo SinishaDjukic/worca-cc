@@ -1295,7 +1295,7 @@ async function cmdPlugin(argv) {
           onInbound: (ev) => process.stderr.write(`inbound: ${JSON.stringify(ev.msg)}\n`),
           onStatus: (ev) => process.stderr.write(`status: ${ev.state}${ev.detail ? ` (${ev.detail})` : ''}\n`),
         });
-        host.start();
+        host.start({ plugin: name, channelId });
         const row = host.status().find((r) => r.plugin === name && r.channelId === channelId);
         if (!row) { await host.stop(); fail(`no chat channel "${name}/${channelId}" — is the plugin installed and enabled?`); }
         process.stderr.write(`worker for ${name}/${channelId} running — type text to simulate inbound, Ctrl-C to exit\n`);

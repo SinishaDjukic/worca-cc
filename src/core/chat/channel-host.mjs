@@ -6,6 +6,12 @@
 // disable/uninstall and on server shutdown. All worker-originated strings are
 // redacted before they reach the logger or the UI.
 //
+// Worker contract: a worker that emits any 'status' frame before 'ready' will
+// NOT be flipped to 'connected' by that 'ready' — the documented no-throw
+// auth-failure pattern (emit 'disconnected' with the reason, then return from
+// start()) relies on this. Workers that self-report 'connected' are unaffected:
+// their own status frame does it.
+//
 // WORCA_MOCK=1: no children — in-memory mock workers, instantly 'connected',
 // with test hooks mirroring plugin-shim.mjs setMockSourceResponses.
 
@@ -106,9 +112,11 @@ export function discoverChannels() {
 /**
  * @param {{logger?:(level:string,msg:string)=>void,
  *          onInbound?:(ev:{plugin:string,channelId:string,platform:string,msg:object})=>void,
- *          onStatus?:(ev:{plugin:string,channelId:string,platform:string,state:string,detail:string|null})=>void}} opts
+ *          onStatus?:(ev:{plugin:string,channelId:string,platform:string,state:string,detail:string|null})=>void,
+ *          _spawn?:typeof spawn, _backoffMs?:number[], _healthyAfterMs?:number}} opts
+ *   `_spawn`/`_backoffMs`/`_healthyAfterMs` are test seams only.
  */
-export function createChannelHost({ logger, onInbound, onStatus } = {}) {
+export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
   const log = typeof logger === 'function' ? logger : (level, msg) => console.error(`chat ${level}: ${msg}`);
   const workers = new Map(); // key -> worker record
   let stopping = false;
@@ -131,6 +139,10 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
   const setStatus = (w, state, detail = null) => {
     const red = detail == null ? null : w.redact(detail);
     if (w.state === state && w.detail === red) return;
+    // healthySince = when we last BELIEVED this worker connected. Stamped on the
+    // transition only, so a masked 'ready' (worker already said disconnected)
+    // can never buy the exit handler's forgiveness.
+    if (state === 'connected' && w.state !== 'connected') w.healthySince = Date.now();
     w.state = state;
     w.detail = red;
     try { onStatus?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, state, detail: red }); }
@@ -182,11 +194,18 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
     switch (frame.type) {
       case 'ready':
         w.identity = frame.identity ?? null;
-        w.consecutiveFailures = 0;
-        w.healthySince = Date.now();
-        setStatus(w, 'connected', null);
+        // NOT w.consecutiveFailures = 0 — the exit handler already forgives a
+        // crash after _healthyAfterMs of health; zeroing here let a
+        // connect-then-crash worker restart at the 1s floor forever.
+        // NOT w.healthySince here either — setStatus stamps it on the real
+        // transition, so a masked ready cannot buy forgiveness.
+        // 'ready' is optimistic: it only claims 'connected' when the worker has
+        // not already reported its own state this spawn (the documented no-throw
+        // auth-failure pattern emits 'disconnected' BEFORE ready).
+        if (!w.statusSinceSpawn) setStatus(w, 'connected', null);
         break;
       case 'status':
+        w.statusSinceSpawn = true;
         setStatus(w, frame.state, frame.detail ?? null);
         break;
       case 'inbound':
@@ -221,12 +240,13 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
   const spawnWorker = (w) => {
     if (stopping) return;
     setStatus(w, 'connecting', null);
-    const proc = spawn(process.execPath,
+    const proc = _spawn(process.execPath,
       [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH],
       { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
     w.proc = proc;
     w.missedPongs = 0;
     w.spawnedAt = Date.now();
+    w.statusSinceSpawn = false;
 
     proc.stdin.on('error', () => { /* EPIPE on dying child: exit handler owns recovery */ });
     let stderrTail = '';
@@ -257,7 +277,8 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
     }, PING_INTERVAL_MS);
     w.pingTimer.unref?.();
 
-    proc.on('exit', (code, signal) => {
+    const onExit = (code, signal) => {
+      if (w.proc !== proc) return;            // stale duplicate: error path ran, or a respawn happened
       clearInterval(w.pingTimer);
       w.proc = null;
       w.outQueue.length = 0;
@@ -266,20 +287,32 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
       if (stopping || w.removed) { setStatus(w, 'disconnected', null); return; }
       if (w.shuttingDown) { w.shuttingDown = false; setStatus(w, 'disconnected', null); return; }
 
-      const healthyLongEnough = w.healthySince && Date.now() - w.healthySince > HEALTHY_AFTER_MS;
+      const healthyLongEnough = w.healthySince && Date.now() - w.healthySince > _healthyAfterMs;
       w.consecutiveFailures = healthyLongEnough ? 1 : w.consecutiveFailures + 1;
       w.healthySince = null;
-      const detail = stderrTail.trim().split('\n').pop() || `exit ${signal || code}`;
+      const detail = w.spawnErrorDetail || stderrTail.trim().split('\n').pop() || `exit ${signal || code}`;
+      w.spawnErrorDetail = null;
       if (w.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         log('error', `[chat:${w.key}] giving up after ${w.consecutiveFailures} failures: ${w.redact(detail)}`);
         setStatus(w, 'failed', detail);
         return;
       }
-      const delay = RESTART_BACKOFF_MS[Math.min(w.consecutiveFailures - 1, RESTART_BACKOFF_MS.length - 1)];
+      const delay = _backoffMs[Math.min(w.consecutiveFailures - 1, _backoffMs.length - 1)];
       log('warn', `[chat:${w.key}] worker exited (${signal || code}) — restart in ${delay}ms`);
       setStatus(w, 'disconnected', detail);
       w.restartTimer = setTimeout(() => spawnWorker(w), delay);
       w.restartTimer.unref?.();
+    };
+    proc.on('exit', onExit);
+    // Async spawn/pipe failures (EMFILE, EAGAIN) must never become an unhandled
+    // 'error' on the child. If spawn failed outright (no pid), 'exit' will never
+    // fire — stash the real error text (stderrTail is empty on this path, so the
+    // badge would otherwise show a useless "exit -1") and route into recovery.
+    proc.on('error', (err) => {
+      const msg = w.redact(err?.message || String(err));
+      log('error', `[chat:${w.key}] worker process error: ${msg}`);
+      if (proc.pid) { try { proc.kill('SIGKILL'); } catch { /* gone */ } }
+      else { w.spawnErrorDetail = msg; onExit(-1, null); }
     });
 
     // hello: config+secrets+state via stdin ONLY (spec §7.2 rule, persistent).
@@ -315,6 +348,8 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
     deliveries: [],
     consecutiveFailures: 0,
     healthySince: null,
+    statusSinceSpawn: false,
+    spawnErrorDetail: null,
     missedPongs: 0,
     shuttingDown: false,
     removed: false,
@@ -360,6 +395,10 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
   const rpc = (w, frame, timeoutMs, kindOnTimeout = 'timeout') => new Promise((resolveRpc, rejectRpc) => {
     const timer = setTimeout(() => {
       w.pending.delete(frame.id);
+      // Still queued behind backpressure? Drop it: a later drain must not
+      // deliver a send the caller was already told had failed.
+      const qi = w.outQueue.findIndex((f) => f && f.id === frame.id);
+      if (qi >= 0) w.outQueue.splice(qi, 1);   // NOT counted in w.dropped (that means queue overflow)
       rejectRpc(new PluginOpError(kindOnTimeout, `worker did not answer within ${timeoutMs}ms`));
     }, timeoutMs);
     timer.unref?.();
@@ -374,9 +413,16 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
   let rpcSeq = 0;
 
   return {
-    /** Discover + start a worker per enabled, fully-configured channel. */
-    start() {
-      for (const entry of discoverChannels()) startEntry(entry);
+    /** Discover + start a worker per enabled, fully-configured channel. With a
+     *  filter, start ONLY that channel — `worca plugin channel` must not spawn
+     *  every configured channel (a second telegram long-poller 409s the live
+     *  server's worker).
+     *  @param {{plugin:string,channelId:string}} [filter] */
+    start(filter) {
+      for (const entry of discoverChannels()) {
+        if (filter && (entry.plugin !== filter.plugin || entry.channelId !== filter.channelId)) continue;
+        startEntry(entry);
+      }
     },
 
     /** Shutdown frame -> grace -> SIGKILL, for every worker. */
@@ -477,7 +523,7 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
       if (!entry) throw new PluginOpError('plugin', `no such chat channel "${plugin}/${channelId}"`);
       if (mockMode()) return { ok: true, mock: true };
       return new Promise((resolveCheck, rejectCheck) => {
-        const proc = spawn(process.execPath, [CHILD_PATH, '--check'], { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+        const proc = _spawn(process.execPath, [CHILD_PATH, '--check'], { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
         let stdout = '';
         let settled = false;
         const timer = setTimeout(() => { settled = true; proc.kill('SIGKILL'); rejectCheck(new PluginOpError('timeout', `validateConfig timed out after ${timeoutMs}ms`)); }, timeoutMs);
@@ -491,16 +537,25 @@ export function createChannelHost({ logger, onInbound, onStatus } = {}) {
           try { resolveCheck(JSON.parse(line)); }
           catch { rejectCheck(new PluginOpError('protocol', 'validateConfig produced no result frame')); }
         });
-        proc.stdin.write(encodeFrame({
-          type: 'hello',
-          apiVersion: entry.apiVersion,
-          plugin, channelId,
-          platform: entry.platform,
-          module: entry.modulePath,
-          config: readPluginConfig(plugin, entry.configSchema),
-          state: readPluginState(plugin),
-          mock: false,
-        }));
+        proc.on('error', (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          rejectCheck(new PluginOpError('plugin', `validateConfig child failed: ${err?.message || err}`));
+        });
+        proc.stdin.on('error', () => { /* EPIPE on dying child: exit/error handlers own it */ });
+        try {
+          proc.stdin.write(encodeFrame({
+            type: 'hello',
+            apiVersion: entry.apiVersion,
+            plugin, channelId,
+            platform: entry.platform,
+            module: entry.modulePath,
+            config: readPluginConfig(plugin, entry.configSchema),
+            state: readPluginState(plugin),
+            mock: false,
+          }));
+        } catch { /* dying child: handlers above settle the promise */ }
       });
     },
   };

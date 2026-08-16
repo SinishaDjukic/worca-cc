@@ -61,12 +61,16 @@ export function createGatewayClient({
       ackPending = true;
       send(OP.HEARTBEAT, seq);
     };
-    // First beat after interval * jitter (gateway spec).
-    jitterTimer = setTimeout(() => { if (running && ws) beat(); }, Math.floor(intervalMs * random()));
-    heartbeatTimer = setInterval(() => { if (running && ws) beat(); }, intervalMs);
+    // First beat after interval * jitter (gateway spec); the steady interval
+    // starts only AFTER that first beat so the two never race.
+    jitterTimer = setTimeout(() => {
+      if (!running || !ws) return;
+      beat();
+      heartbeatTimer = setInterval(() => { if (running && ws) beat(); }, intervalMs);
+    }, Math.floor(intervalMs * random()));
   };
 
-  function handleFrame(raw) {
+  function handleFrame(raw, owner) {          // owner = the socket this frame arrived on
     let frame;
     try { frame = JSON.parse(raw); } catch { return; }
     if (frame.s != null) seq = frame.s;
@@ -98,7 +102,9 @@ export function createGatewayClient({
         const resumable = frame.d === true;
         if (!resumable) { sessionId = null; resumeUrl = null; }
         log('warn', `gateway invalid session (resumable=${resumable})`);
-        setTimeout(() => { try { ws?.close(4901); } catch { /* noop */ } }, 1000 + Math.floor(random() * 4000));
+        const target = owner ?? ws;           // never close a REPLACEMENT socket from this stale timer
+        setTimeout(() => { if (ws === target) { try { target?.close(4901); } catch { /* noop */ } } },
+          1000 + Math.floor(random() * 4000));
         break;
       }
       case OP.DISPATCH: {
@@ -131,7 +137,7 @@ export function createGatewayClient({
         socket.addEventListener('close', (e) => resolve({ code: e?.code ?? 0 }), { once: true });
         socket.addEventListener('error', () => resolve({ code: 0 }), { once: true });
       });
-      socket.addEventListener('message', (e) => handleFrame(typeof e.data === 'string' ? e.data : String(e.data)));
+      socket.addEventListener('message', (e) => handleFrame(typeof e.data === 'string' ? e.data : String(e.data), socket));
       const { code } = await done;
       stopHeartbeat();
       ws = null;

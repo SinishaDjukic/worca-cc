@@ -24,6 +24,13 @@ export function renderToHtml(msg) {
   return renderSegments(msg, TELEGRAM_HTML_STYLE);
 }
 
+/** Rendered-HTML chunk -> plain text (fallback when a chunk boundary broke a tag). */
+export function htmlToPlain(html) {
+  return String(html)
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+}
+
 /**
  * Inner factory with injectable I/O (old-code convention) — tests drive this
  * directly; the child entry point below applies the real defaults.
@@ -139,31 +146,41 @@ export function createTelegramWorker(ctx, {
     },
 
     async send(chatId, msg) {
+      // One chunk-send through the 429 ladder; `extra` carries {text[, parse_mode]}.
+      const sendChunk = (target, extra) => withRetryLadder(async () => {
+        let res;
+        try {
+          res = await fetchFn(api('sendMessage'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: target, ...extra }),
+          });
+        } catch (err) {
+          throw sendError('network', err?.message || String(err));
+        }
+        if (res.status === 429) {
+          const data = await res.json().catch(() => ({}));
+          return { retryAfterMs: (data.parameters?.retry_after ?? 0) * 1000 };
+        }
+        if (res.status === 401) throw sendError('auth', 'auth failed — check botToken');
+        if (res.status === 403) throw sendError('plugin', 'bot is blocked by this chat or was never started — open the chat and /start it');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw sendError('plugin', `sendMessage failed: ${data.description || `HTTP ${res.status}`}`);
+        }
+        return undefined;
+      }, _sleep);
+
       const chunks = splitText(renderToHtml(msg), MAX_MESSAGE_CHARS);
       for (const text of chunks) {
-        await withRetryLadder(async () => {
-          let res;
-          try {
-            res = await fetchFn(api('sendMessage'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-            });
-          } catch (err) {
-            throw sendError('network', err?.message || String(err));
-          }
-          if (res.status === 429) {
-            const data = await res.json().catch(() => ({}));
-            return { retryAfterMs: (data.parameters?.retry_after ?? 0) * 1000 };
-          }
-          if (res.status === 401) throw sendError('auth', 'auth failed — check botToken');
-          if (res.status === 403) throw sendError('plugin', 'bot is blocked by this chat or was never started — open the chat and /start it');
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw sendError('plugin', `sendMessage failed: ${data.description || `HTTP ${res.status}`}`);
-          }
-          return undefined;
-        }, _sleep);
+        try {
+          await sendChunk(chatId, { text, parse_mode: 'HTML' });
+        } catch (err) {
+          // A chunk boundary inside an HTML tag loses the whole notification:
+          // strip tags and resend ONCE as plain text, on a fresh ladder.
+          if (err?.kind !== 'plugin' || !/can't parse entities/i.test(err?.message || '')) throw err;
+          await sendChunk(chatId, { text: htmlToPlain(text) });
+        }
       }
       return { ok: true, chunks: chunks.length };
     },

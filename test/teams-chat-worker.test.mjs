@@ -34,8 +34,8 @@ function mint({ kid = 'kid-1', alg = 'RS256', key = privateKey, ...claims } = {}
 }
 
 const jwksFetch = async (url) => {
-  if (url.includes('openidconfiguration')) return { json: async () => ({ jwks_uri: 'https://login.test/keys' }) };
-  if (url.includes('/keys')) return { json: async () => ({ keys: [JWK] }) };
+  if (url.includes('openidconfiguration')) return { ok: true, status: 200, json: async () => ({ jwks_uri: 'https://login.test/keys' }) };
+  if (url.includes('/keys')) return { ok: true, status: 200, json: async () => ({ keys: [JWK] }) };
   throw new Error(`unexpected ${url}`);
 };
 
@@ -60,6 +60,44 @@ test('JWT matrix: valid accepted; iss/aud/exp/sig/serviceUrl/kid rejected', asyn
     assert.match(out.reason, re);
   }
   assert.ok(decodeJwt(mint()));
+});
+
+test('a signed token WITHOUT exp is rejected (fail closed)', async () => {
+  const token = mint({ exp: undefined }); // JSON.stringify drops the key entirely
+  assert.equal(decodeJwt(token).payload.exp, undefined, 'fixture guard: token really has no exp');
+  const v = createJwtValidator({ appId: APP_ID, fetchFn: jwksFetch });
+  const r = await v.validate(`Bearer ${token}`, SERVICE_URL);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exp/);
+});
+
+test('a string exp is rejected', async () => {
+  const v = createJwtValidator({ appId: APP_ID, fetchFn: jwksFetch });
+  const r = await v.validate(`Bearer ${mint({ exp: 'never' })}`, SERVICE_URL);
+  assert.equal(r.ok, false);
+});
+
+test('a JWKS outage with no cache yields ok:false (→401), not an escaped throw', async () => {
+  const v = createJwtValidator({ appId: APP_ID, fetchFn: async () => { throw new Error('ECONNREFUSED'); } });
+  const r = await v.validate(`Bearer ${mint({})}`, SERVICE_URL);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /jwks unavailable/i);
+});
+
+test('a JWKS outage with a warm cache serves stale keys (bounded)', async () => {
+  let clock = Date.now();
+  let up = true;
+  const v = createJwtValidator({
+    appId: APP_ID,
+    now: () => clock,
+    fetchFn: (u) => (up ? jwksFetch(u) : Promise.reject(new Error('ECONNREFUSED'))),
+  });
+  assert.equal((await v.validate(`Bearer ${mint({})}`, SERVICE_URL)).ok, true); // warms the cache
+  up = false;
+  clock += 25 * 60 * 60 * 1000; // past JWKS_TTL_MS → forced refetch → outage
+  const sec = Math.floor(clock / 1000);
+  const fresh = mint({ exp: sec + 600, nbf: sec - 60 }); // re-mint against the advanced clock
+  assert.equal((await v.validate(`Bearer ${fresh}`, SERVICE_URL)).ok, true, 'stale cache still validates');
 });
 
 function fakeCtx(config = {}) {
@@ -200,6 +238,62 @@ test('mock mode skips JWT only; start reports outbound credential state', async 
       : jwksFetch(url)),
   });
   await bad.start(); // status disconnected, no throw
+});
+
+// ── conversation store: bounded + serialized ─────────────────────────────────
+
+/** A worker whose host state round-trips through JSON (as the real protocol
+ *  frames do) and whose clock is monotonic, so eviction order is deterministic
+ *  and a read-modify-write race is observable instead of hidden behind a
+ *  shared object reference. */
+function convFixture() {
+  const { ctx, state, events } = fakeCtx();
+  ctx.mock = true; // skip the JWT gate — these tests are about the store
+  const hostGet = ctx.state.get;
+  ctx.state.get = async (k) => {
+    const v = await hostGet(k);
+    await Promise.resolve(); // the real host answers across an async gap
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  };
+  let clock = Date.UTC(2026, 0, 1);
+  const routes = tokenRoutes();
+  const worker = createTeamsWorker(ctx, {
+    fetchFn: routes.fetchFn,
+    _sleep: async () => {},
+    now: () => (clock += 1000),
+  });
+  return { worker, state, events, routes };
+}
+
+let actSeq = 0;
+// handleWebhook dedupes on activity.id before the store is touched.
+const webhookFor = (a) => frame({ ...a, id: `act-${++actSeq}` }, 'Bearer mock');
+
+test('conversation store caps at 200, evicting oldest lastSeen (LRU, not insertion order)', async () => {
+  const { worker, state } = convFixture();
+  for (let i = 0; i < 200; i++) {
+    await worker.handleWebhook(webhookFor(ACTIVITY({ conversation: { id: `c${i}` } })));
+  }
+  // Re-see c0 BEFORE overflowing: a correct LRU keeps it and evicts c1 instead.
+  await worker.handleWebhook(webhookFor(ACTIVITY({ conversation: { id: 'c0' } })));
+  for (let i = 200; i < 205; i++) {
+    await worker.handleWebhook(webhookFor(ACTIVITY({ conversation: { id: `c${i}` } })));
+  }
+  const all = state.get('conversations');
+  assert.equal(Object.keys(all).length, 200);
+  assert.ok(all.c0, 're-seen conversation survives');
+  assert.equal(all.c1, undefined, 'least-recently-SEEN evicted, not first-inserted');
+  assert.ok(all.c204);
+});
+
+test('concurrent inbound activities do not lose conversation refs (RMW serialized)', async () => {
+  const { worker, state } = convFixture();
+  await Promise.all([
+    worker.handleWebhook(webhookFor(ACTIVITY({ conversation: { id: 'x' } }))),
+    worker.handleWebhook(webhookFor(ACTIVITY({ conversation: { id: 'y' } }))),
+  ]);
+  const all = state.get('conversations');
+  assert.ok(all.x && all.y, `lost a ref: ${JSON.stringify(Object.keys(all))}`);
 });
 
 test('helpers: stripMentions, renderCard severity icons; validateConfig field pinning', async () => {

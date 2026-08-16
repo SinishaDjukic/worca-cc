@@ -190,7 +190,12 @@ test('renderQuestion clarify: ordinals per option + /answer instructions', () =>
   assert.match(text, /1\. sqlite/);
   assert.match(text, /2\. postgres/);
   assert.match(text, /\*\*Q2\.\*\* Enable telemetry\?/);
-  assert.match(text, /\/answer \*2951 1 1 {2}\(one choice per question, in order\)/);
+  assert.match(text, /\/answer \*2951 1 \| 1 {2}\(one answer per question, in order, separated by \|\)/);
+});
+
+test('renderQuestion instructs the pipe form when a question is free-text', () => {
+  const msg = renderQuestion({ runId: 'r-ab12' }, { kind: 'clarify', questions: [{ id: 'k', question: 'Name?', options: [] }] });
+  assert.match(msg.body[0].value, /\/answer \*ab12 <your answer>/);
 });
 
 test('renderQuestion recovery: cause + approve/retry; renderTest is valid', () => {

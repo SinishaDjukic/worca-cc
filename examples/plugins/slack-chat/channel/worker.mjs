@@ -133,8 +133,18 @@ export function createSlackWorker(ctx, {
       running = true;
       const auth = await slackApi(fetchFn, 'auth.test', botToken, null, ctx.shutdownSignal);
       if (!auth.ok) {
-        setStatus('disconnected', `auth.test failed: ${auth.error || `HTTP ${auth.httpStatus}`} — check botToken`);
-        return { identity: null };
+        // Definitive, restart-cannot-help auth.test errors (matches + extends the send() list):
+        const FATAL_AUTH = new Set(['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked',
+          'token_expired', 'not_allowed_token_type', 'no_permission', 'org_login_required',
+          'ekm_access_denied', 'two_factor_setup_required', 'enterprise_is_restricted']);
+        const fatal = FATAL_AUTH.has(auth.error);
+        const detail = `auth.test failed: ${auth.error || `HTTP ${auth.httpStatus}`}`;
+        if (fatal) {
+          setStatus('disconnected', `${detail} — check botToken`);
+          return { identity: null };
+        }
+        // Transient (429/5xx/network-ish): crash so the supervisor restarts with backoff.
+        throw Object.assign(new Error(detail), { kind: auth.httpStatus === 429 ? 'rate-limit' : 'network' });
       }
       selfUserId = auth.user_id ?? null;
       connectLoop().catch((err) => ctx.log('error', `socket loop died: ${err?.message || err}`));

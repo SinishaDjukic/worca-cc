@@ -14,15 +14,17 @@ useTempHome(after);
 
 const CONFIG = { allowedChatIds: '42, 77' };
 
-function fixture() {
+function fixture(overrideActions = {}) {
   const calls = [];
   const state = {
     live: [
       { runId: 'run-aaaa1111', pipelineId: 'pipe-aaaa1111', title: 'Fix login', status: 'running', kind: 'run', projectDir: '/x/worca' },
     ],
+    // History rows carry the camelCase shape rowToHistoryEntry emits
+    // (src/core/artifacts.mjs), not the raw snake_case DB columns.
     rows: [
-      { id: 'pipe-bbbb2222', title: 'Old run', status: 'done', total_cost_usd: 2.5, total_active_ms: 60000 },
-      { id: 'pipe-cccc3333', title: 'Paused run', status: 'paused', total_cost_usd: 1, pause_reason: 'cost_pipeline' },
+      { id: 'pipe-bbbb2222', title: 'Old run', status: 'done', totalCostUsd: 2.5, totalActiveMs: 60000 },
+      { id: 'pipe-cccc3333', title: 'Paused run', status: 'paused', totalCostUsd: 1, pauseReason: 'cost_pipeline' },
     ],
     pending: {},
     states: { 'run-aaaa1111': { phase: 'implement', totalCostUsd: 0.42, steps: [{ status: 'done' }, { status: 'running' }] } },
@@ -37,6 +39,7 @@ function fixture() {
     resume: async (pipelineId) => { calls.push(['resume', pipelineId]); return { ok: true }; },
     history: async () => state.rows,
     listProjects: async () => [{ name: 'worca', path: '/x/worca' }, { name: 'other', path: '/x/other' }],
+    ...overrideActions,
   };
   const chatContext = createChatContext(join(worcaHome(), `chat-context-${Math.random().toString(36).slice(2)}.json`));
   const router = createCommandRouter({ actions, chatContext, logger: () => {} });
@@ -46,6 +49,10 @@ function fixture() {
   });
   return { send, calls, state, chatContext };
 }
+
+const makeRouter = (overrideActions = {}) => fixture(overrideActions);
+const handle = (f, text, chatId = '42') => f.send(text, chatId);
+const liveOne = () => [{ runId: 'r-ab12', title: 'Live', status: 'running' }];
 
 const text = (msg) => msg.body.map((s) => s.value).join('\n');
 
@@ -73,6 +80,15 @@ test('/help /whoami /projects reply; /runs lists live; /last reads history', asy
   const last = text(await send('/last'));
   assert.match(last, /`\*2222`/);
   assert.match(last, /\$2\.50/);
+});
+
+test('/cost and /last read the real camelCase history-entry fields', async () => {
+  const f = makeRouter({ history: async () => [{ id: 'p-1234', title: 'T', status: 'done', totalCostUsd: 2.5, totalActiveMs: 61000, pauseReason: null }] });
+  const cost = await handle(f, '/cost *1234');
+  assert.match(cost.body[0].value, /\$2\.50/);
+  const last = await handle(f, '/last');
+  assert.match(last.body[0].value, /\$2\.50/);
+  assert.match(last.body[0].value, /1m01s/);
 });
 
 test('/status: no-arg single-active default, wildcard suffix, history fallback, pending hint', async () => {
@@ -143,8 +159,8 @@ test('/answer: ordinal validation and clarify payload mapping', async () => {
       { id: 'q2', question: 'Telemetry?', options: ['yes', 'no'] },
     ],
   };
-  assert.match(text(await send('/answer')), /Need exactly 2 option numbers/);
-  assert.match(text(await send('/answer *1111 1')), /Need exactly 2/);
+  assert.match(text(await send('/answer')), /Need 2 answers/);
+  assert.match(text(await send('/answer *1111 1')), /Need 2 answers/);
   assert.match(text(await send('/answer 1 9')), /Q2 has options 1–2; got 9/);
   await send('/answer *1111 2 1');
   assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'clarify-1', {
@@ -152,6 +168,34 @@ test('/answer: ordinal validation and clarify payload mapping', async () => {
   }]);
   state.pending['run-aaaa1111'] = { id: 'gate-1', kind: 'gate' };
   assert.match(text(await send('/answer 1')), /use `\/approve` or `\/retry`/);
+});
+
+test('/answer answers a zero-option free-text question', async () => {
+  const pq = { id: 'q1', kind: 'clarify', questions: [{ id: 'k', question: 'Name?', options: [] }] };
+  const answered = [];
+  const f = makeRouter({ pendingQuestion: () => pq, answer: (r, id, p) => answered.push(p), listRuns: liveOne });
+  const out = await handle(f, '/answer call it worca');
+  assert.deepEqual(answered, [{ answers: [{ id: 'k', choice: 'call it worca' }] }]);
+  assert.match(out.body[0].value, /Answered 1 question/);
+});
+
+test('/answer mixes ordinals and free text with the pipe separator', async () => {
+  const pq = { id: 'q1', kind: 'clarify', questions: [
+    { id: 'a', question: 'Pick', options: ['x', 'y'] },
+    { id: 'b', question: 'Describe', options: [] },
+  ] };
+  const answered = [];
+  const f = makeRouter({ pendingQuestion: () => pq, answer: (r, id, p) => answered.push(p), listRuns: liveOne });
+  await handle(f, '/answer 2 | free text here');
+  assert.deepEqual(answered[0].answers, [{ id: 'a', choice: 'y' }, { id: 'b', choice: 'free text here' }]);
+});
+
+test('a single free-text answer containing a literal | is taken verbatim', async () => {
+  const pq = { id: 'q1', kind: 'clarify', questions: [{ id: 'k', question: 'Pattern?', options: [] }] };
+  const answered = [];
+  const f = makeRouter({ pendingQuestion: () => pq, answer: (r, id, p) => answered.push(p), listRuns: liveOne });
+  await handle(f, '/answer use a|b as the pattern');
+  assert.deepEqual(answered, [{ answers: [{ id: 'k', choice: 'use a|b as the pattern' }] }]);
 });
 
 test('/mute /unmute persist per chat; /use scopes /runs', async () => {
@@ -178,6 +222,54 @@ test('parseDuration + statusEmoji helpers', () => {
   assert.equal(statusEmoji('running'), '🟢');
   assert.equal(statusEmoji('error'), '🔴');
   assert.equal(statusEmoji('weird'), '⚪');
+});
+
+test('/stop and /pause refuse runs that are already finished', async () => {
+  const f = makeRouter({ listRuns: () => [{ runId: 'r-2951', title: 'Done run', status: 'done' }] });
+  const out = await handle(f, '/stop *2951');
+  assert.match(out.body[0].value, /No live run matches/);
+  const out2 = await handle(f, '/stop');
+  assert.match(out2.body[0].value, /No live runs/);
+});
+
+test('a run parked on a gate is still resolvable by /approve and /answer after the filter', async () => {
+  // wantLive now filters on LIVE = {running, starting, pausing}; a gated run's
+  // entry.status stays 'running' (ui/server.mjs:436-441) — prove it stays reachable.
+  const pq = { id: 'q1', kind: 'gate' };
+  const answered = [];
+  const f = makeRouter({
+    listRuns: () => [{ runId: 'r-77aa', title: 'Gated', status: 'running' }],
+    pendingQuestion: () => pq,
+    answer: (runId, id, payload) => answered.push(payload),
+  });
+  const out = await handle(f, '/approve *77aa');
+  assert.match(out.body[0].value, /approved — continuing/);
+  assert.deepEqual(answered, [{ decision: 'continue' }]);
+});
+
+test('prototype members are not commands', async () => {
+  const f = makeRouter();
+  // The live bugs (parser lowercases, so only all-lowercase prototype members
+  // resolve): /constructor → handler = Object, returns the env object → the
+  // reply send fails isValidMessage → user gets NOTHING; /__proto__ → "Command
+  // failed: handler is not a function". The camelCase ones below already answer
+  // "Unknown command" and are regression guards only.
+  for (const cmd of ['/constructor', '/__proto__', '/hasownproperty', '/tostring']) {
+    const out = await handle(f, cmd);
+    assert.match(out.body[0].value, /Unknown command/, cmd);
+  }
+});
+
+test('bare /resume with two paused pipelines lists them instead of "No live runs"', async () => {
+  const rows = [
+    { id: 'p-aaaa', title: 'One', status: 'paused' },
+    { id: 'p-bbbb', title: 'Two', status: 'interrupted' },
+  ];
+  const f = makeRouter({ history: async () => rows });
+  const out = await handle(f, '/resume');
+  assert.match(out.body[0].value, /Ambiguous/);
+  assert.match(out.body[0].value, /\*aaaa/);
+  assert.match(out.body[0].value, /\*bbbb/);
 });
 
 test('handler exceptions become error replies, never throws', async () => {

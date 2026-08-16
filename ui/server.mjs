@@ -980,21 +980,16 @@ const chatActions = {
   answer: (runId, id, payload) => answerRun(runId, id, payload),
   stop: (runId) => stopRun(runId),
   pause: (runId) => pauseRun(runId),
-  // /api/resume owns a long chain of budget/worktree/double-resume guards;
-  // reuse it verbatim over loopback (the old integrations' rest_client seam).
+  // The long chain of budget/worktree/double-resume guards lives in resumeRun();
+  // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
+  // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
   resume: async (pipelineId) => {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/api/resume`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ pipelineId }),
-      });
-      const body = await r.json().catch(() => ({}));
-      return r.ok ? { ok: true, ...body } : { ok: false, error: body.error || `HTTP ${r.status}` };
-    } catch (err) {
-      return { ok: false, error: err && err.message ? err.message : String(err) };
-    }
+    try { return await resumeRun(pipelineId); }
+    catch (err) { return { ok: false, error: err?.body?.error || err?.message || String(err) }; }
   },
-  history: async ({ limit = 50 } = {}) => ((await listAllPipelines()) || []).slice(0, limit),
+  // Chat reads only DB fields (id/title/status/cost/activeMs/pauseReason), so bound the
+  // rows in SQL and skip git enrichment — /status no longer spawns 2 git procs per pipeline.
+  history: async ({ limit = 50 } = {}) => (await listAllPipelines({ limit, lite: true })) || [],
   listProjects: async () => (await listProjects()).map((p) => ({ name: p.name || path.basename(p.path || ''), path: p.path })),
 };
 
@@ -1003,6 +998,35 @@ const chatRouter = createCommandRouter({
   chatContext,
   logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
 });
+
+// Same-chat commands must run strictly in order: a batched ['/use beta','/runs']
+// from one getUpdates poll otherwise interleaves (stale reads, replies out of
+// order). One promise chain per chatKey; depth-capped (there is NO host-side
+// inbound bound — a Telegram poll can hand over 100 updates at once, and the
+// allowlist is only applied inside the router, after enqueue); the catch is
+// mandatory — nobody awaits this chain, so a rejected tail is an unhandled
+// rejection that kills the process under Node's default flag.
+const CHAT_QUEUE_MAX = 50;          // per chat; a flood past this is dropped, not buffered
+const chatQueues = new Map();       // key -> { tail, depth }
+function enqueueChatWork(key, fn) {
+  const q = chatQueues.get(key) || { tail: Promise.resolve(), depth: 0 };
+  if (q.depth >= CHAT_QUEUE_MAX) {
+    console.error(`[worca-ui] chat queue for ${key} is full (${CHAT_QUEUE_MAX}) — dropping inbound work`);
+    return q.tail;
+  }
+  q.depth += 1;
+  // prev.then(fn, fn): run even after a prior failure (fn takes no arguments,
+  // so the previous error is discarded — do not give fn a parameter).
+  const tail = q.tail.then(fn, fn).catch((err) => {
+    console.error(`[worca-ui] chat work failed: ${err && err.message ? err.message : err}`);
+  }).finally(() => {
+    q.depth -= 1;
+    if (chatQueues.get(key) === q && q.depth === 0) chatQueues.delete(key);
+  });
+  q.tail = tail;
+  chatQueues.set(key, q);
+  return tail;
+}
 
 async function handleChatInbound({ plugin, channelId, platform, msg }) {
   const entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId);
@@ -1028,7 +1052,7 @@ async function handleChatInbound({ plugin, channelId, platform, msg }) {
 
 const channelHost = createChannelHost({
   logger: (level, msg) => console.error(`[worca-ui] ${msg}`),
-  onInbound: (ev) => { handleChatInbound(ev); },
+  onInbound: (ev) => { enqueueChatWork(`${ev.platform}:${ev.msg.chatId}`, () => handleChatInbound(ev)); },
   onStatus: (ev) => { try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ } },
 });
 
@@ -1070,7 +1094,7 @@ function pauseRun(runId) {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
   const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
-  if (!ok) throw new Error('cannot pause in the current state');
+  if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
 }
@@ -1118,10 +1142,142 @@ app.post('/api/pause', (req, res) => {
     pauseRun(runId);
     res.json({ ok: true });
   } catch (err) {
-    if (/cannot pause/.test(err?.message || '')) return badRequest(res, err.message);
+    if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
+
+// ---------------------------------------------------------------------------
+// resumeRun(pipelineId, opts) — the resume guard chain + rehydration, callable
+// in-process. Chat used to reuse it by POSTing http://127.0.0.1:PORT/api/resume
+// over loopback, which breaks under WORCA_HOST (the server may not be bound on
+// 127.0.0.1 at all) and, worse, can land on a DIFFERENT worca instance that
+// happens to own the port. Both callers now share this one function; the route
+// is a thin mapper from ResumeError -> (status, body).
+// ---------------------------------------------------------------------------
+class ResumeError extends Error {
+  constructor(status, body) {
+    super(body.error || 'resume failed');
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {}) {
+  if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
+  const saved = readPipelineForResume(pipelineId);
+  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });
+  if (!saved.resumePoint) throw new ResumeError(400, { error: 'pipeline has no resume point' });
+
+  if (saved.row.archived_at) {
+    throw new ResumeError(409, { error: 'pipeline is archived' });
+  }
+  const budget = budgetStatus();
+  if (budget.blocked) {
+    throw new ResumeError(403, { error: 'total cost limit reached', budget });
+  }
+  // Override persists only once the (never-bypassable) total gate passes —
+  // a total-refused request must not leave cost_cap_override armed.
+  if (ignoreCostCap === true) {
+    setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+  }
+  const pipeCap = budget.pipelineLimitUsd;
+  const spentSoFar = Number(saved.row.total_cost_usd || 0);
+  if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
+    throw new ResumeError(403, {
+      error: 'pipeline cost limit reached', budget, needsOverride: true,
+    });
+  }
+
+  // Double-resume guard: any live entry already driving this pipeline id.
+  for (const e of runs.values()) {
+    if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+      throw new ResumeError(400, { error: 'pipeline is already live' });
+    }
+  }
+
+  // Worktree(s) must still exist (single-project; workspace members are checked
+  // inside orchestrator.resume(), which fails fast with the same message).
+  const branch = saved.row.branch ? JSON.parse(saved.row.branch) : null;
+  if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
+    throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
+  }
+
+  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
+  // runs map project_key back through the registry.
+  let projectDir = null;
+  let workspace;
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    projectDir = projects[0].projectDir;
+    workspace = {
+      id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
+      description: meta.workspaceDescription || '', projects,
+    };
+  } else {
+    for (const p of await listProjects()) {
+      if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
+    }
+    if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  }
+
+  const effMock = mock || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
+  const runId = randomUUID();
+  const orch = createOrchestrator({
+    projectDir,
+    ...(workspace ? { workspace } : {}),
+    agentsDir: AGENTS_DIR,
+    claude: { permissionMode: 'acceptEdits', mock: effMock },
+    resume: saved,
+  });
+  const entry = {
+    id: runId,
+    orch,
+    projectDir,
+    ...(workspace
+      ? {
+          workspaceId: workspace.id,
+          kind: 'workspace-run',
+          projectNames: workspace.projects.map((p) => p.projectName || path.basename(p.projectDir || '')),
+        }
+      : { kind: 'run' }),
+    title: saved.row.title,
+    status: 'starting',
+    startedAt: new Date().toISOString(),
+    events: [],
+    pendingQuestion: null,
+    pipelineId,
+  };
+  runs.set(runId, entry);
+  wireRun(entry);
+  announceRun(entry);
+
+  // Evict the superseded paused/interrupted lineage for this pipeline. The old
+  // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
+  // each hello — leaving it resurfaces the now-resumed (and possibly already
+  // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
+  for (const [id, e] of runs) {
+    if (id !== runId && e.pipelineId === pipelineId &&
+        (e.status === 'paused' || e.status === 'interrupted')) {
+      runs.delete(id);
+    }
+  }
+
+  // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
+  Promise.resolve()
+    .then(() => orch.resume())
+    .catch((err) => {
+      const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
+      entry.status = 'error';
+      entry.events.push(event);
+      broadcast(event);
+    });
+
+  return { ok: true, runId, pipelineId };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/resume { pipelineId } — rehydrate a paused pipeline from the DB (works
@@ -1130,121 +1286,13 @@ app.post('/api/pause', (req, res) => {
 // ---------------------------------------------------------------------------
 app.post('/api/resume', async (req, res) => {
   try {
-    const { pipelineId } = req.body || {};
-    if (!pipelineId || typeof pipelineId !== 'string') return badRequest(res, 'pipelineId is required');
-    const saved = readPipelineForResume(pipelineId);
-    if (!saved) return res.status(404).json({ error: 'pipeline not found' });
-    if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
-    if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
-
-    if (saved.row.archived_at) {
-      return res.status(409).json({ error: 'pipeline is archived' });
-    }
-    const budget = budgetStatus();
-    if (budget.blocked) {
-      return res.status(403).json({ error: 'total cost limit reached', budget });
-    }
-    // Override persists only once the (never-bypassable) total gate passes —
-    // a total-refused request must not leave cost_cap_override armed.
-    if (req.body && req.body.ignoreCostCap === true) {
-      setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
-    }
-    const pipeCap = budget.pipelineLimitUsd;
-    const spentSoFar = Number(saved.row.total_cost_usd || 0);
-    if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
-      return res.status(403).json({
-        error: 'pipeline cost limit reached', budget, needsOverride: true,
-      });
-    }
-
-    // Double-resume guard: any live entry already driving this pipeline id.
-    for (const e of runs.values()) {
-      if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
-        return badRequest(res, 'pipeline is already live');
-      }
-    }
-
-    // Worktree(s) must still exist (single-project; workspace members are checked
-    // inside orchestrator.resume(), which fails fast with the same message).
-    const branch = saved.row.branch ? JSON.parse(saved.row.branch) : null;
-    if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
-      return badRequest(res, `worktree missing: ${branch.worktreeDir}`);
-    }
-
-    // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-    // runs map project_key back through the registry.
-    let projectDir = null;
-    let workspace;
-    if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
-      const meta = JSON.parse(saved.row.workspace_meta);
-      const projects = (meta.projects || []).map((p) => ({ ...p }));
-      if (!projects.length) return badRequest(res, 'workspace metadata incomplete');
-      projectDir = projects[0].projectDir;
-      workspace = {
-        id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
-        description: meta.workspaceDescription || '', projects,
-      };
-    } else {
-      for (const p of await listProjects()) {
-        if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
-      }
-      if (!projectDir) return badRequest(res, 'project for this pipeline is not onboarded on this machine');
-    }
-
-    const mock = !!(req.body && req.body.mock) || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
-    const runId = randomUUID();
-    const orch = createOrchestrator({
-      projectDir,
-      ...(workspace ? { workspace } : {}),
-      agentsDir: AGENTS_DIR,
-      claude: { permissionMode: 'acceptEdits', mock },
-      resume: saved,
+    const out = await resumeRun(req.body?.pipelineId, {
+      ignoreCostCap: req.body?.ignoreCostCap === true,
+      mock: !!(req.body && req.body.mock),
     });
-    const entry = {
-      id: runId,
-      orch,
-      projectDir,
-      ...(workspace
-        ? {
-            workspaceId: workspace.id,
-            kind: 'workspace-run',
-            projectNames: workspace.projects.map((p) => p.projectName || path.basename(p.projectDir || '')),
-          }
-        : { kind: 'run' }),
-      title: saved.row.title,
-      status: 'starting',
-      startedAt: new Date().toISOString(),
-      events: [],
-      pendingQuestion: null,
-      pipelineId,
-    };
-    runs.set(runId, entry);
-    wireRun(entry);
-    announceRun(entry);
-
-    // Evict the superseded paused/interrupted lineage for this pipeline. The old
-    // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
-    // each hello — leaving it resurfaces the now-resumed (and possibly already
-    // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
-    for (const [id, e] of runs) {
-      if (id !== runId && e.pipelineId === pipelineId &&
-          (e.status === 'paused' || e.status === 'interrupted')) {
-        runs.delete(id);
-      }
-    }
-
-    // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
-    Promise.resolve()
-      .then(() => orch.resume())
-      .catch((err) => {
-        const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
-        entry.status = 'error';
-        entry.events.push(event);
-        broadcast(event);
-      });
-
-    res.json({ ok: true, runId, pipelineId });
+    res.json(out);
   } catch (err) {
+    if (err instanceof ResumeError) return res.status(err.status).json(err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -3311,4 +3359,4 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound, chatNotifier };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, chatNotifier, resumeRun };

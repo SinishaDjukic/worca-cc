@@ -44,7 +44,7 @@ const HELP_TEXT = [
   '`/pause [*ref]` · `/stop [*ref]` · `/resume [*ref]`',
   '`/approve [*ref]` — continue past a gate · `/retry [*ref]` — another cycle',
   '`/abort [*ref]` — abort a recovery prompt',
-  '`/answer [*ref] <n> [<n>…]` — answer clarify questions by option number',
+  '`/answer [*ref] <n|text> [| …]` — answer clarify questions (option number, or text for free-text)',
   '`/projects` · `/use <name>` — scope commands to one project',
   '`/mute 30m|2h|1d` · `/unmute` — silence notifications for this chat',
   '`/whoami` · `/help`',
@@ -60,6 +60,9 @@ const LIVE = new Set(['running', 'starting', 'pausing']);
  *          row = history row (when not live); error = NormalizedMessage reply
  */
 function resolveTarget(arg, live, rows, { wantLive = false } = {}) {
+  // wantLive commands (/pause /stop /approve /answer…) must never bind to a
+  // finished entry still parked in the runs Map.
+  if (wantLive) live = live.filter((r) => LIVE.has(String(r.status || '')));
   const suffix = String(arg || '').replace(/^\*/, '').trim();
   if (!suffix) {
     const active = live.filter((r) => LIVE.has(String(r.status || '')));
@@ -148,9 +151,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (!rows.length) return reply('No pipelines yet.');
       const r = rows[0];
       const bits = [runLine({ ...r, runId: r.id })];
-      const cost = fmtUsd(r.total_cost_usd);
+      const cost = fmtUsd(r.totalCostUsd);
       if (cost) bits.push(`   **Cost:** ${cost}`);
-      const dur = fmtMs(r.total_active_ms);
+      const dur = fmtMs(r.totalActiveMs);
       if (dur) bits.push(`   **Active:** ${dur}`);
       return reply(bits.join('\n'));
     },
@@ -161,8 +164,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (t.row) {
         const r = t.row;
         return reply([runLine({ ...r, runId: r.id }),
-          ...(fmtUsd(r.total_cost_usd) ? [`   **Cost:** ${fmtUsd(r.total_cost_usd)}`] : []),
-          ...(r.pause_reason ? [`   **Pause reason:** ${r.pause_reason}`] : []),
+          ...(fmtUsd(r.totalCostUsd) ? [`   **Cost:** ${fmtUsd(r.totalCostUsd)}`] : []),
+          ...(r.pauseReason ? [`   **Pause reason:** ${r.pauseReason}`] : []),
         ].join('\n'));
       }
       const r = t.run;
@@ -182,7 +185,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     cost: async ({ chatKey, args }) => {
       const t = resolveTarget(args[0], scopedRuns(chatKey), await actions.history({ limit: 50 }));
       if (t.error) return t.error;
-      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtUsd(t.row.total_cost_usd) || '$0.00'}`);
+      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtUsd(t.row.totalCostUsd) || '$0.00'}`);
       const state = actions.runState(t.run.runId);
       return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtUsd(state?.totalCostUsd) || '$0.00'}`);
     },
@@ -201,15 +204,18 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       return reply(`⏹ Stopping \`${runRef(t.run.runId)}\` (${String(t.run.title || '').slice(0, 50)}).`, 'warning');
     },
 
-    resume: async ({ chatKey, args }) => {
+    resume: async ({ args }) => {
       // Resolve against PAUSED/INTERRUPTED history rows (resume works across
       // restarts); a live match means it's already running.
       const rows = (await actions.history({ limit: 50 })).filter((r) => r.status === 'paused' || r.status === 'interrupted');
-      const t = resolveTarget(args[0], [], rows);
+      let t = resolveTarget(args[0], [], rows);
       if (t.error) {
-        if (!args[0] && rows.length === 1) return handlers.resume({ chatKey, args: [`*${rows[0].id.slice(-4)}`] });
+        if (!args[0] && rows.length > 1) {
+          return disambiguate(rows.map((r) => ({ id: r.id, title: r.title, status: r.status })));
+        }
         if (!args[0] && !rows.length) return reply('Nothing is paused.', 'warning');
-        return t.error;
+        if (args[0] || rows.length !== 1) return t.error;
+        t = { row: rows[0] };            // exactly one paused row, bare /resume: take it
       }
       const out = await actions.resume(t.row.id);
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\` — ${String(t.row.title || '').slice(0, 50)}`);
@@ -223,28 +229,54 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     answer: async ({ chatKey, args }) => {
       const t = resolveTarget(args[0] && args[0].startsWith('*') ? args[0] : '', scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
-      const ordinals = (args[0] && args[0].startsWith('*') ? args.slice(1) : args).map((a) => Number(a));
       const pq = actions.pendingQuestion(t.run.runId);
       if (!pq) return reply(`\`${runRef(t.run.runId)}\` is not waiting on a question.`, 'warning');
       if (pq.kind !== 'clarify' && pq.kind !== 'questions') {
         return reply(`\`${runRef(t.run.runId)}\` is waiting on ${pq.kind} — use \`/approve\` or \`/retry\`.`, 'warning');
       }
       const questions = Array.isArray(pq.questions) ? pq.questions : [];
-      if (!ordinals.length || ordinals.length !== questions.length || ordinals.some((n) => !Number.isInteger(n))) {
-        return reply(`Need exactly ${questions.length} option number${questions.length === 1 ? '' : 's'} (in order). Example: \`/answer ${runRef(t.run.runId)} ${questions.map(() => '1').join(' ')}\``, 'warning');
+      const hasRef = !!(args[0] && args[0].startsWith('*'));
+      const rest = (hasRef ? args.slice(1) : args).join(' ').trim();
+      const ref = runRef(t.run.runId);
+      const usage = () => reply(
+        `Need ${questions.length} answer${questions.length === 1 ? '' : 's'} — option numbers, or text for free-text questions, separated by \`|\`.\nExample: \`/answer ${ref} ${questions.map((q) => (q.options?.length ? '1' : '<your answer>')).join(' | ')}\``,
+        'warning');
+      if (!rest) return usage();
+      // Parsing spec:
+      // 1-question: the whole rest IS the answer — never split (pipes are data).
+      // Pure-ordinal back-compat: "1 2 3" iff every question has options and no '|'.
+      // Otherwise: pipe-separated, one part per question, in order.
+      let parts;
+      if (questions.length === 1) {
+        parts = [rest];
+      } else {
+        const tokens = rest.split(/\s+/);
+        const allOrdinals = tokens.every((tk) => /^\d+$/.test(tk));
+        const everyHasOptions = questions.every((q) => (q.options || []).length > 0);
+        parts = allOrdinals && everyHasOptions && !rest.includes('|')
+          ? tokens
+          : rest.split('|').map((s) => s.trim());
       }
+      if (parts.length !== questions.length) return usage();
       const answers = [];
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
         const opts = Array.isArray(q.options) ? q.options : [];
-        const n = ordinals[i];
-        if (n < 1 || n > opts.length) {
-          return reply(`Q${i + 1} has options 1–${opts.length}; got ${n}.`, 'warning');
+        const part = parts[i];
+        const n = /^\d+$/.test(part) ? Number(part) : null;
+        if (opts.length && n !== null) {
+          if (n < 1 || n > opts.length) return reply(`Q${i + 1} has options 1–${opts.length}; got ${n}.`, 'warning');
+          answers.push({ id: q.id, choice: opts[n - 1] });
+        } else if (q.allowFreeText !== false && part) {
+          answers.push({ id: q.id, choice: part });   // free text is a choice string (app.js:3717)
+        } else if (!opts.length) {
+          return reply(`Q${i + 1} needs a written answer — got nothing.`, 'warning');
+        } else {
+          return reply(`Q${i + 1} takes an option number (1–${opts.length}), not text.`, 'warning');
         }
-        answers.push({ id: q.id, choice: opts[n - 1] });
       }
       await actions.answer(t.run.runId, pq.id, { answers });
-      return reply(`✅ Answered ${questions.length} question${questions.length === 1 ? '' : 's'} on \`${runRef(t.run.runId)}\`.`, 'success');
+      return reply(`✅ Answered ${questions.length} question${questions.length === 1 ? '' : 's'} on \`${ref}\`.`, 'success');
     },
 
     mute: async ({ chatKey, args }) => {
@@ -297,7 +329,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (!guard.isAllowed({ platform, chatId: msg.chatId })) return null; // silent, fail closed
       const parsed = parseCommand(msg.text);
       if (!parsed) return null; // non-commands are never interpreted
-      const handler = handlers[parsed.command];
+      const handler = Object.hasOwn(handlers, parsed.command) ? handlers[parsed.command] : null;
       const chatKey = `${platform}:${msg.chatId}`;
       if (!handler) return reply(`Unknown command \`/${parsed.command}\` — \`/help\` lists commands.`, 'warning');
       try {

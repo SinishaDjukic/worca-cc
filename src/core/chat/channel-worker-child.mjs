@@ -25,7 +25,8 @@ const CHECK_MODE = process.argv.includes('--check');
 const MAX_LOG_CHARS = 8 * 1024;
 
 function writeFrame(frame) {
-  try { process.stdout.write(encodeFrame(frame)); } catch { /* oversize/broken pipe: drop */ }
+  try { process.stdout.write(encodeFrame(frame)); return true; }
+  catch { return false; /* oversize/broken pipe */ }
 }
 
 // stdout is protocol-reserved: any stray console.* from plugin code becomes a
@@ -73,7 +74,12 @@ async function main() {
       // get() prefers writes made this session; set() RECORDS and emits — the
       // HOST persists via writePluginState (shim stateDelta semantics).
       get: async (k) => (stateSnapshot[k] ?? null),
-      set: async (k, v) => { stateSnapshot[k] = v; writeFrame({ type: 'state-delta', delta: { [k]: v } }); },
+      set: async (k, v) => {
+        stateSnapshot[k] = v;
+        if (!writeFrame({ type: 'state-delta', delta: { [k]: v } })) {
+          writeFrame({ type: 'log', level: 'warn', msg: `state-delta for "${k}" exceeds the 1 MiB frame cap — not persisted` });
+        }
+      },
     },
     log: (level, msg) => writeFrame({ type: 'log', level: String(level || 'info'), msg: String(msg).slice(0, MAX_LOG_CHARS) }),
     emitMessage: (msg) => {

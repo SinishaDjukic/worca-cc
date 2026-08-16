@@ -87,7 +87,8 @@ export function renderError(meta, payload = {}) {
  * question event: {id, kind: clarify|questions|gate|recovery, questions,
  * issues, recovery, agent}. The reply instructions match the command router:
  *   gate/recovery -> /approve <ref> | /retry <ref>
- *   clarify/questions -> /answer <ref> <n> [<n>…] (one ordinal per question)
+ *   clarify/questions -> /answer <ref> <n|text> [| …] (one answer per question:
+ *     an option number, or free text for questions without options)
  */
 export function renderQuestion(meta, payload = {}) {
   const ref = runRef(meta.runId);
@@ -120,8 +121,8 @@ export function renderQuestion(meta, payload = {}) {
       parts.push(`      ${oi + 1}. ${String(opt).trim()}`);
     });
   });
-  const example = questions.map(() => '1').join(' ') || '1';
-  parts.push(`   Reply: /answer ${ref} ${example}${questions.length > 1 ? '  (one choice per question, in order)' : ''}`);
+  const example = questions.map((q) => ((Array.isArray(q.options) && q.options.length) ? '1' : '<your answer>')).join(' | ') || '1';
+  parts.push(`   Reply: /answer ${ref} ${example}${questions.length > 1 ? '  (one answer per question, in order, separated by |)' : ''}`);
   return mdMsg(parts.join('\n'), 'warning');
 }
 

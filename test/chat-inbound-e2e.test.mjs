@@ -23,7 +23,7 @@ const SCHEMA = [
   { key: 'allowedChatIds', type: 'text', label: 'Allowed', secret: false, required: false },
 ];
 
-let channelHost, runs, app, srv, base;
+let channelHost, chatActions, enqueueChatWork, runs, app, srv, base;
 
 before(async () => {
   const cur = pluginCurrentDir(NAME);
@@ -41,7 +41,7 @@ before(async () => {
 
   const server = await import('../ui/server.mjs');
   ({ runs, app } = server);
-  ({ channelHost } = server._testing);
+  ({ channelHost, chatActions, enqueueChatWork } = server._testing);
   channelHost.start();
   srv = app.listen(0, '127.0.0.1');
   await new Promise((r) => srv.once('listening', r));
@@ -146,4 +146,41 @@ test('settings round-trip: chat prefs ride GET/POST /api/settings without cleari
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat: { notify: { question: true } } }),
   });
+});
+
+test('same-chat commands execute strictly in order (batched /use then /runs)', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  // monkey-patch listProjects to hold /use mid-flight (restore in finally)
+  const orig = chatActions.listProjects;
+  chatActions.listProjects = async () => { await gate; return [{ name: 'beta', path: '/tmp/beta' }]; };
+  try {
+    clearMockSentMessages();
+    channelHost.injectInboundMessage(NAME, 'main', { chatId: '42', userId: 'u', text: '/use beta', meta: {} });
+    channelHost.injectInboundMessage(NAME, 'main', { chatId: '42', userId: 'u', text: '/runs', meta: {} });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(mockSentMessages().length, 0, '/runs must wait behind /use');
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    const texts = mockSentMessages().map((m) => m.message.body[0].value);
+    assert.match(texts[0], /Active project: \*\*beta\*\*/);
+  } finally {
+    chatActions.listProjects = orig;
+    channelHost.injectInboundMessage(NAME, 'main', { chatId: '42', userId: 'u', text: '/use -', meta: {} });
+    await new Promise((r) => setTimeout(r, 30));
+  }
+});
+
+test('a throwing handler neither kills the queue nor leaks an unhandled rejection', async () => {
+  const rejections = [];
+  const onUR = (err) => rejections.push(err);
+  process.on('unhandledRejection', onUR);
+  try {
+    await enqueueChatWork('probe:1', () => { throw new Error('probe-boom'); });
+    let ran = false;
+    await enqueueChatWork('probe:1', () => { ran = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(ran, true, 'queue keeps draining after a failure');
+    assert.equal(rejections.length, 0, 'no unhandled rejection escaped');
+  } finally { process.off('unhandledRejection', onUR); }
 });

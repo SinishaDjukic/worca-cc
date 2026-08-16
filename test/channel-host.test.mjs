@@ -40,6 +40,9 @@ const WORKER = [
   "      if (chatId === 'DEGRADE') { ctx.setStatus('degraded', 'partial outage'); return { ok: true }; }",
   // raw stdout write bypasses ctx.log's 8KB clamp -> genuine oversize protocol line
   "      if (chatId === 'HUGE') { process.stdout.write(JSON.stringify({ type: 'log', level: 'info', msg: 'x'.repeat(2 * 1024 * 1024) }) + String.fromCharCode(10)); return { ok: true }; }",
+  // oversize state VALUE: encodeFrame throws inside the child, so the delta never
+  // reaches the pipe -- the child must say so instead of dropping it silently.
+  "      if (chatId === 'BIGSTATE') { await ctx.state.set('big', 'x'.repeat(2 * 1024 * 1024)); return { ok: true }; }",
   '      return { ok: true };',
   '    },',
   '    async handleWebhook(req) {',
@@ -277,5 +280,216 @@ test('WORCA_MOCK=1: no spawn, instant connected, hooks drive both directions', a
     delete process.env.WORCA_MOCK;
     clearMockSentMessages();
     setMockChannelBehavior(null);
+  }
+});
+
+// Shared fake-proc harness — T2 and T4 reuse it; define ONCE at the top of the
+// new test section. The host wraps proc.stdout in readline (createInterface at
+// channel-host.mjs:236), so stdout/stderr MUST be real streams (PassThrough) —
+// a bare EventEmitter throws `input.resume is not a function`. kill() must emit
+// 'exit', or host.stop() waits the full 5 s SHUTDOWN_GRACE_MS per worker.
+import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
+
+function makeFakeProc({ backpressure = false, spawnFailed = false } = {}) {
+  const p = new EventEmitter();
+  p.pid = spawnFailed ? undefined : 12345;
+  p.killed = false;
+  p.exitCode = null;
+  p.stdout = new PassThrough();
+  p.stderr = new PassThrough();
+  p.stdin = Object.assign(new EventEmitter(), {
+    written: [],
+    write(chunk) { this.written.push(String(chunk)); return !backpressure; },
+  });
+  p.kill = (sig) => {
+    if (p.killed) return true;
+    p.killed = true;
+    p.exitCode = 0;
+    queueMicrotask(() => p.emit('exit', 0, sig || 'SIGKILL'));
+    return true;
+  };
+  return p;
+}
+
+/** Fake-spawn host over the discovery fixture (installFixture() registers
+ *  fixture-chat/main). Returns {host, spawned, logs}. */
+function makeFakeHost({ backoffMs = [10, 10, 10, 10], healthyAfterMs, procOpts } = {}) {
+  installFixture();
+  const spawned = [];
+  const logs = [];
+  const host = createChannelHost({
+    logger: (level, msg) => logs.push({ level, msg }),
+    _backoffMs: backoffMs,
+    ...(healthyAfterMs ? { _healthyAfterMs: healthyAfterMs } : {}),
+    _spawn: () => { const p = makeFakeProc(procOpts); spawned.push(p); return p; },
+  });
+  return { host, spawned, logs };
+}
+const endWorkers = (spawned) => { for (const p of spawned) if (!p.killed && p.exitCode === null) p.emit('exit', 0, null); };
+const MSG = { title: null, body: [], severity: 'info' }; // minimal valid NormalizedMessage (T4 reuses it)
+
+// Worker frames go in via p.stdout.write(line) — the host wraps it in readline.
+const frameLine = (obj) => JSON.stringify(obj) + '\n';
+
+test('ready after a worker "disconnected" status keeps the channel disconnected', async () => {
+  const { host, spawned } = makeFakeHost();
+  host.start();
+  const p = spawned[0];
+  p.stdout.write(frameLine({ type: 'status', state: 'disconnected', detail: 'auth failed — check botToken' }));
+  p.stdout.write(frameLine({ type: 'ready', identity: null }));
+  await new Promise((r) => setTimeout(r, 20));
+  const row = host.status()[0];
+  assert.equal(row.state, 'disconnected');
+  assert.match(row.detail, /auth failed/);
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('ready alone still flips a fresh worker to connected', async () => {
+  const { host, spawned } = makeFakeHost();
+  host.start();
+  spawned[0].stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(host.status()[0].state, 'connected');
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('a connect-then-crash worker escalates backoff instead of looping at the floor', async () => {
+  // Assert on the logged restart delays — deterministic; timestamp spreads are flaky.
+  const { host, spawned, logs } = makeFakeHost({ backoffMs: [10, 40, 40, 40] });
+  host.start();
+  for (let i = 0; i < 3; i++) {
+    const p = spawned[i];
+    p.stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
+    await new Promise((r) => setTimeout(r, 5));
+    p.emit('exit', 1, null);
+    await new Promise((r) => setTimeout(r, 60)); // let the restart timer fire
+  }
+  const delays = logs.map((l) => /restart in (\d+)ms/.exec(l.msg)).filter(Boolean).map((m) => Number(m[1]));
+  assert.deepEqual(delays.slice(0, 3), [10, 40, 40], 'ready must not reset the failure counter');
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('a masked ready must not buy HEALTHY_AFTER_MS forgiveness', async () => {
+  // status:disconnected → ready (masked) → outlive _healthyAfterMs → crash twice:
+  // the second restart must escalate (forgiveness would keep it at the floor).
+  const { host, spawned, logs } = makeFakeHost({ backoffMs: [10, 40, 40, 40], healthyAfterMs: 15 });
+  host.start();
+  for (let i = 0; i < 2; i++) {
+    const p = spawned[i];
+    p.stdout.write(frameLine({ type: 'status', state: 'disconnected', detail: 'auth failed' }));
+    p.stdout.write(frameLine({ type: 'ready', identity: null }));
+    await new Promise((r) => setTimeout(r, 30)); // > healthyAfterMs while "masked"
+    p.emit('exit', 1, null);
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  const delays = logs.map((l) => /restart in (\d+)ms/.exec(l.msg)).filter(Boolean).map((m) => Number(m[1]));
+  assert.deepEqual(delays.slice(0, 2), [10, 40], 'masked ready stamped healthySince — finding #5 is back');
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('a spawn "error" event never throws out of the host and schedules recovery', async () => {
+  const { host, spawned } = makeFakeHost({ procOpts: { spawnFailed: true } });
+  host.start();
+  assert.equal(spawned.length, 1);
+  spawned[0].emit('error', Object.assign(new Error('spawn EMFILE'), { code: 'EMFILE' }));
+  // Read the badge SYNCHRONOUSLY: the 10ms-backoff respawn calls
+  // setStatus('connecting', null), which wipes the detail again.
+  assert.match(host.status()[0].detail || '', /EMFILE/, 'spawn error text reaches the badge detail');
+  await new Promise((r) => setTimeout(r, 50)); // > 10ms backoff → respawn happened
+  assert.ok(spawned.length >= 2, 'error event routed into the restart path');
+  assert.notEqual(host.status()[0].state, 'connected');
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('a timed-out RPC frame is dequeued — a later drain cannot deliver it', async () => {
+  const { host, spawned } = makeFakeHost({ procOpts: { backpressure: true } });
+  host.start();
+  const p = spawned[0];
+  p.stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
+  await new Promise((r) => setTimeout(r, 20));
+  const before = p.stdin.written.length; // hello (+ possibly a ping) already queued/written
+  await assert.rejects(
+    () => host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'A', message: MSG, timeoutMs: 30 }),
+    (e) => e.kind === 'timeout');
+  const second = host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'B', message: MSG, timeoutMs: 5000 });
+  p.stdin.write = function (chunk) { this.written.push(String(chunk)); return true; }; // lift backpressure
+  p.stdin.emit('drain');
+  await new Promise((r) => setTimeout(r, 20));
+  const flushed = p.stdin.written.slice(before).join('');
+  assert.ok(!flushed.includes('"chatId":"A"'), 'timed-out frame must not be delivered later');
+  assert.ok(flushed.includes('"chatId":"B"'), 'live frames still flush');
+  // Answer the B frame by finding it explicitly — do NOT take the last flushed
+  // line: a ping frame flushed after B would strand the awaited RPC.
+  const bFrame = flushed.trim().split('\n').map((l) => JSON.parse(l)).find((f) => f.chatId === 'B');
+  p.stdout.write(frameLine({ type: 'send-result', id: bFrame.id, ok: true }));
+  await second;
+  endWorkers(spawned);
+  await host.stop();
+});
+
+test('an oversize state-delta warns instead of vanishing', async () => {
+  installFixture();
+  const { host, seen } = collectingHost();
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+
+  await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'BIGSTATE', message: MSG });
+  await waitFor(
+    () => seen.logs.some((l) => l.level === 'warn' && /exceeds the 1 MiB frame cap/.test(l.msg)),
+    { label: 'oversize state-delta warning' },
+  );
+  assert.equal(readPluginState(NAME).big, undefined, 'the oversize delta must stay unpersisted');
+  await host.stop();
+});
+
+// Two channels on the SAME plugin: writePluginsLock OVERWRITES, so a second
+// plugin would evict the first. Both channels share SCHEMA, so installFixture's
+// single config write leaves neither row `unconfigured`.
+function installFixtureTwoChannels() {
+  installFixture();
+  const cur = pluginCurrentDir(NAME);
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: NAME,
+    engines: { 'worca-cc-api': '>=2 <3' },
+    chatChannels: [
+      { id: 'main', displayName: 'Fixture', platform: 'testchat', module: './channel/worker.mjs', configSchema: SCHEMA },
+      { id: 'alt', displayName: 'Fixture alt', platform: 'testchat', module: './channel/worker.mjs', configSchema: SCHEMA },
+    ],
+  }));
+}
+
+test('start({plugin, channelId}) spawns only the requested channel', async () => {
+  installFixtureTwoChannels();
+  process.env.WORCA_MOCK = '1';
+  try {
+    assert.equal(discoverChannels().length, 2, 'fixture must offer two channels');
+    const host = createChannelHost({ logger: () => {} });
+    host.start({ plugin: NAME, channelId: 'main' });
+    const rows = host.status();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].channelId, 'main');
+    await host.stop();
+  } finally {
+    delete process.env.WORCA_MOCK;
+  }
+});
+
+test('start() with no filter still starts every channel', async () => {
+  installFixtureTwoChannels();
+  process.env.WORCA_MOCK = '1';
+  try {
+    const host = createChannelHost({ logger: () => {} });
+    host.start();
+    assert.deepEqual(host.status().map((r) => r.channelId).sort(), ['alt', 'main']);
+    await host.stop();
+  } finally {
+    delete process.env.WORCA_MOCK;
   }
 });

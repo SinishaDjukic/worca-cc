@@ -39,7 +39,7 @@ const waitFor = async (fn, timeoutMs = 3000) => {
   throw new Error('waitFor timed out');
 };
 
-function gatewayFixture() {
+function gatewayFixtureWith(over = {}) {
   const seen = { messages: [], states: [], fatals: [], logs: [] };
   const client = createGatewayClient({
     token: 'tok',
@@ -51,9 +51,12 @@ function gatewayFixture() {
     onMessage: (m) => seen.messages.push(m),
     onState: (s, d) => seen.states.push({ s, d: d ?? null }),
     onFatal: (d, k) => seen.fatals.push({ d, k }),
+    ...over,
   });
   return { client, seen };
 }
+
+function gatewayFixture() { return gatewayFixtureWith(); }
 
 test('gateway: hello -> identify (intents 33281) -> READY connected; dispatch flows', async () => {
   FakeWebSocket.instances = [];
@@ -203,4 +206,115 @@ test('validateConfig: ok, 401 pins botToken, gateway failure reported', async ()
     fetchFn: async (url) => (url.endsWith('/users/@me') ? json({ username: 'worca' }) : json({}, 500)),
   });
   assert.match(gw.errors[0].message, /gateway\/bot failed: HTTP 500/);
+});
+
+test('start(): /gateway/bot 502 throws (supervisor retries)', async () => {
+  const { ctx, events } = workerCtx();
+  const fetchFn = async (url) => {
+    if (url.endsWith('/users/@me')) return json({ id: '1', username: 'bot' });
+    if (url.endsWith('/gateway/bot')) return json({}, 502);
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  await assert.rejects(() => w.start(), (e) => /gateway\/bot failed: HTTP 502/.test(e.message) && e.kind === 'network');
+  assert.equal(events.status.at(-1).state, 'disconnected');
+});
+
+test('start(): gateway session limit exhausted throws instead of dying silently', async () => {
+  const { ctx } = workerCtx();
+  const fetchFn = async (url) => {
+    if (url.endsWith('/users/@me')) return json({ id: '1', username: 'bot' });
+    if (url.endsWith('/gateway/bot')) return json({ url: 'wss://gw.test', session_start_limit: { remaining: 0, reset_after: 120000 } });
+    throw new Error(`unexpected ${url}`);
+  };
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  await assert.rejects(() => w.start(), (e) => /session limit exhausted — resets in 2min/.test(e.message) && e.kind === 'rate-limit');
+});
+
+test('start(): 401 on /users/@me does NOT throw (definitive degrade)', async () => {
+  const { ctx, events } = workerCtx();
+  const w = createDiscordWorker(ctx, { fetchFn: async () => json({}, 401), WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  const r = await w.start();
+  assert.equal(r.identity, null);
+  assert.equal(events.status.at(-1).state, 'disconnected');
+  assert.match(events.status.at(-1).detail, /check botToken/);
+});
+
+test('send(): every message body disables mention parsing', async () => {
+  const bodies = [];
+  const w = createDiscordWorker(workerCtx().ctx, {
+    fetchFn: async (url, opts) => { if (opts?.method === 'POST') bodies.push(JSON.parse(opts.body)); return json({}); },
+    WebSocketImpl: FakeWebSocket,
+    _sleep: async () => {},
+  });
+  await w.send('123', { title: null, body: [{ kind: 'text', value: 'hi @everyone <@42>' }], severity: 'info' });
+  assert.equal(bodies.length, 1);
+  assert.deepEqual(bodies[0].allowed_mentions, { parse: [] });
+});
+
+test('start(): a non-401 /users/@me failure throws and is not relabelled "network error"', async () => {
+  const { ctx, events } = workerCtx();
+  const w = createDiscordWorker(ctx, { fetchFn: async () => json({}, 503), WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  await assert.rejects(() => w.start(), /users\/@me failed: HTTP 503/);
+  assert.ok(!/network error/.test(events.status.at(-1)?.detail || ''), 'HTTP failure must not be relabelled "network error"');
+});
+
+// Gateway timer hygiene: the INVALID_SESSION delayed close must stay bound to
+// the socket that received the frame, and the steady heartbeat interval must
+// chain after the jittered first beat instead of racing it. REAL timers here —
+// mock timers deadlock against the promise-driven connect loop.
+class RecordingWS extends FakeWebSocket {
+  close(code) { this.closedWith = code ?? 1000; super.close(code); }
+}
+class BeatWS extends FakeWebSocket {
+  constructor(url) { super(url); this.beats = []; }
+  send(data) {
+    super.send(data);
+    const f = JSON.parse(data);
+    if (f.op === 1) { this.beats.push(Date.now()); this.frame({ op: 11 }); } // auto-ACK
+  }
+}
+
+test('gateway: INVALID_SESSION close timer never fires on a replacement socket', async (t) => {
+  FakeWebSocket.instances = [];
+  // random:()=>0 → the delayed close lands at exactly 1000ms.
+  const { client } = gatewayFixtureWith({ WebSocketImpl: RecordingWS, random: () => 0 });
+  t.after(() => client.stop()); // a failing assert must not leave timers alive
+  client.start();
+  const s1 = await waitFor(() => FakeWebSocket.instances[0]);
+  s1.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  s1.frame({ op: 0, t: 'READY', s: 1, d: { session_id: 'sess', user: { username: 'bot' } } });
+  s1.frame({ op: 9, d: true });          // INVALID_SESSION arms the delayed close on s1
+  s1.close(4900);                        // client reconnects → s2
+  const s2 = await waitFor(() => FakeWebSocket.instances[1]);
+  await new Promise((r) => setTimeout(r, 1300)); // past the 1000ms timer
+  assert.equal(s2.closedWith, undefined, 'stale timer must not kill the replacement');
+  await client.stop();
+});
+
+test('gateway: INVALID_SESSION still closes the socket that received it', async (t) => {
+  FakeWebSocket.instances = [];
+  const { client } = gatewayFixtureWith({ WebSocketImpl: RecordingWS, random: () => 0 });
+  t.after(() => client.stop());
+  client.start();
+  const s1 = await waitFor(() => FakeWebSocket.instances[0]);
+  s1.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  s1.frame({ op: 9, d: true });
+  await waitFor(() => s1.closedWith !== undefined);
+  assert.equal(s1.closedWith, 4901);
+  await client.stop();
+});
+
+test('gateway: heartbeat interval starts AFTER the jittered first beat, not in parallel', async (t) => {
+  FakeWebSocket.instances = [];
+  const { client } = gatewayFixtureWith({ WebSocketImpl: BeatWS, random: () => 0.5 });
+  t.after(() => client.stop());
+  client.start();
+  const s1 = await waitFor(() => FakeWebSocket.instances[0]);
+  s1.frame({ op: 10, d: { heartbeat_interval: 100 } });
+  await waitFor(() => s1.beats.length >= 4, 2000);
+  const gaps = s1.beats.slice(1).map((t, i) => t - s1.beats[i]);
+  for (const g of gaps) assert.ok(g >= 85, `beat gap ${g}ms < 85ms — the interval raced the jittered first beat (gaps: ${gaps})`);
+  assert.equal(FakeWebSocket.instances.length, 1, 'no spurious ackPending self-kill / reconnect');
+  await client.stop();
 });

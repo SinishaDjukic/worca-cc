@@ -31,29 +31,37 @@ export function createDiscordWorker(ctx, {
 
   return {
     async start() {
-      let me;
+      let res;
       try {
-        const res = await fetchFn(`${DISCORD_API}/users/@me`, { headers: authHeaders, signal: ctx.shutdownSignal });
-        if (res.status === 401) {
-          ctx.setStatus('disconnected', 'Discord rejected the bot token — check botToken');
-          return { identity: null };
-        }
-        me = await res.json().catch(() => ({}));
+        res = await fetchFn(`${DISCORD_API}/users/@me`, { headers: authHeaders, signal: ctx.shutdownSignal });
       } catch (err) {
         ctx.setStatus('disconnected', `network error: ${err?.message || err}`);
         throw err; // supervisor restarts with backoff
+      }
+      if (res.status === 401) {
+        ctx.setStatus('disconnected', 'Discord rejected the bot token — check botToken');
+        return { identity: null };
+      }
+      const me = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Transient: a null selfId would stop own-message filtering, so never continue here.
+        const detail = `GET /users/@me failed: HTTP ${res.status}`;
+        ctx.setStatus('disconnected', detail);
+        throw Object.assign(new Error(detail), { kind: res.status === 429 ? 'rate-limit' : 'network' });
       }
       selfId = me?.id ?? null;
 
       const gw = await fetchFn(`${DISCORD_API}/gateway/bot`, { headers: authHeaders, signal: ctx.shutdownSignal });
       const gwData = await gw.json().catch(() => ({}));
       if (!gw.ok || !gwData.url) {
-        ctx.setStatus('disconnected', `GET /gateway/bot failed: HTTP ${gw.status}`);
-        return { identity: me?.username ? `@${me.username}` : null };
+        const detail = `GET /gateway/bot failed: HTTP ${gw.status}`;
+        ctx.setStatus('disconnected', detail);
+        throw Object.assign(new Error(detail), { kind: gw.status === 429 ? 'rate-limit' : 'network' });
       }
       if (gwData.session_start_limit?.remaining === 0) {
-        ctx.setStatus('disconnected', `gateway session limit exhausted — resets in ${Math.ceil((gwData.session_start_limit.reset_after || 0) / 60000)}min`);
-        return { identity: me?.username ? `@${me.username}` : null };
+        const detail = `gateway session limit exhausted — resets in ${Math.ceil((gwData.session_start_limit.reset_after || 0) / 60000)}min`;
+        ctx.setStatus('disconnected', detail);
+        throw Object.assign(new Error(detail), { kind: 'rate-limit' });
       }
 
       gateway = createGatewayClient({
@@ -99,7 +107,10 @@ export function createDiscordWorker(ctx, {
           let res;
           try {
             res = await fetchFn(`${DISCORD_API}/channels/${chatId}/messages`, {
-              method: 'POST', headers: authHeaders, body: JSON.stringify({ content }),
+              method: 'POST', headers: authHeaders,
+              // Notification/reply text embeds run titles, error strings and
+              // echoed user input — never let Discord parse mentions out of it.
+              body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
             });
           } catch (err) {
             throw sendError('network', err?.message || String(err));

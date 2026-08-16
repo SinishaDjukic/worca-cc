@@ -22,6 +22,17 @@ function escHtml(text) {
 }
 
 /**
+ * Slack mrkdwn requires &, <, > escaped in ALL text (they delimit links and
+ * control sequences like <!channel>); everything else passes through.
+ */
+export function escapeSlackText(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
  * Process a markdown string by extracting protected regions (code blocks and
  * inline code) first, applying transformations to unprotected text, then
  * restoring the protected regions.
@@ -62,7 +73,7 @@ function processWithCodeProtection(
 
   // 4. Restore placeholders
   for (const { key, value } of placeholders) {
-    result = result.replace(key, value);
+    result = result.replace(key, () => value); // function form: never interprets $ patterns
   }
 
   return result;
@@ -147,6 +158,9 @@ export function toSlackMrkdwn(md) {
     md,
     // Transform regular text
     (text) => {
+      // Escape FIRST: &,<,> are Slack control characters. This must happen
+      // before we emit <url|label>, or we would escape our own link syntax.
+      text = escapeSlackText(text);
       // Links: [text](url) → <url|text>
       // Match links carefully — url part uses a greedy match up to the closing )
       text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => {
@@ -169,16 +183,16 @@ export function toSlackMrkdwn(md) {
       text = text.replace(/\*(.+?)\*/g, '_$1_');
       // Step 3: Restore bold as Slack bold *text*
       for (const { key, content } of boldParts) {
-        text = text.replace(key, `*${content}*`);
+        text = text.replace(key, () => `*${content}*`); // function form: never interprets $ patterns
       }
       // Strikethrough: ~~text~~ → ~text~
       text = text.replace(/~~(.+?)~~/g, '~$1~');
       return text;
     },
     // Code blocks pass through as-is (``` is native in Slack)
-    (code) => `\`\`\`${code}\`\`\``,
+    (code) => `\`\`\`${escapeSlackText(code)}\`\`\``,
     // Inline code passes through as-is
-    (code) => `\`${code}\``,
+    (code) => `\`${escapeSlackText(code)}\``,
   );
 }
 

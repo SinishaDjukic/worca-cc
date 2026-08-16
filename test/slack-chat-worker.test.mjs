@@ -193,3 +193,40 @@ test('validateConfig: per-field errors pin the failing token', async () => {
   const missing = await validateConfig({});
   assert.deepEqual(missing.errors.map((e) => e.field), ['botToken', 'appToken']);
 });
+
+test('start(): transient auth.test failure (5xx/429) throws so the supervisor restarts', async () => {
+  const { ctx } = fakeCtx();
+  const w = createSlackWorker(ctx, { fetchFn: async () => json({}, 503) });
+  await assert.rejects(() => w.start(), (e) => /auth\.test failed: HTTP 503/.test(e.message) && e.kind === 'network');
+
+  const { ctx: ctx429 } = fakeCtx();
+  const w429 = createSlackWorker(ctx429, { fetchFn: async () => json({}, 429, { 'retry-after': '2' }) });
+  await assert.rejects(() => w429.start(), (e) => /auth\.test failed: HTTP 429/.test(e.message) && e.kind === 'rate-limit');
+});
+
+test('start(): definitive invalid_auth still degrades without throwing', async () => {
+  const { ctx, events } = fakeCtx();
+  const w = createSlackWorker(ctx, { fetchFn: async () => json({ ok: false, error: 'invalid_auth' }) });
+  const r = await w.start();
+  assert.equal(r.identity, null);
+  assert.equal(events.status.at(-1).state, 'disconnected');
+  assert.match(events.status.at(-1).detail, /auth\.test failed: invalid_auth — check botToken/);
+});
+
+test('mrkdwn render escapes Slack control sequences in every segment kind', () => {
+  const msg = { title: 'a <!channel> title', severity: 'info', body: [
+    { kind: 'text', value: '<!here> & <void>' },
+    { kind: 'bold', value: '<b>' },
+    { kind: 'code', value: 'x < y' },
+    { kind: 'code_block', value: 'a & b' },
+    { kind: 'link', value: '<label>', href: 'https://x.test/?a=1&b=2' },
+    { kind: 'markdown', value: 'plain <!channel> and `code <kept>`' },
+  ]};
+  const out = renderToMrkdwn(msg);
+  assert.ok(!/<!channel>/.test(out), 'raw <!channel> must not survive');
+  assert.match(out, /&lt;!here&gt; &amp; &lt;void&gt;/);
+  assert.match(out, /\*&lt;b&gt;\*/);
+  assert.match(out, /`x &lt; y`/);
+  assert.match(out, /a &amp; b/);
+  assert.match(out, /<https:\/\/x\.test\/\?a=1&amp;b=2\|&lt;label&gt;>/);
+});

@@ -21,6 +21,7 @@ import { createJwtValidator } from './jwt.mjs';
 import { createTokenProvider } from './token.mjs';
 
 const SEEN_LRU_MAX = 200;
+const MAX_CONVERSATIONS = 200;
 
 /** Markdown-ish segments -> plain text (Teams TextBlock markdown is
  *  inconsistent across clients; plain text is the honest v1 — old
@@ -68,20 +69,35 @@ export function createTeamsWorker(ctx, {
 
   const conversations = async () => (await ctx.state.get('conversations')) || {};
 
-  async function rememberConversation(activity) {
-    const conv = activity.conversation;
-    if (!conv?.id || !activity.serviceUrl) return;
-    const all = await conversations();
-    all[conv.id] = {
-      serviceUrl: activity.serviceUrl,
-      tenantId: activity.channelData?.tenant?.id ?? null,
-      channelId: activity.channelId ?? 'msteams',
-      botId: activity.recipient?.id ?? null,
-      user: activity.from ? { id: activity.from.id, name: activity.from.name ?? null, aadObjectId: activity.from.aadObjectId ?? null } : null,
-      isGroup: conv.isGroup === true || conv.conversationType === 'channel',
-      lastSeen: new Date(now()).toISOString(),
+  let convChain = Promise.resolve(); // serialize read-modify-write on the conversations bag
+  function rememberConversation(activity) {
+    const work = async () => {
+      const conv = activity.conversation;
+      if (!conv?.id || !activity.serviceUrl) return;
+      const all = await conversations();
+      all[conv.id] = {
+        serviceUrl: activity.serviceUrl,
+        tenantId: activity.channelData?.tenant?.id ?? null,
+        channelId: activity.channelId ?? 'msteams',
+        botId: activity.recipient?.id ?? null,
+        user: activity.from ? { id: activity.from.id, name: activity.from.name ?? null, aadObjectId: activity.from.aadObjectId ?? null } : null,
+        isGroup: conv.isGroup === true || conv.conversationType === 'channel',
+        lastSeen: new Date(now()).toISOString(),
+      };
+      const ids = Object.keys(all);
+      if (ids.length > MAX_CONVERSATIONS) {
+        // Numeric compare on Date.parse — total, tolerant of missing/garbage
+        // lastSeen (sorts oldest), with an id tiebreaker for determinism.
+        const ts = (id) => Date.parse(all[id]?.lastSeen ?? '') || 0;
+        ids.sort((a, b) => ts(a) - ts(b) || (a < b ? -1 : a > b ? 1 : 0));
+        const evicted = ids.slice(0, ids.length - MAX_CONVERSATIONS);
+        for (const id of evicted) delete all[id];
+        ctx.log('warn', `conversation store capped at ${MAX_CONVERSATIONS}; evicted ${evicted.length} least-recently-seen (proactive notify to an evicted chat needs the user to message the bot once)`);
+      }
+      await ctx.state.set('conversations', all);
     };
-    await ctx.state.set('conversations', all);
+    convChain = convChain.then(work, work);
+    return convChain;
   }
 
   async function postActivity(serviceUrl, conversationId, activity) {

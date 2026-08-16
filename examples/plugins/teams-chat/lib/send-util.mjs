@@ -23,9 +23,14 @@ export function splitText(text, limit, { preferNewline = true } = {}) {
   while (rest.length > limit) {
     let cut = limit;
     if (preferNewline) {
-      const nl = rest.lastIndexOf('\n', limit);
+      // limit-1: a newline AT index limit would make a limit+1-char chunk.
+      const nl = rest.lastIndexOf('\n', limit - 1);
       if (nl > limit / 2) cut = nl + 1;
     }
+    // Never cut between a surrogate pair (skip at cut===1: a 1-char budget
+    // cannot hold a pair, and decrementing to 0 would loop forever).
+    const cc = rest.charCodeAt(cut - 1);
+    if (cc >= 0xd800 && cc <= 0xdbff && cut > 1) cut -= 1;
     chunks.push(rest.slice(0, cut));
     rest = rest.slice(cut);
   }

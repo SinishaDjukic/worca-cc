@@ -6,7 +6,7 @@
  * @module render-segments
  */
 
-import { toSlackMrkdwn, toTelegramHtml } from './markdown.mjs';
+import { toSlackMrkdwn, toTelegramHtml, escapeSlackText } from './markdown.mjs';
 
 /** Shared 429-retry backoff schedule for adapter send() loops. */
 export const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
@@ -33,15 +33,15 @@ export function escapeHtml(text) {
  * }} SegmentStyle
  */
 
-/** @type {SegmentStyle} Slack mrkdwn. */
+/** @type {SegmentStyle} Slack mrkdwn (all text escaped — <!channel> etc. are control sequences). */
 export const SLACK_STYLE = {
-  title: (t) => `*${t}*\n`,
+  title: (t) => `*${escapeSlackText(t)}*\n`,
   markdown: (v) => toSlackMrkdwn(v),
-  bold: (v) => `*${v}*`,
-  code: (v) => `\`${v}\``,
-  code_block: (v) => `\`\`\`\n${v}\n\`\`\``,
-  link: (v, seg) => `<${seg.href ?? ''}|${v}>`,
-  text: (v) => v,
+  bold: (v) => `*${escapeSlackText(v)}*`,
+  code: (v) => `\`${escapeSlackText(v)}\``,
+  code_block: (v) => `\`\`\`\n${escapeSlackText(v)}\n\`\`\``,
+  link: (v, seg) => `<${String(seg.href ?? '').replace(/&/g, '&amp;')}|${escapeSlackText(v)}>`,
+  text: (v) => escapeSlackText(v),
 };
 
 /** @type {SegmentStyle} Discord markdown (standard markdown passes through). */
