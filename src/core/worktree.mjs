@@ -14,6 +14,7 @@
 // single source of truth for what reaches `git branch`.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, realpath, readdir, rename } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
@@ -310,6 +311,25 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
   return { ok: steps.every((s) => s.ok), steps };
 }
 
+/**
+ * Stage every remaining change and render a binary-capable patch against HEAD.
+ * Used immediately before an explicit retained-worktree discard. Staging is
+ * intentional: it makes untracked files part of the patch. A failure returns
+ * without removing anything so the checkout remains the source of truth.
+ */
+export async function snapshotWorktreePatch(worktreeDir) {
+  if (!worktreeDir) return { ok: false, patch: '', step: 'path', message: 'worktreeDir is required' };
+  const add = await git(worktreeDir, ['add', '-A']);
+  if (!add.ok) {
+    return { ok: false, patch: '', step: 'add', message: add.stderr.trim() || `exit ${add.code}` };
+  }
+  const diff = await git(worktreeDir, ['diff', '--binary', 'HEAD', '--']);
+  if (!diff.ok) {
+    return { ok: false, patch: '', step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}` };
+  }
+  return { ok: true, patch: diff.stdout };
+}
+
 function firstLine(text) {
   if (!text) return '';
   for (const line of String(text).split(/\r?\n/)) {
@@ -367,12 +387,15 @@ export const RUN_ROOT_REMOVE = new Set(['done', 'stopped', 'error']);
  *                                         same DB-free reason as the two above. May
  *                                         degrade to null: it is consulted after the
  *                                         disposition and only names a copy target.
+ * @param {Function} [args.retainOf]       (id) => retained-work record | null. DB
+ *                                         fallback when the manifest is absent or
+ *                                         its recorded worktrees are no longer live.
  * @param {Function} [args.log]            (level, message) sink; defaults to console
  * @returns {Promise<{keep:string[], removed:string[], quarantined:string[],
  *                    failed:string[], warnings:string[]}>}
  */
 export async function sweepRunRoots({
-  worcaHome, statusOf, membersOf, pipelineDirOf, log,
+  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, log,
 } = {}) {
   const out = { keep: [], removed: [], quarantined: [], failed: [], warnings: [] };
   const say = typeof log === 'function'
@@ -409,6 +432,23 @@ export async function sweepRunRoots({
     if (status && RUN_ROOT_KEEP.has(status)) {
       out.keep.push(dir);
       say('info', `keep ${dir} (${status})`);
+      continue;
+    }
+
+    // A manifest retain record is live only while at least one named checkout
+    // still exists. This makes manual recovery/removal self-clearing instead of
+    // leaking the run root forever. The DB callback is an independent fallback.
+    const manifestRetain = manifest?.retain;
+    const manifestMembers = Array.isArray(manifestRetain?.members) ? manifestRetain.members : [];
+    let retained = manifestMembers.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))
+      ? manifestRetain
+      : null;
+    if (!retained && typeof retainOf === 'function') {
+      try { retained = await retainOf(id); } catch { /* status lookup already classified the row */ }
+    }
+    if (retained) {
+      out.keep.push(dir);
+      say('info', `keep ${dir} (${status || 'no row'}, retained: ${retained.reason || 'unknown'})`);
       continue;
     }
     if (status && !RUN_ROOT_REMOVE.has(status)) {

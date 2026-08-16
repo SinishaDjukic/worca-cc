@@ -21,7 +21,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
-  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
+  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
 } from '../src/core/artifacts.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
@@ -57,7 +57,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
-import { archivePipeline } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -1133,6 +1133,35 @@ app.get('/api/runs/:id', async (req, res) => {
   }
 });
 
+// Download the durable done-path diff as an alternate recovery route for a
+// retained worktree. The filename is fixed; callers cannot supply a path.
+app.get('/api/runs/:id/recovery-patch', async (req, res) => {
+  const id = req.params.id;
+  const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
+  const projectKey_ = typeof req.query.projectKey === 'string' ? req.query.projectKey.trim() : '';
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (workspaceId && !WORKSPACE_KEY_RE.test(workspaceId)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  if (projectKey_ && !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(projectKey_)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  if (!workspaceId && !projectKey_ && !projectDir) {
+    return badRequest(res, 'workspaceId, projectKey or projectDir is required');
+  }
+  const key = workspaceId
+    ? `workspaces/${workspaceId}`
+    : (projectKey_ || projectKey(projectDir));
+  try {
+    const patch = await readRunArtifactText(key, id, 'diff-patch.patch');
+    if (patch == null) return res.status(404).json({ error: 'recovery patch not found' });
+    res.setHeader('Content-Disposition', `attachment; filename="diff-patch-${String(id).replace(/[^a-zA-Z0-9._-]/g, '-')}.patch"`);
+    res.type('text/x-diff').send(patch);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
 // Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
@@ -1296,6 +1325,45 @@ app.delete('/api/runs/:id', async (req, res) => {
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
     emitChanged('pipelines-changed', 'deleted');
+    res.json({ ok: true, ...report });
+  } catch (e) {
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'RETAINED_WORKTREE') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
+    res.status(500).json({ error: e && e.message ? e.message : String(e) });
+  }
+});
+
+// Reclaim only worktrees retained after a teardown commit failure. Unlike
+// Archive, this keeps the pipeline in History and saves recovery patches first.
+app.post('/api/runs/:id/discard-worktree', async (req, res) => {
+  const id = req.params.id;
+  const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
+  const projectKey_ = typeof req.query.projectKey === 'string' ? req.query.projectKey.trim() : '';
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (workspaceId && !WORKSPACE_KEY_RE.test(workspaceId)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  if (projectKey_ && !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(projectKey_)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  if (!workspaceId && !projectKey_ && !projectDir) {
+    return badRequest(res, 'workspaceId, projectKey or projectDir is required');
+  }
+  const liveActive = [...runs.values()].some((r) =>
+    (r.pipelineId === id || r.id === id) &&
+    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  if (liveActive) return res.status(409).json({ error: 'cannot discard a running pipeline worktree' });
+
+  try {
+    const report = await discardRetainedWorktrees({
+      workspaceKey: workspaceId || null,
+      key: workspaceId ? null : (projectKey_ || null),
+      projectDir: (workspaceId || projectKey_) ? null : projectDir,
+      id,
+    });
+    if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    emitChanged('pipelines-changed', 'updated');
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });

@@ -13,16 +13,21 @@
 // function just unlinked, so leaving it would strand dead pointers.
 // List and count reads filter on `archived_at IS NULL`; by-id reads still resolve.
 
-import { rm, readdir } from 'node:fs/promises';
+import { rm, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
-import { listArtifacts, readPipelineByKey, persistPrState } from './artifacts.mjs';
+import {
+  listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, writeState,
+  recordArtifact, appendAudit,
+} from './artifacts.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
-import { removeWorktree } from './worktree.mjs';
-import { rmGuarded } from './run-manifest.mjs';
+import { removeWorktree, snapshotWorktreePatch } from './worktree.mjs';
+import {
+  rmGuarded, readRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
+} from './run-manifest.mjs';
 import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
@@ -94,6 +99,12 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   // worktree / rm passes would only produce noise (and warnings) over gone paths.
   if (row.archived_at) {
     return { ok: true, id: row.id, alreadyArchived: true, warnings: [] };
+  }
+  // UI state is advisory. Enforce the no-data-loss rule here as well, because a
+  // stale client or a direct API caller could otherwise force-remove the very
+  // checkout that was retained after its commit failed.
+  if (retainedWorkFor(row)) {
+    throw err('cannot archive while retained uncommitted work exists; recover it or discard the worktree first', 'RETAINED_WORKTREE');
   }
 
   // Reconstruct state (branch/branches/projects) via the same reader history uses.
@@ -209,6 +220,129 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
       .run(new Date().toISOString(), row.id);
   });
 
+  return report;
+}
+
+/**
+ * Explicitly reclaim worktrees retained after a teardown commit failure while
+ * preserving the pipeline row and artifact directory. Every live checkout is
+ * snapshotted first; any snapshot failure aborts before removal.
+ */
+export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+  if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
+  const storeKey = workspaceKey
+    ? `workspaces/${workspaceKey}`
+    : (key || (projectDir ? projectKey(projectDir) : null));
+  if (!storeKey) throw err('projectKey, projectDir or workspaceKey is required', 'BAD_REQUEST');
+
+  const row = lookupRow(storeKey, id);
+  if (!row) return null;
+  if (ACTIVE.has(String(row.status || '').toLowerCase())) {
+    throw err('cannot discard a running pipeline worktree', 'RUNNING');
+  }
+  const retained = retainedWorkFor(row);
+  if (!retained) {
+    return { ok: true, id: row.id, discarded: false, worktrees: [], patches: [], runRoot: null, warnings: [] };
+  }
+
+  const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
+  if (!state) throw err('pipeline state is unavailable', 'BAD_REQUEST');
+  const storeRootDir = projectStorePath(storeKey);
+  const runDir = await findRunDir(join(storeRootDir, 'pipelines'), row.id);
+  if (!runDir) {
+    throw err('cannot discard retained work: the pipeline directory needed for the recovery patch is missing', 'SNAPSHOT_FAILED');
+  }
+
+  const projects = Array.isArray(state.projects) ? state.projects : [];
+  const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
+  const targets = retained.members.map((member) => ({
+    ...member,
+    projectDir: state.target === 'workspace'
+      ? (dirByKey.get(member.projectKey) || null)
+      : (state.projectDir || projectDir || null),
+  }));
+  if (targets.some((t) => !t.projectDir)) {
+    throw err('cannot discard retained work: a member repository could not be resolved', 'SNAPSHOT_FAILED');
+  }
+
+  // Snapshot ALL members before deleting ANY member. This prevents a later
+  // snapshot failure from leaving a half-discarded workspace.
+  const snapshots = [];
+  for (const target of targets) {
+    const snap = await snapshotWorktreePatch(target.worktreeDir);
+    if (!snap.ok) {
+      throw err(
+        `cannot save recovery patch for ${target.projectKey || target.worktreeDir}: git ${snap.step} failed: ${snap.message}`,
+        'SNAPSHOT_FAILED',
+      );
+    }
+    snapshots.push({ target, patch: snap.patch });
+  }
+
+  await mkdir(runDir, { recursive: true });
+  const patches = [];
+  for (const { target, patch } of snapshots) {
+    const suffix = state.target === 'workspace'
+      ? `-${String(target.projectKey || 'member').replace(/[^a-zA-Z0-9._-]+/g, '-')}`
+      : '';
+    const name = `retained-work${suffix}.patch`;
+    const file = join(runDir, name);
+    await writeFile(file, patch, 'utf8');
+    recordArtifact(row.id, 'retained-work-patch', name);
+    patches.push(file);
+  }
+
+  const report = {
+    ok: true, id: row.id, discarded: true, worktrees: [], patches,
+    runRoot: null, warnings: [],
+  };
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  if (existsSync(runRoot)) {
+    const manifest = await readRunManifest(runRoot);
+    for (const [scope, entries] of Object.entries(manifest?.injectedPaths || {})) {
+      const baseDir = scope === 'runRoot'
+        ? runRoot
+        : targets.find((t) => t.projectKey === scope)?.worktreeDir || join(runRoot, 'repos', scope);
+      const warnings = await rescueModifiedMounts({
+        baseDir, entries, pipelineDir: runDir, scope, pipelineId: row.id,
+      });
+      report.warnings.push(...warnings);
+    }
+    report.warnings.push(...await scanStrayEntries({ runRoot, pipelineDir: runDir }));
+    await copyRunManifestTo(runRoot, runDir);
+  }
+
+  for (const target of targets) {
+    const result = await removeWorktree({
+      projectDir: target.projectDir, worktreeDir: target.worktreeDir, branch: null, force: true,
+    });
+    for (const step of result.steps.filter((s) => !s.ok)) {
+      report.warnings.push(`${target.projectKey || 'project'}: ${step.step}: ${step.stderr || 'failed'}`);
+    }
+    if (!existsSync(target.worktreeDir)) {
+      report.worktrees.push(target.worktreeDir);
+      const branchRecord = state.target === 'workspace'
+        ? state.branches?.[target.projectKey]
+        : state.branch;
+      if (branchRecord) {
+        delete branchRecord.commitFailed;
+        branchRecord.worktreeRemoved = true;
+        branchRecord.branchKept = true;
+      }
+    } else {
+      report.warnings.push(`${target.projectKey || 'project'}: worktree still exists at ${target.worktreeDir}`);
+    }
+  }
+
+  await writeState(runDir, state);
+  if (existsSync(runRoot) && !retainedWorkFor(state)) {
+    const removal = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
+    if (removal.removed) report.runRoot = runRoot;
+    else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
+  }
+  await appendAudit(runDir,
+    `Discarded ${report.worktrees.length} retained worktree(s) after saving recovery patch(es): ` +
+    patches.map((p) => `\`${p}\``).join(', ')).catch(() => {});
   return report;
 }
 

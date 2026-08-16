@@ -62,6 +62,7 @@ import {
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
+  RETAIN_REASONS,
 } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, MCP_GRANT_MODE } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
@@ -1356,10 +1357,9 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Tear down the per-pipeline worktree (C1). Retention policy:
-   *   - ALWAYS remove the checkout dir and KEEP the feature branch — done, error,
-   *     or stopped alike. The branch carries every change made up to the stop/error
-   *     point so the user can recover or merge the agent's work; the worktree is
-   *     just the disposable checkout.
+   *   - Remove the checkout and keep the feature branch after a successful (or
+   *     unnecessary) commit. If git status/add/commit fails, retain the checkout
+   *     so its uncommitted work remains recoverable.
    * Always force:true — agents have edited files, so the non-force path would
    * refuse and leak. Idempotent; safe to call when setup never ran.
    */
@@ -1372,7 +1372,13 @@ class Orchestrator extends EventEmitter {
     // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
     // for the reviewer's diff only — it never creates a commit). On error/stop this
     // is what captures the partial work made up to that point.
-    await this._commitWork(info).catch(() => {});
+    const commit = await this._commitWork(info);
+    const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
+    if (retained) {
+      this.workDir = this.projectDir;
+      await this._persist().catch(() => {});
+      return;
+    }
     // branch:null — the branch is always kept (done/error/stopped alike); only the
     // disposable checkout is removed.
     const res = await removeWorktree({
@@ -1396,6 +1402,7 @@ class Orchestrator extends EventEmitter {
       this.state.branch.branchKept = true;
     }
     this.workDir = this.projectDir;
+    await this._persist().catch(() => {});
   }
 
   /**
@@ -1413,7 +1420,11 @@ class Orchestrator extends EventEmitter {
     for (const [projectKey_, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
-      await this._commitWork(info, branchRecord).catch(() => {});
+      const commit = await this._commitWork(info, branchRecord);
+      if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
+        this.workDirs.delete(projectKey_);
+        continue;
+      }
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
@@ -1472,6 +1483,7 @@ class Orchestrator extends EventEmitter {
     const pipelineDir = this.pipeline?.dir || null;
     const entries = [...this.branchInfos.entries()];   // [projectKey, info]
     this.branchInfos = new Map();                      // guard against a double teardown
+    const retainedMembers = [];
     for (const [key, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const wt = info.worktreeDir;
@@ -1492,12 +1504,31 @@ class Orchestrator extends EventEmitter {
         } catch { /* best-effort: a missing file needs no strip */ }
       }
       // (3) commit onto the kept branch, excluding every injected path.
-      const branchRecord = (this.state.branches && this.state.branches[key]) || null;
-      await this._commitWork(info, branchRecord, { excludePathspecs: this._excludePathspecs(key) })
-        .catch(() => {});
+      // Single-project rows persist state.branch; workspace rows persist the
+      // per-member map inside workspace_meta. Updating state.branches for a
+      // single run would be in-memory-only on the DB round trip.
+      const branchRecord = this.isWorkspace
+        ? ((this.state.branches && this.state.branches[key]) || null)
+        : this.state.branch;
+      const commit = await this._commitWork(
+        info, branchRecord, { excludePathspecs: this._excludePathspecs(key) },
+      );
+      const retained = await this._recordCommitFailure(commit, { key, info, branchRecord });
       // (4) remove what worca-cc injected, so nothing can be committed dangling or
       // outlive the run root.
       await removeInjectedPaths(wt, injected);
+      if (retained) {
+        retainedMembers.push({
+          projectKey: key,
+          worktreeDir: wt,
+          branch: info.branch,
+          step: commit.step,
+          message: commit.message,
+          at: branchRecord?.commitFailed?.at || new Date().toISOString(),
+        });
+        this.workDirs.delete(key);
+        continue;
+      }
       // (5) remove the checkout; the branch is always kept.
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
@@ -1521,7 +1552,7 @@ class Orchestrator extends EventEmitter {
       this.workDirs.delete(key);
     }
     // Keep the scalar mirror coherent for late observers.
-    if (this.state.branch) {
+    if (this.state.branch && !retainedMembers.length) {
       this.state.branch.worktreeRemoved = true;
       this.state.branch.branchKept = true;
     }
@@ -1539,16 +1570,30 @@ class Orchestrator extends EventEmitter {
       // (7) §8.11 stray scan — nothing outside the known set is silently lost.
       const strays = await scanStrayEntries({ runRoot: this.runRoot, pipelineDir });
       for (const w of strays) await this._recordRunWarning(w);
+      // Persist the retention decision before copying the manifest. The copy is
+      // the durable explanation after a normal teardown removes the run root.
+      await updateRunManifest(this.runRoot, {
+        retain: retainedMembers.length ? {
+          reason: RETAIN_REASONS.COMMIT_FAILED,
+          at: retainedMembers[0].at,
+          members: retainedMembers,
+        } : null,
+      });
       // (8) §5.2 durable ledger: the run root is about to disappear.
       await copyRunManifestTo(this.runRoot, pipelineDir);
       // (9) guarded removal (§8.13).
-      const removal = await rmGuarded(this.runRoot, {
-        worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
-      });
-      if (removal.removed) {
-        this._log('worktree', 'info', `Run root removed at ${this.runRoot}.`);
+      if (retainedMembers.length) {
+        this._log('worktree', 'warn',
+          `Run root retained at ${this.runRoot} because ${retainedMembers.length} worktree commit(s) failed.`);
       } else {
-        this._log('worktree', 'warn', `run root NOT removed: ${removal.reason}`);
+        const removal = await rmGuarded(this.runRoot, {
+          worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
+        });
+        if (removal.removed) {
+          this._log('worktree', 'info', `Run root removed at ${this.runRoot}.`);
+        } else {
+          this._log('worktree', 'warn', `run root NOT removed: ${removal.reason}`);
+        }
       }
     }
     await this._persist().catch(() => {});
@@ -1570,9 +1615,44 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Stamp a failed teardown commit on its persisted branch record and emit both
+   * human-readable durable traces. Returns true when the caller must keep the
+   * checkout containing the uncommitted work.
+   */
+  async _recordCommitFailure(result, { key = null, info, branchRecord } = {}) {
+    if (result?.ok !== false) return false;
+    const message = result.message || `git ${result.step || 'commit'} failed`;
+    const record = {
+      code: RETAIN_REASONS.COMMIT_FAILED,
+      step: result.step,
+      message,
+      at: new Date().toISOString(),
+    };
+    if (branchRecord) {
+      branchRecord.commitFailed = record;
+      branchRecord.worktreeRemoved = false;
+      branchRecord.branchKept = true;
+    } else {
+      await this._recordRunWarning(
+        `${key ? `${key}: ` : ''}commit failed at git ${result.step} (${message}) with no branch record; ` +
+        `the worktree at ${info?.worktreeDir || '(unknown)'} is retained`,
+      );
+    }
+    const prefix = key ? `${key}: ` : '';
+    this._log('git', 'warn',
+      `${prefix}commit failed at git ${result.step} (${message}) — KEEPING the worktree at ${info?.worktreeDir}`);
+    if (this.pipeline) {
+      await appendAudit(this.pipeline.dir,
+        `Commit FAILED for \`${info?.branch || '(unknown)'}\` at git ${result.step}: ${message}. ` +
+        `Worktree RETAINED at \`${info?.worktreeDir || '(unknown)'}\`.`).catch(() => {});
+    }
+    return true;
+  }
+
+  /**
    * Commit every change in the worktree onto the feature branch so the kept
    * branch actually carries the agent's work after the worktree is removed.
-   * Best-effort: never throws; logs and returns null on any failure. Skips
+   * Best-effort: never throws; returns a discriminated result. Skips
    * cleanly when the working tree is clean (no diff from the checkpoint), which
    * is the truthful "no change needed" outcome. Records the SHA on state.branch.
    * @param {{worktreeDir:string, branch:string}} info the branch being kept
@@ -1582,29 +1662,32 @@ class Orchestrator extends EventEmitter {
    * @param {{excludePathspecs?:string[]}} [opts] §8.8 exclusion set for this
    *   worktree. With the DEFAULT empty array — every legacy run — the method keeps
    *   today's bare `git add -A` byte-identically (§10 rollback contract).
-   * @returns {Promise<string|null>} the new commit SHA, or null when nothing committed.
+   * @returns {Promise<{ok:true,committed:boolean,sha:string|null}|
+   *                   {ok:false,step:'status'|'add'|'commit',message:string}>}
    */
   async _commitWork(info, branchRecord = this.state.branch, { excludePathspecs = [] } = {}) {
     const cwd = info?.worktreeDir;
-    if (!cwd) return null;
+    if (!cwd) return { ok: true, committed: false, sha: null };
     // ignoreAbort on every call: teardown runs after stop/error has aborted the
     // signal, so binding it would no-op these commands and lose the partial work.
     const gitOpts = { cwd, ignoreAbort: true };
     const status = await this._git(['status', '--porcelain'], gitOpts);
     if (!status.ok) {
-      this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`);
-      return null;
+      const message = status.stderr.trim() || `exit ${status.code}`;
+      this._log('git', 'warn', `commit skipped: git status failed: ${message}`);
+      return { ok: false, step: 'status', message };
     }
     if (!status.stdout.trim()) {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
-      return null;
+      return { ok: true, committed: false, sha: null };
     }
     const add = excludePathspecs.length
       ? await this._git(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
       : await this._git(['add', '-A'], gitOpts);
     if (!add.ok) {
-      this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`);
-      return null;
+      const message = add.stderr.trim() || `exit ${add.code}`;
+      this._log('git', 'warn', `commit skipped: git add failed: ${message}`);
+      return { ok: false, step: 'add', message };
     }
     // §8.8 status recheck: with mounts present the porcelain gate above is never
     // clean, so a run whose agent changed nothing would attempt a commit that fails
@@ -1613,7 +1696,7 @@ class Orchestrator extends EventEmitter {
       const staged = await this._git(['diff', '--cached', '--quiet'], gitOpts);
       if (staged.ok) {   // exit 0 => nothing staged
         this._log('git', 'info', 'No changes to commit (working tree clean).');
-        return null;
+        return { ok: true, committed: false, sha: null };
       }
     }
     const title = this.state.title || this.baseName || 'changes';
@@ -1652,8 +1735,9 @@ class Orchestrator extends EventEmitter {
       }
     }
     if (!commit.ok) {
-      this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`);
-      return null;
+      const message = commit.stderr.trim() || `exit ${commit.code}`;
+      this._log('git', 'warn', `commit failed: ${message}`);
+      return { ok: false, step: 'commit', message };
     }
     const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
     const sha = ref.ok ? ref.stdout.trim() : null;
@@ -1664,7 +1748,7 @@ class Orchestrator extends EventEmitter {
         `Committed agent work to \`${info.branch}\` at \`${sha.slice(0, 10)}\`.`,
       ).catch(() => {});
     }
-    return sha;
+    return { ok: true, committed: true, sha };
   }
 
   // ── phase helpers ─────────────────────────────────────────────────────────────

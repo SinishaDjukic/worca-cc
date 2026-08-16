@@ -590,6 +590,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
 .badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.hist-retained-badge[hidden]{display:none;}
 
 /* ---------- History cards (expandable) ---------- */
 .hist-card{padding:18px 22px;}
@@ -606,6 +608,17 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-detail{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
 .hist-detail[hidden]{display:none;}
 .hist-detail .detail-error{color:var(--red-ink);font-size:12.5px;}
+.retained-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
+  border-radius:14px;background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;line-height:1.55;}
+.retained-banner[hidden]{display:none;}
+.retained-banner h4{margin:0 0 6px;font-size:14px;color:var(--amber-ink);}
+.retained-banner p{margin:5px 0;}
+.retained-banner ul{margin:9px 0;padding-left:20px;}
+.retained-banner li+li{margin-top:8px;}
+.retained-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:8px;
+  background:rgba(255,255,255,.7);color:var(--ink);font-family:var(--mono);font-size:11.5px;
+  white-space:pre-wrap;word-break:break-all;}
+.retained-banner a{color:var(--amber-ink);font-weight:700;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 .hist-section{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
 .hist-section-title{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);font-weight:700;margin-bottom:10px;}
@@ -732,7 +745,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Delete action under the expanded card's stepper. Filled red to read as the
    single destructive action (scoped to .hist-delete so the existing soft
    .btn-danger rule is left untouched). */
-.hist-actions{display:flex;justify-content:flex-end;margin-top:14px;}
+.hist-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:14px;}
+.hist-discard{display:inline-flex;align-items:center;padding:6px 12px;font-size:12px;
+  color:var(--amber-ink);border-color:var(--amber);background:var(--amber-bg);}
+.hist-discard:hover:not(:disabled){background:var(--amber-bg);filter:brightness(.97);}
+.hist-discard:disabled{opacity:.6;cursor:default;}
+.hist-discard[hidden]{display:none;}
 .hist-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
   border:1.5px solid var(--red-ink,#d9534f);color:#fff;font-family:inherit;font-weight:600;
   font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;}

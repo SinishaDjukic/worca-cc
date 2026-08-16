@@ -1,5 +1,8 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
@@ -45,6 +48,24 @@ test('active statuses refuse archive (RUNNING error code preserved)', async () =
   const { id } = await seedPipeline('/tmp/proj-a', { status: 'running' });
   await assert.rejects(() => archivePipeline({ projectDir: '/tmp/proj-a', id }),
     (e) => e.code === 'RUNNING');
+});
+
+test('archive refuses a live worktree retained after a commit failure', async () => {
+  const retainedDir = await mkdtemp(join(tmpdir(), 'worca-retained-archive-'));
+  try {
+    const { id } = await seedPipeline('/tmp/proj-a', {
+      status: 'done',
+      branch: {
+        worktreeDir: retainedDir,
+        commitFailed: { code: 'commit_failed', step: 'commit', message: 'hook failed' },
+      },
+    });
+    await assert.rejects(() => archivePipeline({ projectDir: '/tmp/proj-a', id }),
+      (e) => e.code === 'RETAINED_WORKTREE');
+    assert.equal(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(id).archived_at, null);
+  } finally {
+    await rm(retainedDir, { recursive: true, force: true });
+  }
 });
 
 test('archived rows vanish from list + count reads but stay readable by id', async () => {

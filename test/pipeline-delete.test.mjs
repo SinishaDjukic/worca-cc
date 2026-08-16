@@ -1,14 +1,14 @@
 // test/pipeline-delete.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { deletePipeline } from '../src/core/pipeline-delete.mjs';
-import { recordArtifact, listArtifacts, writeStoreMeta } from '../src/core/artifacts.mjs';
+import { deletePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
+import { recordArtifact, listArtifacts, writeStoreMeta, readPipelineByKey } from '../src/core/artifacts.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { listLocalBranches, createWorktree, sweepRunRoots } from '../src/core/worktree.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
@@ -124,6 +124,76 @@ test('deletePipeline removes dir, indexed plan/review files, local branch; keeps
     assert.equal(reviews.length, 0, 'both indexed review md removed');
     assert.equal(existsSync(worktreeDir), false, 'worktree gone');
     assert.ok(!(await listLocalBranches(repo)).includes(branch), 'local branch deleted');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('discardRetainedWorktrees snapshots untracked work, removes only the checkout, and clears retention', async () => {
+  const repo = await freshRepo();
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'retain11', sourceBranch: 'main',
+    featureBranch: 'worca-cc/retain11',
+  });
+  await writeFile(join(wt.worktreeDir, 'agent-new.txt'), 'uncommitted agent work\n');
+  const prev = process.env.WORCA_HOME;
+  const { pdir } = await freshStore(repo, {
+    id: 'retain11', base: 'retained-work', datePrefix: '04-06-26', status: 'done',
+    branch: {
+      source: 'main', feature: wt.branch, worktreeDir: wt.worktreeDir,
+      worktreeRemoved: false, branchKept: true,
+      commitFailed: { code: 'commit_failed', step: 'commit', message: 'hook failed', at: new Date().toISOString() },
+    },
+  });
+  try {
+    const report = await discardRetainedWorktrees({ key: 'proj-00000001', id: 'retain11' });
+    assert.equal(report.discarded, true);
+    assert.equal(existsSync(wt.worktreeDir), false, 'retained checkout reclaimed');
+    assert.ok((await listLocalBranches(repo)).includes(wt.branch), 'feature branch is kept');
+    assert.ok(existsSync(pdir), 'pipeline history directory is kept');
+    assert.equal(report.patches.length, 1);
+    const patch = await readFile(report.patches[0], 'utf8');
+    assert.match(patch, /agent-new\.txt/, 'the patch includes formerly-untracked work');
+    assert.match(patch, /uncommitted agent work/);
+    const saved = await readPipelineByKey('proj-00000001', 'retain11');
+    assert.equal(saved.state.branch.commitFailed, undefined);
+    assert.equal(saved.state.branch.worktreeRemoved, true);
+    assert.ok((await listArtifacts('retain11')).some((a) => a.kind === 'retained-work-patch'));
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('discardRetainedWorktrees snapshots every retained workspace member before reclaiming either checkout', async () => {
+  const repoA = await freshRepo();
+  const repoB = await freshRepo();
+  const wtA = await createWorktree({ projectDir: repoA, pipelineId: 'retainws', sourceBranch: 'main', featureBranch: 'worca-cc/retainws-a' });
+  const wtB = await createWorktree({ projectDir: repoB, pipelineId: 'retainws', sourceBranch: 'main', featureBranch: 'worca-cc/retainws-b' });
+  await writeFile(join(wtA.worktreeDir, 'a.txt'), 'workspace A\n');
+  await writeFile(join(wtB.worktreeDir, 'b.txt'), 'workspace B\n');
+  const prev = process.env.WORCA_HOME;
+  const failure = (message) => ({ code: 'commit_failed', step: 'commit', message, at: new Date().toISOString() });
+  const { pdir } = await freshWorkspaceStore({
+    wkey: 'wks-retain', id: 'retainws', base: 'retained-workspace', datePrefix: '04-06-26', status: 'done',
+    members: [
+      { projectDir: repoA, branch: { source: 'main', feature: wtA.branch, worktreeDir: wtA.worktreeDir, commitFailed: failure('A hook failed') } },
+      { projectDir: repoB, branch: { source: 'main', feature: wtB.branch, worktreeDir: wtB.worktreeDir, commitFailed: failure('B hook failed') } },
+    ],
+  });
+  try {
+    const report = await discardRetainedWorktrees({ workspaceKey: 'wks-retain', id: 'retainws' });
+    assert.equal(report.discarded, true);
+    assert.equal(report.worktrees.length, 2);
+    assert.equal(report.patches.length, 2, 'one independently applicable patch per repository');
+    assert.equal(existsSync(wtA.worktreeDir), false);
+    assert.equal(existsSync(wtB.worktreeDir), false);
+    assert.ok((await listLocalBranches(repoA)).includes(wtA.branch));
+    assert.ok((await listLocalBranches(repoB)).includes(wtB.branch));
+    assert.match(await readFile(report.patches[0], 'utf8'), /workspace [AB]/);
+    assert.match(await readFile(report.patches[1], 'utf8'), /workspace [AB]/);
+    assert.ok(existsSync(pdir), 'workspace history survives');
+    const saved = await readPipelineByKey('workspaces/wks-retain', 'retainws');
+    assert.ok(Object.values(saved.state.branches).every((br) => br.commitFailed === undefined));
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }

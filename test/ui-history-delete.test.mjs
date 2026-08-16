@@ -38,6 +38,13 @@ const runs = (pipelines, ghAvailable) => Promise.resolve({ ok: true, status: 200
 
 const FIN = { id: 'p1', title: 'Feat', status: 'stopped', startedAt: '2026-06-02T00:00:00Z',
               projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj' };
+const RETAINED = {
+  reason: 'commit_failed',
+  members: [{
+    projectKey: 'proj-0000abcd', branch: 'worca/feat', worktreeDir: '/tmp/retained-p1',
+    step: 'commit', message: 'pre-commit hook failed', at: '2026-06-02T01:00:00Z',
+  }],
+};
 
 test('finished entry shows an enabled Archive button under the stepper', async () => {
   const { window, showHistory } = await boot({
@@ -60,6 +67,56 @@ test('running entry hides the Archive button', async () => {
   await new Promise((r) => setTimeout(r, 0));
   const btn = window.document.querySelector('#history .hist-card .hist-delete');
   assert.equal(btn.hidden, true);
+});
+
+test('retained work is prominent and Archive is disabled until it is recovered or discarded', async () => {
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, retainedWork: RETAINED }], false) : null),
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-retained-badge').hidden, false);
+  assert.match(card.querySelector('.retained-banner').textContent, /uncommitted work retained/i);
+  assert.match(card.querySelector('.retained-banner').textContent, /pre-commit hook failed/);
+  assert.match(card.querySelector('.retained-banner').textContent, /\/tmp\/retained-p1/);
+  assert.match(card.querySelector('.retained-banner').textContent, /git -C '\/tmp\/retained-p1' add -A/);
+  assert.equal(card.querySelector('.hist-discard').hidden, false);
+  assert.equal(card.querySelector('.hist-delete').disabled, true, 'Archive cannot bypass retained-work safety');
+  assert.match(card.querySelector('.hist-delete').title, /Recover or discard/);
+});
+
+test('discard saves a patch, clears the warning, and re-enables Archive', async () => {
+  let request = null;
+  const row = { ...FIN, retainedWork: RETAINED };
+  const { window, showHistory } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/discard-worktree')) {
+        request = { url, method: opts.method };
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ ok: true, discarded: true, patches: ['/store/p1/retained-work.patch'] }),
+        });
+      }
+      if (url.includes('/api/history')) return runs([row], false);
+      return null;
+    },
+  });
+  let confirmText = '';
+  window.confirm = (text) => { confirmText = text; return true; };
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('.hist-discard').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(request.method, 'POST');
+  assert.match(request.url, /\/api\/runs\/p1\/discard-worktree\?projectKey=/);
+  assert.match(confirmText, /exists only in the retained worktree/);
+  assert.match(confirmText, /recovery patch will be saved/);
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-retained-badge').hidden, true);
+  assert.equal(card.querySelector('.hist-discard').hidden, true);
+  assert.equal(card.querySelector('.hist-delete').disabled, false);
+  assert.match(window.document.querySelector('#viewer').textContent, /retained-work\.patch/);
 });
 
 test('interrupted entry shows the Archive button', async () => {

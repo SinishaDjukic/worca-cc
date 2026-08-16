@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, readPipelineByKey } from '../src/core/artifacts.mjs';
 import {
   readRunManifest, updateRunManifest, claudeMdFenceBegin, CLAUDE_MD_FENCE_END,
 } from '../src/core/run-manifest.mjs';
@@ -114,6 +114,39 @@ test('detached: a completed run leaves NO <worcaHome>/runs/<id> behind', async (
     const feature = orch.getState().branch.feature;
     assert.ok(branchList(repo).includes(feature), 'the feature branch is KEPT');
     assert.ok(treeOf(repo, feature).includes('src/feature.mjs'), 'the agent work was committed');
+  });
+});
+
+test('detached: a failed teardown commit retains the worktree + run root and persists the reason', async () => {
+  const repo = await freshRepo();
+  await withMode('detached', async () => {
+    const orch = createOrchestrator({
+      projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    });
+    const realGit = orch._git.bind(orch);
+    orch._git = (args, opts) => {
+      const msgAt = args.indexOf('-m');
+      if (args.includes('commit') && msgAt >= 0 && String(args[msgAt + 1] || '').startsWith('worca:')) {
+        return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'simulated commit failure' });
+      }
+      return realGit(args, opts);
+    };
+    const res = await orch.run();
+    assert.equal(res.status, 'done');
+    const st = orch.getState();
+    assert.ok(existsSync(st.branch.worktreeDir), 'the only checkout containing the work survives');
+    const runRoot = join(worcaHome(), 'runs', st.id);
+    assert.ok(existsSync(runRoot), 'the containing run root survives too');
+    const saved = await readPipelineByKey(projectKey(repo), st.id);
+    assert.equal(saved.state.status, 'done', 'commit failure is orthogonal to pipeline status');
+    assert.equal(saved.state.branch.commitFailed.code, 'commit_failed');
+    assert.equal(saved.state.branch.commitFailed.step, 'commit');
+    assert.equal(saved.state.branch.worktreeRemoved, false);
+    const liveManifest = await readRunManifest(runRoot);
+    assert.equal(liveManifest.retain.reason, 'commit_failed');
+    assert.equal(liveManifest.retain.members[0].worktreeDir, st.branch.worktreeDir);
+    const durableManifest = JSON.parse(await readFile(join(st.pipelineDir, 'run.json'), 'utf8'));
+    assert.equal(durableManifest.retain.reason, 'commit_failed', 'retain is written before the durable copy');
   });
 });
 
@@ -621,5 +654,30 @@ test('legacy (pinned): _teardownRunRoot delegates verbatim — worktree removed,
     // No stray/ artifact dir is created when there is no run root to scan.
     assert.ok(!existsSync(join(st.pipelineDir, 'stray')), 'no stray dir on a legacy run');
     assert.ok(!existsSync(join(st.pipelineDir, 'run.json')), 'no manifest copy on a legacy run');
+  });
+});
+
+test('legacy: a failed teardown commit survives a DB round trip and keeps the checkout', async () => {
+  const repo = await freshRepo();
+  await withMode('legacy', async () => {
+    const orch = createOrchestrator({
+      projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    });
+    const realGit = orch._git.bind(orch);
+    orch._git = (args, opts) => {
+      const msgAt = args.indexOf('-m');
+      if (args.includes('commit') && msgAt >= 0 && String(args[msgAt + 1] || '').startsWith('worca:')) {
+        return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'legacy commit failure' });
+      }
+      return realGit(args, opts);
+    };
+    const res = await orch.run();
+    assert.equal(res.status, 'done');
+    const st = orch.getState();
+    assert.ok(existsSync(st.branch.worktreeDir));
+    const saved = await readPipelineByKey(projectKey(repo), st.id);
+    assert.equal(saved.state.branch.commitFailed.code, 'commit_failed');
+    assert.equal(saved.state.branch.commitFailed.step, 'commit');
+    assert.equal(saved.state.branch.worktreeRemoved, false);
   });
 });
