@@ -14,6 +14,10 @@
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
+//   models                 — the global model catalog (configurable-models-design.md
+//                            §4.1): [{id, label?, efforts?, env?}]. Entries shadow
+//                            PREDEFINED_MODELS by id; env is per-model routing env
+//                            merged into the claude spawn (reserved keys rejected).
 // All of them are OPTIONAL and read through the same read-modify-write object, so
 // a new key needs no migration and never disturbs the others (unknown keys — e.g.
 // written by a newer version — survive a write by the same property).
@@ -25,8 +29,9 @@
 // bootstrap value or a plain scalar toggle, so a table would buy nothing.
 //
 // IMPORTANT: this module imports NOTHING from the core graph (Node builtins
-// only). projects.mjs imports it, so importing projects.mjs back would make
-// worcaHome() -> getWorcaRoot() -> projects.mjs an infinite cycle.
+// plus the zero-import model-env.mjs leaf only). projects.mjs imports it, so
+// importing projects.mjs back would make worcaHome() -> getWorcaRoot() ->
+// projects.mjs an infinite cycle.
 //
 // Reads are synchronous + never-throwing (worcaHome's callers are sync). There
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
@@ -37,6 +42,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -450,4 +456,227 @@ export async function setCostLimitResetPeriod(input) {
   else settings.costLimitResetPeriod = input;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
+}
+
+// ---------------------------------------------------------------------------
+// Global model catalog (configurable-models-design.md §4.1). Stored entries are
+// MINIMAL — label only when it differs from id, efforts only when a proper
+// subset, env only when non-empty — so an entry with default metadata keeps
+// tracking a future EFFORTS change instead of freezing today's list. Readers
+// are loud-and-lenient per this module's contract; setters throw. Effort
+// SUBSET validation happens here; catalog COMPOSITION (shadowing
+// PREDEFINED_MODELS, legacy per-project entries) is config.mjs's job.
+// ---------------------------------------------------------------------------
+
+/** Order-normalize an efforts subset to EFFORTS order, deduplicated. */
+const orderEfforts = (list) => EFFORTS.filter((e) => list.includes(e));
+
+/**
+ * Sanitize one raw catalog entry to its EFFECTIVE shape, or null when it is
+ * not salvageable (no id). Unknown efforts and reserved/malformed env pairs
+ * are dropped with a warning naming the entry — a reserved key here means a
+ * hand-edited settings file, since setters reject them.
+ */
+function sanitizeGlobalModel(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  if (!id) return null;
+  const label = (typeof raw.label === 'string' && raw.label.trim()) || id;
+  const efforts = Array.isArray(raw.efforts) ? orderEfforts(raw.efforts) : [];
+  const env = {};
+  const rawEnv = raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env) ? raw.env : {};
+  for (const [k, v] of Object.entries(rawEnv)) {
+    if (isReservedModelEnvKey(k) || typeof v !== 'string' || !v) {
+      console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} (reserved or not a non-empty string)`);
+      continue;
+    }
+    env[k] = v;
+  }
+  return {
+    id,
+    label,
+    efforts: efforts.length ? efforts : [...EFFORTS],
+    ...(Object.keys(env).length ? { env } : {}),
+  };
+}
+
+/**
+ * The sanitized global model catalog: [{id, label, efforts, env?}], effective
+ * shape (label/efforts always present). Missing/corrupt -> []. Malformed and
+ * case-insensitively duplicate entries are dropped loudly (first wins). Never
+ * throws.
+ */
+export function listGlobalModels() {
+  // Under the node:test runner the real ~/.worca-cc/settings.json must not
+  // leak models into tests (mirrors projects.mjs#worcaHome's guard): treat the
+  // catalog as EMPTY unless the test sandboxes HOME/USERPROFILE itself and
+  // says so via WORCA_TEST_ALLOW_HOME_FALLBACK. Reads never throw, so empty —
+  // not an error — is the degradation.
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return [];
+  const raw = readSettings().models;
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    console.warn(`[worca] invalid models ${JSON.stringify(raw)} — treating as empty`);
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    const m = sanitizeGlobalModel(entry);
+    if (!m) {
+      console.warn(`[worca] invalid models entry ${JSON.stringify(entry)} — ignored`);
+      continue;
+    }
+    const key = m.id.toLowerCase();
+    if (seen.has(key)) {
+      console.warn(`[worca] duplicate models id ${JSON.stringify(m.id)} — keeping the first`);
+      continue;
+    }
+    seen.add(key);
+    out.push(m);
+  }
+  return out;
+}
+
+/** @throws {Error} unless `id` is a non-empty string; returns it trimmed. */
+function assertModelId(id) {
+  const v = typeof id === 'string' ? id.trim() : '';
+  if (!v) throw new Error('model id must be a non-empty string');
+  return v;
+}
+
+/** @throws {Error} unless every member is a known effort; returns EFFORTS-ordered subset ([] = default/full). */
+function assertEfforts(input) {
+  if (isClearInput(input) || (Array.isArray(input) && input.length === 0)) return [];
+  if (!Array.isArray(input)) throw new Error(`efforts must be an array drawn from ${EFFORTS.join(' | ')}`);
+  for (const e of input) {
+    if (!EFFORTS.includes(e)) throw new Error(`unknown effort ${JSON.stringify(e)} — must be one of ${EFFORTS.join(' | ')}`);
+  }
+  return orderEfforts(input);
+}
+
+/** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
+ *  the PATCH delete marker (env: {KEY: null}). Returns entries as given. */
+function assertEnvPairs(env, { allowNull = false } = {}) {
+  if (isClearInput(env)) return {};
+  if (typeof env !== 'object' || Array.isArray(env)) throw new Error('env must be an object of string values');
+  for (const [k, v] of Object.entries(env)) {
+    if (isReservedModelEnvKey(k)) throw new Error(`env key ${JSON.stringify(k)} is reserved and cannot be set on a model`);
+    if (allowNull && v === null) continue;
+    if (typeof v !== 'string' || !v) throw new Error(`env value for ${JSON.stringify(k)} must be a non-empty string`);
+  }
+  return { ...env };
+}
+
+/** Catalog WRITES under node:test would hit the user's REAL settings.json —
+ *  throw unless the test sandboxes HOME and opts in (worcaHome-guard mirror). */
+function assertTestSettingsAccess() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) {
+    throw new Error(
+      'global model catalog write under the node:test runner — sandbox HOME/USERPROFILE ' +
+      'and set WORCA_TEST_ALLOW_HOME_FALLBACK=1 (tests must never touch the real ~/.worca-cc)'
+    );
+  }
+}
+
+/** The MINIMAL stored shape for validated parts (see section comment). */
+function storedModelShape(id, label, efforts, env) {
+  return {
+    id,
+    ...(label && label !== id ? { label } : {}),
+    ...(efforts.length && efforts.length !== EFFORTS.length ? { efforts } : {}),
+    ...(Object.keys(env).length ? { env } : {}),
+  };
+}
+
+/** Find the index of the raw `models` entry matching `id` (case-insensitive). */
+function findModelIndex(models, id) {
+  const key = id.toLowerCase();
+  return models.findIndex((e) => e && typeof e === 'object'
+    && typeof e.id === 'string' && e.id.trim().toLowerCase() === key);
+}
+
+/** Read the raw models array for a read-modify-write (non-array -> []). */
+function rawModels(settings) {
+  return Array.isArray(settings.models) ? settings.models : [];
+}
+
+/**
+ * Add a global catalog entry. `label` defaults to the id; `efforts` must be a
+ * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved.
+ * @returns {Promise<{id:string,label:string,efforts:string[],env?:object}>} the effective entry
+ * @throws {Error} on invalid input or a case-insensitively duplicate id
+ */
+export async function addGlobalModel({ id, label, efforts, env } = {}) {
+  assertTestSettingsAccess();
+  const vid = assertModelId(id);
+  if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
+  const vefforts = assertEfforts(efforts);
+  const venv = assertEnvPairs(env);
+  const settings = readSettings();
+  const models = rawModels(settings);
+  if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
+  const vlabel = (typeof label === 'string' && label.trim()) || vid;
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv)];
+  await persistSettings(settings);
+  return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
+}
+
+/**
+ * Patch a global catalog entry. Omitted fields are kept. `label`: ''/null
+ * resets to the id. `efforts`: []/null resets to all. `env`: null clears the
+ * whole map; an object merges per key, where a null value DELETES that key and
+ * a string sets it (write-only PATCH semantics, design §4.10).
+ * @returns {Promise<object>} the effective entry
+ * @throws {Error} on an unknown id or invalid input
+ */
+export async function updateGlobalModel(id, { label, efforts, env } = {}) {
+  assertTestSettingsAccess();
+  const vid = assertModelId(id);
+  const settings = readSettings();
+  const models = rawModels(settings);
+  const idx = findModelIndex(models, vid);
+  if (idx === -1) throw new Error(`unknown model id ${JSON.stringify(vid)}`);
+  const current = sanitizeGlobalModel(models[idx]);
+
+  let nextLabel = current.label;
+  if (label !== undefined) {
+    if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
+    nextLabel = (typeof label === 'string' && label.trim()) || current.id;
+  }
+  const nextEfforts = efforts === undefined
+    ? orderEfforts(current.efforts)
+    : assertEfforts(efforts);
+  let nextEnv = { ...(current.env || {}) };
+  if (env === null) {
+    nextEnv = {};
+  } else if (env !== undefined) {
+    const patch = assertEnvPairs(env, { allowNull: true });
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete nextEnv[k];
+      else nextEnv[k] = v;
+    }
+  }
+
+  settings.models = models.slice();
+  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv);
+  await persistSettings(settings);
+  return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
+}
+
+/**
+ * Remove a global catalog entry. Dangling per-node/per-step refs are the
+ * caller's (config.mjs's) responsibility — design §4.5.
+ * @throws {Error} on an unknown id
+ */
+export async function removeGlobalModel(id) {
+  assertTestSettingsAccess();
+  const vid = assertModelId(id);
+  const settings = readSettings();
+  const models = rawModels(settings);
+  const idx = findModelIndex(models, vid);
+  if (idx === -1) throw new Error(`unknown model id ${JSON.stringify(vid)}`);
+  settings.models = models.slice(0, idx).concat(models.slice(idx + 1));
+  if (!settings.models.length) delete settings.models;
+  await persistSettings(settings);
 }

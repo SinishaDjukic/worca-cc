@@ -120,13 +120,21 @@ test('POST /api/config with an unsupported effort -> 400', async () => {
   assert.equal(r.status, 400);
 });
 
-test('add then delete a custom model over HTTP', async () => {
+test('per-project custom-model ADD endpoint is gone; DELETE still cleans up legacy entries', async () => {
+  // POST /api/config/models was removed (configurable-models-design.md §4.9):
+  // new models are added GLOBALLY via POST /api/models.
   let r = await fetch(`${base}/api/config/models`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectDir: proj, id: 'my-model-x' }),
   });
-  assert.equal(r.status, 200);
-  assert.ok((await r.json()).models.some((m) => m.id === 'my-model-x'));
+  assert.equal(r.status, 404);
+
+  // Legacy entries (seeded via the core API existing projects still carry) can
+  // still be deleted over HTTP.
+  const { addCustomModel } = await import('../src/core/config.mjs');
+  await addCustomModel(proj, { id: 'my-model-x' });
+  r = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
+  assert.ok((await r.json()).models.some((m) => m.id === 'my-model-x' && m.custom === 'project'));
 
   r = await fetch(`${base}/api/config/models?${q({ projectDir: proj, id: 'my-model-x' })}`, { method: 'DELETE' });
   assert.equal(r.status, 200);

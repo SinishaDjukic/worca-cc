@@ -15,6 +15,9 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
+import { EFFORTS, prepareModelEnv } from './model-env.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel } from './settings.mjs';
+import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -36,8 +39,10 @@ export const AGENT_STEPS = agentSteps();
 /** Live key set (recomputed per call so runtime-added user agents validate). */
 const stepKeys = () => new Set(agentSteps().map((s) => s.key));
 
-/** All effort levels the UI can offer (ordering is not a ranking). */
-export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+/** All effort levels the UI can offer (ordering is not a ranking). Canonical
+ *  home is model-env.mjs (so settings.mjs can validate catalog entries without
+ *  importing the core graph); re-exported here for import-compat. */
+export { EFFORTS };
 
 /**
  * Built-in models. `efforts` is the subset of EFFORTS each model supports.
@@ -159,14 +164,177 @@ export async function readConfig(projectDir) {
 }
 
 /**
- * All selectable models = predefined + this project's custom models. Custom models
- * advertise the full effort set (their support is unknown — the user owns the raw id).
+ * Compose the EFFECTIVE catalog (configurable-models-design.md §4.2, §9.2):
+ * predefined ⊕ plugin models ⊕ global settings entries ⊕ legacy per-project
+ * custom models. Precedence on an id collision: global (user) beats plugin
+ * beats predefined; legacy ranks lowest and is dropped. A shadowing entry
+ * keeps the shadowed id's casing so existing step/node refs stay stable.
+ * `custom` is false | 'global' | 'plugin' | 'project' (strings truthy, so
+ * existing `m.custom` checks keep working); plugin entries also carry
+ * `plugin: '<name>'`; `hasEnv` advertises routing env WITHOUT the values
+ * (this shape feeds UI dropdowns).
+ */
+function composeCatalog(projectCustom = []) {
+  const globals = listGlobalModels();
+  const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
+  const plugins = listPluginModels();
+  const pluginByIdLc = new Map(plugins.map((m) => [m.id.toLowerCase(), m]));
+  const flagged = costUnreliableModelIds();
+  const out = [];
+  const seen = new Set();
+  const unreliable = (lc) => (flagged.has(lc) ? { costUnreliable: true } : {});
+  const pluginShape = (id, m, lc) => ({
+    id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
+    hasEnv: !!m.env, ...unreliable(lc),
+  });
+  for (const m of PREDEFINED_MODELS) {
+    const lc = m.id.toLowerCase();
+    const shadow = globalByIdLc.get(lc);
+    const pshadow = pluginByIdLc.get(lc);
+    out.push(shadow
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, ...unreliable(lc) }
+      : pshadow
+        ? pluginShape(m.id, pshadow, lc)
+        : { ...m, custom: false, hasEnv: false });
+    seen.add(lc);
+  }
+  for (const m of globals) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc)) continue; // predefined shadow, already emitted
+    seen.add(lc);
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, ...unreliable(lc) });
+  }
+  for (const m of plugins) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc)) continue; // predefined/global shadow wins
+    seen.add(lc);
+    out.push(pluginShape(m.id, m, lc));
+  }
+  for (const m of projectCustom) {
+    if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
+    seen.add(m.id.toLowerCase());
+    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false });
+  }
+  return out;
+}
+
+// ── cost-reliability observations (design §4.6) ───────────────────────────────
+// DERIVED state in the central DB (model_cost_flags): an env-routed endpoint
+// that reports no cost while consuming tokens gets flagged; a later positive-
+// cost run of the same model auto-clears it. Never assumed from config alone —
+// a proxy that reports real costs is never badged.
+
+/** Whether the model's env-carrying entry (user GLOBAL first, else the winning
+ *  PLUGIN entry — design §9.3) declares an ANTHROPIC_BASE_URL override
+ *  (directly, as a ${VAR} ref, or as a {secret} placeholder — key presence is
+ *  the signal). Only such models are ever observed; the direct Anthropic path
+ *  is never flagged. */
+export function modelHasBaseUrlRouting(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return false;
+  const lc = id.toLowerCase();
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  if (entry) return !!(entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
+  const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
+  return !!(pm && pm.env && 'ANTHROPIC_BASE_URL' in pm.env);
+}
+
+/** Lowercased ids currently flagged cost-unreliable. Never throws ({} on any
+ *  DB trouble) — reads feed catalog composition, which must never fail. */
+export function costUnreliableModelIds() {
+  try {
+    getDb();
+    return new Set(prepare('SELECT model_id FROM model_cost_flags').all()
+      .map((r) => String(r.model_id).toLowerCase()));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Evaluate one terminal result event for cost reliability (design §4.6).
+ * Applies ONLY to models with base-URL routing; the caller must already have
+ * excluded mock runs. `usage` is the raw result event's usage object.
+ * @param {string} modelId
+ * @param {number|null} costUsd  the reported cost (null when absent)
+ * @param {object} [usage]
+ * @returns {'flagged'|'cleared'|null} what changed — 'flagged' asks the caller
+ *   to surface its one-per-run warning; null = no observation recorded
+ */
+export function observeModelCost(modelId, costUsd, usage) {
+  if (!modelHasBaseUrlRouting(modelId)) return null;
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const tokens = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+    .reduce((n, k) => n + (Number(u[k]) || 0), 0);
+  const id = String(modelId).trim();
+  getDb();
+  if (Number.isFinite(costUsd) && costUsd > 0) {
+    // Positive cost = the endpoint reports real spend — auto-clear.
+    const cleared = prepare('DELETE FROM model_cost_flags WHERE model_id = ?').run(id).changes > 0;
+    return cleared ? 'cleared' : null;
+  }
+  if (tokens > 0) {
+    // Tokens consumed, cost absent/zero — the USD budget cannot see this spend.
+    prepare(`
+      INSERT INTO model_cost_flags (model_id, flagged_at) VALUES (?, ?)
+      ON CONFLICT(model_id) DO NOTHING
+    `).run(id, new Date().toISOString());
+    return 'flagged';
+  }
+  return null; // no cost AND no tokens (e.g. an errored run) — no signal either way
+}
+
+/**
+ * All selectable models for a project = the effective catalog (predefined ⊕
+ * global ⊕ this project's legacy custom models). Legacy custom models
+ * advertise the full effort set (their support is unknown — the user owns the
+ * raw id); global entries advertise their configured subset.
  */
 export async function listModels(projectDir) {
+  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global only
   const { customModels } = readRaw(projectDir);
-  const predefined = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
-  const custom = customModels.map((m) => ({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: true }));
-  return [...predefined, ...custom];
+  return composeCatalog(customModels);
+}
+
+/**
+ * The routing env for a model id (design §4.4, §9.3), or undefined when none
+ * is configured. The user's GLOBAL entry wins; otherwise the winning enabled
+ * PLUGIN entry applies, with {secret} placeholders resolved from that plugin's
+ * secrets store (unset secrets dropped with a warning naming plugin and key).
+ * Whole-value ${VAR} refs are expanded from worca's own process env HERE (the
+ * resolution point); reserved or unresolvable keys are dropped with a warning —
+ * write-time validation rejects reserved keys, so a drop means a hand-edited
+ * file (or manifest). Synchronous; never throws.
+ * @param {string} modelId
+ * @returns {Record<string,string>|undefined}
+ */
+export function resolveModelEnv(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return undefined;
+  const lc = id.toLowerCase();
+  let rawEnv;
+  let who;
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  if (entry && entry.env) {
+    rawEnv = entry.env;
+    who = JSON.stringify(entry.id);
+  } else if (!entry) {
+    const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
+    if (pm && pm.env) {
+      const { env, droppedSecrets } = flattenPluginModelEnv(pm);
+      for (const d of droppedSecrets) {
+        console.warn(`[worca] plugin "${pm.plugin}" model ${JSON.stringify(pm.id)}: dropping env ${d} — set it in the plugin's Model secrets`);
+      }
+      rawEnv = env;
+      who = `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`;
+    }
+  }
+  if (!rawEnv) return undefined;
+  const { env, dropped } = prepareModelEnv(rawEnv);
+  for (const k of dropped) {
+    console.warn(`[worca] model ${who}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
+  }
+  return Object.keys(env).length ? env : undefined;
 }
 
 /**
@@ -262,6 +430,9 @@ export async function addCustomModel(projectDir, input = {}) {
   if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === id.toLowerCase())) {
     throw new Error(`"${id}" is already a predefined model`);
   }
+  if (listGlobalModels().some((m) => m.id.toLowerCase() === id.toLowerCase())) {
+    throw new Error(`"${id}" is already a global model`);
+  }
   const key = projectKey(projectDir);
   const cfg = readRaw(projectDir);
   if (cfg.customModels.some((m) => m.id.toLowerCase() === id.toLowerCase())) {
@@ -305,6 +476,29 @@ export async function removeCustomModel(projectDir, id) {
       'DELETE FROM config_workflow_nodes WHERE project_key = ? AND model = ? COLLATE NOCASE'
     ).run(key, target);
   });
+  return updated;
+}
+
+/**
+ * Promote a legacy per-project custom model into the GLOBAL catalog (design
+ * §4.9): create the global entry (skipped when one with that id already
+ * exists) and drop only the project-local entry. Deliberately NOT
+ * addGlobalModel + removeCustomModel — the latter purges node/step refs, and
+ * promotion must be invisible to refs (the id keeps resolving, now globally).
+ * @returns {Promise<{steps:object, customModels:Array}>} the updated legacy view
+ * @throws {Error} when the project has no such custom model
+ */
+export async function promoteCustomModel(projectDir, id) {
+  const target = (typeof id === 'string' ? id : '').trim();
+  const lc = target.toLowerCase();
+  const cfg = readRaw(projectDir);
+  const entry = cfg.customModels.find((m) => m.id.toLowerCase() === lc);
+  if (!entry) throw new Error(`unknown project model "${target}"`);
+  if (!listGlobalModels().some((m) => m.id.toLowerCase() === lc)) {
+    await addGlobalModel({ id: entry.id, label: entry.label });
+  }
+  const updated = { ...cfg, customModels: cfg.customModels.filter((m) => m !== entry) };
+  writeLegacy(projectKey(projectDir), updated);
   return updated;
 }
 
@@ -394,7 +588,10 @@ export async function readRunConfig(projectDir) {
  * workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
  * askQuestions are preserved when the caller omits them (read from the existing
  * row) and set when a boolean. Writes only the config_workflow_nodes table
- * (legacy view + extra untouched).
+ * (legacy view + extra untouched). Model/effort validate against the effective
+ * catalog exactly like setStep (design §4.5 — the two write paths must not
+ * disagree); rows persisted before this hardening are validated only when
+ * next written.
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
@@ -402,6 +599,19 @@ export async function readRunConfig(projectDir) {
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
+  const model = typeof selection.model === 'string' ? selection.model.trim() : '';
+  const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
+  const models = await listModels(projectDir);
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) throw new Error(`unknown model "${model}"`);
+  if (effort) {
+    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!entry) throw new Error('select a model before choosing an effort');
+    if (!entry.efforts.includes(effort)) {
+      throw new Error(`model "${model}" does not support effort "${effort}"`);
+    }
+  }
+
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
@@ -489,4 +699,135 @@ export async function resolveRunConfig(projectDir, workflowId) {
     nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},
     feedbacks: wf.feedbacks && typeof wf.feedbacks === 'object' ? wf.feedbacks : {},
   };
+}
+
+// ── global catalog removal (design §4.5) ──────────────────────────────────────
+// Removing a GLOBAL entry can dangle refs in EVERY project, unlike
+// removeCustomModel's single-project scope. Two carve-outs keep refs that stay
+// resolvable: (1) removing a predefined SHADOW merely reverts to the built-in
+// entry, so nothing dangles; (2) a project whose legacy customModels carries
+// the same id keeps its refs — the id still resolves there (composeCatalog
+// ranks the legacy entry back in once the global one is gone).
+
+/** All project_config rows with parsed steps/customModels (raw, all projects). */
+function allProjectConfigRows() {
+  getDb();
+  return prepare('SELECT project_key, steps, custom_models FROM project_config').all().map((r) => ({
+    projectKey: r.project_key,
+    steps: sanitizeSteps(parseJson(r.steps, {})),
+    customModels: sanitizeCustom(parseJson(r.custom_models, [])),
+  }));
+}
+
+/**
+ * Preview what removing a global catalog entry would clear, for the UI's
+ * confirmation dialog. `predefinedShadow: true` means the removal only reverts
+ * an override and clears nothing. Synchronous; never throws.
+ * @param {string} id
+ * @returns {{predefinedShadow: boolean,
+ *            steps: Array<{projectKey:string, step:string}>,
+ *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>}}
+ */
+export function globalModelRefs(id) {
+  const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
+  if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
+    return { predefinedShadow: true, steps: [], nodes: [] };
+  }
+  return { predefinedShadow: false, ...refsForModelId(lc, allProjectConfigRows()) };
+}
+
+/** Cross-project step/node refs to one lowercased model id, minus projects
+ *  whose legacy customModels carry the same id (those keep resolving). */
+function refsForModelId(lc, rows) {
+  const keep = new Set(rows
+    .filter((r) => r.customModels.some((m) => m.id.toLowerCase() === lc))
+    .map((r) => r.projectKey));
+  const steps = [];
+  for (const r of rows) {
+    if (keep.has(r.projectKey)) continue;
+    for (const [step, v] of Object.entries(r.steps)) {
+      if (v?.model && v.model.toLowerCase() === lc) steps.push({ projectKey: r.projectKey, step });
+    }
+  }
+  const nodes = prepare(
+    'SELECT project_key, workflow_id, node_id FROM config_workflow_nodes WHERE model = ? COLLATE NOCASE'
+  ).all(lc)
+    .filter((r) => !keep.has(r.project_key))
+    .map((r) => ({ projectKey: r.project_key, workflowId: r.workflow_id, nodeId: r.node_id }));
+  return { steps, nodes };
+}
+
+/**
+ * Uninstall guard input (design §9.4, block-with-list): the plugin's model ids
+ * that pipeline configuration still references AND that would stop resolving
+ * once the plugin is gone. Carve-outs — the id keeps resolving, so it does not
+ * block — mirror removeGlobalModelAndRefs: (1) a user GLOBAL entry shadows it;
+ * (2) a PREDEFINED id (removal reverts to the built-in); (3) another enabled
+ * plugin ships the same id; (4) per-project legacy customModels (inside
+ * refsForModelId). Synchronous; never throws.
+ * @param {string} pluginName
+ * @returns {Array<{id:string, steps:Array, nodes:Array}>}
+ */
+export function referencedPluginModels(pluginName) {
+  const all = allPluginModels();
+  const mine = all.filter((m) => m.plugin === pluginName);
+  if (!mine.length) return [];
+  const globalIds = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  const predefinedIds = new Set(PREDEFINED_MODELS.map((m) => m.id.toLowerCase()));
+  const rows = allProjectConfigRows();
+  const out = [];
+  for (const m of mine) {
+    const lc = m.id.toLowerCase();
+    if (globalIds.has(lc) || predefinedIds.has(lc)) continue;
+    if (all.some((o) => o.plugin !== pluginName && o.id.toLowerCase() === lc)) continue;
+    const { steps, nodes } = refsForModelId(lc, rows);
+    if (steps.length || nodes.length) out.push({ id: m.id, steps, nodes });
+  }
+  return out;
+}
+
+/**
+ * Remove a global catalog entry AND every ref it would dangle (per-node rows
+ * and legacy step selections, across all projects, minus the carve-outs
+ * above). Ref purge and settings removal are not one transaction — a purge
+ * that lands without the removal (or vice versa on a crash) is harmless, since
+ * refs can be re-set and purging is idempotent.
+ * @param {string} id
+ * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean}>}
+ * @throws {Error} on an unknown id (from removeGlobalModel)
+ */
+export async function removeGlobalModelAndRefs(id) {
+  const target = (typeof id === 'string' ? id : '').trim();
+  if (!listGlobalModels().some((m) => m.id.toLowerCase() === target.toLowerCase())) {
+    // Guard BEFORE the purge: an unknown id must throw without touching refs
+    // (they may belong to a legacy per-project model with the same string).
+    throw new Error(`unknown model id ${JSON.stringify(target)}`);
+  }
+  const refs = globalModelRefs(id);
+  let clearedSteps = 0;
+  let clearedNodes = 0;
+  if (!refs.predefinedShadow && (refs.steps.length || refs.nodes.length)) {
+    const lc = String(id).trim().toLowerCase();
+    const rows = allProjectConfigRows();
+    const stepKeysByProject = new Map(refs.steps.map((s) => [s.projectKey, true]));
+    tx(() => {
+      for (const r of rows) {
+        if (!stepKeysByProject.has(r.projectKey)) continue;
+        const filtered = {};
+        for (const [k, v] of Object.entries(r.steps)) {
+          if (v?.model && v.model.toLowerCase() === lc) { clearedSteps += 1; continue; }
+          filtered[k] = v;
+        }
+        prepare('UPDATE project_config SET steps = ? WHERE project_key = ?')
+          .run(JSON.stringify(filtered), r.projectKey);
+      }
+      for (const n of refs.nodes) {
+        clearedNodes += prepare(
+          'DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+        ).run(n.projectKey, n.workflowId, n.nodeId).changes;
+      }
+    });
+  }
+  await removeGlobalModel(id); // throws on unknown id — AFTER the idempotent purge
+  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow };
 }

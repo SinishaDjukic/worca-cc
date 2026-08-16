@@ -19,8 +19,8 @@ function contribSummary(c) {
   const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
   const parts = [
     [n(c && c.agents), 'agent'], [n(c && c.taskSources), 'source'],
-    [n(c && c.chatChannels), 'chat channel'], [n(c && c.skills), 'skill'],
-    [n(c && c.workflows), 'workflow'],
+    [n(c && c.chatChannels), 'chat channel'], [n(c && c.models), 'model'],
+    [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
   ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
   return parts.join(' · ') || 'no contributions';
 }
@@ -141,6 +141,22 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     channels.appendChild(h(doc, 'div', 'pl-consent-row pl-channel-warn',
       'Inbound chat can pause/stop/approve runs: anyone holding the bot token or in an allowed chat controls worca-cc.'));
   }
+  // Models (design §9.4): the base URL renders VERBATIM — a model's env can
+  // redirect all API traffic for that model, so the reviewer must see where.
+  if ((inv.models || []).length) {
+    const models = section(`Models (${inv.models.length})`);
+    for (const m of inv.models) {
+      const row = h(doc, 'div', 'pl-consent-row', `${m.label || m.id} `);
+      row.appendChild(h(doc, 'span', 'mono', `(${m.id})`));
+      if (m.baseUrl) row.appendChild(h(doc, 'span', 'pl-secret pl-baseurl', ` routes to: ${m.baseUrl}`));
+      if ((m.envKeys || []).length) row.appendChild(h(doc, 'small', 'hint', ` env: ${m.envKeys.join(', ')}`));
+      models.appendChild(row);
+    }
+    for (const s of inv.modelSecrets || []) {
+      models.appendChild(h(doc, 'div', 'pl-consent-row')).appendChild(
+        h(doc, 'span', 'pl-secret', `requests model secret: ${s.key}${s.label && s.label !== s.key ? ` (${s.label})` : ''}`));
+    }
+  }
   const skills = section(`Skills (${(inv.skills || []).length})`);
   for (const s of inv.skills || []) skills.appendChild(h(doc, 'div', 'pl-consent-row mono', s));
   const wfs = section(`Workflows (${(inv.workflows || []).length})`);
@@ -179,6 +195,12 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
     ...(d.newTaskSources || []).map((s) => ['pl-delta', `new task source: ${s}`]),
     ...(d.newAgents || []).map((a) => ['pl-delta', `new agent: ${a}`]),
     ...(d.setupChanged ? [['pl-delta', 'setup commands changed']] : []),
+    // Model delta (design §9.4): an env change can silently reroute API traffic
+    // — red-flag it like a new secret.
+    ...(d.envChangedModels || []).map((m) => ['pl-delta-secret', `MODEL ENV CHANGED (check its base URL): ${m}`]),
+    ...(d.newModelSecrets || []).map((k) => ['pl-delta-secret', `NEW MODEL SECRET requested: ${k}`]),
+    ...(d.newModels || []).map((m) => ['pl-delta', `new model: ${m}`]),
+    ...(d.removedModels || []).map((m) => ['pl-delta', `removed model: ${m}`]),
   ];
   if (flags.length) {
     const box = h(doc, 'div', 'pl-manifest-delta');
@@ -282,8 +304,16 @@ export function renderReferences409(refs, { doc = globalThis.document } = {}) {
   root.appendChild(h(doc, 'p', 'hint err', 'Cannot uninstall: still referenced by'));
   const ul = h(doc, 'ul', 'pl-refs-list');
   for (const ref of refs || []) {
-    const text = typeof ref === 'string' ? ref
-      : `${ref.type || 'workflow'}: ${ref.name || ref.id || JSON.stringify(ref)}`;
+    let text;
+    if (typeof ref === 'string') {
+      text = ref;
+    } else if (Array.isArray(ref.nodes) || Array.isArray(ref.steps)) {
+      // A model-guard reference (design §9.4): { id, steps, nodes }.
+      const count = (ref.nodes || []).length + (ref.steps || []).length;
+      text = `model: ${ref.id} (${count} pipeline selection${count === 1 ? '' : 's'})`;
+    } else {
+      text = `${ref.type || 'workflow'}: ${ref.name || ref.id || JSON.stringify(ref)}`;
+    }
     ul.appendChild(h(doc, 'li', 'mono', text));
   }
   root.appendChild(ul);

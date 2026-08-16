@@ -39,7 +39,11 @@ import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
   readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
+  globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
+import { modelEnvRef } from '../src/core/model-env.mjs';
+import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -80,7 +84,7 @@ import { createNotifier } from '../src/core/chat/notifier.mjs';
 import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
-import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
+import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 // discoveryInventory below needs these four — server.mjs currently imports NONE
@@ -1987,13 +1991,14 @@ app.post('/api/settings', async (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/config', async (req, res) => {
   const raw = req.query.projectDir;
-  // No project selected yet (e.g. a fresh clone): still return the built-in
-  // models so the picker is never empty. Custom models are per-project, so the
-  // project-less response carries only the predefined Opus/Sonnet/Haiku set.
+  // No project selected yet (e.g. a fresh clone): still return the catalog so
+  // the picker is never empty. The project-less catalog is predefined ⊕ GLOBAL
+  // entries (the global catalog is project-independent by design §4.2); only
+  // legacy per-project custom models need a projectDir.
   if (raw == null || raw === '') {
-    const models = PREDEFINED_MODELS.map((m) => ({ ...m, custom: false }));
     return res.json({
-      config: { steps: {}, customModels: [] }, models, steps: agentSteps(), efforts: EFFORTS,
+      config: { steps: {}, customModels: [] },
+      models: await listModels(''), steps: agentSteps(), efforts: EFFORTS,
     });
   }
   const projectDir = resolveProjectDir(raw);
@@ -2042,11 +2047,10 @@ app.post('/api/config', async (req, res) => {
 // PATCH /api/config -> write run-config: per-node model/effort, per-feedback
 // cycle counts, and the active workflow id. Keyed by workflowId + node/feedback
 // instance ids (see RunConfig in the design). Legacy per-role `steps` are
-// written via POST /api/config and are left untouched here. NOTE: the run-config
-// setters do NOT reject unknown models/efforts, and setFeedbackCycles COERCES
-// maxCycles to >= 1 (it never throws) — so the try/catch below guards I/O, not
-// validation. (Optional hardening: validate model/effort in setNodeModel via
-// listModels + EFFORTS, mirroring setStep at config.mjs:141-153.)
+// written via POST /api/config and are left untouched here. setNodeModel now
+// validates model/effort against the effective catalog exactly like setStep
+// (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
+// maxCycles to >= 1 (it never throws).
 // body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
@@ -2082,19 +2086,10 @@ app.patch('/api/config', async (req, res) => {
   }
 });
 
-app.post('/api/config/models', async (req, res) => {
-  const body = req.body || {};
-  const projectDir = resolveProjectDir(body.projectDir);
-  if (!projectDir) return badRequest(res, 'projectDir is required');
-  try {
-    await addCustomModel(projectDir, { id: body.id, label: body.label });
-    res.json({ models: await listModels(projectDir) });
-  } catch (err) {
-    // addCustomModel throws only on validation (empty/duplicate/shadow) -> 400.
-    return badRequest(res, err && err.message ? err.message : String(err));
-  }
-});
-
+// POST /api/config/models (the per-project ADD) is deliberately GONE: new
+// models are added to the GLOBAL catalog via POST /api/models (design §4.9 —
+// the add flow moves entirely to the global Models view). DELETE stays so
+// legacy per-project entries can still be cleaned up.
 app.delete('/api/config/models', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
@@ -2105,6 +2100,248 @@ app.delete('/api/config/models', async (req, res) => {
     res.json({ config, models: await listModels(projectDir) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Global model catalog (configurable-models-design.md §4.10). Project-less by
+// design — the catalog lives in ~/.worca-cc/settings.json (settings.mjs) and
+// applies to every project. Env VALUES are secrets-adjacent: responses carry
+// them MASKED (write-only editing; a whole-value ${VAR} ref is config, not a
+// secret, and passes through readable), and a PATCH that echoes a masked value
+// back means "keep" and is dropped from the write.
+// ---------------------------------------------------------------------------
+
+const maskEnvValue = (v) =>
+  (modelEnvRef(v) ? v : (v.length > 8 ? `••••••${v.slice(-4)}` : '••••••'));
+const maskedGlobalModel = (m) => (m.env
+  ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
+  : m);
+const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
+const maskedGlobalModels = () => {
+  const flagged = costUnreliableModelIds(); // §4.6 observed flag, merged for the editor's badge
+  return listGlobalModels().map((m) => ({
+    ...maskedGlobalModel(m),
+    ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
+  }));
+};
+
+/** Read-only plugin model entries (design §9.7): literals masked with the
+ *  standard masker, ${VAR} refs readable, {secret} placeholders surfaced as
+ *  display markers with their set-ness. */
+const pluginModelsPayload = () => {
+  const flagged = costUnreliableModelIds();
+  const statusByPlugin = new Map();
+  return listPluginModels().map((m) => {
+    if (!statusByPlugin.has(m.plugin)) statusByPlugin.set(m.plugin, pluginModelSecretStatus(m.plugin));
+    const status = statusByPlugin.get(m.plugin);
+    return {
+      id: m.id, label: m.label, efforts: m.efforts, plugin: m.plugin,
+      env: Object.fromEntries(Object.entries(m.env ?? {}).map(([k, v]) => [
+        k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
+      ])),
+      secrets: status.filter((s) => m.secrets.includes(s.key)),
+      ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
+    };
+  });
+};
+
+app.get('/api/models', (req, res) => {
+  res.json({ models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });
+});
+
+app.post('/api/models', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env });
+    res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
+  } catch (err) {
+    // addGlobalModel throws only on validation (empty/dup id, unknown effort,
+    // reserved env key, non-string env value) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Promote a legacy per-project custom model to the global catalog (§4.9).
+// Refs survive by construction — see promoteCustomModel. Registered before the
+// :id routes only for readability; POST /api/models/promote shares no method
+// with them, so there is no capture conflict.
+app.post('/api/models/promote', async (req, res) => {
+  const b = req.body || {};
+  const projectDir = resolveProjectDir(b.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  try {
+    const config = await promoteCustomModel(projectDir, b.id);
+    res.json({ config, models: maskedGlobalModels() });
+  } catch (err) {
+    // Throws only on validation (unknown project model) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Export selected global models as a plugin scaffold (design §9.5). Body:
+// { name, description?, version?, dest, models: [{ id, env: {KEY: mode} }] }
+// with mode 'include' (stored value verbatim — literal or ${VAR} ref text),
+// 'secret' (strip the value; declare a modelSecrets placeholder the importer
+// fills at install), or 'omit'. Reads RAW env values server-side — same trust
+// boundary as GET /api/models/:id/env-value (the user's own settings.json,
+// deliberate action). Distribution is git-only: the scaffold folder is what
+// gets pushed; no zip.
+app.post('/api/models/export-plugin', async (req, res) => {
+  const b = req.body || {};
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!MANIFEST_PLUGIN_NAME_RE.test(name) || name.length > 64) {
+    return badRequest(res, 'name must be kebab-case (e.g. "discretestack-models")');
+  }
+  const picks = Array.isArray(b.models) ? b.models : [];
+  if (!picks.length) return badRequest(res, 'models must be a non-empty array');
+  const destRaw = typeof b.dest === 'string' ? b.dest.trim() : '';
+  if (!destRaw) return badRequest(res, 'dest is required');
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const dest = path.resolve(destRaw.startsWith('~') ? path.join(home, destRaw.slice(1)) : destRaw);
+  try {
+    if (fs.existsSync(dest)) {
+      if (!fs.statSync(dest).isDirectory()) return badRequest(res, 'dest exists and is not a directory');
+      if (fs.readdirSync(dest).length) return badRequest(res, 'dest folder is not empty');
+    }
+  } catch (err) {
+    return badRequest(res, `dest is not usable: ${err.message}`);
+  }
+
+  const globals = listGlobalModels();
+  const secretKeyFor = (envKey) => envKey.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const models = [];
+  const modelSecrets = new Map(); // secret key -> { key, label }
+  for (const pick of picks) {
+    const id = pick && typeof pick.id === 'string' ? pick.id.trim() : '';
+    const entry = globals.find((m) => m.id.toLowerCase() === id.toLowerCase());
+    if (!entry) return badRequest(res, `unknown global model id ${JSON.stringify(id)}`);
+    const modes = pick.env && typeof pick.env === 'object' && !Array.isArray(pick.env) ? pick.env : {};
+    const env = {};
+    for (const [k, mode] of Object.entries(modes)) {
+      if (!entry.env || !(k in entry.env)) return badRequest(res, `model ${JSON.stringify(entry.id)} has no env key ${JSON.stringify(k)}`);
+      if (mode === 'omit') continue;
+      if (mode === 'include') { env[k] = entry.env[k]; continue; }
+      if (mode === 'secret') {
+        const skey = secretKeyFor(k);
+        if (!skey) return badRequest(res, `cannot derive a secret key from ${JSON.stringify(k)}`);
+        if (!modelSecrets.has(skey)) modelSecrets.set(skey, { key: skey, label: k });
+        env[k] = { secret: skey };
+        continue;
+      }
+      return badRequest(res, `env mode for ${JSON.stringify(k)} must be include | secret | omit`);
+    }
+    models.push({
+      id: entry.id,
+      ...(entry.label !== entry.id ? { label: entry.label } : {}),
+      ...(entry.efforts.length && entry.efforts.length !== EFFORTS.length ? { efforts: entry.efforts } : {}),
+      ...(Object.keys(env).length ? { env } : {}),
+    });
+  }
+
+  const manifest = {
+    name,
+    ...(typeof b.version === 'string' && b.version.trim() ? { version: b.version.trim() } : { version: '0.1.0' }),
+    ...(typeof b.description === 'string' && b.description.trim() ? { description: b.description.trim() } : {}),
+    models,
+    ...(modelSecrets.size ? { modelSecrets: [...modelSecrets.values()] } : {}),
+  };
+  // Belt: the scaffold must install anywhere this host would — validate before writing.
+  const norm = normalizeManifest(manifest);
+  if (!norm.ok) return badRequest(res, `generated manifest is invalid: ${norm.errors.join('; ')}`);
+
+  const readme = [
+    `# ${name}`,
+    '',
+    manifest.description || 'Worca CC model plugin.',
+    '',
+    '## Models',
+    '',
+    ...models.map((m) => `- \`${m.id}\`${m.label ? ` — ${m.label}` : ''}`),
+    ...(modelSecrets.size ? [
+      '',
+      '## Secrets requested at install',
+      '',
+      ...[...modelSecrets.values()].map((s) => `- \`${s.key}\` (${s.label})`),
+      '',
+      'Teammates set these under the plugin\'s **Model secrets** after installing;',
+      'values live in their local `data/secrets.json` (0600) and never in this repo.',
+    ] : []),
+    '',
+    '## Publish',
+    '',
+    '```sh',
+    `cd ${dest}`,
+    'git init -b main && git add -A && git commit -m "model plugin"',
+    'git remote add origin <your-team-repo-url> && git push -u origin main',
+    '```',
+    '',
+    '## Install (teammates)',
+    '',
+    'Worca CC → Plugins → Add repo → paste the repo URL → Install.',
+    'Model secrets are prompted in the plugin\'s configuration panel.',
+    '',
+  ].join('\n');
+
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, 'worca-cc-plugin.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(path.join(dest, 'README.md'), readme, 'utf8');
+  } catch (err) {
+    return res.status(500).json({ error: `could not write the scaffold: ${err.message}` });
+  }
+  res.json({
+    ok: true, dir: dest, files: ['worca-cc-plugin.json', 'README.md'],
+    modelSecrets: [...modelSecrets.values()],
+  });
+});
+
+app.patch('/api/models/:id', async (req, res) => {
+  const b = req.body || {};
+  // Write-only env: strip masked echoes (unchanged values a client sent back)
+  // so they read as "keep", never as a literal '••…' secret. env: null still
+  // means "clear the whole map" and passes through untouched.
+  let env = b.env;
+  if (env && typeof env === 'object' && !Array.isArray(env)) {
+    env = Object.fromEntries(Object.entries(env).filter(([, v]) => !isMaskedEcho(v)));
+  }
+  try {
+    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env });
+    res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
+  } catch (err) {
+    // updateGlobalModel throws only on validation (unknown id, unknown effort,
+    // reserved env key) -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Preview what deleting a global entry would clear (feeds the confirmation
+// dialog; design §4.5). Unknown ids just report empty refs — preview never 400s.
+app.get('/api/models/:id/refs', (req, res) => {
+  res.json(globalModelRefs(req.params.id));
+});
+
+// Reveal raw env value(s) for the editor's copy button and Show-values toggle.
+// The default GET surface stays masked (accidental exposure in screenshots/
+// devtools); this is a deliberate read of what the user already owns on disk
+// in ~/.worca-cc/settings.json — same trust boundary, explicit action.
+// ?key=K -> { key, value }; no key -> { env } (the whole raw map).
+app.get('/api/models/:id/env-value', (req, res) => {
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === String(req.params.id).toLowerCase());
+  if (!entry) return badRequest(res, `unknown model id ${JSON.stringify(req.params.id)}`);
+  const key = typeof req.query.key === 'string' ? req.query.key : '';
+  if (!key) return res.json({ env: { ...(entry.env || {}) } });
+  if (!entry.env || !(key in entry.env)) return badRequest(res, `model has no env key ${JSON.stringify(key)}`);
+  res.json({ key, value: entry.env[key] });
+});
+
+app.delete('/api/models/:id', async (req, res) => {
+  try {
+    const result = await removeGlobalModelAndRefs(req.params.id);
+    res.json({ ...result, models: maskedGlobalModels() });
+  } catch (err) {
+    // Throws only on an unknown id -> client error.
+    return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
 
@@ -2657,7 +2894,14 @@ app.get('/api/plugins/:name/config', (req, res) => {
       schema: c.configSchema,
       values: redactedConfig(name, c.configSchema),
     }));
-    res.json({ sources, channels });
+    // Model secrets (design §9.7): same redaction contract — { set: true|false }
+    // markers only, never values.
+    const msSchema = modelSecretsSchema(name);
+    res.json({
+      sources,
+      channels,
+      ...(msSchema.length ? { models: { schema: msSchema, values: redactedConfig(name, msSchema) } } : {}),
+    });
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -2676,6 +2920,18 @@ app.put('/api/plugins/:name/config', (req, res) => {
   }
   const manifest = readInstalledManifest(name);
   if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  // { target: 'modelSecrets', values } writes the plugin-level model secrets
+  // (design §9.7) — same write-only semantics, routed by the synthesized schema.
+  if (body.target === 'modelSecrets') {
+    const schema = modelSecretsSchema(name);
+    if (!schema.length) return badRequest(res, 'plugin declares no modelSecrets');
+    try {
+      writePluginConfig(name, schema, body.values);
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendPluginError(res, err);
+    }
+  }
   let schema;
   if (typeof body.channelId === 'string' && body.channelId) {
     const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
@@ -2697,6 +2953,26 @@ app.put('/api/plugins/:name/config', (req, res) => {
   } catch (err) {
     sendPluginError(res, err);
   }
+});
+
+// GET /api/plugins/:name/model-env?id=<modelId> — the RAW manifest env of one
+// plugin model, for the Models view "Edit a copy" prefill (design §9.6).
+// Literals and ${VAR} ref text return verbatim (they came from a shared repo,
+// not this user's secrets); {secret} placeholders are NEVER resolved — their
+// env keys are listed in `secretKeys` so the editor renders empty rows.
+app.get('/api/plugins/:name/model-env', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  const model = listPluginModels().find((m) => m.plugin === name && m.id.toLowerCase() === id.toLowerCase());
+  if (!model) return badRequest(res, `plugin "${name}" provides no model ${JSON.stringify(id)}`);
+  const env = {};
+  const secretKeys = [];
+  for (const [k, v] of Object.entries(model.env ?? {})) {
+    if (typeof v === 'string') env[k] = v;
+    else secretKeys.push(k);
+  }
+  res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
 });
 
 // ---------------------------------------------------------------------------

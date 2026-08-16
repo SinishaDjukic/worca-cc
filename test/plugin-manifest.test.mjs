@@ -40,6 +40,7 @@ test('minimal { name } manifest normalizes with full defaults', () => {
   assert.deepEqual(r.manifest, {
     name: 'my-plugin', version: null, description: '', author: '', homepage: '', license: '',
     engines: { worcaApi: null }, setup: { node: false, python: null }, taskSources: [], chatChannels: [],
+    models: [], modelSecrets: [],
   });
 });
 
@@ -361,4 +362,68 @@ test('validatePluginDir: chatChannels module must exist on disk', () => {
     'channel/worker.mjs': 'export function createChannelWorker() {}',
   }));
   assert.equal(ok.ok, true, JSON.stringify(ok.problems));
+});
+
+// ── models + modelSecrets (design §9.1) ──────────────────────────────────────
+
+const MODEL = (over = {}) => ({
+  id: 'discretestack-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+  env: { ANTHROPIC_BASE_URL: 'https://api.ds.example', ANTHROPIC_AUTH_TOKEN: { secret: 'ds-token' } },
+  ...over,
+});
+const SECRETS = [{ key: 'ds-token', label: 'DS API token' }];
+
+test('models: normalization — defaults, canonical effort order, secret refs kept', () => {
+  const r = normalizeManifest({
+    name: 'p', modelSecrets: SECRETS,
+    models: [MODEL({ efforts: ['high', 'medium', 'high'] }), { id: 'bare' }],
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.manifest.modelSecrets, [{ key: 'ds-token', label: 'DS API token' }]);
+  const [m, bare] = r.manifest.models;
+  assert.deepEqual(m.efforts, ['medium', 'high'], 'EFFORTS order, deduped');
+  assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://api.ds.example');
+  assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'ds-token' });
+  assert.equal(bare.label, 'bare');
+  assert.deepEqual(bare.efforts, ['medium', 'high', 'xhigh', 'max'], 'absent efforts -> full set');
+  assert.equal(bare.env, undefined, 'no env key when empty');
+});
+
+test('models: rejections — reserved env key, dup id, unknown effort, dangling secret, bad value', () => {
+  const fail = (models, modelSecrets, re) => {
+    const r = normalizeManifest({ name: 'p', models, ...(modelSecrets ? { modelSecrets } : {}) });
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join('\n'), re);
+  };
+  fail([MODEL({ env: { WORCA_MOCK: '1' } })], SECRETS, /env key "WORCA_MOCK" is reserved/);
+  fail([MODEL({ env: { PATH: '/evil' } })], SECRETS, /env key "PATH" is reserved/);
+  fail([MODEL({}), MODEL({ label: 'Twin', id: 'Discretestack-Stable' })], SECRETS, /duplicate models id/);
+  fail([MODEL({ efforts: ['low'] })], SECRETS, /unknown effort "low"/);
+  fail([MODEL()], undefined, /undeclared modelSecrets key "ds-token"/);
+  fail([MODEL({ env: { X: '' } })], SECRETS, /must be a non-empty string or \{"secret"/);
+  fail([MODEL({ env: { X: { secret: 'a', extra: 1 } } })], SECRETS, /must be a non-empty string or \{"secret"/);
+  fail([{ label: 'no id' }], undefined, /"id" is required/);
+  fail('nope', undefined, /"models" must be an array/);
+});
+
+test('modelSecrets: rejections — bad key, duplicate key, non-array', () => {
+  const bad = normalizeManifest({ name: 'p', modelSecrets: [{ key: 'has space' }] });
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors.join('\n'), /"key" must be an identifier/);
+  const dup = normalizeManifest({ name: 'p', modelSecrets: [{ key: 'k' }, { key: 'k' }] });
+  assert.equal(dup.ok, false);
+  assert.match(dup.errors.join('\n'), /duplicate modelSecrets key "k"/);
+  const notArr = normalizeManifest({ name: 'p', modelSecrets: {} });
+  assert.equal(notArr.ok, false);
+  assert.match(notArr.errors.join('\n'), /"modelSecrets" must be an array/);
+});
+
+test('models: unknown fields warn (strict promotes via validatePluginDir)', () => {
+  const r = normalizeManifest({
+    name: 'p', modelSecrets: [{ key: 'k', magic: 1 }],
+    models: [{ id: 'm', pricing: {} }],
+  });
+  assert.equal(r.ok, true);
+  assert.match(r.warnings.join('\n'), /models\[0\]: unknown field "pricing" ignored/);
+  assert.match(r.warnings.join('\n'), /modelSecrets\[0\]: unknown field "magic" ignored/);
 });

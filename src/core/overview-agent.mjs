@@ -6,6 +6,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
+import { resolveModelEnv } from './config.mjs';
 import { safeParseJson } from './protocol.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras,
@@ -100,6 +101,7 @@ export async function generateOverview(key, id, { model, signal, force = false, 
     prompt,
     allowedTools: [],                 // pure reasoning over the prompt; no tools needed
     model,
+    modelEnv: resolveModelEnv(model), // catalog routing env travels with the id (design §4.8)
     signal,
     onEvent: (e) => { if (e.costUsd != null) costUsd = e.costUsd; },
   });
