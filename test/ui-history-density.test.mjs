@@ -143,7 +143,11 @@ test('expanding a row draws the rail from the row itself — no detail fetch nee
   assert.deepEqual(cells.map((x) => x.querySelector('.rlabel').textContent),
     ['Preflight', 'Plan', 'Implement']);
   assert.ok(cells.every((x) => x.classList.contains('is-done')), 'a done run is done throughout');
-  assert.match(c.querySelector('.hist-detail .run-stats').textContent, /3\/3/);
+  // "stage 3/3" is headline data — it moved from the expanded stats row to the
+  // always-visible meta line, after date · duration · cost.
+  assert.match(c.querySelector('.hist-head .hist-stage').textContent, /^stage 3\/3$/);
+  assert.doesNotMatch(c.querySelector('.hist-detail .run-stats').textContent, /3\/3/,
+    'the stats row must not repeat what the headline says');
   assert.match(c.querySelector('.hist-detail .run-stats').textContent, /cycle 2/);
 });
 

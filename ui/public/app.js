@@ -8669,9 +8669,12 @@ function paintHistRail(node, p) {
   paintRunRail(node.querySelector('.run-rail'), manifest, view);
   const cycles = Number(p.cycle) || 0;
   const { at, total } = railProgress(railRows(manifest, view));
+  // How far the run got is HEADLINE data — it belongs on the always-visible
+  // meta line next to date/duration/cost, not behind the expander.
+  const stageEl = node.querySelector('.hist-stage');
+  if (stageEl) stageEl.textContent = total ? `stage ${at}/${total}` : '';
   paintRunStats(node.querySelector('.run-stats'), [
-    ['stage ', total ? `${at}/${total}` : null],
-    [' cycle ', cycles > 1 ? cycles : null],
+    ['cycle ', cycles > 1 ? cycles : null],
   ]);
   const ctaText = node.querySelector('.hist-cta-text');
   if (ctaText) {
@@ -9349,7 +9352,9 @@ function fmtDate(v) {
   if (!v) return '';
   const d = typeof v === 'number' ? new Date(v) : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
-  return d.toLocaleString();
+  // Localized date, then HH:MM — no seconds (noise in a list) and no
+  // toLocaleString comma (reads oddly beside the meta line's interpuncts).
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -724,14 +724,20 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    two-tone line reads as random emphasis. The mono face alone marks the numbers. */
 .run-meta .run-cost{font-family:var(--mono);font-weight:500;color:var(--ink-3);}
 .run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
-.h-meta .hist-total{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
-.h-meta .hist-total:empty{display:none;}
+/* One tone, dot-separated (mirrors the Running card's meta line): the values
+   share the date's grey, the mono face alone marks the numbers, and each
+   non-empty value announces itself with an interpunct — a plain space was
+   ambiguous against the internal space of "5m 23s". */
+.h-meta .hist-time,.h-meta .hist-total,.h-meta .hist-stage{
+  font-family:var(--mono);font-size:12px;font-weight:500;color:var(--ink-3);}
+.h-meta .hist-time:not(:empty)::before,.h-meta .hist-total:not(:empty)::before,
+.h-meta .hist-stage:not(:empty)::before{content:'·';margin:0 8px;}
+.h-meta .hist-time:empty,.h-meta .hist-total:empty,.h-meta .hist-stage:empty{display:none;}
 
 /* ---------- per-pipeline duration (twin of cost) ---------- */
 .run-meta .run-time{font-family:var(--mono);font-weight:500;color:var(--ink-3);}
 .run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
-.h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
-.h-meta .hist-time:empty{display:none;}
+/* (.h-meta .hist-time styling lives in the grouped one-tone rule above.) */
 
 /* Branch name under the date/cost (left column). */
 .h-meta .hist-branch{display:block;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-top:4px;}
