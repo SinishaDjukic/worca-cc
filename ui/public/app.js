@@ -1201,6 +1201,18 @@ function nodeStepIndex(stepper, nodeId) {
   return null;
 }
 
+// The log SOURCE a manifest node's lines carry: its agent key ('planner',
+// 'implementer', …). '' when the manifest does not name one — then the click
+// clears the source axis rather than guessing.
+function nodeLogSource(stepper, nodeId) {
+  for (const cell of manifestFor(stepper).steps) {
+    for (const n of cell.nodes || []) {
+      if (n && n.id === nodeId) return n.key || '';
+    }
+  }
+  return '';
+}
+
 // Highest cycle among the log lines attributed to stepIndex; null when none.
 function latestCycleIn(lines, stepIndex) {
   let max = null;
@@ -1215,9 +1227,10 @@ function latestCycleIn(lines, stepIndex) {
 // History host: drive the saved-log panel's own filter bar. The bar builds
 // lazily (loadLiveLogs fetches on first tab open), so a click that races the
 // fetch parks the wish on the panel and loadLiveLogs applies it after paint.
-function focusPanelLog(panel, stepIndex) {
+function focusPanelLog(panel, stepIndex, source) {
   if (!panel._logRecs || !panel.querySelector('.log-f-step')) {
     panel.dataset.focusStep = String(stepIndex);
+    panel.dataset.focusSource = source || '';
     return;
   }
   const cycle = latestCycleIn(panel._logRecs, stepIndex);
@@ -1227,6 +1240,7 @@ function focusPanelLog(panel, stepIndex) {
   const selStep = panel.querySelector('.log-f-step');
   set(selStep, stepIndex);
   set(panel.querySelector('.log-f-cycle'), cycle == null ? '' : cycle);
+  set(panel.querySelector('.log-f-source'), source || '');
   selStep.dispatchEvent(new Event('change'));
 }
 
@@ -1242,7 +1256,12 @@ document.addEventListener('click', (e) => {
     const stepIndex = nodeStepIndex(r.stepper, nodeId);
     if (stepIndex == null) return;
     const cycle = latestCycleIn(r.logLines, stepIndex);
-    r.logFilter = { ...r.logFilter, step: String(stepIndex), cycle: cycle == null ? '' : String(cycle) };
+    r.logFilter = {
+      ...r.logFilter,
+      source: nodeLogSource(r.stepper, nodeId),
+      step: String(stepIndex),
+      cycle: cycle == null ? '' : String(cycle),
+    };
     const tabs = runCard.querySelector('.run-tabs');
     if (tabs && !tabs.hidden) selectTab(runCard, tabs, 'log');
     if (!paintLogFilters(r)) repaintFilteredLog(r);
@@ -1260,7 +1279,7 @@ document.addEventListener('click', (e) => {
     const tabs = detail.querySelector('.run-tabs');
     if (tabs && !tabs.hidden) selectTab(detail, tabs, 'log'); // opens the bar → lazy load
     else openTabPanel(logsBar);
-    focusPanelLog(logsBar.querySelector('.logs-panel'), stepIndex);
+    focusPanelLog(logsBar.querySelector('.logs-panel'), stepIndex, nodeLogSource(row && row.stepper, nodeId));
   }
 });
 
@@ -9224,8 +9243,10 @@ async function loadLiveLogs(panel, logUrl) {
     panel._logRecs = recs;
     if (panel.dataset.focusStep !== undefined) {
       const want = Number(panel.dataset.focusStep);
+      const wantSource = panel.dataset.focusSource || '';
       delete panel.dataset.focusStep;
-      focusPanelLog(panel, want);
+      delete panel.dataset.focusSource;
+      focusPanelLog(panel, want, wantSource);
     }
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;

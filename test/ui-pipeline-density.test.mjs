@@ -601,8 +601,8 @@ test('clicking an agents node focuses the log on that step and its latest cycle'
   const kinds = {
     steps: [
       { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-      { kind: 'agents', nodes: [{ id: 'clarify', label: 'Clarify', uiPhase: 'clarify' }] },
-      { kind: 'agents', nodes: [{ id: 'planner', label: 'Plan', uiPhase: 'plan' }] },
+      { kind: 'agents', nodes: [{ id: 'clarify', key: 'clarify', label: 'Clarify', uiPhase: 'clarify' }] },
+      { kind: 'agents', nodes: [{ id: 'planner', key: 'planner', label: 'Plan', uiPhase: 'plan' }] },
     ],
     feedbacks: [],
   };
@@ -625,6 +625,7 @@ test('clicking an agents node focuses the log on that step and its latest cycle'
     'the Log tab takes over');
   assert.equal(c.querySelector('.log-f-step').value, '1', 'step filter = the node\'s step');
   assert.equal(c.querySelector('.log-f-cycle').value, '2', 'cycle filter = its LATEST cycle');
+  assert.equal(c.querySelector('.log-f-source').value, 'planner', 'source filter = the stage\'s agent');
   // Bookend nodes are not stages — clicking preflight must not change anything.
   c.querySelector('.run-flow .run-node[data-id="preflight"]')
     .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
