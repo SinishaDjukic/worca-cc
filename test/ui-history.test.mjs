@@ -119,7 +119,8 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
   assert.equal(cards.length, 2, 'two history cards rendered');
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> emitted');
 
-  const badges = [...doc.querySelectorAll('#history .badge')];
+  // Status badges only: each card also carries a hidden .hist-retained-badge.
+  const badges = [...doc.querySelectorAll('#history .badge:not(.hist-retained-badge)')];
   assert.equal(badges[0].textContent, 'DONE');
   assert.ok(badges[0].classList.contains('green'), 'done badge is green');
   assert.equal(badges[1].textContent, 'STOPPED');

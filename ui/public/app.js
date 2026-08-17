@@ -7976,7 +7976,8 @@ function readHistoryCache() {
 
 function writeHistoryCache(pipelines, ghAvailable) {
   try {
-    const slim = pipelines.slice(0, HISTORY_CACHE_MAX).map(({ pr, ...rest }) => rest); // never persist live PR
+    const slim = pipelines.slice(0, HISTORY_CACHE_MAX)
+      .map(({ pr, retainedWork, ...rest }) => rest); // never persist live PR or retention facts
     localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(
       { v: HISTORY_CACHE_VER, ts: Date.now(), ghAvailable: !!ghAvailable, pipelines: slim }));
   } catch { /* quota / serialization: skip cache, never throw */ }
@@ -8439,6 +8440,136 @@ function isDeletableEntry(p) {
   return !['running', 'starting', 'created', 'pausing'].includes(s);
 }
 
+function runActionQuery(projectDir, p) {
+  const qs = new URLSearchParams();
+  if (p.target === 'workspace' && typeof p.projectKey === 'string') {
+    qs.set('workspaceId', p.projectKey.replace(/^workspaces\//, ''));
+  } else if (p.projectKey) {
+    qs.set('projectKey', p.projectKey);
+  } else {
+    qs.set('projectDir', p.projectDir || projectDir);
+  }
+  return qs;
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value == null ? '' : value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+// Paint both the collapsed warning badge and the expanded manual-recovery
+// instructions. Every value is assigned through textContent: git stderr and
+// repository paths are data, never markup.
+function renderRetainedWork(node, p) {
+  const retained = p && p.retainedWork;
+  const members = Array.isArray(retained?.members) ? retained.members : [];
+  const badge = node.querySelector('.hist-retained-badge');
+  if (badge) badge.hidden = !members.length;
+  const banner = node.querySelector('.retained-banner');
+  if (!banner || !members.length) {
+    if (banner) banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML = '';
+  const title = document.createElement('h4');
+  title.textContent = 'Commit failed — uncommitted work retained';
+  const intro = document.createElement('p');
+  intro.textContent = 'The pipeline result is unchanged, but this work is not safely stored on the branch yet. Commit it manually, or save a recovery patch and discard the worktree below.';
+  const list = document.createElement('ul');
+  for (const member of members) {
+    const li = document.createElement('li');
+    const label = document.createElement('strong');
+    label.textContent = member.projectKey || member.branch || 'Project';
+    li.appendChild(label);
+    const detail = document.createElement('span');
+    detail.textContent = ` — git ${member.step || 'commit'}: ${member.message || 'failed'}`;
+    li.appendChild(detail);
+    const path = document.createElement('div');
+    path.textContent = `Worktree: ${member.worktreeDir || '(unknown)'}`;
+    li.appendChild(path);
+    if (member.branch) {
+      const branch = document.createElement('div');
+      branch.textContent = `Branch: ${member.branch} (the uncommitted work is not on it yet)`;
+      li.appendChild(branch);
+    }
+    const command = document.createElement('code');
+    command.textContent = `git -C ${shellSingleQuote(member.worktreeDir)} status\ngit -C ${shellSingleQuote(member.worktreeDir)} add -A\ngit -C ${shellSingleQuote(member.worktreeDir)} commit`;
+    li.appendChild(command);
+    list.appendChild(li);
+  }
+  const archiveNote = document.createElement('p');
+  archiveNote.textContent = 'Archive is disabled until the retained worktree has been recovered or discarded.';
+  const clearNote = document.createElement('p');
+  clearNote.textContent = 'After committing manually, use "Discard worktree" to remove the now-redundant checkout and clear this warning (a patch of anything still uncommitted is saved first). Your changes are already staged in that checkout, so git status will list them under "Changes to be committed".';
+  banner.append(title, intro, list, archiveNote, clearNote);
+}
+
+function addRecoveryPatchLink(node, projectDir, p, artifacts) {
+  const banner = node.querySelector('.retained-banner');
+  if (!banner || banner.hidden || !Array.isArray(artifacts)) return;
+  const retained = artifacts.some((a) => a && a.kind === 'retained-work-patch');
+  const diff = artifacts.some((a) => a && a.kind === 'diff-patch');
+  if (!retained && !diff) return;
+  if (banner.querySelector('.retained-patch-link')) return;
+  const line = document.createElement('p');
+  line.className = 'retained-patch-link';
+  line.appendChild(document.createTextNode('Alternate recovery: '));
+  const link = document.createElement('a');
+  link.href = `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`;
+  link.download = retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch`;
+  link.textContent = retained
+    ? 'download the recovery patch (snapshot taken when the work was retained)'
+    : 'download the pipeline diff patch';
+  link.addEventListener('click', (e) => e.stopPropagation());
+  line.appendChild(link);
+  banner.appendChild(line);
+}
+
+function setupDiscardWorktreeButton(node, projectDir, p) {
+  const btn = node.querySelector('.hist-discard');
+  if (!btn) return;
+  const retained = p && p.retainedWork;
+  const members = Array.isArray(retained?.members) ? retained.members : [];
+  btn.hidden = !members.length;
+  if (!members.length) return;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const msg = 'Discard the retained worktree?\n\nAny work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed. If you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.\n\nContinue?';
+    if (!window.confirm(msg)) return;
+    btn.disabled = true;
+    const previous = btn.textContent;
+    btn.textContent = 'Saving patch…';
+    try {
+      const qs = runActionQuery(projectDir, p);
+      const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      if (data.remaining > 0) {
+        // Partial failure: the checkout is still on disk, so the retained state
+        // is still true — repaint nothing away, tell the user what happened.
+        btn.disabled = false;
+        btn.textContent = previous;
+        showViewer('Discard incomplete',
+          'The retained worktree could not be fully removed:\n\n' +
+          `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
+          'The retained-work warning stays until the checkout is gone.');
+        return;
+      }
+      p.retainedWork = null;
+      writeHistoryCache(state.historyAll, state.ghAvailable);
+      paintHistory();
+      const paths = Array.isArray(data.patches) ? data.patches : [];
+      showViewer('Retained worktree discarded', paths.length
+        ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
+        : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = previous;
+      btn.title = `Could not discard retained worktree: ${err.message}`;
+    }
+  });
+}
+
 // Wire the Archive button in the expanded card. Shown only for finished entries.
 // Confirms via window.confirm (the app's destructive-action convention), then
 // DELETEs the pipeline — which archives it — and drops the card from the list.
@@ -8447,6 +8578,11 @@ function setupDeleteButton(node, projectDir, p) {
   if (!btn) return;
   if (!isDeletableEntry(p)) { btn.hidden = true; return; }
   btn.hidden = false;
+  if (p.retainedWork) {
+    btn.disabled = true;
+    btn.title = 'Recover or discard the retained uncommitted work before archiving.';
+    return;
+  }
   btn.addEventListener('click', async (e) => {
     e.stopPropagation(); // never toggle the card
     const label = p.title || p.id || 'this entry';
@@ -8458,16 +8594,7 @@ function setupDeleteButton(node, projectDir, p) {
     const prev = btn.textContent;
     btn.textContent = 'Archiving…';
     try {
-      const qs = new URLSearchParams();
-      // A workspace run routes by bare workspaceId; ?projectKey would carry the
-      // slashed "workspaces/<wkey>" segment that DELETE /api/runs/:id rejects.
-      if (p.target === 'workspace' && typeof p.projectKey === 'string') {
-        qs.set('workspaceId', p.projectKey.replace(/^workspaces\//, ''));
-      } else if (p.projectKey) {
-        qs.set('projectKey', p.projectKey);
-      } else {
-        qs.set('projectDir', p.projectDir || projectDir);
-      }
+      const qs = runActionQuery(projectDir, p);
       const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}?${qs.toString()}`, { method: 'DELETE' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
@@ -8708,7 +8835,9 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
 
   // Right-side cluster (before the chevron): lines changed + Create-PR button.
   renderHistDiff(node.querySelector('.hist-diff'), p);
+  renderRetainedWork(node, p);
   setupPrButton(node, projectDir, p, ghAvailable);
+  setupDiscardWorktreeButton(node, projectDir, p);
   setupDeleteButton(node, projectDir, p);
   setupResumeButton(node, projectDir, p);
 
@@ -8946,6 +9075,7 @@ async function loadHistDetail(projectDir, id, detail, record) {
     }, data.results);
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
+    addRecoveryPatchLink(detail, projectDir, record || { id }, data.artifacts);
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');

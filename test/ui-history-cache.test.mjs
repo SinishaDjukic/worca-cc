@@ -133,3 +133,19 @@ test('writeHistoryCache strips the live `pr` field before persisting', async () 
   assert.ok(parsed.pipelines.every((row) => !('pr' in row)), 'no persisted row carries a live pr');
   await ctx.settle();
 });
+
+test('writeHistoryCache strips the live retainedWork field before persisting', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.endsWith('/api/history')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [
+          { id: 'r1', projectKey: 'k1', title: 'R', status: 'done', startedAt: '2026-01-01T00:00:00Z',
+            retainedWork: { reason: 'commit_failed', members: [{ worktreeDir: '/tmp/x' }] } },
+        ], ghAvailable: false }) })
+      : null),
+  });
+  ctx.showHistory();
+  await ctx.settle();
+  const parsed = JSON.parse(ctx.window.localStorage.getItem(CACHE_KEY));
+  assert.ok(parsed.pipelines.every((row) => !('retainedWork' in row)),
+    'retainedWork is a live existsSync-derived fact; caching it paints stale banners');
+});

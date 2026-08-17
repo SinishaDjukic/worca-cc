@@ -404,6 +404,7 @@
             <section class="card hist-card">
               <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
                 <span class="badge"></span>
+                <span class="badge hist-retained-badge" hidden>Work retained</span>
                 <div class="h-meta">
                   <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
                   <span class="hist-branch mono"></span>
@@ -418,6 +419,7 @@
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="hist-detail" hidden>
+                <div class="retained-banner" role="alert" hidden></div>
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
                 <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
                 <div class="results-section"></div>
@@ -470,6 +472,7 @@
                   <div class="subs-panel logs-panel" hidden></div>
                 </div>
                 <div class="hist-actions">
+                  <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   <button type="button" class="hist-delete btn-danger" hidden>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

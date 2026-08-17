@@ -148,3 +148,26 @@ test('Overview dropdown: pre-generated overview paints on first open', async () 
   assert.equal(ov.querySelector('.results-overview-btn').textContent, 'Regenerate overview');
   assert.match(ov.querySelector('.overview-panel').textContent, /Refactored the widget\./);
 });
+
+test('retained banner links the recovery patch honestly (retained-work name + label)', async () => {
+  const retainedRow = {
+    id: 'p-1', projectKey: 'proj-00000001', title: 'Run', status: 'error', startedAt: '2026-06-20T00:00:00Z',
+    retainedWork: { reason: 'commit_failed', members: [{ worktreeDir: '/tmp/x', step: 'commit', message: 'hook' }] },
+  };
+  const { detail } = await openCard((url) => {
+    if (url.includes('/api/history/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({
+      state: { phase: 'error', status: 'error', cycle: 1, subAgents: [], steps: [], stepper: null },
+      auditMarkdown: '', clarify: { questions: [], answers: [] }, reviews: [],
+      results: null, overview: null,
+      artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }],
+    }) });
+    if (url.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({
+      pipelines: [retainedRow],
+    }) });
+    return null;
+  });
+  const link = detail.querySelector('.retained-patch-link a');
+  assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
+  assert.equal(link.download, 'retained-work-p-1.patch', 'download name matches what the route prefers');
+  assert.match(link.textContent, /recovery patch \(snapshot taken when the work was retained\)/);
+});

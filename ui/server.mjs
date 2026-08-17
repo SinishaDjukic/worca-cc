@@ -21,8 +21,10 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
-  readRunLogText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
+  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
+  listArtifacts,
 } from '../src/core/artifacts.mjs';
+import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -59,7 +61,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
 import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
-import { archivePipeline } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -628,6 +630,7 @@ function badRequest(res, message) {
 // pattern of /api/projects + /api/workflows). Anything else is a 500 caller bug.
 function workspaceErrorStatus(code) {
   if (code === 'DUPLICATE_NAME' || code === 'DUPLICATE_SET') return 409;
+  if (code === 'RETAINED_WORKTREE') return 409;   // retained uncommitted work blocks deletion
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
   return 500;
@@ -1359,6 +1362,60 @@ app.get('/api/runs/:id', async (req, res) => {
   }
 });
 
+// Shared query-scope resolver for the retained-work routes (recovery-patch GET +
+// discard POST). Returns null after writing the error response itself. The older
+// DELETE /api/runs/:id route keeps its inline copy DELIBERATELY (it shadows the
+// imported projectKey(), derives no store key, and maps RETAINED_WORKTREE).
+function resolveRunScope(req, res) {
+  const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
+  const projectKey_ = typeof req.query.projectKey === 'string' ? req.query.projectKey.trim() : '';
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (workspaceId && !WORKSPACE_KEY_RE.test(workspaceId)) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  if (projectKey_ && !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(projectKey_)) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  if (!workspaceId && !projectKey_ && !projectDir) {
+    badRequest(res, 'workspaceId, projectKey or projectDir is required');
+    return null;
+  }
+  const key = workspaceId ? `workspaces/${workspaceId}` : (projectKey_ || projectKey(projectDir));
+  return { workspaceId, projectKey: projectKey_, projectDir, key };
+}
+
+// Download the durable done-path diff as an alternate recovery route for a
+// retained worktree. The filename is fixed; callers cannot supply a path.
+app.get('/api/runs/:id/recovery-patch', async (req, res) => {
+  const id = req.params.id;
+  const scope = resolveRunScope(req, res);
+  if (!scope) return;
+  const key = scope.key; // the body's readRunArtifactText(key, …) calls stay unchanged
+  try {
+    // Prefer a retained-work snapshot (any member's, incl. workspace-suffixed
+    // names) over the done-path diff. Resolved through the artifacts INDEX, which
+    // only gains a row on a SUCCESSFUL snapshot — a truncated or missing file can
+    // never shadow the diff-patch fallback.
+    const arts = await listArtifacts(id).catch(() => []);
+    const retainedRel = arts.find((a) => a && a.kind === 'retained-work-patch')?.relPath || null;
+    let filename = null;
+    let patch = retainedRel == null ? null : await readRunArtifactText(key, id, retainedRel);
+    if (patch != null && patch.length) {
+      filename = `retained-work-${String(id).replace(/[^a-zA-Z0-9._-]/g, '-')}.patch`;
+    } else {
+      patch = await readRunArtifactText(key, id, DIFF_PATCH_FILE);
+      filename = `diff-patch-${String(id).replace(/[^a-zA-Z0-9._-]/g, '-')}.patch`;
+    }
+    if (patch == null) return res.status(404).json({ error: 'recovery patch not found' });
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.type('text/x-diff').send(patch);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
 // Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
@@ -1525,6 +1582,36 @@ app.delete('/api/runs/:id', async (req, res) => {
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'RETAINED_WORKTREE') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
+    res.status(500).json({ error: e && e.message ? e.message : String(e) });
+  }
+});
+
+// Reclaim only worktrees retained after a teardown commit failure. Unlike
+// Archive, this keeps the pipeline in History and saves recovery patches first.
+app.post('/api/runs/:id/discard-worktree', async (req, res) => {
+  const id = req.params.id;
+  const scope = resolveRunScope(req, res);
+  if (!scope) return;
+  const liveActive = [...runs.values()].some((r) =>
+    (r.pipelineId === id || r.id === id) &&
+    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  if (liveActive) return res.status(409).json({ error: 'cannot discard a running pipeline worktree' });
+
+  try {
+    const report = await discardRetainedWorktrees({
+      workspaceKey: scope.workspaceId || null,
+      key: scope.workspaceId ? null : (scope.projectKey || null),
+      projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
+      id,
+    });
+    if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, ...report });
+  } catch (e) {
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -3407,7 +3494,7 @@ export async function bootMaintenance({ log } = {}) {
       console.log(`[worca-ui] run-root sweep: kept ${r.keep.length}, removed ${r.removed.length}, quarantined ${r.quarantined.length}`);
     }
     if (r.failed.length) {
-      console.error(`[worca-ui] run-root sweep: ${r.failed.length} run root(s) SKIPPED — pipelines-row lookup failed; nothing was removed`);
+      console.error(`[worca-ui] run-root sweep: ${r.failed.length} run root(s) SKIPPED — run-root lookup failed; nothing was removed`);
       for (const w of r.warnings) console.error(`[worca-ui]   ${w}`);
     }
   } catch (err) {

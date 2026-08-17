@@ -11,7 +11,7 @@
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { realpathSync, existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
@@ -1364,6 +1364,40 @@ function totalsFor(row) {
 }
 
 /**
+ * Return the still-live worktrees retained after a teardown commit failure.
+ * The DB stores single-project metadata in `branch` and workspace metadata in
+ * `workspace_meta.branches`; callers may also pass reconstructed state objects.
+ * A missing checkout self-clears the derived warning without mutating history.
+ */
+export function retainedWorkFor(row) {
+  if (!row || typeof row !== 'object') return null;
+  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
+  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
+  const workspaceBranches = wm?.branches || row.branches;
+  const isWorkspace = row.target === 'workspace' && workspaceBranches && typeof workspaceBranches === 'object';
+  const candidates = isWorkspace
+    ? Object.entries(workspaceBranches)
+    : [[row.project_key ?? row.projectKey ?? null, branch]];
+  const members = [];
+  for (const [projectKey_, br] of candidates) {
+    const failure = br?.commitFailed;
+    const worktreeDir = br?.worktreeDir;
+    if (!failure || !worktreeDir || !existsSync(worktreeDir)) continue;
+    members.push({
+      projectKey: projectKey_ || null,
+      worktreeDir,
+      branch: br?.feature || br?.branch || null,
+      code: failure.code || null,
+      step: failure.step || null,
+      message: failure.message || '',
+      at: failure.at || null,
+    });
+  }
+  if (!members.length) return null;
+  return { reason: members[0].code || 'unknown', members };
+}
+
+/**
  * Build a history row from a pipelines DB row. Mirrors the legacy pipelineEntry
  * wire shape EXACTLY: { id, dir, title, status, startedAt, branch, sourceBranch,
  * survived, added, removed, totalCostUsd, totalActiveMs, mtime[, pr] }. Git/PR work
@@ -1374,6 +1408,7 @@ function totalsFor(row) {
  *  - `row.dir` is attached by the caller (the real on-disk run dir).
  *  - `guardrailsId` (additive, v14+): the run's selected guardrail set id
  *    ('permissive' = unguarded) or null for legacy rows.
+ *  - `retainedWork` is non-null only while a commit-failed worktree still exists.
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr? }
@@ -1404,6 +1439,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
     pauseReason: row.pause_reason ?? null,
+    retainedWork: retainedWorkFor(row),
     survived,
     added,
     removed,
@@ -1456,7 +1492,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+    SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
+           branch, workspace_meta, guardrails_id,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
@@ -1730,6 +1767,8 @@ export function lookupPipelineRow(key, id) {
  *                         state.branch scalar x the store_meta path). Used only when
  *                         `run.json` is missing. THROWS when the lookup fails.
  *   pipelineDirOf(id)  -> the durable artifact dir, for rescue-before-remove.
+ *   retainOf(id)       -> a derived retained-work record, or null once no recorded
+ *                         checkout is still present. THROWS when the lookup fails.
  *
  * THREE STATES, NEVER TWO. A DB *failure* must never masquerade as "no pipelines
  * row", because the row-less disposition is RECLAIM: if an unopenable sqlite file
@@ -1740,7 +1779,7 @@ export function lookupPipelineRow(key, id) {
  * keep-set exists to prevent, reintroduced on the error path. So these callbacks
  * deliberately DO NOT catch: the throw reaches sweepRunRoots, which skips that run
  * root untouched and logs loudly.
- * @returns {{statusOf:Function, membersOf:Function, pipelineDirOf:Function}}
+ * @returns {{statusOf:Function, membersOf:Function, pipelineDirOf:Function,retainOf:Function}}
  */
 export function runRootSweepLookups() {
   // No try/catch by design (see above): only a successful query that matched nothing
@@ -1757,6 +1796,10 @@ export function runRootSweepLookups() {
     .prepare('SELECT * FROM pipelines WHERE id = ? AND archived_at IS NULL').get(id) || null;
   return {
     statusOf: (id) => rowById(id)?.status ?? null,
+    retainOf: (id) => {
+      const row = rowById(id);
+      return row ? retainedWorkFor(row) : null;
+    },
     membersOf: async (id) => {
       const row = rowById(id);
       if (!row) return null;
@@ -1915,7 +1958,26 @@ export async function runDirForRow(row) {
     : projectStorePath(row.project_key);
   const pipelinesDir = join(storeRoot, 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
-  return dirById.get(row.id) || join(pipelinesDir, row.id);
+  const indexed = dirById.get(row.id);
+  if (indexed) return indexed;
+  // Production ids are 8-hex and always covered by runDirIndex; this fallback
+  // serves older/manual rows via the SAME matcher archive uses (findRunDir),
+  // adopting its case-insensitive suffix-first precedence deliberately (F11).
+  const hit = await findRunDir(pipelinesDir, row.id);
+  if (hit) return hit;
+  return join(pipelinesDir, row.id);
+}
+
+/** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>).
+ *  Case-insensitive suffix pass first, exact-basename pass second — the archive
+ *  resolver's historical behavior. */
+export async function findRunDir(pipelinesDir, id) {
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
+  const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const e of entries) if (e.isDirectory() && new RegExp(`-${esc}$`, 'i').test(e.name)) return join(pipelinesDir, e.name);
+  for (const e of entries) if (e.isDirectory() && e.name === id) return join(pipelinesDir, e.name);
+  return null;
 }
 
 /** Read a pipeline-local artifact file as text, or null if absent. */
@@ -1942,20 +2004,7 @@ export async function readRunArtifactJson(key, id, relPath) {
  * @param {object} [opts]
  */
 export async function listWorkspacePipelines(workspaceKey, primaryDir = null, opts = {}) {
-  const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
-  const dirById = await runDirIndex(pipelinesDir);
-  const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
-    FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
-  `).all(workspaceKey);
-  const out = [];
-  for (const row of rows) {
-    row.dir = dirById.get(row.id) || join(pipelinesDir, row.id);
-    out.push(await rowToHistoryEntry(row, primaryDir, opts));
-  }
-  out.sort((a, b) => b.mtime - a.mtime);
-  return out;
+  return listPipelines(primaryDir, opts, workspaceKey);
 }
 
 /**

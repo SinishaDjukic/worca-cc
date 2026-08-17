@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 
 import { worcaHome, normalizeProjectPath } from './projects.mjs';
 import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
-import { slugify } from './artifacts.mjs';
+import { slugify, retainedWorkFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
 
 /** Object-shaped error carrying a machine code (mirrors pipeline-delete.mjs). */
@@ -317,6 +317,21 @@ export async function deleteWorkspace(id) {
   // Membership-first: only act on an id actually present.
   if (!prepare('SELECT 1 FROM workspaces WHERE id = ?').get(id)) {
     throw err(`workspace not found: ${id}`, 'NOT_FOUND');
+  }
+
+  // Never orphan retained uncommitted work: deleting the store removes the
+  // pipeline dir the discard flow needs for its recovery patch, wedging the run.
+  const memberRows = prepare(
+    'SELECT * FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL',
+  ).all(id);
+  for (const memberRow of memberRows) {
+    if (retainedWorkFor(memberRow)) {
+      throw err(
+        `workspace has retained uncommitted work (pipeline ${memberRow.id}); recover or discard it first — ` +
+        'and copy any retained-work*.patch out of the workspace store before deleting, deletion removes it',
+        'RETAINED_WORKTREE',
+      );
+    }
   }
 
   const warnings = [];

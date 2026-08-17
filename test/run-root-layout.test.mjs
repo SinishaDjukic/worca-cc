@@ -27,7 +27,7 @@ import {
   createWorktree, sweepRunRoots, sweepLegacyWorktrees, sweepLegacyWorktreesAll,
   listLocalBranches,
 } from '../src/core/worktree.mjs';
-import { writeRunManifest, readRunManifest, rmGuarded } from '../src/core/run-manifest.mjs';
+import { writeRunManifest, readRunManifest, updateRunManifest, rmGuarded } from '../src/core/run-manifest.mjs';
 import { RESULTS_FILE, DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { runRootSweepLookups, legacySweepLookups } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -452,6 +452,55 @@ test('sweep: KEEP running/pausing/paused/interrupted; REMOVE done/stopped/error;
   // Every feature branch survives every disposition — only checkouts are disposable.
   const branches = branchList(repo);
   for (const [, e] of byId) assert.ok(branches.includes(e.branch), `branch ${e.branch} KEPT`);
+});
+
+test('sweep: terminal run with a live manifest retention record is kept', async () => {
+  const home = await tmp('worca-cc-rr-retain-');
+  const repo = await freshRepo();
+  const e = await seedRunRoot(home, 'retain01', repo);
+  await updateRunManifest(e.runRoot, {
+    retain: { reason: 'commit_failed', members: [{ worktreeDir: e.worktreeDir }] },
+  });
+  const res = await sweepRunRoots({ worcaHome: home, statusOf: () => 'done', log: () => {} });
+  assert.deepEqual(res.keep, [e.runRoot]);
+  assert.ok(existsSync(e.worktreeDir));
+});
+
+test('sweep: stale manifest retention self-clears after the worktree is removed by hand', async () => {
+  const home = await tmp('worca-cc-rr-retain-stale-');
+  const repo = await freshRepo();
+  const e = await seedRunRoot(home, 'retain02', repo);
+  await updateRunManifest(e.runRoot, {
+    retain: { reason: 'commit_failed', members: [{ worktreeDir: e.worktreeDir }] },
+  });
+  await rm(e.worktreeDir, { recursive: true, force: true });
+  const res = await sweepRunRoots({ worcaHome: home, statusOf: () => 'done', log: () => {} });
+  assert.deepEqual(res.removed, [e.runRoot]);
+  assert.ok(!existsSync(e.runRoot));
+});
+
+test('sweep: retainOf keeps a terminal root when the manifest has no retain block', async () => {
+  const home = await tmp('worca-cc-rr-retain-db-');
+  const repo = await freshRepo();
+  const e = await seedRunRoot(home, 'retain03', repo);
+  const retained = { reason: 'commit_failed', members: [{ worktreeDir: e.worktreeDir }] };
+  const res = await sweepRunRoots({
+    worcaHome: home, statusOf: () => 'done', retainOf: () => retained, log: () => {},
+  });
+  assert.deepEqual(res.keep, [e.runRoot]);
+});
+
+test('sweep: a throwing retainOf skips the root untouched (three-state doctrine)', async () => {
+  const home = await tmp('worca-cc-rr-retain-throw-');
+  const repo = await freshRepo();
+  const e = await seedRunRoot(home, 'retain04', repo);
+  const res = await sweepRunRoots({
+    worcaHome: home, statusOf: () => 'done',
+    retainOf: () => { throw new Error('db exploded'); }, log: () => {},
+  });
+  assert.ok(!res.removed.includes(e.runRoot), 'retention-unknown must never mean remove');
+  assert.ok(existsSync(e.runRoot), 'run root untouched');
+  assert.ok(res.failed.includes(e.runRoot), 'reported as SKIPPED, not silently ignored');
 });
 
 test('sweep: `interrupted` explicitly survives — the crash-recovery guard', async () => {
