@@ -3897,7 +3897,7 @@ function onQuestion(r, msg) {
 // Head-and-shoulders person glyph: every needs-your-input surface uses it — a
 // human is being asked, not a machine. Built fresh each call (a node can only
 // live in one place in the DOM).
-function questionIcon(size = 17) {
+function questionIcon(size = 26) {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('width', String(size));
@@ -7860,6 +7860,19 @@ if (runListEl) {
     copyLogToClipboard(btn, r.logLines.filter((rec) => logLineVisible(rec, r.logFilter)));
   });
 
+  // Clear every log filter at once (dropdowns + search) and show the full log.
+  runListEl.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.log-clear');
+    if (!btn) return;
+    const card = btn.closest('.run-card');
+    const r = card && runs.get(card.dataset.runId);
+    if (!r) return;
+    clearTimeout(r._logSearchTimer); // a mid-flight search debounce must not repaint again
+    resetLogFilterBar(btn.closest('.log-filters'));
+    r.logFilter = { source: '', level: '', step: '', cycle: '', search: '' };
+    repaintFilteredLog(r);
+  });
+
   // Density affordances: the mini card's peek toggle, its two ways into the
   // detail view, and the detail view's tab bar.
   runListEl.addEventListener('click', (e) => {
@@ -7901,6 +7914,15 @@ document.addEventListener('click', (e) => {
   const scope = bar && bar.parentElement;
   if (scope) selectTab(scope, bar, tab.dataset.tabKey);
 });
+
+// Reset a filter bar's controls to "all" + empty search. DOM only — the caller
+// owns mirroring the cleared state into its filter model and repainting.
+function resetLogFilterBar(barEl) {
+  if (!barEl) return;
+  for (const sel of barEl.querySelectorAll('select.log-f')) sel.value = '';
+  const search = barEl.querySelector('.log-search');
+  if (search) search.value = '';
+}
 
 // Read a run card's whole log filter out of the DOM. One reader for the
 // dropdowns and the search box, so neither can clobber the other's value.
@@ -9192,6 +9214,21 @@ async function loadLiveLogs(panel, logUrl) {
       if (n === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
     };
     const facets = logFacets(recs);
+
+    // Clear-all pill, leftmost — mirrors the live card's .log-clear.
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'log-f log-clear';
+    clearBtn.textContent = '×';
+    clearBtn.title = 'Clear all log filters';
+    clearBtn.setAttribute('aria-label', 'Clear all log filters');
+    clearBtn.addEventListener('click', () => {
+      resetLogFilterBar(bar);
+      filter.source = ''; filter.level = ''; filter.step = ''; filter.cycle = ''; filter.search = '';
+      paint();
+    });
+    bar.appendChild(clearBtn);
+
     for (const [cls, allLabel, values, labelOf] of [
       ['log-f-source', 'all sources', facets.sources, null],
       ['log-f-level', 'all levels', facets.levels, null],
@@ -10639,7 +10676,7 @@ function renderPipelineTabs() {
     if (r.pendingQuestion != null) {
       const q = document.createElement('span');
       q.className = 'child-q';
-      q.appendChild(questionIcon(14));
+      q.appendChild(questionIcon(21));
       q.title = 'Waiting for your input';
       row.appendChild(q);
     } else if (isPaused(r)) {
