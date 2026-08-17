@@ -15,6 +15,9 @@ import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+// jsdom applies no layout, so a rule whose whole job is to size a box has to be
+// asserted as stylesheet text.
+const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
 
 const PROJECT = '/tmp/proj';
 
@@ -197,15 +200,16 @@ test('expanding a card toggles aria-expanded, unhides detail, tints stepper from
   assert.equal(detail.hidden, true, 'detail re-hidden');
 });
 
-test('clicking the title opens the viewer modal (distinct from expand)', async () => {
-  let detailFetches = 0;
+// The title is a link to the pipeline, not a toggle and not a modal. It used to
+// open a dialog dumping the raw audit markdown — a dead end, since the detail view
+// carries that markdown plus the log, the agents, the diff and the findings.
+test('clicking the title opens the pipeline, and does not expand the card', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/history')) {
         return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
       }
       if (url.includes('/api/runs/p-done')) {
-        detailFetches++;
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { phase: 'done', status: 'done' }, auditMarkdown: '# saved audit' }) });
       }
       return null;
@@ -218,14 +222,26 @@ test('clicking the title opens the viewer modal (distinct from expand)', async (
   const card = doc.querySelector('#history .hist-card');
   const head = card.querySelector('.hist-head');
 
-  // Click the title -> viewer opens; the head must NOT expand.
   card.querySelector('.h-meta b').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
 
   assert.equal(head.getAttribute('aria-expanded'), 'false', 'title click did not expand the card');
-  const viewer = doc.querySelector('#viewer-card');
-  assert.equal(viewer.classList.contains('hidden'), false, 'viewer modal opened');
-  assert.match(doc.querySelector('#viewer').textContent, /saved audit/, 'viewer shows the saved markdown');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/p-done',
+    'it navigates to the pipeline, the same destination as "Open pipeline"');
+  assert.equal(doc.querySelector('#viewer-card'), null, 'the saved-markdown modal is gone');
+});
+
+// The title must be the only click target on that line: it is block-level so the
+// date/cost wraps below it, which used to make its box span the whole row — so a
+// pointer resting to the RIGHT of the title underlined it and navigated, where the
+// reader meant "expand".
+test('the title box hugs its text, so the rest of the row still expands', () => {
+  const m = css.match(/\.hist-head \.h-meta b\{([^}]*)\}/g);
+  assert.ok(m && m.length, '.hist-head .h-meta b rule missing');
+  const all = m.join(' ');
+  assert.match(all, /width:\s*fit-content/,
+    'without fit-content the block spans the row and steals the expand affordance');
+  assert.match(all, /cursor:\s*pointer/);
 });
 
 test('keyboard: Enter on the head toggles expand', async () => {

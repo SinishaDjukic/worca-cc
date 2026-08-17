@@ -613,7 +613,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-head .hash{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);}
 .hist-head .chev{color:var(--ink-3);transition:transform .2s;flex:0 0 auto;}
 .hist-head[aria-expanded="true"] .chev{transform:rotate(180deg);}
-.hist-head .h-meta b{cursor:pointer;}
+/* The title is a link into the pipeline; the rest of the head is the expand
+   toggle. It has to stay BLOCK-level so the date/cost line breaks below it, but
+   `width:fit-content` shrinks the box to the text — otherwise the block spans the
+   whole row and the underline (and the navigation) answers to a pointer sitting
+   in the empty space to the right of the title, where a reader means "expand". */
+.hist-head .h-meta b{width:fit-content;max-width:100%;cursor:pointer;}
 .hist-head .h-meta b:hover{text-decoration:underline;}
 .hist-detail{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
 .hist-detail[hidden]{display:none;}

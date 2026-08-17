@@ -127,7 +127,12 @@ test('expanding a workspace row fetches GET /api/workspaces/<wksId>/runs/<id> (n
   assert.equal(card.querySelector('.detail-error'), null, 'detail rendered from the workspace route');
 });
 
-test('opening a workspace row (title click) fetches the workspace route for the markdown viewer', async () => {
+// The title used to open a markdown modal, whose fetch is what this case checked.
+// The modal is gone — the title now links to the pipeline — so what is left to
+// verify is that a WORKSPACE-scoped row links by the same bare pipeline id, and
+// fetches nothing at all. (The workspace-aware detail URL rule this used to cover
+// is asserted by the expand case above, which still fetches it.)
+test('the title of a workspace row links to the pipeline and fetches nothing', async () => {
   const viewReqs = [];
   const { window, show } = await boot({
     fetchHandler: (u) => {
@@ -141,8 +146,9 @@ test('opening a workspace row (title click) fetches the workspace route for the 
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('#history .hist-card .h-meta b').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(viewReqs.length, 1);
-  assert.match(viewReqs[0], /\/api\/workspaces\/wks-iot-9f3a1c20\/runs\/w2$/);
+  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/w2',
+    'the canonical pipeline url, by the bare id — workspace scoping is not part of the identity');
+  assert.equal(viewReqs.length, 0, 'no detail fetch: navigating is not opening a dialog');
 });
 
 test('deleting a workspace row sends DELETE /api/runs/<id>?workspaceId=<wksId> (not ?projectKey=...)', async () => {

@@ -1074,16 +1074,9 @@
       </main>
     </div>
 
-    <!-- ===== Saved-markdown viewer (modal) ===== -->
-    <div id="viewer-card" class="viewer-modal hidden">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="viewer-title">Saved pipeline</h2>
-          <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
-        </div>
-        <pre id="viewer" class="viewer"></pre>
-      </div>
-    </div>
+    <!-- (The saved-markdown modal lived here. The history title now links to the
+         pipeline's detail view instead; .viewer-modal / .viewer are still used by
+         the other modals and by the workspace/agent markdown panes.) -->
 
     <!-- ===== Folder browser (fallback when no native dialog) ===== -->
     <div id="folder-browser" class="viewer-modal folder-modal hidden">

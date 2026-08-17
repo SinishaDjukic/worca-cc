@@ -176,10 +176,6 @@ const el = {
   wizClose: $('#wiz-close'),
   wizTitle: $('#wiz-title'),
 
-  viewerCard: $('#viewer-card'),
-  viewerTitle: $('#viewer-title'),
-  viewer: $('#viewer'),
-  viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
@@ -5343,11 +5339,10 @@ if (el.wizName) el.wizName.addEventListener('input', () => { state.wizard.name =
 
 // A11y: Escape in the wizard view triggers #wiz-close (which navigates away;
 // the showView leave-guard aborts any live scan). Scoped to the wizard view so
-// it never collides with the viewer-modal Escape handler.
+// it never collides with another modal's Escape handler.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (currentView() !== 'workspace-create') return;
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return; // modal owns Escape
   if (el.folderBrowser && !el.folderBrowser.classList.contains('hidden')) return; // modal owns Escape
   if (el.wizClose) el.wizClose.click();
 });
@@ -6308,7 +6303,6 @@ function beginRun(runId, projectDir, title, opts = {}) {
     workspaceName: opts.workspaceName || undefined,
     projectNames: Array.isArray(opts.projectNames) && opts.projectNames.length ? opts.projectNames : undefined,
   });
-  hideViewer();
   updateNavCounts();
   showView('running');
   renderRunningView();
@@ -8449,7 +8443,6 @@ async function histCostOverride(projectDir, id, record, btn) {
     );
     await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(id, p));
     if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
-    hideViewer();
     updateNavCounts();
     location.hash = `pipeline/${data.runId}`;  // canonical; upgraded to the pipelineId by onState
     renderRunningView();
@@ -8502,7 +8495,6 @@ function setupResumeButton(node, projectDir, p) {
         if (feat) { nr.branchFeature = feat; paintRunCard(nr); }
       }
       if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
-      hideViewer();
       updateNavCounts();
       location.hash = `pipeline/${data.runId}`;  // canonical; upgraded to the pipelineId by onState
       renderRunningView();
@@ -8580,7 +8572,11 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const title = p.title || id || '(untitled)';
   if (titleEl) {
     titleEl.textContent = title; // project shown by the pill / section header
-    titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewPipeline(projectDir, id, p.title, p); });
+    // The title is a link to the pipeline — the same destination as "Open
+    // pipeline". It used to open a modal dumping the raw audit markdown, which
+    // was a dead end: everything in it (and much more) is in the detail view.
+    // stopPropagation because the head itself is the expand toggle.
+    titleEl.addEventListener('click', (e) => { e.stopPropagation(); location.hash = `pipeline/${id}`; });
   }
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
@@ -9323,41 +9319,10 @@ function renderHistoryError(message) {
   el.history.appendChild(histEmpty(`Could not load history: ${message}`));
 }
 
-async function viewPipeline(projectDir, id, title, record) {
-  if (!id) return;
-  try {
-    const url = historyDetailUrl(projectDir, id, record);
-    const res = await fetch(url);
-    const data = await safeJson(res);
-    if (!res.ok) {
-      showViewer(title || id, `Could not load pipeline: ${data.error || res.status}`);
-      return;
-    }
-    const md = data.auditMarkdown || '(no saved markdown)';
-    showViewer(title || id, md);
-  } catch (e) {
-    showViewer(title || id, `Error: ${e.message}`);
-  }
-}
-
-function showViewer(title, text) {
-  el.viewerTitle.textContent = title ? `Saved: ${title}` : 'Saved pipeline';
-  el.viewer.textContent = text;
-  el.viewerCard.classList.remove('hidden');
-  el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-function hideViewer() {
-  el.viewerCard.classList.add('hidden');
-}
-el.viewerClose.addEventListener('click', hideViewer);
-// Close the modal on backdrop click (overlay itself, not its inner card)...
-el.viewerCard.addEventListener('click', (e) => {
-  if (e.target === el.viewerCard) hideViewer();
-});
-// ...and on Escape, when it's open.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.viewerCard.classList.contains('hidden')) hideViewer();
-});
+// (Removed: viewPipeline + the saved-markdown modal it opened. The history title
+// now links to the pipeline's detail view, which carries the audit markdown as one
+// tab among the log, the agents, the diff and the findings — so a modal that could
+// show only the raw markdown, with no way onward, had nothing left to offer.)
 
 // ---------------------------------------------------------------------------
 // helpers
