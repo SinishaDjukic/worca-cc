@@ -111,43 +111,37 @@ test('buildNodeConfigRows on the Default 4-step topology yields the original fou
 import { readFileSync as _rf } from 'node:fs';
 const indexHtml = _rf(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 
-test('index.html exposes the workflow select + dynamic node/feedback containers', () => {
+test('index.html exposes the workflow select + the agents accordion containers', () => {
   assert.ok(indexHtml.includes('id="workflowSelect"'), 'missing #workflowSelect');
-  assert.ok(indexHtml.includes('id="wf-default-stages"'), 'missing #wf-default-stages wrapper');
-  assert.ok(indexHtml.includes('id="wf-node-config"'), 'missing #wf-node-config container');
+  assert.ok(indexHtml.includes('id="agents-rows"'), 'missing #agents-rows container');
+  assert.ok(indexHtml.includes('id="agentsSummary"'), 'missing the accordion header summary');
+  assert.ok(indexHtml.includes('id="agentsReset"'), 'missing the reset action');
+  assert.ok(indexHtml.includes('id="agentsPromote"'), 'missing the save-as-defaults action');
   assert.ok(indexHtml.includes('id="wf-feedback-config"'), 'missing #wf-feedback-config container');
-  // the original four hardcoded stage rows must remain (Default backward-compat)
-  for (const role of ['planner', 'refiner', 'implementer', 'reviewer']) {
-    assert.ok(indexHtml.includes(`data-role="${role}"`), `lost default stage row for ${role}`);
-  }
+  // The five hardcoded stage cards are GONE: the Default workflow renders through
+  // the same dynamic accordion as any saved one (newpipeline-ux-design.md §4.7).
+  assert.ok(!indexHtml.includes('id="wf-default-stages"'), 'static default stages must be removed');
+  assert.ok(!indexHtml.includes('data-role="planner"'), 'static per-role markup must be removed');
 });
 
-test('index.html includes a Clarify default-stage card as the first stage with full-parity controls', () => {
-  // Clarify must exist as a default-stage row with the same model + effort + fan-out controls.
-  assert.ok(indexHtml.includes('data-role="clarify"'), 'missing Clarify default stage row');
-  assert.ok(indexHtml.includes('<b>Clarify</b>'), 'missing Clarify title');
-  assert.ok(indexHtml.includes('<div class="acc red"></div>'), 'missing Clarify accent bar');
-  assert.ok(
-    indexHtml.includes('class="step-model select" data-role="clarify"'),
-    'Clarify card missing model select',
-  );
-  assert.ok(
-    indexHtml.includes('class="step-effort select" data-role="clarify"'),
-    'Clarify card missing effort select',
-  );
-  assert.ok(
-    indexHtml.includes('class="step-fanout" data-role="clarify"'),
-    'Clarify card missing fan-out checkbox',
-  );
-  assert.ok(
-    indexHtml.includes('class="step-current" data-role="clarify"'),
-    'Clarify card missing summary line',
-  );
-  // Clarify is the FIRST stage: it must appear before the Plan (planner) card.
-  assert.ok(
-    indexHtml.indexOf('data-role="clarify"') < indexHtml.indexOf('data-role="planner"'),
-    'Clarify card must come before the Plan card',
-  );
+test('the Default workflow renders Clarify first, with full-parity controls', async () => {
+  const { window } = await boot();
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  // Clarify is the FIRST row, and its controls carry the legacy role key.
+  const names = [...doc.querySelectorAll('#agents-rows .agent-name')].map((n) => n.textContent);
+  assert.equal(names[0], 'Clarify');
+  assert.ok(names.indexOf('Clarify') < names.indexOf('Plan'), 'Clarify must come before Plan');
+  const row = doc.querySelector('.agent-row[data-node-id="s_clarify"]');
+  assert.ok(row, 'missing Clarify row');
+  assert.equal(row.querySelector('.acc').className, 'acc red');
+  assert.ok(row.querySelector('.step-model[data-role="clarify"]'), 'missing model select');
+  assert.ok(row.querySelector('.step-effort[data-role="clarify"]'), 'missing effort select');
+  assert.ok(row.querySelector('.step-fanout[data-role="clarify"]'), 'missing fan-out checkbox');
+  // The collapsed head IS the row's summary line — there is no second caption
+  // duplicating it 8px lower inside the body.
+  assert.ok(row.querySelector('.agent-sum'), 'missing summary line');
+  assert.equal(row.querySelector('.step-current'), null, 'no duplicate in-body caption');
 });
 
 test('the Clarify default-stage card defaults Fan-out ON and is populated from /api/config steps', async () => {
@@ -290,28 +284,48 @@ test('the workflow select is populated with Default + saved names from GET /api/
   assert.deepEqual(opts, ['Default', 'Demo']);
 });
 
-test('selecting a saved workflow renders one node row per node (keyed by node id) + one cycle input per feedback', async () => {
+test('selecting a saved workflow renders one accordion row per node (keyed by node id) + one cycle input per feedback', async () => {
   const { window } = await boot({ fetchHandler: workflowFetch() });
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
   pickWorkflow(window, 'wf_x');
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
-  // default stages hidden, dynamic containers shown
-  assert.ok(doc.querySelector('#wf-default-stages').classList.contains('hidden'));
-  assert.ok(!doc.querySelector('#wf-node-config').classList.contains('hidden'));
-  // one model select per node, keyed by data-node-id
-  const ids = [...doc.querySelectorAll('#wf-node-config .step-model')].map((s) => s.dataset.nodeId);
+  // one collapsed row per node, in dispatch order, keyed by data-node-id
+  const ids = [...doc.querySelectorAll('#agents-rows .agent-row')].map((r) => r.dataset.nodeId);
   assert.deepEqual(ids, ['s0_0', 's1_0', 's2_0']);
+  // every row starts collapsed — that is the whole point of the redesign
+  assert.ok([...doc.querySelectorAll('#agents-rows .agent-row-body')].every((b) => b.hidden), 'rows must start collapsed');
+  assert.ok([...doc.querySelectorAll('#agents-rows .agent-row-head')].every((h) => h.getAttribute('aria-expanded') === 'false'));
+  // the controls still exist inside each row, with the same class + data contract
+  const ctlIds = [...doc.querySelectorAll('#agents-rows .step-model')].map((s) => s.dataset.nodeId);
+  assert.deepEqual(ctlIds, ['s0_0', 's1_0', 's2_0']);
   // model dropdown is populated (default + 2 models + add)
-  assert.equal(doc.querySelector('#wf-node-config .step-model[data-node-id="s1_0"]').options.length, 4);
+  assert.equal(doc.querySelector('#agents-rows .step-model[data-node-id="s1_0"]').options.length, 4);
   // one cycle input per feedback, keyed by data-fb-id, default 3
   const cyc = doc.querySelector('#wf-feedback-config input[data-fb-id="fb_0"]');
   assert.ok(cyc, 'missing cycle input for fb_0');
   assert.equal(cyc.value, '3');
 });
 
-test('selecting Default again restores the original four stage rows and hides the dynamic containers', async () => {
+test('clicking a row head expands it (aria-expanded + body), clicking again collapses', async () => {
+  const { window } = await boot({ fetchHandler: workflowFetch() });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_x');
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  const head = doc.querySelector('.agent-row-head[data-node-id="s1_0"]');
+  const body = doc.querySelector('#agent-body-s1_0');
+  head.dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(body.hidden, false);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(body.hidden, true);
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+});
+
+test('selecting Default again renders the five built-in stages through the SAME accordion', async () => {
   const { window } = await boot({ fetchHandler: workflowFetch() });
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
@@ -320,14 +334,14 @@ test('selecting Default again restores the original four stage rows and hides th
   pickWorkflow(window, 'wf_default');
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
-  assert.ok(!doc.querySelector('#wf-default-stages').classList.contains('hidden'), 'default stages shown');
-  assert.ok(doc.querySelector('#wf-node-config').classList.contains('hidden'), 'node config hidden');
-  assert.ok(doc.querySelector('#wf-feedback-config').classList.contains('hidden'), 'feedback config hidden');
-  // the original four role rows still render their model dropdowns
+  // The Default workflow is no longer static markup — it is rows like any other,
+  // but its controls still carry the legacy per-ROLE key that saveStep writes.
+  const names = [...doc.querySelectorAll('#agents-rows .agent-name')].map((n) => n.textContent);
+  assert.deepEqual(names, ['Clarify', 'Plan', 'Refine', 'Implement', 'Review']);
   assert.equal(doc.querySelector('.step-model[data-role="planner"]').options.length, 4);
 });
 
-test('saved run-config preselects a node\'s model+effort when the workflow is opened', async () => {
+test('saved run-config preselects a node\'s model+effort and marks the row modified', async () => {
   const extra = { workflows: { wf_x: { nodes: { s1_0: { model: 'claude-opus-4-8', effort: 'high' } }, feedbacks: { fb_0: { maxCycles: 7 } } } } };
   const { window } = await boot({ fetchHandler: workflowFetch(extra) });
   selectProjectAnd(window);
@@ -335,9 +349,16 @@ test('saved run-config preselects a node\'s model+effort when the workflow is op
   pickWorkflow(window, 'wf_x');
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
-  assert.equal(doc.querySelector('#wf-node-config .step-model[data-node-id="s1_0"]').value, 'claude-opus-4-8');
-  assert.equal(doc.querySelector('#wf-node-config .step-effort[data-node-id="s1_0"]').value, 'high');
+  assert.equal(doc.querySelector('#agents-rows .step-model[data-node-id="s1_0"]').value, 'claude-opus-4-8');
+  assert.equal(doc.querySelector('#agents-rows .step-effort[data-node-id="s1_0"]').value, 'high');
   assert.equal(doc.querySelector('#wf-feedback-config input[data-fb-id="fb_0"]').value, '7');
+  // the collapsed row states the effective config, so nothing has to be opened
+  assert.match(doc.querySelector('.agent-sum[data-node-id="s1_0"]').textContent, /Opus 4\.8 · high/);
+  // ...and is flagged as deviating from the workflow default
+  const row = doc.querySelector('.agent-row[data-node-id="s1_0"]');
+  assert.ok(row.querySelector('.agent-mod'), 'modified row must carry the dot');
+  assert.ok(!doc.querySelector('.agent-row[data-node-id="s0_0"] .agent-mod'), 'untouched row must not');
+  assert.equal(doc.querySelector('#agentsSummary').textContent, '1 modified');
 });
 
 // Capture PATCH /api/config bodies (CONV-2) while still serving the
@@ -363,7 +384,7 @@ test('changing a node model PATCHes { ..., nodes: { [nodeId]: { model, effort } 
   await new Promise((r) => setTimeout(r, 0));
   pickWorkflow(window, 'wf_x');
   await new Promise((r) => setTimeout(r, 0));
-  const modelSel = window.document.querySelector('#wf-node-config .step-model[data-node-id="s1_0"]');
+  const modelSel = window.document.querySelector('#agents-rows .step-model[data-node-id="s1_0"]');
   modelSel.value = 'claude-opus-4-8';
   modelSel.dispatchEvent(new window.Event('change', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
@@ -573,14 +594,15 @@ test('default-row fan-out checkbox reflects the sidecar default from /api/config
   assert.equal(window.document.querySelector('.step-fanout[data-role="refiner"]').checked, false);
 });
 
-test('renderNodeRows paints an .acc swatch carrying each node color (amber Plan Review included)', async () => {
+test('renderAgentRows paints an .acc swatch carrying each node color (amber Plan Review included)', async () => {
   const { window } = await boot();
+  const def = { model: '', effort: '', fanOut: false, askQuestions: false };
   const rows = [
-    { nodeId: 's0_0', key: 'planner',      label: 'Plan',        color: 'violet', stepIndex: 0, parallel: false, model: '', effort: '', fanOut: false },
-    { nodeId: 's1_0', key: 'planReviewer', label: 'Plan Review', color: 'amber',  stepIndex: 1, parallel: false, model: '', effort: '', fanOut: false },
+    { nodeId: 's0_0', key: 'planner',      label: 'Plan',        color: 'violet', stepIndex: 0, parallel: false, model: '', effort: '', fanOut: false, askQuestions: null, def, override: {} },
+    { nodeId: 's1_0', key: 'planReviewer', label: 'Plan Review', color: 'amber',  stepIndex: 1, parallel: false, model: '', effort: '', fanOut: false, askQuestions: null, def, override: {} },
   ];
-  window.__np.renderNodeRows(rows);
-  const accs = [...window.document.querySelectorAll('#wf-node-config .acc')];
+  window.__np.renderAgentRows(rows);
+  const accs = [...window.document.querySelectorAll('#agents-rows .agent-row-head .acc')];
   assert.deepEqual(accs.map((a) => a.className), ['acc violet', 'acc amber']);
 });
 
@@ -631,7 +653,7 @@ test('a failing GET /api/workflows keeps the dropdown entries and the active sel
   const values = [...sel.options].map((o) => o.value);
   assert.ok(values.includes('wf_x'), 'saved workflow entry kept in the dropdown');
   assert.equal(sel.value, 'wf_x', 'active selection preserved');
-  assert.ok(!window.document.querySelector('#wf-node-config').classList.contains('hidden'), 'node rows still rendered');
+  assert.ok(window.document.querySelectorAll('#agents-rows .agent-row').length > 0, 'node rows still rendered');
 });
 
 // An empty registry is a failed /api/agents fetch, not a real state: painting
@@ -650,7 +672,7 @@ test('a failing GET /api/agents paints the could-not-load hint instead of capabi
   pickWorkflow(window, 'wf_x');
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
-  const host = window.document.querySelector('#wf-node-config');
+  const host = window.document.querySelector('#agents-rows');
   assert.match(host.textContent, /Could not load this workflow/, 'hint painted');
   assert.equal(host.querySelectorAll('.step-model').length, 0, 'no capability-stripped rows');
 });
@@ -682,11 +704,13 @@ const pickGuardrails = (window, id) => {
   s.value = id; s.dispatchEvent(new window.Event('change', { bubbles: true }));
 };
 
-test('index.html: #guardrailsSelect + #guardrailsHint live inside #pipeline-config', () => {
+test('index.html: #guardrailsSelect + #guardrailsHint live inside the Advanced disclosure', () => {
   const html = readFileSync(htmlPath, 'utf8');
-  const cfg = html.slice(html.indexOf('id="pipeline-config"'), html.indexOf('id="wf-default-stages"'));
-  assert.ok(cfg.includes('id="guardrailsSelect"'), 'select present before the stage rows');
-  assert.ok(cfg.includes('id="guardrailsHint"'), 'hint line present');
+  // Guardrails default to Permissive, so they belong behind Advanced (§4.6) —
+  // still one <details> away, never in the always-visible path.
+  const adv = html.slice(html.indexOf('id="advanced-config"'), html.indexOf('id="start-btn"'));
+  assert.ok(adv.includes('id="guardrailsSelect"'), 'select present inside Advanced');
+  assert.ok(adv.includes('id="guardrailsHint"'), 'hint line present');
 });
 
 test('the guardrails select is populated from GET /api/guardrails with Permissive (default) selected', async () => {

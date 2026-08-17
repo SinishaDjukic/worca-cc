@@ -63,6 +63,11 @@ const OPUS = [{ id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['high', 'max
 
 test('default rows: clarify locked-checked; planner editable-unchecked; refiner hidden', async () => {
   const { window } = await boot({ fetchHandler: configFetch() });
+  // A project must be selected for capability to be observable: without one the
+  // whole accordion is read-only, so every box reads disabled regardless of its
+  // agent's manifest.
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
   const clarify = doc.querySelector('.step-questions[data-role="clarify"]');
@@ -72,8 +77,9 @@ test('default rows: clarify locked-checked; planner editable-unchecked; refiner 
   const planner = doc.querySelector('.step-questions[data-role="planner"]');
   assert.equal(planner.checked, false);
   assert.equal(planner.disabled, false);
-  const refinerWrap = doc.querySelector('.step-questions[data-role="refiner"]').closest('.questions-toggle');
-  assert.equal(refinerWrap.hidden, true, 'no capability => toggle hidden');
+  // A row whose agent has no questions capability renders NO checkbox at all —
+  // stronger than the old hidden wrapper, and impossible to reveal by accident.
+  assert.equal(doc.querySelector('.step-questions[data-role="refiner"]'), null, 'no capability => no toggle');
 });
 
 test('toggling a default row posts askQuestions with the row model preserved', async () => {
@@ -99,7 +105,11 @@ test('toggling a default row posts askQuestions with the row model preserved', a
   assert.equal(posts[0].step, 'planner');
   assert.equal(posts[0].askQuestions, true);
   assert.equal(posts[0].model, 'claude-opus-4-8', 'row model preserved');
-  assert.ok(!('fanOut' in posts[0]), 'fanOut omitted so the setter preserves it');
+  // The accordion always sends the row's full resolved state; a value matching
+  // the default is sent as an explicit "inherit" (null) rather than omitted, so
+  // the stored config stays sparse (newpipeline-ux-design.md §4.5). planner's
+  // sidecar default is fanOut:true and the row is untouched -> null.
+  assert.equal(posts[0].fanOut, null, 'fan-out still matches its default -> stored as inherit');
 });
 
 test('buildNodeConfigRows: hidden / locked / editable matrix', async () => {
@@ -149,14 +159,14 @@ test('GET /api/config failure still populates the workflow dropdown and hides qu
   assert.match(hint.textContent, /no such column: ask_questions/, 'hint carries the server error');
 });
 
-// The static markup must ship the questions toggles hidden: before ANY JS runs
-// (or when it fails), an interactable-looking checkbox would misrepresent
-// capability (refiner has none; clarify is locked-on).
-test('index.html ships the default-stage questions toggles hidden', () => {
+// Before ANY JS runs (or when it fails), an interactable-looking checkbox would
+// misrepresent capability (refiner has none; clarify is locked-on). The accordion
+// settles this by construction: index.html ships NO questions toggle at all, and
+// each one is created only once its agent's capability is known.
+test('index.html ships no static questions toggles at all', () => {
   const html = readFileSync(htmlPath, 'utf8');
-  const toggles = html.match(/class="fanout-toggle questions-toggle"[^>]*/g) || [];
-  assert.equal(toggles.length, 5, 'five static questions toggles');
-  for (const t of toggles) assert.match(t, /\bhidden\b/, `static toggle not hidden: ${t}`);
+  assert.equal(html.match(/questions-toggle/g), null, 'no static questions toggle may exist');
+  assert.equal(html.match(/step-questions/g), null, 'no static questions checkbox may exist');
 });
 
 // Toggling questions must echo the LIVE selects, not state.config — state lags
@@ -190,14 +200,15 @@ test('toggling questions sends the model currently shown in the select, not stal
   assert.equal(qPost.model, 'my-new-model', 'live select value sent, not stale state.config');
 });
 
-test('renderNodeRows: locked checkbox disabled; unsupported row has no checkbox', async () => {
+test('renderAgentRows: locked checkbox disabled; unsupported row has no checkbox', async () => {
   const { window } = await boot();
   const doc = window.document;
-  const { renderNodeRows } = window.__np;
-  renderNodeRows([
-    { nodeId: 'a', key: 'ask', label: 'Ask', color: '', stepIndex: 0, parallel: false, model: '', effort: '', fanOut: false, askQuestions: false, questionsLocked: false },
-    { nodeId: 'b', key: 'locked', label: 'Locked', color: '', stepIndex: 1, parallel: false, model: '', effort: '', fanOut: false, askQuestions: true, questionsLocked: true },
-    { nodeId: 'c', key: 'plain', label: 'Plain', color: '', stepIndex: 2, parallel: false, model: '', effort: '', fanOut: false, askQuestions: null, questionsLocked: false },
+  const { renderAgentRows } = window.__np;
+  const def = { model: '', effort: '', fanOut: false, askQuestions: false };
+  renderAgentRows([
+    { nodeId: 'a', key: 'ask', label: 'Ask', color: '', stepIndex: 0, parallel: false, model: '', effort: '', fanOut: false, askQuestions: false, questionsLocked: false, def, override: {} },
+    { nodeId: 'b', key: 'locked', label: 'Locked', color: '', stepIndex: 1, parallel: false, model: '', effort: '', fanOut: false, askQuestions: true, questionsLocked: true, def, override: {} },
+    { nodeId: 'c', key: 'plain', label: 'Plain', color: '', stepIndex: 2, parallel: false, model: '', effort: '', fanOut: false, askQuestions: null, questionsLocked: false, def, override: {} },
   ]);
   const a = doc.querySelector('.step-questions[data-node-id="a"]');
   assert.ok(a && !a.disabled && !a.checked);

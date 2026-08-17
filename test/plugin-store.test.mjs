@@ -145,7 +145,7 @@ test('setPluginEnabled toggles the lock flag; listInstalledPlugins reflects it',
     { enabled: row.enabled, linked: row.linked, version: row.version, pinnedSha: row.pinnedSha },
     { enabled: true, linked: false, version: '0.1.0', pinnedSha: origin.sha },
   );
-  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, models: 0, skills: 1, workflows: 1 });
+  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, chatChannels: 0, models: 0, skills: 1, workflows: 1 });
   assert.throws(() => setPluginEnabled('ghost-plugin', true), /not installed/);
 });
 

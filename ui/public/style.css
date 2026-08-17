@@ -90,9 +90,12 @@ body{
 .nav-count.n-amber{background:var(--amber);color:#fff;}
 .nav-count.n-grey{background:var(--field);color:var(--ink-3);}
 .nav button.active .nav-count{background:rgba(255,255,255,.18);color:#fff;}
-/* Running split-badges: green = running count, amber = paused count. Both keep
-   their colour on the dark active fill (the generic active rule above would
-   wash them into translucent white). */
+/* Running split-badges: green = work in flight, amber = paused count. Green is
+   applied by app.js ONLY while the count is >0 — at zero the badge falls back to
+   n-grey, the inert-inventory treatment History/Projects/Workspaces use, so a
+   permanently green pill cannot dilute the green that should catch the eye.
+   Both keep their colour on the dark active fill (the generic active rule above
+   would wash them into translucent white). */
 .nav-count.n-run{background:var(--green);color:#fff;}
 .nav-count.n-paused{background:var(--amber);color:#fff;position:relative;margin-left:6px;}
 .nav-count[hidden]{display:none;}   /* author display:grid beats the UA [hidden] rule */
@@ -402,23 +405,103 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .form-msg.err{color:var(--red-ink);}
 
 /* ---------- Pipeline config ---------- */
-.stage-cfg{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:15px 0;border-top:1px solid var(--line);}
-.stage-cfg:first-of-type{border-top:none;padding-top:4px;}
-.stage-cfg .acc{width:10px;height:38px;border-radius:6px;flex:0 0 auto;}
-/* .meta keeps a floor width so long node labels can't collapse under .picks;
-   past the floor the row wraps (.stage-cfg is flex-wrap) instead of overlapping. */
-.stage-cfg .meta{flex:1 1 150px;min-width:150px;}
-/* The label stays one ellipsized line; the caption WRAPS (clamped at 2 lines) —
-   forcing nowrap on it cut every stage blurb mid-sentence once the copy grew
-   past the ~235px column. */
-.stage-cfg .meta b{display:block;font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.stage-cfg .meta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;color:var(--ink-3);font-size:12px;line-height:1.35;}
-.stage-cfg .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;flex:0 1 auto;min-width:0;}
-.stage-cfg .select-wrap{width:180px;}
-.stage-cfg .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
+/* The always-open .stage-cfg card is gone: every per-agent control now lives in
+   an accordion row below (newpipeline-ux-design.md §4.7). Only the colour
+   swatch classes survive — the run-graph and the accordion head share them. */
 .acc.violet{background:var(--violet);} .acc.green{background:var(--green);}
 .acc.peach{background:var(--peach);} .acc.blue{background:var(--blue);}
 .acc.amber{background:var(--amber);} .acc.red{background:var(--red);}
+
+/* ---------- Agents accordion (New pipeline) ----------
+   One collapsed row per agent showing its effective config; the controls only
+   exist once a row is opened, so the page height no longer grows with the
+   workflow. (newpipeline-ux-design.md §4.2) */
+.agents-cfg{margin:6px 0 18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--field);}
+.agents-head{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);}
+.agents-title{font-weight:700;font-size:13px;}
+.agents-wf{flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--ink-2);
+  background:#fff;border:1px solid var(--line-2);border-radius:999px;padding:2px 9px;
+  max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agents-wf:empty{display:none;}
+.agents-summary{color:var(--ink-3);font-size:12px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agents-summary.muted{font-style:italic;}
+/* Read-only accordion (no project selected): the rows still show what the
+   workflow will do, but nothing in them can be edited. */
+.agent-row-body select:disabled,.agent-row-body input:disabled{opacity:.55;cursor:not-allowed;}
+.agent-row-body .fanout-toggle:has(input:disabled){opacity:.6;cursor:not-allowed;}
+.agents-actions{display:flex;gap:6px;flex:0 0 auto;}
+.agents-actions .btn-mini{font-size:11.5px;padding:5px 10px;}
+
+.agent-row{border-top:1px solid var(--line);background:#fff;}
+.agent-row:first-child{border-top:none;}
+.agent-row-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;
+  background:none;border:none;font-family:inherit;font-size:13px;text-align:left;cursor:pointer;color:inherit;}
+.agent-row-head:hover{background:var(--field);}
+.agent-row-head:focus-visible{outline:2px solid var(--violet);outline-offset:-2px;}
+.agent-chev{flex:0 0 auto;width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
+.agent-row.open .agent-chev{transform:rotate(90deg);}
+/* Sizing only — the colour comes from the shared .acc.<name> classes below, which
+   would otherwise be tied on specificity and lose to a background set here. */
+.agent-row-head .acc{width:8px;height:20px;border-radius:4px;flex:0 0 auto;}
+.acc.neutral{background:var(--line-2);}
+/* The agent name stays on one line and ellipsizes when a display name is long;
+   its full blurb is in .agent-desc inside the opened body, where it can wrap. */
+.agent-name{font-weight:600;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agent-step{color:var(--ink-3);font-size:11px;flex:0 0 auto;}
+.agent-sum{color:var(--ink-3);font-size:12px;margin-left:auto;text-align:right;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.agent-mod{color:var(--violet);font-size:9px;flex:0 0 auto;line-height:1;}
+.agent-row-body{padding:4px 14px 14px 37px;}
+.agent-desc{display:block;margin-bottom:9px;color:var(--ink-3);font-size:12px;line-height:1.45;overflow-wrap:anywhere;}
+.agent-row-body .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
+.agent-row-body .select-wrap{width:180px;}
+.agent-row-body .select{padding:10px 36px 10px 13px;font-size:13px;border-radius:11px;background:#fff;border-color:var(--line-2);}
+.agent-origin{display:block;margin-top:4px;color:var(--ink-3);font-size:11.5px;}
+.fb-field{margin-bottom:10px;}
+.fb-field:last-child{margin-bottom:0;}
+
+/* A segmented switch + the picker it qualifies, on one row: Target/Project and
+   Task source/Workflow share this proportion. The switch column sizes to itself
+   but may shrink (a plugin task source adds buttons); the picker keeps at least
+   200px so a long project path or workflow name never squeezes it away. */
+.split-row{display:grid;grid-template-columns:minmax(0,auto) minmax(200px,1fr);column-gap:18px;align-items:start;}
+.split-row > *{min-width:0;}
+.split-row .seg{flex-wrap:wrap;}
+.target-panes{min-width:0;}
+@media (max-width:760px){ .split-row{grid-template-columns:1fr;} }
+
+/* Two fields sharing one row (New pipeline: source + feature branch). Equal
+   columns with min-width:0 so a long branch name ellipsizes inside its own
+   column instead of widening it; stacks below the narrow breakpoint. */
+.field-grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;}
+.field-grid-2 > .field{min-width:0;}
+@media (max-width:760px){ .field-grid-2{grid-template-columns:1fr;} }
+
+/* Compact rhythm for the run-detail fields promoted out of Advanced (title,
+   extra files, the branch pair). They are frequent enough to stay visible but
+   secondary to the task box, so they get tighter labels, shorter controls and
+   less breathing room — full-size fields would have cost ~340px of page. */
+.field-compact{margin-bottom:12px;}
+.field-compact > label{font-size:12px;margin-bottom:5px;}
+.field-compact .input,.field-compact .select{padding:11px 14px;font-size:13px;}
+.field-compact .select{padding-right:36px;}
+.field-compact .file{padding:9px 13px;gap:11px;}
+.field-compact .file .pick{padding:6px 12px;font-size:12px;}
+.field-compact .file .state{font-size:12px;}
+.field-compact .hint{margin-top:5px;font-size:11.5px;}
+
+/* ---------- Advanced disclosure (New pipeline) ---------- */
+.advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;}
+.advanced>summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;
+  font-weight:600;font-size:13px;padding:2px 0;}
+.advanced>summary::-webkit-details-marker{display:none;}
+.advanced>summary:focus-visible{outline:2px solid var(--violet);outline-offset:3px;border-radius:6px;}
+.adv-chev{width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
+.advanced[open] .adv-chev{transform:rotate(90deg);}
+.advanced-body{padding-top:12px;}
+.advanced-body .switch-row{margin-top:4px;}
 
 /* per-step model/effort controls (app.js: .step-config / .step-model / .step-effort / .step-current) */
 .step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
@@ -751,13 +834,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-discard:hover:not(:disabled){background:var(--amber-bg);filter:brightness(.97);}
 .hist-discard:disabled{opacity:.6;cursor:default;}
 .hist-discard[hidden]{display:none;}
-.hist-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
+.hist-delete,.pl-remove{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
   border:1.5px solid var(--red-ink,#d9534f);color:#fff;font-family:inherit;font-weight:600;
   font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;}
-.hist-delete:hover:not(:disabled){filter:brightness(0.95);}
-.hist-delete:disabled{opacity:.6;cursor:default;}
+.hist-delete:hover:not(:disabled),.pl-remove:hover:not(:disabled){filter:brightness(0.95);}
+.hist-delete:disabled,.pl-remove:disabled{opacity:.6;cursor:default;}
 .hist-delete[hidden]{display:none;}
-.hist-delete svg{display:block;}
+.hist-delete svg,.pl-remove svg{display:block;}
 
 /* ========================================================================== */
 /* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
@@ -921,6 +1004,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* New-Pipeline target panes (mutually exclusive). */
 .target-pane.hidden{display:none;}
 .ws-members{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
+/* With no workspace picked the container is empty, but a flex box still holds
+   its margin — 10px of nothing that made the workspace pane taller than the
+   project pane and relaid the form out on every target flip. */
+.ws-members:empty{display:none;}
 .ws-members .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);}
 .ws-members .chip.missing{background:var(--red-bg);color:var(--red-ink);border-color:var(--red);}
 .ws-source-branches{display:flex;flex-direction:column;gap:12px;margin-top:6px;}
@@ -1215,14 +1302,24 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .results-trunc{font-size:11px;color:#946;margin-top:6px;}
 
 /* ---- Plugins view ---- */
+/* Available/Marketplaces render as one wrapper div inside the .run-list, so the
+   list's gap doesn't reach the cards — the wrappers repeat it. */
+.pl-list,.pl-orphans,.pl-available,.pl-mkts{display:flex;flex-direction:column;gap:18px;}
 .plugin-card{padding:16px 20px;}
+/* Card actions live top-right of the head row. */
+.pl-remove{border-radius:999px;} /* pill like the rest of this page's buttons */
+.pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.pl-mkt-actions .btn-ghost{display:inline-flex;align-items:center;gap:6px;}
+.pl-mkt-actions .btn-ghost svg{display:block;}
+.pl-avail-card .pl-install-avail,.pl-avail-card .pl-installed{margin-left:auto;}
 .plugin-card.pl-disabled{opacity:.62;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:14.5px;}
 .pl-version{color:var(--ink-3);font-size:12px;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
-.pl-actions button{padding:7px 14px;}
+/* One button height across the Plugins view, keyed to .btn-mini (Install…/Add). */
+.pl-actions button,.pl-purge-orphan,.pl-mkt-actions .btn-ghost,.pl-remove{padding:8px 14px;font-size:12.5px;}
 .pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
 .pl-consent-h{font-weight:700;font-size:12.5px;margin:10px 0 4px;}
 .pl-consent-row{font-size:12.5px;padding:2px 0;}
@@ -1240,6 +1337,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:8px;padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
+.pl-sec-title{margin:22px 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;}
+.pl-provenance{display:block;margin-top:4px;}
+.pl-mkt-url{display:block;margin-top:2px;}
+.pl-mkt-sync{display:block;margin-top:2px;}
+.pl-mkt-warning{margin-top:4px;}
+.pl-avail-card .pl-mkt-badge{margin-left:6px;}
+.pl-avail-card .mono,.pl-mkt-row .mono{font-family:var(--mono);}
 
 /* ---- Pluggable source pane (New Pipeline) ---- */
 .sp-pane{margin-top:11px;}
@@ -1360,6 +1464,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .topnav-amt.over{color:var(--red-ink);}
 .topnav button.active .topnav-amt{color:inherit;}
 
+/* ---------- Settings cards ---------- */
+/* One width/centering/gap rule for all three Settings cards. */
+.settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
+.settings-card + .settings-card{margin-top:18px;}
+
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit
    here moved into the card heading's ⓘ tooltip). */
@@ -1383,6 +1492,17 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .stat-row{grid-template-columns:repeat(2,1fr);}
   .charts-grid{grid-template-columns:1fr;}
 }
+
+/* ── Chat connectivity (chat-connectivity-design.md §4.8) ─────────────────── */
+.pl-channels { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
+.pl-channel-warn { color: var(--red, #e5484d); font-weight: 600; }
+.pl-config-h { font-weight: 600; margin: 14px 0 6px; font-size: 13px; }
+.chat-events, .chat-channels { margin: 8px 0; }
+.chat-event-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; cursor: pointer; }
+.chat-event-row .hint { margin-left: 4px; }
+.chat-channel-row { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+.chat-channel-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.chat-state { text-transform: none; }
 
 /* ---- Models view (configurable-models-design.md §4.10) ---- */
 .mv-list{display:grid;gap:18px;}
@@ -1425,4 +1545,3 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mvx-env-row .select{flex:0 0 auto;}
 .mvx-warn{color:var(--red,#c0392b);}
 .pl-baseurl{word-break:break-all;}
-.pl-config-h{margin:14px 0 6px;font-size:13px;}

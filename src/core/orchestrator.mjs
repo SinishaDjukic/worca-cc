@@ -713,6 +713,7 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', {
           status: 'stopped',
@@ -726,6 +727,7 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', {
         status: 'error',
@@ -962,6 +964,7 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
@@ -972,6 +975,7 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
@@ -3317,9 +3321,12 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
-   * source that produced it. Runs right after _buildResults() on BOTH terminal
-   * done paths so results.json exists for the summary, and the row status is
-   * already persisted 'done' (statusToResult -> 'completed'). NEVER throws and
+   * source that produced it. Runs on EVERY terminal path — after
+   * _buildResults() on the done paths (results.json exists for the summary;
+   * statusToResult -> 'completed') and after persist on the stopped/error
+   * branches (statusToResult -> 'failed'; the summary is thinner because
+   * results.json may not exist — chat-connectivity design PR12 closed the old
+   * success-only gap). NEVER throws and
    * never fails the run: a failure emits a warn `log` event and the results view
    * offers a manual retry via the same retryWriteback (Task 15 endpoint, Task 21
    * button). Prompt/markdown

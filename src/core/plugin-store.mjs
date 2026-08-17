@@ -14,7 +14,7 @@ import {
   mkdirSync, rmSync, symlinkSync, renameSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { WORCA_PLUGIN_API } from './plugin-api.mjs';
+import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
@@ -58,7 +58,7 @@ function frontmatterTools(text) {
  *  dep count from the lockfile, and the exact setup commands that would run. */
 export function buildInstallInventory(versionDir) {
   const manifest = readManifestAt(versionDir)
-    ?? { taskSources: [], models: [], modelSecrets: [], setup: { node: false, python: null } };
+    ?? { taskSources: [], chatChannels: [], models: [], modelSecrets: [], setup: { node: false, python: null } };
   const agents = [];
   const aDir = join(versionDir, 'agents');
   if (existsSync(aDir)) {
@@ -72,6 +72,14 @@ export function buildInstallInventory(versionDir) {
   const taskSources = (manifest.taskSources || []).map((s) => ({
     id: s.id, displayName: s.displayName,
     secrets: (s.configSchema || []).filter((x) => x.secret).map((x) => x.key),
+  }));
+  // Channel consent is security-loud by design: a chat channel is remote
+  // control of worca-cc (approve gates, stop/pause runs) for anyone holding
+  // the bot token or sitting in an allow-listed chat (design §4.6).
+  const chatChannels = (manifest.chatChannels || []).map((c) => ({
+    id: c.id, displayName: c.displayName, platform: c.platform, ingress: c.ingress,
+    inbound: c.capabilities?.inbound !== false, outbound: c.capabilities?.outbound !== false,
+    secrets: (c.configSchema || []).filter((x) => x.secret).map((x) => x.key),
   }));
   const models = (manifest.models || []).map((m) => {
     const bu = m.env?.ANTHROPIC_BASE_URL;
@@ -102,7 +110,7 @@ export function buildInstallInventory(versionDir) {
   const setupCommands = [];
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
-  return { agents, taskSources, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
+  return { agents, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
@@ -131,8 +139,9 @@ function dirChecks(dir, manifest) {
   c('manifest', !!manifest, manifest ? `plugin "${manifest.name}"` : 'worca-cc-plugin.json missing or invalid');
   if (manifest) {
     const range = manifest.engines?.worcaApi;
-    c('api', apiSatisfies(range), range ? `requires "${range}", host is ${WORCA_PLUGIN_API}` : 'no engines constraint');
+    c('api', apiSatisfies(range), range ? `requires "${range}", host APIs [${WORCA_PLUGIN_APIS.join(', ')}]` : 'no engines constraint');
     for (const s of manifest.taskSources || []) c(`module:${s.id}`, existsSync(join(dir, s.module)), s.module);
+    for (const ch of manifest.chatChannels || []) c(`channel-module:${ch.id}`, existsSync(join(dir, ch.module)), ch.module);
     if (manifest.setup?.node) c('node-deps', existsSync(join(dir, 'node_modules')), 'node_modules present (setup.node)');
     if (manifest.setup?.python === 'pyproject') c('python-venv', existsSync(join(dir, '.venv')), '.venv present (setup.python)');
   }
@@ -186,7 +195,7 @@ function precheck(versionDir, manifest) {
  * doctor precheck -> atomic symlink swap -> lock entry. sha omitted -> repo HEAD.
  * On ANY failure: versions/<sha7> removed, prior state untouched, error rethrown.
  */
-export async function installPlugin({ repoUrl, subdir = '', name, sha } = {}, { exec = defaultExec } = {}) {
+export async function installPlugin({ repoUrl, subdir = '', name, sha, marketplace } = {}, { exec = defaultExec } = {}) {
   if (!name) throw new Error('installPlugin: name is required');
   const lock = readPluginsLock();
   if (lock[name]) throw new Error(`plugin "${name}" is already installed`);
@@ -205,6 +214,7 @@ export async function installPlugin({ repoUrl, subdir = '', name, sha } = {}, { 
       version: manifest.version ?? pin.slice(0, 7), // no manifest version -> the SHA is the version (§4.1)
       enabled: true, installedAt: new Date().toISOString(),
       lockfileHash: sha256File(join(versionDir, 'package-lock.json')),
+      ...(marketplace ? { marketplace } : {}), // provenance only when it came from one
     };
     writePluginsLock(lock);
     // §6.1(3): workflow template import is the LAST install step (post-swap,
@@ -387,12 +397,15 @@ export function listInstalledPlugins() {
       name,
       version: e.version ?? null,
       pinnedSha: e.pinnedSha ?? null,
+      repo: e.repo ?? null,
+      subdir: e.subdir ?? '',
+      marketplace: e.marketplace ?? null, // raw id; name resolution is the API layer's job
       enabled: e.enabled !== false,
       linked: e.linked === true,
       broken: !manifest,
       contributions: inv
-        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
-        : { agents: 0, taskSources: 0, models: 0, skills: 0, workflows: 0 },
+        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
+        : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
     };
   });
 }

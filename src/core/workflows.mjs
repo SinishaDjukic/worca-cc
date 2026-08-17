@@ -2,9 +2,10 @@
 // node:sqlite migration: now persisted in the `workflows` table; path helpers vestigial.
 // Global workflow-template store + the built-in DEFAULT_WORKFLOW + resolveWorkflow.
 //
-// Templates are TOPOLOGY ONLY (steps + feedbacks, by node-instance id). Per-project
-// model/effort/cycle data is the run-config in config.mjs and is merged in by
-// resolveWorkflow.
+// Templates are TOPOLOGY + PER-NODE DEFAULTS (steps + feedbacks by node-instance
+// id; each node may carry an optional `defaults` block — newpipeline-ux-design.md
+// §4.4). Per-project model/effort/cycle data is the run-config in config.mjs and
+// OVERRIDES those defaults; resolveWorkflow merges both.
 //
 // Reads never throw: a missing/corrupt store yields []/null.
 
@@ -13,7 +14,7 @@ import { join } from 'node:path';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig } from './config.mjs';
+import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 
 /**
@@ -109,6 +110,84 @@ export const DEFAULT_WORKFLOW = Object.freeze({
   updatedAt: '1970-01-01T00:00:00.000Z',
 });
 
+/**
+ * Sanitize one node's `defaults` block (newpipeline-ux-design.md §4.4). Loud and
+ * lenient, matching the module's house style: a malformed FIELD is dropped with a
+ * console.warn naming it, the rest of the block survives. An empty/absent block
+ * (or one left empty after dropping) yields undefined so callers omit the key.
+ * Structural only — that `model` names a catalog entry is validated at the API
+ * boundary (where the effective per-project catalog is reachable), exactly like
+ * setStep/setNodeModel.
+ * @param {unknown} raw
+ * @param {string} [nodeId] for the warning message
+ * @returns {{model?:string,effort?:string,fanOut?:boolean,askQuestions?:boolean}|undefined}
+ */
+export function sanitizeNodeDefaults(raw, nodeId = '?') {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out = {};
+  const warn = (field, why) =>
+    console.warn(`workflow node "${nodeId}": dropping defaults.${field} (${why})`);
+
+  if (raw.model !== undefined) {
+    const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+    if (model) out.model = model;
+    else if (raw.model !== '' && raw.model !== null) warn('model', 'not a non-empty string');
+  }
+  if (raw.effort !== undefined) {
+    const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
+    if (EFFORTS.includes(effort)) out.effort = effort;
+    else if (effort) warn('effort', `unknown effort "${effort}"`);
+  }
+  // An effort without a model is meaningless (it is filtered by the model's
+  // advertised effort list), so it never survives on its own.
+  if (out.effort && !out.model) {
+    warn('effort', 'no model to interpret it');
+    delete out.effort;
+  }
+  for (const field of ['fanOut', 'askQuestions']) {
+    if (raw[field] === undefined) continue;
+    if (typeof raw[field] === 'boolean') out[field] = raw[field];
+    else warn(field, 'not a boolean');
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Normalize a steps matrix for persistence: pass every node through untouched
+ * EXCEPT its `defaults` block, which is sanitized (and dropped when empty).
+ * Unknown node fields are preserved verbatim — plugin-shipped templates may carry
+ * their own, and this function must not be the thing that silently eats them.
+ * Pure: returns new arrays/objects, never mutates the input.
+ * @param {unknown} steps
+ * @returns {Array<Array<object>>}
+ */
+export function sanitizeWorkflowSteps(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps.map((group) => (Array.isArray(group) ? group.map((node) => {
+    if (!node || typeof node !== 'object') return node;
+    const { defaults, ...rest } = node;
+    const clean = sanitizeNodeDefaults(defaults, node.id);
+    return clean ? { ...rest, defaults: clean } : rest;
+  }) : group));
+}
+
+/**
+ * Flatten a template's per-node defaults to { [nodeId]: defaults }. Nodes without
+ * a defaults block are absent from the map. Used by the UI/API to answer "what is
+ * this workflow's default for node X" without re-walking steps.
+ * @param {object|null} tpl
+ * @returns {Record<string,object>}
+ */
+export function workflowNodeDefaults(tpl) {
+  const out = {};
+  for (const group of Array.isArray(tpl?.steps) ? tpl.steps : []) {
+    for (const node of Array.isArray(group) ? group : []) {
+      if (node && node.id && node.defaults && typeof node.defaults === 'object') out[node.id] = node.defaults;
+    }
+  }
+  return out;
+}
+
 /** Absolute path to ~/.worca-cc/workflows (honors WORCA_HOME via projects.mjs). */
 export function workflowsDir() {
   return join(worcaHome(), 'workflows');
@@ -163,7 +242,7 @@ export async function writeWorkflow(tpl) {
   const now = new Date().toISOString();
   const name = (tpl && typeof tpl.name === 'string' && tpl.name.trim()) || 'Untitled';
   const id = (tpl && typeof tpl.id === 'string' && tpl.id.trim()) || `wf_${slugify(name)}`;
-  const steps = Array.isArray(tpl?.steps) ? tpl.steps : [];
+  const steps = sanitizeWorkflowSteps(tpl?.steps);
   const feedbacks = Array.isArray(tpl?.feedbacks) ? tpl.feedbacks : [];
   const domain = normDomain(tpl && tpl.domain);
 
@@ -213,6 +292,45 @@ export async function listWorkflows() {
     'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at, origin FROM workflows ORDER BY created_at DESC, id'
   ).all();
   return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
+}
+
+/**
+ * Replace the per-node `defaults` of a SAVED template (newpipeline-ux-design.md
+ * §4.4). `map` is { [nodeId]: defaults|null }: a sanitized block sets that node's
+ * defaults, null/empty clears them, and a node absent from the map keeps what it
+ * has. Node ids unknown to the template are ignored (a stale UI must not
+ * resurrect deleted nodes). Topology is untouched.
+ *
+ * Refuses wf_default: the built-in is frozen and never persisted, so it has no row
+ * to carry defaults — its sensible defaults come from the agent registry instead
+ * (design D6). Duplicating it in Composer yields a saved workflow that can.
+ *
+ * @param {string} id
+ * @param {Record<string,object|null>} map
+ * @returns {Promise<object>} the updated template
+ * @throws {Error} unknown/unsafe id, or the built-in default
+ */
+export async function setWorkflowNodeDefaults(id, map) {
+  if (id === DEFAULT_WORKFLOW.id) {
+    throw new Error('the built-in Default workflow cannot store defaults — save a copy in Composer first');
+  }
+  const tpl = readRaw(id);
+  if (!tpl) throw new Error(`workflow not found: ${id}`);
+  const patch = map && typeof map === 'object' ? map : {};
+
+  const steps = tpl.steps.map((group) => (Array.isArray(group) ? group.map((node) => {
+    if (!node || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(patch, node.id)) return node;
+    const { defaults, ...rest } = node;
+    const clean = sanitizeNodeDefaults(patch[node.id], node.id);
+    return clean ? { ...rest, defaults: clean } : rest;
+  }) : group));
+
+  const now = new Date().toISOString();
+  tx(() => {
+    prepare('UPDATE workflows SET steps = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(steps), now, id);
+  });
+  return { ...tpl, steps, updatedAt: now };
 }
 
 /**
@@ -292,6 +410,10 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
       // Legacy per-role config is keyed by the ORIGINAL UI step key (e.g. `reviewer`),
       // so a substituted workspaceReviewer still inherits the user's review model/effort.
       const legacy = stepsCfg[node.key] || {};
+      // Workflow-level per-node defaults sit BELOW both run-config layers and ABOVE
+      // the registry sidecar (newpipeline-ux-design.md §4.3): a project override
+      // still wins, but an untouched project inherits the workflow author's tuning.
+      const wfDef = (node.defaults && typeof node.defaults === 'object') ? node.defaults : {};
       resolvedGroup.push({
         nodeId: node.id,
         key,
@@ -300,16 +422,19 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
         agentFile: meta.agentFile ?? null,
         agentPrompt: prompt,
         promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
-        model: firstDefined(sel.model, legacy.model),     // undefined unless configured (folded later)
-        effort: firstDefined(sel.effort, legacy.effort),  // undefined unless configured
-        fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, meta.fanOut, false), // node > role > sidecar > false
+        model: firstDefined(sel.model, legacy.model, wfDef.model),     // undefined unless configured (folded later)
+        // An effort only travels with the model that advertises it, so a project
+        // override that names its own model must not inherit the workflow default's
+        // effort — otherwise "Opus/max" silently becomes "Haiku/max".
+        effort: firstDefined(sel.effort, legacy.effort, (sel.model || legacy.model) ? undefined : wfDef.effort),
+        fanOut: !!firstDefined(sel.fanOut, legacy.fanOut, wfDef.fanOut, meta.fanOut, false), // node > role > workflow > sidecar > false
         // Per-agent user questions (spec 2026-07-11): unsupported is ALWAYS off;
-        // locked ignores every override; else node > role > sidecar default.
+        // locked ignores every override; else node > role > workflow > sidecar default.
         askQuestions: !meta.asksQuestions
           ? false
           : (meta.questionsLocked
               ? !!meta.questionsDefault
-              : !!firstDefined(sel.askQuestions, legacy.askQuestions, meta.questionsDefault, false)),
+              : !!firstDefined(sel.askQuestions, legacy.askQuestions, wfDef.askQuestions, meta.questionsDefault, false)),
         tools,
         loopSource: !!meta.loopSource,
         consumes: meta.consumes || [],

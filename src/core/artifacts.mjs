@@ -1514,7 +1514,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  runs in parallel batches so a large store does not pay N serialized git
  *  round-trips. Wire format (§0.6) unchanged: project rows tag {projectKey,
  *  projectName, projectDir}; workspace rows tag {projectKey:"workspaces/<wk>",
- *  projectName, workspaceName, projectDir:primaryPath, target:'workspace'}. */
+ *  projectName, workspaceName, projectDir:primaryPath, target:'workspace'}.
+ *  `opts.limit` (positive integer) bounds the rows in SQL; `opts.lite` skips ALL git
+ *  enrichment (survived/added/removed stay false/0/0). Both default off, so existing
+ *  callers see exactly what they saw before. */
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
@@ -1522,8 +1525,9 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
     WHERE archived_at IS NULL
-    ORDER BY started_at DESC
-  `).all();
+    ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
+    LIMIT ?
+  `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
 
   const metaCache = new Map(); // store key -> meta object (or null)
   const meta = (k) => {
@@ -1555,7 +1559,10 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
       tag = { projectKey: row.project_key, projectName: m?.name ?? row.project_key, projectDir: m?.path ?? null };
       repoDir = m?.path ?? null;
     }
-    return { row, tag, repoDir, pipelinesDir };
+    // `lite` drops repoDir so rowToHistoryEntry skips branchExists/diffShortstat (and
+    // withPr) entirely — callers that read only the DB fields (chat history) pay no git.
+    // tag.projectDir stays intact: /resume still needs it.
+    return { row, tag, repoDir: opts.lite ? null : repoDir, pipelinesDir };
   });
 
   // Phase 2 — build rows in parallel, capped at `batchSize` concurrent git/gh fans.

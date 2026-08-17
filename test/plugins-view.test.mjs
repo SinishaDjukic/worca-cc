@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
-  renderOrphanList,
+  renderOrphanList, renderAvailableList, renderMarketplaceList, relTime,
 } from '../ui/public/plugins-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -29,6 +29,33 @@ test('install consent lists a requested secret (.pl-secret) + setup commands ver
   assert.match(el.textContent, /issueTriager — tools: Bash, Read/);
   assert.match(el.textContent, /12 npm dependencies/);
   assert.match(el.querySelector('.pl-setup-cmd').textContent, /npm ci --prefix <dir> --ignore-scripts --omit=dev/);
+});
+
+test('install consent: chat channels render security-loud with secrets; absent -> no section', () => {
+  const el = renderInstallConsent(
+    { name: 'telegram-chat', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    {
+      agents: [], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [],
+      chatChannels: [{
+        id: 'main', displayName: 'Telegram', platform: 'telegram',
+        ingress: 'connect', inbound: true, outbound: true, secrets: ['botToken'],
+      }],
+    },
+    { doc },
+  );
+  assert.match(el.textContent, /Chat channels \(1\)/);
+  assert.match(el.textContent, /Telegram \(telegram, inbound \+ outbound\) — runs a persistent worker/);
+  assert.match(el.querySelector('.pl-secret').textContent, /botToken/);
+  const warn = el.querySelector('.pl-channel-warn');
+  assert.ok(warn, 'security warning must render');
+  assert.match(warn.textContent, /pause\/stop\/approve runs/);
+
+  const none = renderInstallConsent(
+    { name: 'github-source', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    { agents: [], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [] },
+    { doc },
+  );
+  assert.doesNotMatch(none.textContent, /Chat channels/);
 });
 
 test('config form masks secrets; collect skips untouched {set:true} markers', () => {
@@ -126,6 +153,50 @@ test('orphan list: row per orphan with Purge button; empty input -> empty contai
   assert.equal(renderOrphanList(undefined, { doc }).childElementCount, 0);
 });
 
+test('plugin cards show live channel badges when channelStatus rows match', () => {
+  const el = renderPluginList([
+    { name: 'telegram-chat', enabled: true, contributions: { agents: 0, taskSources: 0, chatChannels: 1, skills: 0, workflows: 0 } },
+    { name: 'github-source', enabled: true, contributions: { agents: 1, taskSources: 1, skills: 0, workflows: 0 } },
+  ], {
+    doc,
+    channelStatus: [
+      { plugin: 'telegram-chat', channelId: 'main', displayName: 'Telegram', platform: 'telegram', state: 'connected', detail: null },
+    ],
+  });
+  const badge = el.querySelector('.pl-channel');
+  assert.ok(badge);
+  assert.equal(badge.dataset.channelKey, 'telegram-chat/main');
+  assert.match(badge.className, /green/);
+  assert.match(badge.textContent, /Telegram · connected/);
+  const cards = el.querySelectorAll('.plugin-card');
+  assert.equal(cards[1].querySelector('.pl-channel'), null, 'no badges without matching rows');
+  assert.match(cards[0].querySelector('.pl-contrib').textContent, /1 chat channel/);
+});
+
+test('config form renders channel sections with data-channel-id; collect routes accordingly', () => {
+  const schema = [
+    { key: 'botToken', type: 'text', label: 'Bot token', secret: true, required: true, default: null, help: null, options: [] },
+    { key: 'notifyChatIds', type: 'text', label: 'Notify', secret: false, required: false, default: null, help: null, options: [] },
+  ];
+  const root = renderConfigForm({
+    sources: [{ id: 'gh', schema: [{ key: 'token', type: 'text', label: 'T', secret: true, required: true, default: null, help: null, options: [] }], values: {} }],
+    channels: [{ id: 'main', displayName: 'Telegram', platform: 'telegram', schema, values: { botToken: { set: true }, notifyChatIds: '42' } }],
+  }, { doc });
+
+  const forms = [...root.querySelectorAll('.pl-config-form')];
+  assert.equal(forms.length, 2);
+  assert.equal(forms[0].dataset.sourceId, 'gh');
+  assert.equal(forms[1].dataset.channelId, 'main');
+  assert.match(forms[1].querySelector('.pl-config-h').textContent, /Telegram \(telegram channel\)/);
+
+  const tokenInput = forms[1].querySelector('[data-key="botToken"]');
+  assert.equal(tokenInput.type, 'password');
+  assert.equal(tokenInput.placeholder, '(set)');
+  forms[1].querySelector('[data-key="notifyChatIds"]').value = '42, 77';
+  assert.deepEqual(collectConfigForm(forms[1]), { channelId: 'main', values: { notifyChatIds: '42, 77' } });
+  assert.deepEqual(collectConfigForm(forms[0]).sourceId, 'gh', 'legacy source forms unchanged');
+});
+
 // ── model contributions in the plugin surfaces (design §9.4, §9.6) ───────────
 
 test('install consent: models section — base URL verbatim + model secrets red', () => {
@@ -177,4 +248,85 @@ test('plugin list card counts models; references409 renders model guard entries'
     { id: 'ds-stable', steps: [{ projectKey: 'a', step: 'planner' }], nodes: [{ projectKey: 'a', workflowId: 'w', nodeId: 'n' }] },
   ], { doc });
   assert.match(refs.querySelector('li').textContent, /model: ds-stable \(2 pipeline selections\)/);
+});
+
+// ── marketplaces: available cards, registry rows, installed provenance ───────
+
+const MKT = {
+  id: 'm-1', url: '/tmp/m1', name: 'Fixture Market', description: 'x', builtin: true,
+  addedAt: '2026-08-17T00:00:00Z',
+  lastSync: { sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', at: '2026-08-17T10:00:00Z' },
+  warnings: ['worca-cc-marketplace.json: bad/entry — skipped'],
+  plugins: [
+    { name: 'aa', subdir: 'plugins/aa', description: 'first', version: '1.0.0', installed: false, inventory: {} },
+    { name: 'bb', subdir: 'plugins/bb', description: 'second', version: null, installed: true, inventory: {} },
+  ],
+};
+
+test('renderAvailableList: install button only for non-installed; marketplace badge; installed tag', () => {
+  const el = renderAvailableList([MKT], { doc });
+  const cards = el.querySelectorAll('.pl-avail-card');
+  assert.equal(cards.length, 2);
+  const btn = cards[0].querySelector('.pl-install-avail');
+  assert.ok(btn);
+  assert.equal(btn.dataset.name, 'aa');
+  assert.equal(btn.dataset.marketplace, 'm-1');
+  assert.match(cards[0].querySelector('.pl-mkt-badge').textContent, /Fixture Market/);
+  assert.ok(!cards[1].querySelector('.pl-install-avail'), 'installed plugin has no install button');
+  assert.match(cards[1].querySelector('.pl-installed').textContent, /Installed/);
+});
+
+test('renderAvailableList: never-synced marketplace disables install; empty states', () => {
+  const unsynced = { ...MKT, id: 'm-2', lastSync: null, plugins: [{ name: 'cc', subdir: '', description: '', version: null, installed: false, inventory: {} }] };
+  const el = renderAvailableList([unsynced], { doc });
+  assert.ok(!el.querySelector('.pl-install-avail'), 'no install button before first sync');
+  assert.match(renderAvailableList([], { doc }).textContent, /No marketplaces yet/);
+  assert.match(renderAvailableList([{ ...MKT, plugins: [] }], { doc }).textContent, /No plugins discovered/);
+});
+
+test('renderMarketplaceList: builtin badge, sync line (relTime), warnings, action buttons', () => {
+  const el = renderMarketplaceList([MKT], { doc, now: Date.parse('2026-08-17T13:00:00Z') }); // C4: inject now
+  const row = el.querySelector('.pl-mkt-row');
+  assert.equal(row.dataset.id, 'm-1');
+  assert.match(row.querySelector('.pl-mkt-builtin').textContent, /built-in/);
+  assert.match(row.querySelector('.pl-mkt-sync').textContent, /a1b2c3d.*synced .*(ago|\d{4}-).*2 plugins/);
+  assert.match(row.querySelector('.pl-mkt-warning').textContent, /bad\/entry/);
+  assert.equal(row.querySelector('.pl-mkt-refresh').dataset.id, 'm-1');
+  assert.equal(row.querySelector('.pl-mkt-remove').dataset.id, 'm-1');
+  const never = renderMarketplaceList([{ ...MKT, id: 'm-3', lastSync: null, warnings: [] }], { doc });
+  assert.match(never.querySelector('.pl-mkt-sync').textContent, /never synced/);
+});
+
+test('renderPluginList: provenance line renders marketplace + repo @ sha7', () => {
+  const el = renderPluginList([{
+    name: 'aa', version: '1.0.0', pinnedSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+    enabled: true, linked: false, broken: false,
+    contributions: { agents: 0, taskSources: 1, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+    repo: '/tmp/m1', subdir: 'plugins/aa', marketplace: 'm-1', marketplaceName: 'Fixture Market',
+  }], { doc });
+  const prov = el.querySelector('.pl-provenance');
+  assert.ok(prov);
+  assert.match(prov.textContent, /Fixture Market · \/tmp\/m1 @ a1b2c3d/);
+});
+
+test('relTime: fixed-now buckets (pure, jsdom-safe) (C4)', () => {
+  const now = Date.parse('2026-08-17T12:00:00Z');
+  assert.equal(relTime('2026-08-17T11:59:40Z', now), 'just now');
+  assert.equal(relTime('2026-08-17T11:55:00Z', now), '5m ago');
+  assert.equal(relTime('2026-08-17T09:00:00Z', now), '3h ago');
+  assert.equal(relTime('2026-08-15T12:00:00Z', now), '2d ago');
+  assert.equal(relTime('not-a-date', now), 'not-a-date');
+});
+
+test('renderPluginList: provenance falls back to the raw repo when marketplaceName is null (E14)', () => {
+  const el = renderPluginList([{
+    name: 'bb', version: '1.0.0', pinnedSha: 'deadbeefcafebabe0000000000000000deadbeef',
+    enabled: true, linked: false, broken: false,
+    contributions: { agents: 0, taskSources: 1, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+    repo: '/tmp/gone-repo', subdir: 'plugins/bb', marketplace: 'gone', marketplaceName: null,
+  }], { doc });
+  const prov = el.querySelector('.pl-provenance');
+  assert.ok(prov);
+  assert.match(prov.textContent, /\/tmp\/gone-repo @ deadbee/);
+  assert.doesNotMatch(prov.textContent, /·/); // no marketplace name -> no separator
 });

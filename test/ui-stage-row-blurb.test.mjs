@@ -1,8 +1,9 @@
-// test/ui-stage-row-blurb.test.mjs — New-Pipeline stage rows must SHOW the whole
-// caption, not ellipsize it mid-sentence (web-UI review F1: the longer blurbs no
-// longer fit the ~235px .meta column, so every row read "Writes the code from
-// the approved pl…"). The stage NAME keeps its single-line ellipsis; only the
-// caption wraps, clamped at 2 lines so the row height stays bounded.
+// test/ui-stage-row-blurb.test.mjs — New-Pipeline agent rows must SHOW the whole
+// agent blurb, not ellipsize it mid-sentence (web-UI review F1: the longer blurbs
+// no longer fit the old ~235px .meta column, so every row read "Writes the code
+// from the approved pl…"). Since the accordion redesign the blurb lives in the
+// OPENED row body (.agent-desc), where it has the full width and can wrap; the
+// agent NAME in the collapsed head keeps its single-line ellipsis.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -28,26 +29,27 @@ function rules(selector) {
   return out;
 }
 
-test('the stage-row caption wraps instead of ellipsizing the blurb away', () => {
-  const bodies = rules('.stage-cfg .meta small');
-  assert.ok(bodies.length, '.stage-cfg .meta small rule must exist');
+test('the agent blurb wraps instead of ellipsizing away', () => {
+  const bodies = rules('.agent-desc');
+  assert.ok(bodies.length, '.agent-desc rule must exist');
   for (const body of bodies) {
-    assert.doesNotMatch(body, /white-space:\s*nowrap/, 'caption must not be forced onto one line');
-    assert.doesNotMatch(body, /text-overflow:\s*ellipsis/, 'caption must not ellipsize');
+    assert.doesNotMatch(body, /white-space:\s*nowrap/, 'blurb must not be forced onto one line');
+    assert.doesNotMatch(body, /text-overflow:\s*ellipsis/, 'blurb must not ellipsize');
   }
-  const all = bodies.join(';');
-  assert.match(all, /-webkit-line-clamp:\s*2/, 'caption clamps at 2 lines so rows stay compact');
-  assert.match(all, /overflow-wrap:\s*anywhere/, 'a long unbroken token still cannot widen the column');
+  assert.match(bodies.join(';'), /overflow-wrap:\s*anywhere/, 'a long unbroken token cannot widen the row');
 });
 
-test('the stage-row NAME keeps its single-line ellipsis', () => {
-  const all = rules('.stage-cfg .meta b').join(';');
-  assert.ok(all, '.stage-cfg .meta b rule must exist');
+test('the collapsed row NAME keeps its single-line ellipsis', () => {
+  const all = rules('.agent-name').join(';');
+  assert.ok(all, '.agent-name rule must exist');
   assert.match(all, /white-space:\s*nowrap/, 'node label stays on one line');
   assert.match(all, /text-overflow:\s*ellipsis/, 'node label ellipsizes when too long');
 });
 
-test('the five default stage rows carry the full new blurbs', () => {
+test('the five built-in stage blurbs ship with the renderer', () => {
+  // They moved out of index.html into DEFAULT_STAGE_META: the Default workflow's
+  // rows are rendered, not hardcoded (newpipeline-ux-design.md §4.7).
+  const appjs = readFileSync(fileURLToPath(new URL('../ui/public/app.js', import.meta.url)), 'utf8');
   for (const blurb of [
     'Turns hidden decisions into questions before planning',
     'Explores the codebase and writes the implementation plan',
@@ -55,6 +57,6 @@ test('the five default stage rows carry the full new blurbs', () => {
     'Writes the code from the approved plan, strict TDD',
     'Reviews the implementation diff against the plan',
   ]) {
-    assert.ok(html.includes(blurb), `#wf-default-stages must carry: ${blurb}`);
+    assert.ok(appjs.includes(blurb), `DEFAULT_STAGE_META must carry: ${blurb}`);
   }
 });
