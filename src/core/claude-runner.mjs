@@ -445,8 +445,35 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       });
     });
 
+    // stderr is a FIRST-CLASS log stream, not just failure evidence. The CLI puts
+    // retry/throttle notices (429/529), MCP server chatter, and runtime warnings
+    // here on runs that go on to succeed — all of it was previously discarded,
+    // since stderrBuf is only read on the non-zero-exit path below.
+    //
+    // Chunks are not lines: `data` fires on arbitrary boundaries, so a carry
+    // buffer holds the partial tail until its newline arrives, and `close`
+    // flushes whatever is left. Each line is emitted at receive time — the
+    // closest available proxy for event time, as stderr carries no timestamp of
+    // its own. `stream:'err'` tags the origin channel; the orchestrator decides
+    // the level.
+    let stderrCarry = '';
+    const emitStderrLine = (line) => {
+      const text = line.replace(/\r$/, '').trim();
+      if (text) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
+    };
+    const flushStderr = () => {
+      if (!stderrCarry) return;
+      const rest = stderrCarry;
+      stderrCarry = '';
+      emitStderrLine(rest);
+    };
     child.stderr.on('data', (d) => {
-      stderrBuf += d.toString();
+      const chunk = d.toString();
+      stderrBuf += chunk;                 // still the source of the exit-code detail
+      stderrCarry += chunk;
+      const parts = stderrCarry.split('\n');
+      stderrCarry = parts.pop() ?? '';    // trailing partial line waits for its newline
+      for (const line of parts) emitStderrLine(line);
     });
 
     child.on('error', (err) => {
@@ -455,6 +482,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
 
     child.on('close', (code) => {
       rl.close();
+      flushStderr(); // a final line with no trailing newline is still a line
       if (signal?.aborted) {
         const err = new Error('aborted');
         err.name = 'AbortError';
@@ -462,8 +490,15 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         return;
       }
       if (code !== 0) {
-        const detail = stderrBuf.trim() || errorDetail || 'no stderr';
-        finish(rejectP, new Error(`${bin} exited with code ${code}: ${detail}`));
+        const fromStderr = stderrBuf.trim();
+        const detail = fromStderr || errorDetail || 'no stderr';
+        const err = new Error(`${bin} exited with code ${code}: ${detail}`);
+        // Mark the origin channel so the orchestrator can tag its `error` log
+        // line with stream:'err' without sniffing the message. Absent when the
+        // detail came from the stdout `result` envelope (the common case — see
+        // the errorDetail comment above), which is not an stderr line.
+        if (fromStderr) err.stream = 'err';
+        finish(rejectP, err);
         return;
       }
       const text = resultText || assistantText;

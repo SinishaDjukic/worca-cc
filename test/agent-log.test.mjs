@@ -338,6 +338,48 @@ test('init line carries step attribution', () => {
   assert.equal(logs[0].cycle, 1);
 });
 
+// ── stderr (stream:'err') ───────────────────────────────────────────────────
+
+test('a stderr event logs at warn, tagged stream:"err"', () => {
+  const logs = capture('planner', { type: 'stderr', stream: 'err', text: 'Overloaded, retrying in 4s' });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].source, 'planner', 'plain role — stderr is always main-stream');
+  assert.equal(logs[0].level, 'warn', 'NOT error: this is mostly retry/throttle chatter');
+  assert.equal(logs[0].stream, 'err');
+  assert.equal(logs[0].text, 'Overloaded, retrying in 4s');
+  assert.equal(logs[0].sub, undefined);
+});
+
+test('a stderr line carries step attribution like any other line', () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const logs = [];
+  orch.on('log', (l) => logs.push(l));
+  orch._onAgentEvent('implementer',
+    { type: 'stderr', stream: 'err', text: 'API 529, backing off' },
+    { nodeId: 'n2', stepIndex: 3, cycle: 2, stepKey: '3:n2#2' });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].nodeId, 'n2');
+  assert.equal(logs[0].stepIndex, 3);
+  assert.equal(logs[0].cycle, 2);
+  assert.equal(logs[0].stream, 'err');
+});
+
+test('an empty/whitespace stderr event logs nothing', () => {
+  assert.equal(capture('planner', { type: 'stderr', stream: 'err', text: '   ' }).length, 0);
+  assert.equal(capture('planner', { type: 'stderr', stream: 'err' }).length, 0);
+});
+
+test('a stderr event never touches the tool/init/result branches', () => {
+  const logs = capture('planner', { type: 'stderr', stream: 'err', text: 'plain noise' });
+  assert.ok(!logs.some((l) => /^[←→]|\[init\]/.test(l.text)), 'no arrow/init line');
+});
+
+test('lines without stderr provenance carry no stream field', () => {
+  const logs = capture('planner', { type: 'assistant', text: 'Planning.', raw: { type: 'assistant' } });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].stream, undefined);
+});
+
 test('result event never logs a [done]/turns line', () => {
   const logs = capture('planner', {
     type: 'result',

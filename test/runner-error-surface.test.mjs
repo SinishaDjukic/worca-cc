@@ -79,3 +79,89 @@ test('real stderr still takes precedence when present', async () => {
     /exited with code 1: boom from stderr/,
   );
 });
+
+// ── stderr as a first-class log stream ──────────────────────────────────────
+// Retry/throttle notices (429/529) and subprocess chatter land on stderr even on
+// runs that go on to SUCCEED, where the exit-code path above never reads them.
+
+/** Write a fake `claude` from raw /bin/sh lines (finer control than fakeBin). */
+async function fakeShell(dir, body) {
+  const path = join(dir, 'fake-claude-sh.sh');
+  await writeFile(path, ['#!/bin/sh', ...body].join('\n') + '\n', 'utf8');
+  await chmod(path, 0o755);
+  return path;
+}
+
+const stderrEvents = (events) => events.filter((e) => e.type === 'stderr');
+
+test('stderr lines are emitted as stream:"err" events on a SUCCESSFUL run', async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeShell(dir, [
+    `printf '%s\\n' 'Overloaded, retrying in 4s' 1>&2`,
+    `printf '%s\\n' '{"type":"result","result":"done"}'`,
+    'exit 0',
+  ]);
+  const events = [];
+  const out = await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => events.push(e) });
+  assert.equal(out.exitCode, 0, 'the run still succeeds');
+  assert.deepEqual(stderrEvents(events), [
+    { type: 'stderr', stream: 'err', text: 'Overloaded, retrying in 4s' },
+  ]);
+});
+
+test('each stderr line is its own event, blank lines dropped', async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeShell(dir, [
+    `printf '%s\\n\\n%s\\n' 'first' 'second' 1>&2`,
+    'exit 0',
+  ]);
+  const events = [];
+  await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => events.push(e) });
+  assert.deepEqual(stderrEvents(events).map((e) => e.text), ['first', 'second']);
+});
+
+test('a final stderr line with NO trailing newline is still emitted', async () => {
+  const dir = await makeTmpDir();
+  // printf without \n: the line only exists in the carry buffer until close.
+  const bin = await fakeShell(dir, [`printf '%s' 'no trailing newline' 1>&2`, 'exit 0']);
+  const events = [];
+  await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => events.push(e) });
+  assert.deepEqual(stderrEvents(events).map((e) => e.text), ['no trailing newline']);
+});
+
+test('a line split across write boundaries is reassembled, not torn in two', async () => {
+  const dir = await makeTmpDir();
+  // Two writes, one logical line: the carry buffer must hold "one half " until
+  // the newline arrives with the second write.
+  const bin = await fakeShell(dir, [
+    `printf '%s' 'one half ' 1>&2`,
+    'sleep 0.2',
+    `printf '%s\\n' 'and the rest' 1>&2`,
+    'exit 0',
+  ]);
+  const events = [];
+  await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => events.push(e) });
+  assert.deepEqual(stderrEvents(events).map((e) => e.text), ['one half and the rest']);
+});
+
+test('the non-zero-exit error is marked stream:"err" only when stderr fed it', async () => {
+  const dir = await makeTmpDir();
+  const fromStderr = await fakeBin(dir, { code: 1, stderr: 'boom from stderr' });
+  await assert.rejects(
+    () => runClaude({ bin: fromStderr, prompt: 'hi', cwd: dir }),
+    (err) => { assert.equal(err.stream, 'err'); return true; },
+  );
+
+  const dir2 = await makeTmpDir();
+  const fromStdout = await fakeBin(dir2, {
+    code: 1,
+    stdout: '{"type":"result","is_error":true,"result":"Not logged in"}',
+  });
+  await assert.rejects(
+    () => runClaude({ bin: fromStdout, prompt: 'hi', cwd: dir2 }),
+    (err) => {
+      assert.equal(err.stream, undefined, 'a stdout-borne failure is not an stderr line');
+      return true;
+    },
+  );
+});

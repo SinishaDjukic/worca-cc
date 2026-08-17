@@ -146,6 +146,26 @@ const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
 const MAX_QUESTION_ROUNDS = 3;
 
 /**
+ * `attr` marking a log line whose text came from a subprocess's stderr.
+ *
+ * ONE convention for every subprocess worca spawns — the agent CLI (framed
+ * line-by-line by claude-runner), git (`_git`), and graphify. It records the
+ * origin CHANNEL, never the severity: each call site keeps the level it already
+ * had, because these git/graphify lines are worca's own summaries of a failure,
+ * not raw stderr echoes. Frozen and shared: `_log` only reads from `attr`.
+ */
+const ERR_STREAM = Object.freeze({ stream: 'err' });
+
+/** The `: <stderr>` suffix for a failed subprocess result, or '' when it said
+ *  nothing. runGraphifyUpdate already returns its child's stderr and the log
+ *  line used to drop it — tagging a line as stderr-derived while discarding the
+ *  stderr would make the tag a lie. Clipped: a build failure can be verbose. */
+function errDetail(res, max = 200) {
+  const text = (res?.stderr || '').trim().replace(/\s+/g, ' ');
+  return text ? `: ${clip(text, max)}` : '';
+}
+
+/**
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
  * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
  * prompt can warn about the shared working tree (see implementerBody).
@@ -1313,7 +1333,9 @@ class Orchestrator extends EventEmitter {
       this._log(
         'graph',
         'warn',
-        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`,
+        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`
+          + errDetail(res),
+        ERR_STREAM,
       );
     }
   }
@@ -1349,7 +1371,10 @@ class Orchestrator extends EventEmitter {
         await appendAudit(this.pipeline.dir, `Preflight: built graphify graph for ${m.projectKey} (AST-only).`).catch(() => {});
       } else {
         this.toolInstructions.set(m.projectKey, '');
-        this._log('graph', 'warn', `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`);
+        this._log('graph', 'warn',
+          `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`
+            + errDetail(res),
+          ERR_STREAM);
       }
     });
   }
@@ -1382,7 +1407,7 @@ class Orchestrator extends EventEmitter {
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
-      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`);
+      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
     }
     if (this.pipeline) {
       await appendAudit(
@@ -1421,7 +1446,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`);
+        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1506,7 +1531,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`);
+        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1592,7 +1617,7 @@ class Orchestrator extends EventEmitter {
     const gitOpts = { cwd, ignoreAbort: true };
     const status = await this._git(['status', '--porcelain'], gitOpts);
     if (!status.ok) {
-      this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`);
+      this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`, ERR_STREAM);
       return null;
     }
     if (!status.stdout.trim()) {
@@ -1603,7 +1628,7 @@ class Orchestrator extends EventEmitter {
       ? await this._git(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
       : await this._git(['add', '-A'], gitOpts);
     if (!add.ok) {
-      this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`);
+      this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`, ERR_STREAM);
       return null;
     }
     // §8.8 status recheck: with mounts present the porcelain gate above is never
@@ -1637,7 +1662,7 @@ class Orchestrator extends EventEmitter {
       // node_modules today and do not detached). Retry ONCE with hooks disabled for
       // that invocation only, logging both facts.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
-      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`);
+      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, ERR_STREAM);
       const retry = await this._git(
         ['-c', 'core.hooksPath=', '-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator',
          'commit', '-m', msg],
@@ -1652,7 +1677,7 @@ class Orchestrator extends EventEmitter {
       }
     }
     if (!commit.ok) {
-      this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`);
+      this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`, ERR_STREAM);
       return null;
     }
     const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
@@ -2108,6 +2133,17 @@ class Orchestrator extends EventEmitter {
       if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
         endMark = 'paused';
         throw pauseErr();
+      }
+      // Terminal node failure (recovery already gave up, or the error was never
+      // recoverable): the ONE `error`-level line of the agent log. A pause/abort
+      // is not a failure, and a recoverable error that retried logged its own
+      // `warn` in _recover — neither reaches here. `err.stream` is set by the
+      // runner only when the detail actually came from the CLI's stderr.
+      if (!isAbort(err) && !isPause(err)) {
+        this._log(node.key, 'error', `step failed: ${err?.message || err}`, {
+          nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
+          ...(err?.stream ? { stream: err.stream } : {}),
+        });
       }
       throw err;
     } finally {
@@ -2780,6 +2816,21 @@ class Orchestrator extends EventEmitter {
       }
       return;
     }
+    // Agent stderr (`stream:'err'`), one framed line per event. Handled HERE,
+    // beside the other envelope guards, because a stderr event carries no `raw`:
+    // routing it through the cost block and the five lifecycle reducers below
+    // only to have each no-op is noise. It is always main-stream (stderr has no
+    // parent_tool_use_id), so the source is the plain role and `sub` is never set.
+    //
+    // Level is `warn`, not `error`: what actually lands here is mostly 429/529
+    // retry text and subprocess chatter. Genuine failures arrive as a `result`
+    // event with is_error on STDOUT — see the non-zero-exit path in
+    // claude-runner.mjs — and are logged at `error` by the node failure handler.
+    if (e.type === 'stderr') {
+      const text = (e.text || '').trim();
+      if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
+      return;
+    }
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
@@ -3122,7 +3173,7 @@ class Orchestrator extends EventEmitter {
         'orchestrator: initial checkpoint',
       ], { cwd: dir });
       if (!commit.ok) {
-        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`);
+        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`, ERR_STREAM);
       }
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
@@ -3269,7 +3320,7 @@ class Orchestrator extends EventEmitter {
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._git(args, { cwd: dir });
       if (!res.ok && res.stderr && res.stderr.trim()) {
-        this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`);
+        this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }
     }
   }
@@ -3502,6 +3553,10 @@ class Orchestrator extends EventEmitter {
       if (attr.stepIndex != null) evt.stepIndex = attr.stepIndex;
       if (attr.cycle != null) evt.cycle = attr.cycle;
       if (attr.sub) evt.sub = true;        // drives sub-agent web styling
+      // Origin channel of the text: 'err' when it came from a subprocess's
+      // stderr (agent CLI, git, graphify). Provenance, not severity — the level
+      // says how bad it is, this says where it came from.
+      if (attr.stream) evt.stream = attr.stream;
     }
     this._emit('log', evt);
     this.logWriter.push(evt); // persist the full stream (buffered; flushed on a timer)
