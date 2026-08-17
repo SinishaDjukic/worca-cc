@@ -54,8 +54,8 @@ import {
   EMBEDDED_AGENTS,
   groupPaletteByDomain,
 } from './composer-core.mjs';
-import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore } from './log-line.mjs';
-import { logLineVisible, logFacets } from './log-filter.mjs';
+import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
+import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import {
   statusChip, diffBadges, mergeFindings,
   sourceBadge, reportResultControl, workflowPickerLabel,
@@ -2728,6 +2728,7 @@ if (typeof window !== 'undefined') {
     onHello,
     isPaused,
     resumeRunFromCard,
+    seedResumedLog,
   });
 }
 
@@ -3613,7 +3614,12 @@ const LOG_SEARCH_DEBOUNCE_MS = 120;
 // hidden-textarea fallback keeps the button working anywhere.
 async function copyLogToClipboard(btn, recs) {
   const text = serializeLog(recs);
-  if (!text) return;
+  if (!text) {
+    // A filtered-empty pane: silence looks like a dead button, and the STALE
+    // clipboard content would pass for the filtered log on the next paste.
+    flashCopyBtn(btn, 'nothing to copy');
+    return;
+  }
   let ok = true;
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
@@ -3621,9 +3627,15 @@ async function copyLogToClipboard(btn, recs) {
   } catch {
     ok = legacyCopy(text);
   }
+  flashCopyBtn(btn, ok ? 'copied' : 'copy failed');
+}
+
+// Save/flash/restore a copy button's label. `dataset.label` survives repeated
+// clicks so a flash can never become the button's permanent label.
+function flashCopyBtn(btn, msg) {
   const prev = btn.dataset.label || btn.textContent;
   btn.dataset.label = prev;
-  btn.textContent = ok ? 'copied' : 'copy failed';
+  btn.textContent = msg;
   clearTimeout(btn._copyTimer);
   btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
 }
@@ -3655,13 +3667,26 @@ function buildLogSeparator(label) {
   return el;
 }
 
+// ONE DOM cap for the streaming append and the filter repaint. Counts RECORD
+// lines only (the model cap counts records too — counting separators made the
+// two caps diverge and over-evict), evicts oldest-first, and drops a separator
+// left leading the pane: a rule above the first line labels nothing.
+function trimLogDom(logEl) {
+  const lines = logEl.getElementsByClassName('log-line'); // live collection
+  while (lines.length > MAX_LOG_LINES) logEl.removeChild(logEl.firstElementChild);
+  while (logEl.firstElementChild && logEl.firstElementChild.classList.contains('log-sep')) {
+    logEl.removeChild(logEl.firstElementChild);
+  }
+}
+
 // Append `rec` to a log pane, preceded by a cycle separator when it opens a new
-// cycle. `prevRec` is the previously RENDERED record (not the previous one in
-// the model), so a filter that hides a whole cycle cannot orphan a separator.
-function appendLogRec(logEl, rec, prevRec) {
-  const sep = cycleSeparatorBefore(prevRec, rec);
+// cycle. `prevCycle` is the last RENDERED cycle value (see cycleSeparatorBefore);
+// returns the value the NEXT append must pass.
+function appendLogRec(logEl, rec, prevCycle) {
+  const sep = cycleSeparatorBefore(prevCycle, rec);
   if (sep) logEl.appendChild(buildLogSeparator(sep));
   logEl.appendChild(buildLogLine(rec));
+  return rec.cycle != null ? rec.cycle : prevCycle;
 }
 
 // Pin a card's log to the bottom when its auto-scroll is on. Source of truth is
@@ -3720,9 +3745,8 @@ function onLog(r, msg) {
     const logEl = r.el.querySelector('.log');
     if (logEl && !repainted && logLineVisible(rec, r.logFilter)) {
       clearLogPlaceholder(logEl);
-      appendLogRec(logEl, rec, r._lastRenderedLog);
-      r._lastRenderedLog = rec;
-      while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
+      r._lastRenderedCycle = appendLogRec(logEl, rec, r._lastRenderedCycle ?? null);
+      trimLogDom(logEl);
       maybeAutoscrollLog(r);
     }
   }
@@ -3768,13 +3792,7 @@ function paintLogFilters(r, root = r.el) {
   // A selection whose value vanished from the facets (log rotation, rebuild)
   // fell back to "all" in the DOM; mirror that into the model and repaint so
   // the pane never stays filtered by a value the dropdowns no longer show.
-  const effective = {
-    source: selSource ? selSource.value : r.logFilter.source,
-    level: selLevel ? selLevel.value : r.logFilter.level,
-    step: selStep ? selStep.value : r.logFilter.step,
-    cycle: selCycle ? selCycle.value : r.logFilter.cycle,
-    search: r.logFilter.search, // free text: no facet to vanish from
-  };
+  const effective = readLogFilterFrom(root, r.logFilter.search);
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
     || String(effective.step) !== String(r.logFilter.step)
@@ -3828,17 +3846,22 @@ function repaintFilteredLog(r, root = r.el) {
   const savedTop = logEl.scrollTop;
   logEl.innerHTML = '';
   delete logEl.dataset.empty;
+  const visible = compileLogFilter(r.logFilter);
+  // One fragment, one reflow — appending 4000 nodes into the live document
+  // per debounce tick is where search jank came from.
+  const frag = document.createDocumentFragment();
   let shown = 0;
-  let prevRec = null;
+  let prevCycle = null;
   for (const rec of r.logLines) {
-    if (!logLineVisible(rec, r.logFilter)) continue;
-    appendLogRec(logEl, rec, prevRec);
-    prevRec = rec;
+    if (!visible(rec)) continue;
+    prevCycle = appendLogRec(frag, rec, prevCycle);
     shown++;
   }
-  // Hand the streaming path in onLog the record the separator must compare
+  logEl.appendChild(frag);
+  // Hand the streaming path in onLog the cycle the next separator must compare
   // against, so a live append after a repaint agrees with the repaint.
-  r._lastRenderedLog = prevRec;
+  r._lastRenderedCycle = prevCycle;
+  trimLogDom(logEl);
   if (shown === 0 && r.logLines.length) {
     logEl.textContent = '(no lines match the filter)';
     logEl.dataset.empty = '1';
@@ -7812,10 +7835,7 @@ async function seedResumedLog(newRunId, prevLines, logUrl) {
           const t = raw.trim(); if (!t) continue;
           try {
             const rec = JSON.parse(t);
-            head.push({
-              source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
-              ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
-            });
+            head.push(projectLogRecord(rec));
           } catch { /* torn line */ }
         }
       }
@@ -7984,11 +8004,10 @@ if (runListEl) {
     const card = box.closest('.run-card');
     const r = card && runs.get(card.dataset.runId);
     if (!r) return;
-    clearTimeout(r._logSearchTimer);
-    r._logSearchTimer = setTimeout(() => {
+    scheduleLogSearch(r, () => {
       r.logFilter = readCardLogFilter(card, r);
       repaintFilteredLog(r);
-    }, LOG_SEARCH_DEBOUNCE_MS);
+    });
   });
 
   // Copy the VISIBLE log lines (what the filters and search left on screen).
@@ -7998,23 +8017,41 @@ if (runListEl) {
     const card = btn.closest('.run-card');
     const r = card && runs.get(card.dataset.runId);
     if (!r) return;
-    copyLogToClipboard(btn, r.logLines.filter((rec) => logLineVisible(rec, r.logFilter)));
+    copyLogToClipboard(btn, r.logLines.filter(compileLogFilter(r.logFilter)));
   });
 }
 
-// Read a run card's whole log filter out of the DOM. One reader for the
-// dropdowns and the search box, so neither can clobber the other's value.
-function readCardLogFilter(card, r) {
-  // The search box is read by PRESENCE, not truthiness: an empty box means the
-  // user cleared the term, which must win over the stored value.
-  const searchEl = card.querySelector('.log-search');
+// The ONE source of the filter bar's markup is the run-card template; History
+// clones it so the two bars can never drift (control order, classes, a11y).
+function buildLogFilterBar() {
+  return document.getElementById('run-card-tpl').content.querySelector('.log-filters').cloneNode(true);
+}
+
+// The ONE filter reader for both bars. The search box is read by PRESENCE, not
+// truthiness: an empty box means the user cleared the term, which must win over
+// the stored value; `prevSearch` only applies when the box is absent.
+function readLogFilterFrom(root, prevSearch = '') {
+  const searchEl = root.querySelector('.log-search');
   return {
-    source: card.querySelector('.log-f-source')?.value || '',
-    level: card.querySelector('.log-f-level')?.value || '',
-    step: card.querySelector('.log-f-step')?.value || '',
-    cycle: card.querySelector('.log-f-cycle')?.value || '',
-    search: searchEl ? searchEl.value : (r.logFilter.search || ''),
+    source: root.querySelector('.log-f-source')?.value || '',
+    level: root.querySelector('.log-f-level')?.value || '',
+    step: root.querySelector('.log-f-step')?.value || '',
+    cycle: root.querySelector('.log-f-cycle')?.value || '',
+    search: searchEl ? searchEl.value : prevSearch,
   };
+}
+
+// The ONE search debounce: state rides on `holder` so the delegated live-card
+// path (per-run timer) and History's closure share the implementation.
+function scheduleLogSearch(holder, fn) {
+  clearTimeout(holder._logSearchTimer);
+  holder._logSearchTimer = setTimeout(fn, LOG_SEARCH_DEBOUNCE_MS);
+}
+
+// Read a run card's whole log filter out of the DOM, carrying the run's stored
+// search term as the fallback.
+function readCardLogFilter(card, r) {
+  return readLogFilterFrom(card, r.logFilter.search || '');
 }
 
 // Statistics: range segmented control + chart tooltip. Both are delegated, so
@@ -9319,8 +9356,7 @@ function paintLiveLogsBar(barEl, logUrl, hasLog) {
 // live panel uses, so persisted logs look identical to live ones — including the
 // same source/level/step filter bar as the live card.
 async function loadLiveLogs(panel, logUrl) {
-  const bar = document.createElement('div');
-  bar.className = 'log-filters';
+  const bar = buildLogFilterBar();
   const box = document.createElement('div');
   box.className = 'log';
   panel.innerHTML = '';
@@ -9335,74 +9371,47 @@ async function loadLiveLogs(panel, logUrl) {
       if (!t) continue;
       let rec;
       try { rec = JSON.parse(t); } catch { continue; } // skip a torn final line
-      recs.push({
-        source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
-        ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
-        // `cycle` drives the cycle filter AND the "── Cycle N ──" separators; it
-        // is persisted on every attributed line, so dropping it here would leave
-        // both dead in History while working live.
-        ...(rec.cycle != null ? { cycle: rec.cycle } : {}),
-        ...(rec.stream ? { stream: rec.stream } : {}),
-      });
+      recs.push(projectLogRecord(rec));
     }
     const filter = { source: '', level: '', step: '', cycle: '', search: '' };
     const paint = () => {
       box.innerHTML = '';
-      let n = 0;
-      let prevRec = null;
-      for (const rec of recs) {
-        if (!logLineVisible(rec, filter)) continue;
-        appendLogRec(box, rec, prevRec);
-        prevRec = rec;
-        n++;
+      const visible = compileLogFilter(filter);
+      const matches = recs.filter(visible);
+      // Tail-render: the History NDJSON is uncapped and every debounce tick
+      // repaints — bound the DOM like the live card. Copy keeps ALL matches.
+      const shown = matches.length > MAX_LOG_LINES ? matches.slice(-MAX_LOG_LINES) : matches;
+      const frag = document.createDocumentFragment();
+      if (shown.length < matches.length) {
+        const note = document.createElement('div');
+        note.className = 'hint';
+        note.textContent = `(showing the last ${shown.length} of ${matches.length} matching lines — copy takes all ${matches.length})`;
+        frag.appendChild(note);
       }
-      if (n === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
+      let prevCycle = null;
+      for (const rec of shown) prevCycle = appendLogRec(frag, rec, prevCycle);
+      box.appendChild(frag);
+      if (matches.length === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
     };
     const facets = logFacets(recs);
-    for (const [cls, allLabel, values, labelOf] of [
-      ['log-f-source', 'all sources', facets.sources, null],
-      ['log-f-level', 'all levels', facets.levels, null],
-      ['log-f-step', 'all steps', facets.steps, (i) => `step ${i + 1}`],
-      ['log-f-cycle', 'all cycles', facets.cycles, (c) => `cycle ${c}`],
-    ]) {
-      const sel = document.createElement('select');
-      sel.className = `log-f ${cls}`;
-      fillFilterSelect(sel, allLabel, values, '', labelOf);
-      sel.addEventListener('change', () => {
-        filter.source = bar.querySelector('.log-f-source')?.value || '';
-        filter.level = bar.querySelector('.log-f-level')?.value || '';
-        filter.step = bar.querySelector('.log-f-step')?.value || '';
-        filter.cycle = bar.querySelector('.log-f-cycle')?.value || '';
-        paint();
-      });
-      bar.appendChild(sel);
-    }
-
-    // Search + copy, mirroring the live card's affordances (debounced repaint;
-    // copy takes what the filters and search left visible).
-    const search = document.createElement('input');
-    search.type = 'search';
-    search.className = 'log-f log-search';
-    search.placeholder = 'search';
-    search.title = 'Search the log text';
-    search.setAttribute('aria-label', 'Search the log text');
-    let searchTimer = null;
-    search.addEventListener('input', () => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => { filter.search = search.value; paint(); }, LOG_SEARCH_DEBOUNCE_MS);
+    fillFilterSelect(bar.querySelector('.log-f-source'), 'all sources', facets.sources, '');
+    fillFilterSelect(bar.querySelector('.log-f-level'), 'all levels', facets.levels, '');
+    fillFilterSelect(bar.querySelector('.log-f-step'), 'all steps', facets.steps, '', (i) => `step ${i + 1}`);
+    fillFilterSelect(bar.querySelector('.log-f-cycle'), 'all cycles', facets.cycles, '', (c) => `cycle ${c}`);
+    // The search box also carries `log-f`, so the guard is select-only: a
+    // keystroke must not take the change path's undebounced repaint.
+    bar.addEventListener('change', (e) => {
+      if (!(e.target.closest && e.target.closest('select.log-f'))) return;
+      Object.assign(filter, readLogFilterFrom(bar, filter.search));
+      paint();
     });
-    bar.appendChild(search);
-
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.className = 'log-f log-copy';
-    copyBtn.textContent = 'copy';
-    copyBtn.title = 'Copy the visible log lines';
-    copyBtn.setAttribute('aria-label', 'Copy the visible log lines');
-    copyBtn.addEventListener('click', () => {
-      copyLogToClipboard(copyBtn, recs.filter((rec) => logLineVisible(rec, filter)));
+    const searchHolder = {};
+    bar.querySelector('.log-search').addEventListener('input', () => {
+      scheduleLogSearch(searchHolder, () => { Object.assign(filter, readLogFilterFrom(bar, filter.search)); paint(); });
     });
-    bar.appendChild(copyBtn);
+    bar.querySelector('.log-copy').addEventListener('click', (e) => {
+      copyLogToClipboard(e.target.closest('.log-copy'), recs.filter(compileLogFilter(filter)));
+    });
 
     paint();
   } catch (e) {

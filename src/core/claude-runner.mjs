@@ -41,6 +41,12 @@ import { dirname, join } from 'node:path';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
+// Cap for the stderr detail embedded in a non-zero-exit Error message. The
+// audit trail, the UI error banner, and classifyError all consume that message;
+// an uncapped stderrBuf (hundreds of KB of MCP/retry chatter) must not ride
+// into them when every stderr line was already streamed as its own warn event.
+const STDERR_DETAIL_MAX = 2000;
+
 /**
  * Translate a pipeline "effort" level into claude CLI argv additions. This is
  * the ONE place that knows the CLI surface for effort.
@@ -450,30 +456,19 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // here on runs that go on to succeed — all of it was previously discarded,
     // since stderrBuf is only read on the non-zero-exit path below.
     //
-    // Chunks are not lines: `data` fires on arbitrary boundaries, so a carry
-    // buffer holds the partial tail until its newline arrives, and `close`
-    // flushes whatever is left. Each line is emitted at receive time — the
-    // closest available proxy for event time, as stderr carries no timestamp of
-    // its own. `stream:'err'` tags the origin channel; the orchestrator decides
-    // the level.
-    let stderrCarry = '';
-    const emitStderrLine = (line) => {
-      const text = line.replace(/\r$/, '').trim();
-      if (text) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
-    };
-    const flushStderr = () => {
-      if (!stderrCarry) return;
-      const rest = stderrCarry;
-      stderrCarry = '';
-      emitStderrLine(rest);
-    };
-    child.stderr.on('data', (d) => {
-      const chunk = d.toString();
-      stderrBuf += chunk;                 // still the source of the exit-code detail
-      stderrCarry += chunk;
-      const parts = stderrCarry.split('\n');
-      stderrCarry = parts.pop() ?? '';    // trailing partial line waits for its newline
-      for (const line of parts) emitStderrLine(line);
+    // Framed with the SAME readline as stdout: readline decodes through an
+    // internal StringDecoder (a multi-byte character split across pipe chunks
+    // survives) and treats a lone \r as a line break, so CR-rewriting progress
+    // output surfaces live instead of accumulating until exit. Each line is
+    // emitted at receive time — the closest available proxy for event time.
+    // `stream:'err'` tags the origin channel; the orchestrator decides the level.
+    const rlErr = createInterface({ input: child.stderr });
+    rlErr.on('line', (line) => {
+      stderrBuf += line + '\n';        // still the source of the exit-code detail
+      const text = line.trim();
+      // A pause/stop SIGTERMs the child: whatever it writes while dying (and the
+      // torn fragment readline flushes at stream end) is not run output.
+      if (text && !signal?.aborted) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
     });
 
     child.on('error', (err) => {
@@ -482,7 +477,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
 
     child.on('close', (code) => {
       rl.close();
-      flushStderr(); // a final line with no trailing newline is still a line
+      rlErr.close(); // readline already flushed its final unterminated line when the stream ended
       if (signal?.aborted) {
         const err = new Error('aborted');
         err.name = 'AbortError';
@@ -491,7 +486,9 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       }
       if (code !== 0) {
         const fromStderr = stderrBuf.trim();
-        const detail = fromStderr || errorDetail || 'no stderr';
+        const raw = fromStderr || errorDetail || 'no stderr';
+        // Tail, not head: the terminal cause sits at the END of a long stderr.
+        const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
         const err = new Error(`${bin} exited with code ${code}: ${detail}`);
         // Mark the origin channel so the orchestrator can tag its `error` log
         // line with stream:'err' without sniffing the message. Absent when the

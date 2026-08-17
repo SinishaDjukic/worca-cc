@@ -370,7 +370,17 @@ test('an empty/whitespace stderr event logs nothing', () => {
 });
 
 test('a stderr event never touches the tool/init/result branches', () => {
-  const logs = capture('planner', { type: 'stderr', stream: 'err', text: 'plain noise' });
+  // Poison raw: if the stderr early-return vanished, this tool_use payload
+  // would fall through to the reducers and log '→ Read x.js'.
+  const logs = capture('planner', {
+    type: 'stderr', stream: 'err', text: 'plain noise',
+    raw: { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 't9', name: 'Read', input: { file_path: '/tmp/proj/x.js' } },
+    ] } },
+  });
+  assert.equal(logs.length, 1, 'exactly the warn line, nothing from the reducers');
+  assert.equal(logs[0].level, 'warn');
+  assert.equal(logs[0].text, 'plain noise');
   assert.ok(!logs.some((l) => /^[←→]|\[init\]/.test(l.text)), 'no arrow/init line');
 });
 

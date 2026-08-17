@@ -198,5 +198,9 @@ class AgentGen extends EventEmitter {
 }
 
 function isAbort(err) {
-  return err && (err.name === 'AbortError' || /aborted|stopped/i.test(err.message || ''));
+  // NAME only, matching orchestrator.isAbort (kept local: importing it would
+  // create an import cycle). _checkAbort stamps name='AbortError'; a message
+  // sniff also matched real failures mentioning "aborted"/"stopped" and would
+  // end agent generation silently.
+  return !!err && err.name === 'AbortError';
 }

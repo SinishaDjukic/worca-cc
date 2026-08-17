@@ -93,6 +93,40 @@ async function boot({ fetchHandler } = {}) {
   return { window, calls, wsBox, selectProject, showHistory };
 }
 
+// Boot, load History serving the given NDJSON, expand the one card, open the
+// Live-logs panel. Shared by the copy/cap/parity tests (the replay test above
+// predates it and keeps its inline flow).
+async function openLogsPanel(NDJSON) {
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history/') && url.endsWith('/log')) {
+        return Promise.resolve({ ok: true, status: 200, text: async () => NDJSON });
+      }
+      if (url.includes('/api/history/')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          state: { phase: 'done', status: 'done', cycle: 2, subAgents: [], steps: [], stepper: null },
+          auditMarkdown: '', clarify: null, reviews: [],
+          artifacts: [{ kind: 'live-log', relPath: 'live-log.ndjson' }],
+        }) });
+      }
+      if (url.includes('/api/history')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          pipelines: [{ id: 'p-1', projectKey: 'proj-00000001', title: 'Run', status: 'done', startedAt: '2026-06-20T00:00:00Z' }] }) });
+      }
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = ctx.window.document.querySelector('#history .hist-card');
+  card.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const logsBar = card.querySelector('.hist-detail .logs-bar');
+  logsBar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  return { ctx, card, panel: logsBar.querySelector('.logs-panel') };
+}
+
 test('expanded card shows Sub-agents, then Clarify, then Live-logs; logs render on open', async () => {
   const NDJSON =
     '{"source":"preflight","level":"info","text":"No knowledge-graph tooling detected","ts":"2026-06-20T00:00:00Z"}\n' +
@@ -157,6 +191,7 @@ test('replayed logs keep their cycle: picker, separator, search and copy all wor
   const NDJSON =
     '{"source":"planner","level":"info","text":"Planning…","ts":"2026-06-20T00:00:01Z","stepIndex":0,"cycle":1}\n' +
     '{"source":"reviewer","level":"info","text":"Blocking issue found","ts":"2026-06-20T00:00:02Z","stepIndex":1,"cycle":1}\n' +
+    '{"source":"git","level":"info","text":"staged working tree","ts":"2026-06-20T00:00:02.5Z"}\n' +
     '{"source":"implementer","level":"info","text":"Fixing the issue","ts":"2026-06-20T00:00:03Z","stepIndex":1,"cycle":2}\n';
 
   const ctx = await boot({
@@ -199,9 +234,9 @@ test('replayed logs keep their cycle: picker, separator, search and copy all wor
   assert.ok(panel.querySelector('.log-copy'), 'copy button present');
 
   const seps = panel.querySelectorAll('.log .log-sep');
-  assert.equal(seps.length, 1, 'exactly one boundary among cycles 1,1,2');
+  assert.equal(seps.length, 1, 'the cycle-less git line sitting on the boundary does not mask it');
   assert.equal(seps[0].textContent, 'Cycle 2');
-  assert.equal(panel.querySelectorAll('.log .log-line').length, 3, 'separators are not log lines');
+  assert.equal(panel.querySelectorAll('.log .log-line').length, 4, 'separators are not log lines');
 
   // Narrowing to cycle 2 leaves one line and NO separator: it is the first
   // rendered record, so there is nothing above it to separate from.
@@ -229,4 +264,57 @@ test('dropdowns stay hidden when there is no clarify and no log artifact', async
   const detail = card.querySelector('.hist-detail');
   assert.ok(detail.querySelector('.clarify-bar').hidden, 'no clarify -> hidden');
   assert.ok(detail.querySelector('.logs-bar').hidden, 'no log artifact -> hidden');
+});
+
+test('History tail-renders huge logs and says so; copy still takes everything', async () => {
+  const N = 4005;
+  let NDJSON = '';
+  for (let i = 0; i < N; i++) {
+    NDJSON += `{"source":"planner","level":"info","text":"line ${i}","ts":"2026-06-20T00:00:01Z","stepIndex":0,"cycle":1}\n`;
+  }
+  const { ctx, panel } = await openLogsPanel(NDJSON);
+  assert.equal(panel.querySelectorAll('.log .log-line').length, 4000, 'DOM bounded like the live card');
+  assert.match(panel.querySelector('.log').textContent, /showing the last 4000 of 4005 matching lines/);
+  const writes = [];
+  Object.defineProperty(ctx.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async (t) => { writes.push(t); } } });
+  panel.querySelector('.log-copy').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].split('\n').length, N, 'copy is the FULL filtered set, not the tail render');
+});
+
+test('copy on a filtered-empty pane flashes "nothing to copy" and leaves the clipboard alone', async () => {
+  const { ctx, panel } = await openLogsPanel(
+    '{"source":"planner","level":"info","text":"Planning…","ts":"2026-06-20T00:00:01Z","stepIndex":0,"cycle":1}\n');
+  const writes = [];
+  Object.defineProperty(ctx.window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (t) => { writes.push(t); } },
+  });
+  const search = panel.querySelector('.log-search');
+  search.value = 'zz-no-match-zz';
+  search.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));   // > LOG_SEARCH_DEBOUNCE_MS (120)
+  const copyBtn = panel.querySelector('.log-copy');
+  copyBtn.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(copyBtn.textContent, 'nothing to copy');
+  assert.deepEqual(writes, [], 'clipboard untouched');
+  await new Promise((r) => setTimeout(r, 1300));
+  assert.equal(copyBtn.textContent, 'copy', 'label restored after the flash');
+});
+
+test('the History filter bar is the run-card template bar — one markup source', async () => {
+  const { ctx, panel } = await openLogsPanel(
+    '{"source":"planner","level":"info","text":"Planning…","ts":"2026-06-20T00:00:01Z","stepIndex":0,"cycle":1}\n');
+  const doc = ctx.window.document;
+  const tplBar = doc.getElementById('run-card-tpl').content.querySelector('.log-filters');
+  const histBar = panel.querySelector('.log-filters');
+  assert.deepEqual(
+    [...histBar.children].map((el) => el.className),
+    [...tplBar.children].map((el) => el.className),
+    'History bar matches the template bar — no drift');
+  assert.ok(histBar.querySelector('.log-search').getAttribute('aria-label'), 'a11y rides along');
+  assert.equal(histBar.querySelector('.log-copy').getAttribute('type'), 'button');
 });

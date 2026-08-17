@@ -22,6 +22,11 @@ async function bootLive({ resumeFails = false } = {}) {
   const fetchCalls = [];
   window.fetch = (url, opts) => {
     fetchCalls.push({ url: String(url), opts });
+    if (String(url).includes('/log')) {
+      return Promise.resolve({ ok: true, status: 200, text: async () =>
+        '{"source":"planner","level":"info","text":"pass one","ts":"2026-08-17T00:00:01Z","stepIndex":0,"cycle":1}\n' +
+        '{"source":"implementer","level":"warn","text":"429, retrying","ts":"2026-08-17T00:00:02Z","stepIndex":1,"cycle":2,"stream":"err"}\n' });
+    }
     if (String(url).includes('/api/resume')) {
       if (resumeFails) {
         return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'pipeline not found' }) });
@@ -88,4 +93,14 @@ test('failed resume restores the Resume button: enabled, icon intact, error logg
     r.logLines.some((l) => /resume failed: pipeline not found/.test(String(l.text))),
     'server error must land in the card log'
   );
+});
+
+test('seedResumedLog re-hydrates cycle and stream from the persisted NDJSON', async () => {
+  const { window } = await bootLive();
+  const { upsertRun, seedResumedLog, getRun } = window.__np;
+  upsertRun({ runId: 'r-new', title: 't', projectDir: '/tmp/proj', status: 'starting' });
+  await seedResumedLog('r-new', null, '/api/history/p1/log');
+  const lines = getRun('r-new').logLines;
+  assert.ok(lines.some((l) => l.cycle === 2), 'cycle survives the seed projection');
+  assert.ok(lines.some((l) => l.stream === 'err'), 'stderr provenance survives the seed projection');
 });
