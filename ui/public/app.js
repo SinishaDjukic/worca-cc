@@ -3894,26 +3894,26 @@ function onQuestion(r, msg) {
   paintRunCard(r);
 }
 
-// The `?` glyph used in the panel head. Built fresh each call (a node can only
+// Head-and-shoulders person glyph: every needs-your-input surface uses it — a
+// human is being asked, not a machine. Built fresh each call (a node can only
 // live in one place in the DOM).
-function questionIcon() {
+function questionIcon(size = 17) {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('width', '17');
-  svg.setAttribute('height', '17');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('fill', 'none');
   svg.setAttribute('stroke', 'currentColor');
   svg.setAttribute('stroke-width', '2');
   const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', 'M9.1 9a3 3 0 1 1 4.6 2.5c-.9.6-1.7 1.2-1.7 2.3');
+  path.setAttribute('d', 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2');
   path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
   const circle = document.createElementNS(NS, 'circle');
   circle.setAttribute('cx', '12');
-  circle.setAttribute('cy', '17.5');
-  circle.setAttribute('r', '.5');
-  circle.setAttribute('fill', 'currentColor');
-  circle.setAttribute('stroke-width', '1.4');
+  circle.setAttribute('cy', '7');
+  circle.setAttribute('r', '4');
   svg.append(path, circle);
   return svg;
 }
@@ -10631,7 +10631,7 @@ function renderPipelineTabs() {
     row.append(dot, body);
 
     // End-of-row marker (same slot, three mutually exclusive states):
-    //  - pending input  → pulsing amber "?"   (needs your answer)
+    //  - pending input  → pulsing amber person (needs your answer)
     //  - finished done   → static green "●"    (completed, unseen)
     //  - finished failed → static red "●"      (error/stopped, unseen)
     // The green/red marker persists until the run is acknowledged (opened), at
@@ -10639,7 +10639,7 @@ function renderPipelineTabs() {
     if (r.pendingQuestion != null) {
       const q = document.createElement('span');
       q.className = 'child-q';
-      q.textContent = '?';
+      q.appendChild(questionIcon(14));
       q.title = 'Waiting for your input';
       row.appendChild(q);
     } else if (isPaused(r)) {

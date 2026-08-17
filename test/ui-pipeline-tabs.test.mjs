@@ -48,12 +48,13 @@ test('hello with two live pipelines renders two child rows + live badge', async 
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '2');
 });
 
-test('a pending question shows pulsing "?" marker + parent roll-up', async () => {
+test('a pending question shows pulsing person marker + parent roll-up', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix', { pendingQuestion: { id: 'q1', kind: 'clarify', questions: [{ question: 'x?', options: ['a'] }] } })] });
   const q = window.document.querySelector('#nav-running-children .nav-child .child-q');
-  assert.ok(q, 'awaiting-input "?" marker present');
-  assert.equal(q.textContent, '?');
+  assert.ok(q, 'awaiting-input marker present');
+  assert.ok(q.querySelector('svg'), 'person icon, not a text glyph');
+  assert.equal(q.textContent, '', 'no leftover "?" text');
   assert.equal(window.document.querySelector('#nav-running-rollup').hidden, false);
 });
 

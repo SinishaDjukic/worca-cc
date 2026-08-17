@@ -175,12 +175,13 @@ body{
 .child-dot.red   { background: var(--red); }
 .child-dot.paused { background: var(--amber); } /* parked + resumable: static, no pulse */
 
-/* Awaiting-input marker: a pulsing yellow "?" pinned at the end of the row. */
+/* Awaiting-input marker: a pulsing amber person pinned at the end of the row. */
 .child-q {
-  flex: 0 0 auto; margin-left: 6px;
+  flex: 0 0 auto; margin-left: 6px; display: inline-flex; align-items: center;
   color: var(--amber); font-weight: 800; font-size: 15px; line-height: 1;
   animation: pulse 1.3s ease-in-out infinite;
 }
+.child-q svg { display: block; }
 /* Finished-but-unseen marker: static green/red "●" in the same end slot (no pulse). */
 .child-q.ok  { color: var(--green); font-size: 12px; animation: none; }
 .child-q.bad { color: var(--red);   font-size: 12px; animation: none; }
