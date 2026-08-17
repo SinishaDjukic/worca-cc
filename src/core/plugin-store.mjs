@@ -195,7 +195,7 @@ function precheck(versionDir, manifest) {
  * doctor precheck -> atomic symlink swap -> lock entry. sha omitted -> repo HEAD.
  * On ANY failure: versions/<sha7> removed, prior state untouched, error rethrown.
  */
-export async function installPlugin({ repoUrl, subdir = '', name, sha } = {}, { exec = defaultExec } = {}) {
+export async function installPlugin({ repoUrl, subdir = '', name, sha, marketplace } = {}, { exec = defaultExec } = {}) {
   if (!name) throw new Error('installPlugin: name is required');
   const lock = readPluginsLock();
   if (lock[name]) throw new Error(`plugin "${name}" is already installed`);
@@ -214,6 +214,7 @@ export async function installPlugin({ repoUrl, subdir = '', name, sha } = {}, { 
       version: manifest.version ?? pin.slice(0, 7), // no manifest version -> the SHA is the version (§4.1)
       enabled: true, installedAt: new Date().toISOString(),
       lockfileHash: sha256File(join(versionDir, 'package-lock.json')),
+      ...(marketplace ? { marketplace } : {}), // provenance only when it came from one
     };
     writePluginsLock(lock);
     // §6.1(3): workflow template import is the LAST install step (post-swap,
@@ -396,6 +397,9 @@ export function listInstalledPlugins() {
       name,
       version: e.version ?? null,
       pinnedSha: e.pinnedSha ?? null,
+      repo: e.repo ?? null,
+      subdir: e.subdir ?? '',
+      marketplace: e.marketplace ?? null, // raw id; name resolution is the API layer's job
       enabled: e.enabled !== false,
       linked: e.linked === true,
       broken: !manifest,
