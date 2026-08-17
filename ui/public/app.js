@@ -67,7 +67,7 @@ import {
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
-  renderOrphanList, channelBadge,
+  renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
 import {
@@ -242,11 +242,12 @@ const el = {
   // Plugins view
   pluginsList: $('#plugins-list'),
   pluginsMsg: $('#plugins-msg'),
+  pluginsAvailable: $('#plugins-available'),
+  marketplacesList: $('#marketplaces-list'),
   pluginAddBtn: $('#plugin-add-btn'),
-  pluginAddRow: $('#plugin-add-row'),
-  pluginRepoUrl: $('#plugin-repo-url'),
-  pluginRepoScan: $('#plugin-repo-scan'),
-  pluginDiscovered: $('#plugin-discovered'),
+  marketplaceAddRow: $('#marketplace-add-row'),
+  marketplaceUrl: $('#marketplace-url'),
+  marketplaceAdd: $('#marketplace-add'),
   pluginModal: $('#plugin-modal'),
   pluginModalTitle: $('#plugin-modal-title'),
   pluginModalBody: $('#plugin-modal-body'),
@@ -6339,12 +6340,26 @@ async function pluginApi(method, url, body) {
   return { ok: res.ok, status: res.status, data: await safeJson(res) };
 }
 
-async function loadPluginsView() {
+// Snapshot of the last GET /api/marketplaces payload — the delegated install
+// listener resolves the consent inventory from here (no re-fetch, no network).
+let pluginsViewMarketplaces = [];
+
+function renderMarketplaceSections(list, { fromBackground = false } = {}) {
+  if (fromBackground && el.pluginModal && !el.pluginModal.classList.contains('hidden')) {
+    pluginsViewMarketplaces = list || []; // keep the data; skip the DOM swap under an open modal
+    return;
+  }
+  pluginsViewMarketplaces = list || [];
+  el.pluginsAvailable.replaceChildren(renderAvailableList(pluginsViewMarketplaces));
+  el.marketplacesList.replaceChildren(renderMarketplaceList(pluginsViewMarketplaces));
+}
+
+async function loadPluginsView({ refresh = false } = {}) {
   setPluginsMsg('');
   try {
-    const res = await fetch('/api/plugins');
-    const data = await safeJson(res);
-    if (!res.ok) return setPluginsMsg(data.error || `HTTP ${res.status}`, 'err');
+    const [pRes, mRes] = await Promise.all([fetch('/api/plugins'), fetch('/api/marketplaces')]);
+    const data = await safeJson(pRes);
+    if (!pRes.ok) { renderMarketplaceSections([]); return setPluginsMsg(data.error || `HTTP ${pRes.status}`, 'err'); }
     let channelStatus = [];
     try {
       const cs = await safeJson(await fetch('/api/chat/status'));
@@ -6353,33 +6368,50 @@ async function loadPluginsView() {
     const parts = [renderPluginList(data.plugins || [], { channelStatus })];
     if (Array.isArray(data.orphans) && data.orphans.length) parts.push(renderOrphanList(data.orphans));
     el.pluginsList.replaceChildren(...parts);
+    const mData = await safeJson(mRes);
+    renderMarketplaceSections(mRes.ok ? mData.marketplaces || [] : []);
   } catch (e) { setPluginsMsg(e.message, 'err'); }
+  if (refresh) refreshMarketplacesInBackground(); // C3: only the view-open path kicks the background refresh
 }
 
-// Add repo -> POST /api/plugins/repo -> discovery pick-list (each row carries
-// its "Will install" inventory) -> Install opens the consent modal.
-async function scanPluginRepo() {
-  const url = (el.pluginRepoUrl.value || '').trim();
-  if (!url) return setPluginsMsg('Enter a repo URL (https://github.com/owner/repo or owner/repo).', 'err');
-  el.pluginRepoScan.disabled = true;
-  setPluginsMsg('Scanning repo…');
-  const { ok, data } = await pluginApi('POST', '/api/plugins/repo', { url });
-  el.pluginRepoScan.disabled = false;
-  if (!ok) return setPluginsMsg(data.error || 'scan failed', 'err');
-  setPluginsMsg('');
-  el.pluginDiscovered.replaceChildren();
-  for (const d of data.discovered || []) {
-    const row = document.createElement('div');
-    row.className = 'pl-pick-row';
-    const label = document.createElement('span');
-    label.textContent = `${d.name}${d.manifest && d.manifest.description ? ' — ' + d.manifest.description : ''}`;
-    const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'btn btn-primary btn-mini'; btn.textContent = 'Install…';
-    btn.addEventListener('click', () => openInstallConsent({ ...d, repoUrl: data.repoUrl, sha: data.sha }));
-    row.append(label, btn);
-    el.pluginDiscovered.appendChild(row);
+// Stale-while-revalidate (spec §4.6): render cached snapshots instantly, then
+// one background refresh-all; re-render on completion. Failures keep the stale
+// snapshot (per-marketplace warnings arrive in the payload).
+let marketplaceRefreshInFlight = false;
+async function refreshMarketplacesInBackground() {
+  if (marketplaceRefreshInFlight) return;
+  marketplaceRefreshInFlight = true;
+  setPluginsMsg('Refreshing marketplaces…');
+  try {
+    const { ok, data } = await pluginApi('POST', '/api/marketplaces/refresh');
+    if (ok) renderMarketplaceSections(data.marketplaces || [], { fromBackground: true });
+  } catch { /* keep stale */ } finally {
+    marketplaceRefreshInFlight = false;
+    // Clear only OUR status line — an install/remove error posted while the
+    // background refresh was in flight must survive it.
+    if (el.pluginsMsg && el.pluginsMsg.textContent === 'Refreshing marketplaces…') setPluginsMsg('');
   }
-  if (!(data.discovered || []).length) setPluginsMsg('No worca-cc-plugin.json found at depth 0–1 of that repo.', 'err');
+}
+
+async function addMarketplaceFromInput() {
+  const url = (el.marketplaceUrl.value || '').trim();
+  if (!url) return setPluginsMsg('Enter a marketplace repo (https://github.com/owner/repo, owner/repo, or a local path).', 'err');
+  el.marketplaceAdd.disabled = true;
+  setPluginsMsg('Adding marketplace…');
+  let res;
+  try {
+    res = await pluginApi('POST', '/api/marketplaces', { url });
+  } catch (e) {
+    return setPluginsMsg(e.message || 'add failed', 'err'); // fetch-level failure must not strand the button
+  } finally {
+    el.marketplaceAdd.disabled = false;
+  }
+  const { ok, data } = res;
+  if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
+  el.marketplaceUrl.value = '';
+  el.marketplaceAddRow.classList.add('hidden');
+  setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
+  loadPluginsView();
 }
 
 function openInstallConsent(entry) {
@@ -6389,8 +6421,16 @@ function openInstallConsent(entry) {
       closePluginModal();
       setPluginsMsg(`Installing ${entry.name}…`);
       const { ok, data } = await pluginApi('POST', '/api/plugins/install',
-        { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha });
-      if (!ok) return setPluginsMsg(data.error || 'install failed', 'err');
+        { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha,
+          ...(entry.marketplace ? { marketplace: entry.marketplace } : {}) });
+      if (!ok) {
+        // A cached snapshot can point at a sha the remote no longer has (force-push,
+        // rebase): git's raw complaint is unreadable, so map it to the real fix (C3).
+        if (/not a valid object name|does not exist/.test(data.error || '')) {
+          return setPluginsMsg('This plugin snapshot is stale — Refresh the marketplace and try again.', 'err');
+        }
+        return setPluginsMsg(data.error || 'install failed', 'err');
+      }
       setPluginsMsg(`Installed ${entry.name}.`, 'ok');
       invalidateAgentCaches();                 // plugin agents join the registry
       loadPluginsView();
@@ -6511,11 +6551,49 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
   }
 });
 
-if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
-  el.pluginAddRow.classList.toggle('hidden');
-  if (!el.pluginAddRow.classList.contains('hidden')) el.pluginRepoUrl.focus();
+// Available section: Install… resolves the snapshot entry from the last
+// /api/marketplaces payload and opens the same consent modal as before.
+if (el.pluginsAvailable) el.pluginsAvailable.addEventListener('click', (e) => {
+  const t = e.target;
+  if (!t.classList || !t.classList.contains('pl-install-avail')) return;
+  const m = pluginsViewMarketplaces.find((x) => x.id === t.dataset.marketplace);
+  const p = m && (m.plugins || []).find((x) => x.name === t.dataset.name);
+  if (!m || !p || !m.lastSync) return;
+  openInstallConsent({
+    name: p.name, subdir: p.subdir, repoUrl: m.url, sha: m.lastSync.sha,
+    inventory: p.inventory || {}, marketplace: m.id,
+  });
 });
-if (el.pluginRepoScan) el.pluginRepoScan.addEventListener('click', scanPluginRepo);
+
+// Marketplaces section: Refresh / Remove.
+if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e) => {
+  const t = e.target;
+  const id = t && t.dataset ? t.dataset.id : '';
+  if (!id) return;
+  if (t.classList.contains('pl-mkt-refresh')) {
+    setPluginsMsg('Refreshing marketplace…');
+    const { ok, data } = await pluginApi('POST', `/api/marketplaces/${encodeURIComponent(id)}/refresh`, {});
+    setPluginsMsg(ok ? '' : (data.error || 'refresh failed'), ok ? undefined : 'err');
+    if (ok) loadPluginsView();
+  } else if (t.classList.contains('pl-mkt-remove')) {
+    const sure = await confirmModal({
+      title: 'Remove marketplace',
+      message: 'Removes plugin discovery from this marketplace. Installed plugins are not affected.',
+      confirmLabel: 'Remove',
+    });
+    if (!sure) return;
+    const { ok, data } = await pluginApi('DELETE', `/api/marketplaces/${encodeURIComponent(id)}`);
+    if (!ok) return setPluginsMsg(data.error || 'remove failed', 'err');
+    setPluginsMsg('Marketplace removed. Installed plugins remain.', 'ok');
+    loadPluginsView();
+  }
+});
+
+if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
+  el.marketplaceAddRow.classList.toggle('hidden');
+  if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
+});
+if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
   if (grvState.wizard) return grvCloseWizard();
   closePluginModal();
@@ -9768,7 +9846,7 @@ function showView(name, param = '') {
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
-  if (name === 'plugins') loadPluginsView();
+  if (name === 'plugins') loadPluginsView({ refresh: true });
   if (name === 'guardrails') loadGuardrailsView(param);
   if (name === 'models') loadModelsView();
   if (name === 'agent-create') enterAgentWizard();

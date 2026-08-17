@@ -1222,6 +1222,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:8px;padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
+.pl-sec-title{margin:22px 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;}
+.pl-provenance{display:block;margin-top:4px;}
+.pl-mkt-url{display:block;margin-top:2px;}
+.pl-mkt-sync{display:block;margin-top:2px;}
+.pl-mkt-warning{margin-top:4px;}
+.pl-avail-card .pl-mkt-badge{margin-left:6px;}
+.pl-avail-card .mono,.pl-mkt-row .mono{font-family:var(--mono);}
 
 /* ---- Pluggable source pane (New Pipeline) ---- */
 .sp-pane{margin-top:11px;}

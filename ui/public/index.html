@@ -731,22 +731,26 @@
           <div class="topbar">
             <div>
               <h1>Plugins</h1>
-              <div class="sub">Task sources, agents, skills and workflow packs installed from GitHub repos</div>
+              <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
             </div>
             <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add repo
+              Add marketplace
             </button>
           </div>
           <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-          <div class="card hidden" id="plugin-add-row" style="padding:16px 20px;margin-bottom:14px">
+          <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
             <div class="path-row">
-              <input id="plugin-repo-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
-              <button type="button" id="plugin-repo-scan" class="btn btn-primary btn-mini">Scan</button>
+              <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+              <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
             </div>
-            <div id="plugin-discovered"></div>
           </div>
+          <h3 class="pl-sec-title">Installed</h3>
           <div class="run-list" id="plugins-list"></div>
+          <h3 class="pl-sec-title">Available</h3>
+          <div class="run-list" id="plugins-available"></div>
+          <h3 class="pl-sec-title">Marketplaces</h3>
+          <div class="run-list" id="marketplaces-list"></div>
         </section>
         <!-- /view plugins -->
 
