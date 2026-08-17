@@ -1,6 +1,6 @@
 // test/chat-lib-drift.test.mjs — the chat plugins vendor lib/ byte-identically
 // (plugins are self-contained; there is no shared package). This test holds
-// the copies together mechanically: every examples/plugins/*/lib file that
+// the copies together mechanically: every plugins/*/lib file that
 // exists in more than one chat plugin must hash identically. Edit the canon
 // (telegram-chat/lib) and re-copy; never patch one plugin's copy in place.
 import { test } from 'node:test';
@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PLUGINS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'plugins');
+const PLUGINS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
 
 test('vendored lib/ copies are byte-identical across chat plugins', () => {
   const withLib = readdirSync(PLUGINS_DIR, { withFileTypes: true })

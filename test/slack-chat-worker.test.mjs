@@ -5,7 +5,7 @@
 // per-field errors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSlackWorker, validateConfig, renderToMrkdwn } from '../examples/plugins/slack-chat/channel/worker.mjs';
+import { createSlackWorker, validateConfig, renderToMrkdwn } from '../plugins/slack-chat/channel/worker.mjs';
 
 const json = (obj, status = 200, headers = {}) => ({
   ok: status >= 200 && status < 300,

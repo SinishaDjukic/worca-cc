@@ -5,8 +5,8 @@
 // mapping) and validateConfig.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDiscordWorker, validateConfig, renderToMarkdown } from '../examples/plugins/discord-chat/channel/worker.mjs';
-import { createGatewayClient, INTENTS } from '../examples/plugins/discord-chat/channel/gateway.mjs';
+import { createDiscordWorker, validateConfig, renderToMarkdown } from '../plugins/discord-chat/channel/worker.mjs';
+import { createGatewayClient, INTENTS } from '../plugins/discord-chat/channel/gateway.mjs';
 
 const json = (obj, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => obj });
 

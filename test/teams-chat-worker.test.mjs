@@ -6,9 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createSign } from 'node:crypto';
-import { createJwtValidator, decodeJwt } from '../examples/plugins/teams-chat/channel/jwt.mjs';
-import { createTokenProvider } from '../examples/plugins/teams-chat/channel/token.mjs';
-import { createTeamsWorker, validateConfig, renderCard, stripMentions } from '../examples/plugins/teams-chat/channel/worker.mjs';
+import { createJwtValidator, decodeJwt } from '../plugins/teams-chat/channel/jwt.mjs';
+import { createTokenProvider } from '../plugins/teams-chat/channel/token.mjs';
+import { createTeamsWorker, validateConfig, renderCard, stripMentions } from '../plugins/teams-chat/channel/worker.mjs';
 
 const APP_ID = 'app-1234';
 const SERVICE_URL = 'https://smba.trafficmanager.net/emea/';

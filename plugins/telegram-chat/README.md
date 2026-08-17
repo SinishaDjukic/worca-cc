@@ -16,7 +16,7 @@ server and dials out to `api.telegram.org` only.
 2. **Install + configure**:
 
    ```bash
-   worca plugin link examples/plugins/telegram-chat   # dev; or install by repo URL
+   worca plugin link plugins/telegram-chat   # dev; or install by repo URL
    ```
 
    Then in the UI: *Plugins → telegram-chat → Settings* — paste the **Bot

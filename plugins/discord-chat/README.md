@@ -24,7 +24,7 @@ no public URL, no interactions endpoint, no tunnel. Zero npm dependencies
 5. Install + configure:
 
    ```bash
-   worca plugin link examples/plugins/discord-chat
+   worca plugin link plugins/discord-chat
    ```
 
    Paste the token (or `{"$env":"DISCORD_BOT_TOKEN"}`), fill **Notify channel

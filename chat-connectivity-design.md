@@ -19,7 +19,7 @@ two-way, Discord/Slack outbound, dependency-free — that was left behind in the
 - **Inbound**: chat commands against the live instance — `/status /runs /last /cost`,
   `/pause /resume /stop`, and a new approval surface `/approve`, `/retry`, `/answer <n>`.
 - All four platforms bi-directional in v1.
-- Shipped as plugins (one per platform, in-repo under `examples/plugins/`), executing
+- Shipped as plugins (one per platform, in-repo under `plugins/`), executing
   under the plugin sandbox rules (scrubbed env, secrets via stdin, no new runtime deps).
 
 ## 3. Non-goals

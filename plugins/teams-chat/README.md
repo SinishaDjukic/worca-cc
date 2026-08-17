@@ -40,7 +40,7 @@ you discover the conversation ID.
 6. **Install + configure**:
 
    ```bash
-   worca plugin link examples/plugins/teams-chat
+   worca plugin link plugins/teams-chat
    ```
 
    Fill App ID / secret / tenant / ingress token. Doctor verifies the AAD

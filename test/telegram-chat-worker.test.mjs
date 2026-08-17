@@ -9,9 +9,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createTelegramWorker, validateConfig, renderToHtml,
-} from '../examples/plugins/telegram-chat/channel/worker.mjs';
-import { splitText, withRetryLadder } from '../examples/plugins/telegram-chat/lib/send-util.mjs';
-import { toTelegramHtml, toSlackMrkdwn } from '../examples/plugins/telegram-chat/lib/markdown.mjs';
+} from '../plugins/telegram-chat/channel/worker.mjs';
+import { splitText, withRetryLadder } from '../plugins/telegram-chat/lib/send-util.mjs';
+import { toTelegramHtml, toSlackMrkdwn } from '../plugins/telegram-chat/lib/markdown.mjs';
 
 const json = (obj, status = 200) => ({
   ok: status >= 200 && status < 300,

@@ -23,7 +23,7 @@ URL, no Events API endpoint, no tunnel.
    `{"$env":"SLACK_BOT_TOKEN"}` / `{"$env":"SLACK_APP_TOKEN"}`):
 
    ```bash
-   worca plugin link examples/plugins/slack-chat
+   worca plugin link plugins/slack-chat
    ```
 6. `/invite @your-bot` into the channel(s); channel IDs (`C…`) are in the
    channel's *About* tab. Fill **Notify channel IDs** and — for commands —
