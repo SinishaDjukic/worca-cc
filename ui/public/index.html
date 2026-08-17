@@ -369,17 +369,27 @@
 
           <div class="run-list" id="run-list"></div>
 
-          <!-- clone target for one run card (Task 3 fills it) -->
+          <!-- clone target for one run card (Task 3 fills it).
+               DENSITY: the card carries .mini (list) or .full (detail view). Both
+               densities are the SAME element with the same regions — CSS `order`
+               puts the blocking question above the graph in .full, and hides the
+               list-only rail / peek in .full and the detail-only graph / tabs /
+               log in .mini. See style.css "run card density". -->
           <template id="run-card-tpl">
-            <section class="card run-card" data-run-id="">
+            <section class="card run-card mini" data-run-id="">
               <div class="run-top">
                 <div><div class="run-title"></div><div class="run-meta"><span class="rm-text"></span><span class="run-time mono"></span><span class="run-cost mono"></span></div></div>
                 <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
+                <button type="button" class="run-expand" aria-expanded="false" title="Show the most recent log lines" aria-label="Show the most recent log lines"><svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
               </div>
+              <!-- List density: one-line stage rail + the four numbers that matter. -->
+              <div class="run-rail-wrap"><div class="run-rail"></div><div class="run-stats mono"></div></div>
               <div class="run-flow-wrap"><div class="run-flow"></div></div>
-              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="run-foot"><span class="chip"></span><span class="run-cta-text"></span><button type="button" class="btn-answer sm" title="Open this pipeline and answer its questions" hidden>Answer</button><button type="button" class="btn-open sm" title="Open this pipeline's detail view">Open &#8599;</button><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
               <div class="cost-banner" hidden></div>
-              <div class="subs-bar" hidden>
+              <!-- Detail density: one tab bar replacing the stack of dropdowns. -->
+              <div class="run-tabs" role="tablist" hidden></div>
+              <div class="subs-bar" hidden data-tab="agents" data-tab-label="Agents">
                 <button type="button" class="btn-subs" aria-expanded="false">
                   <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
                   Agents
@@ -388,10 +398,14 @@
                 </button>
                 <div class="subs-panel" hidden></div>
               </div>
-              <div class="run-log">
+              <div class="run-log" data-tab="log" data-tab-label="Log">
                 <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
                 <div class="log"></div>
               </div>
+              <!-- List density, expanded: the last few log lines, no filters. A
+                   deliberately DIFFERENT class from .log so the log painters'
+                   `querySelector('.log')` can never resolve to the peek. -->
+              <div class="run-peek" hidden><div class="peek-lines"></div><div class="peek-foot"></div></div>
               <div class="qpanel hidden"></div>
             </section>
           </template>
@@ -416,7 +430,7 @@
 
           <!-- clone target for one history card (Task 5 fills it) -->
           <template id="hist-card-tpl">
-            <section class="card hist-card">
+            <section class="card hist-card mini">
               <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
                 <span class="badge"></span>
                 <div class="h-meta">
@@ -425,6 +439,7 @@
                   <span class="hist-pausenote" hidden></span>
                 </div>
                 <div class="hist-aside">
+                  <span class="hist-outcome" hidden></span>
                   <span class="hist-diff" aria-label="lines changed"></span>
                   <span class="hist-merge" hidden></span>
                   <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
@@ -433,11 +448,21 @@
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="hist-detail" hidden>
+                <!-- List density lives INSIDE the expandable section: expanding a
+                     row reveals a MINI view of the pipeline (the one-line stage
+                     rail, drawn from the list row's own stepper + phase with no
+                     detail fetch, plus the results summary and a way into the
+                     detail view) — not the whole record. The collapsed row keeps
+                     its 103px; the graph, the tab bar and the five panels below
+                     are detail-view only. -->
+                <div class="run-rail-wrap"><div class="run-rail"></div><div class="run-stats mono"></div></div>
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                <!-- One tab bar replacing the stack of sibling dropdowns below. -->
+                <div class="run-tabs" role="tablist" hidden></div>
                 <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
-                <div class="results-section"></div>
+                <div class="results-section" data-tab="results" data-tab-label="Results"></div>
                 <!-- Diff dropdown (New/Changed files) — collapsed by default -->
-                <div class="diff-bar" hidden>
+                <div class="diff-bar" hidden data-tab="diff" data-tab-label="Diff">
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
                     Diff
@@ -448,7 +473,7 @@
                   <div class="subs-panel diff-panel" hidden></div>
                 </div>
                 <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
-                <div class="overview-bar" hidden>
+                <div class="overview-bar" hidden data-tab="overview" data-tab-label="Overview">
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     Overview
@@ -456,7 +481,7 @@
                   </button>
                   <div class="subs-panel overview-panel" hidden></div>
                 </div>
-                <div class="subs-bar" hidden>
+                <div class="subs-bar" hidden data-tab="agents" data-tab-label="Agents">
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
                     Agents
@@ -466,7 +491,7 @@
                   <div class="subs-panel" hidden></div>
                 </div>
                 <!-- Clarify dropdown (Q&A) — under Sub-agents -->
-                <div class="clarify-bar" hidden>
+                <div class="clarify-bar" hidden data-tab="clarify" data-tab-label="Clarify">
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     Clarify
@@ -476,7 +501,7 @@
                   <div class="subs-panel clarify-panel" hidden></div>
                 </div>
                 <!-- Live logs dropdown — under Clarify -->
-                <div class="logs-bar" hidden>
+                <div class="logs-bar" hidden data-tab="log" data-tab-label="Log">
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>
                     Live logs
@@ -484,6 +509,7 @@
                   </button>
                   <div class="subs-panel logs-panel" hidden></div>
                 </div>
+                <div class="hist-cta"><span class="hist-cta-text"></span><button type="button" class="hist-open btn-ghost">Open pipeline &#8599;</button></div>
                 <div class="hist-actions">
                   <button type="button" class="hist-delete btn-danger" hidden>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"

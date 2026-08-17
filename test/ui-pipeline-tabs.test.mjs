@@ -230,12 +230,27 @@ test('run-created broadcast materializes a child row with project metadata', asy
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });
 
-// v3: finishing the FOCUSED run falls back to the Overview (Q&A #5).
-test('finishing the focused run falls back to Overview', async () => {
+// Finishing the FOCUSED run KEEPS the reader on that pipeline.
+//
+// This replaces the older "drop to Overview" behaviour (Q&A #5), which made sense
+// while the focused view was only the list filtered to one card. It is now the
+// pipeline's detail view, and the moment a run finishes is the moment its results
+// matter most — so the route is rewritten to the canonical #pipeline/<id>, which
+// resolves to Running while the finished run lingers there and to History once it
+// has left. Either way the reader stays on the pipeline they were reading.
+test('finishing the focused run keeps the reader on it, via the canonical route', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
   window.location.hash = 'running/auth-fix';
   window.dispatchEvent(new window.Event('hashchange'));
   recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // focused run finishes
-  assert.equal(window.location.hash.replace(/^#/, ''), 'running', 'hash dropped to Overview');
+  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/auth-fix',
+    'finishing writes the canonical pipeline url');
+  // hashchange is async (in jsdom and in a real browser alike); after it fires the
+  // canonical url has resolved to the view that owns this pipeline.
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(window.location.hash.replace(/^#/, ''), 'running/auth-fix',
+    'still on the pipeline (resolved from #pipeline/auth-fix), not dropped to the list');
+  assert.ok(window.document.querySelector('#run-list .run-card[data-run-id="auth-fix"]'),
+    'the finished pipeline is still the one card on screen');
 });

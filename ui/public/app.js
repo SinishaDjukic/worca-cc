@@ -10,6 +10,9 @@ const state = {
   ws: null,
   wsReady: false,
   selectedRunId: '',   // focused pipeline for #running/<runId>; '' === Overview (transient, not persisted)
+  historyFocusId: '',  // focused pipeline for #history/<pipelineId>; '' === the whole list
+  detailOrigin: '',    // which list a detail view was opened from ('running' | 'history')
+  pendingPipelineId: '', // #pipeline/<id> deep link awaiting the WS hello to resolve
   helloSubscribed: new Set(), // runIds we've already sent a backfill subscribe for this socket
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
@@ -60,6 +63,7 @@ import {
 } from './composer-core.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore } from './log-line.mjs';
 import { logLineVisible, logFacets } from './log-filter.mjs';
+import { railRows, railProgress, railLabelsFit } from './run-rail.mjs';
 import {
   statusChip, diffBadges, mergeFindings,
   sourceBadge, reportResultControl, workflowPickerLabel,
@@ -631,8 +635,20 @@ function onHello(msg) {
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
 
+  helloSeen = true;
   refreshAllCounts();
   refreshBudget();
+  // A #pipeline/<id> deep link that could not be resolved before the live set
+  // arrived gets one more chance now.
+  if (state.pendingPipelineId) {
+    const id = state.pendingPipelineId;
+    state.pendingPipelineId = '';
+    const [view, target] = resolvePipelineRoute(id);
+    if (view === 'running') {
+      location.hash = `running/${target}`;
+      return;
+    }
+  }
   const cur = currentView();
   if (cur === 'running') renderRunningView();
   // Background-load history on the first connect so the sidebar count + PR states
@@ -924,6 +940,211 @@ function buildRunGraph(host, manifest) {
   // Restore the pre-rebuild horizontal scroll (the browser clamps automatically if
   // the graph is now narrower). Only when there was a position to keep.
   if (scroller && savedLeft) scroller.scrollLeft = savedLeft;
+}
+
+// ---------------------------------------------------------------------------
+// The stage rail — list-density sibling of the run graph.
+//
+// Consumes the SAME view adapter paintRunGraph takes, so a node's status is
+// computed once (paintStepper / paintHistStepper / histRowView) and rendered
+// twice. Projection logic lives in the pure run-rail.mjs; this is only DOM.
+// ---------------------------------------------------------------------------
+const RAIL_TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const RAIL_GLYPH = { stopped: '&#10005;', paused: '&#8214;' };
+
+function paintRunRail(host, manifest, view) {
+  if (!host) return;
+  const m = manifestFor(manifest);
+  const rows = railRows(m, view);
+  const labels = railLabelsFit(rows);
+  // Signature-gated like buildRunGraph: a log line lands here on every tagged
+  // event, and rebuilding the rail each time would restart its CSS transitions
+  // and drop the scroll position of a long rail.
+  const sig = JSON.stringify([labels, rows]);
+  if (host.dataset.railSig === sig) return;
+  host.dataset.railSig = sig;
+
+  host.classList.toggle('no-labels', !labels);
+  host.innerHTML = '';
+  for (const row of rows) {
+    if (row.kind === 'bar') {
+      const bar = document.createElement('span');
+      bar.className = `rbar${row.done ? ' done' : ''}`;
+      host.appendChild(bar);
+      continue;
+    }
+    const cell = document.createElement('span');
+    cell.className = `rcell is-${row.status}`
+      + (row.cycles > 0 ? ' looped' : '')
+      + (row.parallel ? ' parallel' : '');
+    const dot = document.createElement('span');
+    dot.className = 'rdot';
+    if (row.status === 'done') dot.innerHTML = RAIL_TICK;
+    else if (RAIL_GLYPH[row.status]) dot.innerHTML = RAIL_GLYPH[row.status];
+    const lbl = document.createElement('span');
+    lbl.className = 'rlabel';
+    lbl.textContent = row.label;
+    // The full story rides in the tooltip so the rail itself stays one line.
+    const bits = [row.label];
+    if (row.parallel) bits.push(`${row.parallel} in parallel`);
+    if (row.cycles > 0) bits.push(`looped ${row.cycles}×`);
+    cell.title = bits.join(' · ');
+    cell.append(dot, lbl);
+    host.appendChild(cell);
+  }
+}
+
+// The numbers beside the rail. `parts` is an ordered [label, value] list; a null
+// value is skipped so one painter serves a live run (step/cycle/elapsed/cost)
+// and a finished one (cycles/duration/cost/diff).
+function paintRunStats(host, parts) {
+  if (!host) return;
+  host.innerHTML = '';
+  for (const [k, v, cls] of parts) {
+    if (v == null || v === '') continue;
+    const span = document.createElement('span');
+    if (k) {
+      const key = document.createElement('span');
+      key.className = 'k';
+      key.textContent = k;
+      span.appendChild(key);
+    }
+    const val = document.createElement('span');
+    if (cls) val.className = cls;
+    val.textContent = String(v);
+    span.appendChild(val);
+    host.appendChild(span);
+  }
+}
+
+// "+8 −0" as a fragment, or null when there is nothing to report. U+2212 minus,
+// matching renderHistDiff.
+function diffStatParts(added, removed) {
+  if (!added && !removed) return null;
+  return [`+${added || 0}`, `−${removed || 0}`];
+}
+
+// ---------------------------------------------------------------------------
+// Density: .mini in a list, .full in the detail view. One element, two reads.
+// ---------------------------------------------------------------------------
+function setCardDensity(card, density) {
+  if (!card) return false;
+  const want = density === 'full' ? 'full' : 'mini';
+  if (card.classList.contains(want)) return false;
+  card.classList.toggle('full', want === 'full');
+  card.classList.toggle('mini', want === 'mini');
+  if (want === 'full') {
+    // The graph's wires are routed from measured element geometry, which reads
+    // as zero while the graph is display:none in .mini. Drop the signature so
+    // the next paint re-routes them now that the host has a layout.
+    const flow = card.querySelector('.run-flow');
+    if (flow) flow.dataset.wiresSig = '';
+  }
+  return true;   // changed — callers repaint what the other density skipped
+}
+
+const isFullCard = (card) => !!(card && card.classList.contains('full'));
+
+// ---------------------------------------------------------------------------
+// Tab bar for the detail density.
+//
+// Panels declare themselves with data-tab / data-tab-label. A panel that is
+// [hidden] (its painter found nothing to show) contributes no tab, which is the
+// same "hidden when empty" rule the dropdown bars already follow. Selection is
+// remembered per container so a repaint does not snap back to the first tab.
+// ---------------------------------------------------------------------------
+function tabPanels(scope) {
+  return [...scope.children].filter((el) => el.dataset && el.dataset.tab && !el.hidden);
+}
+
+// A panel's count badge, read from whatever the panel already renders: the
+// dropdown bars keep it in .sb-count, so the tab shows the same number without
+// a second source of truth.
+//
+// A LONE badge is compacted to its number ("0 sub-agents" -> "0"): the tab label
+// beside it already says what is being counted. Several badges keep their words,
+// because there the words are what tells them apart ("0 changed · 0 removed").
+function tabCount(el) {
+  const counts = [...el.querySelectorAll(':scope > .btn-subs > .sb-count')]
+    .map((c) => c.textContent.trim()).filter(Boolean);
+  if (counts.length === 1) {
+    const lone = /^(\d+)\s+\S/.exec(counts[0]);
+    if (lone) return lone[1];
+  }
+  return counts.join(' · ');
+}
+
+// Which tab opens first, when the reader has not chosen one. DOM order is the
+// wrong default: the panels are declared in the order they were built, and the
+// one a reader wants depends on the pipeline's state — the log while it runs, the
+// findings once it is finished.
+function preferredTab(keys, preferred) {
+  for (const want of preferred || []) if (keys.includes(want)) return want;
+  return keys[0];
+}
+
+function paintTabs(scope, tabsHost, preferred) {
+  if (!scope || !tabsHost) return;
+  const panels = tabPanels(scope);
+  if (panels.length < 2) {
+    // One panel (or none) needs no tab bar: showing it flush is strictly better.
+    tabsHost.hidden = true;
+    tabsHost.innerHTML = '';
+    delete tabsHost.dataset.tabsSig;
+    panels.forEach((p) => p.classList.remove('tab-off'));
+    if (panels.length === 1) openTabPanel(panels[0]);
+    return;
+  }
+  tabsHost.hidden = false;
+  const keys = panels.map((p) => p.dataset.tab);
+  const current = keys.includes(tabsHost.dataset.selected)
+    ? tabsHost.dataset.selected
+    : preferredTab(keys, preferred);
+
+  const sig = JSON.stringify([keys, panels.map((p) => [p.dataset.tabLabel, tabCount(p)]), current]);
+  if (tabsHost.dataset.tabsSig !== sig) {
+    tabsHost.dataset.tabsSig = sig;
+    tabsHost.innerHTML = '';
+    for (const p of panels) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'run-tab';
+      btn.dataset.tabKey = p.dataset.tab;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', String(p.dataset.tab === current));
+      btn.textContent = p.dataset.tabLabel || p.dataset.tab;
+      const n = tabCount(p);
+      if (n) {
+        const badge = document.createElement('span');
+        badge.className = 'n';
+        badge.textContent = n;
+        btn.appendChild(badge);
+      }
+      tabsHost.appendChild(btn);
+    }
+  }
+  selectTab(scope, tabsHost, current);
+}
+
+function selectTab(scope, tabsHost, key) {
+  tabsHost.dataset.selected = key;
+  for (const btn of tabsHost.querySelectorAll('.run-tab')) {
+    btn.setAttribute('aria-selected', String(btn.dataset.tabKey === key));
+  }
+  for (const p of tabPanels(scope)) {
+    const on = p.dataset.tab === key;
+    p.classList.toggle('tab-off', !on);
+    if (on) openTabPanel(p);
+  }
+}
+
+// Force a panel open. The dropdown bars gate their (lazy, sometimes fetching)
+// bodies behind their own .btn-subs, so the tab drives that button's real click
+// handler rather than reaching past it — otherwise the Agents tree, the saved
+// log replay and the overview would never render.
+function openTabPanel(el) {
+  const btn = el.querySelector(':scope > .btn-subs');
+  if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
 }
 
 // Final per-node loop count the renderer consumes directly: a node that ran k
@@ -2535,6 +2756,11 @@ if (typeof window !== 'undefined') {
     manifestSig,
     makeRun,
     onLog,
+    setCardDensity,
+    paintRunRail,
+    paintRunStats,
+    paintTabs,
+    histRowView,
     maybeAutoscrollLog,
     setAutoscroll,
     onSubagent,
@@ -3312,6 +3538,15 @@ function onLog(r, msg) {
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
 
   if (r.el) {
+    // A mini card has no log pane on screen (it is display:none), so streaming
+    // DOM into it would be work nobody sees — one hidden node per line, for
+    // every live run at once. The model already holds every line, and
+    // buildRunCard/setCardDensity repaint the pane from it when the card goes
+    // .full, so the only thing to refresh here is the peek.
+    if (!isFullCard(r.el)) {
+      paintRunPeek(r);
+      return;
+    }
     // A repaint (true) already rendered rec from the model — appending again
     // would duplicate the line.
     const repainted = maybePaintLogFilters(r, rec);
@@ -3896,11 +4131,18 @@ function finishRun(r, status) {
   const willLinger = !paused && isPipelineRun(r);
   if (willLinger) markLingering(r.runId);  // no-op if already acknowledged
 
-  // Q&A #5: if the user is staring at THIS run's focus tab, drop them to Overview.
-  // A paused run keeps its focus tab (its card stays, now showing Resume).
+  // A reader parked on THIS pipeline's detail view stays on it.
+  //
+  // This used to drop them to Overview (Q&A #5), which was reasonable while the
+  // focused view was just the list filtered to one card. Now that it is the
+  // pipeline's detail view, ejecting the reader at the exact moment the run
+  // finishes is the worst possible time — the results are what they were waiting
+  // for. Re-route to the CANONICAL url instead: it resolves to Running while the
+  // run lingers there and to History once it has left, so the page survives the
+  // transition either way. A paused run keeps its view as before.
   if (!paused && state.selectedRunId === r.runId) {
-    state.selectedRunId = '';
-    if (location.hash.slice(1) !== 'running') location.hash = 'running'; // → hashchange → Overview
+    const canonical = `pipeline/${r.runId}`;
+    if (location.hash.slice(1) !== canonical) location.hash = canonical;
   }
 
   // Card drops out of the live view (liveRuns excludes terminal statuses).
@@ -7433,7 +7675,46 @@ if (runListEl) {
     if (!r) return;
     copyLogToClipboard(btn, r.logLines.filter((rec) => logLineVisible(rec, r.logFilter)));
   });
+
+  // Density affordances: the mini card's peek toggle, its two ways into the
+  // detail view, and the detail view's tab bar.
+  runListEl.addEventListener('click', (e) => {
+    if (!e.target.closest) return;
+
+    const exp = e.target.closest('.run-expand');
+    if (exp) {
+      const card = exp.closest('.run-card');
+      const r = card && runs.get(card.dataset.runId);
+      const peek = card && card.querySelector('.run-peek');
+      if (!r || !peek) return;
+      const open = exp.getAttribute('aria-expanded') === 'true';
+      exp.setAttribute('aria-expanded', String(!open));
+      peek.hidden = open;
+      if (!open) paintRunPeek(r);   // hidden peeks are not maintained
+      return;
+    }
+
+    const open = e.target.closest('.btn-open, .btn-answer');
+    if (open) {
+      const card = open.closest('.run-card');
+      const runId = card && card.dataset.runId;
+      if (runId) location.hash = `pipeline/${runId}`;
+      return;
+    }
+  });
 }
+
+// Tab clicks are bound ONCE on the document, not per container: the detail view
+// renders into #run-list for a live pipeline and into #history for a finished
+// one, and a tab is self-contained anyway (its scope is its bar's parent), so one
+// listener serves both without either container knowing about tabs.
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest && e.target.closest('.run-tab');
+  if (!tab) return;
+  const bar = tab.closest('.run-tabs');
+  const scope = bar && bar.parentElement;
+  if (scope) selectTab(scope, bar, tab.dataset.tabKey);
+});
 
 // Read a run card's whole log filter out of the DOM. One reader for the
 // dropdowns and the search box, so neither can clobber the other's value.
@@ -7795,6 +8076,29 @@ function renderHistory() {
   host.innerHTML = '';
   const all = Array.isArray(state.historyAll) ? state.historyAll : [];
 
+  // #history/<id> — the detail view for a finished pipeline: that card alone, at
+  // .full density, expanded. The list's project pills and group headers are
+  // suppressed, so the page is about one pipeline the same way the focused
+  // Running view is.
+  if (el.historyFilter) el.historyFilter.hidden = !!state.historyFocusId;
+  if (state.historyFocusId) {
+    const row = all.find((p) => p && p.id === state.historyFocusId);
+    if (!row) {
+      host.appendChild(histEmpty('That pipeline is not in history (it may still be running).'));
+      return;
+    }
+    const card = buildHistCard(row.projectDir || null, row, state.ghAvailable);
+    setCardDensity(card, 'full');
+    host.appendChild(card);
+    paintDetailBar(host, 'history');
+    // Expand immediately: a detail view that opens collapsed is a click for
+    // nothing. toggleHistCard also drives the lazy detail fetch.
+    const head = card.querySelector('.hist-head');
+    const detail = card.querySelector('.hist-detail');
+    if (head && detail) toggleHistCard(row.projectDir || null, row.id, head, detail, row);
+    return;
+  }
+
   // A finished-but-unacknowledged pipeline (lingerer) AND a paused pipeline both
   // live ONLY in the Running list — suppress them from History by pipelineId so
   // they don't double-show. A lingerer reappears in History once acknowledged; a
@@ -7806,6 +8110,7 @@ function renderHistory() {
   );
   const visible = hiddenPids.size ? all.filter((p) => !hiddenPids.has(p.id)) : all;
 
+  hideDetailBar(host);
   const filter = state.historyFilter;
   const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
 
@@ -8258,6 +8563,18 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   setupDeleteButton(node, projectDir, p);
   setupResumeButton(node, projectDir, p);
 
+  // List density: the same one-line rail the Running cards use, its totals, and
+  // one way into the detail view.
+  paintHistRail(node, p);
+
+  const openBtn = node.querySelector('.hist-open');
+  if (openBtn) {
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();               // the head is a toggle; this is a navigation
+      location.hash = `pipeline/${id}`;
+    });
+  }
+
   const head = node.querySelector('.hist-head');
   const detail = node.querySelector('.hist-detail');
   if (head && detail) {
@@ -8269,6 +8586,53 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   }
 
   return node;
+}
+
+// Rail + the numbers the head does NOT already carry, for one history row.
+//
+// The card head already shows duration, cost and the diff size, so repeating
+// them beside the rail would be noise: the rail's caption adds only how far the
+// run got and how many cycles it took.
+function paintHistRail(node, p) {
+  const { manifest, view } = histRowView(p);
+  paintRunRail(node.querySelector('.run-rail'), manifest, view);
+  const cycles = Number(p.cycle) || 0;
+  const { at, total } = railProgress(railRows(manifest, view));
+  paintRunStats(node.querySelector('.run-stats'), [
+    ['stage ', total ? `${at}/${total}` : null],
+    [' cycle ', cycles > 1 ? cycles : null],
+  ]);
+  const ctaText = node.querySelector('.hist-cta-text');
+  if (ctaText) {
+    ctaText.textContent = at < total
+      ? `Stopped at stage ${at} of ${total} — the detail view has the log, the agents and the diff.`
+      : 'The detail view has the log, the agents, the diff and the review findings.';
+  }
+}
+
+// The outcome-quality pill in a history row's head: "Clean" or "N to check".
+//
+// This is the question a reader actually brings to History, and the status badge
+// cannot answer it. It is painted from the DETAIL payload (results.summary), so
+// it appears once a row has been expanded or opened — the list endpoint has no
+// blocking-issue count to offer. Giving the collapsed row this pill up front
+// needs a `blocking_issues` column on the pipelines table; that is deliberately
+// not part of this change.
+function paintHistOutcome(card, results) {
+  const pill = card && card.querySelector('.hist-outcome');
+  if (!pill) return;
+  const n = results && results.summary ? Number(results.summary.blockingIssues) || 0 : null;
+  if (results == null || n == null) { pill.hidden = true; return; }
+  pill.hidden = false;
+  pill.className = `hist-outcome ${n ? 'check' : 'clean'}`;
+  // Same wording as the Results panel's own chip — deliberately the SAME
+  // function, so hoisting it into the head cannot drift from the panel. The
+  // panel's copy is then hidden (see .results-chip in style.css) rather than
+  // said twice.
+  pill.textContent = statusChip(results);
+  pill.title = n
+    ? `${n} blocking issue${n === 1 ? '' : 's'} flagged by review`
+    : 'No blocking issues flagged by review';
 }
 
 // Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
@@ -8492,6 +8856,16 @@ async function loadHistDetail(projectDir, id, detail, record) {
     }, data.results);
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
+    // Outcome quality in the head, now that results are in hand.
+    paintHistOutcome(detail.closest('.hist-card'), data.results);
+    // One tab bar over whichever panels ended up with content. Runs LAST: every
+    // paint*Bar above decides whether its panel is [hidden], and a hidden panel
+    // contributes no tab. Detail density only — in a list the panels are not on
+    // screen, and paintTabs OPENS the selected one, which would fire that bar's
+    // lazy fetch (the saved-log replay, the overview) for nobody.
+    if (isFullCard(detail.closest('.hist-card'))) {
+      paintTabs(detail, detail.querySelector('.run-tabs'), ['results', 'diff', 'log']);
+    }
     if (typeof data.state.totalCostUsd === 'number') {
       const card = detail.closest('.hist-card');
       const totalEl = card && card.querySelector('.hist-total');
@@ -8840,6 +9214,39 @@ function paintHistStepper(detail, st) {
     subsOf: (id) => subAgentsForNode(st, id),
     modelUsedOf: (id) => modelsUsed[id],
   });
+}
+
+// The {manifest, view} pair for a HISTORY LIST ROW — no detail fetch.
+//
+// The list payload carries the run's own stepper manifest plus its final phase
+// (src/core/artifacts.mjs#rowToHistoryEntry), which is exactly enough to place
+// the frontier: everything before the reached cell ran, the reached cell either
+// completed or is where the run stopped, everything after never started. That is
+// the same fallback paintHistStepper uses for records with no per-step rows, and
+// it is all the fidelity a one-line rail can show.
+function histRowView(row) {
+  const manifest = manifestFor(row && row.stepper);
+  const status = String((row && row.status) || '').toLowerCase();
+  const halted = ['stopped', 'error', 'aborted', 'failed', 'interrupted'].includes(status);
+  const isDone = ['done', 'complete', 'completed'].includes(status);
+  const reached = row && row.phase ? locateInManifest(manifest, { phase: row.phase }).cellIdx : -1;
+  const cellOf = {};
+  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
+  return {
+    manifest,
+    view: {
+      statusOf: (id) => {
+        const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
+        if (isDone) return 'done';
+        if (cellIdx < reached) return 'done';
+        if (cellIdx === reached) return halted ? 'stopped' : 'done';
+        return 'pending';
+      },
+      activeId: null,
+      cycles: {},
+      live: false,
+    },
+  };
 }
 
 // Highest cell index the saved run reached. Uses steps[].nodeId when present
@@ -9352,10 +9759,11 @@ function nodeLabelLookup(stepper) {
   return (id) => map[id] || id;
 }
 
-function paintStepper(r) {
-  if (!r.el) return;
-  const host = r.el.querySelector('.run-flow');
-  if (!host) return;
+// The live run's {manifest, view} pair. Split out of paintStepper so the graph
+// (detail density) and the rail (list density) render from ONE status
+// computation — two independent computations would eventually disagree, and the
+// user would be told two different things about the same node.
+function runStepperView(r) {
   const manifest = manifestFor(r.stepper);
   const terminalDone = r.status === 'done';
   const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
@@ -9378,16 +9786,43 @@ function paintStepper(r) {
     }
   }
 
-  paintRunGraph(host, manifest, {
-    statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
-    activeId,
-    cycles: loopCounts(manifest, r.nodeCycle),
-    live: true,
-    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsForNode(r, id),
-    modelUsedOf: (id) => modelsUsed[id],
-  });
+  return {
+    manifest,
+    view: {
+      statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
+      activeId,
+      cycles: loopCounts(manifest, r.nodeCycle),
+      live: true,
+      durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
+      costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
+      subsOf: (id) => subAgentsForNode(r, id),
+      modelUsedOf: (id) => modelsUsed[id],
+    },
+  };
+}
+
+// Paint BOTH progress views from the one adapter. Both stay painted regardless
+// of density: the cost is a class toggle per node, and keeping the graph current
+// means switching a card to .full shows the right thing on the same frame.
+// (The graph's WIRES are the exception — they are geometry, and geometry read
+// from a display:none host is all zeros. setCardDensity clears the wire
+// signature on the way into .full so they recompute against a laid-out card.)
+function paintStepper(r) {
+  if (!r.el) return;
+  const { manifest, view } = runStepperView(r);
+  const host = r.el.querySelector('.run-flow');
+  if (host) paintRunGraph(host, manifest, view);
+  paintRunRail(r.el.querySelector('.run-rail'), manifest, view);
+  const rows = railRows(manifestFor(manifest), view);
+  const { at, total } = railProgress(rows);
+  const diff = diffStatParts(r.added, r.removed);
+  paintRunStats(r.el.querySelector('.run-stats'), [
+    ['step ', `${at}/${total}`],
+    [' cycle ', r.cycle > 0 ? r.cycle : null],
+    ['', fmtDuration(liveTotalMs(r.steps, Date.now()))],
+    ['', fmtUsd(r.totalCostUsd || 0)],
+    ...(diff ? [['', diff[0], 'add'], ['', diff[1], 'del']] : []),
+  ]);
 }
 
 // Does the run's current frontier cell contain a cycling node?
@@ -9407,6 +9842,85 @@ function stockResumeTitle() {
       ?.content?.querySelector('.btn-resume')?.title || '';
   }
   return _stockResumeTitle;
+}
+
+// How many log lines a mini card's expanded peek shows. Enough to see what the
+// agent is doing right now; not enough to be a log pane (that is the detail view).
+const PEEK_LINES = 5;
+
+// The peek: the tail of the run's log, through the run's own filter, with no
+// filter bar of its own. Reuses buildLogLine so a peeked line reads exactly like
+// the same line in the full pane.
+function paintRunPeek(r) {
+  if (!r || !r.el) return;
+  const peek = r.el.querySelector('.run-peek');
+  if (!peek || peek.hidden) return;
+  const lines = peek.querySelector('.peek-lines');
+  const foot = peek.querySelector('.peek-foot');
+  if (!lines) return;
+  const visible = r.logLines.filter((rec) => logLineVisible(rec, r.logFilter));
+  const tail = visible.slice(-PEEK_LINES);
+  lines.innerHTML = '';
+  if (!tail.length) {
+    const empty = document.createElement('div');
+    empty.className = 'peek-empty';
+    empty.textContent = r.logLines.length ? '(no lines match the filter)' : '(no output yet)';
+    lines.appendChild(empty);
+  } else {
+    for (const rec of tail) lines.appendChild(buildLogLine(rec));
+  }
+  if (foot) {
+    const active = (r.subAgents || []).filter((s) => s && s.status === 'running').length;
+    const bits = [];
+    if (visible.length) bits.push(`last ${tail.length} of ${visible.length} lines`);
+    if (active) bits.push(`${active} sub-agent${active === 1 ? '' : 's'} active`);
+    foot.textContent = bits.join(' · ');
+  }
+}
+
+// The single call to action a mini card is allowed. Order matters: a blocking
+// question outranks a cost pause outranks "nothing to do but watch".
+function paintRunCta(r) {
+  if (!r.el) return;
+  const textEl = r.el.querySelector('.run-cta-text');
+  const answerBtn = r.el.querySelector('.btn-answer');
+  const openBtn = r.el.querySelector('.btn-open');
+  const focused = isFullCard(r.el);
+  if (openBtn) openBtn.hidden = focused;
+
+  let text = '';
+  let asks = false;
+  if (r.pendingQuestion != null) {
+    const n = questionCount(r.pendingQuestion);
+    const phase = PHASE_LABEL[r.phaseKey] || 'The pipeline';
+    text = `${phase} needs your input · ${n} question${n === 1 ? '' : 's'}`;
+    asks = true;
+  } else if (isPaused(r) && typeof r.pauseReason === 'string' && r.pauseReason.startsWith('cost_')) {
+    // The cost banner (rung 2) carries the numbers and the two ways out; the CTA
+    // line must not repeat them.
+    text = '';
+  } else if (!r._finished && !isTerminalStatus(r.status)) {
+    const active = (r.subAgents || []).filter((s) => s && s.status === 'running').length;
+    const node = activeNodeLabel(r);
+    const bits = [];
+    if (node) bits.push(node);
+    if (active) bits.push(`${active} sub-agent${active === 1 ? '' : 's'} active`);
+    text = bits.join(' · ');
+  }
+  // In .full the question panel itself is on screen — restating it above the
+  // graph would be noise.
+  if (textEl) textEl.textContent = focused ? '' : text;
+  if (answerBtn) answerBtn.hidden = focused || !asks;
+}
+
+// Display label of the node the run is currently at, for the CTA line.
+function activeNodeLabel(r) {
+  const m = manifestFor(r.stepper);
+  const cell = m.steps[r.maxCellIdx];
+  if (!cell) return '';
+  const live = cell.nodes.filter((n) => ['now', 'pause'].includes(r.nodeStatus[n.id]));
+  const pick = live.length ? live : cell.nodes;
+  return pick.map((n) => runNodeAgent(n).label).join(' + ');
 }
 
 function paintRunCard(r) {
@@ -9456,6 +9970,13 @@ function paintRunCard(r) {
       stepStatusByKey(r.steps, r.stepper),
     );
   }
+  // List-density regions. Painted after paintSubsBar so the CTA/peek can count
+  // the sub-agents it just grouped.
+  paintRunCta(r);
+  paintRunPeek(r);
+  // Detail-density regions: one tab bar over whichever panels have content.
+  if (isFullCard(r.el)) paintTabs(r.el, r.el.querySelector('.run-tabs'), ['log', 'agents']);
+
   const titleEl = r.el.querySelector('.run-title');
   if (titleEl && r.title && titleEl.textContent !== r.title) titleEl.textContent = r.title;
   const timeEl = r.el.querySelector('.run-time');
@@ -9494,6 +10015,15 @@ function paintRunCard(r) {
   const resumeBtn = r.el.querySelector('.btn-resume');
   if (pauseBtn) pauseBtn.hidden = paused;
   if (resumeBtn) resumeBtn.hidden = !paused;
+  // A finished run lingers in the list until it is opened, and there is nothing
+  // left to pause or stop — offering both was harmless when a finished card was
+  // evicted immediately, but the lingerer is now a card a reader actually reads.
+  const terminal = !paused && (r._finished || isTerminalStatus(r.status));
+  if (terminal) {
+    if (pauseBtn) pauseBtn.hidden = true;
+    const stopBtn = r.el.querySelector('.btn-stop');
+    if (stopBtn) stopBtn.hidden = true;
+  }
   // A total-budget pause cannot be resumed at all until the window resets or the
   // limit is raised — the server 403s it, so the button says so up front.
   const totalBlocked = r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
@@ -9550,7 +10080,7 @@ function insertCardPreservingScroll(list, el, before) {
 // A card already in its correct slot is NOT touched — reattaching an attached
 // node resets descendant scroll (log pane, stepper row) and breaks the .main
 // scroller's anchoring, which is exactly the scroll-reset-on-every-log bug.
-function paintRunList(list, rlist, emptyMsg) {
+function paintRunList(list, rlist, emptyMsg, density = 'mini') {
   if (rlist.length) {
     const empty = list.querySelector('.run-empty');
     if (empty) empty.remove();
@@ -9560,6 +10090,12 @@ function paintRunList(list, rlist, emptyMsg) {
   for (const r of rlist) {
     seen.add(r.runId);
     if (!r.el || r.el.dataset.runId !== r.runId) r.el = buildRunCard(r);
+    // Density first: paintRunCard below branches on it, and a card arriving in
+    // the detail view needs the log pane it did not maintain while .mini.
+    if (setCardDensity(r.el, density) && density === 'full') {
+      paintLogFilters(r, r.el);
+      repaintFilteredLog(r, r.el);
+    }
     const inPlace = r.el.parentNode === list && r.el.previousElementSibling === prev;
     if (!inPlace) {
       insertCardPreservingScroll(list, r.el, prev ? prev.nextSibling : list.firstChild);
@@ -9581,9 +10117,10 @@ function renderOverview() {
   const list = $('#run-list');
   if (!list) return;
   const rows = overviewRuns();
+  hideDetailBar(list);
   // Overview is kind-agnostic (live scans/agentgen included), so the empty copy
   // must not claim "pipelines" specifically.
-  paintRunList(list, rows, 'No active runs — start one from New.');
+  paintRunList(list, rows, 'No active runs — start one from New.', 'mini');
 
   // "N pipelines executing" counts LIVE PIPELINES (the sub-text is pipeline-framed);
   // "needs input" counts live runs with a pending question.
@@ -9613,9 +10150,54 @@ function renderFocusView(runId) {
   const list = $('#run-list');
   if (!list) return;
   const r = runs.get(runId);
-  // Unknown run (bad deep-link / never existed) → bounce to Overview.
-  if (!r) { location.hash = 'running'; return; }
-  paintRunList(list, [r], 'Run not found.');   // others hidden — the core "separate visually" fix
+  if (!r) {
+    // On a COLD boot the runs map is still empty — it is seeded by the WS hello.
+    // Bouncing here would throw away a perfectly good deep link (and the focus
+    // selection with it), so hold the route and wait: onHello re-renders this
+    // view once the live set is known.
+    if (!helloSeen) {
+      list.innerHTML = '<div class="run-empty">Loading pipeline…</div>';
+      return;
+    }
+    // Genuinely unknown (never existed, or already archived) → back to Overview.
+    location.hash = 'running';
+    return;
+  }
+  // .full: the detail density — question above the graph, one tab at a time.
+  paintRunList(list, [r], 'Run not found.', 'full');   // others hidden — the core "separate visually" fix
+  paintDetailBar(list);
+}
+
+// "← Running" / "← History" above a focused card, so the detail view is
+// escapable without the browser's back button. The target is DERIVED from where
+// the pipeline currently belongs (live → Running, terminal → History) rather
+// than stored, except when the user arrived from a list, which is recorded so a
+// lingering finished run returns to the list it was opened from.
+function paintDetailBar(host, fallback = 'running') {
+  if (!host) return;
+  let bar = host.parentNode && host.parentNode.querySelector(':scope > .detail-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'detail-bar';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'detail-back';
+    bar.appendChild(back);
+    host.parentNode.insertBefore(bar, host);
+  }
+  // A deep-linked detail view has no recorded origin, so it falls back to the
+  // list that owns this pipeline (History for a finished one) rather than always
+  // offering Running, which would be a dead end for a finished run.
+  const origin = state.detailOrigin || fallback;
+  bar.querySelector('.detail-back').onclick = () => { location.hash = origin; };
+  const label = origin === 'history' ? 'History' : 'Running';
+  bar.querySelector('.detail-back').textContent = `← ${label}`;
+  bar.hidden = false;
+}
+
+function hideDetailBar(host) {
+  const bar = host && host.parentNode && host.parentNode.querySelector(':scope > .detail-bar');
+  if (bar) bar.hidden = true;
 }
 
 let runningCollapsed = false; // in-memory only; auto-expanded whenever ≥1 child exists
@@ -9764,9 +10346,40 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings',
+  // 'pipeline' has no [data-view] section of its own: it is the ONE canonical
+  // detail URL for a pipeline, resolved to the concrete view that owns it (see
+  // resolvePipelineRoute). Listed so a deep link routes instead of falling back.
+  'pipeline'];
+
+// #pipeline/<id> -> #running/<id> while the pipeline is live in this session,
+// else #history/<id>. One URL survives a run finishing under the reader: today a
+// finished run is evicted from Running and has to be found again in History.
+// `id` may be either a live runId or a persisted pipelineId — a resumed run has
+// both, so both are matched.
+function resolvePipelineRoute(id) {
+  if (!id) return ['running', ''];
+  for (const r of runs.values()) {
+    if (r.runId === id || r.pipelineId === id) return ['running', r.runId];
+  }
+  // No live match — but on a cold boot the runs map is still empty: it is seeded
+  // by the WS `hello`, which has not arrived yet. Route to History (the right
+  // answer for a finished pipeline) and remember the id, so onHello can re-resolve
+  // it the moment the live set is known. Without this, deep-linking a RUNNING
+  // pipeline would land on "not in history".
+  if (!helloSeen) state.pendingPipelineId = id;
+  return ['history', id];
+}
+// True once the first WS hello has been applied (the live run set is known).
+let helloSeen = false;
 
 function showView(name, param = '') {
+  // Canonical detail URL: rewrite to the owning view before anything else, so
+  // every downstream branch sees a concrete view name.
+  if (name === 'pipeline') {
+    const [view, id] = resolvePipelineRoute(param);
+    return showView(view, id);
+  }
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
   // scan + resets wizard state (addresses orphaned-background-request risk).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
@@ -9790,8 +10403,13 @@ function showView(name, param = '') {
   if (currentShownView === 'settings' && name !== 'settings') hideInfoTip();
   currentShownView = name;
 
-  // Focus selection lives only while on the Running view.
+  // Focus selection lives only while on the view that owns it.
   state.selectedRunId = (name === 'running') ? (param || '') : '';
+  state.historyFocusId = (name === 'history') ? (param || '') : '';
+  // Remember which list a detail view was opened from, so its back link returns
+  // there. Only a LIST navigation records it; entering a detail view leaves the
+  // memory alone (that is the whole point of it).
+  if (!param && (name === 'running' || name === 'history')) state.detailOrigin = name;
 
   // Sync hash so direct callers (beginRun, resume, boot) don't leave hash stale.
   // Reconstruct the full hash (view + optional param) so a focused Running deep

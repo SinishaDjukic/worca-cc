@@ -60,6 +60,7 @@ test('log pins to bottom on a new line while Auto-scroll is ON', async () => {
   const { np, tick } = await boot();
   const r = np.upsertRun({ runId: 'p1', title: 't', projectDir: PROJECT, status: 'running' });
   r.el = np.buildRunCard(r);
+  np.setCardDensity(r.el, 'full');   // the log pane is a DETAIL-density region
   const logEl = r.el.querySelector('.log');
   instrumentScroll(logEl, { scrollHeight: 5000, clientHeight: 300 });
   assert.equal(r.autoscroll, true, 'default ON on the model (seeded by makeRun via upsertRun)');
@@ -84,6 +85,7 @@ test('OFF freezes the log and persists across a card rebuild', async () => {
   sw = r.el.querySelector('.switch.autoscroll');
   assert.equal(sw.classList.contains('on'), false, 'OFF survives the template re-clone');
 
+  np.setCardDensity(r.el, 'full');   // the log pane is a DETAIL-density region
   const logEl = r.el.querySelector('.log');
   instrumentScroll(logEl, { scrollHeight: 5000, clientHeight: 300 });
   logEl.scrollTop = 42;                            // user parked here
@@ -97,6 +99,7 @@ test('re-enabling holds position; only subsequent lines follow', async () => {
   const { np, tick } = await boot();
   const r = np.upsertRun({ runId: 'p1', title: 't', projectDir: PROJECT, status: 'running' });
   r.el = np.buildRunCard(r);
+  np.setCardDensity(r.el, 'full');   // the log pane is a DETAIL-density region
   const logEl = r.el.querySelector('.log');
   instrumentScroll(logEl, { scrollHeight: 5000, clientHeight: 300 });
 

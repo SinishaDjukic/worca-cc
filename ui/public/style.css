@@ -238,7 +238,10 @@ body.view-history .main{padding-top:0;}
 .btn-resume:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* [hidden] must beat the author display rules above (author origin outranks the
    UA [hidden]{display:none} rule — same footgun as .questions-toggle[hidden]). */
-.btn-pause[hidden],.btn-resume[hidden]{display:none;}
+/* These three set `display`, which beats the UA's [hidden]{display:none} — so
+   hiding them from JS needs this rule to exist. .btn-stop joined the list when a
+   finished run stopped offering controls it cannot honour. */
+.btn-pause[hidden],.btn-resume[hidden],.btn-stop[hidden]{display:none;}
 
 /* ---------- Views ---------- */
 .view{display:block;}
@@ -1417,3 +1420,195 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mvx-warn{color:var(--red,#c0392b);}
 .pl-baseurl{word-break:break-all;}
 .pl-config-h{margin:14px 0 6px;font-size:13px;}
+
+/* ===========================================================================
+   Pipeline views: two densities, one card
+   ---------------------------------------------------------------------------
+   A pipeline card renders at one of two densities, chosen by a class on the
+   card itself:
+
+     .mini  — in a list (Running, History). Identity, a one-line stage rail,
+              the four numbers that matter, and at most one call to action.
+     .full  — in the detail view (#pipeline/<id>, #running/<id>, #history/<id>).
+              Header, the blocking question, the full graph, then one tab.
+
+   Both densities are the SAME element with the same regions, so every existing
+   painter keeps its selectors. What changes is `order` (the priority ladder:
+   anything that stops the pipeline outranks anything that describes it) and
+   which regions are displayed. The graph/log/tab machinery is therefore never
+   duplicated, and the two densities cannot disagree about status — the rail and
+   the graph consume one view adapter (see paintStepper / run-rail.mjs).
+   =========================================================================== */
+
+/* Flex column (not block) purely to make `order` available. The regions keep
+   their own margins — flex margins do not collapse, so spacing is unchanged. */
+.run-card{display:flex;flex-direction:column;}
+.run-card > .run-top{order:-4;}
+.run-card > .run-rail-wrap{order:-3;}
+.run-card > .cost-banner{order:-2;}
+.run-card > .qpanel{order:-1;}      /* the blocker, directly under identity */
+.run-card > .run-foot{order:0;}
+.run-card > .run-flow-wrap{order:1;}
+.run-card > .run-tabs{order:2;}
+.run-card > .subs-bar{order:3;}
+.run-card > .run-log{order:4;}
+.run-card > .run-peek{order:5;}
+
+/* List density: no graph canvas, no log pane, no dropdowns, no question form. */
+.run-card.mini > .run-flow-wrap,
+.run-card.mini > .run-tabs,
+.run-card.mini > .subs-bar,
+.run-card.mini > .run-log,
+.run-card.mini > .qpanel{display:none;}
+/* Detail density: no rail, no peek, no expander — the graph and tabs replace them. */
+.run-card.full > .run-rail-wrap,
+.run-card.full > .run-peek,
+.run-card.full .run-expand{display:none;}
+/* The graph carries its own bottom margin; in .full the question sits above it. */
+.run-card.full > .qpanel{margin-top:0;margin-bottom:18px;}
+
+/* ---------- the stage rail (list density) ---------- */
+.run-rail-wrap{display:flex;align-items:center;justify-content:space-between;
+  gap:10px 20px;flex-wrap:wrap;margin-bottom:16px;}
+.run-rail{display:flex;align-items:center;flex:1 1 340px;min-width:0;overflow-x:auto;
+  scrollbar-width:thin;padding-bottom:2px;}
+.run-rail .rcell{display:flex;flex-direction:column;align-items:center;gap:5px;
+  flex:0 0 auto;width:70px;text-align:center;}
+.run-rail .rbar{flex:1 1 14px;min-width:9px;height:2px;border-radius:2px;background:var(--line-2);}
+.run-rail .rbar.done{background:color-mix(in srgb,var(--green) 55%,var(--line-2));}
+.run-rail .rdot{position:relative;width:19px;height:19px;border-radius:50%;
+  display:grid;place-items:center;border:2px solid var(--line-2);background:var(--panel);
+  font-family:var(--mono);font-size:9px;font-weight:600;color:var(--ink-3);}
+.run-rail .rdot svg{width:11px;height:11px;}
+.run-rail .rlabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.03em;
+  text-transform:uppercase;color:var(--ink-3);max-width:70px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.run-rail .rcell.is-done .rdot{background:var(--green);border-color:var(--green);color:#fff;}
+.run-rail .rcell.is-active .rdot{border-color:var(--violet);background:var(--violet-bg);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--violet) 15%,transparent);}
+.run-rail .rcell.is-active .rlabel{color:var(--violet-ink);font-weight:700;}
+.run-rail .rcell.is-paused .rdot{border-color:var(--amber);background:var(--amber-bg);color:var(--amber-ink);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--amber) 18%,transparent);}
+.run-rail .rcell.is-paused .rlabel{color:var(--amber-ink);font-weight:700;}
+.run-rail .rcell.is-stopped .rdot{border-color:var(--red);background:var(--red);color:#fff;}
+.run-rail .rcell.is-stopped .rlabel{color:var(--red-ink);font-weight:700;}
+/* A stage that a feedback loop re-ran wears a dashed ring; the count rides in
+   the marker's title so the rail stays one line. */
+.run-rail .rcell.looped .rdot::after{content:"";position:absolute;width:27px;height:27px;
+  border-radius:50%;border:1.5px dashed var(--peach);}
+/* Parallel cell: a second offset ring, matching the graph's "· parallel" tag. */
+.run-rail .rcell.parallel .rdot{box-shadow:2.5px 2.5px 0 0 var(--panel),3.5px 3.5px 0 1.5px var(--line-2);}
+.run-rail.no-labels .rcell{width:34px;}
+.run-rail.no-labels .rcell .rlabel{display:none;}
+.run-rail.no-labels .rcell.is-active .rlabel{display:block;position:absolute;margin-top:26px;}
+.run-rail.no-labels .rcell.is-active{position:relative;}
+
+.run-stats{display:flex;align-items:center;gap:14px;flex:0 0 auto;
+  font-size:11.5px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.run-stats .k{color:var(--ink-3);font-weight:500;margin-right:4px;}
+.run-stats .add{color:var(--green-ink);}
+.run-stats .del{color:var(--red-ink);}
+.run-stats:empty{display:none;}
+
+/* Say each thing once. At list density the stats row carries duration and cost,
+   so the meta line drops them; the CTA line names the phase and what it wants,
+   so the phase chip drops out. Both come back in .full, where there is no rail
+   and no CTA line to carry them. */
+.run-card.mini > .run-top .run-meta .run-time,
+.run-card.mini > .run-top .run-meta .run-cost,
+.run-card.mini > .run-foot > .chip{display:none;}
+
+/* ---------- foot: one call to action ---------- */
+.run-cta-text{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:600;color:var(--ink-2);}
+.run-cta-text:empty{display:none;}
+.run-card.attention .run-cta-text{color:var(--amber-ink);}
+.btn-answer.sm,.btn-open.sm{padding:8px 15px;font-size:12px;font-weight:600;font-family:inherit;
+  border-radius:999px;border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);cursor:pointer;}
+.btn-open.sm:hover,.btn-answer.sm:hover{background:var(--field);}
+.btn-answer.sm{background:var(--amber-bg);border-color:transparent;color:var(--amber-ink);}
+.btn-answer.sm:hover{background:var(--amber);color:#fff;}
+.run-card.full > .run-foot .btn-open{display:none;}   /* already here */
+
+/* ---------- expander + peek (list density) ---------- */
+.run-expand{flex:0 0 auto;background:none;border:0;padding:4px;cursor:pointer;color:var(--ink-3);
+  border-radius:8px;line-height:0;}
+.run-expand:hover{color:var(--ink);background:var(--field);}
+.run-expand .chev{transition:transform .2s;}
+.run-expand[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.run-peek{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
+.run-peek[hidden]{display:none;}
+.peek-lines{background:#FBFBF9;border:1px solid var(--line);border-radius:14px;padding:10px 14px;
+  font-family:var(--mono);font-size:11px;line-height:1.75;overflow-x:auto;}
+.peek-lines .log-line{display:flex;gap:10px;}
+.peek-lines .log-ts{color:var(--ink-3);flex:0 0 auto;}
+.peek-lines .log-src{color:var(--violet-ink);flex:0 0 auto;}
+.peek-lines .log-msg{white-space:pre-wrap;word-break:break-word;}
+.peek-lines .peek-empty{color:var(--ink-3);}
+.peek-foot{display:flex;align-items:center;gap:10px;margin-top:9px;
+  font-size:11.5px;color:var(--ink-3);font-family:var(--mono);}
+.peek-foot:empty{display:none;}
+
+/* ---------- tabs (detail density) ---------- */
+/* One panel at a time, because each of these panels is TALL (a log pane, a diff
+   list, a sub-agent tree) and you never want two at once — the case tabs are
+   for, and the case a stack of accordions serves badly. */
+.run-tabs{display:flex;gap:3px;align-items:flex-end;border-bottom:1px solid var(--line);
+  margin:0 0 14px;overflow-x:auto;scrollbar-width:thin;}
+.run-tabs[hidden]{display:none;}
+.run-tab{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-3);background:none;
+  border:0;border-bottom:2px solid transparent;padding:9px 13px;}
+.run-tab:hover{color:var(--ink-2);}
+.run-tab .n{font-family:var(--mono);font-size:10.5px;font-weight:600;background:var(--field);
+  color:var(--ink-3);border-radius:999px;padding:1px 7px;}
+.run-tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);}
+.run-tab[aria-selected="true"] .n{background:var(--violet-bg);color:var(--violet-ink);}
+/* A panel the tab bar is not showing. Set by paintTabs, not by [hidden], so the
+   bars' own accordion state (aria-expanded / panel[hidden]) is left untouched. */
+.tab-off{display:none !important;}
+/* In .full the tab IS the control, so a panel's own dropdown button is dropped
+   and its body shown flush. */
+.run-card.full > [data-tab] > .btn-subs,
+.hist-card.full .hist-detail > [data-tab] > .btn-subs{display:none;}
+.run-card.full > .subs-bar,
+.hist-card.full .hist-detail > [data-tab]{border:0;padding:0;background:none;}
+
+/* ---------- History: list density ---------- */
+/* The collapsed row is unchanged (it was already the right density). Expanding
+   it reveals a MINI VIEW of the pipeline — the stage rail, the run's totals, the
+   results summary, and one way into the detail view — instead of the whole
+   record. The graph, the tab bar, the other four panels and Archive are
+   detail-view only. */
+.hist-card.mini .hist-detail > .run-flow-wrap,
+.hist-card.mini .hist-detail > .run-tabs,
+.hist-card.mini .hist-detail > [data-tab]:not(.results-section),
+.hist-card.mini .hist-detail > .hist-actions{display:none;}
+.hist-card.full .hist-detail > .run-rail-wrap,
+.hist-card.full .hist-detail > .hist-cta,
+.hist-card.full .hist-head .chev{display:none;}
+.hist-cta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;
+  padding-top:13px;border-top:1px solid var(--line);}
+.hist-cta-text{flex:1 1 auto;min-width:0;font-size:12.5px;color:var(--ink-2);}
+.hist-open{padding:8px 15px;font-size:12px;}
+/* Outcome-quality pill in the row: the question you actually bring to History is
+   "did this go well?", which the status badge alone cannot answer. */
+.hist-outcome{font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:999px;white-space:nowrap;}
+.hist-outcome[hidden]{display:none;}
+.hist-outcome.clean{background:var(--green-bg);color:var(--green-ink);}
+.hist-outcome.check{background:var(--peach-bg);color:var(--peach-ink);}
+/* The Results panel's own status chip is the same statusChip() string the head
+   pill now carries — shown once, in the head. The rest of .results-chips (the
+   plugin source badge, the write-back retry) is untouched. */
+.hist-card .results-chips .results-chip{display:none;}
+
+/* ---------- detail view chrome ---------- */
+.detail-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+.detail-back{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
+  border:1px solid var(--line);border-radius:999px;padding:7px 15px;font-family:inherit;
+  font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;}
+.detail-back:hover{background:var(--field);color:var(--ink);}
+
+@media (max-width:720px){
+  .run-rail-wrap{gap:12px;}
+  .run-stats{flex-wrap:wrap;gap:8px 12px;}
+}
