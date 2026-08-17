@@ -12,7 +12,10 @@ const state = {
   selectedRunId: '',   // focused pipeline for #running/<runId>; '' === Overview (transient, not persisted)
   historyFocusId: '',  // focused pipeline for #history/<pipelineId>; '' === the whole list
   detailOrigin: '',    // which list a detail view was opened from ('running' | 'history')
+  pipelineOwner: '',   // on #pipeline/<id>: the list that owns it ('running' | 'history')
   pendingPipelineId: '', // #pipeline/<id> deep link awaiting the WS hello to resolve
+  historyLoaded: false,  // has /api/history (or its cache) ever landed? distinguishes
+                         // "no such pipeline" from "not fetched yet" on a deep link
   helloSubscribed: new Set(), // runIds we've already sent a backfill subscribe for this socket
   projectDir: '',
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
@@ -643,10 +646,16 @@ function onHello(msg) {
   if (state.pendingPipelineId) {
     const id = state.pendingPipelineId;
     state.pendingPipelineId = '';
-    const [view, target] = resolvePipelineRoute(id);
-    if (view === 'running') {
-      location.hash = `running/${target}`;
-      return;
+    // Re-run the resolution, not a navigation: the url is already canonical and
+    // must not change (a write would push a history entry and break Back). Only
+    // while the reader is still parked on that pipeline — they may have moved on
+    // during the round trip, and hello must not drag them back.
+    const [curView, curParam] = parseHash();
+    if (curView === 'pipeline' && curParam.split('/')[0] === id) {
+      showView('pipeline', curParam);
+      // Landing on the History host already loaded it; say so, or the tail below
+      // fires a second /api/history that just aborts the first.
+      if (currentShownView === 'history') historyBooted = true;
     }
   }
   const cur = currentView();
@@ -663,7 +672,18 @@ function parseHash() {
   const i = raw.indexOf('/');
   return i === -1 ? [raw, ''] : [raw.slice(0, i), raw.slice(i + 1)];
 }
+// Tracks the SECTION showView last rendered. Declared here, above its first
+// reader, because currentView() answers from it.
+let currentShownView = null;
+
+// Which view the user is looking at. This is the rendered SECTION, not the raw
+// hash token: #pipeline/<id> is rendered by Running or by History, and every
+// caller here is asking "is the user looking at the History view" so it can
+// refresh or repaint it. Answering 'pipeline' would silently stop those refreshes
+// on exactly the pages that need them most. Falls back to the hash before the
+// first showView (a WS hello can land during boot).
 function currentView() {
+  if (currentShownView) return currentShownView;
   const [view] = parseHash();
   return VIEW_NAMES.includes(view) ? view : 'new';
 }
@@ -1717,7 +1737,12 @@ function onState(r, msg) {
   // wireRun); without this the run model only ever gets a pipelineId from the
   // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
   // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
-  if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
+  if (typeof msg.id === 'string' && msg.id) {
+    r.pipelineId = msg.id;
+    // The durable id is now known: upgrade a runId-keyed detail url in place, so
+    // the address the reader might bookmark outlives this session.
+    upgradePipelineHash(r);
+  }
   if (msg && msg.branch && msg.branch.feature) {
     r.branchFeature = msg.branch.feature;
   }
@@ -2761,6 +2786,13 @@ if (typeof window !== 'undefined') {
     paintRunStats,
     paintTabs,
     histRowView,
+    // Pipeline URL routing (see the "Pipeline URLs" block above showView).
+    pipelineKey,
+    resolvePipelineHost,
+    normalizeRoute,
+    upgradePipelineHash,
+    detailStatusOf,
+    detailStatusOfRow,
     maybeAutoscrollLog,
     setAutoscroll,
     onSubagent,
@@ -4137,12 +4169,21 @@ function finishRun(r, status) {
   // focused view was just the list filtered to one card. Now that it is the
   // pipeline's detail view, ejecting the reader at the exact moment the run
   // finishes is the worst possible time — the results are what they were waiting
-  // for. Re-route to the CANONICAL url instead: it resolves to Running while the
-  // run lingers there and to History once it has left, so the page survives the
-  // transition either way. A paused run keeps its view as before.
+  // for. The canonical url already covers this transition (it resolves to the live
+  // card while the run lingers and to History once it is evicted), so there is
+  // nothing to navigate: normalize the address in place and re-render so the
+  // header and the sidebar switch from Running to the finished reading. A paused
+  // run keeps its view as before.
   if (!paused && state.selectedRunId === r.runId) {
-    const canonical = `pipeline/${r.runId}`;
-    if (location.hash.slice(1) !== canonical) location.hash = canonical;
+    replaceHash(`pipeline/${pipelineKey(r)}`);
+    // The pipeline has changed hands: it belongs to History now, so the back link
+    // and the sidebar follow it. Deliberately NOT a showView() re-entry — showView
+    // treats a terminal run under selectedRunId as "opened after finishing" and
+    // acknowledges it, and merely being present while a run finishes is not the
+    // glance that clears its linger. renderRunningView() below repaints the card
+    // and its header with the finished status.
+    state.pipelineOwner = 'history';
+    paintNavActive('history');
   }
 
   // Card drops out of the live view (liveRuns excludes terminal statuses).
@@ -7557,7 +7598,7 @@ async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
-    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    location.hash = `pipeline/${data.runId}`;  // canonical; upgraded to the pipelineId by onState
     renderRunningView();
   } catch (err) {
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
@@ -7698,7 +7739,9 @@ if (runListEl) {
     if (open) {
       const card = open.closest('.run-card');
       const runId = card && card.dataset.runId;
-      if (runId) location.hash = `pipeline/${runId}`;
+      // Navigate by the durable id when the run has one — the runId is only the
+      // fallback for a run too young to have a DB row yet.
+      if (runId) location.hash = `pipeline/${pipelineKey(runs.get(runId)) || runId}`;
       return;
     }
   });
@@ -7829,6 +7872,7 @@ async function loadHistoryView({ force = false } = {}) {
     const cached = readHistoryCache();
     if (cached) {
       state.historyAll = cached.pipelines;
+      state.historyLoaded = true;
       state.ghAvailable = cached.ghAvailable;
       restoreHistoryFilter();
       paintHistory();                     // instant; cards show Create-PR in its neutral state
@@ -7855,6 +7899,7 @@ async function loadHistoryView({ force = false } = {}) {
   }
   const pipelines = Array.isArray(data.pipelines) ? data.pipelines : [];
   state.historyAll = pipelines;
+  state.historyLoaded = true;
   state.ghAvailable = !!data.ghAvailable;
   restoreHistoryFilter();
   paintHistory();                                        // fresh skeleton repaint
@@ -8084,13 +8129,22 @@ function renderHistory() {
   if (state.historyFocusId) {
     const row = all.find((p) => p && p.id === state.historyFocusId);
     if (!row) {
-      host.appendChild(histEmpty('That pipeline is not in history (it may still be running).'));
+      // Two very different reasons for "no row", and they must not read alike:
+      // the data has not landed yet (cold boot — /api/history in flight, or the WS
+      // hello that decides live-vs-finished still pending), or there is genuinely
+      // no such pipeline.
+      if (!state.historyLoaded || !helloSeen) {
+        host.appendChild(histEmpty('Loading pipeline…'));
+      } else {
+        hideDetailBar(host);
+        host.appendChild(pipelineNotFound());
+      }
       return;
     }
     const card = buildHistCard(row.projectDir || null, row, state.ghAvailable);
     setCardDensity(card, 'full');
     host.appendChild(card);
-    paintDetailBar(host, 'history');
+    paintDetailBar(host, { title: row.title || 'Pipeline', status: detailStatusOfRow(row) });
     // Expand immediately: a detail view that opens collapsed is a click for
     // nothing. toggleHistCard also drives the lazy detail fetch.
     const head = card.querySelector('.hist-head');
@@ -8397,7 +8451,7 @@ async function histCostOverride(projectDir, id, record, btn) {
     if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
-    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    location.hash = `pipeline/${data.runId}`;  // canonical; upgraded to the pipelineId by onState
     renderRunningView();
   } catch (err) {
     btn.disabled = false;
@@ -8450,7 +8504,7 @@ function setupResumeButton(node, projectDir, p) {
       if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
       hideViewer();
       updateNavCounts();
-      location.hash = `running/${data.runId}`;   // land on the continuous live card
+      location.hash = `pipeline/${data.runId}`;  // canonical; upgraded to the pipelineId by onState
       renderRunningView();
     } catch (err) {
       btn.disabled = false;
@@ -10159,21 +10213,52 @@ function renderFocusView(runId) {
       list.innerHTML = '<div class="run-empty">Loading pipeline…</div>';
       return;
     }
-    // Genuinely unknown (never existed, or already archived) → back to Overview.
-    location.hash = 'running';
+    // Genuinely unknown. Say so and keep the url: bouncing to the list threw the
+    // address away and never explained itself, so a stale link looked like the app
+    // had simply ignored the click.
+    list.innerHTML = '';
+    hideDetailBar(list);
+    list.appendChild(pipelineNotFound());
     return;
   }
   // .full: the detail density — question above the graph, one tab at a time.
   paintRunList(list, [r], 'Run not found.', 'full');   // others hidden — the core "separate visually" fix
-  paintDetailBar(list);
+  paintDetailBar(list, { title: r.title || 'Pipeline', status: detailStatusOf(r) });
 }
 
-// "← Running" / "← History" above a focused card, so the detail view is
-// escapable without the browser's back button. The target is DERIVED from where
-// the pipeline currently belongs (live → Running, terminal → History) rather
-// than stored, except when the user arrived from a list, which is recorded so a
-// lingering finished run returns to the list it was opened from.
-function paintDetailBar(host, fallback = 'running') {
+// The dead-link panel for #pipeline/<id> with no pipeline behind it. The most
+// likely cause is a bookmarked runId: that id is a SESSION id (it indexes the
+// server's in-memory run map) and does not outlive a restart, which is exactly
+// why the canonical url carries the persisted pipelineId instead.
+function pipelineNotFound() {
+  const box = document.createElement('div');
+  box.className = 'run-empty';
+  const p = document.createElement('p');
+  p.textContent = 'That pipeline is not running and is not in this machine’s history. It may have been archived, or the link may point at a run id from an earlier session.';
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'btn-ghost';
+  go.textContent = 'Go to History';
+  go.onclick = () => { location.hash = 'history'; };
+  box.append(p, go);
+  return box;
+}
+
+// The detail view's own header: "← Running" / "← History", the pipeline's title,
+// and its real status.
+//
+// It replaces the host section's list header (hidden by body.view-pipeline)
+// because that header describes a LIST: "Running · 0 pipelines executing" sat
+// above a single finished pipeline, which is how the old route advertised itself
+// as a lie. One header serves both hosts, so the detail view reads the same
+// whether the live card or a History row supplies its content.
+//
+// `subject` is {title, status:{cls,text}} — the caller normalizes, since a live
+// run and a persisted row describe their status through different helpers.
+// The back target is DERIVED from where the pipeline currently belongs (live →
+// Running, terminal → History), except when the reader arrived from a list, which
+// is recorded so a lingering finished run returns to the list it was opened from.
+function paintDetailBar(host, subject = null) {
   if (!host) return;
   let bar = host.parentNode && host.parentNode.querySelector(':scope > .detail-bar');
   if (!bar) {
@@ -10182,17 +10267,52 @@ function paintDetailBar(host, fallback = 'running') {
     const back = document.createElement('button');
     back.type = 'button';
     back.className = 'detail-back';
-    bar.appendChild(back);
+    const title = document.createElement('h1');
+    title.className = 'detail-title';
+    const status = document.createElement('span');
+    status.className = 'detail-status';
+    status.hidden = true;
+    bar.append(back, title, status);
     host.parentNode.insertBefore(bar, host);
   }
   // A deep-linked detail view has no recorded origin, so it falls back to the
   // list that owns this pipeline (History for a finished one) rather than always
   // offering Running, which would be a dead end for a finished run.
-  const origin = state.detailOrigin || fallback;
-  bar.querySelector('.detail-back').onclick = () => { location.hash = origin; };
-  const label = origin === 'history' ? 'History' : 'Running';
-  bar.querySelector('.detail-back').textContent = `← ${label}`;
+  const origin = state.detailOrigin || state.pipelineOwner || 'running';
+  const back = bar.querySelector('.detail-back');
+  back.onclick = () => { location.hash = origin; };
+  back.textContent = `← ${origin === 'history' ? 'History' : 'Running'}`;
+
+  bar.querySelector('.detail-title').textContent = (subject && subject.title) || '';
+  const pill = bar.querySelector('.detail-status');
+  const st = subject && subject.status;
+  if (st && st.text) {
+    pill.className = `detail-status ${st.cls || ''}`.trim();
+    pill.textContent = st.text;
+    pill.hidden = false;
+  } else {
+    pill.hidden = true;
+  }
   bar.hidden = false;
+}
+
+// The live-run status pill, in paintDetailBar's {cls,text} shape.
+function detailStatusOf(r) {
+  const { family, text } = statusPill(r);
+  return { cls: `pill-run ${family}`, text };
+}
+
+// The finished-row status pill, mapped onto the SAME vocabulary the live pill uses
+// (pill-run + a colour family) rather than the .badge look. A badge is a list-row
+// device — uppercase, tight, one of many; a page header carries one pill, and the
+// detail view must read identically whichever host supplied its content.
+function detailStatusOfRow(p) {
+  const { cls, text } = historyBadge(p);
+  const family = cls.includes('green') ? 'green'
+    : cls.includes('red') ? 'red'
+    : cls.includes('paused') ? 'amber'
+    : cls.includes('running') ? 'peach' : '';
+  return { cls: `pill-run ${family}`.trim(), text: text.charAt(0) + text.slice(1).toLowerCase() };
 }
 
 function hideDetailBar(host) {
@@ -10300,7 +10420,7 @@ function renderPipelineTabs() {
       m.title = ok ? 'Completed' : 'Did not complete';
       row.appendChild(m);
     }
-    row.addEventListener('click', () => { location.hash = `running/${r.runId}`; });
+    row.addEventListener('click', () => { location.hash = `pipeline/${pipelineKey(r) || r.runId}`; });
     host.appendChild(row);
   }
 }
@@ -10348,38 +10468,146 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings',
   // 'pipeline' has no [data-view] section of its own: it is the ONE canonical
-  // detail URL for a pipeline, resolved to the concrete view that owns it (see
-  // resolvePipelineRoute). Listed so a deep link routes instead of falling back.
+  // detail URL for a pipeline, RENDERED by the section that owns it (see
+  // resolvePipelineHost). Listed so a deep link routes instead of falling back.
   'pipeline'];
 
-// #pipeline/<id> -> #running/<id> while the pipeline is live in this session,
-// else #history/<id>. One URL survives a run finishing under the reader: today a
-// finished run is evicted from Running and has to be found again in History.
-// `id` may be either a live runId or a persisted pipelineId — a resumed run has
-// both, so both are matched.
-function resolvePipelineRoute(id) {
-  if (!id) return ['running', ''];
-  for (const r of runs.values()) {
-    if (r.runId === id || r.pipelineId === id) return ['running', r.runId];
-  }
-  // No live match — but on a cold boot the runs map is still empty: it is seeded
-  // by the WS `hello`, which has not arrived yet. Route to History (the right
-  // answer for a finished pipeline) and remember the id, so onHello can re-resolve
-  // it the moment the live set is known. Without this, deep-linking a RUNNING
-  // pipeline would land on "not in history".
-  if (!helloSeen) state.pendingPipelineId = id;
-  return ['history', id];
+// ---------------------------------------------------------------------------
+// Pipeline URLs: one canonical route per pipeline.
+//
+//   #running, #history          the two LISTS — two different questions ("what
+//                               needs me", "what happened")
+//   #pipeline/<pipelineId>      one pipeline, whatever its state
+//   #pipeline/<id>/<tab>        reserved for deep-linkable tabs; the tab segment
+//                               is parsed off and ignored today
+//
+// A pipeline is one entity with a lifecycle, not two entities. #running/<id> and
+// #history/<id> encoded WHICH LIST the reader arrived from into the identity of
+// the thing, so every pipeline had two URLs and one of them rotted the moment the
+// run finished. They are kept as aliases and replaced in place (normalizeRoute).
+//
+// IDENTITY is the persisted pipelines.id (the 8-hex shortId): it is what
+// /api/history returns, what the branch name and the on-disk pipeline dir carry,
+// and — decisively — what SURVIVES A RESUME. Resume mints a NEW runId against the
+// SAME pipelineId (POST /api/resume), so a runId-keyed URL would change under the
+// reader on pause → resume. The runId is accepted as an ALIAS because a
+// just-started run has no pipelineId yet (it arrives on the first `state` event
+// after createPipeline, see onState) and the URL is UPGRADED to the pipelineId
+// the moment it is known — never the reverse. The old code did exactly that
+// reverse: it matched a History row by pipelineId and then routed to r.runId,
+// turning a permanent id into a session id that dies with the server.
+// ---------------------------------------------------------------------------
+
+/** The canonical, persisted identity of a run for URLs. */
+function pipelineKey(r) {
+  return (r && (r.pipelineId || r.runId)) || '';
 }
+
+// Rewrite the address bar WITHOUT minting a history entry, and without firing
+// hashchange (so no re-render). Canonicalization only — never navigation.
+function replaceHash(hash) {
+  const next = `#${hash}`;
+  if (location.hash === next) return;
+  try { history.replaceState(null, '', next); }
+  catch { location.hash = hash; }        // opaque origins have no replaceState
+}
+
+// Which section RENDERS #pipeline/<id>, plus the list that OWNS the pipeline.
+// Returns [view, keyForThatView, owner]:
+//   view   — 'running' (the live card) or 'history' (the persisted detail)
+//   key    — the id that view indexes by: runId for Running, pipelineId for History
+//   owner  — 'running' | 'history': where the pipeline currently BELONGS, which
+//            drives the sidebar highlight and the back link, independently of
+//            which section happens to hold the DOM.
+//
+// A TERMINAL run that is still in this session's map keeps rendering from the live
+// card: every byte (log, graph, sub-agents) is already in memory, and History is a
+// cached fetch that will not contain a pipeline that finished ten seconds ago. Its
+// `owner` is History though — so the chrome tells the truth even while the live
+// card supplies the content. Once the lingerer is acknowledged and evicted, the
+// same URL resolves to History for real.
+//
+// This function does NOT touch the hash. That is the whole point: the rewrite it
+// used to do minted a second history entry, which made the browser Back button a
+// treadmill (Back popped to #pipeline/x, which re-resolved and re-pushed
+// #running/x, landing the reader exactly where they started).
+function resolvePipelineHost(id) {
+  if (!id) return ['running', '', 'running'];
+  for (const r of runs.values()) {
+    if (r.runId === id || r.pipelineId === id) {
+      const live = !isTerminalStatus(r.status) || isPaused(r);
+      return ['running', r.runId, live ? 'running' : 'history'];
+    }
+  }
+  // No live match — but on a cold boot the runs map is still EMPTY: it is seeded by
+  // the WS `hello`, which has not arrived yet, so "not live" is not yet knowable.
+  // Hold on the Running host and remember the id for onHello to re-resolve. Running
+  // is the right place to wait: it owns the "Loading pipeline…" placeholder, a
+  // reload while watching a run (much the commonest deep link) lands where it
+  // belongs with no flash of the wrong section, and waiting in History would fire a
+  // whole /api/history for a pipeline that turns out to be live.
+  if (!helloSeen) {
+    state.pendingPipelineId = id;
+    return ['running', id, 'running'];
+  }
+  return ['history', id, 'history'];
+}
+
+// #running/<id> and #history/<id> are the legacy detail URLs. Replace them in
+// place with the canonical form — replaceState, so Back still goes where the
+// reader came from instead of bouncing off a redirect — and route that instead.
+// A legacy runId is upgraded to its pipelineId here when the run is known.
+function normalizeRoute(view, param) {
+  if (param && (view === 'running' || view === 'history')) {
+    const r = runs.get(param);
+    const id = r ? pipelineKey(r) : param;
+    replaceHash(`pipeline/${id}`);
+    return ['pipeline', id];
+  }
+  return [view, param];
+}
+
+// A run's pipelineId arrives on its first `state` event, after the orchestrator
+// has created the DB row. If the reader is sitting on that run's detail view
+// under the runId alias, silently upgrade the URL to the durable id so the page
+// they might bookmark or share outlives the session.
+function upgradePipelineHash(r) {
+  if (!r || !r.pipelineId) return;
+  const [view, param] = parseHash();
+  if (view !== 'pipeline') return;
+  const [id, ...rest] = param.split('/');
+  if (id !== r.runId) return;
+  replaceHash(['pipeline', r.pipelineId, ...rest].join('/'));
+}
+
+// Mark one sidebar entry current. Split out of showView because a pipeline can
+// change hands WITHOUT a navigation — a run finishing under the reader moves from
+// Running to History — and the sidebar has to follow it without re-entering the
+// router (see finishRun).
+function paintNavActive(name) {
+  navLinks.forEach((b) => {
+    const on = b.dataset.nav === name;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+}
+
 // True once the first WS hello has been applied (the live run set is known).
 let helloSeen = false;
 
-function showView(name, param = '') {
-  // Canonical detail URL: rewrite to the owning view before anything else, so
-  // every downstream branch sees a concrete view name.
+function showView(name, param = '', canonical = null) {
+  // #pipeline/<id> — the canonical detail route. It resolves to the section that
+  // renders it and hands its OWN url down as `canonical`, so the address bar is
+  // left alone: rewriting it here is what broke the Back button.
   if (name === 'pipeline') {
-    const [view, id] = resolvePipelineRoute(param);
-    return showView(view, id);
+    const id = param.split('/')[0];        // #pipeline/<id>/<tab> — tab reserved
+    const [view, key, owner] = resolvePipelineHost(id);
+    state.pipelineOwner = owner;
+    return showView(view, key, param ? `pipeline/${param}` : 'pipeline');
   }
+  // Any non-pipeline navigation leaves the detail route behind.
+  if (!canonical) state.pipelineOwner = '';
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
   // scan + resets wizard state (addresses orphaned-background-request risk).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
@@ -10414,7 +10642,8 @@ function showView(name, param = '') {
   // Sync hash so direct callers (beginRun, resume, boot) don't leave hash stale.
   // Reconstruct the full hash (view + optional param) so a focused Running deep
   // link (running/<id>) is preserved rather than collapsed to a bare view.
-  const targetHash = param ? `${name}/${param}` : name;
+  // `canonical` wins when set: a detail route keeps ITS url, never the host's.
+  const targetHash = canonical || (param ? `${name}/${param}` : name);
   if (location.hash.slice(1) !== targetHash) {
     syncingHash = true;
     location.hash = targetHash;
@@ -10422,15 +10651,18 @@ function showView(name, param = '') {
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
-  navLinks.forEach((b) => {
-    const on = b.dataset.nav === name;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
+  // On a detail route the sidebar marks the list the pipeline BELONGS to, not the
+  // section rendering it: a finished run still served from the live card is filed
+  // under History, and highlighting Running for it would be the same lie the url
+  // used to tell.
+  paintNavActive(canonical ? (state.pipelineOwner || name) : name);
   // Toggle a body flag so CSS can drop .main's top padding for the History view,
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');
+  // A detail route hides the host section's list header ("Running · 0 pipelines
+  // executing" over a finished pipeline was the reported symptom); the detail bar
+  // carries the pipeline's own title + status instead.
+  document.body.classList.toggle('view-pipeline', !!canonical);
   if (name === 'running') {
     renderRunningView();
     // Opening a run's focus view acknowledges it (linger → drops on next render).
@@ -10459,8 +10691,7 @@ function showView(name, param = '') {
   if (name === 'settings') loadSettings();
   if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); }
 }
-// Tracks the currently shown view so the leave-guard can fire on transition.
-let currentShownView = null;
+// (currentShownView is declared above currentView(), its first reader.)
 // True only while showView() is writing location.hash itself, to prevent re-entry.
 let syncingHash = false;
 
@@ -10485,14 +10716,14 @@ $('#run-list')?.addEventListener('click', (e) => {
   if (!top) return;
   const card = top.closest('.run-card');
   const id = card && card.dataset.runId;
-  if (id) location.hash = `running/${id}`;
+  if (id) location.hash = `pipeline/${pipelineKey(runs.get(id)) || id}`;
 });
 
 window.addEventListener('hashchange', () => {
   // Swallow the hashchange that showView() itself produced (syncingHash) to keep
   // the single-render guarantee; genuine user-driven hash changes still route normally.
   if (syncingHash) { syncingHash = false; return; }
-  const [view, param] = parseHash();
+  const [view, param] = normalizeRoute(...parseHash());
   if (VIEW_NAMES.includes(view)) showView(view, param);
 });
 
@@ -10534,9 +10765,10 @@ connectWS();
 // the workspace options + re-points the config panel; 'project' is the default.
 const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'workspace' : 'project';
 if (bootTarget === 'workspace') setRunTarget('workspace');
-// Boot: parse view + optional param so a reload on a deep link (#running/<id>)
-// restores the Running view instead of silently resetting to New.
-const [bootView, bootParam] = parseHash();
+// Boot: parse view + optional param so a reload on a deep link (#pipeline/<id>,
+// or a legacy #running/<id> normalized to it) restores that view instead of
+// silently resetting to New.
+const [bootView, bootParam] = normalizeRoute(...parseHash());
 showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
 refreshBudget();

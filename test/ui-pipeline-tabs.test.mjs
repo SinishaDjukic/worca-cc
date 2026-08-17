@@ -241,16 +241,19 @@ test('run-created broadcast materializes a child row with project metadata', asy
 test('finishing the focused run keeps the reader on it, via the canonical route', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
-  window.location.hash = 'running/auth-fix';
+  window.location.hash = 'pipeline/auth-fix';
   window.dispatchEvent(new window.Event('hashchange'));
   recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // focused run finishes
   assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/auth-fix',
-    'finishing writes the canonical pipeline url');
-  // hashchange is async (in jsdom and in a real browser alike); after it fires the
-  // canonical url has resolved to the view that owns this pipeline.
+    'the canonical url covers the transition, so nothing navigates');
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(window.location.hash.replace(/^#/, ''), 'running/auth-fix',
-    'still on the pipeline (resolved from #pipeline/auth-fix), not dropped to the list');
+  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/auth-fix',
+    'and it stays put — no rewrite, so no extra history entry to trap Back');
   assert.ok(window.document.querySelector('#run-list .run-card[data-run-id="auth-fix"]'),
     'the finished pipeline is still the one card on screen');
+  // The pipeline changed hands while being read: it belongs to History now.
+  const active = window.document.querySelector('.nav button[data-nav].active');
+  assert.equal(active && active.dataset.nav, 'history', 'the sidebar follows it');
+  assert.match(window.document.querySelector('.detail-bar .detail-back').textContent, /History/,
+    'and so does the way back');
 });

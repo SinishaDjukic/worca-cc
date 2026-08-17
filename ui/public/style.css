@@ -1602,11 +1602,32 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-card .results-chips .results-chip{display:none;}
 
 /* ---------- detail view chrome ---------- */
+/* The detail header REPLACES the host section's list header: a pipeline's detail
+   view is rendered inside [data-view="running"] or [data-view="history"], and
+   "Running · 0 pipelines executing" standing over one finished pipeline was the
+   reported bug. body.view-pipeline is set by showView for detail routes only. */
+body.view-pipeline .view[data-view="running"] > .topbar,
+body.view-pipeline .view[data-view="history"] > .topbar{display:none;}
+
 .detail-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+/* [hidden] must beat the author display:flex above — the same footgun already
+   patched for .nav-count and .btn-pause/.btn-resume/.btn-stop. Without it
+   hideDetailBar() is inert and the "← History" button stays parked above the
+   History LIST after the reader leaves a detail view. */
+.detail-bar[hidden]{display:none;}
 .detail-back{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
   border:1px solid var(--line);border-radius:999px;padding:7px 15px;font-family:inherit;
   font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;}
 .detail-back:hover{background:var(--field);color:var(--ink);}
+/* The pipeline's own name, at the weight the list h1 used to carry. */
+.detail-title{margin:0;font-size:23px;font-weight:800;letter-spacing:-.4px;color:var(--ink);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Layout hook only — the look comes from the .pill-run family the painter adds,
+   so the live and the finished reading are the same pill in the same slot. */
+.detail-status{flex:0 0 auto;}
+.detail-status[hidden]{display:none;}
+/* The dead-link panel: .run-empty is centred text, this adds the way out. */
+.run-empty .btn-ghost{margin-top:14px;}
 
 @media (max-width:720px){
   .run-rail-wrap{gap:12px;}

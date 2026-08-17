@@ -273,9 +273,15 @@ test('Archive is a detail-view action, not a list one', async () => {
     'the destructive action lives on the page about ONE pipeline');
 });
 
-test('a #history/<id> for an id that is not in history says so', async () => {
-  const ctx = await boot();
-  await ctx.go('history/nope');
-  assert.match(ctx.window.document.querySelector('#history').textContent,
-    /not in history/);
+// A dead link keeps its url and explains itself, rather than bouncing to the list.
+// The copy names the likeliest cause: a bookmarked runId, which is a session id.
+test('a #pipeline/<id> for an id that is nowhere says so, and offers a way out', async () => {
+  const ctx = await boot();                       // boot already sends an empty hello
+  await ctx.go('pipeline/nope');
+  await ctx.tick();
+  const host = ctx.window.document.querySelector('#history');
+  assert.match(host.textContent, /not in this machine/);
+  assert.ok(host.querySelector('button'), 'a way out of the dead end');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/nope',
+    'the url is kept, so the reader can see what they followed');
 });

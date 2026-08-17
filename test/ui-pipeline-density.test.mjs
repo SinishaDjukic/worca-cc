@@ -292,26 +292,77 @@ test('a single panel needs no tab bar', async () => {
 
 // ── routing ─────────────────────────────────────────────────────────────────
 
-test('#pipeline/<id> resolves to Running while the pipeline is live', async () => {
+// #pipeline/<id> is a DESTINATION, not a redirect: it resolves to the section that
+// renders it and the url stays put. Rewriting it minted a second history entry,
+// which turned the browser Back button into a treadmill.
+test('#pipeline/<id> renders the live card without rewriting the url', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [live('a')] });
   await ctx.go('pipeline/a');
-  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/a');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/a',
+    'the canonical url is preserved, not swapped for the host view');
+  assert.ok(card(ctx.window, 'a'), 'and the live card is what renders');
 });
 
 test('#pipeline/<id> resolves by pipelineId too, so a resumed run keeps one url', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [live('run-uuid', { pipelineId: 'abc12345' })] });
   await ctx.go('pipeline/abc12345');
-  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/run-uuid',
-    'the persisted id routes to the live run that owns it');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/abc12345',
+    'the persisted id is the identity; it is never downgraded to the session runId');
+  assert.ok(card(ctx.window, 'run-uuid'), 'the live run that owns it renders');
 });
 
-test('#pipeline/<id> resolves to History when nothing live owns the id', async () => {
+test('#pipeline/<id> falls to the History host when nothing live owns the id', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [] });          // live set known, and empty
   await ctx.go('pipeline/deadbeef');
-  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'history/deadbeef');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/deadbeef');
+  const np = ctx.window.__np;
+  assert.deepEqual(np.resolvePipelineHost('deadbeef'), ['history', 'deadbeef', 'history']);
+});
+
+// A TERMINAL run still sitting in the session's run map keeps rendering from the
+// live card (its log and graph are already in memory), but it BELONGS to History —
+// so the sidebar and the back link say History. The old route said "running", which
+// is how a finished pipeline ended up under a "0 pipelines executing" header.
+test('a finished run in the live map is owned by History, not Running', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a')] });
+  ctx.recv({ type: 'done', runId: 'a', status: 'done' });
+  await ctx.tick();
+  const [view, key, owner] = ctx.window.__np.resolvePipelineHost('a');
+  assert.equal(view, 'running', 'the live card still supplies the content');
+  assert.equal(key, 'a');
+  assert.equal(owner, 'history', 'but the pipeline is filed under History');
+  await ctx.go('pipeline/a');
+  const active = ctx.window.document.querySelector('.nav button[data-nav].active');
+  assert.equal(active && active.dataset.nav, 'history', 'sidebar follows the owner');
+});
+
+// The legacy detail urls stay linkable, but they are replaced IN PLACE (no new
+// history entry) so Back still reaches wherever the reader came from.
+test('legacy #running/<id> and #history/<id> normalize to the canonical url', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('run-uuid', { pipelineId: 'abc12345' })] });
+  await ctx.go('running/run-uuid');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/abc12345',
+    'a legacy runId url is upgraded to the durable pipelineId');
+  await ctx.go('history/deadbeef');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/deadbeef');
+});
+
+// A url captured before the DB row existed carries the runId; the moment the
+// pipelineId lands it is swapped in, so what the reader may bookmark is durable.
+test('a runId url is upgraded in place when the pipelineId arrives', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('fresh')] });
+  await ctx.go('pipeline/fresh');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/fresh');
+  ctx.recv({ type: 'state', runId: 'fresh', id: 'cafe1234' });
+  await ctx.tick();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/cafe1234',
+    'the durable id replaces the session id');
 });
 
 test('a deep link that arrives BEFORE the live set is held, not bounced', async () => {
@@ -319,9 +370,12 @@ test('a deep link that arrives BEFORE the live set is held, not bounced', async 
   // eagerly would decide "not live" against an empty map and strand the reader in
   // History — or, on #running/<id>, throw the selection away entirely.
   const ctx = await boot();
-  await ctx.go('running/late');
-  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/late',
+  await ctx.go('pipeline/late');
+  await ctx.tick();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/late',
     'the route is held while the live set is unknown');
+  // The wait happens on the Running host: it owns the placeholder, and holding in
+  // History would fetch the whole list for a pipeline that may well be live.
   assert.match(ctx.window.document.querySelector('#run-list').textContent, /Loading pipeline/);
 
   ctx.recv({ type: 'hello', runs: [live('late')] });
@@ -330,12 +384,18 @@ test('a deep link that arrives BEFORE the live set is held, not bounced', async 
   assert.equal(card(ctx.window, 'late').classList.contains('full'), true, 'at detail density');
 });
 
-test('an unknown id IS bounced once the live set is known', async () => {
+// A dead link keeps its url and explains itself. Bouncing to the list threw the
+// address away and never said why, so a stale bookmark read as an ignored click.
+test('an unknown id says so instead of bouncing to the list', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [live('a')] });
-  await ctx.go('running/nope');
-  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running',
-    'no run and no excuse -> back to the list');
+  await ctx.go('pipeline/nope');
+  await ctx.tick();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/nope',
+    'the url the reader followed is still in the bar');
+  const host = ctx.window.document.querySelector('#history');
+  assert.match(host.textContent, /not running and is not in this machine/);
+  assert.ok(host.querySelector('button'), 'and there is a way out');
 });
 
 test('the detail view offers a way back to the list it was opened from', async () => {
@@ -369,4 +429,55 @@ test('every hideable run-card button is actually hideable', () => {
       `${cls} sets display, so it needs ${cls}[hidden] in the patch rule`);
   }
   assert.match(m[1], /display:\s*none/);
+});
+
+// The same trap, third occurrence — this one shipped. .detail-bar sets
+// display:flex, so hideDetailBar()'s `hidden` was inert and the "← History"
+// button stayed parked above the History LIST after the reader left a detail view.
+// Generalized: every element the app hides from JS and styles with its own
+// `display` needs the patch, so assert the property rather than one class.
+test('.detail-bar honours [hidden] despite its own display rule', () => {
+  assert.match(css, /\.detail-bar\{[^}]*display:\s*flex/, 'it sets its own display');
+  assert.match(css, /\.detail-bar\[hidden\]\s*\{[^}]*display:\s*none/,
+    'so [hidden] must be patched, or hideDetailBar() is a no-op');
+});
+
+// The detail view must not wear the list's header. "Running · 0 pipelines
+// executing" over one finished pipeline was the reported symptom.
+test('a detail route hides the host list header and titles itself', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a')] });
+  await ctx.go('running');
+  assert.equal(ctx.window.document.body.classList.contains('view-pipeline'), false);
+
+  await ctx.go('pipeline/a');
+  const body = ctx.window.document.body;
+  assert.ok(body.classList.contains('view-pipeline'), 'the list header is suppressed');
+  assert.match(css, /body\.view-pipeline[^{]*\.topbar\{[^}]*display:\s*none/,
+    'and the rule that suppresses it exists');
+  const bar = ctx.window.document.querySelector('[data-view="running"] .detail-bar');
+  assert.equal(bar.querySelector('.detail-title').textContent, 'run a',
+    'the header names the pipeline');
+  const pill = bar.querySelector('.detail-status');
+  assert.equal(pill.hidden, false);
+  assert.match(pill.className, /pill-run/, 'status shown in the shared pill vocabulary');
+
+  await ctx.go('running');
+  assert.equal(body.classList.contains('view-pipeline'), false, 'and it is restored on the list');
+});
+
+// Back must reach the list in ONE step. The rewrite this replaced pushed a second
+// entry (#history -> #pipeline/x -> #running/x), so Back popped to the middle
+// entry, which re-resolved and re-pushed — the reader never got out.
+test('opening a pipeline adds exactly one history entry', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a')] });
+  await ctx.go('history');
+  const before = ctx.window.history.length;
+  ctx.window.location.hash = 'pipeline/a';
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await ctx.tick();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/a');
+  assert.equal(ctx.window.history.length, before + 1,
+    'one navigation, one entry — a canonicalizing rewrite would add a second');
 });
