@@ -1,4 +1,4 @@
-// examples/plugins/github-source/connector/github-api.mjs
+// plugins/github-source/connector/github-api.mjs
 // Minimal GitHub REST v3 fetch wrapper. No octokit, no GraphQL, no webhooks
 // (YAGNI). Every request goes through ghFetch so auth headers + error mapping
 // live in exactly one place. Errors carry a `kind` the shim child forwards

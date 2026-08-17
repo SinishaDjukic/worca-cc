@@ -157,7 +157,7 @@ npm run smoke
 This is equivalent to:
 
 ```bash
-WORCA_MOCK=1 node src/cli/worca-cc.mjs --project examples/sandbox --prompt "demo task" --mock --yes
+WORCA_MOCK=1 node src/cli/worca-cc.mjs --project sandbox --prompt "demo task" --mock --yes
 ```
 
 Set `WORCA_MOCK=1` (or pass `--mock`) on any run to use the mock path.
