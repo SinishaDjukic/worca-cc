@@ -183,6 +183,7 @@ Subcommands:
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|init|validate|exec. See: worca plugin help
+  marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
 
 Options:
@@ -798,8 +799,8 @@ async function cmdResume(argv) {
 const PLUGIN_HELP = `worca plugin — manage worca-cc plugins (task sources, agents, skills, workflows)
 
 Usage:
-  worca plugin add <repo-url>                     Discover installable plugins in a repo
-  worca plugin install <name> [--repo <url>] [--ref <sha>] [--yes]
+  worca plugin add <repo-url>                     Register a plugin marketplace (alias of: worca marketplace add)
+  worca plugin install <name> [--repo <url>] [--marketplace <id>] [--ref <sha>] [--yes]
   worca plugin list                               Installed plugins (from plugins.lock.json)
   worca plugin update <name> [--yes] [--diff]     Preview commits, diffstat + manifest delta (--diff: full diff), then update
   worca plugin remove <name> [--purge]            Uninstall (--purge also deletes data/)
@@ -814,6 +815,19 @@ Usage:
                                                   foreground (typed lines = simulated inbound); --check runs
                                                   the module's validateConfig once and exits
 
+Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
+`;
+
+const MARKETPLACE_HELP = `worca marketplace — manage plugin marketplaces (repos whose plugins show up as installable)
+
+Usage:
+  worca marketplace add <repo-url|owner/repo|path>   Register + sync a marketplace
+  worca marketplace list                             Registered marketplaces + their plugins
+  worca marketplace refresh [id]                     Re-sync one marketplace (or all)
+  worca marketplace remove <id> [--yes]              Unregister (installed plugins remain)
+
+Removing a marketplace only removes discovery — already-installed plugins keep
+working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
@@ -1070,28 +1084,42 @@ async function cmdPlugin(argv) {
       case 'add': {
         const a = pluginArgs(rest);
         const url = a._[0];
-        if (!url) fail('Usage: worca plugin add <repo-url>');
-        const found = await repoMod.addPluginRepo(url);
-        out(`repo ${found.repoUrl} @ ${found.sha.slice(0, 7)}`);
-        if (!found.discovered.length) {
-          out('no worca-cc-plugin.json found at depth 0 or 1');
-          return 1;
-        }
-        out('discovered plugins:');
-        for (const d of found.discovered) {
-          out(`  ${d.manifest.name}\t${d.manifest.version || found.sha.slice(0, 7)}\t${d.manifest.description || ''}`);
-        }
-        out(`install with: worca plugin install <name> --repo ${found.repoUrl}`);
-        return 0;
+        if (!url) fail('Usage: worca plugin add <repo-url>  (alias of: worca marketplace add)');
+        out('note: `worca plugin add` now registers a marketplace (persisted) — same as `worca marketplace add`');
+        return cmdMarketplace(['add', url]);
       }
 
       case 'install': {
-        const a = pluginArgs(rest, ['--repo', '--ref'], ['--yes']);
+        const a = pluginArgs(rest, ['--repo', '--ref', '--marketplace'], ['--yes']);
         const name = a._[0];
-        if (!name) fail('Usage: worca plugin install <name> [--repo <url>] [--ref <sha>] [--yes]');
-        const { readPluginsLock } = await import('../core/plugins-lock.mjs');
-        const repoUrl = a.repo || readPluginsLock()[name]?.repo;
-        if (!repoUrl) fail(`plugin "${name}" is not in the lock — pass --repo <url>`);
+        if (!name) fail('Usage: worca plugin install <name> [--repo <url>] [--marketplace <id>] [--ref <sha>] [--yes]');
+        const mkt = await import('../core/marketplaces.mjs');
+        try { mkt.seedBuiltinMarketplace(); } catch { /* non-checkout install */ }
+        let repoUrl = a.repo;
+        let marketplace = a.marketplace || null;
+        if (!repoUrl && marketplace) {
+          const m = mkt.listMarketplaces().find((x) => x.id === marketplace);
+          if (!m) fail(`unknown marketplace "${marketplace}" — see: worca marketplace list`);
+          repoUrl = m.url;
+        }
+        if (!repoUrl) {
+          let hit = mkt.resolveInstallSource(name, {});
+          if (!hit && mkt.listMarketplaces().some((m) => !m.lastSync)) {
+            // builtin was seeded with no snapshot (no-git-ops seed) — sync unsynced ones, retry (C5)
+            for (const m of mkt.listMarketplaces()) { if (!m.lastSync) { try { await mkt.syncMarketplace(m.id); } catch { /* tolerate */ } } }
+            hit = mkt.resolveInstallSource(name, {});
+          }
+          if (hit && hit.candidates) {
+            process.stderr.write(`plugin "${name}" exists in ${hit.candidates.length} marketplaces — pass --repo <url> or --marketplace <id>:\n`);
+            for (const cnd of hit.candidates) process.stderr.write(`  --marketplace ${cnd.marketplace}\t${cnd.repoUrl}\n`);
+            return 1;
+          }
+          if (hit) {
+            repoUrl = hit.repoUrl;
+            marketplace = marketplace ?? hit.marketplace;
+          }
+        }
+        if (!repoUrl) fail(`plugin "${name}" not found in the lock or any marketplace — pass --repo <url> (or add a marketplace first)`);
         const found = await repoMod.addPluginRepo(repoUrl);
         const entry = found.discovered.find((d) => d.name === name);
         if (!entry) {
@@ -1116,7 +1144,7 @@ async function cmdPlugin(argv) {
           out('aborted (nothing installed)');
           return 1;
         }
-        const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha });
+        const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha, ...(marketplace ? { marketplace } : {}) });
         out('installed:');
         printInventory(res.inventory);
         return 0;
@@ -1125,7 +1153,7 @@ async function cmdPlugin(argv) {
       case 'list': {
         const plugins = store.listInstalledPlugins();
         if (!plugins.length) {
-          out('No plugins installed. Use `worca plugin add <repo-url>` to discover some.');
+          out('No plugins installed. Browse marketplaces with `worca marketplace list` or add one with `worca marketplace add <repo-url>`.');
           return 0;
         }
         for (const p of plugins) {
@@ -1327,9 +1355,81 @@ async function cmdPlugin(argv) {
   }
 }
 
+/** `worca marketplace <verb> …` — dispatch. Seeds the builtin marketplace
+ *  lazily (a no-op file write after the first time; never any git work). */
+async function cmdMarketplace(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') {
+    process.stdout.write(MARKETPLACE_HELP);
+    return 0;
+  }
+  const mkt = await import('../core/marketplaces.mjs');
+  try { mkt.seedBuiltinMarketplace(); } catch { /* non-checkout install: skip */ }
+  try {
+    switch (verb) {
+      case 'add': {
+        const a = pluginArgs(rest);
+        const url = a._[0];
+        if (!url) fail('Usage: worca marketplace add <repo-url|owner/repo|path>');
+        const entry = await mkt.addMarketplace(url);
+        out(`added marketplace ${entry.name}\t${entry.id}\t@ ${entry.lastSync.sha.slice(0, 7)}`);
+        for (const p of entry.plugins) out(`  ${p.name}\t${p.version || (entry.lastSync ? entry.lastSync.sha.slice(0, 7) : '')}\t${p.description || ''}`);
+        for (const w of entry.warnings) out(c('yellow', `  warning: ${w}`));
+        out(`install with: worca plugin install <name>`);
+        return 0;
+      }
+      case 'list': {
+        const entries = mkt.listMarketplaces();
+        if (!entries.length) {
+          out('No marketplaces registered. Add one with `worca marketplace add <repo-url>`.');
+          return 0;
+        }
+        for (const m of entries) {
+          const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
+          out(`${m.name}\t${m.id}\t${m.url}\t${sync}${m.builtin ? '\tbuilt-in' : ''}`);
+          for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
+        }
+        return 0;
+      }
+      case 'refresh': {
+        const a = pluginArgs(rest);
+        const entries = a._[0] ? [await mkt.syncMarketplace(a._[0])] : await mkt.refreshAllMarketplaces();
+        for (const m of entries) {
+          const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
+          out(`${m.name}\t${sync}`);
+          for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
+        }
+        return 0;
+      }
+      case 'remove': {
+        const a = pluginArgs(rest, [], ['--yes']);
+        const id = a._[0];
+        if (!id) fail('Usage: worca marketplace remove <id> [--yes]');
+        if (!(await confirmPlugin(`Remove marketplace "${id}"? Installed plugins remain.`, !!a.yes))) {
+          out('aborted');
+          return 1;
+        }
+        mkt.removeMarketplace(id);
+        out(`removed marketplace ${id} — installed plugins remain (managed via worca plugin …)`);
+        return 0;
+      }
+      default:
+        fail(`unknown marketplace verb "${verb}" — see: worca marketplace help`);
+    }
+  } catch (err) {
+    const kind = err?.kind ? `[${err.kind}] ` : '';
+    process.stderr.write(`worca marketplace ${verb}: ${kind}${err?.message || err}\n`);
+    for (const ref of err?.references || []) {
+      process.stderr.write(`  referenced by: ${typeof ref === 'string' ? ref : JSON.stringify(ref)}\n`);
+    }
+    return 1;
+  }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'config']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config']);
 
 async function main() {
   const sub = process.argv[2];
@@ -1341,6 +1441,7 @@ async function main() {
     if (sub === 'resume') return cmdResume(rest);
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);
+    if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
   }
 
