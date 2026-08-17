@@ -52,6 +52,11 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     head.appendChild(toggle);
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
+    if (p.repo || p.marketplaceName) {
+      const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
+      card.appendChild(h(doc, 'small', 'pl-provenance hint mono',
+        p.pinnedSha ? `${prov} @ ${sha7(p.pinnedSha)}` : prov));
+    }
     const chRows = (channelStatus || []).filter((c) => c.plugin === p.name);
     if (chRows.length) {
       const chans = h(doc, 'div', 'pl-channels');
@@ -69,7 +74,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     root.appendChild(card);
   }
   if (!plugins || !plugins.length) {
-    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Add a GitHub repo to get started.'));
+    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Browse Available below or add a marketplace.'));
   }
   return root;
 }
@@ -106,7 +111,7 @@ export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
 }
 
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.
-// entry: { name, repoUrl, sha } (a /api/plugins/repo discovery row + repo/sha);
+// entry: { name, repoUrl, sha } (a marketplace snapshot plugin + the marketplace's url/lastSync.sha);
 // inventory: buildInstallInventory shape. Secrets render red; setup commands verbatim.
 export function renderInstallConsent(entry, inventory, { doc = globalThis.document } = {}) {
   const inv = inventory || {};
@@ -317,5 +322,89 @@ export function renderReferences409(refs, { doc = globalThis.document } = {}) {
     ul.appendChild(h(doc, 'li', 'mono', text));
   }
   root.appendChild(ul);
+  return root;
+}
+
+// relTime(iso) -> "just now"/"5m ago"/"3h ago"/"2d ago"/ISO date fallback. Pure,
+// jsdom-safe (tests pass a fixed `now`). Exported for reuse + unit tests (C4).
+export function relTime(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return String(iso || 'unknown');
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24); if (d < 30) return `${d}d ago`;
+  return String(iso).slice(0, 10);
+}
+
+// renderAvailableList(marketplaces) -> <div.pl-available> of installable cards
+// across every marketplace snapshot (GET /api/marketplaces). Install buttons
+// carry data-name + data-marketplace for app.js's delegated listener; installed
+// plugins render a badge instead; a never-synced marketplace renders no button
+// (there is no sha to pin yet — Refresh first).
+export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
+  const root = h(doc, 'div', 'pl-available');
+  const mkts = marketplaces || [];
+  let cards = 0;
+  for (const m of mkts) {
+    for (const p of m.plugins || []) {
+      cards++;
+      const card = h(doc, 'section', 'card pl-avail-card');
+      card.dataset.name = p.name;
+      card.dataset.marketplace = m.id;
+      const head = h(doc, 'div', 'pl-head');
+      head.appendChild(h(doc, 'b', 'pl-name', p.name));
+      head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
+      head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-badge', m.name || m.id));
+      if (p.installed) {
+        head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
+      } else if (m.lastSync) {
+        const b = h(doc, 'button', 'btn btn-primary btn-mini pl-install-avail', 'Install…');
+        b.type = 'button';
+        b.dataset.name = p.name;
+        b.dataset.marketplace = m.id;
+        head.appendChild(b);
+      }
+      card.appendChild(head);
+      if (p.description) card.appendChild(h(doc, 'small', 'hint', p.description));
+      card.appendChild(h(doc, 'small', 'pl-avail-src hint mono', m.url)); // C10: unspoofable source url
+      root.appendChild(card);
+    }
+  }
+  if (!mkts.length) root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces yet — add one below.'));
+  else if (!cards) root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins discovered in your marketplaces.'));
+  return root;
+}
+
+// renderMarketplaceList(marketplaces) -> <div.pl-mkts> of registry rows with
+// Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
+// lines; the snapshot stays usable (stale) per spec §4.6.
+export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
+  const root = h(doc, 'div', 'pl-mkts');
+  for (const m of marketplaces || []) {
+    const row = h(doc, 'div', 'card pl-mkt-row');
+    row.dataset.id = m.id;
+    const head = h(doc, 'div', 'pl-head');
+    head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
+    if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
+    for (const [cls, label] of [['pl-mkt-refresh', 'Refresh'], ['pl-mkt-remove', 'Remove']]) {
+      const b = h(doc, 'button', `btn-ghost ${cls}`, label);
+      b.type = 'button';
+      b.dataset.id = m.id;
+      head.appendChild(b);
+    }
+    row.appendChild(head);
+    row.appendChild(h(doc, 'small', 'pl-mkt-url hint mono', m.url));
+    const n = (m.plugins || []).length;
+    row.appendChild(h(doc, 'small', 'pl-mkt-sync hint', m.lastSync
+      ? `${sha7(m.lastSync.sha)} · synced ${relTime(m.lastSync.at, now)} · ${n} plugin${n === 1 ? '' : 's'}`
+      : 'never synced — refresh to discover plugins'));
+    for (const w of m.warnings || []) row.appendChild(h(doc, 'div', 'pl-mkt-warning hint err', w));
+    root.appendChild(row);
+  }
+  if (!(marketplaces || []).length) {
+    root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces registered.'));
+  }
   return root;
 }

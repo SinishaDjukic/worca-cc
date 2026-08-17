@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
-  renderOrphanList,
+  renderOrphanList, renderAvailableList, renderMarketplaceList, relTime,
 } from '../ui/public/plugins-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -248,4 +248,85 @@ test('plugin list card counts models; references409 renders model guard entries'
     { id: 'ds-stable', steps: [{ projectKey: 'a', step: 'planner' }], nodes: [{ projectKey: 'a', workflowId: 'w', nodeId: 'n' }] },
   ], { doc });
   assert.match(refs.querySelector('li').textContent, /model: ds-stable \(2 pipeline selections\)/);
+});
+
+// ── marketplaces: available cards, registry rows, installed provenance ───────
+
+const MKT = {
+  id: 'm-1', url: '/tmp/m1', name: 'Fixture Market', description: 'x', builtin: true,
+  addedAt: '2026-08-17T00:00:00Z',
+  lastSync: { sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', at: '2026-08-17T10:00:00Z' },
+  warnings: ['worca-cc-marketplace.json: bad/entry — skipped'],
+  plugins: [
+    { name: 'aa', subdir: 'plugins/aa', description: 'first', version: '1.0.0', installed: false, inventory: {} },
+    { name: 'bb', subdir: 'plugins/bb', description: 'second', version: null, installed: true, inventory: {} },
+  ],
+};
+
+test('renderAvailableList: install button only for non-installed; marketplace badge; installed tag', () => {
+  const el = renderAvailableList([MKT], { doc });
+  const cards = el.querySelectorAll('.pl-avail-card');
+  assert.equal(cards.length, 2);
+  const btn = cards[0].querySelector('.pl-install-avail');
+  assert.ok(btn);
+  assert.equal(btn.dataset.name, 'aa');
+  assert.equal(btn.dataset.marketplace, 'm-1');
+  assert.match(cards[0].querySelector('.pl-mkt-badge').textContent, /Fixture Market/);
+  assert.ok(!cards[1].querySelector('.pl-install-avail'), 'installed plugin has no install button');
+  assert.match(cards[1].querySelector('.pl-installed').textContent, /Installed/);
+});
+
+test('renderAvailableList: never-synced marketplace disables install; empty states', () => {
+  const unsynced = { ...MKT, id: 'm-2', lastSync: null, plugins: [{ name: 'cc', subdir: '', description: '', version: null, installed: false, inventory: {} }] };
+  const el = renderAvailableList([unsynced], { doc });
+  assert.ok(!el.querySelector('.pl-install-avail'), 'no install button before first sync');
+  assert.match(renderAvailableList([], { doc }).textContent, /No marketplaces yet/);
+  assert.match(renderAvailableList([{ ...MKT, plugins: [] }], { doc }).textContent, /No plugins discovered/);
+});
+
+test('renderMarketplaceList: builtin badge, sync line (relTime), warnings, action buttons', () => {
+  const el = renderMarketplaceList([MKT], { doc, now: Date.parse('2026-08-17T13:00:00Z') }); // C4: inject now
+  const row = el.querySelector('.pl-mkt-row');
+  assert.equal(row.dataset.id, 'm-1');
+  assert.match(row.querySelector('.pl-mkt-builtin').textContent, /built-in/);
+  assert.match(row.querySelector('.pl-mkt-sync').textContent, /a1b2c3d.*synced .*(ago|\d{4}-).*2 plugins/);
+  assert.match(row.querySelector('.pl-mkt-warning').textContent, /bad\/entry/);
+  assert.equal(row.querySelector('.pl-mkt-refresh').dataset.id, 'm-1');
+  assert.equal(row.querySelector('.pl-mkt-remove').dataset.id, 'm-1');
+  const never = renderMarketplaceList([{ ...MKT, id: 'm-3', lastSync: null, warnings: [] }], { doc });
+  assert.match(never.querySelector('.pl-mkt-sync').textContent, /never synced/);
+});
+
+test('renderPluginList: provenance line renders marketplace + repo @ sha7', () => {
+  const el = renderPluginList([{
+    name: 'aa', version: '1.0.0', pinnedSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+    enabled: true, linked: false, broken: false,
+    contributions: { agents: 0, taskSources: 1, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+    repo: '/tmp/m1', subdir: 'plugins/aa', marketplace: 'm-1', marketplaceName: 'Fixture Market',
+  }], { doc });
+  const prov = el.querySelector('.pl-provenance');
+  assert.ok(prov);
+  assert.match(prov.textContent, /Fixture Market · \/tmp\/m1 @ a1b2c3d/);
+});
+
+test('relTime: fixed-now buckets (pure, jsdom-safe) (C4)', () => {
+  const now = Date.parse('2026-08-17T12:00:00Z');
+  assert.equal(relTime('2026-08-17T11:59:40Z', now), 'just now');
+  assert.equal(relTime('2026-08-17T11:55:00Z', now), '5m ago');
+  assert.equal(relTime('2026-08-17T09:00:00Z', now), '3h ago');
+  assert.equal(relTime('2026-08-15T12:00:00Z', now), '2d ago');
+  assert.equal(relTime('not-a-date', now), 'not-a-date');
+});
+
+test('renderPluginList: provenance falls back to the raw repo when marketplaceName is null (E14)', () => {
+  const el = renderPluginList([{
+    name: 'bb', version: '1.0.0', pinnedSha: 'deadbeefcafebabe0000000000000000deadbeef',
+    enabled: true, linked: false, broken: false,
+    contributions: { agents: 0, taskSources: 1, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+    repo: '/tmp/gone-repo', subdir: 'plugins/bb', marketplace: 'gone', marketplaceName: null,
+  }], { doc });
+  const prov = el.querySelector('.pl-provenance');
+  assert.ok(prov);
+  assert.match(prov.textContent, /\/tmp\/gone-repo @ deadbee/);
+  assert.doesNotMatch(prov.textContent, /·/); // no marketplace name -> no separator
 });
