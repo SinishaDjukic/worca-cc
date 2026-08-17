@@ -93,7 +93,10 @@ async function boot({ fetchHandler } = {}) {
   return { window, calls, wsBox, selectProject, showHistory };
 }
 
-test('expanded card shows Sub-agents, then Clarify, then Live-logs; logs render on open', async () => {
+// Clarify now precedes Sub-agents: tab order is read as priority, and the answered
+// Q&A is provenance (what the run was told to do) rather than a debugging tool.
+// Live logs stay last, the deepest thing on the page.
+test('expanded card shows Clarify, then Sub-agents, then Live-logs; logs render on open', async () => {
   const NDJSON =
     '{"source":"preflight","level":"info","text":"No knowledge-graph tooling detected","ts":"2026-06-20T00:00:00Z"}\n' +
     '{"source":"planner","level":"info","text":"Planning…","ts":"2026-06-20T00:00:01Z"}\n';
@@ -131,11 +134,14 @@ test('expanded card shows Sub-agents, then Clarify, then Live-logs; logs render 
   const detail = card.querySelector('.hist-detail');
   const clarifyBar = detail.querySelector('.clarify-bar');
   const logsBar = detail.querySelector('.logs-bar');
-  assert.equal(detail.querySelector('.subs-bar'), detail.querySelectorAll('.subs-bar,.clarify-bar,.logs-bar')[0], 'sub-agents first');
+  assert.equal(clarifyBar, detail.querySelectorAll('.subs-bar,.clarify-bar,.logs-bar')[0],
+    'clarify first — the decisions outrank the mechanics');
   assert.ok(!clarifyBar.hidden, 'clarify dropdown visible (Q&A present)');
   assert.ok(!logsBar.hidden, 'live-logs dropdown visible (artifact present)');
-  // DOM order: subs-bar precedes clarify-bar precedes logs-bar
-  assert.ok(clarifyBar.compareDocumentPosition(logsBar) & ctx.window.Node.DOCUMENT_POSITION_FOLLOWING, 'logs after clarify');
+  // DOM order: clarify-bar precedes subs-bar precedes logs-bar
+  const FOLLOWS = ctx.window.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.ok(clarifyBar.compareDocumentPosition(detail.querySelector('.subs-bar')) & FOLLOWS, 'agents after clarify');
+  assert.ok(clarifyBar.compareDocumentPosition(logsBar) & FOLLOWS, 'logs after clarify');
 
   // Open clarify -> question text appears
   clarifyBar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));

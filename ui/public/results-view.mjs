@@ -36,18 +36,26 @@ export function statusChip(results) {
 }
 
 /**
- * Always-on header badges for the Diff dropdown: "N changed" + "N removed".
- * Rendered even when zero (product spec). `changed` = modified files
- * (summary.filesChanged); `removed` = deleted files (summary.filesDeleted).
+ * Always-on header badges for the Diff dropdown: "N new" + "N changed" +
+ * "N removed". Rendered even when zero (product spec). `n` lets the caller grey a
+ * zero badge.
+ *
+ * `new` = added/copied files (summary.filesNew), which the header used to omit
+ * entirely — so a pipeline whose every line landed in new files announced itself as
+ * "0 changed · 0 removed", i.e. as no diff at all. It is also the count that names
+ * the panel's own "New files" list, so its absence was a gap in the labelling too.
+ *
  * NOTE: filesChanged already includes deleted rows (bucketFiles routes 'D' into
- * changedFiles); we intentionally preserve today's counting. `n` lets the caller
- * grey a zero badge.
+ * changedFiles), so `removed` re-counts a subset of `changed`; today's counting is
+ * intentionally preserved. new + changed is the total files touched.
  */
 export function diffBadges(results) {
   const s = (results && results.summary) || {};
+  const added = s.filesNew || 0;
   const changed = s.filesChanged || 0;
   const removed = s.filesDeleted || 0;
   return [
+    { kind: 'new', n: added, text: `${added} new` },
     { kind: 'changed', n: changed, text: `${changed} changed` },
     { kind: 'removed', n: removed, text: `${removed} removed` },
   ];

@@ -439,7 +439,6 @@
                   <span class="hist-pausenote" hidden></span>
                 </div>
                 <div class="hist-aside">
-                  <span class="hist-diff" aria-label="lines changed"></span>
                   <span class="hist-merge" hidden></span>
                   <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
                   <button type="button" class="hist-resume btn-ghost" hidden>Resume</button>
@@ -465,11 +464,24 @@
                   <button type="button" class="btn-subs" aria-expanded="false">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
                     Diff
+                    <span class="sb-count diff-new grey"></span>
                     <span class="sb-count diff-changed grey"></span>
                     <span class="sb-count diff-removed grey"></span>
                     <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                   <div class="subs-panel diff-panel" hidden></div>
+                </div>
+                <!-- Clarify (Q&A): the decisions that shaped the run. Ranked above the
+                     generated narrative and the execution mechanics — tab order is
+                     read as priority, and this is provenance, not debugging. -->
+                <div class="clarify-bar" hidden data-tab="clarify" data-tab-label="Clarify">
+                  <button type="button" class="btn-subs" aria-expanded="false">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Clarify
+                    <span class="sb-count grey"></span>
+                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="subs-panel clarify-panel" hidden></div>
                 </div>
                 <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
                 <div class="overview-bar" hidden data-tab="overview" data-tab-label="Overview">
@@ -488,16 +500,6 @@
                     <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                   <div class="subs-panel" hidden></div>
-                </div>
-                <!-- Clarify dropdown (Q&A) — under Sub-agents -->
-                <div class="clarify-bar" hidden data-tab="clarify" data-tab-label="Clarify">
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    Clarify
-                    <span class="sb-count grey"></span>
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-                  <div class="subs-panel clarify-panel" hidden></div>
                 </div>
                 <!-- Live logs dropdown — under Clarify -->
                 <div class="logs-bar" hidden data-tab="log" data-tab-label="Log">

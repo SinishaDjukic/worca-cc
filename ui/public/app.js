@@ -1033,8 +1033,7 @@ function paintRunStats(host, parts) {
   }
 }
 
-// "+8 −0" as a fragment, or null when there is nothing to report. U+2212 minus,
-// matching renderHistDiff.
+// "+8 −0" as a fragment, or null when there is nothing to report. U+2212 minus.
 function diffStatParts(added, removed) {
   if (!added && !removed) return null;
   return [`+${added || 0}`, `−${removed || 0}`];
@@ -8246,26 +8245,6 @@ function historyBadge(p) {
   return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
 }
 
-// Render the +added / −removed line-count chip for a survived branch. Colors are
-// class-driven (green add / red del). Nothing for branches that did not survive.
-// NOTE: the minus glyph is U+2212 (−), not an ASCII hyphen; the jsdom test
-// asserts it byte-for-byte, so keep this exact character.
-function renderHistDiff(host, p) {
-  if (!host) return;
-  host.textContent = '';
-  if (!p || !p.survived) return;
-  const added = Number.isFinite(+p.added) ? +p.added : 0;
-  const removed = Number.isFinite(+p.removed) ? +p.removed : 0;
-  const add = document.createElement('span');
-  add.className = 'diff-add';
-  add.textContent = `+${added}`;
-  const del = document.createElement('span');
-  del.className = 'diff-del';
-  del.textContent = `−${removed}`; // U+2212 minus
-  host.append(add, del);
-  host.title = `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
-}
-
 // Wire the Create-PR button. Shown only when gh is available AND the feature
 // branch survived AND we know its source. Click pushes + opens the PR, then
 // swaps itself for a link and reveals the mergeability pill.
@@ -8619,7 +8598,6 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   }
 
   // Right-side cluster (before the chevron): lines changed + Create-PR button.
-  renderHistDiff(node.querySelector('.hist-diff'), p);
   setupPrButton(node, projectDir, p, ghAvailable);
   setupDeleteButton(node, projectDir, p);
   setupResumeButton(node, projectDir, p);
@@ -8723,8 +8701,9 @@ function historyLogUrl(id, record) {
 // Render the Layer-1 results header: the single status pill ("Clean" / "N to check")
 // and the key-things-to-check list. New/Changed file lists moved to the Diff dropdown
 // (paintDiffBar); the Layer-2 overview moved to the Overview dropdown (paintOverviewBar).
-// The "+X / −Y" line-count pill was dropped — renderHistDiff() already shows that next
-// to the Create-PR button.
+// The "+X / −Y" line-count pill was dropped from here, and later from the card head
+// too (a raw line delta next to Create PR answered nothing); per-file counts remain
+// in the Diff panel's file lists.
 function renderResults(host, results, row) {
   host.innerHTML = '';
   if (!results) { host.textContent = 'No results for this run.'; return; }
@@ -9132,21 +9111,24 @@ function paintDiffBar(barEl, results) {
   barEl.hidden = false;
   barEl._results = results;
 
-  const [changed, removed] = diffBadges(results);
-  const changedEl = barEl.querySelector('.diff-changed');
-  const removedEl = barEl.querySelector('.diff-removed');
-  if (changedEl) { changedEl.textContent = changed.text; changedEl.classList.toggle('grey', changed.n === 0); }
-  if (removedEl) { removedEl.textContent = removed.text; removedEl.classList.toggle('grey', removed.n === 0); }
+  for (const b of diffBadges(results)) {
+    const el = barEl.querySelector(`.diff-${b.kind}`);
+    if (!el) continue;
+    el.textContent = b.text;
+    el.classList.toggle('grey', b.n === 0);
+  }
 
-  // On a TAB, this panel's own header words ("0 changed · 0 removed") swamp the
-  // label — and they count FILES, where a diff is read in LINES. Declare the tab's
-  // badges as +added / −removed instead: the same notation the history head and
-  // every diff tool use, two glyphs wide, with the sign carrying the meaning so no
-  // icon is needed. The file counts stay in the header, above the lists they name.
+  // On a TAB, this panel's own header words ("2 new · 0 changed · 0 removed")
+  // swamp the label, and even the diff-stat trio (files, +added, −removed) proved
+  // too wide beside five other tabs. So the tab carries ONE number in the house
+  // style every other lone count uses: files touched. That is filesNew +
+  // filesChanged — bucketFiles puts every name-status row in exactly one of the
+  // two buckets (deletions land in changedFiles) — so an all-new-files change can
+  // never read as zero. The split and the line counts live one click away, in the
+  // panel's own header and file lists.
   const s = results.summary || {};
   barEl.dataset.tabBadges = JSON.stringify([
-    { text: `+${s.linesAdded || 0}`, cls: 'diff-add' },
-    { text: `−${s.linesRemoved || 0}`, cls: 'diff-del' },   // U+2212 minus
+    { text: String((s.filesNew || 0) + (s.filesChanged || 0)) },
   ]);
 
   const btn = barEl.querySelector('.btn-subs');

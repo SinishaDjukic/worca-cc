@@ -431,16 +431,29 @@ test('every hideable run-card button is actually hideable', () => {
   assert.match(m[1], /display:\s*none/);
 });
 
-// The same trap, third occurrence — this one shipped. .detail-bar sets
-// display:flex, so hideDetailBar()'s `hidden` was inert and the "← History"
-// button stayed parked above the History LIST after the reader left a detail view.
-// Generalized: every element the app hides from JS and styles with its own
-// `display` needs the patch, so assert the property rather than one class.
-test('.detail-bar honours [hidden] despite its own display rule', () => {
-  assert.match(css, /\.detail-bar\{[^}]*display:\s*flex/, 'it sets its own display');
-  assert.match(css, /\.detail-bar\[hidden\]\s*\{[^}]*display:\s*none/,
-    'so [hidden] must be patched, or hideDetailBar() is a no-op');
-});
+// The `hidden` footgun, as a table — it has now bitten four times in this
+// stylesheet (.nav-count, the pause/resume/stop trio, .detail-bar, .hist-filter).
+// An author rule that sets `display` outranks the UA's [hidden]{display:none},
+// because author origin beats user-agent origin. So any element the app hides by
+// setting `.hidden = true` in JS AND styles with its own `display` silently stays
+// on screen until a [hidden] patch names it. Each entry below is an element hidden
+// from JS; the test asserts the patch exists whenever the base rule sets display.
+const JS_HIDDEN = [
+  ['.detail-bar', 'hideDetailBar(), leaving "← History" above the History list'],
+  ['.hist-filter', 'renderHistory(), leaving list filters on a single-pipeline page'],
+  ['.run-peek', 'the mini card collapsing its log peek'],
+  ['.run-tabs', 'a card with fewer than two panels'],
+];
+for (const [sel, why] of JS_HIDDEN) {
+  test(`${sel} honours [hidden] despite its own display rule`, () => {
+    const base = new RegExp(`\\${sel}\\{([^}]*)\\}`).exec(css);
+    assert.ok(base, `${sel} base rule missing`);
+    if (!/display:\s*(?!none)/.test(base[1])) return;   // no author display -> UA rule already wins
+    const patch = new RegExp(`\\${sel}\\[hidden\\]\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(patch, `${sel} sets display, so [hidden] is inert on it — ${why}`);
+    assert.match(patch[1], /display:\s*none/);
+  });
+}
 
 // The detail view must not wear the list's header. "Running · 0 pipelines
 // executing" over one finished pipeline was the reported symptom.

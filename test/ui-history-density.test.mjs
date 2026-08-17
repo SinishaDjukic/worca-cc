@@ -197,10 +197,10 @@ test('a history card shows no outcome-quality label, in the head or the panel', 
 });
 
 // The Diff tab used to carry its panel header verbatim — "0 changed · 0 removed" —
-// which swamped the label and counted FILES, where a diff is read in LINES. The
-// panel now declares its own tab badges: +added / −removed, the notation the
-// history head and every diff tool already use, with the sign as the icon.
-test('the Diff tab shows signed line counts, not the panel header words', async () => {
+// which swamped the label; a signed diff-stat trio proved too wide beside five
+// other tabs. It now carries ONE number in the house style every lone tab count
+// uses: total files touched. The split and the line counts live in the panel.
+test('the Diff tab shows one bare file count, not the panel header words', async () => {
   const ctx = await boot();
   await ctx.go('history/p-1');
   for (let i = 0; i < 6; i++) await ctx.tick();
@@ -209,18 +209,12 @@ test('the Diff tab shows signed line counts, not the panel header words', async 
     .find((t) => t.dataset.tabKey === 'diff');
   assert.ok(tab, 'the Diff tab exists');
   assert.doesNotMatch(tab.textContent, /changed|removed/, 'the panel header words are gone');
-  const badges = [...tab.querySelectorAll('.n')].map((n) => [n.textContent, n.className]);
-  assert.equal(badges.length, 2, 'two separate badges, one per count');
-  assert.match(badges[0][0], /^\+\d+$/, 'added, signed');
-  assert.match(badges[1][0], /^\u2212\d+$/, 'removed, with a real minus (U+2212)');
-  assert.match(badges[0][1], /diff-add/);
-  assert.match(badges[1][1], /diff-del/);
-  // The colours must survive selection: added/removed is what the number means.
-  assert.match(css, /\.run-tab \.n\.diff-add\{[^}]*var\(--green-bg\)/);
-  assert.match(css, /\.run-tab \.n\.diff-del\{[^}]*var\(--red-bg\)/);
-  const selRule = css.indexOf('.run-tab[aria-selected="true"] .n{');
-  assert.ok(selRule > -1 && css.indexOf('.run-tab .n.diff-add{') > selRule,
-    'declared after the selected-tab rule, so selecting a tab cannot recolour them');
+  const badges = [...tab.querySelectorAll('.n')];
+  assert.equal(badges.length, 1, 'one badge, like every other tab with a lone count');
+  // Fixture: filesNew 1 + filesChanged 3. The count is the TOTAL touched —
+  // bucketFiles puts every row in exactly one bucket — so a change living
+  // entirely in new files can never read as zero.
+  assert.equal(badges[0].textContent, '4', 'filesNew + filesChanged, bare digits');
 });
 
 // The bar's own header keeps the file words: there it sits directly above the
@@ -255,9 +249,14 @@ test('the five stacked dropdowns become one tab bar, one panel at a time', async
   await ctx.go('history/p-1');
   const c = ctx.window.document.querySelector('#history .hist-card');
   const tabs = [...c.querySelectorAll('.run-tab')];
+  // Tab order is read as priority, so it is declared as priority, not as the order
+  // the panels happened to be built in. Outcome first (what came out), then the
+  // decisions that shaped it, then how it ran — deepest last. Clarify used to sit
+  // between Agents and Log, filed with the debugging tools rather than with the
+  // provenance it actually is.
   assert.deepEqual(tabs.map((t) => t.dataset.tabKey),
-    ['results', 'diff', 'overview', 'agents', 'clarify', 'log'],
-    'every populated panel contributes exactly one tab');
+    ['results', 'diff', 'clarify', 'overview', 'agents', 'log'],
+    'outcome -> decisions -> mechanics');
   const on = tabs.filter((t) => t.getAttribute('aria-selected') === 'true');
   assert.equal(on.length, 1);
   assert.equal(on[0].dataset.tabKey, 'results', 'the findings open first');
@@ -270,8 +269,8 @@ test('the five stacked dropdowns become one tab bar, one panel at a time', async
   assert.equal(tabs.find((t) => t.dataset.tabKey === 'clarify').querySelector('.n').textContent, '1');
   // Diff is the exception: it DECLARES its badges (data-tab-badges) because its own
   // header words are too long for a tab. Asserted in full further down.
-  assert.equal(tabs.find((t) => t.dataset.tabKey === 'diff').querySelectorAll('.n').length, 2,
-    'one badge per count, not one string holding both');
+  assert.equal(tabs.find((t) => t.dataset.tabKey === 'diff').querySelector('.n').textContent, '4',
+    'Diff declares its lone count (files touched) instead of its long header words');
 });
 
 test('selecting a tab opens the panel it controls, including a lazily-fetched one', async () => {

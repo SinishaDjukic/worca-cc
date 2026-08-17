@@ -639,6 +639,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    show through, and the user can switch projects while scrolled. */
 .hist-filter{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;
   gap:8px;margin:0 0 14px;padding:12px 0;background:var(--bg);}
+/* The detail view hides the project pills from JS (renderHistory), which the
+   author display:flex above defeats — so a page about ONE pipeline was still
+   offering filters for the list. Same footgun as .detail-bar / .nav-count /
+   .btn-pause; see the table test in ui-pipeline-density. */
+.hist-filter[hidden]{display:none;}
 .hist-pill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
   border:1.5px solid var(--line-2);border-radius:999px;padding:7px 14px;font-weight:600;
   font-size:12.5px;color:var(--ink-2);cursor:pointer;white-space:nowrap;
@@ -729,10 +734,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* Right-side cluster, before the chevron: lines changed, merge pill, Create PR. */
 .hist-aside{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
-.hist-diff{display:inline-flex;gap:6px;font-family:var(--mono);font-size:12px;font-weight:700;}
-.hist-diff:empty{display:none;}
-.hist-diff .diff-add{color:var(--green-ink);}
-.hist-diff .diff-del{color:var(--red-ink);}
 
 .hist-merge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap;}
 .hist-merge[hidden]{display:none;}
@@ -1469,6 +1470,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-card.full > .run-rail-wrap,
 .run-card.full > .run-peek,
 .run-card.full .run-expand{display:none;}
+/* The detail header (.detail-bar) already names the pipeline and states its status,
+   so the card must not repeat either: on a page about ONE pipeline, saying its
+   title twice a few pixels apart is noise, and two status pills invite the reader
+   to check whether they agree. The meta line stays — the date, duration, cost and
+   branch are not in the header. Same rule for a history card below. */
+.run-card.full > .run-top > div > .run-title,
+.run-card.full > .run-top > .pill-run{display:none;}
 /* The graph carries its own bottom margin; in .full the question sits above it. */
 .run-card.full > .qpanel{margin-top:0;margin-bottom:18px;}
 
@@ -1568,12 +1576,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   color:var(--ink-3);border-radius:999px;padding:1px 7px;}
 .run-tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);}
 .run-tab[aria-selected="true"] .n{background:var(--violet-bg);color:var(--violet-ink);}
-/* Signed diff badges (data-tab-badges on .diff-bar) keep the green/red the history
-   head uses for the same two numbers. Declared AFTER the selected-tab rule on
-   purpose: added/removed is what the number MEANS, and selecting a tab must not
-   recolour it. Same class names as .hist-diff so the vocabulary is learned once. */
-.run-tab .n.diff-add{background:var(--green-bg);color:var(--green-ink);}
-.run-tab .n.diff-del{background:var(--red-bg);color:var(--red-ink);}
 /* A panel the tab bar is not showing. Set by paintTabs, not by [hidden], so the
    bars' own accordion state (aria-expanded / panel[hidden]) is left untouched. */
 .tab-off{display:none !important;}
@@ -1597,6 +1599,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-card.full .hist-detail > .run-rail-wrap,
 .hist-card.full .hist-detail > .hist-cta,
 .hist-card.full .hist-head .chev{display:none;}
+/* Title + status badge live in the detail header on this page (see the .run-card
+   rule above for the reasoning). The head keeps the date, duration, cost and
+   branch, which the header does not carry. Hiding the title also retires its
+   link-to-this-pipeline behaviour, which is a no-op here anyway. */
+.hist-card.full .hist-head > .badge,
+.hist-card.full .hist-head .h-meta > b{display:none;}
 .hist-cta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;
   padding-top:13px;border-top:1px solid var(--line);}
 .hist-cta-text{flex:1 1 auto;min-width:0;font-size:12.5px;color:var(--ink-2);}

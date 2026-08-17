@@ -29,13 +29,26 @@ test('statusChip is Clean with no blocking issues, else "N to check"', () => {
   assert.equal(statusChip(null), 'Clean'); // missing results -> Clean
 });
 
-test('diffBadges always returns changed + removed, even at zero', () => {
+// `new` is included because omitting it let a diff whose every line landed in NEW
+// files announce itself as "0 changed · 0 removed" — as no diff at all.
+test('diffBadges always returns new + changed + removed, even at zero', () => {
   assert.deepEqual(
-    diffBadges({ summary: { filesChanged: 1, filesDeleted: 0 } }),
-    [{ kind: 'changed', n: 1, text: '1 changed' }, { kind: 'removed', n: 0, text: '0 removed' }],
+    diffBadges({ summary: { filesNew: 2, filesChanged: 1, filesDeleted: 0 } }),
+    [{ kind: 'new', n: 2, text: '2 new' },
+      { kind: 'changed', n: 1, text: '1 changed' },
+      { kind: 'removed', n: 0, text: '0 removed' }],
   );
   assert.deepEqual(
     diffBadges(null),
-    [{ kind: 'changed', n: 0, text: '0 changed' }, { kind: 'removed', n: 0, text: '0 removed' }],
+    [{ kind: 'new', n: 0, text: '0 new' },
+      { kind: 'changed', n: 0, text: '0 changed' },
+      { kind: 'removed', n: 0, text: '0 removed' }],
   );
+});
+
+// The regression that motivated it: all-new-files must not read as an empty diff.
+test('diffBadges reports an all-new-files change instead of calling it empty', () => {
+  const [isNew, changed] = diffBadges({ summary: { filesNew: 2, filesChanged: 0, filesDeleted: 0, linesAdded: 14 } });
+  assert.equal(isNew.text, '2 new');
+  assert.equal(changed.n, 0, 'nothing was modified — and that is now sayable without implying nothing happened');
 });

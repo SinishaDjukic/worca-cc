@@ -96,9 +96,13 @@ test('Diff dropdown: collapsed, always-on badges, lists render on open', async (
   assert.equal(btn.getAttribute('aria-expanded'), 'false', 'collapsed by default');
   assert.equal(diff.querySelector('.diff-panel').hidden, true, 'panel hidden by default');
 
-  // Always-on badges (even the zero one), with grey applied at zero.
+  // Always-on badges (even the zero one), with grey applied at zero. `new` is here
+  // because a diff living entirely in new files used to read as "0 changed ·
+  // 0 removed" — as no diff at all.
+  const isNew = diff.querySelector('.diff-new');
   const changed = diff.querySelector('.diff-changed');
   const removed = diff.querySelector('.diff-removed');
+  assert.match(isNew.textContent, /^\d+ new$/);
   assert.equal(changed.textContent, '1 changed');
   assert.equal(removed.textContent, '0 removed');
   assert.ok(!changed.classList.contains('grey'), 'non-zero badge not greyed');

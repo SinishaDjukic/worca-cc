@@ -42,7 +42,9 @@ const SURVIVED = {
   projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj',
 };
 
-test('survived entry: branch line under meta + green/red diff chip', async () => {
+// The +X/−Y chip beside Create PR was removed (a raw line delta there answered
+// nothing); the branch line is what remains of the survived-branch head display.
+test('survived entry: branch line under meta, and no line-delta chip', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([SURVIVED], true) : null),
   });
@@ -50,8 +52,7 @@ test('survived entry: branch line under meta + green/red diff chip', async () =>
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.h-meta .hist-branch').textContent, 'worca-cc/feat-1');
-  assert.equal(card.querySelector('.hist-diff .diff-add').textContent, '+12');
-  assert.equal(card.querySelector('.hist-diff .diff-del').textContent, '−5');
+  assert.equal(card.querySelector('.hist-diff'), null, 'no +X/−Y chip in the head');
 });
 
 test('Create-PR button shows when gh available; click opens PR + merge pill', async () => {
@@ -93,7 +94,7 @@ test('button hidden when gh unavailable, and for non-survived branches', async (
   await new Promise((r) => setTimeout(r, 0));
   const cards = window.document.querySelectorAll('#history .hist-card');
   assert.equal(cards[0].querySelector('.hist-pr').hidden, true, 'gh unavailable hides button');
-  assert.equal(cards[1].querySelector('.hist-diff').textContent, '', 'non-survived shows no diff');
+  assert.equal(cards[1].querySelector('.hist-diff'), null, 'no diff chip on any row');
 });
 
 test('open PR: no Create-PR button, shows a "View PR" link to the existing PR', async () => {
