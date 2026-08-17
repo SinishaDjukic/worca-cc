@@ -935,7 +935,9 @@ function buildRunGraph(host, manifest) {
       .map((fb) => fb.from),
   );
 
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
+  // No bookend .strip spacers here: in the composer they are drop zones, but in
+  // a run graph they were inert 44px blocks that (with the flex gap on both
+  // sides) pushed the first node ~130px off the canvas edge.
   m.steps.forEach((cell, i) => {
     const col = document.createElement('div');
     col.className = 'col';
@@ -947,7 +949,6 @@ function buildRunGraph(host, manifest) {
     for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
     host.appendChild(col);
   });
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'wires');

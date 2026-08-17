@@ -41,8 +41,9 @@ test('.run-flow is a max-content flex row with deep top/bottom padding', () => {
   assert.match(body, /width:\s*max-content/);
 });
 
-test('.run-flow .strip / .col / .col-tag are scoped', () => {
-  assert.ok(ruleBody('.run-flow .strip'), '.run-flow .strip missing');
+test('.run-flow .col / .col-tag are scoped; no composer .strip spacers', () => {
+  assert.equal(ruleBody('.run-flow .strip'), null,
+    'run graphs build no bookend strips (composer drop zones) — the rule would be dead');
   assert.ok(ruleBody('.run-flow .col'), '.run-flow .col missing');
   const tag = ruleBody('.run-flow .col .col-tag');
   assert.ok(tag, '.run-flow .col .col-tag missing');

@@ -1001,7 +1001,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    stay: feedback loops route ~46px above the node tops and a self-cycle lobe
    hangs ~45px below a node's bottom edge. */
 .run-flow{position:relative;display:flex;align-items:flex-start;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
-.run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
 .run-flow .col{padding:14px 8px;align-self:flex-start;}
 .run-flow .col .col-tag{color:var(--ink-3);}
 
@@ -1495,8 +1494,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- the stage rail (list density) ---------- */
 .run-rail-wrap{display:flex;align-items:center;justify-content:space-between;
   gap:10px 20px;flex-wrap:wrap;margin-bottom:16px;}
+/* overflow-x:auto forces the vertical axis to clip too, so the rail needs top
+   padding for what sticks out above a 19px dot: the 27px looped dash ring and
+   the 4px active/paused glow. */
 .run-rail{display:flex;align-items:center;flex:1 1 340px;min-width:0;overflow-x:auto;
-  scrollbar-width:thin;padding-bottom:2px;}
+  scrollbar-width:thin;padding:7px 0 2px;}
 .run-rail .rcell{display:flex;flex-direction:column;align-items:center;gap:5px;
   flex:0 0 auto;width:70px;text-align:center;}
 .run-rail .rbar{flex:1 1 14px;min-width:9px;height:2px;border-radius:2px;background:var(--line-2);}
@@ -1553,6 +1555,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-answer.sm{background:var(--amber-bg);border-color:transparent;color:var(--amber-ink);}
 .btn-answer.sm:hover{background:var(--amber);color:#fff;}
 .run-card.full > .run-foot .btn-open{display:none;}   /* already here */
+/* The foot owns no vertical margin of its own (in .mini it is the card's last
+   row), but in .full the graph canvas follows it — without this the Pause/Stop
+   pills sit flush on the canvas border. */
+.run-card.full > .run-foot{margin-bottom:18px;}
 
 /* ---------- expander + peek (list density) ---------- */
 .run-expand{flex:0 0 auto;background:none;border:0;padding:4px;cursor:pointer;color:var(--ink-3);

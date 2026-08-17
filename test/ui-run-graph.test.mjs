@@ -54,15 +54,15 @@ const MANIFEST = {
   feedbacks: [],
 };
 
-test('buildRunGraph builds .run-flow with leading/trailing strip, one .col per cell, one .run-node per cell node', async () => {
+test('buildRunGraph builds .run-flow with one .col per cell and one .run-node per cell node — no strips', async () => {
   const { window } = await bootLive();
   window.__np._setModels([{ id: 'opus', label: 'Opus 4.8', efforts: ['low', 'high'] }]);
   const host = window.document.createElement('div');
   host.className = 'run-flow';
   window.__np.buildRunGraph(host, MANIFEST);
 
-  // Two strips (lead/trail) + one wires svg + 5 cols.
-  assert.equal(host.querySelectorAll(':scope > .strip').length, 2);
+  // One wires svg + 5 cols; NO bookend strips (composer drop zones, dead space here).
+  assert.equal(host.querySelectorAll(':scope > .strip').length, 0);
   assert.equal(host.querySelectorAll(':scope > svg.wires').length, 1);
   const cols = host.querySelectorAll(':scope > .col');
   assert.equal(cols.length, 5);
