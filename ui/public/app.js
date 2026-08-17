@@ -8394,6 +8394,34 @@ function histEmpty(text) {
 }
 
 // Map a pipeline status to { cls, text } for the collapsed-card badge.
+// History head status (design B + C's icon): a tinted icon circle on the left
+// carries the state family; the meta line's status WORD carries the nuance —
+// including the pause reason, which used to dangle under the branch as
+// .hist-pausenote. historyBadge below stays for the detail-page pill.
+const HIST_ICON_SVG = {
+  ok: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bad: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>',
+  warn: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>',
+  run: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>',
+  none: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 12h12" stroke-linecap="round"/></svg>',
+};
+function histStatusView(p) {
+  const s = String(p.status || '').toLowerCase();
+  if (s === 'done' || s === 'complete' || s === 'completed') return { family: 'ok', word: 'Done' };
+  if (s === 'stopped' || s === 'aborted') return { family: 'bad', word: 'Stopped' };
+  if (s === 'error' || s === 'failed') return { family: 'bad', word: 'Error' };
+  if (s === 'interrupted') return { family: 'bad', word: 'Interrupted' };
+  if (s === 'paused') {
+    const reason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+    const word = reason === 'cost_total' ? 'Paused — total budget'
+      : reason.startsWith('cost_') ? 'Paused — cost limit' : 'Paused';
+    return { family: 'warn', word };
+  }
+  if (s === 'pausing') return { family: 'run', word: 'Pausing…' };
+  if (p.live || s === 'running' || s === 'starting') return { family: 'run', word: 'Running' };
+  return { family: 'none', word: s ? s.toUpperCase() : 'UNKNOWN' };
+}
+
 function historyBadge(p) {
   const s = String(p.status || '').toLowerCase();
   if (s === 'done' || s === 'complete' || s === 'completed') return { cls: 'badge green', text: 'DONE' };
@@ -8406,30 +8434,122 @@ function historyBadge(p) {
   return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
 }
 
+// ⋯ overflow menu (design B): a row shows at most one primary action; secondary
+// actions live behind the quiet .hist-more button. The button stays hidden until
+// the first item registers, so rows with nothing extra never grow the affordance.
+function histMenuAdd(node, label, onPick) {
+  const more = node.querySelector('.hist-more');
+  const aside = node.querySelector('.hist-aside');
+  if (!more || !aside) return null;
+  let menu = aside.querySelector('.hist-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.className = 'hist-menu';
+    menu.hidden = true;
+    aside.appendChild(menu);
+    more.hidden = false;
+    more.addEventListener('click', (e) => {
+      e.stopPropagation(); // the head is an expand toggle
+      const wasOpen = !menu.hidden;
+      closeHistMenus();
+      if (!wasOpen) { menu.hidden = false; more.setAttribute('aria-expanded', 'true'); }
+    });
+  }
+  // Re-wiring (patchHistoryPr -> setupPrButton re-run) must not stack duplicate
+  // items: a same-labelled entry is replaced, keeping the newest closure.
+  for (const old of [...menu.children]) if (old.textContent === label) old.remove();
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'hist-menu-item';
+  item.textContent = label;
+  item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeHistMenus();
+    onPick(item);
+  });
+  menu.appendChild(item);
+  return item;
+}
+function closeHistMenus() {
+  for (const m of document.querySelectorAll('.hist-menu:not([hidden])')) m.hidden = true;
+  for (const b of document.querySelectorAll('.hist-more[aria-expanded="true"]')) b.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', closeHistMenus);
+
+// Push + open the PR for a history entry, then surface the result in the aside:
+// the trigger button (when given) is replaced by the View-PR control; a menu-item
+// trigger inserts it before the ⋯ button instead. Shared by the .hist-pr button
+// and the paused-row menu item.
+async function runCreatePr(node, projectDir, p, btn) {
+  const mergeEl = node.querySelector('.hist-merge');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    const res = await fetch('/api/pr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    const link = prControl({ state: 'OPEN', url: data.url || '#' }, data.existed ? 'View PR ↗' : 'PR opened ↗');
+    if (btn) btn.replaceWith(link);
+    else {
+      const aside = node.querySelector('.hist-aside');
+      if (aside) aside.insertBefore(link, aside.querySelector('.hist-more'));
+    }
+    if (mergeEl) {
+      setMergePill(mergeEl, data.mergeable);
+      // If GitHub hasn't computed mergeability yet (UNKNOWN -> "checking…"),
+      // re-check once after a short pause so the pill never sticks.
+      if (String(data.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
+        scheduleMergeRecheck(mergeEl, { projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id });
+      }
+    }
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+      btn.title = `Could not open PR: ${err.message}`;
+    } else {
+      const more = node.querySelector('.hist-more');
+      if (more) more.title = `Could not open PR: ${err.message}`;
+    }
+  }
+}
+
+// The existing-PR control (design B): an open PR is a quiet View-PR button, a
+// merged PR is a linked chip — a fact that happens to be clickable, not a call
+// to action. Both keep the .hist-pr-link class (the §3.6 in-place patch and the
+// tests select on it).
+function prControl(pr, openLabel = 'View PR ↗') {
+  const link = document.createElement('a');
+  const merged = String(pr.state || '').toUpperCase() === 'MERGED';
+  link.className = merged ? 'hist-pr-link merged' : 'hist-pr-link';
+  link.href = pr.url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = merged ? '✓ Merged' : openLabel;
+  // Clicking the link must not toggle the surrounding history card.
+  link.addEventListener('click', (e) => e.stopPropagation());
+  return link;
+}
+
 // Wire the Create-PR button. Shown only when gh is available AND the feature
-// branch survived AND we know its source. Click pushes + opens the PR, then
-// swaps itself for a link and reveals the mergeability pill.
+// branch survived AND we know its source. On a PAUSED row Resume is the one
+// primary action (design B), so Create PR moves into the ⋯ menu instead.
 function setupPrButton(node, projectDir, p, ghAvailable) {
   const btn = node.querySelector('.hist-pr');
-  const mergeEl = node.querySelector('.hist-merge');
   if (!btn) return;
 
   // A PR already open or merged for this branch -> never offer "Create PR";
-  // replace the button with a link to that existing PR (reusing gh's URL). This
+  // replace the button with the View-PR / Merged control (reusing gh's URL). This
   // runs BEFORE the `survived` eligibility check, so a merged PR whose branch was
-  // deleted (survived === false) still shows a "Merged" link.
+  // deleted (survived === false) still shows a "Merged" chip.
   const pr = p.pr && typeof p.pr === 'object' ? p.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
-    const link = document.createElement('a');
-    link.className = prState === 'MERGED' ? 'hist-pr-link merged' : 'hist-pr-link';
-    link.href = pr.url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
-    // Clicking the link must not toggle the surrounding history card.
-    link.addEventListener('click', (e) => e.stopPropagation());
-    btn.replaceWith(link);
+    btn.replaceWith(prControl(pr));
     return;
   }
 
@@ -8444,40 +8564,16 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
   //   undefined = pending, null = looked/none, object = found.
   if (p.pr === undefined) { btn.hidden = true; return; }
 
+  if (String(p.status || '').toLowerCase() === 'paused') {
+    btn.hidden = true;
+    histMenuAdd(node, 'Create PR', () => runCreatePr(node, projectDir, p, null));
+    return;
+  }
+
   btn.hidden = false;
-  btn.addEventListener('click', async (e) => {
+  btn.addEventListener('click', (e) => {
     e.stopPropagation(); // never toggle the card when clicking the button
-    btn.disabled = true;
-    const label = btn.textContent;
-    btn.textContent = 'Creating…';
-    try {
-      const res = await fetch('/api/pr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id }),
-      });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      const link = document.createElement('a');
-      link.className = 'hist-pr-link';
-      link.href = data.url || '#';
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = data.existed ? 'View PR' : 'PR opened';
-      btn.replaceWith(link);
-      if (mergeEl) {
-        setMergePill(mergeEl, data.mergeable);
-        // If GitHub hasn't computed mergeability yet (UNKNOWN -> "checking…"),
-        // re-check once after a short pause so the pill never sticks.
-        if (String(data.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
-          scheduleMergeRecheck(mergeEl, { projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id });
-        }
-      }
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = label;
-      btn.title = `Could not open PR: ${err.message}`;
-    }
+    runCreatePr(node, projectDir, p, btn);
   });
 }
 
@@ -8709,14 +8805,21 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   node.dataset.pipelineId = id;
   node.dataset.projectKey = p.projectKey || ''; // composite key for the §3.6 in-place PR patch selector
 
-  const badge = node.querySelector('.badge');
-  if (badge) {
-    const { cls, text } = historyBadge(p);
-    badge.className = cls;
-    badge.textContent = text;
-    // Plugin provenance badge (§11) — null for prompt/markdown rows.
-    const src = sourceBadge(p);
-    if (src) badge.after(src);
+  // Status icon (design B + C): tinted circle on the left, family class on the
+  // card for the edge stripe, the status WORD on the meta line (with the pause
+  // reason inline — the old .hist-pausenote is gone).
+  const sv = histStatusView(p);
+  node.classList.add(`hc-${sv.family}`);
+  const ico = node.querySelector('.hist-ico');
+  if (ico) {
+    ico.className = `hist-ico hi-${sv.family}`;
+    ico.innerHTML = HIST_ICON_SVG[sv.family] || HIST_ICON_SVG.none;
+    ico.title = sv.word;
+  }
+  const statEl = node.querySelector('.hist-stat');
+  if (statEl) {
+    statEl.textContent = sv.word;
+    statEl.classList.add(`hs-${sv.family}`);
   }
 
   const titleEl = node.querySelector('.h-meta b');
@@ -8728,6 +8831,10 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
     // was a dead end: everything in it (and much more) is in the detail view.
     // stopPropagation because the head itself is the expand toggle.
     titleEl.addEventListener('click', (e) => { e.stopPropagation(); location.hash = `pipeline/${id}`; });
+    // Plugin provenance badge (§11) — on the title line (design B); null for
+    // prompt/markdown rows.
+    const src = sourceBadge(p);
+    if (src) titleEl.after(src);
   }
   const whenEl = node.querySelector('.h-meta small');
   if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
@@ -8739,29 +8846,53 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
     totalEl.title = typeof p.totalCostUsd === 'number' ? estTitle(p.totalCostUsd) : '';
   }
 
-  // Branch name under the date/cost (left column; hidden when empty via :empty).
+  // Branch pair under the date/cost: source → feature (hidden when empty via
+  // :empty). A row with no known source shows the feature branch alone.
   const branchEl = node.querySelector('.hist-branch');
-  if (branchEl) branchEl.textContent = p.branch || '';
-
-  // Cost-pause note in the head. The reason is also stamped on the card so a
-  // later budget repaint can re-gate Resume without refetching the record.
-  const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
-  if (pauseReason) node.dataset.pauseReason = pauseReason;
-  const noteEl = node.querySelector('.hist-pausenote');
-  if (noteEl) {
-    const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
-      && pauseReason.startsWith('cost_');
-    noteEl.hidden = !costPaused;
-    noteEl.textContent = costPaused
-      ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
-      : '';
-    noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
+  if (branchEl) {
+    branchEl.replaceChildren();
+    if (p.branch) {
+      if (p.sourceBranch) {
+        const from = document.createElement('span');
+        from.className = 'from';
+        from.textContent = p.sourceBranch;
+        const arr = document.createElement('span');
+        arr.className = 'arr';
+        arr.textContent = '→';
+        branchEl.append(from, arr);
+      }
+      const to = document.createElement('span');
+      to.className = 'to';
+      to.textContent = p.branch;
+      branchEl.appendChild(to);
+    }
   }
 
-  // Right-side cluster (before the chevron): lines changed + Create-PR button.
+  // The pause reason is stamped on the card so a later budget repaint can
+  // re-gate Resume without refetching the record (applyHistResumeGates).
+  const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+  if (pauseReason) node.dataset.pauseReason = pauseReason;
+
+  // Right-side cluster (before the chevron): the row's one primary action plus
+  // the ⋯ overflow (Create PR while paused, Copy branch, Archive).
   setupPrButton(node, projectDir, p, ghAvailable);
   setupDeleteButton(node, projectDir, p);
   setupResumeButton(node, projectDir, p);
+  if (p.branch) {
+    histMenuAdd(node, 'Copy branch name', async (item) => {
+      try {
+        await navigator.clipboard.writeText(p.branch);
+        item.textContent = 'Copied ✓';
+        setTimeout(() => { item.textContent = 'Copy branch name'; }, 1200);
+      } catch { /* clipboard unavailable — leave the label */ }
+    });
+  }
+  if (isDeletableEntry(p)) {
+    histMenuAdd(node, 'Archive', () => {
+      const del = node.querySelector('.hist-delete');
+      if (del) del.click(); // the detail button owns confirm + DELETE + removal
+    });
+  }
 
   // List density: the same one-line rail the Running cards use, its totals, and
   // one way into the detail view.

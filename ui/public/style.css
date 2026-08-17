@@ -610,7 +610,36 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 
 /* ---------- History cards (expandable) ---------- */
-.hist-card{padding:18px 22px;}
+/* Design B edge stripe: status colour on the card's left edge (border, not an
+   overlay — the ⋯ menu must overflow the card, so no overflow:hidden here). */
+.hist-card{padding:18px 22px;border-left:4px solid var(--line-2);}
+.hist-card.hc-ok{border-left-color:var(--green);}
+.hist-card.hc-warn{border-left-color:var(--amber);}
+.hist-card.hc-bad{border-left-color:var(--red);}
+.hist-card.hc-run{border-left-color:var(--blue);}
+
+/* C's status icon: a tinted circle carries the state family at a glance. */
+.hist-ico{flex:0 0 auto;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;}
+.hist-ico svg{display:block;}
+.hist-ico.hi-ok{background:var(--green-bg);color:var(--green-ink);}
+.hist-ico.hi-warn{background:var(--amber-bg);color:var(--amber-ink);}
+.hist-ico.hi-bad{background:var(--red-bg);color:var(--red-ink);}
+.hist-ico.hi-run{background:var(--blue-bg);color:var(--blue-ink);}
+.hist-ico.hi-run svg{animation:pulse 1.3s ease-in-out infinite;}
+.hist-ico.hi-none{background:var(--field);color:var(--ink-3);}
+
+.hist-head .h-line1{display:flex;align-items:center;gap:9px;min-width:0;}
+.hist-head .h-line2{display:flex;align-items:center;flex-wrap:wrap;min-width:0;}
+/* Status word: dot + coloured text, first on the meta line (carries the pause
+   reason inline — "Paused — cost limit"). */
+.hist-stat{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;white-space:nowrap;}
+.hist-stat::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.hist-stat.hs-ok{color:var(--green-ink);}
+.hist-stat.hs-warn{color:var(--amber-ink);}
+.hist-stat.hs-bad{color:var(--red-ink);}
+.hist-stat.hs-run{color:var(--blue-ink);}
+.hist-stat.hs-none{color:var(--ink-3);}
+.hist-head .h-line2 small:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .hist-head{display:flex;align-items:center;gap:13px;cursor:pointer;}
 .hist-head:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .hist-head .h-meta{flex:1;min-width:0;}
@@ -745,21 +774,50 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Branch name under the date/cost (left column). */
 .h-meta .hist-branch{display:block;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-top:4px;}
 .h-meta .hist-branch:empty{display:none;}
+/* Branch pair: greyed source → emphasised feature. */
+.h-meta .hist-branch .from{color:var(--ink-3);font-weight:500;}
+.h-meta .hist-branch .arr{color:var(--ink-3);font-weight:500;margin:0 6px;}
+.h-meta .hist-branch .to{color:var(--ink-2);}
 
 /* Right-side cluster, before the chevron: lines changed, merge pill, Create PR. */
-.hist-aside{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
+.hist-aside{position:relative;display:flex;align-items:center;gap:9px;flex:0 0 auto;}
 
-.hist-merge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.hist-merge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:5px 11px;border-radius:999px;white-space:nowrap;}
 .hist-merge[hidden]{display:none;}
 .hist-merge.ok{background:var(--green-bg);color:var(--green-ink);}
 .hist-merge.bad{background:var(--red-bg);color:var(--red-ink);}
 .hist-merge.unknown{background:var(--amber-bg);color:var(--amber-ink);}
 
-.hist-pr{padding:6px 12px;font-size:12px;flex:0 0 auto;}
+/* Design B: one action size for the whole cluster; Resume (the row's single
+   primary when paused) is the only filled button, everything else stays quiet. */
+.hist-aside .btn-ghost{padding:7px 15px;font-size:12.5px;flex:0 0 auto;}
 .hist-pr[hidden]{display:none;}
-.hist-pr-link{font-size:12px;font-weight:600;color:var(--green-ink);text-decoration:none;white-space:nowrap;}
-.hist-pr-link:hover{text-decoration:underline;}
-.hist-pr-link.merged{color:var(--muted, #888);}
+.hist-resume{background:var(--ink);color:#fff;border-color:var(--ink);}
+.hist-resume:hover:not(:disabled){background:var(--ink);filter:brightness(1.35);}
+.hist-resume:disabled{opacity:.45;cursor:default;}
+.hist-resume:disabled:hover{background:var(--ink);}
+/* Open PR -> quiet View-PR button; merged PR -> linked chip (a fact, not a CTA). */
+.hist-pr-link{display:inline-flex;align-items:center;gap:6px;padding:7px 15px;
+  border:1.5px solid var(--line-2);border-radius:999px;background:#fff;
+  font-size:12.5px;font-weight:600;color:var(--ink);text-decoration:none;white-space:nowrap;transition:.15s;}
+.hist-pr-link:hover{background:var(--field);}
+.hist-pr-link.merged{border:none;background:#eef0ef;color:#6a6a64;
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:5px 11px;}
+.hist-pr-link.merged:hover{background:#e4e6e4;}
+
+/* ⋯ overflow: secondary actions (Create PR while paused, Copy branch, Archive). */
+.hist-more{display:inline-flex;align-items:center;justify-content:center;width:33px;height:33px;
+  border:1.5px solid var(--line-2);border-radius:999px;background:#fff;color:var(--ink-2);
+  font:inherit;font-size:15px;line-height:1;cursor:pointer;transition:.15s;flex:0 0 auto;}
+.hist-more:hover{background:var(--field);}
+.hist-more[hidden]{display:none;}
+.hist-menu{position:absolute;top:calc(100% + 7px);right:0;z-index:30;min-width:170px;
+  background:#fff;border:1px solid var(--line-2);border-radius:13px;padding:6px;
+  box-shadow:0 8px 26px rgba(20,20,10,.13);display:flex;flex-direction:column;}
+.hist-menu[hidden]{display:none;}
+.hist-menu-item{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);text-align:left;
+  background:none;border:none;border-radius:8px;padding:9px 12px;cursor:pointer;white-space:nowrap;}
+.hist-menu-item:hover{background:var(--field);}
 
 /* Delete action under the expanded card's stepper. Filled red to read as the
    single destructive action (scoped to .hist-delete so the existing soft
@@ -1396,8 +1454,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .cost-banner .cb-text{color:var(--ink-2);}
 .cost-banner .cb-text .mono{font-family:var(--mono);font-weight:600;color:var(--ink);}
 .cost-banner .cb-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
-.hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);margin-left:10px;}
-.hist-pausenote.total{color:var(--red-ink);}
 
 @media (max-width:1080px){
   .stat-row{grid-template-columns:repeat(2,1fr);}

@@ -435,16 +435,17 @@
           <template id="hist-card-tpl">
             <section class="card hist-card mini">
               <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
-                <span class="badge"></span>
+                <span class="hist-ico"></span>
                 <div class="h-meta">
-                  <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span><span class="hist-stage mono"></span>
+                  <div class="h-line1"><b></b></div>
+                  <div class="h-line2"><span class="hist-stat"></span><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span><span class="hist-stage mono"></span></div>
                   <span class="hist-branch mono"></span>
-                  <span class="hist-pausenote" hidden></span>
                 </div>
                 <div class="hist-aside">
                   <span class="hist-merge" hidden></span>
                   <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
                   <button type="button" class="hist-resume btn-ghost" hidden>Resume</button>
+                  <button type="button" class="hist-more" hidden aria-label="More actions" aria-haspopup="true" aria-expanded="false">⋯</button>
                 </div>
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>

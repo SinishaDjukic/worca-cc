@@ -43,15 +43,18 @@ const SURVIVED = {
 };
 
 // The +X/−Y chip beside Create PR was removed (a raw line delta there answered
-// nothing); the branch line is what remains of the survived-branch head display.
-test('survived entry: branch line under meta, and no line-delta chip', async () => {
+// nothing); the branch line shows the pair: greyed source → emphasised feature.
+test('survived entry: branch pair under meta, and no line-delta chip', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([SURVIVED], true) : null),
   });
   showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
-  assert.equal(card.querySelector('.h-meta .hist-branch').textContent, 'worca-cc/feat-1');
+  const branch = card.querySelector('.h-meta .hist-branch');
+  assert.equal(branch.querySelector('.from').textContent, 'main', 'source branch first');
+  assert.equal(branch.querySelector('.arr').textContent, '→');
+  assert.equal(branch.querySelector('.to').textContent, 'worca-cc/feat-1', 'feature branch emphasised');
   assert.equal(card.querySelector('.hist-diff'), null, 'no +X/−Y chip in the head');
 });
 
@@ -108,7 +111,7 @@ test('open PR: no Create-PR button, shows a "View PR" link to the existing PR', 
   assert.equal(card.querySelector('.hist-pr'), null, 'Create-PR button is gone');
   const link = card.querySelector('.hist-pr-link');
   assert.equal(link.getAttribute('href'), 'https://gh/x/pull/8');
-  assert.equal(link.textContent, 'View PR');
+  assert.equal(link.textContent, 'View PR ↗');
 });
 
 test('merged PR: shows a "Merged" link, no button', async () => {
@@ -121,7 +124,7 @@ test('merged PR: shows a "Merged" link, no button', async () => {
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr'), null);
   const link = card.querySelector('.hist-pr-link');
-  assert.equal(link.textContent, 'Merged');
+  assert.equal(link.textContent, '✓ Merged');
   assert.equal(link.getAttribute('href'), 'https://gh/x/pull/9');
 });
 
@@ -152,7 +155,7 @@ test('merged PR with branch gone (survived=false) still shows the Merged link', 
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr'), null);
-  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged');
+  assert.equal(card.querySelector('.hist-pr-link').textContent, '✓ Merged');
 });
 
 test('open PR still checking: a delayed re-check updates the stuck pill', async () => {

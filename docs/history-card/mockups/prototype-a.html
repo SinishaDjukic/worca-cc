@@ -1,0 +1,177 @@
+<meta charset="utf-8">
+<title>History Card Prototype A</title>
+<style>
+  :root{
+    --bg:#eeeeea; --card:#ffffff; --field:#f5f5f1;
+    --ink:#1a1a18; --ink-2:#4c4c47; --ink-3:#94948c;
+    --line:#e8e8e2; --line-2:#dcdcd5;
+    --green-bg:#e2f3e5; --green-ink:#2c7a3f;
+    --amber-bg:#fdeed2; --amber-ink:#a86a15;
+    --red-bg:#fbe4e1; --red-ink:#bf3b2f;
+    --violet-bg:#ececfa; --violet-ink:#5555c9;
+    --grey-bg:#eef0ef; --grey-ink:#6a6a64;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:44px 24px 90px;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+  .page{max-width:1020px;margin:0 auto;}
+  h1{font-size:21px;margin:0 0 6px;letter-spacing:-.01em;}
+  .lede{color:var(--ink-2);font-size:13.5px;max-width:70ch;margin:0 0 4px;}
+  .moves{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px;padding:0;list-style:none;}
+  .moves li{font-size:11.5px;font-weight:600;color:var(--ink-2);background:var(--card);
+    border:1px solid var(--line-2);border-radius:999px;padding:5px 12px;}
+  .cap{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink-3);margin:26px 0 8px;}
+
+  /* ---------- the row ---------- */
+  .card{background:var(--card);border-radius:20px;padding:17px 22px;
+    box-shadow:0 1px 2px rgba(20,20,10,.05),0 4px 14px rgba(20,20,10,.03);}
+  .row{display:flex;align-items:center;gap:15px;}
+
+  .badge{flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:.05em;
+    padding:6px 12px;border-radius:999px;white-space:nowrap;}
+  .badge.green{background:var(--green-bg);color:var(--green-ink);}
+  .badge.amber{background:var(--amber-bg);color:var(--amber-ink);}
+  .badge.red{background:var(--red-bg);color:var(--red-ink);}
+  .badge small{display:block;font-size:9px;font-weight:700;letter-spacing:.04em;
+    opacity:.85;margin-top:1px;text-transform:none;}
+
+  .meta{flex:1 1 auto;min-width:0;}
+  .titleline{display:flex;align-items:center;gap:9px;min-width:0;}
+  .title{font-weight:650;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .src{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;
+    background:var(--violet-bg);color:var(--violet-ink);border-radius:999px;padding:3px 10px;}
+  .src a{color:inherit;text-decoration:none;border-bottom:1px solid currentColor;font-weight:800;}
+  .vals{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;
+    font-weight:500;color:var(--ink-3);margin-top:3px;}
+  .vals b{font-weight:500;}
+  .vals .dot{margin:0 7px;}
+  .branch{font-family:var(--mono);font-size:12px;margin-top:4px;}
+  .branch .from{color:var(--ink-3);}
+  .branch .arr{color:var(--ink-3);margin:0 7px;}
+  .branch .to{color:var(--ink-2);font-weight:650;}
+
+  .aside{flex:0 0 auto;display:flex;align-items:center;gap:9px;}
+  .chip{font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:5px 11px;
+    border-radius:999px;white-space:nowrap;}
+  .chip.green{background:var(--green-bg);color:var(--green-ink);}
+  .chip.grey{background:var(--grey-bg);color:var(--grey-ink);}
+  .act{display:inline-flex;align-items:center;gap:6px;padding:8px 15px;border:1.5px solid var(--line-2);
+    border-radius:999px;background:var(--card);font:inherit;font-weight:650;font-size:12.5px;
+    color:var(--ink);cursor:pointer;text-decoration:none;white-space:nowrap;transition:background .15s;}
+  .act:hover{background:var(--field);}
+  .act[aria-disabled="true"]{opacity:.42;cursor:default;}
+  .act[aria-disabled="true"]:hover{background:var(--card);}
+  .act .ext{font-size:11px;color:var(--ink-3);}
+
+  .chev{flex:0 0 auto;color:var(--ink-3);}
+
+  .note{font-size:12px;color:var(--ink-3);margin:7px 4px 0;max-width:74ch;}
+</style>
+
+<div class="page">
+  <h1>Prototype A — one grammar</h1>
+  <p class="lede">The conservative repair: keep today's anatomy, but make every element speak one of
+  exactly two languages. <b>Chips state facts</b> (status, PR merged, mergeability) and
+  <b>buttons do things</b> — same size, same shape, no bare links. The status pill absorbs the pause
+  reason, the plugin pill leaves the badge column and becomes a quiet label on the title line.</p>
+  <ul class="moves">
+    <li>pause note folded into the status pill</li>
+    <li>provenance chip → title line</li>
+    <li>View PR is a button, Merged is a chip</li>
+    <li>one action size everywhere</li>
+    <li>branch pair: source → feature</li>
+  </ul>
+
+  <div class="cap">Done · plugin-sourced · PR not created yet</div>
+  <div class="card"><div class="row">
+    <span class="badge green">DONE</span>
+    <div class="meta">
+      <div class="titleline">
+        <span class="title">H9 · Plugin-sourced task</span>
+        <span class="src">github-tasks <a href="#">T-123</a></span>
+      </div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>12m 23s<span class="dot">·</span>$1.87<span class="dot">·</span>stage 7/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h9</span></div>
+    </div>
+    <div class="aside"><button class="act" type="button">Create PR</button></div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <div class="cap">Done · PR open</div>
+  <div class="card"><div class="row">
+    <span class="badge green">DONE</span>
+    <div class="meta">
+      <div class="titleline"><span class="title">H7 · Done — PR open</span></div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>12m 23s<span class="dot">·</span>$1.87<span class="dot">·</span>stage 7/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h7</span></div>
+    </div>
+    <div class="aside">
+      <span class="chip green">can merge</span>
+      <a class="act" href="#">View PR <span class="ext">↗</span></a>
+    </div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <div class="cap">Done · PR merged</div>
+  <div class="card"><div class="row">
+    <span class="badge green">DONE</span>
+    <div class="meta">
+      <div class="titleline"><span class="title">H8 · Done — PR merged</span></div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>12m 23s<span class="dot">·</span>$1.87<span class="dot">·</span>stage 7/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h8</span></div>
+    </div>
+    <div class="aside">
+      <span class="chip grey">✓ merged</span>
+      <a class="act" href="#">View PR <span class="ext">↗</span></a>
+    </div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <div class="cap">Paused · per-pipeline cost limit · resumable</div>
+  <div class="card"><div class="row">
+    <span class="badge amber">PAUSED<small>cost limit</small></span>
+    <div class="meta">
+      <div class="titleline"><span class="title">H4 · Paused — cost limit (resumable)</span></div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>6m 0s<span class="dot">·</span>$5.00<span class="dot">·</span>stage 5/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h4</span></div>
+    </div>
+    <div class="aside">
+      <button class="act" type="button">Create PR</button>
+      <button class="act" type="button">Resume</button>
+    </div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <div class="cap">Paused · total budget exhausted · Resume gated</div>
+  <div class="card"><div class="row">
+    <span class="badge amber">PAUSED<small>total budget</small></span>
+    <div class="meta">
+      <div class="titleline"><span class="title">H5 · Paused — total budget</span></div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>9m 0s<span class="dot">·</span>$12.55<span class="dot">·</span>stage 4/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h5</span></div>
+    </div>
+    <div class="aside">
+      <button class="act" type="button">Create PR</button>
+      <button class="act" type="button" aria-disabled="true" title="Global budget exhausted — raise it in Settings to resume">Resume</button>
+    </div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <div class="cap">Error · no actions in the head</div>
+  <div class="card"><div class="row">
+    <span class="badge red">ERROR</span>
+    <div class="meta">
+      <div class="titleline"><span class="title">H2 · Errored during implement</span></div>
+      <div class="vals">17/08/2026 12:15<span class="dot">·</span>3m 41s<span class="dot">·</span>$0.92<span class="dot">·</span>stage 5/7</div>
+      <div class="branch"><span class="from">dev</span><span class="arr">→</span><span class="to">worca-cc/frozen-h2</span></div>
+    </div>
+    <div class="aside"></div>
+    <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+
+  <p class="note">The two-deck status pill ("PAUSED / cost limit") replaces the amber
+  <code>.hist-pausenote</code> line entirely — the reason travels with the status instead of dangling
+  under the branch. The tooltip on the gated Resume explains <i>why</i> it is disabled.</p>
+</div>

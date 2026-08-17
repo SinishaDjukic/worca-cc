@@ -78,7 +78,7 @@ test('history-pr OPEN batch swaps Create-PR -> "View PR" link in place, merge pi
   assert.equal(card.querySelector('.hist-pr'), null, 'Create-PR button replaced');
   const link = card.querySelector('.hist-pr-link');
   assert.equal(link.getAttribute('href'), 'https://gh/x/pull/8');
-  assert.equal(link.textContent, 'View PR');
+  assert.equal(link.textContent, 'View PR ↗');
   assert.equal(card.querySelector('.hist-merge').hidden, true, 'mergeability pill stays hidden (clarification B)');
   assert.equal(card.querySelector('.hist-head').getAttribute('aria-expanded'), 'true', 'expand survived the patch');
 });
@@ -93,7 +93,7 @@ test('history-pr MERGED batch renders a "Merged" link', async () => {
   const card = ctx.window.document.querySelector('#history .hist-card');
   const link = card.querySelector('.hist-pr-link.merged');
   assert.ok(link, 'merged link present');
-  assert.equal(link.textContent, 'Merged');
+  assert.equal(link.textContent, '✓ Merged');
   assert.equal(link.getAttribute('href'), 'https://gh/x/pull/9');
 });
 
@@ -177,7 +177,7 @@ test('PR button stays hidden until each entry resolves, then reveals progressive
   ctx.dispatchPr({ token, done: true, items: [{ projectKey: 'k', id: 'b', pr: { state: 'OPEN', url: 'https://gh/x/pull/4', number: 4 } }] });
   await ctx.tick();
   assert.equal(cardB.querySelector('.hist-pr'), null, 'B button replaced by link');
-  assert.equal(cardB.querySelector('.hist-pr-link').textContent, 'View PR');
+  assert.equal(cardB.querySelector('.hist-pr-link').textContent, 'View PR ↗');
 });
 
 test('an eligible entry the server never sent a batch for is revealed on the final (done) batch', async () => {
@@ -220,7 +220,7 @@ test('refresh hides a previously-merged entry button (no Create-PR flash) until 
   ctx.dispatchPr({ token: t1, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } }] });
   await ctx.tick();
   let card = ctx.window.document.querySelector('#history .hist-card');
-  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged', 'resolved to Merged after first load');
+  assert.equal(card.querySelector('.hist-pr-link').textContent, '✓ Merged', 'resolved to Merged after first load');
 
   // Force-refresh: skeleton has no pr -> button must be HIDDEN, not "Create PR", and the
   // stale "Merged" link must be gone during the refresh window.
@@ -235,5 +235,5 @@ test('refresh hides a previously-merged entry button (no Create-PR flash) until 
   assert.notEqual(t1, t2, 'refresh issued a new token');
   ctx.dispatchPr({ token: t2, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } }] });
   await ctx.tick();
-  assert.equal(card.querySelector('.hist-pr-link').textContent, 'Merged', 're-resolved to Merged after refresh');
+  assert.equal(card.querySelector('.hist-pr-link').textContent, '✓ Merged', 're-resolved to Merged after refresh');
 });

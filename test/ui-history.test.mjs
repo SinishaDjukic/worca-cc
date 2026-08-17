@@ -102,7 +102,7 @@ function runsListResponse(pipelines, live = []) {
   return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 }
 
-test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav count=2', async () => {
+test('history renders 2 .hist-card divs (no <li>), ok/bad status icons, nav count=2', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/history')) {
@@ -122,11 +122,13 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
   assert.equal(cards.length, 2, 'two history cards rendered');
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> emitted');
 
-  const badges = [...doc.querySelectorAll('#history .badge')];
-  assert.equal(badges[0].textContent, 'DONE');
-  assert.ok(badges[0].classList.contains('green'), 'done badge is green');
-  assert.equal(badges[1].textContent, 'STOPPED');
-  assert.ok(badges[1].classList.contains('red'), 'stopped badge is red');
+  const icons = [...doc.querySelectorAll('#history .hist-ico')];
+  assert.ok(icons[0].classList.contains('hi-ok'), 'done icon is the green family');
+  assert.equal(icons[0].title, 'Done');
+  assert.ok(icons[1].classList.contains('hi-bad'), 'stopped icon is the red family');
+  assert.equal(icons[1].title, 'Stopped');
+  assert.equal(cards[0].querySelector('.hist-stat').textContent, 'Done');
+  assert.equal(cards[1].querySelector('.hist-stat').textContent, 'Stopped');
 
   // Titles surface in .h-meta b.
   assert.equal(cards[0].querySelector('.h-meta b').textContent, 'Done run');
@@ -134,7 +136,7 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
   assert.equal(doc.querySelector('#nav-history-count').textContent, '2', 'nav count reflects rendered cards');
 });
 
-test('interrupted entry renders an INTERRUPTED red badge', async () => {
+test('interrupted entry renders a red-family icon + Interrupted status word', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.includes('/api/history')
       ? runsListResponse([{ id: 'pi', title: 'Stuck', status: 'interrupted', startedAt: '2026-06-02T00:00:00Z',
@@ -143,9 +145,9 @@ test('interrupted entry renders an INTERRUPTED red badge', async () => {
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  const badge = ctx.window.document.querySelector('#history .badge');
-  assert.equal(badge.textContent, 'INTERRUPTED');
-  assert.ok(badge.classList.contains('red'), 'interrupted badge is red');
+  const ico = ctx.window.document.querySelector('#history .hist-ico');
+  assert.ok(ico.classList.contains('hi-bad'), 'interrupted icon is the red family');
+  assert.equal(ctx.window.document.querySelector('#history .hist-stat').textContent, 'Interrupted');
 });
 
 test('expanding a card toggles aria-expanded, unhides detail, tints stepper from fetched state', async () => {

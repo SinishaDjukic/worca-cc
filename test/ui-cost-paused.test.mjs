@@ -182,7 +182,7 @@ test('a non-cost pause leaves the banner hidden and the pill plain', async () =>
   assert.equal(card.querySelector('.btn-resume').disabled, false);
 });
 
-test('history: pausenote in head; expanded detail shows the banner; hist-resume gated', async () => {
+test('history: pause reason in the status word; expanded detail shows the banner; hist-resume gated', async () => {
   const ENTRIES = [
     { id: 'h1', title: 'Pipe cap', status: 'paused', pauseReason: 'cost_pipeline', startedAt: '2026-01-01T00:00:00Z' },
     { id: 'h2', title: 'Total cap', status: 'paused', pauseReason: 'cost_total', startedAt: '2026-01-01T00:00:00Z' },
@@ -205,13 +205,12 @@ test('history: pausenote in head; expanded detail shows the banner; hist-resume 
   const cards = ctx.window.document.querySelectorAll('#history .hist-card');
   assert.equal(cards.length, 2);
 
-  const note1 = cards[0].querySelector('.hist-pausenote');
-  assert.ok(note1, 'hist-card template carries a .hist-pausenote slot');
-  assert.equal(note1.hidden, false);
-  assert.equal(note1.textContent, 'paused · cost limit');
-  const note2 = cards[1].querySelector('.hist-pausenote');
-  assert.equal(note2.textContent, 'paused · total budget');
-  assert.ok(note2.classList.contains('total'), 'total-budget note uses the red modifier');
+  const stat1 = cards[0].querySelector('.hist-stat');
+  assert.ok(stat1, 'hist-card template carries a .hist-stat slot');
+  assert.equal(stat1.textContent, 'Paused — cost limit');
+  const stat2 = cards[1].querySelector('.hist-stat');
+  assert.equal(stat2.textContent, 'Paused — total budget');
+  assert.ok(stat2.classList.contains('hs-warn'), 'paused rows carry the warn family');
   assert.equal(cards[1].dataset.pauseReason, 'cost_total', 'reason stamped for later re-gating');
 
   // Gating: only the total-cap row is blocked while the budget is over.
