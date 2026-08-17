@@ -433,7 +433,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-clear{background:var(--field);border:none;border-radius:10px;padding:8px 15px;font-family:inherit;
   font-weight:600;font-size:12.5px;cursor:pointer;color:var(--ink-2);transition:.15s;}
 .btn-clear:hover{background:var(--line-2);}
-.log{background:#FBFBF9;border:1px solid var(--line);border-radius:16px;min-height:260px;max-height:380px;overflow-y:auto;
+.log{background:#fff;border:1px solid var(--line);border-radius:16px;min-height:260px;max-height:380px;overflow-y:auto;
   padding:18px 20px;font-family:var(--mono);font-size:12.5px;line-height:1.85;color:var(--ink-2);
   white-space:pre-wrap;word-break:break-word;}
 .log .t{color:var(--ink-3);}
@@ -518,11 +518,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    one row always: nowrap bar, content-sized shrinkable pills (width:auto beats
    the global 100%-width select rule; min-width:0 lets bar and pills shrink) */
 .log-filters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0;}
-.log-filters .log-f{font:inherit;font-size:12px;padding:2px 6px;border:1px solid var(--line);border-radius:8px;
-  background:#FBFBF9;color:var(--ink-2);max-width:150px;width:auto;min-width:0;}
-/* search shares the pill look but may shrink further; copy is the only button */
-.log-filters .log-search{flex:0 1 130px;}
-.log-filters .log-copy{flex:0 0 auto;cursor:pointer;}
+.log-filters .log-f{font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;color:var(--ink-2);max-width:150px;width:auto;min-width:0;}
+/* search is the only pill that grows (own max-width beats the pill cap above);
+   copy pins to the bar's right edge via the auto margin */
+.log-filters .log-search{flex:1 1 160px;max-width:340px;}
+.log-filters .log-copy{flex:0 0 auto;margin-left:auto;cursor:pointer;}
 .log-filters .log-copy:hover{background:var(--line);}
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
