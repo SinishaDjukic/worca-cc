@@ -134,3 +134,50 @@ test('setStep with only fanOut=false on an otherwise-empty step still persists',
   await setStep(p, 'reviewer', { fanOut: false });
   assert.deepEqual((await readConfig(p)).steps.reviewer, { fanOut: false });
 });
+
+// An explicit null is the third state the New-Pipeline accordion needs: not
+// "leave it alone" (undefined) and not "store false" (boolean), but "drop the
+// override so this row inherits its default again" (newpipeline-ux-design.md §4.5).
+test('setStep: null CLEARS a toggle, undefined preserves it, false stores false', async () => {
+  const p = await freshProject();
+  await setStep(p, 'planner', { fanOut: true, askQuestions: true });
+  assert.deepEqual((await readConfig(p)).steps.planner, { fanOut: true, askQuestions: true });
+
+  await setStep(p, 'planner', { fanOut: null });
+  assert.deepEqual((await readConfig(p)).steps.planner, { askQuestions: true }, 'fanOut cleared, sibling kept');
+
+  await setStep(p, 'planner', { askQuestions: false });
+  assert.deepEqual((await readConfig(p)).steps.planner, { askQuestions: false }, 'false is a stored value, not a clear');
+
+  // Clearing the last thing on a step removes the step entry entirely.
+  await setStep(p, 'planner', { askQuestions: null });
+  assert.equal((await readConfig(p)).steps.planner, undefined);
+});
+
+test('setNodeModel: null clears a toggle and an emptied node drops its row', async () => {
+  const { setNodeModel, readRunConfig } = await import('../src/core/config.mjs');
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 'n0', { model: 'claude-opus-4-8', fanOut: true });
+  assert.deepEqual((await readRunConfig(p)).workflows.wf_x.nodes.n0, { model: 'claude-opus-4-8', fanOut: true });
+
+  await setNodeModel(p, 'wf_x', 'n0', { model: 'claude-opus-4-8', fanOut: null });
+  assert.deepEqual((await readRunConfig(p)).workflows.wf_x.nodes.n0, { model: 'claude-opus-4-8' });
+
+  await setNodeModel(p, 'wf_x', 'n0', { model: '', effort: '', fanOut: null, askQuestions: null });
+  assert.equal((await readRunConfig(p)).workflows.wf_x, undefined, 'an empty node leaves nothing behind');
+});
+
+test('resetWorkflowConfig drops one workflow\'s overrides, and wf_default\'s legacy steps too', async () => {
+  const { setNodeModel, setFeedbackCycles, resetWorkflowConfig, readRunConfig } = await import('../src/core/config.mjs');
+  const p = await freshProject();
+  await setStep(p, 'planner', { model: 'claude-opus-4-8' });
+  await setNodeModel(p, 'wf_default', 's0_0', { fanOut: true });
+  await setNodeModel(p, 'wf_other', 'n0', { fanOut: true });
+  await setFeedbackCycles(p, 'wf_default', 'fb_review', 9);
+
+  await resetWorkflowConfig(p, 'wf_default');
+  const cfg = await readRunConfig(p);
+  assert.deepEqual(cfg.steps, {}, 'the legacy blob is where wf_default overrides live — it must go too');
+  assert.equal(cfg.workflows.wf_default, undefined);
+  assert.deepEqual(cfg.workflows.wf_other.nodes.n0, { fanOut: true }, 'other workflows untouched');
+});

@@ -38,7 +38,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
-  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow,
+  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -51,6 +51,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+  setWorkflowNodeDefaults, workflowNodeDefaults,
 } from '../src/core/workflows.mjs';
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -2130,6 +2131,27 @@ app.patch('/api/config', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// DELETE /api/config/workflow -> "Reset to defaults" for one workflow in one
+// project (newpipeline-ux-design.md §4.5). Drops every per-node/per-feedback
+// override (and, for wf_default, the legacy per-role steps) so the accordion
+// falls back to the workflow's defaults + the agent registry. Idempotent:
+// resetting an already-clean project is a no-op 200.
+// query: ?projectDir=&workflowId=
+// ---------------------------------------------------------------------------
+app.delete('/api/config/workflow', async (req, res) => {
+  const projectDir = resolveProjectDir(req.query.projectDir);
+  if (!projectDir) return badRequest(res, 'projectDir is required');
+  const workflowId = typeof req.query.workflowId === 'string' ? req.query.workflowId.trim() : '';
+  if (!workflowId) return badRequest(res, 'workflowId is required');
+  try {
+    await resetWorkflowConfig(projectDir, workflowId);
+    res.json({ config: await readRunConfig(projectDir) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // POST /api/config/models (the per-project ADD) is deliberately GONE: new
 // models are added to the GLOBAL catalog via POST /api/models (design §4.9 —
 // the add flow moves entirely to the global Models view). DELETE stays so
@@ -2395,6 +2417,23 @@ app.delete('/api/models/:id', async (req, res) => {
 // /api/projects + /api/config delegation pattern: thin handlers, validation and
 // atomic persistence owned by src/core/workflows.mjs + workflow-validator.mjs.
 // ---------------------------------------------------------------------------
+// Validate one node-defaults block against the project-less catalog. Returns an
+// error message, or '' when the block is acceptable. Mirrors setStep's rules so a
+// workflow default can never name something a per-project override could not.
+function nodeDefaultsError(raw, models, where) {
+  if (raw == null) return '';
+  if (typeof raw !== 'object' || Array.isArray(raw)) return `defaults for ${where} must be an object`;
+  const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+  const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) return `unknown model "${model}"`;
+  if (!effort) return '';
+  if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
+  if (!entry) return 'select a model before choosing an effort';
+  if (!entry.efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
+  return '';
+}
+
 app.get('/api/workflows', async (_req, res) => {
   try {
     // The built-in default is never persisted to the user store; callers
@@ -2426,6 +2465,17 @@ app.post('/api/workflows', async (req, res) => {
   };
   if (!tpl.name) return badRequest(res, 'name is required');
   try {
+    // Per-node defaults ride along in steps (§4.4); hold them to the same catalog
+    // rules as PATCH .../defaults so an imported template cannot smuggle in a
+    // model id that no per-project override would be allowed to name.
+    const models = await listModels('');
+    for (const group of tpl.steps) {
+      for (const node of Array.isArray(group) ? group : []) {
+        if (!node || typeof node !== 'object' || node.defaults === undefined) continue;
+        const err = nodeDefaultsError(node.defaults, models, `node "${node.id}"`);
+        if (err) return badRequest(res, err);
+      }
+    }
     const registry = loadAgentRegistry(AGENTS_DIR);
     const { ok, errors, warnings } = validateWorkflow(tpl, registry);
     if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
@@ -2434,6 +2484,37 @@ app.post('/api/workflows', async (req, res) => {
     res.status(201).json({ workflow, warnings });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/workflows/:id/defaults -> set the template's per-node defaults
+// (newpipeline-ux-design.md §4.4). body: { defaults: { [nodeId]: {model?, effort?,
+// fanOut?, askQuestions?} | null } }; null (or an empty block) clears a node, an
+// absent node keeps what it has. Model/effort validate against the PROJECT-LESS
+// catalog (predefined ⊕ global ⊕ plugin) — defaults are global, so a legacy
+// per-project custom model is deliberately not a valid default.
+// ---------------------------------------------------------------------------
+app.patch('/api/workflows/:id/defaults', async (req, res) => {
+  const body = req.body || {};
+  const map = body.defaults;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    return badRequest(res, 'defaults must be an object keyed by node id');
+  }
+  try {
+    const models = await listModels('');
+    for (const [nodeId, raw] of Object.entries(map)) {
+      const err = nodeDefaultsError(raw, models, `node "${nodeId}"`);
+      if (err) return badRequest(res, err);
+    }
+    const workflow = await setWorkflowNodeDefaults(req.params.id, map);
+    res.json({ workflow, defaults: workflowNodeDefaults(workflow) });
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    // "workflow not found" is a 404; the frozen-default refusal and any shape
+    // complaint are caller errors — nothing here is a server fault.
+    if (/not found/i.test(message)) return res.status(404).json({ error: message });
+    return badRequest(res, message);
   }
 });
 
