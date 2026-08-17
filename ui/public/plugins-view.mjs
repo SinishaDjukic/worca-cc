@@ -13,6 +13,22 @@ function h(doc, tag, cls, text) {
 
 const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 
+// Inline feather-style icons for card action buttons (stroke follows currentColor).
+const ICONS = {
+  bin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
+  refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+};
+
+// icon button: <button class=cls>[svg] label</button>. innerHTML is a fixed
+// ICONS constant (never caller data), so no injection surface.
+function iconBtn(doc, cls, icon, label) {
+  const b = h(doc, 'button', cls);
+  b.type = 'button';
+  b.innerHTML = ICONS[icon];
+  b.appendChild(doc.createTextNode(label));
+  return b;
+}
+
 // contributions -> "2 agents · 1 source · 1 skill". Arrays (listInstalledPlugins)
 // or plain counts are both tolerated.
 function contribSummary(c) {
@@ -388,12 +404,16 @@ export function renderMarketplaceList(marketplaces, { doc = globalThis.document,
     const head = h(doc, 'div', 'pl-head');
     head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
     if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
-    for (const [cls, label] of [['pl-mkt-refresh', 'Refresh'], ['pl-mkt-remove', 'Remove']]) {
-      const b = h(doc, 'button', `btn-ghost ${cls}`, label);
-      b.type = 'button';
+    const actions = h(doc, 'div', 'pl-mkt-actions');
+    for (const [cls, icon, label] of [
+      ['btn-ghost pl-mkt-refresh', 'refresh', 'Refresh'],
+      ['pl-remove pl-mkt-remove', 'bin', 'Remove'],
+    ]) {
+      const b = iconBtn(doc, cls, icon, label);
       b.dataset.id = m.id;
-      head.appendChild(b);
+      actions.appendChild(b);
     }
+    head.appendChild(actions);
     row.appendChild(head);
     row.appendChild(h(doc, 'small', 'pl-mkt-url hint mono', m.url));
     const n = (m.plugins || []).length;

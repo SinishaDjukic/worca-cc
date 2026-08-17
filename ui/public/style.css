@@ -733,13 +733,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    single destructive action (scoped to .hist-delete so the existing soft
    .btn-danger rule is left untouched). */
 .hist-actions{display:flex;justify-content:flex-end;margin-top:14px;}
-.hist-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
+.hist-delete,.pl-remove{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink,#d9534f);
   border:1.5px solid var(--red-ink,#d9534f);color:#fff;font-family:inherit;font-weight:600;
   font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;}
-.hist-delete:hover:not(:disabled){filter:brightness(0.95);}
-.hist-delete:disabled{opacity:.6;cursor:default;}
+.hist-delete:hover:not(:disabled),.pl-remove:hover:not(:disabled){filter:brightness(0.95);}
+.hist-delete:disabled,.pl-remove:disabled{opacity:.6;cursor:default;}
 .hist-delete[hidden]{display:none;}
-.hist-delete svg{display:block;}
+.hist-delete svg,.pl-remove svg{display:block;}
 
 /* ========================================================================== */
 /* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
@@ -1197,14 +1197,24 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .results-trunc{font-size:11px;color:#946;margin-top:6px;}
 
 /* ---- Plugins view ---- */
+/* Available/Marketplaces render as one wrapper div inside the .run-list, so the
+   list's gap doesn't reach the cards — the wrappers repeat it. */
+.pl-list,.pl-orphans,.pl-available,.pl-mkts{display:flex;flex-direction:column;gap:18px;}
 .plugin-card{padding:16px 20px;}
+/* Card actions live top-right of the head row. */
+.pl-remove{border-radius:999px;} /* pill like the rest of this page's buttons */
+.pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.pl-mkt-actions .btn-ghost{display:inline-flex;align-items:center;gap:6px;}
+.pl-mkt-actions .btn-ghost svg{display:block;}
+.pl-avail-card .pl-install-avail,.pl-avail-card .pl-installed{margin-left:auto;}
 .plugin-card.pl-disabled{opacity:.62;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:14.5px;}
 .pl-version{color:var(--ink-3);font-size:12px;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
-.pl-actions button{padding:7px 14px;}
+/* One button height across the Plugins view, keyed to .btn-mini (Install…/Add). */
+.pl-actions button,.pl-purge-orphan,.pl-mkt-actions .btn-ghost,.pl-remove{padding:8px 14px;font-size:12.5px;}
 .pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
 .pl-consent-h{font-weight:700;font-size:12.5px;margin:10px 0 4px;}
 .pl-consent-row{font-size:12.5px;padding:2px 0;}
@@ -1348,6 +1358,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .topnav-amt.warn{color:var(--amber-ink);}
 .topnav-amt.over{color:var(--red-ink);}
 .topnav button.active .topnav-amt{color:inherit;}
+
+/* ---------- Settings cards ---------- */
+/* One width/centering/gap rule for all three Settings cards. */
+.settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
+.settings-card + .settings-card{margin-top:18px;}
 
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit

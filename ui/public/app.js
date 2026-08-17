@@ -6554,8 +6554,8 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
 // Available section: Install… resolves the snapshot entry from the last
 // /api/marketplaces payload and opens the same consent modal as before.
 if (el.pluginsAvailable) el.pluginsAvailable.addEventListener('click', (e) => {
-  const t = e.target;
-  if (!t.classList || !t.classList.contains('pl-install-avail')) return;
+  const t = e.target instanceof Element ? e.target.closest('.pl-install-avail') : null;
+  if (!t) return;
   const m = pluginsViewMarketplaces.find((x) => x.id === t.dataset.marketplace);
   const p = m && (m.plugins || []).find((x) => x.name === t.dataset.name);
   if (!m || !p || !m.lastSync) return;
@@ -6567,7 +6567,7 @@ if (el.pluginsAvailable) el.pluginsAvailable.addEventListener('click', (e) => {
 
 // Marketplaces section: Refresh / Remove.
 if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e) => {
-  const t = e.target;
+  const t = e.target instanceof Element ? e.target.closest('.pl-mkt-refresh,.pl-mkt-remove') : null;
   const id = t && t.dataset ? t.dataset.id : '';
   if (!id) return;
   if (t.classList.contains('pl-mkt-refresh')) {
