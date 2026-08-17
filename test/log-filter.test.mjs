@@ -55,9 +55,60 @@ test('logFacets collects distinct levels, parent-role sources, and sorted steps'
 });
 
 test('logFacets is safe on empty/malformed input', () => {
-  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [] });
+  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [], cycles: [] });
   const facets = logFacets([{ text: 'no source or level' }]);
   assert.deepEqual(facets.sources, []);
   assert.deepEqual(facets.levels, ['info']);
   assert.deepEqual(facets.steps, []);
+  assert.deepEqual(facets.cycles, []);
+});
+
+// ── cycle (the feedback-loop rewind counter, orthogonal to step) ─────────────
+
+test('cycle filter matches rec.cycle; attribution-less lines only show under all', () => {
+  assert.equal(logLineVisible(L({ cycle: 2 }), { cycle: '2' }), true);
+  assert.equal(logLineVisible(L({ cycle: 1 }), { cycle: '2' }), false);
+  assert.equal(logLineVisible(L(), { cycle: '1' }), false, 'no cycle → hidden when a cycle is chosen');
+  assert.equal(logLineVisible(L(), { cycle: '' }), true);
+});
+
+test('cycle and step are independent axes (a re-run keeps its stepIndex)', () => {
+  const firstPass = L({ stepIndex: 2, cycle: 1 });
+  const reRun = L({ stepIndex: 2, cycle: 2 });
+  assert.equal(logLineVisible(firstPass, { step: '2' }), true);
+  assert.equal(logLineVisible(reRun, { step: '2' }), true, 'both passes share the step');
+  assert.equal(logLineVisible(firstPass, { step: '2', cycle: '2' }), false);
+  assert.equal(logLineVisible(reRun, { step: '2', cycle: '2' }), true);
+});
+
+test('logFacets collects cycles, sorted numerically', () => {
+  const facets = logFacets([
+    L({ cycle: 3 }), L({ cycle: 1 }), L({ cycle: 2 }), L({ cycle: 1 }), L(), // cycle-less → no facet
+  ]);
+  assert.deepEqual(facets.cycles, [1, 2, 3]);
+});
+
+// ── search ──────────────────────────────────────────────────────────────────
+
+test('search is a case-insensitive substring of the text', () => {
+  assert.equal(logLineVisible(L({ text: 'Building the graph' }), { search: 'graph' }), true);
+  assert.equal(logLineVisible(L({ text: 'Building the graph' }), { search: 'GRAPH' }), true);
+  assert.equal(logLineVisible(L({ text: 'Building the graph' }), { search: 'missing' }), false);
+  assert.equal(logLineVisible(L({ text: 'x' }), { search: '' }), true, 'empty term shows all');
+});
+
+test('search matches the text only, not the source', () => {
+  assert.equal(logLineVisible(L({ source: 'planner', text: 'hello' }), { search: 'planner' }), false);
+});
+
+test('search is safe on a text-less record', () => {
+  assert.equal(logLineVisible({ source: 'planner' }, { search: 'x' }), false);
+  assert.equal(logLineVisible({ source: 'planner' }, { search: '' }), true);
+});
+
+test('search composes with the dropdown axes (AND)', () => {
+  const rec = L({ source: 'implementer', level: 'debug', stepIndex: 1, cycle: 2, text: '→ Read a.js' });
+  assert.equal(logLineVisible(rec, { source: 'implementer', level: 'debug', step: '1', cycle: '2', search: 'read' }), true);
+  assert.equal(logLineVisible(rec, { source: 'implementer', level: 'debug', step: '1', cycle: '2', search: 'write' }), false);
+  assert.equal(logLineVisible(rec, { source: 'planner', search: 'read' }), false);
 });
