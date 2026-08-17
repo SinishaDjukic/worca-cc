@@ -72,10 +72,14 @@ import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY
 import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
-  setPluginEnabled, doctorPlugin, buildInstallInventory,
+  setPluginEnabled, doctorPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
-import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
+import { fetchCandidate } from '../src/core/plugin-repo.mjs';
+import {
+  addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
+  removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
+} from '../src/core/marketplaces.mjs';
 import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core/plugin-config.mjs';
 import { createChannelHost } from '../src/core/chat/channel-host.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
@@ -87,14 +91,6 @@ import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs'
 import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
-// discoveryInventory below needs these four — server.mjs currently imports NONE
-// of them (verified: its node built-ins are namespace imports `fs`/`path`/`os`/
-// `fsp` only, and no `execFile`/`promisify`/`mkdtemp`/`rm`/`tmpdir` identifier
-// exists in the file, so there are no collisions):
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -2747,6 +2743,21 @@ function requirePlugin(req, res) {
   return name;
 }
 
+// :id guard for every /api/marketplaces/:id route. Real ids come from repoSlug
+// (`<readable [A-Za-z0-9._-]>-<8 hex>`), so this regex admits every legitimate
+// id and nothing path-like. The null-prototype map from readMarketplaces already
+// blocks `__proto__`/`constructor` lookups in add/sync/remove; Object.hasOwn
+// here is belt-and-suspenders.
+const MARKETPLACE_ID_RE = /^[A-Za-z0-9._-]{1,100}$/;
+function requireMarketplace(req, res) {
+  const id = req.params.id;
+  if (!MARKETPLACE_ID_RE.test(id) || !Object.hasOwn(readMarketplaces().marketplaces, id)) {
+    res.status(404).json({ error: 'marketplace not found' });
+    return null;
+  }
+  return id;
+}
+
 // Map plugin-core err.code -> HTTP (mirrors agentErrorStatus). The uninstall
 // guard's ReferencedError (plugin-workflows.mjs) is matched structurally so its
 // payload (the referencing list) reaches the client; everything uncoded is a
@@ -2755,6 +2766,7 @@ function pluginErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
   if (code === 'REFERENCED') return 409;
+  if (code === 'EXISTS') return 409;
   return 500;
 }
 function sendPluginError(res, err) {
@@ -2777,53 +2789,70 @@ function readInstalledManifest(name) {
   }
 }
 
-// Pre-install consent inventory (spec §6.1: agents WITH tools, sources WITH
-// requested secrets, dep count, setup commands — all BEFORE anything is
-// installed). buildInstallInventory needs a tree on disk, so export the pinned
-// SHA from the bare cache into a throwaway temp dir, inventory it, delete it.
-// Nothing lands under ~/.worca-cc/plugins and no plugin code runs.
-const execFileP = promisify(execFile); // execFile/promisify imported in the step-(a) block above
-async function discoveryInventory(repoUrl, sha, subdir) {
-  const tmp = await mkdtemp(path.join(tmpdir(), 'worca-cc-consent-'));
-  try {
-    const tar = path.join(tmp, 'x.tar');
-    await execFileP('git', ['--git-dir', repoCacheDir(repoUrl), 'archive', '--format=tar', '-o', tar,
-      ...(subdir ? [sha, subdir] : [sha])]);
-    await execFileP('tar', ['-xf', tar, '-C', tmp,
-      ...(subdir ? ['--strip-components', String(subdir.split('/').length)] : [])]);
-    await rm(tar, { force: true });
-    return buildInstallInventory(tmp);
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
-  }
-}
-
 app.get('/api/plugins', (req, res) => {
   try {
-    res.json({ plugins: listInstalledPlugins(), orphans: listOrphanPluginData() });
+    const mkts = readMarketplaces().marketplaces;
+    res.json({
+      plugins: listInstalledPlugins().map((p) => ({
+        ...p,
+        marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+      })),
+      orphans: listOrphanPluginData(),
+    });
   } catch (err) {
     sendPluginError(res, err);
   }
 });
 
-// POST /api/plugins/repo { url } -> discovery pick-list (§4.3). Bare clone/
-// fetch into the cache; nothing is installed and no plugin code runs.
-app.post('/api/plugins/repo', async (req, res) => {
+// Marketplaces (spec §4.7): the persisted repo registry behind the Plugins
+// view's Available/Marketplaces sections. Snapshots are cached in
+// marketplaces.json, so GET is zero-network; refresh routes do the git work.
+
+// Merge lock membership onto each snapshot plugin. MUST wrap every response that
+// returns marketplace snapshots — refresh routes return raw entries whose plugins
+// have no `installed` key, and renderAvailableList would re-offer Install on them.
+function withInstalled(list) {
+  const lock = readPluginsLock();
+  return (list || []).map((m) => ({
+    ...m, plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+  }));
+}
+
+app.get('/api/marketplaces', (req, res) => {
+  try {
+    res.json({ marketplaces: withInstalled(listMarketplaces()) });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.post('/api/marketplaces', async (req, res) => {
   const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
   if (!url) return badRequest(res, 'url is required');
   try {
-    const out = await addPluginRepo(url);
-    res.json({
-      repoUrl: out.repoUrl,
-      sha: out.sha,
-      discovered: await Promise.all(out.discovered.map(async (d) => ({
-        ...d,
-        inventory: await discoveryInventory(out.repoUrl, out.sha, d.subdir),
-      }))),
-    });
-  } catch (err) {
-    sendPluginError(res, err);
-  }
+    res.json({ ok: true, marketplace: withInstalled([await addMarketplace(url)])[0] });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+// refresh-all (a distinct path from :id/refresh, so registration order is irrelevant).
+app.post('/api/marketplaces/refresh', async (req, res) => {
+  try {
+    res.json({ ok: true, marketplaces: withInstalled(await refreshAllMarketplaces()) });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.post('/api/marketplaces/:id/refresh', async (req, res) => {
+  const id = requireMarketplace(req, res);
+  if (!id) return;
+  try {
+    res.json({ ok: true, marketplace: withInstalled([await syncMarketplace(id)])[0] });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.delete('/api/marketplaces/:id', (req, res) => {
+  const id = requireMarketplace(req, res);
+  if (!id) return;
+  try {
+    res.json(removeMarketplace(id));
+  } catch (err) { sendPluginError(res, err); }
 });
 
 // POST /api/plugins/install { repoUrl, subdir, name, sha } — the consent point
@@ -2835,9 +2864,17 @@ app.post('/api/plugins/install', async (req, res) => {
     if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
   }
   const subdir = typeof body.subdir === 'string' ? body.subdir : '';
+  // A4: layer-3 option-injection guard on the install body. (?!-) rejects
+  // dash-leading segments too, matching parseMarketplaceManifest exactly — no
+  // defense layer may be laxer than the others.
+  if (subdir && !/^(?!-)[A-Za-z0-9._-]+(\/(?!-)[A-Za-z0-9._-]+)*$/.test(subdir)) {
+    return badRequest(res, 'invalid subdir');
+  }
+  const marketplace = typeof body.marketplace === 'string' && MARKETPLACE_ID_RE.test(body.marketplace)
+    ? body.marketplace : undefined;
   try {
     const out = await installPlugin({
-      repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(),
+      repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
     reloadChatWorkers(body.name.trim());
     res.json(out); // { ok: true, inventory }
@@ -3328,6 +3365,12 @@ export async function bootMaintenance({ log } = {}) {
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  try {
+    seedBuiltinMarketplace();
+  } catch (err) {
+    console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
+  }
+
   bootMaintenance().catch((err) => {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
