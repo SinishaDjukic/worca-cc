@@ -58,7 +58,7 @@ import {
   EMBEDDED_AGENTS,
   groupPaletteByDomain,
 } from './composer-core.mjs';
-import { logLineClass } from './log-line.mjs';
+import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore } from './log-line.mjs';
 import { logLineVisible, logFacets } from './log-filter.mjs';
 import {
   statusChip, diffBadges, mergeFindings,
@@ -1083,7 +1083,7 @@ function makeRun({
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
-    logFilter: { source: '', level: '', step: '' }, // '' === all; render-time only (logLines keeps everything)
+    logFilter: { source: '', level: '', step: '', cycle: '', search: '' }, // '' === all; render-time only (logLines keeps everything)
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
@@ -3185,7 +3185,7 @@ function buildLogLine({ source, level, text, ts, sub }) {
 
   const t = document.createElement('span');
   t.className = 'log-ts';
-  t.textContent = fmtTime(ts);
+  t.textContent = logLineTime(ts);
 
   const s = document.createElement('span');
   s.className = 'log-src';
@@ -3197,6 +3197,69 @@ function buildLogLine({ source, level, text, ts, sub }) {
 
   line.append(t, s, m);
   return line;
+}
+
+// Keystroke-to-repaint delay for the log search box.
+const LOG_SEARCH_DEBOUNCE_MS = 120;
+
+// Copy already-filtered log records to the clipboard and flash the button.
+//
+// Serializes from the MODEL, never from the DOM: a log line spaces its
+// ts/src/msg spans with a flex `gap` rather than whitespace, so a native
+// selection-copy would run them together ("12:34:56[planner]text").
+// navigator.clipboard needs a secure context — localhost qualifies — but a
+// hidden-textarea fallback keeps the button working anywhere.
+async function copyLogToClipboard(btn, recs) {
+  const text = serializeLog(recs);
+  if (!text) return;
+  let ok = true;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else ok = legacyCopy(text);
+  } catch {
+    ok = legacyCopy(text);
+  }
+  const prev = btn.dataset.label || btn.textContent;
+  btn.dataset.label = prev;
+  btn.textContent = ok ? 'copied' : 'copy failed';
+  clearTimeout(btn._copyTimer);
+  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
+}
+
+function legacyCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// A "── Cycle N ──" rule marking where a feedback loop rewound and re-ran the
+// same steps. Without it a re-run is indistinguishable from its first pass,
+// since a re-run keeps its stepIndex and only bumps its cycle.
+function buildLogSeparator(label) {
+  const el = document.createElement('div');
+  el.className = 'log-sep';
+  el.textContent = label;
+  return el;
+}
+
+// Append `rec` to a log pane, preceded by a cycle separator when it opens a new
+// cycle. `prevRec` is the previously RENDERED record (not the previous one in
+// the model), so a filter that hides a whole cycle cannot orphan a separator.
+function appendLogRec(logEl, rec, prevRec) {
+  const sep = cycleSeparatorBefore(prevRec, rec);
+  if (sep) logEl.appendChild(buildLogSeparator(sep));
+  logEl.appendChild(buildLogLine(rec));
 }
 
 // Pin a card's log to the bottom when its auto-scroll is on. Source of truth is
@@ -3243,6 +3306,7 @@ function onLog(r, msg) {
     ...(msg.nodeId != null ? { nodeId: msg.nodeId } : {}),
     ...(msg.stepIndex != null ? { stepIndex: msg.stepIndex } : {}),
     ...(msg.cycle != null ? { cycle: msg.cycle } : {}),
+    ...(msg.stream ? { stream: msg.stream } : {}),
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -3254,7 +3318,8 @@ function onLog(r, msg) {
     const logEl = r.el.querySelector('.log');
     if (logEl && !repainted && logLineVisible(rec, r.logFilter)) {
       clearLogPlaceholder(logEl);
-      logEl.appendChild(buildLogLine(rec));
+      appendLogRec(logEl, rec, r._lastRenderedLog);
+      r._lastRenderedLog = rec;
       while (logEl.childElementCount > MAX_LOG_LINES) logEl.removeChild(logEl.firstChild);
       maybeAutoscrollLog(r);
     }
@@ -3290,9 +3355,13 @@ function paintLogFilters(r, root = r.el) {
   const selSource = root.querySelector('.log-f-source');
   const selLevel = root.querySelector('.log-f-level');
   const selStep = root.querySelector('.log-f-step');
+  const selCycle = root.querySelector('.log-f-cycle');
   fillFilterSelect(selSource, 'all sources', facets.sources, r.logFilter.source);
   fillFilterSelect(selLevel, 'all levels', facets.levels, r.logFilter.level);
   fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
+  // shifted for display.
+  fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
   r._logFacetKeys = facetKeys(facets);
   // A selection whose value vanished from the facets (log rotation, rebuild)
   // fell back to "all" in the DOM; mirror that into the model and repaint so
@@ -3301,10 +3370,13 @@ function paintLogFilters(r, root = r.el) {
     source: selSource ? selSource.value : r.logFilter.source,
     level: selLevel ? selLevel.value : r.logFilter.level,
     step: selStep ? selStep.value : r.logFilter.step,
+    cycle: selCycle ? selCycle.value : r.logFilter.cycle,
+    search: r.logFilter.search, // free text: no facet to vanish from
   };
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
-    || String(effective.step) !== String(r.logFilter.step)) {
+    || String(effective.step) !== String(r.logFilter.step)
+    || String(effective.cycle) !== String(r.logFilter.cycle)) {
     r.logFilter = effective;
     repaintFilteredLog(r, root);
     return true;
@@ -3319,6 +3391,7 @@ function facetKeys(facets) {
     ...facets.sources.map((s) => `s:${s}`),
     ...facets.levels.map((l) => `l:${l}`),
     ...facets.steps.map((i) => `t:${i}`),
+    ...facets.cycles.map((c) => `c:${c}`),
   ]);
 }
 // Returns paintLogFilters' repaint flag (true when the pane was fully
@@ -3354,9 +3427,16 @@ function repaintFilteredLog(r, root = r.el) {
   logEl.innerHTML = '';
   delete logEl.dataset.empty;
   let shown = 0;
+  let prevRec = null;
   for (const rec of r.logLines) {
-    if (logLineVisible(rec, r.logFilter)) { logEl.appendChild(buildLogLine(rec)); shown++; }
+    if (!logLineVisible(rec, r.logFilter)) continue;
+    appendLogRec(logEl, rec, prevRec);
+    prevRec = rec;
+    shown++;
   }
+  // Hand the streaming path in onLog the record the separator must compare
+  // against, so a live append after a repaint agrees with the repaint.
+  r._lastRenderedLog = prevRec;
   if (shown === 0 && r.logLines.length) {
     logEl.textContent = '(no lines match the filter)';
     logEl.dataset.empty = '1';
@@ -3384,13 +3464,9 @@ function appendLog({ source, level, text }) {
   else console.log(`worca ${tag} ${text}`);
 }
 
-function fmtTime(ts) {
-  const d = ts ? new Date(ts) : new Date();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  return `${hh}:${mm}:${ss}`;
-}
+// (fmtTime moved to log-line.mjs as logLineTime: the rendered line and the
+// clipboard serializer must format a timestamp identically, and log-line.mjs is
+// the pure module both go through.)
 
 // ---------------------------------------------------------------------------
 // Questions (clarify) and gates. The full question/gate UI is built INLINE into
@@ -7320,21 +7396,58 @@ if (runListEl) {
     if (r) setAutoscroll(r, r.autoscroll === false);
   });
 
-  // Log filter dropdowns (source/level/step). Delegated like the switch above;
-  // read all three so one change event leaves the whole filter consistent.
+  // Log filter dropdowns (source/level/step/cycle). Delegated like the switch
+  // above; read them all so one change event leaves the whole filter consistent.
   runListEl.addEventListener('change', (e) => {
-    const sel = e.target.closest && e.target.closest('.log-f');
+    const sel = e.target.closest && e.target.closest('select.log-f');
     if (!sel) return;
     const card = sel.closest('.run-card');
     const r = card && runs.get(card.dataset.runId);
     if (!r) return;
-    r.logFilter = {
-      source: card.querySelector('.log-f-source')?.value || '',
-      level: card.querySelector('.log-f-level')?.value || '',
-      step: card.querySelector('.log-f-step')?.value || '',
-    };
+    r.logFilter = readCardLogFilter(card, r);
     repaintFilteredLog(r);
   });
+
+  // Log search. Debounced: `input` fires per keystroke and each repaint rebuilds
+  // every visible line, so filtering on the raw event would rebuild the pane
+  // mid-word. The model keeps every line, so narrowing never loses history.
+  runListEl.addEventListener('input', (e) => {
+    const box = e.target.closest && e.target.closest('.log-search');
+    if (!box) return;
+    const card = box.closest('.run-card');
+    const r = card && runs.get(card.dataset.runId);
+    if (!r) return;
+    clearTimeout(r._logSearchTimer);
+    r._logSearchTimer = setTimeout(() => {
+      r.logFilter = readCardLogFilter(card, r);
+      repaintFilteredLog(r);
+    }, LOG_SEARCH_DEBOUNCE_MS);
+  });
+
+  // Copy the VISIBLE log lines (what the filters and search left on screen).
+  runListEl.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.log-copy');
+    if (!btn) return;
+    const card = btn.closest('.run-card');
+    const r = card && runs.get(card.dataset.runId);
+    if (!r) return;
+    copyLogToClipboard(btn, r.logLines.filter((rec) => logLineVisible(rec, r.logFilter)));
+  });
+}
+
+// Read a run card's whole log filter out of the DOM. One reader for the
+// dropdowns and the search box, so neither can clobber the other's value.
+function readCardLogFilter(card, r) {
+  // The search box is read by PRESENCE, not truthiness: an empty box means the
+  // user cleared the term, which must win over the stored value.
+  const searchEl = card.querySelector('.log-search');
+  return {
+    source: card.querySelector('.log-f-source')?.value || '',
+    level: card.querySelector('.log-f-level')?.value || '',
+    step: card.querySelector('.log-f-step')?.value || '',
+    cycle: card.querySelector('.log-f-cycle')?.value || '',
+    search: searchEl ? searchEl.value : (r.logFilter.search || ''),
+  };
 }
 
 // Statistics: range segmented control + chart tooltip. Both are delegated, so
@@ -8528,14 +8641,23 @@ async function loadLiveLogs(panel, logUrl) {
       recs.push({
         source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
         ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
+        // `cycle` drives the cycle filter AND the "── Cycle N ──" separators; it
+        // is persisted on every attributed line, so dropping it here would leave
+        // both dead in History while working live.
+        ...(rec.cycle != null ? { cycle: rec.cycle } : {}),
+        ...(rec.stream ? { stream: rec.stream } : {}),
       });
     }
-    const filter = { source: '', level: '', step: '' };
+    const filter = { source: '', level: '', step: '', cycle: '', search: '' };
     const paint = () => {
       box.innerHTML = '';
       let n = 0;
+      let prevRec = null;
       for (const rec of recs) {
-        if (logLineVisible(rec, filter)) { box.appendChild(buildLogLine(rec)); n++; }
+        if (!logLineVisible(rec, filter)) continue;
+        appendLogRec(box, rec, prevRec);
+        prevRec = rec;
+        n++;
       }
       if (n === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
     };
@@ -8544,6 +8666,7 @@ async function loadLiveLogs(panel, logUrl) {
       ['log-f-source', 'all sources', facets.sources, null],
       ['log-f-level', 'all levels', facets.levels, null],
       ['log-f-step', 'all steps', facets.steps, (i) => `step ${i + 1}`],
+      ['log-f-cycle', 'all cycles', facets.cycles, (c) => `cycle ${c}`],
     ]) {
       const sel = document.createElement('select');
       sel.className = `log-f ${cls}`;
@@ -8552,10 +8675,38 @@ async function loadLiveLogs(panel, logUrl) {
         filter.source = bar.querySelector('.log-f-source')?.value || '';
         filter.level = bar.querySelector('.log-f-level')?.value || '';
         filter.step = bar.querySelector('.log-f-step')?.value || '';
+        filter.cycle = bar.querySelector('.log-f-cycle')?.value || '';
         paint();
       });
       bar.appendChild(sel);
     }
+
+    // Search + copy, mirroring the live card's affordances (debounced repaint;
+    // copy takes what the filters and search left visible).
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'log-f log-search';
+    search.placeholder = 'search';
+    search.title = 'Search the log text';
+    search.setAttribute('aria-label', 'Search the log text');
+    let searchTimer = null;
+    search.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { filter.search = search.value; paint(); }, LOG_SEARCH_DEBOUNCE_MS);
+    });
+    bar.appendChild(search);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'log-f log-copy';
+    copyBtn.textContent = 'copy';
+    copyBtn.title = 'Copy the visible log lines';
+    copyBtn.setAttribute('aria-label', 'Copy the visible log lines');
+    copyBtn.addEventListener('click', () => {
+      copyLogToClipboard(copyBtn, recs.filter((rec) => logLineVisible(rec, filter)));
+    });
+    bar.appendChild(copyBtn);
+
     paint();
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;

@@ -456,6 +456,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .log-line.sub-agent{padding-left:1.6em;opacity:.72;}
 .log-line.sub-agent .log-src{color:var(--peach-ink);}
 
+/* cycle separator: where a feedback loop rewound and re-ran the same steps */
+.log-sep{display:flex;align-items:center;gap:8px;margin:6px 0 4px;
+  color:var(--ink-3);font-size:11px;letter-spacing:.08em;text-transform:uppercase;}
+.log-sep::before,.log-sep::after{content:"";flex:1;height:1px;background:var(--line);}
+
 /* ---------- Running ---------- */
 .run-list{display:flex;flex-direction:column;gap:18px;}
 .run-card{padding:22px 24px;}
@@ -515,6 +520,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .log-filters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:0;}
 .log-filters .log-f{font:inherit;font-size:12px;padding:2px 6px;border:1px solid var(--line);border-radius:8px;
   background:#FBFBF9;color:var(--ink-2);max-width:150px;width:auto;min-width:0;}
+/* search shares the pill look but may shrink further; copy is the only button */
+.log-filters .log-search{flex:0 1 130px;}
+.log-filters .log-copy{flex:0 0 auto;cursor:pointer;}
+.log-filters .log-copy:hover{background:var(--line);}
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
 .run-log-head .log-filters{order:1;flex-basis:100%;}

@@ -150,6 +150,68 @@ test('expanded card shows Sub-agents, then Clarify, then Live-logs; logs render 
   assert.match(lines[0].textContent, /No knowledge-graph tooling detected/);
 });
 
+// The History replay rebuilds records from the NDJSON. `cycle` must survive that
+// projection or the cycle picker and the separators are dead here while working
+// on the live card.
+test('replayed logs keep their cycle: picker, separator, search and copy all work', async () => {
+  const NDJSON =
+    '{"source":"planner","level":"info","text":"Planning…","ts":"2026-06-20T00:00:01Z","stepIndex":0,"cycle":1}\n' +
+    '{"source":"reviewer","level":"info","text":"Blocking issue found","ts":"2026-06-20T00:00:02Z","stepIndex":1,"cycle":1}\n' +
+    '{"source":"implementer","level":"info","text":"Fixing the issue","ts":"2026-06-20T00:00:03Z","stepIndex":1,"cycle":2}\n';
+
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/history/') && url.endsWith('/log')) {
+        return Promise.resolve({ ok: true, status: 200, text: async () => NDJSON });
+      }
+      if (url.includes('/api/history/')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          state: { phase: 'done', status: 'done', cycle: 2, subAgents: [], steps: [], stepper: null },
+          auditMarkdown: '', clarify: null, reviews: [],
+          artifacts: [{ kind: 'live-log', relPath: 'live-log.ndjson' }],
+        }) });
+      }
+      if (url.includes('/api/history')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          pipelines: [{ id: 'p-1', projectKey: 'proj-00000001', title: 'Run', status: 'done', startedAt: '2026-06-20T00:00:00Z' }] }) });
+      }
+      return null;
+    },
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const doc = ctx.window.document;
+  const card = doc.querySelector('#history .hist-card');
+  card.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const logsBar = card.querySelector('.hist-detail .logs-bar');
+  logsBar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const panel = logsBar.querySelector('.logs-panel');
+  const cycleSel = panel.querySelector('.log-f-cycle');
+  assert.ok(cycleSel, 'the cycle picker exists in History');
+  assert.deepEqual([...cycleSel.options].map((o) => o.textContent), ['all cycles', 'cycle 1', 'cycle 2'],
+    'cycles are NOT shifted for display (unlike steps, the loop counter is already 1-based)');
+
+  assert.ok(panel.querySelector('.log-search'), 'search box present');
+  assert.ok(panel.querySelector('.log-copy'), 'copy button present');
+
+  const seps = panel.querySelectorAll('.log .log-sep');
+  assert.equal(seps.length, 1, 'exactly one boundary among cycles 1,1,2');
+  assert.equal(seps[0].textContent, 'Cycle 2');
+  assert.equal(panel.querySelectorAll('.log .log-line').length, 3, 'separators are not log lines');
+
+  // Narrowing to cycle 2 leaves one line and NO separator: it is the first
+  // rendered record, so there is nothing above it to separate from.
+  cycleSel.value = '2';
+  cycleSel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(panel.querySelectorAll('.log .log-line').length, 1);
+  assert.equal(panel.querySelectorAll('.log .log-sep').length, 0, 'no orphan separator');
+  assert.match(panel.querySelector('.log .log-line').textContent, /Fixing the issue/);
+});
+
 test('dropdowns stay hidden when there is no clarify and no log artifact', async () => {
   const ctx = await boot({ fetchHandler: (url) => {
     if (url.includes('/api/history/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({
