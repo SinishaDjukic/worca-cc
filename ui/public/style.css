@@ -186,8 +186,11 @@ body{
 .child-q.ok  { color: var(--green); font-size: 12px; animation: none; }
 .child-q.bad { color: var(--red);   font-size: 12px; animation: none; }
 
-/* Overview cards are clickable to focus */
+/* Overview cards behave like History rows: the head expands the peek, the
+   TITLE is the way into the pipeline. */
 #run-list .run-card .run-top { cursor: pointer; }
+#run-list .run-card.mini .run-title { cursor: pointer; width: fit-content; max-width: 100%; }
+#run-list .run-card.mini .run-title:hover { text-decoration: underline; }
 
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;
@@ -1527,7 +1530,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-card{display:flex;flex-direction:column;}
 .run-card > .run-top{order:-4;}
 .run-card > .run-rail-wrap{order:-3;}
-.run-card > .cost-banner{order:-2;}
+.run-card > .cost-banner{order:-2;margin-bottom:14px;}
 .run-card > .qpanel{order:-1;}      /* the blocker, directly under identity */
 .run-card > .run-foot{order:0;}
 .run-card > .run-flow-wrap{order:1;}
@@ -1618,8 +1621,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-card > .run-foot > .chip{display:none;}
 
 /* ---------- foot: one call to action ---------- */
+/* Even when EMPTY the CTA text stays in flow: it is the flex spacer that keeps
+   the button cluster right-aligned (display:none here left Open packed left on
+   rows with no CTA line). */
 .run-cta-text{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:600;color:var(--ink-2);}
-.run-cta-text:empty{display:none;}
 .run-card.attention .run-cta-text{color:var(--amber-ink);}
 .btn-answer.sm,.btn-open.sm{padding:8px 15px;font-size:12px;font-weight:600;font-family:inherit;
   border-radius:999px;border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);cursor:pointer;}

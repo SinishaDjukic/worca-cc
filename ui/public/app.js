@@ -11106,17 +11106,26 @@ navLinks.forEach((b) =>
   })
 );
 
-// Overview card → focus (spec: "Click a card → that run's focus view"). Delegated,
-// restricted to the card header so existing buttons / the question panel keep working;
-// only active in Overview.
+// Overview cards mirror History rows: clicking the card head EXPANDS the peek
+// (recent log lines, same as the chevron), while the TITLE is the way into the
+// pipeline's detail view. Delegated, restricted to the header so existing
+// buttons / the question panel keep working; only active in Overview.
 $('#run-list')?.addEventListener('click', (e) => {
-  if (state.selectedRunId) return;                 // already in focus
+  if (state.selectedRunId) return;                 // focus view: the card is .full
+  const title = e.target.closest('.run-title');
+  if (title) {
+    const card = title.closest('.run-card');
+    const id = card && card.dataset.runId;
+    if (id) location.hash = `pipeline/${pipelineKey(runs.get(id)) || id}`;
+    return;
+  }
   if (e.target.closest('button, a, input, textarea, .qpanel, .subs-bar')) return;
   const top = e.target.closest('.run-top');
   if (!top) return;
-  const card = top.closest('.run-card');
-  const id = card && card.dataset.runId;
-  if (id) location.hash = `pipeline/${pipelineKey(runs.get(id)) || id}`;
+  // Reuse the chevron's own toggle (wireRunList's .run-expand handler) so the
+  // head and the button can never disagree about the peek's state.
+  const exp = top.closest('.run-card')?.querySelector('.run-expand');
+  if (exp) exp.click();
 });
 
 window.addEventListener('hashchange', () => {

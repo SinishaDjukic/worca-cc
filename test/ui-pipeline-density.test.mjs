@@ -234,6 +234,24 @@ test('a mini card streams no log DOM; expanding it shows the tail of the log', a
   assert.match(peek.querySelector('.peek-foot').textContent, /last 5 of 8 lines/);
 });
 
+// The mini card mirrors History (user decision): the head EXPANDS the peek,
+// only the title (or Open) navigates into the pipeline.
+test('mini-card head click toggles the peek; the title click navigates', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER, title: 'A run' })] });
+  await ctx.go('running');
+  const c = card(ctx.window, 'a');
+  const peek = c.querySelector('.run-peek');
+  const before = ctx.window.location.hash;
+  c.querySelector('.run-meta').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  assert.equal(peek.hidden, false, 'head click expands the peek');
+  assert.equal(ctx.window.location.hash, before, 'head click does NOT navigate');
+  c.querySelector('.run-meta').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  assert.equal(peek.hidden, true, 'second head click collapses');
+  c.querySelector('.run-title').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  assert.match(ctx.window.location.hash, /^#pipeline\//, 'the title is the way in');
+});
+
 test('opening the detail view hydrates the full log pane from the model', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER })] });
