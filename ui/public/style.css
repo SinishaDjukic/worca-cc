@@ -1501,7 +1501,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-rail-wrap{display:flex;align-items:center;justify-content:space-between;
   gap:10px 20px;flex-wrap:wrap;margin-bottom:16px;}
 /* overflow-x:auto forces the vertical axis to clip too, so the rail needs top
-   padding for what sticks out above a 19px dot: the 27px looped dash ring and
+   padding for what sticks out above a 19px dot: the looped ↺ shoulder badge and
    the 4px active/paused glow. */
 .run-rail{display:flex;align-items:center;flex:1 1 340px;min-width:0;overflow-x:auto;
   scrollbar-width:thin;padding:7px 0 2px;}
@@ -1525,10 +1525,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-rail .rcell.is-paused .rlabel{color:var(--amber-ink);font-weight:700;}
 .run-rail .rcell.is-stopped .rdot{border-color:var(--red);background:var(--red);color:#fff;}
 .run-rail .rcell.is-stopped .rlabel{color:var(--red-ink);font-weight:700;}
-/* A stage that a feedback loop re-ran wears a dashed ring; the count rides in
-   the marker's title so the rail stays one line. */
-.run-rail .rcell.looped .rdot::after{content:"";position:absolute;width:27px;height:27px;
-  border-radius:50%;border:1.5px dashed var(--peach);}
+/* A stage that a feedback loop re-ran wears a small ↺ badge on the dot's
+   shoulder — the universal re-run glyph (a bare dashed ring read as
+   draft/selected). Amber ties it to the graph's feedback arcs; the cycle count
+   rides in the marker's title so the rail stays one line. */
+.run-rail .rcell.looped .rdot::after{content:"↺";position:absolute;top:-6px;right:-7px;
+  width:13px;height:13px;border-radius:50%;background:var(--amber);color:#fff;
+  font-size:9.5px;line-height:13px;text-align:center;font-weight:700;}
 /* Parallel cell: a second offset ring, matching the graph's "· parallel" tag. */
 .run-rail .rcell.parallel .rdot{box-shadow:2.5px 2.5px 0 0 var(--panel),3.5px 3.5px 0 1.5px var(--line-2);}
 .run-rail.no-labels .rcell{width:34px;}
