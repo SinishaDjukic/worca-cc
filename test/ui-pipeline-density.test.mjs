@@ -633,6 +633,40 @@ test('clicking an agents node focuses the log on that step and its latest cycle'
   assert.equal(c.querySelector('.log-f-step').value, '1', 'preflight click is a no-op');
 });
 
+test('the ✕ pill clears every log filter at once', async () => {
+  const kinds = {
+    steps: [
+      { kind: 'agents', nodes: [{ id: 'clarify', key: 'clarify', label: 'Clarify', uiPhase: 'clarify' }] },
+      { kind: 'agents', nodes: [{ id: 'planner', key: 'planner', label: 'Plan', uiPhase: 'plan' }] },
+    ],
+    feedbacks: [],
+  };
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: kinds })] });
+  await ctx.go('running');
+  ctx.recv({ type: 'log', runId: 'a', source: 'clarify', level: 'info', text: 'q&a', stepIndex: 0, cycle: 1 });
+  ctx.recv({ type: 'log', runId: 'a', source: 'planner', level: 'info', text: 'first pass', stepIndex: 1, cycle: 1 });
+  ctx.recv({ type: 'state', runId: 'a', status: 'running',
+    steps: [{ nodeId: 'clarify', cycle: 1, status: 'done' }, { nodeId: 'planner', cycle: 1, status: 'start' }] });
+  await ctx.go('pipeline/a');
+  await ctx.tick();
+  const c = ctx.window.document.querySelector('#run-list .run-card.full');
+  // Narrow via node click (source+step+cycle), then add a search term by hand.
+  c.querySelector('.run-flow .run-node[data-id="planner"]')
+    .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.tick();
+  const search = c.querySelector('.log-search');
+  search.value = 'first';
+  assert.equal(c.querySelectorAll('.run-log .log .log-line').length, 1, 'narrowed to one line');
+  c.querySelector('.log-clear').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.tick();
+  assert.equal(c.querySelector('.log-f-source').value, '', 'source back to all');
+  assert.equal(c.querySelector('.log-f-step').value, '', 'step back to all');
+  assert.equal(c.querySelector('.log-f-cycle').value, '', 'cycle back to all');
+  assert.equal(search.value, '', 'search box emptied');
+  assert.equal(c.querySelectorAll('.run-log .log .log-line').length, 2, 'every line visible again');
+});
+
 // ── the back button follows ownership, not the page you came from ───────────
 
 test('a LIVE pipeline opened from History still says ← Running', async () => {

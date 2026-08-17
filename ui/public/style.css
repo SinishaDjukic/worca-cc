@@ -531,6 +531,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .log-filters .log-search{flex:0 1 130px;}
 .log-filters .log-copy{flex:0 0 auto;cursor:pointer;}
 .log-filters .log-copy:hover{background:var(--line);}
+.log-filters .log-clear{flex:0 0 auto;cursor:pointer;line-height:1;}
+.log-filters .log-clear:hover{background:var(--line);}
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
 .run-log-head .log-filters{order:1;flex-basis:100%;}
