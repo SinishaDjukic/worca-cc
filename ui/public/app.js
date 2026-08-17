@@ -1813,7 +1813,8 @@ function onTitle(r, msg) {
   const titleEl = card && card.querySelector('.run-title');
   if (titleEl) {
     titleEl.textContent = r.title;
-    titleEl.classList.remove('title-provisional');
+    // Toggle, not remove: a provisional title frame must LOOK provisional too.
+    titleEl.classList.toggle('title-provisional', !!msg.provisional);
   }
   // If the detail view is open ON this pipeline, its header carries the title
   // too — patch it in place, or the page shows the provisional name until the

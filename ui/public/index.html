@@ -1154,6 +1154,9 @@
       </div>
     </div>
 
+    <!-- Frozen state gallery (dev tool): inert without ?freeze in the URL.
+         Must load BEFORE app.js so its WebSocket/fetch stubs are in place. -->
+    <script src="/freeze.mjs" type="module"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
