@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
-import { normalizeManifest } from './plugin-manifest.mjs';
+import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState } from './plugin-config.mjs';
 
@@ -103,11 +103,16 @@ function loadSource(plugin, sourceId) {
   }
   const source = (manifest.taskSources || []).find((s) => s.id === sourceId);
   if (!source) throw new PluginOpError('plugin', `plugin "${plugin}" has no task source "${sourceId}"`);
-  return { dir, source };
+  // Highest host API the manifest's range allows: an API-1 connector keeps
+  // receiving apiVersion 1 after a host API bump (design §4.3).
+  const apiVersion = negotiatedApi(manifest.engines?.worcaApi) ?? WORCA_PLUGIN_API;
+  return { dir, source, apiVersion };
 }
 
-/** Child env: PATH + HOME ONLY (spec §7.2). Notably NOT WORCA_*, tokens, npm_*. */
-function scrubbedEnv() {
+/** Child env: PATH + HOME ONLY (spec §7.2). Notably NOT WORCA_*, tokens, npm_*.
+ *  Exported for the channel-worker supervisor (chat/channel-host.mjs), which
+ *  spawns persistent children under the same rule. */
+export function scrubbedEnv() {
   const env = {};
   if (process.env.PATH) env.PATH = process.env.PATH;
   if (process.env.HOME) env.HOME = process.env.HOME;
@@ -134,9 +139,9 @@ export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 
     return r;
   }
 
-  const { dir, source } = loadSource(plugin, sourceId);
+  const { dir, source, apiVersion } = loadSource(plugin, sourceId);
   const payload = JSON.stringify({
-    apiVersion: WORCA_PLUGIN_API,
+    apiVersion,
     module: resolve(dir, source.module), // './'-relative, '..'-free (normalizeManifest)
     op,
     config: readPluginConfig(plugin, source.configSchema),

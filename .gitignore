@@ -1,6 +1,6 @@
 node_modules
 .DS_Store
-examples/sandbox
+/sandbox
 ai-artifacts/
 *.log
 graphify-out/

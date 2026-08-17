@@ -82,3 +82,15 @@ test('listAllPipelines threads store_meta.path so survived/added are computed ma
   assert.equal(row.added, 1);
   assert.equal(row.removed, 0);
 });
+
+test('lite skips git enrichment on a row that would otherwise be enriched', async () => {
+  // These fixtures are the only ones where enrichment is REAL (a live git repo whose
+  // feature branch exists), so this is where `lite` can be proven to skip it.
+  const { listAllPipelines } = await import('../src/core/artifacts.mjs');
+  const full = await listAllPipelines();
+  assert.equal(full.find((r) => r.id === pp1Id).survived, true, 'fixture sanity: enrichment is real here');
+  const lite = await listAllPipelines({ lite: true });
+  const r = lite.find((x) => x.id === pp1Id);
+  assert.equal(r.survived, false);
+  assert.equal(r.added, 0);
+});

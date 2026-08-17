@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -29,6 +29,7 @@ import {
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  chatPrefs, setChatPrefs,
 } from '../src/core/settings.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
@@ -71,23 +72,25 @@ import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY
 import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
-  setPluginEnabled, doctorPlugin, buildInstallInventory,
+  setPluginEnabled, doctorPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
-import { addPluginRepo, fetchCandidate, repoCacheDir } from '../src/core/plugin-repo.mjs';
-import { redactedConfig, writePluginConfig } from '../src/core/plugin-config.mjs';
+import { fetchCandidate } from '../src/core/plugin-repo.mjs';
+import {
+  addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
+  removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
+} from '../src/core/marketplaces.mjs';
+import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core/plugin-config.mjs';
+import { createChannelHost } from '../src/core/chat/channel-host.mjs';
+import { createCommandRouter } from '../src/core/chat/command-router.mjs';
+import { createChatContext } from '../src/core/chat/chat-context.mjs';
+import { createNotifier } from '../src/core/chat/notifier.mjs';
+import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
+import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
-// discoveryInventory below needs these four — server.mjs currently imports NONE
-// of them (verified: its node built-ins are namespace imports `fs`/`path`/`os`/
-// `fsp` only, and no `execFile`/`promisify`/`mkdtemp`/`rm`/`tmpdir` identifier
-// exists in the file, so there are no collisions):
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -386,6 +389,14 @@ function subscribe(orch, name, handler) {
 function wireRun(entry) {
   const { id, orch } = entry;
 
+  // Chat notifications ride the same per-run subscription (design §4.5): every
+  // creation site that wires a run gets chat fan-out for free. Scans/agent-gens
+  // use their own wire* helpers and are deliberately not notified.
+  if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
+    try { chatNotifier.attach(orch, { runId: id, entry }); }
+    catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
+  }
+
   const record = (event) => {
     // bufferEvent tags runId LAST so the runs-Map key always wins. The
     // orchestrator's `subagent` delta historically carried its own runId
@@ -502,6 +513,62 @@ function wireAgentGen(entry) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Teams ingress (chat-connectivity-design.md §4.7) — the ONE deliberate,
+// auditable exemption from the loopback guard below: Bot Framework can only
+// deliver inbound Teams activities to a public HTTPS endpoint (via a
+// user-supplied tunnel), so this route is mounted BEFORE express.json and
+// BEFORE the guard. Hardening: capability-URL token (per-channel ingressToken
+// secret, timingSafeEqual, uniform 404 on ANY mismatch), 256 KB raw body cap,
+// 60 req/min bucket, worker-down 503, 10 s forward timeout 504. The worker
+// validates the Bot Framework JWT (issuer/audience/exp/serviceUrl) — bodies
+// and Authorization headers are NEVER logged host-side. Everything outside
+// /api/ingress stays loopback-guarded even through the tunnel.
+// ---------------------------------------------------------------------------
+const ingressBucket = new TokenBucket(60);
+const INGRESS_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
+
+app.post('/api/ingress/teams/:plugin/:channelId/:token',
+  express.raw({ type: '*/*', limit: '256kb' }),
+  async (req, res) => {
+    const notFound = () => res.status(404).json({ error: 'not found' });
+    if (!ingressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+    const { plugin, channelId, token } = req.params;
+    if (!INGRESS_ID_RE.test(plugin) || !INGRESS_ID_RE.test(channelId) || typeof token !== 'string' || !token) {
+      return notFound();
+    }
+    let entry;
+    try {
+      entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId && e.ingress === 'webhook');
+    } catch { entry = null; }
+    if (!entry) return notFound();
+    let expected = '';
+    try { expected = String(readPluginConfig(plugin, entry.configSchema).ingressToken || ''); }
+    catch { return notFound(); }
+    const got = Buffer.from(token);
+    const want = Buffer.from(expected);
+    if (!expected || got.length !== want.length || !timingSafeEqual(got, want)) return notFound();
+
+    try {
+      const out = await channelHost.handleWebhook({
+        plugin,
+        channelId,
+        method: req.method,
+        path: req.path,
+        headers: req.headers,
+        bodyB64: Buffer.isBuffer(req.body) ? req.body.toString('base64') : '',
+        timeoutMs: 10000,
+      });
+      res.status(out.statusCode || 200);
+      for (const [k, v] of Object.entries(out.headers || {})) res.set(k, v);
+      if (out.bodyB64) return res.send(Buffer.from(out.bodyB64, 'base64'));
+      return res.end();
+    } catch (err) {
+      if (err?.kind === 'timeout') return res.status(504).json({ error: 'worker timeout' });
+      return res.status(503).json({ error: 'channel worker unavailable' });
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Express middleware + static
@@ -887,6 +954,148 @@ app.post('/api/run', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Chat connectivity (chat-connectivity-design.md): persistent channel workers
+// + inbound command router. Workers are dumb transports; every command
+// resolves here against the runs Map / DB through chatActions.
+// ---------------------------------------------------------------------------
+// Lazy: worcaHome() must not resolve at import time (tests import the app
+// before their temp WORCA_HOME hook runs); the file loads on first chat use.
+let _chatContext = null;
+const chatCtx = () => (_chatContext ??= createChatContext());
+const chatContext = {
+  get: (k) => chatCtx().get(k),
+  set: (k, patch) => chatCtx().set(k, patch),
+  isMuted: (k) => chatCtx().isMuted(k),
+  incrementMuted: (k) => chatCtx().incrementMuted(k),
+};
+
+const chatActions = {
+  listRuns: () => summarizeRuns(),
+  runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
+  pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
+  answer: (runId, id, payload) => answerRun(runId, id, payload),
+  stop: (runId) => stopRun(runId),
+  pause: (runId) => pauseRun(runId),
+  // The long chain of budget/worktree/double-resume guards lives in resumeRun();
+  // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
+  // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
+  resume: async (pipelineId) => {
+    try { return await resumeRun(pipelineId); }
+    catch (err) { return { ok: false, error: err?.body?.error || err?.message || String(err) }; }
+  },
+  // Chat reads only DB fields (id/title/status/cost/activeMs/pauseReason), so bound the
+  // rows in SQL and skip git enrichment — /status no longer spawns 2 git procs per pipeline.
+  history: async ({ limit = 50 } = {}) => (await listAllPipelines({ limit, lite: true })) || [],
+  listProjects: async () => (await listProjects()).map((p) => ({ name: p.name || path.basename(p.path || ''), path: p.path })),
+};
+
+const chatRouter = createCommandRouter({
+  actions: chatActions,
+  chatContext,
+  logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+});
+
+// Same-chat commands must run strictly in order: a batched ['/use beta','/runs']
+// from one getUpdates poll otherwise interleaves (stale reads, replies out of
+// order). One promise chain per chatKey; depth-capped (there is NO host-side
+// inbound bound — a Telegram poll can hand over 100 updates at once, and the
+// allowlist is only applied inside the router, after enqueue); the catch is
+// mandatory — nobody awaits this chain, so a rejected tail is an unhandled
+// rejection that kills the process under Node's default flag.
+const CHAT_QUEUE_MAX = 50;          // per chat; a flood past this is dropped, not buffered
+const chatQueues = new Map();       // key -> { tail, depth }
+function enqueueChatWork(key, fn) {
+  const q = chatQueues.get(key) || { tail: Promise.resolve(), depth: 0 };
+  if (q.depth >= CHAT_QUEUE_MAX) {
+    console.error(`[worca-ui] chat queue for ${key} is full (${CHAT_QUEUE_MAX}) — dropping inbound work`);
+    return q.tail;
+  }
+  q.depth += 1;
+  // prev.then(fn, fn): run even after a prior failure (fn takes no arguments,
+  // so the previous error is discarded — do not give fn a parameter).
+  const tail = q.tail.then(fn, fn).catch((err) => {
+    console.error(`[worca-ui] chat work failed: ${err && err.message ? err.message : err}`);
+  }).finally(() => {
+    q.depth -= 1;
+    if (chatQueues.get(key) === q && q.depth === 0) chatQueues.delete(key);
+  });
+  q.tail = tail;
+  chatQueues.set(key, q);
+  return tail;
+}
+
+async function handleChatInbound({ plugin, channelId, platform, msg }) {
+  const entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId);
+  if (!entry) return;
+  let replyMsg;
+  try {
+    replyMsg = await chatRouter.handleIncoming({
+      plugin, channelId, platform,
+      channelConfig: readPluginConfig(plugin, entry.configSchema),
+      msg,
+    });
+  } catch (err) {
+    console.error(`[worca-ui] chat inbound failed: ${err && err.message ? err.message : err}`);
+    return;
+  }
+  if (!replyMsg) return;
+  try {
+    await channelHost.sendMessage({ plugin, channelId, chatId: msg.chatId, message: replyMsg });
+  } catch (err) {
+    console.error(`[worca-ui] chat reply delivery failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+const channelHost = createChannelHost({
+  logger: (level, msg) => console.error(`[worca-ui] ${msg}`),
+  onInbound: (ev) => { enqueueChatWork(`${ev.platform}:${ev.msg.chatId}`, () => handleChatInbound(ev)); },
+  onStatus: (ev) => { try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ } },
+});
+
+const chatNotifier = createNotifier({
+  channelHost,
+  getPrefs: chatPrefs,
+  chatContext,
+  logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+});
+
+/** Best-effort worker restart after any plugin mutation (enable/disable,
+ *  config save, install, update, uninstall). Never blocks the route. */
+function reloadChatWorkers(name) {
+  channelHost.reloadPlugin(name).catch((err) => {
+    console.error(`[worca-ui] chat worker reload failed for ${name}: ${err && err.message ? err.message : err}`);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Run control actions — ONE implementation shared by the HTTP routes and the
+// chat command router (chat-connectivity-design.md §4.6), so answering a gate
+// from Discord clears the question card in every browser tab exactly like the
+// UI button does (resolvePending is part of the action, not the route).
+// ---------------------------------------------------------------------------
+function answerRun(runId, id, payload) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  entry.orch.answer(id, payload);
+  resolvePending(entry, { id, reason: 'answered' });
+}
+function stopRun(runId) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  entry.orch.stop();
+  entry.status = 'stopped';
+  resolvePending(entry, { reason: 'stopped' });
+}
+function pauseRun(runId) {
+  const entry = runs.get(runId);
+  if (!entry) throw new Error('unknown runId');
+  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+  if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
+  entry.status = 'pausing';
+  resolvePending(entry, { reason: 'paused' });
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/answer  -> resolve a pending question for a run
 // body: { runId, id, payload }
 // ---------------------------------------------------------------------------
@@ -894,10 +1103,8 @@ app.post('/api/answer', (req, res) => {
   const { runId, id, payload } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
-  const entry = runs.get(runId);
   try {
-    entry.orch.answer(id, payload);
-    resolvePending(entry, { id, reason: 'answered' });
+    answerRun(runId, id, payload);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -911,11 +1118,8 @@ app.post('/api/answer', (req, res) => {
 app.post('/api/stop', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
-  const entry = runs.get(runId);
   try {
-    entry.orch.stop();
-    entry.status = 'stopped';
-    resolvePending(entry, { reason: 'stopped' });
+    stopRun(runId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -930,17 +1134,146 @@ app.post('/api/stop', (req, res) => {
 app.post('/api/pause', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
-  const entry = runs.get(runId);
   try {
-    const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
-    if (!ok) return badRequest(res, 'cannot pause in the current state');
-    entry.status = 'pausing';
-    resolvePending(entry, { reason: 'paused' });
+    pauseRun(runId);
     res.json({ ok: true });
   } catch (err) {
+    if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
+
+// ---------------------------------------------------------------------------
+// resumeRun(pipelineId, opts) — the resume guard chain + rehydration, callable
+// in-process. Chat used to reuse it by POSTing http://127.0.0.1:PORT/api/resume
+// over loopback, which breaks under WORCA_HOST (the server may not be bound on
+// 127.0.0.1 at all) and, worse, can land on a DIFFERENT worca instance that
+// happens to own the port. Both callers now share this one function; the route
+// is a thin mapper from ResumeError -> (status, body).
+// ---------------------------------------------------------------------------
+class ResumeError extends Error {
+  constructor(status, body) {
+    super(body.error || 'resume failed');
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {}) {
+  if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
+  const saved = readPipelineForResume(pipelineId);
+  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });
+  if (!saved.resumePoint) throw new ResumeError(400, { error: 'pipeline has no resume point' });
+
+  if (saved.row.archived_at) {
+    throw new ResumeError(409, { error: 'pipeline is archived' });
+  }
+  const budget = budgetStatus();
+  if (budget.blocked) {
+    throw new ResumeError(403, { error: 'total cost limit reached', budget });
+  }
+  // Override persists only once the (never-bypassable) total gate passes —
+  // a total-refused request must not leave cost_cap_override armed.
+  if (ignoreCostCap === true) {
+    setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+  }
+  const pipeCap = budget.pipelineLimitUsd;
+  const spentSoFar = Number(saved.row.total_cost_usd || 0);
+  if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
+    throw new ResumeError(403, {
+      error: 'pipeline cost limit reached', budget, needsOverride: true,
+    });
+  }
+
+  // Double-resume guard: any live entry already driving this pipeline id.
+  for (const e of runs.values()) {
+    if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+      throw new ResumeError(400, { error: 'pipeline is already live' });
+    }
+  }
+
+  // Worktree(s) must still exist (single-project; workspace members are checked
+  // inside orchestrator.resume(), which fails fast with the same message).
+  const branch = saved.row.branch ? JSON.parse(saved.row.branch) : null;
+  if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
+    throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
+  }
+
+  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
+  // runs map project_key back through the registry.
+  let projectDir = null;
+  let workspace;
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    projectDir = projects[0].projectDir;
+    workspace = {
+      id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
+      description: meta.workspaceDescription || '', projects,
+    };
+  } else {
+    for (const p of await listProjects()) {
+      if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
+    }
+    if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  }
+
+  const effMock = mock || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
+  const runId = randomUUID();
+  const orch = createOrchestrator({
+    projectDir,
+    ...(workspace ? { workspace } : {}),
+    agentsDir: AGENTS_DIR,
+    claude: { permissionMode: 'acceptEdits', mock: effMock },
+    resume: saved,
+  });
+  const entry = {
+    id: runId,
+    orch,
+    projectDir,
+    ...(workspace
+      ? {
+          workspaceId: workspace.id,
+          kind: 'workspace-run',
+          projectNames: workspace.projects.map((p) => p.projectName || path.basename(p.projectDir || '')),
+        }
+      : { kind: 'run' }),
+    title: saved.row.title,
+    status: 'starting',
+    startedAt: new Date().toISOString(),
+    events: [],
+    pendingQuestion: null,
+    pipelineId,
+  };
+  runs.set(runId, entry);
+  wireRun(entry);
+  announceRun(entry);
+
+  // Evict the superseded paused/interrupted lineage for this pipeline. The old
+  // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
+  // each hello — leaving it resurfaces the now-resumed (and possibly already
+  // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
+  for (const [id, e] of runs) {
+    if (id !== runId && e.pipelineId === pipelineId &&
+        (e.status === 'paused' || e.status === 'interrupted')) {
+      runs.delete(id);
+    }
+  }
+
+  // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
+  Promise.resolve()
+    .then(() => orch.resume())
+    .catch((err) => {
+      const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
+      entry.status = 'error';
+      entry.events.push(event);
+      broadcast(event);
+    });
+
+  return { ok: true, runId, pipelineId };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/resume { pipelineId } — rehydrate a paused pipeline from the DB (works
@@ -949,121 +1282,13 @@ app.post('/api/pause', (req, res) => {
 // ---------------------------------------------------------------------------
 app.post('/api/resume', async (req, res) => {
   try {
-    const { pipelineId } = req.body || {};
-    if (!pipelineId || typeof pipelineId !== 'string') return badRequest(res, 'pipelineId is required');
-    const saved = readPipelineForResume(pipelineId);
-    if (!saved) return res.status(404).json({ error: 'pipeline not found' });
-    if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') return badRequest(res, `pipeline is "${saved.row.status}", not resumable`);
-    if (!saved.resumePoint) return badRequest(res, 'pipeline has no resume point');
-
-    if (saved.row.archived_at) {
-      return res.status(409).json({ error: 'pipeline is archived' });
-    }
-    const budget = budgetStatus();
-    if (budget.blocked) {
-      return res.status(403).json({ error: 'total cost limit reached', budget });
-    }
-    // Override persists only once the (never-bypassable) total gate passes —
-    // a total-refused request must not leave cost_cap_override armed.
-    if (req.body && req.body.ignoreCostCap === true) {
-      setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
-    }
-    const pipeCap = budget.pipelineLimitUsd;
-    const spentSoFar = Number(saved.row.total_cost_usd || 0);
-    if (pipeCap != null && spentSoFar >= pipeCap && !readCostCapOverride(pipelineId)) {
-      return res.status(403).json({
-        error: 'pipeline cost limit reached', budget, needsOverride: true,
-      });
-    }
-
-    // Double-resume guard: any live entry already driving this pipeline id.
-    for (const e of runs.values()) {
-      if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
-        return badRequest(res, 'pipeline is already live');
-      }
-    }
-
-    // Worktree(s) must still exist (single-project; workspace members are checked
-    // inside orchestrator.resume(), which fails fast with the same message).
-    const branch = saved.row.branch ? JSON.parse(saved.row.branch) : null;
-    if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
-      return badRequest(res, `worktree missing: ${branch.worktreeDir}`);
-    }
-
-    // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-    // runs map project_key back through the registry.
-    let projectDir = null;
-    let workspace;
-    if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
-      const meta = JSON.parse(saved.row.workspace_meta);
-      const projects = (meta.projects || []).map((p) => ({ ...p }));
-      if (!projects.length) return badRequest(res, 'workspace metadata incomplete');
-      projectDir = projects[0].projectDir;
-      workspace = {
-        id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
-        description: meta.workspaceDescription || '', projects,
-      };
-    } else {
-      for (const p of await listProjects()) {
-        if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
-      }
-      if (!projectDir) return badRequest(res, 'project for this pipeline is not onboarded on this machine');
-    }
-
-    const mock = !!(req.body && req.body.mock) || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
-    const runId = randomUUID();
-    const orch = createOrchestrator({
-      projectDir,
-      ...(workspace ? { workspace } : {}),
-      agentsDir: AGENTS_DIR,
-      claude: { permissionMode: 'acceptEdits', mock },
-      resume: saved,
+    const out = await resumeRun(req.body?.pipelineId, {
+      ignoreCostCap: req.body?.ignoreCostCap === true,
+      mock: !!(req.body && req.body.mock),
     });
-    const entry = {
-      id: runId,
-      orch,
-      projectDir,
-      ...(workspace
-        ? {
-            workspaceId: workspace.id,
-            kind: 'workspace-run',
-            projectNames: workspace.projects.map((p) => p.projectName || path.basename(p.projectDir || '')),
-          }
-        : { kind: 'run' }),
-      title: saved.row.title,
-      status: 'starting',
-      startedAt: new Date().toISOString(),
-      events: [],
-      pendingQuestion: null,
-      pipelineId,
-    };
-    runs.set(runId, entry);
-    wireRun(entry);
-    announceRun(entry);
-
-    // Evict the superseded paused/interrupted lineage for this pipeline. The old
-    // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
-    // each hello — leaving it resurfaces the now-resumed (and possibly already
-    // completed) pipeline as a phantom 'Paused' card in Running on reload/reconnect.
-    for (const [id, e] of runs) {
-      if (id !== runId && e.pipelineId === pipelineId &&
-          (e.status === 'paused' || e.status === 'interrupted')) {
-        runs.delete(id);
-      }
-    }
-
-    // Fire-and-forget; all progress is surfaced through events (same idiom as /api/run).
-    Promise.resolve()
-      .then(() => orch.resume())
-      .catch((err) => {
-        const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
-        entry.status = 'error';
-        entry.events.push(event);
-        broadcast(event);
-      });
-
-    res.json({ ok: true, runId, pipelineId });
+    res.json(out);
   } catch (err) {
+    if (err instanceof ResumeError) return res.status(err.status).json(err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -1760,7 +1985,7 @@ const settingsState = () => ({
 });
 
 app.get('/api/settings', (_req, res) => {
-  res.json(settingsState());
+  res.json({ ...settingsState(), chat: chatPrefs() });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -1784,6 +2009,7 @@ app.post('/api/settings', async (req, res) => {
   }
   try {
     assertCostLimitInputs(budget);
+    if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
     }
@@ -1792,11 +2018,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     // Legacy contract: a POST that names no known key clears root. Budget keys
     // must not trip it — a budget-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey)) {
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey || has('chat'))) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (hasBudgetKey) emitChanged('budget-changed');
-    res.json(settingsState());
+    res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
     return badRequest(res, err && err.message ? err.message : String(err));
@@ -2517,6 +2743,21 @@ function requirePlugin(req, res) {
   return name;
 }
 
+// :id guard for every /api/marketplaces/:id route. Real ids come from repoSlug
+// (`<readable [A-Za-z0-9._-]>-<8 hex>`), so this regex admits every legitimate
+// id and nothing path-like. The null-prototype map from readMarketplaces already
+// blocks `__proto__`/`constructor` lookups in add/sync/remove; Object.hasOwn
+// here is belt-and-suspenders.
+const MARKETPLACE_ID_RE = /^[A-Za-z0-9._-]{1,100}$/;
+function requireMarketplace(req, res) {
+  const id = req.params.id;
+  if (!MARKETPLACE_ID_RE.test(id) || !Object.hasOwn(readMarketplaces().marketplaces, id)) {
+    res.status(404).json({ error: 'marketplace not found' });
+    return null;
+  }
+  return id;
+}
+
 // Map plugin-core err.code -> HTTP (mirrors agentErrorStatus). The uninstall
 // guard's ReferencedError (plugin-workflows.mjs) is matched structurally so its
 // payload (the referencing list) reaches the client; everything uncoded is a
@@ -2525,6 +2766,7 @@ function pluginErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
   if (code === 'REFERENCED') return 409;
+  if (code === 'EXISTS') return 409;
   return 500;
 }
 function sendPluginError(res, err) {
@@ -2547,53 +2789,70 @@ function readInstalledManifest(name) {
   }
 }
 
-// Pre-install consent inventory (spec §6.1: agents WITH tools, sources WITH
-// requested secrets, dep count, setup commands — all BEFORE anything is
-// installed). buildInstallInventory needs a tree on disk, so export the pinned
-// SHA from the bare cache into a throwaway temp dir, inventory it, delete it.
-// Nothing lands under ~/.worca-cc/plugins and no plugin code runs.
-const execFileP = promisify(execFile); // execFile/promisify imported in the step-(a) block above
-async function discoveryInventory(repoUrl, sha, subdir) {
-  const tmp = await mkdtemp(path.join(tmpdir(), 'worca-cc-consent-'));
-  try {
-    const tar = path.join(tmp, 'x.tar');
-    await execFileP('git', ['--git-dir', repoCacheDir(repoUrl), 'archive', '--format=tar', '-o', tar,
-      ...(subdir ? [sha, subdir] : [sha])]);
-    await execFileP('tar', ['-xf', tar, '-C', tmp,
-      ...(subdir ? ['--strip-components', String(subdir.split('/').length)] : [])]);
-    await rm(tar, { force: true });
-    return buildInstallInventory(tmp);
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
-  }
-}
-
 app.get('/api/plugins', (req, res) => {
   try {
-    res.json({ plugins: listInstalledPlugins(), orphans: listOrphanPluginData() });
+    const mkts = readMarketplaces().marketplaces;
+    res.json({
+      plugins: listInstalledPlugins().map((p) => ({
+        ...p,
+        marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+      })),
+      orphans: listOrphanPluginData(),
+    });
   } catch (err) {
     sendPluginError(res, err);
   }
 });
 
-// POST /api/plugins/repo { url } -> discovery pick-list (§4.3). Bare clone/
-// fetch into the cache; nothing is installed and no plugin code runs.
-app.post('/api/plugins/repo', async (req, res) => {
+// Marketplaces (spec §4.7): the persisted repo registry behind the Plugins
+// view's Available/Marketplaces sections. Snapshots are cached in
+// marketplaces.json, so GET is zero-network; refresh routes do the git work.
+
+// Merge lock membership onto each snapshot plugin. MUST wrap every response that
+// returns marketplace snapshots — refresh routes return raw entries whose plugins
+// have no `installed` key, and renderAvailableList would re-offer Install on them.
+function withInstalled(list) {
+  const lock = readPluginsLock();
+  return (list || []).map((m) => ({
+    ...m, plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+  }));
+}
+
+app.get('/api/marketplaces', (req, res) => {
+  try {
+    res.json({ marketplaces: withInstalled(listMarketplaces()) });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.post('/api/marketplaces', async (req, res) => {
   const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
   if (!url) return badRequest(res, 'url is required');
   try {
-    const out = await addPluginRepo(url);
-    res.json({
-      repoUrl: out.repoUrl,
-      sha: out.sha,
-      discovered: await Promise.all(out.discovered.map(async (d) => ({
-        ...d,
-        inventory: await discoveryInventory(out.repoUrl, out.sha, d.subdir),
-      }))),
-    });
-  } catch (err) {
-    sendPluginError(res, err);
-  }
+    res.json({ ok: true, marketplace: withInstalled([await addMarketplace(url)])[0] });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+// refresh-all (a distinct path from :id/refresh, so registration order is irrelevant).
+app.post('/api/marketplaces/refresh', async (req, res) => {
+  try {
+    res.json({ ok: true, marketplaces: withInstalled(await refreshAllMarketplaces()) });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.post('/api/marketplaces/:id/refresh', async (req, res) => {
+  const id = requireMarketplace(req, res);
+  if (!id) return;
+  try {
+    res.json({ ok: true, marketplace: withInstalled([await syncMarketplace(id)])[0] });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+app.delete('/api/marketplaces/:id', (req, res) => {
+  const id = requireMarketplace(req, res);
+  if (!id) return;
+  try {
+    res.json(removeMarketplace(id));
+  } catch (err) { sendPluginError(res, err); }
 });
 
 // POST /api/plugins/install { repoUrl, subdir, name, sha } — the consent point
@@ -2605,10 +2864,19 @@ app.post('/api/plugins/install', async (req, res) => {
     if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
   }
   const subdir = typeof body.subdir === 'string' ? body.subdir : '';
+  // A4: layer-3 option-injection guard on the install body. (?!-) rejects
+  // dash-leading segments too, matching parseMarketplaceManifest exactly — no
+  // defense layer may be laxer than the others.
+  if (subdir && !/^(?!-)[A-Za-z0-9._-]+(\/(?!-)[A-Za-z0-9._-]+)*$/.test(subdir)) {
+    return badRequest(res, 'invalid subdir');
+  }
+  const marketplace = typeof body.marketplace === 'string' && MARKETPLACE_ID_RE.test(body.marketplace)
+    ? body.marketplace : undefined;
   try {
     const out = await installPlugin({
-      repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(),
+      repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
+    reloadChatWorkers(body.name.trim());
     res.json(out); // { ok: true, inventory }
   } catch (err) {
     sendPluginError(res, err);
@@ -2625,7 +2893,9 @@ app.post('/api/plugins/:name/update', async (req, res) => {
     if (!(req.body && req.body.confirm === true)) {
       return res.json({ preview: await fetchCandidate(name) });
     }
-    res.json(await updatePlugin(name));
+    const updated = await updatePlugin(name);
+    reloadChatWorkers(name);
+    res.json(updated);
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -2639,6 +2909,7 @@ app.post('/api/plugins/:name/enable', (req, res) => {
   }
   try {
     setPluginEnabled(name, req.body.enabled);
+    reloadChatWorkers(name);
     res.json({ ok: true, enabled: req.body.enabled });
   } catch (err) {
     sendPluginError(res, err);
@@ -2654,6 +2925,7 @@ app.delete('/api/plugins/:name', async (req, res) => {
   const purge = isTruthy(req.query.purge) || !!(req.body && req.body.purge === true);
   try {
     await uninstallPlugin(name, { purge });
+    reloadChatWorkers(name);
     res.json({ ok: true, purged: purge });
   } catch (err) {
     sendPluginError(res, err);
@@ -2700,11 +2972,19 @@ app.get('/api/plugins/:name/config', (req, res) => {
       schema: s.configSchema,
       values: redactedConfig(name, s.configSchema),
     }));
+    const channels = (manifest.chatChannels || []).map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      platform: c.platform,
+      schema: c.configSchema,
+      values: redactedConfig(name, c.configSchema),
+    }));
     // Model secrets (design §9.7): same redaction contract — { set: true|false }
     // markers only, never values.
     const msSchema = modelSecretsSchema(name);
     res.json({
       sources,
+      channels,
       ...(msSchema.length ? { models: { schema: msSchema, values: redactedConfig(name, msSchema) } } : {}),
     });
   } catch (err) {
@@ -2712,9 +2992,10 @@ app.get('/api/plugins/:name/config', (req, res) => {
   }
 });
 
-// PUT /api/plugins/:name/config { sourceId, values } -> writePluginConfig
-// routes secret:true keys to data/secrets.json (0600, atomic). Request values
-// are NEVER logged and NEVER echoed back (the response is a bare receipt).
+// PUT /api/plugins/:name/config { sourceId | channelId, values } ->
+// writePluginConfig routes secret:true keys to data/secrets.json (0600,
+// atomic). Request values are NEVER logged and NEVER echoed back (the response
+// is a bare receipt). A channelId save also hot-restarts the channel worker.
 app.put('/api/plugins/:name/config', (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
@@ -2736,14 +3017,23 @@ app.put('/api/plugins/:name/config', (req, res) => {
       return sendPluginError(res, err);
     }
   }
-  const sources = manifest.taskSources || [];
-  const sourceId = typeof body.sourceId === 'string' && body.sourceId
-    ? body.sourceId
-    : (sources.length === 1 ? sources[0].id : '');
-  const source = sources.find((s) => s.id === sourceId);
-  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  let schema;
+  if (typeof body.channelId === 'string' && body.channelId) {
+    const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
+    if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
+    schema = channel.configSchema;
+  } else {
+    const sources = manifest.taskSources || [];
+    const sourceId = typeof body.sourceId === 'string' && body.sourceId
+      ? body.sourceId
+      : (sources.length === 1 ? sources[0].id : '');
+    const source = sources.find((s) => s.id === sourceId);
+    if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+    schema = source.configSchema;
+  }
   try {
-    writePluginConfig(name, source.configSchema, body.values);
+    writePluginConfig(name, schema, body.values);
+    reloadChatWorkers(name);
     res.json({ ok: true });
   } catch (err) {
     sendPluginError(res, err);
@@ -2949,6 +3239,31 @@ function isTruthy(v) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
+// ---------------------------------------------------------------------------
+// /api/chat* -> channel worker status + test delivery (design §4.8). Prefs ride
+// GET/POST /api/settings; per-plugin channel CONFIG rides /api/plugins/:name/config.
+// ---------------------------------------------------------------------------
+app.get('/api/chat/status', (_req, res) => {
+  try {
+    res.json({ channels: channelHost.status() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/chat/test', async (req, res) => {
+  const { plugin, channelId } = req.body || {};
+  if (!plugin || !channelId) return badRequest(res, 'plugin and channelId are required');
+  try {
+    res.json(await chatNotifier.sendTest(plugin, channelId, renderTest()));
+  } catch (err) {
+    // Connector-outcome convention: caller correctness -> HTTP status; delivery
+    // outcomes ride a 200 envelope elsewhere, but a missing channel/config is
+    // the caller's mistake here.
+    return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
 // SPA fallback: any unmatched GET that is not an /api or /ws path serves
 // index.html. Implemented as middleware (not a route pattern) so it does not
 // depend on path-to-regexp wildcard syntax, which differs between Express 4
@@ -3050,6 +3365,12 @@ export async function bootMaintenance({ log } = {}) {
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  try {
+    seedBuiltinMarketplace();
+  } catch (err) {
+    console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
+  }
+
   bootMaintenance().catch((err) => {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
@@ -3063,8 +3384,22 @@ if (isMain) {
     const url = `http://${shown}:${PORT}`;
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
     console.log(`[worca-ui] WebSocket on ws://${shown}:${PORT}/ws`);
+    try { channelHost.start(); } catch (err) {
+      console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
+    }
   });
+
+  // Channel workers must die with the server (design §9: persistent-process
+  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit.
+  let shuttingDown = false;
+  const shutdownChat = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    channelHost.stop().finally(() => process.exit(signal === 'SIGINT' ? 130 : 143));
+  };
+  process.on('SIGINT', () => shutdownChat('SIGINT'));
+  process.on('SIGTERM', () => shutdownChat('SIGTERM'));
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen };
+export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, chatNotifier, resumeRun };

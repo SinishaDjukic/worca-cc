@@ -106,19 +106,20 @@ test('GET /api/plugins with zero plugins -> { plugins: [], orphans: [] } (featur
   assert.deepEqual(await r.json(), { plugins: [], orphans: [] });
 });
 
-test('POST /api/plugins/repo discovers the fixture + manifest-derived preview', async () => {
-  assert.equal((await post('/api/plugins/repo', {})).status, 400, 'missing url -> 400');
-  const r = await post('/api/plugins/repo', { url: repoDir });
+test('POST /api/marketplaces discovers the fixture + manifest-derived preview', async () => {
+  assert.equal((await post('/api/marketplaces', {})).status, 400, 'missing url -> 400');
+  const r = await post('/api/marketplaces', { url: repoDir });
   assert.equal(r.status, 200);
-  const j = await r.json();
-  assert.match(j.sha, /^[0-9a-f]{40}$/);
-  assert.equal(j.sha, repoSha);
-  const d = j.discovered.find((x) => x.name === 'local-src');
-  assert.ok(d, 'fixture plugin discovered at depth 0');
-  assert.equal(d.subdir, '');
-  assert.equal(d.inventory.taskSources[0].id, 'main');
-  assert.deepEqual(d.inventory.taskSources[0].secrets, ['token'], 'secret keys surfaced pre-install');
-  assert.ok(d.inventory.agents.some((a) => a.key === 'localHelper'), 'agents (with tools) inventoried pre-install');
+  const { marketplace } = await r.json();
+  assert.match(marketplace.lastSync.sha, /^[0-9a-f]{40}$/);
+  assert.equal(marketplace.lastSync.sha, repoSha);
+  const p = marketplace.plugins.find((x) => x.name === 'local-src');
+  assert.ok(p, 'fixture plugin discovered at depth 0 (fallback scan — no marketplace manifest)');
+  assert.equal(p.subdir, '');
+  assert.equal(p.installed, false, 'installed flag merged onto the snapshot');
+  assert.equal(p.inventory.taskSources[0].id, 'main');
+  assert.deepEqual(p.inventory.taskSources[0].secrets, ['token'], 'secret keys surfaced pre-install');
+  assert.ok(p.inventory.agents.some((a) => a.key === 'localHelper'), 'agents (with tools) inventoried pre-install');
 });
 
 test('POST /api/plugins/install -> { ok, inventory }; plugin then lists', async () => {

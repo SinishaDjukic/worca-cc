@@ -1,0 +1,53 @@
+{
+  "name": "slack-chat",
+  "version": "0.1.0",
+  "description": "Two-way Slack channel via Socket Mode: pipeline notifications + chat commands (/status, /pause, /approve…)",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=2 <3" },
+  "chatChannels": [
+    {
+      "id": "main",
+      "displayName": "Slack",
+      "platform": "slack",
+      "module": "./channel/worker.mjs",
+      "ingress": "connect",
+      "capabilities": { "inbound": true, "outbound": true },
+      "configSchema": [
+        {
+          "key": "botToken",
+          "type": "text",
+          "label": "Bot token (xoxb-…)",
+          "secret": true,
+          "required": true,
+          "help": "OAuth & Permissions → Bot User OAuth Token. Scopes: chat:write, plus channels:history/groups:history for inbound. Or {\"$env\":\"SLACK_BOT_TOKEN\"}."
+        },
+        {
+          "key": "appToken",
+          "type": "text",
+          "label": "App-level token (xapp-…)",
+          "secret": true,
+          "required": true,
+          "help": "Basic Information → App-Level Tokens, scope connections:write (Socket Mode must be enabled). Or {\"$env\":\"SLACK_APP_TOKEN\"}."
+        },
+        {
+          "key": "notifyChatIds",
+          "type": "text",
+          "label": "Notify channel IDs",
+          "help": "Comma-separated channel IDs (C…) that receive run notifications. /invite the bot to each channel first."
+        },
+        {
+          "key": "allowedChatIds",
+          "type": "text",
+          "label": "Allowed channel IDs (commands)",
+          "help": "Comma-separated channel IDs allowed to send commands. EMPTY = nobody: anyone in an allowed channel can control worca-cc."
+        },
+        {
+          "key": "channelAllowlist",
+          "type": "text",
+          "label": "Listen filter (optional)",
+          "help": "Optional comma-separated channel IDs to listen on; empty = every channel the bot can read (commands are still gated by Allowed channel IDs)."
+        }
+      ]
+    }
+  ]
+}
