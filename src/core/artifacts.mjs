@@ -1399,6 +1399,12 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     dir: row.dir,
     title: row.title ?? row.id,
     status: row.status ?? 'unknown',
+    // phase + stepper let the History LIST draw the one-line stage rail with no
+    // per-row detail fetch: the manifest supplies the stages, the final phase
+    // places the frontier (app.js#histRowView). cycle drives "N cycles".
+    phase: row.phase ?? null,
+    cycle: Number.isFinite(row.cycle) ? row.cycle : 0,
+    stepper: j(row.stepper, null),
     startedAt: row.started_at ?? null,
     branch: feature,
     sourceBranch: source,
@@ -1456,7 +1462,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+    SELECT id, title, status, phase, cycle, stepper, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
@@ -1480,7 +1486,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  projectName, workspaceName, projectDir:primaryPath, target:'workspace'}. */
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
-    SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
+    SELECT id, project_key, workspace_key, target, title, status, phase, cycle, stepper,
+           started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines
@@ -1938,7 +1945,7 @@ export async function listWorkspacePipelines(workspaceKey, primaryDir = null, op
   const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, title, status, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
+    SELECT id, title, status, phase, cycle, stepper, started_at, updated_at, total_cost_usd, total_active_ms, branch, guardrails_id,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
     FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
   `).all(workspaceKey);
