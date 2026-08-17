@@ -1,0 +1,11 @@
+{
+  "name": "Worca CC Official",
+  "description": "Plugins bundled with the Worca CC repo",
+  "plugins": [
+    "plugins/github-source",
+    "plugins/telegram-chat",
+    "plugins/slack-chat",
+    "plugins/discord-chat",
+    "plugins/teams-chat"
+  ]
+}

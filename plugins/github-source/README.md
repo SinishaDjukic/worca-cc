@@ -5,8 +5,7 @@ back as an issue comment (optionally closing the issue).
 
 ## Install
 
-    worca plugin add https://github.com/denislavprinov/maestro-plugins
-    worca plugin install github-source --repo https://github.com/denislavprinov/maestro-plugins
+    worca plugin install github-source
 
 ## Auth
 
@@ -38,8 +37,9 @@ the task browser searches titles client-side.
 
 ## Publishing
 
-This directory (`examples/plugins/github-source` in the worca-cc repo) is the
-SOURCE OF TRUTH. Publish by copying it verbatim into the
-`denislavprinov/maestro-plugins` repo (as top-level dir `github-source`, so
-discovery finds the manifest at depth 1) and committing; users then get it via
-`worca plugin add` / `worca plugin update github-source`.
+This directory (`plugins/github-source` in the worca-cc repo) is the source of
+truth AND the distribution point: the worca-cc repo is itself a plugin
+marketplace (see the root `worca-cc-marketplace.json`), registered by default
+in every worca-cc install. Users get this plugin from Plugins → Available, or:
+
+    worca plugin install github-source

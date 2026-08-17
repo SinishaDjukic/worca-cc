@@ -27,7 +27,9 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
             <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
-            <span class="nav-count n-run" id="nav-running-count">0</span>
+            <!-- Starts grey: zero running IS the resting state, and app.js
+                 (updateNavCounts) swaps in n-run as soon as anything is live. -->
+            <span class="nav-count n-grey" id="nav-running-count">0</span>
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
@@ -114,38 +116,43 @@
           <div class="topbar">
             <div>
               <h1>New pipeline</h1>
-              <div class="sub">Pick a workflow, configure each agent, and run · default: Plan &rarr; Refine &rarr; Implement &rarr; Review</div>
+              <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
             </div>
           </div>
 
           <div class="grid single">
             <section class="card">
               <form id="run-form" autocomplete="off">
-                <!-- Target: single project vs workspace -->
-                <div class="field">
-                  <label>Target</label>
-                  <div class="seg" id="target-seg">
-                    <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
-                    <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                <!-- Target switch and the thing it selects share one row: they are one
+                     decision, and the switch is only meaningful next to its picker. -->
+                <div class="split-row">
+                  <div class="field field-compact">
+                    <label>Target</label>
+                    <div class="seg" id="target-seg">
+                      <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
+                      <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                    </div>
+                    <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="target" value="project" checked hidden />
+                    <input type="radio" name="target" value="workspace" hidden />
                   </div>
-                  <!-- hidden radios kept as the source of truth read at submit -->
-                  <input type="radio" name="target" value="project" checked hidden />
-                  <input type="radio" name="target" value="workspace" hidden />
-                </div>
+
+                  <!-- One cell, two panes: whichever the switch selects. -->
+                  <div class="target-panes">
 
                 <!-- Project (target = project) -->
-                <div class="field target-pane" id="target-project-pane">
+                <div class="field field-compact target-pane" id="target-project-pane">
                   <label for="projectSelect">Project</label>
-                  <div class="row-2">
-                    <div class="select-wrap with-x">
-                      <select id="projectSelect" name="projectSelect">
-                        <option value="" disabled selected>No projects yet</option>
-                        <option value="__add__">+ Add project&hellip;</option>
-                      </select>
-                    </div>
-                    <button type="button" id="project-delete" class="icon-btn" title="Remove the selected project from the list" disabled>&#10005;</button>
+                  <div class="select-wrap">
+                    <select id="projectSelect" name="projectSelect">
+                      <option value="" disabled selected>No projects yet</option>
+                      <option value="__add__">+ Add project&hellip;</option>
+                    </select>
                   </div>
-                  <small class="hint" id="projectHint">Pick a saved project, or add one. The orchestrator operates inside its folder.</small>
+                  <!-- Removing a project is a rare, destructive action: it lives in the
+                       Projects view (with the app's own confirm), exactly as removing a
+                       workspace lives in the Workspaces view. -->
+                  <small class="hint" id="projectHint">Runs happen inside this folder. <a href="#projects" data-nav="projects">Manage projects</a></small>
 
                   <div id="add-project" class="add-project hidden">
                     <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
@@ -162,7 +169,7 @@
                 </div>
 
                 <!-- Workspace (target = workspace) -->
-                <div class="field target-pane hidden" id="target-workspace-pane">
+                <div class="field field-compact target-pane hidden" id="target-workspace-pane">
                   <label for="workspaceSelect">Workspace</label>
                   <div class="select-wrap">
                     <select id="workspaceSelect" name="workspaceSelect">
@@ -170,43 +177,51 @@
                     </select>
                   </div>
                   <div class="ws-members" id="ws-members"></div>
-                  <small class="hint">A run fans out across the workspace's member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
-                  <small class="hint" id="workspaceHintConfig">Per-agent models resolve per project from each project's own config.</small>
+                  <!-- ONE hint line, matching the project pane: a second line made
+                       the row taller than its project counterpart, so flipping the
+                       target relaid out everything below it. -->
+                  <small class="hint">A run fans out across the member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
                 </div>
 
-                <!-- Title -->
-                <div class="field">
+                  </div><!-- /.target-panes -->
+                </div><!-- /.split-row -->
+
+                <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
+                <div class="field field-compact">
                   <label for="title">Title <span class="opt">(optional)</span></label>
                   <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                  <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Branch fields -->
-                <div class="field">
-                  <label for="sourceBranch">Source branch</label>
-                  <div class="select-wrap" id="sourceBranchWrap">
-                    <select id="sourceBranch" class="select"></select>
+                <!-- Task source switch and the workflow that will act on it, on one
+                     row — same proportion as Target/Project above. The panes below
+                     span the full width. -->
+                <div class="split-row">
+                  <div class="field field-compact">
+                    <label>Task source</label>
+                    <div class="seg" id="source-seg">
+                      <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                      <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                    </div>
+                    <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="source" value="prompt" checked hidden />
+                    <input type="radio" name="source" value="markdown" hidden />
                   </div>
-                  <!-- Workspace mode: one source-branch dropdown per member project. -->
-                  <div class="ws-source-branches hidden" id="ws-source-branches"></div>
-                  <small class="hint" id="sourceBranchHint">The new worktree is created off this branch. Defaults to the project's current branch.</small>
-                </div>
 
-                <div class="field">
-                  <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
-                  <input id="featureBranch" class="input" type="text" placeholder="leave empty — Claude will propose a name" spellcheck="false" />
-                </div>
-
-                <!-- Task source -->
-                <div class="field">
-                  <label>Task source</label>
-                  <div class="seg" id="source-seg">
-                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
-                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                  <!-- Workflow picker (Default + saved). app.js populates from GET
+                       /api/workflows. Choosing a workflow is a run decision, so it
+                       stays here; tuning its agents is not, and lives in Advanced. -->
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
                   </div>
-                  <!-- hidden radios kept as the source of truth read at submit -->
-                  <input type="radio" name="source" value="prompt" checked hidden />
-                  <input type="radio" name="source" value="markdown" hidden />
+                </div>
 
+                <div class="field">
                   <div id="prompt-pane" class="source-pane">
                     <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
                   </div>
@@ -222,125 +237,95 @@
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                 </div>
 
-                <!-- Optional extra files -->
-                <div class="field">
-                  <label>Optional extra files</label>
+                <!-- Config-load failure hint; app.js#setConfigError paints/clears it.
+                     Lives in the main column: it reports that the model catalog and
+                     saved agent config could not be read, and Advanced never opens
+                     itself, so inside it the message would go unseen. -->
+                <div id="config-error" class="hint" style="margin:-6px 0 14px;color:var(--red-ink)" hidden></div>
+
+                <!-- Extra files belong WITH the task: they are more of the same
+                     input, just as files. -->
+                <div class="field field-compact">
+                  <label>Extra files <span class="opt">(optional)</span></label>
                   <div class="file">
                     <button type="button" class="pick" data-pick="extras">Choose files</button>
-                    <span class="state" id="extrasNote">Reference files uploaded and copied into the pipeline's extras/ folder.</span>
+                    <span class="state" id="extrasNote">Leave empty and the run gets no extra files.</span>
                     <input id="extras" type="file" multiple hidden />
                   </div>
                 </div>
 
-                <!-- Pipeline configuration -->
-                <div id="pipeline-config" style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
-                  <h2 style="font-size:14.5px;font-weight:700;margin:0 0 6px">Pipeline configuration</h2>
-                  <div class="hint" style="margin:0 0 6px">Choose a workflow, then set model and reasoning effort per agent.</div>
-                  <!-- Config-load failure hint; app.js#setConfigError paints/clears it. -->
-                  <div id="config-error" class="hint" style="margin:0 0 6px;color:var(--red-ink)" hidden></div>
-
-                  <!-- Workflow picker (Default + saved). app.js populates from GET /api/workflows. -->
-                  <div class="field" style="margin-bottom:14px">
-                    <label for="workflowSelect">Workflow</label>
-                    <div class="select-wrap">
-                      <select id="workflowSelect" class="select" aria-label="Workflow">
-                        <option value="wf_default">Default</option>
-                      </select>
+                <!-- Branch pair: one decision (from → into), so one compact row. -->
+                <div class="field-grid-2">
+                  <div class="field field-compact">
+                    <label for="sourceBranch">Source branch</label>
+                    <div class="select-wrap" id="sourceBranchWrap">
+                      <select id="sourceBranch" class="select"></select>
                     </div>
+                    <!-- Workspace mode: one source-branch dropdown per member project. -->
+                    <div class="ws-source-branches hidden" id="ws-source-branches"></div>
+                    <small class="hint" id="sourceBranchHint">The worktree branches off this. Defaults to the current branch.</small>
                   </div>
 
-                  <!-- Guardrails picker (built-ins + named sets; the selection IS the
-                       run's policy, applied uniformly to every member). app.js populates
-                       from GET /api/guardrails. Sits OUTSIDE the target panes: applies
-                       to Project and Workspace targets alike. Default Permissive = no
-                       restrictions (legacy behavior). -->
-                  <div class="field" style="margin-bottom:14px">
-                    <label for="guardrailsSelect">Guardrails</label>
-                    <div class="select-wrap">
-                      <select id="guardrailsSelect" class="select" aria-label="Guardrails">
-                        <option value="permissive">Permissive (default)</option>
-                      </select>
-                    </div>
-                    <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
+                  <div class="field field-compact">
+                    <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
+                    <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                    <small class="hint">Leave empty and Worca will propose one.</small>
                   </div>
-
-                  <!-- Default-workflow stages: Clarify + the original four rows, shown
-                       when the Default workflow is selected (backward-compat). -->
-                  <div id="wf-default-stages">
-                    <div class="stage-cfg">
-                      <div class="acc red"></div>
-                      <div class="meta"><b>Clarify</b><small>Turns hidden decisions into questions before planning</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="clarify" aria-label="Clarify model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="clarify" aria-label="Clarify effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="clarify" aria-label="Clarify fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="clarify" aria-label="Clarify questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="clarify"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc violet"></div>
-                      <div class="meta"><b>Plan</b><small>Explores the codebase and writes the implementation plan</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="planner" aria-label="Plan model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="planner" aria-label="Plan effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="planner" aria-label="Plan fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="planner" aria-label="Plan questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="planner"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc green"></div>
-                      <div class="meta"><b>Refine</b><small>Rewrites the latest plan into a tighter version</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="refiner" aria-label="Refine model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="refiner" aria-label="Refine effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="refiner" aria-label="Refine fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="refiner" aria-label="Refine questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="refiner"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc peach"></div>
-                      <div class="meta"><b>Implement</b><small>Writes the code from the approved plan, strict TDD</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="implementer" aria-label="Implement model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="implementer" aria-label="Implement effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="implementer" aria-label="Implement fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="implementer" aria-label="Implement questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="implementer"></small>
-                    </div>
-
-                    <div class="stage-cfg">
-                      <div class="acc blue"></div>
-                      <div class="meta"><b>Review</b><small>Reviews the implementation diff against the plan</small></div>
-                      <div class="picks">
-                        <div class="select-wrap"><select class="step-model select" data-role="reviewer" aria-label="Review model"></select></div>
-                        <div class="select-wrap"><select class="step-effort select" data-role="reviewer" aria-label="Review effort"></select></div>
-                        <label class="fanout-toggle"><input type="checkbox" class="step-fanout" data-role="reviewer" aria-label="Review fan-out"><span>Fan-out</span></label>
-                        <label class="fanout-toggle questions-toggle" hidden><input type="checkbox" class="step-questions" data-role="reviewer" aria-label="Review questions"><span>Questions</span></label>
-                      </div>
-                      <small class="step-current" data-role="reviewer"></small>
-                    </div>
-                  </div>
-
-                  <!-- Per-node pickers for a non-default (saved) workflow. app.js fills this. -->
-                  <div id="wf-node-config" class="hidden"></div>
-
-                  <!-- Per-feedback cycle-count inputs. app.js fills this. -->
-                  <div id="wf-feedback-config" class="hidden"></div>
                 </div>
 
-                <!-- Mock -->
-                <div class="switch-row" style="margin-top:22px">
-                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
-                  <span class="txt">Mock mode — no Claude calls, offline dry run</span>
+                <!-- Advanced: how the run is executed, as opposed to what it runs.
+                     A workflow ships tuned, so its per-agent knobs belong here with
+                     guardrails and mock mode; the workflow PICKER stays above.
+                     Collapsed unless something inside is already non-default. -->
+                <details class="advanced" id="advanced-config">
+                  <summary>
+                    <span class="adv-chev" aria-hidden="true"></span>
+                    <span>Advanced</span>
+                  </summary>
+                  <div class="advanced-body">
+
+                <div id="pipeline-config">
+
+                  <!-- Agents accordion: one collapsed row per node, showing its
+                       EFFECTIVE model/effort. app.js#renderAgentRows fills it. The
+                       header names the workflow these agents come from — the picker
+                       is no longer beside them. -->
+                  <div class="agents-cfg" id="agents-config">
+                    <div class="agents-head">
+                      <span class="agents-title">Agents</span>
+                      <span class="agents-wf" id="agentsWorkflow"></span>
+                      <span class="agents-summary" id="agentsSummary">all defaults</span>
+                      <span class="agents-actions">
+                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" hidden>Save as workflow defaults</button>
+                        <button type="button" id="agentsReset" class="btn-ghost btn-mini" hidden>Reset</button>
+                      </span>
+                    </div>
+                    <div id="agents-rows"></div>
+                    <div id="wf-feedback-config" class="agent-row-body-inner" hidden></div>
+                  </div>
                 </div>
-                <input id="mock" type="checkbox" hidden />
+
+                    <!-- Guardrails picker (built-ins + named sets; the selection IS the
+                         run's policy, applied uniformly to every member). app.js populates
+                         from GET /api/guardrails. Applies to Project and Workspace targets
+                         alike. Default Permissive = no restrictions (legacy behavior). -->
+                    <div class="field">
+                      <label for="guardrailsSelect">Guardrails</label>
+                      <div class="select-wrap">
+                        <select id="guardrailsSelect" class="select" aria-label="Guardrails">
+                          <option value="permissive">Permissive (default)</option>
+                        </select>
+                      </div>
+                      <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
+                    </div>
+
+                    <div class="switch-row">
+                      <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                      <span class="txt">Mock mode — no Claude calls, offline dry run</span>
+                    </div>
+                    <input id="mock" type="checkbox" hidden />
+                  </div>
+                </details>
 
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
@@ -419,6 +404,7 @@
             <section class="card hist-card">
               <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
                 <span class="badge"></span>
+                <span class="badge hist-retained-badge" hidden>Work retained</span>
                 <div class="h-meta">
                   <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
                   <span class="hist-branch mono"></span>
@@ -433,6 +419,7 @@
                 <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="hist-detail" hidden>
+                <div class="retained-banner" role="alert" hidden></div>
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
                 <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
                 <div class="results-section"></div>
@@ -485,6 +472,7 @@
                   <div class="subs-panel logs-panel" hidden></div>
                 </div>
                 <div class="hist-actions">
+                  <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   <button type="button" class="hist-delete btn-danger" hidden>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -731,22 +719,26 @@
           <div class="topbar">
             <div>
               <h1>Plugins</h1>
-              <div class="sub">Task sources, agents, skills and workflow packs installed from GitHub repos</div>
+              <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
             </div>
             <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add repo
+              Add marketplace
             </button>
           </div>
           <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-          <div class="card hidden" id="plugin-add-row" style="padding:16px 20px;margin-bottom:14px">
+          <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
             <div class="path-row">
-              <input id="plugin-repo-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
-              <button type="button" id="plugin-repo-scan" class="btn btn-primary btn-mini">Scan</button>
+              <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+              <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
             </div>
-            <div id="plugin-discovered"></div>
           </div>
+          <h3 class="pl-sec-title">Installed</h3>
           <div class="run-list" id="plugins-list"></div>
+          <h3 class="pl-sec-title">Available</h3>
+          <div class="run-list" id="plugins-available"></div>
+          <h3 class="pl-sec-title">Marketplaces</h3>
+          <div class="run-list" id="marketplaces-list"></div>
         </section>
         <!-- /view plugins -->
 
@@ -960,13 +952,13 @@
             </div>
           </div>
 
-          <section class="card" style="max-width:760px;padding:22px">
+          <section class="card settings-card">
             <div class="field">
               <div class="label-row">
                 <label for="settingsRoot">Worca CC root folder</label>
                 <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
                   The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
-                  history store, the project list, and saved workflows. Leave blank to use the default.
+                  history store, the project list, and saved workflows. Leave empty to use the default.
                   Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
                   data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
                   the old root is left in place.
@@ -979,7 +971,7 @@
                 <label for="settingsProjectsRoot">Projects root folder</label>
                 <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
                   The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
-                  .mcp.json are made available to every pipeline agent. Leave blank to use your home folder.
+                  .mcp.json are made available to every pipeline agent. Leave empty to use your home folder.
                 </span></button>
               </div>
               <div class="path-row">
@@ -994,7 +986,7 @@
             <small class="hint" id="settingsMsg"></small>
           </section>
 
-          <section class="card" style="max-width:760px;padding:22px;margin-top:18px">
+          <section class="card settings-card">
             <div class="card-head">
               <div class="label-row">
                 <h2>Budget &amp; cost limits</h2>
@@ -1008,7 +1000,7 @@
               <div class="label-row">
                 <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
                 <button type="button" class="info-tip" aria-label="About Per-pipeline cost limit">i<span class="tip-content hidden">
-                  Pause a pipeline when its estimated cost reaches this amount. Leave blank for no limit.
+                  Pause a pipeline when its estimated cost reaches this amount. Leave empty for no limit.
                 </span></button>
               </div>
               <input id="budgetPerPipeline" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
@@ -1018,7 +1010,7 @@
                 <label for="budgetTotal">Total cost limit (USD)</label>
                 <button type="button" class="info-tip" aria-label="About Total cost limit">i<span class="tip-content hidden">
                   Pause all pipelines and block new ones when total spend in the period reaches this amount.
-                  Leave blank for no limit.
+                  Leave empty for no limit.
                 </span></button>
               </div>
               <input id="budgetTotal" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
@@ -1042,6 +1034,20 @@
               <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
             </div>
             <small class="hint" id="budgetMsg"></small>
+          </section>
+
+          <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+               events ping which chat channels. Body rendered by
+               chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+          <section class="card settings-card" id="chat-settings-card">
+            <div class="label-row">
+              <h2>Chat notifications</h2>
+            </div>
+            <div id="chat-settings-host"></div>
+            <div class="add-project-actions" style="margin-top:14px">
+              <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
+            </div>
+            <small class="hint" id="chatSettingsMsg"></small>
           </section>
         </section>
         <!-- /view settings -->

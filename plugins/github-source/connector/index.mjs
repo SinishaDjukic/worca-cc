@@ -1,4 +1,4 @@
-// examples/plugins/github-source/connector/index.mjs
+// plugins/github-source/connector/index.mjs
 // GitHub Issues task source (worca-cc plugin API v1). REST only, injected fetch,
 // zero dependencies. Task ids round-trip opaquely as "owner/repo#123".
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Pull tasks from GitHub Issues, write results back",
   "author": "Denislav Prinov",
-  "homepage": "https://github.com/denislavprinov/maestro-plugins",
+  "homepage": "https://github.com/denislavprinov/maestro",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=1 <2" },
   "taskSources": [

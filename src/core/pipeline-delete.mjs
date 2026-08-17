@@ -13,17 +13,23 @@
 // function just unlinked, so leaving it would strand dead pointers.
 // List and count reads filter on `archived_at IS NULL`; by-id reads still resolve.
 
-import { rm, readdir } from 'node:fs/promises';
+import { rm, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
-import { listArtifacts, readPipelineByKey, persistPrState } from './artifacts.mjs';
+import {
+  listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor,
+  recordArtifact, appendAudit, findRunDir,
+} from './artifacts.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
-import { removeWorktree } from './worktree.mjs';
-import { rmGuarded } from './run-manifest.mjs';
+import { removeWorktree, snapshotWorktreePatch } from './worktree.mjs';
+import {
+  rmGuarded, readRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
+} from './run-manifest.mjs';
 import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
+import { retainedWorkPatchName } from './results.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
@@ -95,6 +101,45 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   if (row.archived_at) {
     return { ok: true, id: row.id, alreadyArchived: true, warnings: [] };
   }
+  // UI state is advisory. Enforce the no-data-loss rule here as well, because a
+  // stale client or a direct API caller could otherwise force-remove the very
+  // checkout that was retained after its commit failed.
+  if (retainedWorkFor(row)) {
+    throw err('cannot archive while retained uncommitted work exists; recover it or discard the worktree first', 'RETAINED_WORKTREE');
+  }
+  // The run root is the one thing archive destroys that can still hold retained
+  // checkouts (detached members live at runs/<id>/repos/<key>). Resolve it ONCE,
+  // here, for the guards below AND the 2b) removal further down.
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  // Fail CLOSED on unreadable retention metadata — but ONLY while the run root
+  // still exists. With it gone, archive's per-member cleanup is already a no-op
+  // for an unparseable column (rowToState yields branches:{} / a null branch), so
+  // refusing forever would only wedge the row: discard cannot clear it
+  // (retainedWorkFor returns null) and the UI hides the Discard button. Naming
+  // the path keeps the refusal hand-clearable.
+  const unreadable = (col) => {
+    if (typeof col !== 'string' || !col.trim()) return false;
+    // A JSON *string* branch ("worca/foo") is a SUPPORTED legacy shape
+    // (rowToHistoryEntry reads it) — it carries no retention, so it is readable.
+    try { const p = JSON.parse(col); return p === null || (typeof p !== 'object' && typeof p !== 'string'); }
+    catch { return true; }
+  };
+  const metaUnreadable = row.target === 'workspace' ? unreadable(row.workspace_meta) : unreadable(row.branch);
+  if (metaUnreadable && existsSync(runRoot)) {
+    throw err(
+      `cannot archive: retention metadata is unreadable, so retained uncommitted work inside ${runRoot} cannot be ruled out — inspect and remove that run root, then archive again`,
+      'RETAINED_WORKTREE',
+    );
+  }
+  // The DB stamp is teardown's LAST best-effort write; the run.json retain block
+  // is written earlier. Trust either representation (the sweep already does).
+  if (existsSync(runRoot)) {
+    const guardManifest = await readRunManifest(runRoot);
+    const members = Array.isArray(guardManifest?.retain?.members) ? guardManifest.retain.members : [];
+    if (members.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))) {
+      throw err('cannot archive while retained uncommitted work exists; recover it or discard the worktree first', 'RETAINED_WORKTREE');
+    }
+  }
 
   // Reconstruct state (branch/branches/projects) via the same reader history uses.
   const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
@@ -108,6 +153,9 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     ok: true, id: row.id, archived: true, pipelineDir: runDir,
     planFiles: [], reviewFiles: [], branch: null, worktree: null, runRoot: null, warnings: [],
   };
+  if (metaUnreadable) {
+    report.warnings.push('retention metadata was unreadable; per-member branch/worktree cleanup was skipped');
+  }
 
   // Final PR observation while the branch still exists (spec §6.8.3). Single-
   // project runs only: workspace rows carry a branches MAP (state.branches) —
@@ -187,7 +235,6 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   //     row, so the boot sweep can still resolve this id — but the run root is gone
   //     and unreclaimable-by-id later, so it must be removed here, not deferred.
   //     A legacy run simply has no such dir, so this is a no-op there.
-  const runRoot = join(worcaHome(), 'runs', row.id);
   if (existsSync(runRoot)) {
     const res = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
     if (res.removed) report.runRoot = runRoot;
@@ -212,18 +259,170 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   return report;
 }
 
+/**
+ * Explicitly reclaim worktrees retained after a teardown commit failure while
+ * preserving the pipeline row and artifact directory. Every live checkout is
+ * snapshotted first; any snapshot failure aborts before removal.
+ */
+export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+  if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
+  const storeKey = workspaceKey
+    ? `workspaces/${workspaceKey}`
+    : (key || (projectDir ? projectKey(projectDir) : null));
+  if (!storeKey) throw err('projectKey, projectDir or workspaceKey is required', 'BAD_REQUEST');
+
+  const row = lookupRow(storeKey, id);
+  if (!row) return null;
+  if (ACTIVE.has(String(row.status || '').toLowerCase())) {
+    throw err('cannot discard a running pipeline worktree', 'RUNNING');
+  }
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  let retained = retainedWorkFor(row);
+  if (!retained && existsSync(runRoot)) {
+    // The DB stamp is teardown's LAST best-effort write and can be lost (F2's
+    // crash window). The run.json retain ledger is written earlier — honor it so
+    // manifest-only retention is still discardable instead of a permanent wedge
+    // (archive refuses it; this is the only exit). existsSync keeps it
+    // self-clearing, same contract as retainedWorkFor.
+    const manifest = await readRunManifest(runRoot);
+    const live = (Array.isArray(manifest?.retain?.members) ? manifest.retain.members : [])
+      .filter((m) => m?.worktreeDir && existsSync(m.worktreeDir));
+    if (live.length) retained = { reason: manifest.retain.reason || 'unknown', members: live };
+  }
+  if (!retained) {
+    return { ok: true, id: row.id, discarded: false, remaining: 0, worktrees: [], patches: [], runRoot: null, warnings: [] };
+  }
+
+  const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
+  if (!state) throw err('pipeline state is unavailable', 'BAD_REQUEST');
+  const storeRootDir = projectStorePath(storeKey);
+  const runDir = await findRunDir(join(storeRootDir, 'pipelines'), row.id);
+  if (!runDir) {
+    throw err('cannot discard retained work: the pipeline directory needed for the recovery patch is missing', 'SNAPSHOT_FAILED');
+  }
+
+  const projects = Array.isArray(state.projects) ? state.projects : [];
+  const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
+  const targets = retained.members.map((member) => ({
+    ...member,
+    projectDir: state.target === 'workspace'
+      ? (dirByKey.get(member.projectKey) || null)
+      : (state.projectDir || projectDir || null),
+  }));
+  if (targets.some((t) => !t.projectDir)) {
+    throw err('cannot discard retained work: a member repository could not be resolved', 'SNAPSHOT_FAILED');
+  }
+
+  // Snapshot ALL members before deleting ANY member, straight to their final
+  // files. This prevents a later snapshot failure from leaving a half-discarded
+  // workspace, without ever holding a whole patch in memory.
+  await mkdir(runDir, { recursive: true });
+  const patches = [];
+  for (const target of targets) {
+    const name = retainedWorkPatchName(state.target === 'workspace' ? (target.projectKey || 'member') : null);
+    const snap = await snapshotWorktreePatch(target.worktreeDir, join(runDir, name));
+    if (!snap.ok) {
+      throw err(
+        `cannot save recovery patch for ${target.projectKey || target.worktreeDir}: git ${snap.step} failed: ${snap.message}`,
+        'SNAPSHOT_FAILED',
+      );
+    }
+    if (snap.file) { // a clean tree yields no patch — nothing to record
+      recordArtifact(row.id, 'retained-work-patch', name);
+      patches.push(snap.file);
+    }
+  }
+
+  const report = {
+    ok: true, id: row.id, discarded: false, remaining: 0, worktrees: [], patches,
+    runRoot: null, warnings: [],
+  };
+  if (existsSync(runRoot)) {
+    const manifest = await readRunManifest(runRoot);
+    for (const [scope, entries] of Object.entries(manifest?.injectedPaths || {})) {
+      const baseDir = scope === 'runRoot'
+        ? runRoot
+        : targets.find((t) => t.projectKey === scope)?.worktreeDir || join(runRoot, 'repos', scope);
+      const warnings = await rescueModifiedMounts({
+        baseDir, entries, pipelineDir: runDir, scope, pipelineId: row.id,
+      });
+      report.warnings.push(...warnings);
+    }
+    report.warnings.push(...await scanStrayEntries({ runRoot, pipelineDir: runDir }));
+    await copyRunManifestTo(runRoot, runDir);
+  }
+
+  const clearedKeys = [];
+  for (const target of targets) {
+    const result = await removeWorktree({
+      projectDir: target.projectDir, worktreeDir: target.worktreeDir, branch: null, force: true,
+    });
+    for (const step of result.steps.filter((s) => !s.ok)) {
+      report.warnings.push(`${target.projectKey || 'project'}: ${step.step}: ${step.stderr || 'failed'}`);
+    }
+    if (!existsSync(target.worktreeDir)) {
+      report.worktrees.push(target.worktreeDir);
+      clearedKeys.push(target.projectKey ?? null);
+    } else {
+      report.remaining += 1;
+      report.warnings.push(`${target.projectKey || 'project'}: worktree still exists at ${target.worktreeDir}`);
+    }
+  }
+  report.discarded = report.remaining === 0;
+
+  // Targeted update: clear ONLY the retention stamps. A full writeState would
+  // restamp updated_at (the stats terminal-write proxy), NULL resume_point, and
+  // rewrite pipeline_steps — none of which a checkout reclaim may touch.
+  if (clearedKeys.length) {
+    const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
+    const clear = (br) => { delete br.commitFailed; br.worktreeRemoved = true; br.branchKept = true; };
+    tx(() => {
+      const fresh = getDb().prepare('SELECT branch, workspace_meta FROM pipelines WHERE id = ?').get(row.id);
+      if (state.target === 'workspace') {
+        const wm = typeof fresh?.workspace_meta === 'string' ? parse(fresh.workspace_meta) : fresh?.workspace_meta;
+        // NEVER write a rebuilt {} here: workspace_meta carries the whole §5.2
+        // superset (projects/projectKeys/checkpointRefs/runRootMode). Unreadable
+        // or branch-less meta is reported, not overwritten.
+        if (!wm || typeof wm !== 'object' || !wm.branches || typeof wm.branches !== 'object') {
+          // A NULL column is the manifest-only case (Task 11) — nothing to clear,
+          // nothing to warn about. Warn only when a non-null column is corrupt.
+          if (fresh?.workspace_meta != null) {
+            report.warnings.push('retention stamp not cleared: workspace metadata is unreadable');
+          }
+          return;
+        }
+        let touched = false;
+        for (const k of clearedKeys) { const br = wm.branches[k]; if (br) { clear(br); touched = true; } }
+        if (touched) {
+          getDb().prepare('UPDATE pipelines SET workspace_meta = ? WHERE id = ?')
+            .run(JSON.stringify(wm), row.id);
+        }
+      } else {
+        const br = typeof fresh?.branch === 'string' ? parse(fresh.branch) : fresh?.branch;
+        if (!br || typeof br !== 'object') {
+          if (fresh?.branch != null) { // NULL column = manifest-only discard: silent skip
+            report.warnings.push('retention stamp not cleared: branch metadata is unreadable');
+          }
+          return;
+        }
+        clear(br);
+        getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(br), row.id);
+      }
+    });
+  }
+  if (existsSync(runRoot) && report.remaining === 0) {
+    const removal = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
+    if (removal.removed) report.runRoot = runRoot;
+    else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
+  }
+  await appendAudit(runDir,
+    `Discarded ${report.worktrees.length} retained worktree(s) after saving recovery patch(es): ` +
+    patches.map((p) => `\`${p}\``).join(', ')).catch(() => {});
+  return report;
+}
+
 // Compat alias. The server now calls `archivePipeline` directly; this name is
 // kept for the pre-existing suites (test/pipeline-delete.test.mjs,
 // test/persist-roundtrip.test.mjs) that assert the FS/branch reclamation half
 // under the old name — which archive still performs in full.
 export { archivePipeline as deletePipeline };
-
-/** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>). */
-async function findRunDir(pipelinesDir, id) {
-  let entries;
-  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
-  for (const e of entries) if (e.isDirectory() && new RegExp(`-${id}$`, 'i').test(e.name)) return join(pipelinesDir, e.name);
-  // exact-basename match (id passed as the full dir name)
-  for (const e of entries) if (e.isDirectory() && e.name === id) return join(pipelinesDir, e.name);
-  return null;
-}

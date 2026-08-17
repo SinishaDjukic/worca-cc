@@ -12,7 +12,7 @@
 // pipeline. The M5 smoke will replace the mocked scan with the real engine.
 //
 // ISOLATION (mirrors `npm run smoke`): runs under WORCA_HOME=.worca-cc-smoke and uses
-// THROWAWAY git repos created in an OS temp dir (never examples/sandbox, never this
+// THROWAWAY git repos created in an OS temp dir (never sandbox/, never this
 // repo) — the orchestrator makes real worktrees + branches INSIDE each member repo, so
 // pointing at a real repo would pollute it. Temp repos + the smoke home are removed in
 // a finally block, so a clean run leaves no worktree/branch/dir behind.

@@ -1,0 +1,39 @@
+{
+  "name": "telegram-chat",
+  "version": "0.1.0",
+  "description": "Two-way Telegram bot channel: pipeline notifications + chat commands (/status, /pause, /approve…)",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=2 <3" },
+  "chatChannels": [
+    {
+      "id": "main",
+      "displayName": "Telegram",
+      "platform": "telegram",
+      "module": "./channel/worker.mjs",
+      "ingress": "connect",
+      "capabilities": { "inbound": true, "outbound": true },
+      "configSchema": [
+        {
+          "key": "botToken",
+          "type": "text",
+          "label": "Bot token",
+          "secret": true,
+          "required": true,
+          "help": "From @BotFather (/newbot). Paste the token, or reference an env var with {\"$env\":\"TELEGRAM_BOT_TOKEN\"}."
+        },
+        {
+          "key": "notifyChatIds",
+          "type": "text",
+          "label": "Notify chat IDs",
+          "help": "Comma-separated chat IDs that receive run notifications. Message the bot, then run Doctor / check getUpdates for chat.id (negative IDs are groups)."
+        },
+        {
+          "key": "allowedChatIds",
+          "type": "text",
+          "label": "Allowed chat IDs (commands)",
+          "help": "Comma-separated chat IDs allowed to send commands (/status, /pause, /approve…). EMPTY = nobody: anyone in an allowed chat can control worca-cc."
+        }
+      ]
+    }
+  ]
+}

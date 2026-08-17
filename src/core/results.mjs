@@ -12,6 +12,12 @@ export const RESULTS_FILE = 'results.json';
 export const DIFF_PATCH_FILE = 'diff-patch.patch';
 export const OVERVIEW_FILE = 'overview.json';
 
+/** Canonical retained-work patch filename; a null/empty key yields the bare name. */
+export function retainedWorkPatchName(projectKey = null) {
+  const suffix = projectKey ? `-${String(projectKey).replace(/[^a-zA-Z0-9._-]+/g, '-')}` : '';
+  return `retained-work${suffix}.patch`;
+}
+
 /** Bucket name-status rows into new/changed and sum line counts from numstat. */
 export function bucketFiles(nameStatus, numstat) {
   const newFiles = [];
