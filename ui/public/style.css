@@ -1568,6 +1568,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   color:var(--ink-3);border-radius:999px;padding:1px 7px;}
 .run-tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);}
 .run-tab[aria-selected="true"] .n{background:var(--violet-bg);color:var(--violet-ink);}
+/* Signed diff badges (data-tab-badges on .diff-bar) keep the green/red the history
+   head uses for the same two numbers. Declared AFTER the selected-tab rule on
+   purpose: added/removed is what the number MEANS, and selecting a tab must not
+   recolour it. Same class names as .hist-diff so the vocabulary is learned once. */
+.run-tab .n.diff-add{background:var(--green-bg);color:var(--green-ink);}
+.run-tab .n.diff-del{background:var(--red-bg);color:var(--red-ink);}
 /* A panel the tab bar is not showing. Set by paintTabs, not by [hidden], so the
    bars' own accordion state (aria-expanded / panel[hidden]) is left untouched. */
 .tab-off{display:none !important;}
@@ -1597,13 +1603,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-open{padding:8px 15px;font-size:12px;}
 /* Outcome-quality pill in the row: the question you actually bring to History is
    "did this go well?", which the status badge alone cannot answer. */
-.hist-outcome{font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:999px;white-space:nowrap;}
-.hist-outcome[hidden]{display:none;}
-.hist-outcome.clean{background:var(--green-bg);color:var(--green-ink);}
-.hist-outcome.check{background:var(--peach-bg);color:var(--peach-ink);}
-/* The Results panel's own status chip is the same statusChip() string the head
-   pill now carries — shown once, in the head. The rest of .results-chips (the
-   plugin source badge, the write-back retry) is untouched. */
+/* "Clean" / "N to check" is not shown in a history card at all. It reads as "no
+   issues found" but means only "no critical-or-major issue in the LAST review
+   cycle" — minor findings and suggestions are counted separately as nitpicks and
+   never appear in it, so the word oversells what it knows. The findings themselves
+   are right below in the Results panel, which says more and says it accurately.
+   The rest of .results-chips (the plugin source badge, the write-back retry) is
+   untouched, and the Running card's Results header still carries the chip. */
 .hist-card .results-chips .results-chip{display:none;}
 
 /* ---------- detail view chrome ---------- */

@@ -1073,21 +1073,33 @@ function tabPanels(scope) {
   return [...scope.children].filter((el) => el.dataset && el.dataset.tab && !el.hidden);
 }
 
-// A panel's count badge, read from whatever the panel already renders: the
-// dropdown bars keep it in .sb-count, so the tab shows the same number without
-// a second source of truth.
+// A panel's tab badges, as [{text, cls}].
 //
-// A LONE badge is compacted to its number ("0 sub-agents" -> "0"): the tab label
-// beside it already says what is being counted. Several badges keep their words,
-// because there the words are what tells them apart ("0 changed · 0 removed").
-function tabCount(el) {
+// By default they are read from whatever the panel already renders — the dropdown
+// bars keep their counts in .sb-count — so a tab never becomes a second source of
+// truth for a number. A LONE badge is compacted to its digits ("0 sub-agents" ->
+// "0"): the tab label beside it already says what is being counted.
+//
+// A panel may instead DECLARE its badges in data-tab-badges (JSON), for when the
+// words its own header needs are too long for a tab. That is the Diff panel: its
+// header reads "0 changed · 0 removed" because it sits above those two file lists,
+// but on a tab the words swamped the label. Declaring lets it show the same change
+// in the notation every diff tool uses — +added / −removed — in two glyphs.
+function tabBadges(el) {
+  const declared = el.dataset.tabBadges;
+  if (declared) {
+    try {
+      const list = JSON.parse(declared);
+      if (Array.isArray(list)) return list.filter((b) => b && b.text);
+    } catch { /* malformed -> fall through to the scraped counts */ }
+  }
   const counts = [...el.querySelectorAll(':scope > .btn-subs > .sb-count')]
     .map((c) => c.textContent.trim()).filter(Boolean);
   if (counts.length === 1) {
     const lone = /^(\d+)\s+\S/.exec(counts[0]);
-    if (lone) return lone[1];
+    if (lone) return [{ text: lone[1] }];
   }
-  return counts.join(' · ');
+  return counts.length ? [{ text: counts.join(' · ') }] : [];
 }
 
 // Which tab opens first, when the reader has not chosen one. DOM order is the
@@ -1117,7 +1129,7 @@ function paintTabs(scope, tabsHost, preferred) {
     ? tabsHost.dataset.selected
     : preferredTab(keys, preferred);
 
-  const sig = JSON.stringify([keys, panels.map((p) => [p.dataset.tabLabel, tabCount(p)]), current]);
+  const sig = JSON.stringify([keys, panels.map((p) => [p.dataset.tabLabel, tabBadges(p)]), current]);
   if (tabsHost.dataset.tabsSig !== sig) {
     tabsHost.dataset.tabsSig = sig;
     tabsHost.innerHTML = '';
@@ -1129,11 +1141,10 @@ function paintTabs(scope, tabsHost, preferred) {
       btn.setAttribute('role', 'tab');
       btn.setAttribute('aria-selected', String(p.dataset.tab === current));
       btn.textContent = p.dataset.tabLabel || p.dataset.tab;
-      const n = tabCount(p);
-      if (n) {
+      for (const b of tabBadges(p)) {
         const badge = document.createElement('span');
-        badge.className = 'n';
-        badge.textContent = n;
+        badge.className = b.cls ? `n ${b.cls}` : 'n';
+        badge.textContent = b.text;
         btn.appendChild(badge);
       }
       tabsHost.appendChild(btn);
@@ -8660,31 +8671,6 @@ function paintHistRail(node, p) {
   }
 }
 
-// The outcome-quality pill in a history row's head: "Clean" or "N to check".
-//
-// This is the question a reader actually brings to History, and the status badge
-// cannot answer it. It is painted from the DETAIL payload (results.summary), so
-// it appears once a row has been expanded or opened — the list endpoint has no
-// blocking-issue count to offer. Giving the collapsed row this pill up front
-// needs a `blocking_issues` column on the pipelines table; that is deliberately
-// not part of this change.
-function paintHistOutcome(card, results) {
-  const pill = card && card.querySelector('.hist-outcome');
-  if (!pill) return;
-  const n = results && results.summary ? Number(results.summary.blockingIssues) || 0 : null;
-  if (results == null || n == null) { pill.hidden = true; return; }
-  pill.hidden = false;
-  pill.className = `hist-outcome ${n ? 'check' : 'clean'}`;
-  // Same wording as the Results panel's own chip — deliberately the SAME
-  // function, so hoisting it into the head cannot drift from the panel. The
-  // panel's copy is then hidden (see .results-chip in style.css) rather than
-  // said twice.
-  pill.textContent = statusChip(results);
-  pill.title = n
-    ? `${n} blocking issue${n === 1 ? '' : 's'} flagged by review`
-    : 'No blocking issues flagged by review';
-}
-
 // Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
 // state and render the tinted stepper, caching it so re-expand doesn't refetch.
 function toggleHistCard(projectDir, id, head, detail, record) {
@@ -8907,7 +8893,6 @@ async function loadHistDetail(projectDir, id, detail, record) {
     const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
     paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
     // Outcome quality in the head, now that results are in hand.
-    paintHistOutcome(detail.closest('.hist-card'), data.results);
     // One tab bar over whichever panels ended up with content. Runs LAST: every
     // paint*Bar above decides whether its panel is [hidden], and a hidden panel
     // contributes no tab. Detail density only — in a list the panels are not on
@@ -9152,6 +9137,17 @@ function paintDiffBar(barEl, results) {
   const removedEl = barEl.querySelector('.diff-removed');
   if (changedEl) { changedEl.textContent = changed.text; changedEl.classList.toggle('grey', changed.n === 0); }
   if (removedEl) { removedEl.textContent = removed.text; removedEl.classList.toggle('grey', removed.n === 0); }
+
+  // On a TAB, this panel's own header words ("0 changed · 0 removed") swamp the
+  // label — and they count FILES, where a diff is read in LINES. Declare the tab's
+  // badges as +added / −removed instead: the same notation the history head and
+  // every diff tool use, two glyphs wide, with the sign carrying the meaning so no
+  // icon is needed. The file counts stay in the header, above the lists they name.
+  const s = results.summary || {};
+  barEl.dataset.tabBadges = JSON.stringify([
+    { text: `+${s.linesAdded || 0}`, cls: 'diff-add' },
+    { text: `−${s.linesRemoved || 0}`, cls: 'diff-del' },   // U+2212 minus
+  ]);
 
   const btn = barEl.querySelector('.btn-subs');
   const panel = barEl.querySelector('.diff-panel');

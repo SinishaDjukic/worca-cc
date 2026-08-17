@@ -15,6 +15,8 @@ import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+// jsdom applies no layout and no stylesheet, so rules are asserted as CSS text.
+const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
 const PROJECT = '/tmp/proj';
 
 // A three-stage manifest, as the list row now carries it.
@@ -174,36 +176,62 @@ test('the list keeps ONE region behind the expander; the rest is detail-only', a
   assert.match(c.querySelector('.hist-cta-text').textContent, /detail view/);
 });
 
-test('outcome quality is hoisted into the row head, and said only once', async () => {
+// "Clean" / "N to check" is deliberately absent from a history card. It reads as
+// "no issues found" but means only "no critical-or-major issue in the LAST review
+// cycle" — minor findings and suggestions are counted separately as nitpicks and
+// never reach it. The findings themselves are in the Results panel, which is both
+// more informative and accurate.
+test('a history card shows no outcome-quality label, in the head or the panel', async () => {
   const ctx = await boot();
   await ctx.go('history');
   const c = histCard(ctx.window);
   c.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   for (let i = 0; i < 4; i++) await ctx.tick();
 
-  const pill = c.querySelector('.hist-outcome');
-  assert.equal(pill.hidden, false);
-  assert.equal(pill.textContent, '3 to check', 'the question a reader brings to History');
-  assert.equal(pill.classList.contains('check'), true);
-  // Same string as the Results panel's own chip, which is why the panel's copy is
-  // suppressed in CSS rather than rendered twice.
-  const chip = c.querySelector('.results-chips .results-chip');
-  assert.equal(chip.textContent, pill.textContent, 'one source of truth (statusChip)');
+  assert.equal(c.querySelector('.hist-outcome'), null, 'no pill in the head');
+  assert.match(css, /\.hist-card \.results-chips \.results-chip\{[^}]*display:\s*none/,
+    'and the panel copy stays suppressed, so the label is gone from the card entirely');
+  // The findings it summarized are still there, said properly.
+  assert.match(c.querySelector('.hist-detail').textContent, /to check|Clean —/,
+    'the Results panel still reports the review outcome in full');
 });
 
-test('a clean run says Clean', async () => {
-  const ctx = await boot({
-    detail: { ...DETAIL,
-      results: { ...DETAIL.results, summary: { ...DETAIL.results.summary, blockingIssues: 0 },
-                 keyThingsToCheck: [] } },
-  });
-  await ctx.go('history');
-  const c = histCard(ctx.window);
-  c.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  for (let i = 0; i < 4; i++) await ctx.tick();
-  const pill = c.querySelector('.hist-outcome');
-  assert.equal(pill.textContent, 'Clean');
-  assert.equal(pill.classList.contains('clean'), true);
+// The Diff tab used to carry its panel header verbatim — "0 changed · 0 removed" —
+// which swamped the label and counted FILES, where a diff is read in LINES. The
+// panel now declares its own tab badges: +added / −removed, the notation the
+// history head and every diff tool already use, with the sign as the icon.
+test('the Diff tab shows signed line counts, not the panel header words', async () => {
+  const ctx = await boot();
+  await ctx.go('history/p-1');
+  for (let i = 0; i < 6; i++) await ctx.tick();
+
+  const tab = [...ctx.window.document.querySelectorAll('#history .run-tab')]
+    .find((t) => t.dataset.tabKey === 'diff');
+  assert.ok(tab, 'the Diff tab exists');
+  assert.doesNotMatch(tab.textContent, /changed|removed/, 'the panel header words are gone');
+  const badges = [...tab.querySelectorAll('.n')].map((n) => [n.textContent, n.className]);
+  assert.equal(badges.length, 2, 'two separate badges, one per count');
+  assert.match(badges[0][0], /^\+\d+$/, 'added, signed');
+  assert.match(badges[1][0], /^\u2212\d+$/, 'removed, with a real minus (U+2212)');
+  assert.match(badges[0][1], /diff-add/);
+  assert.match(badges[1][1], /diff-del/);
+  // The colours must survive selection: added/removed is what the number means.
+  assert.match(css, /\.run-tab \.n\.diff-add\{[^}]*var\(--green-bg\)/);
+  assert.match(css, /\.run-tab \.n\.diff-del\{[^}]*var\(--red-bg\)/);
+  const selRule = css.indexOf('.run-tab[aria-selected="true"] .n{');
+  assert.ok(selRule > -1 && css.indexOf('.run-tab .n.diff-add{') > selRule,
+    'declared after the selected-tab rule, so selecting a tab cannot recolour them');
+});
+
+// The bar's own header keeps the file words: there it sits directly above the
+// New/Changed file lists, so the words are what they name.
+test('the Diff bar header still names files changed and removed', async () => {
+  const ctx = await boot();
+  await ctx.go('history/p-1');
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  const bar = ctx.window.document.querySelector('#history .diff-bar .btn-subs');
+  assert.match(bar.textContent, /changed/);
+  assert.match(bar.textContent, /removed/);
 });
 
 // ── detail density: #history/<id> ────────────────────────────────────────────
@@ -240,8 +268,10 @@ test('the five stacked dropdowns become one tab bar, one panel at a time', async
   // A tab carries the count its panel already renders; a lone badge is compacted
   // to its number because the label beside it says what is counted.
   assert.equal(tabs.find((t) => t.dataset.tabKey === 'clarify').querySelector('.n').textContent, '1');
-  assert.match(tabs.find((t) => t.dataset.tabKey === 'diff').querySelector('.n').textContent,
-    /changed.*removed/, 'several badges keep the words that tell them apart');
+  // Diff is the exception: it DECLARES its badges (data-tab-badges) because its own
+  // header words are too long for a tab. Asserted in full further down.
+  assert.equal(tabs.find((t) => t.dataset.tabKey === 'diff').querySelectorAll('.n').length, 2,
+    'one badge per count, not one string holding both');
 });
 
 test('selecting a tab opens the panel it controls, including a lazily-fetched one', async () => {
