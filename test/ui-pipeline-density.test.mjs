@@ -714,7 +714,9 @@ test('Running groups by project with History-style pills; the mini meta drops th
   assert.equal(doc.querySelectorAll('#run-list .hist-group-head').length, 2,
     'one group header per project in the All view');
   // The meta line's project span exists but is CSS-hidden at list density.
-  assert.equal(card(ctx.window, 'a').querySelector('.rm-proj').textContent, 'proj · ');
+  // Its '·' separator is a ::after so it hides with the span.
+  assert.equal(card(ctx.window, 'a').querySelector('.rm-proj').textContent, 'proj');
+  assert.match(css, /\.run-meta \.rm-proj::after\{content:'·';margin:0 8px;\}/);
   assert.match(css, /\.run-card\.mini \.run-meta \.rm-proj\{display:none;\}/);
 
   // A pill filters flat (no headers), like History's.

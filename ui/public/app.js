@@ -9798,14 +9798,21 @@ function renderRunMeta(r, root = r.el) {
   if (!root) return;
   const metaEl = root.querySelector('.rm-text');
   if (!metaEl) return;
-  const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
   // The project name is its own span: at list density the group header (or the
   // active filter pill) already names the project, so .mini hides it via CSS.
+  // Separators are CSS dots (::after / ::before, 8px sides) so every gap on the
+  // line matches the History card's meta treatment exactly.
   metaEl.textContent = '';
   const proj = document.createElement('span');
   proj.className = 'rm-proj';
-  proj.textContent = `${runProjectLabel(r)} · `;
-  metaEl.append(proj, document.createTextNode(`started ${startedLabel(r.startedAt)}${branchTxt}`));
+  proj.textContent = runProjectLabel(r);
+  metaEl.append(proj, document.createTextNode(`started ${startedLabel(r.startedAt)}`));
+  if (r.branchFeature) {
+    const br = document.createElement('span');
+    br.className = 'rm-branch';
+    br.textContent = r.branchFeature;
+    metaEl.appendChild(br);
+  }
 }
 
 function buildRunCard(r) {
