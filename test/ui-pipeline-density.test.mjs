@@ -234,6 +234,22 @@ test('a mini card streams no log DOM; expanding it shows the tail of the log', a
   assert.match(peek.querySelector('.peek-foot').textContent, /last 5 of 8 lines/);
 });
 
+// History's edge stripe on running cards: the pill family colours the left
+// border via an rc-<family> class stamped on every repaint.
+test('the run card carries its status family as an rc-* stripe class', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER })] });
+  await ctx.go('running');
+  const c = card(ctx.window, 'a');
+  assert.ok(c.classList.contains('rc-peach'), 'a plain running card is the peach family');
+  ctx.recv({ type: 'done', runId: 'a', status: 'error' });
+  assert.ok(c.classList.contains('rc-red'), 'error repaints the stripe red');
+  assert.equal(c.classList.contains('rc-peach'), false, 'the old family class is dropped');
+  const css = readFileSync(cssPath, 'utf8');
+  assert.match(css, /\.run-card\{border-left:4px solid var\(--line-2\);\}/);
+  assert.match(css, /\.run-card\.rc-red\{border-left-color:var\(--red\);\}/);
+});
+
 // The mini card mirrors History (user decision): the head EXPANDS the peek,
 // only the title (or Open) navigates into the pipeline.
 test('mini-card head click toggles the peek; the title click navigates', async () => {

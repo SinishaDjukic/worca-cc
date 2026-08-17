@@ -10249,10 +10249,13 @@ function paintRunCard(r) {
   // later state/resume event appears without a full card rebuild.
   renderRunMeta(r);
 
-  // Status pill: family class + text, preserving the leading .pdot.
+  // Status pill: family class + text, preserving the leading .pdot. The same
+  // family drives the card's left edge stripe (parity with the History rows).
+  const { family, text } = statusPill(r);
+  r.el.classList.remove('rc-green', 'rc-red', 'rc-amber', 'rc-blue', 'rc-violet', 'rc-peach');
+  r.el.classList.add(`rc-${family}`);
   const pill = r.el.querySelector('.pill-run');
   if (pill) {
-    const { family, text } = statusPill(r);
     pill.className = `pill-run ${family}`;
     const txt = pill.querySelector('.pill-text');
     if (txt) txt.textContent = text;

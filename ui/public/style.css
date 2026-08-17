@@ -471,6 +471,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- Running ---------- */
 .run-list{display:flex;flex-direction:column;gap:18px;}
 .run-card{padding:22px 24px;}
+/* History's edge stripe on running cards too: the status-pill family colours
+   the left border (paintRunCard stamps rc-<family> on every repaint). */
+.run-card{border-left:4px solid var(--line-2);}
+.run-card.rc-green{border-left-color:var(--green);}
+.run-card.rc-red{border-left-color:var(--red);}
+.run-card.rc-amber{border-left-color:var(--amber);}
+.run-card.rc-blue{border-left-color:var(--blue);}
+.run-card.rc-violet{border-left-color:var(--violet);}
+.run-card.rc-peach{border-left-color:var(--peach);}
+
 .run-top{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
 /* The title block absorbs the slack so the status pill sits AT the right edge,
    against the expander — space-between left it floating mid-card. */
