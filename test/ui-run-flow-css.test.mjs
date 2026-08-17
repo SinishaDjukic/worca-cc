@@ -35,7 +35,8 @@ test('.run-flow is a max-content flex row with deep top/bottom padding', () => {
   const body = ruleBody('.run-flow');
   assert.ok(body, '.run-flow rule missing');
   assert.match(body, /display:\s*flex/);
-  assert.match(body, /align-items:\s*center/);
+  assert.match(body, /align-items:\s*flex-start/,
+    'columns are TOP-aligned: node heights differ, and centering staggered every STEP tag');
   assert.match(body, /padding:\s*66px 30px 52px/, 'deep padding for self-loop + col tags');
   assert.match(body, /width:\s*max-content/);
 });

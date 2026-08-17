@@ -467,7 +467,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- Running ---------- */
 .run-list{display:flex;flex-direction:column;gap:18px;}
 .run-card{padding:22px 24px;}
-.run-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;}
+.run-top{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
+/* The title block absorbs the slack so the status pill sits AT the right edge,
+   against the expander — space-between left it floating mid-card. */
+.run-top > div:first-child{flex:1 1 auto;min-width:0;}
 .run-title{font-weight:700;font-size:16px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px;}
 .run-title .hash{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);font-weight:500;}
 .run-title.title-provisional{opacity:.65;font-style:italic;}
@@ -717,13 +720,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 }
 
 /* ---------- per-pipeline cost (per-node cost is the graph's .nrun .cost) ---------- */
-.run-meta .run-cost{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
+/* Same colour as the rest of the meta line: duration and cost are meta, and a
+   two-tone line reads as random emphasis. The mono face alone marks the numbers. */
+.run-meta .run-cost{font-family:var(--mono);font-weight:500;color:var(--ink-3);}
 .run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-total{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
 .h-meta .hist-total:empty{display:none;}
 
 /* ---------- per-pipeline duration (twin of cost) ---------- */
-.run-meta .run-time{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
+.run-meta .run-time{font-family:var(--mono);font-weight:500;color:var(--ink-3);}
 .run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
 .h-meta .hist-time{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:10px;}
 .h-meta .hist-time:empty{display:none;}
@@ -988,9 +993,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /*  --c is set per-node inline by runNode(); these rules read it via var(--c).) */
 /* ========================================================================== */
 .run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
-.run-flow{position:relative;display:flex;align-items:center;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
+/* Columns are TOP-aligned, not centered: node heights differ (a pending node
+   shows its description, a finished one only its result), and centering ragged
+   heights puts every STEP tag on its own baseline and staggers the node tops.
+   Top-aligning puts the tags on one line and the raggedness at the bottom edge,
+   where nothing has to line up. The vertical padding is arc clearance and must
+   stay: feedback loops route ~46px above the node tops and a self-cycle lobe
+   hangs ~45px below a node's bottom edge. */
+.run-flow{position:relative;display:flex;align-items:flex-start;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
 .run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
-.run-flow .col{padding:14px 8px;}
+.run-flow .col{padding:14px 8px;align-self:flex-start;}
 .run-flow .col .col-tag{color:var(--ink-3);}
 
 /* Node sizing overrides — base look (accent bar ::before, border, radius,
@@ -1523,13 +1535,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-stats .del{color:var(--red-ink);}
 .run-stats:empty{display:none;}
 
-/* Say each thing once. At list density the stats row carries duration and cost,
-   so the meta line drops them; the CTA line names the phase and what it wants,
-   so the phase chip drops out. Both come back in .full, where there is no rail
-   and no CTA line to carry them. */
-.run-card.mini > .run-top .run-meta .run-time,
-.run-card.mini > .run-top .run-meta .run-cost,
-.run-card.mini > .run-foot > .chip{display:none;}
+/* Say each thing once. The meta line carries duration and cost at BOTH
+   densities (the stats row no longer repeats them), and the phase chip is
+   retired from view at both: at list density the rail's highlighted cell names
+   the phase, at detail density the header pill and the glowing node do. The
+   chip element and its painter stay — the text is the phase model's test
+   surface — but no density displays it. */
+.run-card > .run-foot > .chip{display:none;}
 
 /* ---------- foot: one call to action ---------- */
 .run-cta-text{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:600;color:var(--ink-2);}
@@ -1585,6 +1597,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-card.full .hist-detail > [data-tab] > .btn-subs{display:none;}
 .run-card.full > .subs-bar,
 .hist-card.full .hist-detail > [data-tab]{border:0;padding:0;background:none;}
+/* The graph's height is a content floor (tallest node + arc clearance), so the
+   detail page's slack vertical space goes to the log pane instead. */
+.run-card.full > .run-log .log,
+.hist-card.full .hist-detail .logs-panel .log{max-height:max(340px, 56vh);}
 
 /* ---------- History: list density ---------- */
 /* The collapsed row is unchanged (it was already the right density). Expanding

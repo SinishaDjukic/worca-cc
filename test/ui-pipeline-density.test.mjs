@@ -192,14 +192,18 @@ test('a pending question puts one Answer CTA on the mini card, not the question 
     'the question form is here');
 });
 
-test('with nothing to decide, the CTA names the running stage instead', async () => {
+test('with nothing to decide, the CTA stays empty — the rail already names the stage', async () => {
   const ctx = await boot();
   ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER })] });
   await ctx.go('running');
   ctx.recv({ type: 'phase', runId: 'a', phase: 'plan', cycle: 1 });
   await ctx.tick();
   const c = card(ctx.window, 'a');
-  assert.match(c.querySelector('.run-cta-text').textContent, /Plan/);
+  assert.equal(c.querySelector('.run-cta-text').textContent, '',
+    'no restated stage label — the rail cell above carries it');
+  const activeCell = [...c.querySelectorAll('.rcell')].find((x) => x.classList.contains('is-active'));
+  assert.equal(activeCell.querySelector('.rlabel').textContent, 'Plan',
+    'the stage name lives on the rail, once');
   assert.equal(c.querySelector('.btn-answer').hidden, true, 'nothing is being asked');
 });
 
@@ -493,4 +497,100 @@ test('opening a pipeline adds exactly one history entry', async () => {
   assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'pipeline/a');
   assert.equal(ctx.window.history.length, before + 1,
     'one navigation, one entry — a canonicalizing rewrite would add a second');
+});
+
+// ── the stats row says only what nothing else says ──────────────────────────
+
+test('the stats row drops step/duration/cost (rail + meta carry them); cycle appears from 2', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER })] });
+  await ctx.go('running');
+  ctx.recv({ type: 'phase', runId: 'a', phase: 'clarify', cycle: 1 });
+  await ctx.tick();
+  const c = card(ctx.window, 'a');
+  const stats = () => c.querySelector('.run-stats').textContent;
+  assert.equal(stats().includes('step'), false, 'the rail states the position graphically');
+  assert.equal(stats().includes('$'), false, 'cost lives on the meta line');
+  assert.equal(stats().includes('cycle'), false, 'a first cycle is the normal case, not news');
+  // The meta line now carries the numbers at BOTH densities.
+  assert.notEqual(c.querySelector('.run-time').textContent, '', 'duration on the meta line');
+  assert.match(c.querySelector('.run-cost').textContent, /\$/, 'cost on the meta line');
+  assert.doesNotMatch(css, /\.run-card\.mini > \.run-top \.run-meta \.run-time/,
+    'no mini rule hides the meta duration any more');
+
+  ctx.recv({ type: 'phase', runId: 'a', phase: 'clarify', cycle: 2 });
+  await ctx.tick();
+  assert.match(stats(), /cycle\s*2/, 'a second cycle IS news');
+});
+
+// ── rail labels are display names, not truncations ──────────────────────────
+
+test('a long stage label is shortened for the rail; the tooltip keeps the full name', async () => {
+  const wide = {
+    steps: [
+      { nodes: [{ id: 'preflight', label: 'Preflight' }] },
+      { nodes: [{ id: 'implementer', label: 'Implementation', uiPhase: 'implement' }] },
+      { nodes: [{ id: 'reviewer', label: 'Review Implementation', uiPhase: 'review' }] },
+    ],
+    feedbacks: [],
+  };
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: wide })] });
+  await ctx.go('running');
+  await ctx.tick();
+  const cells = [...card(ctx.window, 'a').querySelectorAll('.rcell')];
+  assert.deepEqual(cells.map((x) => x.querySelector('.rlabel').textContent),
+    ['Preflight', 'Implement', 'Review']);
+  assert.equal(cells[1].title, 'Implementation', 'full name survives in the tooltip');
+  assert.equal(cells[2].title, 'Review Implementation');
+});
+
+// ── chrome the detail page must not repeat ──────────────────────────────────
+
+test('the foot chip is retired at both densities, and the status pill anchors right', () => {
+  assert.match(css, /\.run-card > \.run-foot > \.chip\{display:none;\}/,
+    'the phase chip is never displayed — the rail / header / glowing node name the phase');
+  assert.match(css, /\.run-top > div:first-child\{flex:1 1 auto;min-width:0;\}/,
+    'the title block absorbs the slack so the pill sits at the right edge');
+  assert.match(css, /\.run-flow\{[^}]*align-items:flex-start/,
+    'graph columns are top-aligned — STEP tags share one baseline');
+});
+
+test('a zero count paints no tab badge — "Agents", not "Agents 0"', async () => {
+  // A stepper whose Clarify cell is an 'agents' cell (subsGroupsForRender only
+  // groups those), and a state snapshot that says the agent RAN but spawned
+  // nothing: exactly the state that used to render "Agents 0".
+  const kinds = {
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
+      { kind: 'agents', nodes: [{ id: 'clarify', label: 'Clarify', uiPhase: 'clarify' }] },
+    ],
+    feedbacks: [],
+  };
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: kinds })] });
+  await ctx.go('running');
+  ctx.recv({ type: 'state', runId: 'a', status: 'running',
+    steps: [{ nodeId: 'clarify', cycle: 1, status: 'start' }] });
+  await ctx.go('pipeline/a');
+  await ctx.tick();
+  const tabs = [...ctx.window.document.querySelectorAll('.run-card .run-tab')];
+  const agents = tabs.find((b) => b.textContent.startsWith('Agents'));
+  assert.ok(agents, 'the Agents tab exists');
+  assert.equal(agents.querySelector('.n'), null, 'no badge for an empty set');
+});
+
+// ── the detail header follows a late title ──────────────────────────────────
+
+test('a title landing while the detail page is open renames the header in place', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER, title: 'provisional words' })] });
+  await ctx.go('pipeline/a');
+  await ctx.tick();
+  const bar = ctx.window.document.querySelector('.view[data-view="running"] .detail-bar');
+  assert.equal(bar.querySelector('.detail-title').textContent, 'provisional words');
+  ctx.recv({ type: 'title', runId: 'a', title: 'Real Pipeline Name', provisional: false });
+  await ctx.tick();
+  assert.equal(bar.querySelector('.detail-title').textContent, 'Real Pipeline Name',
+    'the header is patched, not left waiting for the next route change');
 });

@@ -66,7 +66,7 @@ import {
 } from './composer-core.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore } from './log-line.mjs';
 import { logLineVisible, logFacets } from './log-filter.mjs';
-import { railRows, railProgress, railLabelsFit } from './run-rail.mjs';
+import { railRows, railProgress, railLabelsFit, railShortLabel } from './run-rail.mjs';
 import {
   statusChip, diffBadges, mergeFindings,
   sourceBadge, reportResultControl, workflowPickerLabel,
@@ -999,7 +999,7 @@ function paintRunRail(host, manifest, view) {
     else if (RAIL_GLYPH[row.status]) dot.innerHTML = RAIL_GLYPH[row.status];
     const lbl = document.createElement('span');
     lbl.className = 'rlabel';
-    lbl.textContent = row.label;
+    lbl.textContent = railShortLabel(row.label);
     // The full story rides in the tooltip so the rail itself stays one line.
     const bits = [row.label];
     if (row.parallel) bits.push(`${row.parallel} in parallel`);
@@ -1085,18 +1085,21 @@ function tabPanels(scope) {
 // but on a tab the words swamped the label. Declaring lets it show the same change
 // in the notation every diff tool uses — +added / −removed — in two glyphs.
 function tabBadges(el) {
+  // A bare zero is not a badge: "Agents 0" makes the reader parse a number to
+  // learn there is nothing, where an unadorned "Agents" already says it.
+  const worthShowing = (b) => b && b.text && b.text !== '0';
   const declared = el.dataset.tabBadges;
   if (declared) {
     try {
       const list = JSON.parse(declared);
-      if (Array.isArray(list)) return list.filter((b) => b && b.text);
+      if (Array.isArray(list)) return list.filter(worthShowing);
     } catch { /* malformed -> fall through to the scraped counts */ }
   }
   const counts = [...el.querySelectorAll(':scope > .btn-subs > .sb-count')]
-    .map((c) => c.textContent.trim()).filter(Boolean);
+    .map((c) => c.textContent.trim()).filter((t) => t && t !== '0');
   if (counts.length === 1) {
     const lone = /^(\d+)\s+\S/.exec(counts[0]);
-    if (lone) return [{ text: lone[1] }];
+    if (lone) return [{ text: lone[1] }].filter(worthShowing);
   }
   return counts.length ? [{ text: counts.join(' · ') }] : [];
 }
@@ -1269,6 +1272,26 @@ function paintRunGraph(host, manifest, view) {
     doneSet,
     cycles,
   });
+
+  // Keep the ACTIVE node in view: the canvas is wider than the page and used to
+  // sit wherever the last manual scroll left it, so a pipeline whose frontier
+  // moved past step 3 showed dead prefix and clipped the node that matters.
+  // Centered once per activeId change (and only while laid out — a .mini card's
+  // hidden graph has no geometry), so a reader's own scrolling is never fought.
+  const wantCenter = view.live ? (view.activeId || '') : '';
+  if (wantCenter && host.dataset.centeredOn !== wantCenter && host.offsetParent) {
+    host.dataset.centeredOn = wantCenter;
+    const el = host.querySelector(`.run-node[data-id="${cssEscape(wantCenter)}"]`);
+    const wrap = host.parentElement;
+    if (el && wrap && typeof wrap.scrollTo === 'function' && wrap.scrollWidth > wrap.clientWidth) {
+      // Rect math, not offsetLeft: the node's offset parent is its .col
+      // (position:relative), so offsetLeft is a few px, not a canvas position.
+      const r = el.getBoundingClientRect();
+      const w = wrap.getBoundingClientRect();
+      const center = r.left - w.left + wrap.scrollLeft + r.width / 2;
+      wrap.scrollTo({ left: Math.max(0, Math.round(center - wrap.clientWidth / 2)), behavior: 'smooth' });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1790,6 +1813,14 @@ function onTitle(r, msg) {
   if (titleEl) {
     titleEl.textContent = r.title;
     titleEl.classList.remove('title-provisional');
+  }
+  // If the detail view is open ON this pipeline, its header carries the title
+  // too — patch it in place, or the page shows the provisional name until the
+  // next route change happens to repaint the bar.
+  const hashId = (/^#pipeline\/([^/]+)/.exec(location.hash || '') || [])[1];
+  if (hashId && [r.runId, r.pipelineId, msg.pipelineId].includes(hashId)) {
+    document.querySelectorAll('.detail-bar .detail-title')
+      .forEach((t) => { t.textContent = r.title; });
   }
   // If this pipeline is also shown in History (e.g. it finished before the title
   // settled), patch it too. The pipeline id comes from the MESSAGE — the run model
@@ -9810,14 +9841,12 @@ function paintStepper(r) {
   const host = r.el.querySelector('.run-flow');
   if (host) paintRunGraph(host, manifest, view);
   paintRunRail(r.el.querySelector('.run-rail'), manifest, view);
-  const rows = railRows(manifestFor(manifest), view);
-  const { at, total } = railProgress(rows);
+  // Only what the row does not already say: the rail states the position
+  // graphically ("step 2/7" restated it in words), and the meta line carries
+  // duration and cost. A first cycle is the normal case, so only 2+ is news.
   const diff = diffStatParts(r.added, r.removed);
   paintRunStats(r.el.querySelector('.run-stats'), [
-    ['step ', `${at}/${total}`],
-    [' cycle ', r.cycle > 0 ? r.cycle : null],
-    ['', fmtDuration(liveTotalMs(r.steps, Date.now()))],
-    ['', fmtUsd(r.totalCostUsd || 0)],
+    ['cycle ', r.cycle > 1 ? r.cycle : null],
     ...(diff ? [['', diff[0], 'add'], ['', diff[1], 'del']] : []),
   ]);
 }
@@ -9897,27 +9926,16 @@ function paintRunCta(r) {
     // line must not repeat them.
     text = '';
   } else if (!r._finished && !isTerminalStatus(r.status)) {
+    // Only the sub-agent count: the rail directly above already highlights the
+    // active stage by name, and restating it here was the row's only content
+    // most of the time — a label posing as a call to action.
     const active = (r.subAgents || []).filter((s) => s && s.status === 'running').length;
-    const node = activeNodeLabel(r);
-    const bits = [];
-    if (node) bits.push(node);
-    if (active) bits.push(`${active} sub-agent${active === 1 ? '' : 's'} active`);
-    text = bits.join(' · ');
+    if (active) text = `${active} sub-agent${active === 1 ? '' : 's'} active`;
   }
   // In .full the question panel itself is on screen — restating it above the
   // graph would be noise.
   if (textEl) textEl.textContent = focused ? '' : text;
   if (answerBtn) answerBtn.hidden = focused || !asks;
-}
-
-// Display label of the node the run is currently at, for the CTA line.
-function activeNodeLabel(r) {
-  const m = manifestFor(r.stepper);
-  const cell = m.steps[r.maxCellIdx];
-  if (!cell) return '';
-  const live = cell.nodes.filter((n) => ['now', 'pause'].includes(r.nodeStatus[n.id]));
-  const pick = live.length ? live : cell.nodes;
-  return pick.map((n) => runNodeAgent(n).label).join(' + ');
 }
 
 function paintRunCard(r) {

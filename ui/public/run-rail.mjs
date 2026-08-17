@@ -100,6 +100,31 @@ export function railProgress(rows) {
 }
 
 /**
+ * Display name for a rail cell. The rail's label slot fits ~12 characters of
+ * its small caps mono face; longer labels used to ellipsize MID-WORD
+ * ("IMPLEMENTA…", "REVIEW IMP…"), which reads as a defect, not a name. So:
+ * a fitting label passes through; a known long stage name maps to its verb;
+ * any other multi-word label keeps its first word (the tooltip carries the
+ * full name either way — paintRunRail already sets it). A single long word
+ * falls through untouched and lets the CSS ellipsis have it: there is no
+ * honest way to shorten a word we do not know.
+ */
+export const RAIL_LABEL_FIT = 12;
+const RAIL_SHORT = {
+  implementation: 'Implement',
+  'review implementation': 'Review',
+  'implementation review': 'Review',
+};
+export function railShortLabel(label) {
+  const s = String(label || '').trim();
+  if (s.length <= RAIL_LABEL_FIT) return s;
+  const known = RAIL_SHORT[s.toLowerCase()];
+  if (known) return known;
+  const first = s.split(/\s+/)[0];
+  return first.length <= RAIL_LABEL_FIT ? first : s;
+}
+
+/**
  * True when the rail should hide its per-cell labels: past a certain number of
  * stages the labels collide, and the markers alone still carry the shape. The
  * active cell keeps its label regardless (that is the one datum a reader wants),

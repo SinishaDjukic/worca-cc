@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cellStatus, railRows, railProgress, railLabelsFit, RAIL_LABEL_LIMIT,
+  cellStatus, railRows, railProgress, railLabelsFit, RAIL_LABEL_LIMIT, railShortLabel,
 } from '../ui/public/run-rail.mjs';
 
 // A manifest in the shape manifestFor() produces: cells that hold nodes.
@@ -116,4 +116,25 @@ test('labels fit up to the limit and not past it', () => {
   assert.equal(railLabelsFit(railRows(cellsOf(RAIL_LABEL_LIMIT), viewOf({}))), true);
   assert.equal(railLabelsFit(railRows(cellsOf(RAIL_LABEL_LIMIT + 1), viewOf({}))), false);
   assert.equal(railLabelsFit([]), true);
+});
+
+// ── display shortening ──────────────────────────────────────────────────────
+
+test('a label that fits passes through untouched', () => {
+  assert.equal(railShortLabel('Preflight'), 'Preflight');
+  assert.equal(railShortLabel('Refine Plan'), 'Refine Plan');   // exactly at the budget
+  assert.equal(railShortLabel(''), '');
+});
+
+test('the known long stage names map to their verbs, not to a mid-word ellipsis', () => {
+  assert.equal(railShortLabel('Implementation'), 'Implement');
+  assert.equal(railShortLabel('Review Implementation'), 'Review');
+});
+
+test('an unknown long multi-word label keeps its first word', () => {
+  assert.equal(railShortLabel('Generate Detailed Report'), 'Generate');
+});
+
+test('a single long word is left for the CSS ellipsis — no honest shortening exists', () => {
+  assert.equal(railShortLabel('Recontextualization'), 'Recontextualization');
 });
