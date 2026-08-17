@@ -1496,6 +1496,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-card.full > .run-top > .pill-run{display:none;}
 /* The graph carries its own bottom margin; in .full the question sits above it. */
 .run-card.full > .qpanel{margin-top:0;margin-bottom:18px;}
+/* On a detail page an agents node is a control: clicking it filters the log to
+   that stage (step + latest cycle). Bookend nodes (preflight/done) are not. */
+.run-card.full .run-flow .col[data-kind="agents"] .node,
+.hist-card.full .run-flow .col[data-kind="agents"] .node{cursor:pointer;}
 
 /* ---------- the stage rail (list density) ---------- */
 .run-rail-wrap{display:flex;align-items:center;justify-content:space-between;
@@ -1568,6 +1572,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    row), but in .full the graph canvas follows it — without this the Pause/Stop
    pills sit flush on the canvas border. */
 .run-card.full > .run-foot{margin-bottom:18px;}
+/* At list density the group header (or the active filter pill) already names
+   the project — the meta line must not repeat it. It returns in .full, where
+   there is no grouping. */
+.run-card.mini .run-meta .rm-proj{display:none;}
 
 /* ---------- expander + peek (list density) ---------- */
 .run-expand{flex:0 0 auto;background:none;border:0;padding:4px;cursor:pointer;color:var(--ink-3);

@@ -594,3 +594,87 @@ test('a title landing while the detail page is open renames the header in place'
   assert.equal(bar.querySelector('.detail-title').textContent, 'Real Pipeline Name',
     'the header is patched, not left waiting for the next route change');
 });
+
+// ── click-to-focus: a graph node narrows the log to its stage ───────────────
+
+test('clicking an agents node focuses the log on that step and its latest cycle', async () => {
+  const kinds = {
+    steps: [
+      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
+      { kind: 'agents', nodes: [{ id: 'clarify', label: 'Clarify', uiPhase: 'clarify' }] },
+      { kind: 'agents', nodes: [{ id: 'planner', label: 'Plan', uiPhase: 'plan' }] },
+    ],
+    feedbacks: [],
+  };
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: kinds })] });
+  await ctx.go('running');
+  ctx.recv({ type: 'log', runId: 'a', source: 'clarify', level: 'info', text: 'q&a', stepIndex: 0, cycle: 1 });
+  ctx.recv({ type: 'log', runId: 'a', source: 'planner', level: 'info', text: 'first pass', stepIndex: 1, cycle: 1 });
+  ctx.recv({ type: 'log', runId: 'a', source: 'planner', level: 'info', text: 'second pass', stepIndex: 1, cycle: 2 });
+  // Two panels (Agents + Log) so the .full card grows its tab bar.
+  ctx.recv({ type: 'state', runId: 'a', status: 'running',
+    steps: [{ nodeId: 'clarify', cycle: 1, status: 'done' }, { nodeId: 'planner', cycle: 2, status: 'start' }] });
+  await ctx.go('pipeline/a');
+  await ctx.tick();
+  const c = ctx.window.document.querySelector('#run-list .run-card.full');
+  c.querySelector('.run-flow .run-node[data-id="planner"]')
+    .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.tick();
+  assert.equal(c.querySelector('.run-tab[aria-selected="true"]').dataset.tabKey, 'log',
+    'the Log tab takes over');
+  assert.equal(c.querySelector('.log-f-step').value, '1', 'step filter = the node\'s step');
+  assert.equal(c.querySelector('.log-f-cycle').value, '2', 'cycle filter = its LATEST cycle');
+  // Bookend nodes are not stages — clicking preflight must not change anything.
+  c.querySelector('.run-flow .run-node[data-id="preflight"]')
+    .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.tick();
+  assert.equal(c.querySelector('.log-f-step').value, '1', 'preflight click is a no-op');
+});
+
+// ── the back button follows ownership, not the page you came from ───────────
+
+test('a LIVE pipeline opened from History still says ← Running', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [live('a', { stepper: STEPPER })] });
+  await ctx.go('history');           // records detailOrigin = 'history'
+  await ctx.go('pipeline/a');        // …but the pipeline is live
+  const bar = ctx.window.document.querySelector('.view[data-view="running"] .detail-bar');
+  assert.equal(bar.querySelector('.detail-back').textContent, '← Running',
+    'a live pipeline has no History row to return to');
+});
+
+// ── Running project pills + grouping (History's toolbar, same classes) ──────
+
+test('Running groups by project with History-style pills; the mini meta drops the project name', async () => {
+  const ctx = await boot();
+  ctx.recv({ type: 'hello', runs: [
+    live('a', { stepper: STEPPER }),
+    live('b', { stepper: STEPPER, projectDir: '/tmp/otherproj' }),
+  ] });
+  await ctx.go('running');
+  await ctx.tick();
+  const doc = ctx.window.document;
+  const pills = [...doc.querySelectorAll('#runningFilter .hist-pill')].map((b) => b.textContent.trim());
+  assert.deepEqual(pills.sort(), ['All Projects 2', 'otherproj 1', 'proj 1'],
+    'one pill per project plus All (order follows the list order)');
+  assert.equal(doc.querySelectorAll('#run-list .hist-group-head').length, 2,
+    'one group header per project in the All view');
+  // The meta line's project span exists but is CSS-hidden at list density.
+  assert.equal(card(ctx.window, 'a').querySelector('.rm-proj').textContent, 'proj · ');
+  assert.match(css, /\.run-card\.mini \.run-meta \.rm-proj\{display:none;\}/);
+
+  // A pill filters flat (no headers), like History's.
+  [...doc.querySelectorAll('#runningFilter .hist-pill')]
+    .find((b) => b.textContent.includes('otherproj'))
+    .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.tick();
+  assert.equal(doc.querySelectorAll('#run-list .run-card').length, 1);
+  assert.equal(doc.querySelectorAll('#run-list .hist-group-head').length, 0);
+
+  // The detail page is about one pipeline: pills and headers go away.
+  ctx.window.localStorage.removeItem('worca-cc.running.project');
+  await ctx.go('pipeline/a');
+  assert.equal(doc.querySelector('#runningFilter').hidden, true);
+  assert.equal(doc.querySelectorAll('#run-list .hist-group-head').length, 0);
+});

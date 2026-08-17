@@ -32,6 +32,7 @@ const state = {
   channelIds: [], // known channel ids from /api/agents (drives the agent editor)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   historyFilter: '', // active projectKey filter for History; '' === All Projects
+  runningFilter: '', // active project key for Running; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
 
   // --- Workspaces ---
@@ -139,6 +140,7 @@ const el = {
 
   history: $('#history'),
   historyFilter: $('#historyFilter'),
+  runningFilter: $('#runningFilter'),
   refreshHistory: $('#refresh-history'),
   navHistoryCount: $('#nav-history-count'),
   navWorkspacesCount: $('#nav-workspaces-count'),
@@ -942,6 +944,8 @@ function buildRunGraph(host, manifest) {
     const col = document.createElement('div');
     col.className = 'col';
     col.dataset.cellIdx = String(i);
+    col.dataset.kind = cell.kind || ''; // agents cells are click-to-focus targets
+
     const tag = document.createElement('div');
     tag.className = 'col-tag';
     tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
@@ -1176,6 +1180,89 @@ function openTabPanel(el) {
   const btn = el.querySelector(':scope > .btn-subs');
   if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
 }
+
+// ---------------------------------------------------------------------------
+// Click-to-focus: on a detail page, clicking a graph node narrows the log to
+// that stage — its step filter plus the LATEST cycle that stage ran. One
+// delegated handler serves both hosts (live card / history record).
+// ---------------------------------------------------------------------------
+
+// The log's stepIndex for a manifest node: its cell's ordinal among the
+// 'agents' cells — exactly how the orchestrator numbers steps (preflight and
+// done carry no step attribution). null for bookend nodes / unknown ids.
+function nodeStepIndex(stepper, nodeId) {
+  const m = manifestFor(stepper);
+  let ordinal = -1;
+  for (const cell of m.steps) {
+    if (!cell || cell.kind !== 'agents') continue;
+    ordinal += 1;
+    if ((cell.nodes || []).some((n) => n && n.id === nodeId)) return ordinal;
+  }
+  return null;
+}
+
+// Highest cycle among the log lines attributed to stepIndex; null when none.
+function latestCycleIn(lines, stepIndex) {
+  let max = null;
+  for (const rec of lines || []) {
+    if (rec && rec.stepIndex === stepIndex && rec.cycle != null) {
+      max = max == null ? rec.cycle : Math.max(max, rec.cycle);
+    }
+  }
+  return max;
+}
+
+// History host: drive the saved-log panel's own filter bar. The bar builds
+// lazily (loadLiveLogs fetches on first tab open), so a click that races the
+// fetch parks the wish on the panel and loadLiveLogs applies it after paint.
+function focusPanelLog(panel, stepIndex) {
+  if (!panel._logRecs || !panel.querySelector('.log-f-step')) {
+    panel.dataset.focusStep = String(stepIndex);
+    return;
+  }
+  const cycle = latestCycleIn(panel._logRecs, stepIndex);
+  const set = (sel, v) => {
+    if (sel) sel.value = [...sel.options].some((o) => o.value === String(v)) ? String(v) : '';
+  };
+  const selStep = panel.querySelector('.log-f-step');
+  set(selStep, stepIndex);
+  set(panel.querySelector('.log-f-cycle'), cycle == null ? '' : cycle);
+  selStep.dispatchEvent(new Event('change'));
+}
+
+document.addEventListener('click', (e) => {
+  const nodeEl = e.target.closest('.run-flow .run-node');
+  if (!nodeEl) return;
+  const nodeId = nodeEl.dataset.id;
+
+  const runCard = nodeEl.closest('.run-card.full');
+  if (runCard) {
+    const r = runs.get(runCard.dataset.runId);
+    if (!r) return;
+    const stepIndex = nodeStepIndex(r.stepper, nodeId);
+    if (stepIndex == null) return;
+    const cycle = latestCycleIn(r.logLines, stepIndex);
+    r.logFilter = { ...r.logFilter, step: String(stepIndex), cycle: cycle == null ? '' : String(cycle) };
+    const tabs = runCard.querySelector('.run-tabs');
+    if (tabs && !tabs.hidden) selectTab(runCard, tabs, 'log');
+    if (!paintLogFilters(r)) repaintFilteredLog(r);
+    return;
+  }
+
+  const histCard = nodeEl.closest('.hist-card.full');
+  if (histCard) {
+    const detail = histCard.querySelector('.hist-detail');
+    const logsBar = detail && detail.querySelector('.logs-bar');
+    if (!detail || !logsBar || logsBar.hidden) return; // no saved log for this record
+    const row = (state.historyAll || []).find((p) => p && p.id === histCard.dataset.pipelineId);
+    const stepIndex = nodeStepIndex(row && row.stepper, nodeId);
+    if (stepIndex == null) return;
+    const tabs = detail.querySelector('.run-tabs');
+    if (tabs && !tabs.hidden) selectTab(detail, tabs, 'log'); // opens the bar → lazy load
+    else openTabPanel(logsBar);
+    focusPanelLog(logsBar.querySelector('.logs-panel'), stepIndex);
+  }
+});
 
 // Final per-node loop count the renderer consumes directly: a node that ran k
 // cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
@@ -9132,6 +9219,14 @@ async function loadLiveLogs(panel, logUrl) {
     bar.appendChild(copyBtn);
 
     paint();
+    // Node-click focus that raced the fetch (see focusPanelLog): apply it now
+    // that the bar exists and the records are known.
+    panel._logRecs = recs;
+    if (panel.dataset.focusStep !== undefined) {
+      const want = Number(panel.dataset.focusStep);
+      delete panel.dataset.focusStep;
+      focusPanelLog(panel, want);
+    }
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;
     panel.dataset.loaded = ''; // allow a retry on the next open
@@ -9515,7 +9610,13 @@ function renderRunMeta(r, root = r.el) {
   const metaEl = root.querySelector('.rm-text');
   if (!metaEl) return;
   const branchTxt = r.branchFeature ? ` · ${r.branchFeature}` : '';
-  metaEl.textContent = `${projectName(r.projectDir)} · started ${startedLabel(r.startedAt)}${branchTxt}`;
+  // The project name is its own span: at list density the group header (or the
+  // active filter pill) already names the project, so .mini hides it via CSS.
+  metaEl.textContent = '';
+  const proj = document.createElement('span');
+  proj.className = 'rm-proj';
+  proj.textContent = `${runProjectLabel(r)} · `;
+  metaEl.append(proj, document.createTextNode(`started ${startedLabel(r.startedAt)}${branchTxt}`));
 }
 
 function buildRunCard(r) {
@@ -10118,7 +10219,14 @@ function paintRunList(list, rlist, emptyMsg, density = 'mini') {
       paintLogFilters(r, r.el);
       repaintFilteredLog(r, r.el);
     }
-    const inPlace = r.el.parentNode === list && r.el.previousElementSibling === prev;
+    // "In place" skips over project group-head dividers: they are lightweight
+    // siblings owned by paintRunGroupHeads, and a header between two correctly
+    // ordered cards must not read as "this card moved" (that would re-insert
+    // cards on every paint and reset their scroll — the exact bug the
+    // zero-DOM-moves invariant exists to prevent).
+    let prevCard = r.el.previousElementSibling;
+    while (prevCard && prevCard.classList.contains('hist-group-head')) prevCard = prevCard.previousElementSibling;
+    const inPlace = r.el.parentNode === list && prevCard === prev;
     if (!inPlace) {
       insertCardPreservingScroll(list, r.el, prev ? prev.nextSibling : list.firstChild);
     }
@@ -10135,18 +10243,144 @@ function paintRunList(list, rlist, emptyMsg, density = 'mini') {
   if (!rlist.length) list.innerHTML = `<div class="run-empty">${emptyMsg}</div>`;
 }
 
+// ── Running project filter + grouping (mirrors History's pills/sections) ────
+const RUNNING_FILTER_KEY = 'worca-cc.running.project';
+
+// One grouping key per run: the project dir, or the workspace for a workspace run.
+function runProjectKey(r) {
+  return r.workspaceId ? `ws:${r.workspaceId}` : (r.projectDir || '');
+}
+function runProjectLabel(r) {
+  if (r.workspaceId) {
+    return r.workspaceName
+      || (Array.isArray(r.projectNames) && r.projectNames.length ? r.projectNames.join(' + ') : 'workspace');
+  }
+  return projectName(r.projectDir);
+}
+
+function setRunningFilter(key) {
+  state.runningFilter = key || '';
+  try {
+    if (state.runningFilter) localStorage.setItem(RUNNING_FILTER_KEY, state.runningFilter);
+    else localStorage.removeItem(RUNNING_FILTER_KEY);
+  } catch { /* private mode */ }
+  renderRunningView();
+}
+
+// The pills toolbar over the Running list. Same classes as History's, so the
+// two toolbars cannot drift visually. Hidden when the list is empty.
+function paintRunningFilter(rows) {
+  const host = el.runningFilter;
+  if (!host) return;
+  host.hidden = !rows.length;
+  host.innerHTML = '';
+  if (!rows.length) return;
+  const groups = [];
+  const seen = new Map();
+  for (const r of rows) {
+    const key = runProjectKey(r);
+    const g = seen.get(key);
+    if (g) g.count += 1;
+    else { const ng = { key, label: runProjectLabel(r), count: 1, ws: !!r.workspaceId }; seen.set(key, ng); groups.push(ng); }
+  }
+  const mkPill = (key, label, count, isWs = false) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    const active = state.runningFilter === key;
+    b.className = 'hist-pill' + (isWs ? ' ws' : '') + (active ? ' active' : '');
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    const txt = document.createElement('span');
+    txt.textContent = label;
+    b.appendChild(txt);
+    b.appendChild(document.createTextNode(' '));
+    const c = document.createElement('span');
+    c.className = 'pill-count';
+    c.textContent = String(count);
+    b.appendChild(c);
+    b.addEventListener('click', () => setRunningFilter(key));
+    return b;
+  };
+  host.appendChild(mkPill('', 'All Projects', rows.length));
+  for (const g of groups) host.appendChild(mkPill(g.key, g.label, g.count, g.ws));
+}
+
+// Group-header dividers between projects in the All-Projects list. Plain
+// sibling elements, NOT wrappers: paintRunList's card-identity reconcile must
+// keep owning the cards. Always stripped first so the reconcile sees a
+// contiguous card list (a header between cards would defeat its in-place check
+// and reset scroll on every paint).
+function stripRunGroupHeads(list) {
+  delete list.dataset.runGroupSig;
+  list.querySelectorAll(':scope > .hist-group-head').forEach((h) => h.remove());
+}
+// Signature-gated: renderOverview runs on hot paths (a log frame can reach it),
+// and the zero-DOM-moves invariant paintRunList keeps for in-place cards must
+// hold for the headers too — repaint only when the grouping actually changed.
+function paintRunGroupHeads(list, rows, grouped) {
+  const sig = grouped ? rows.map((r) => `${runProjectKey(r)}|${r.runId}`).join(',') : '';
+  if ((list.dataset.runGroupSig || '') === sig && (sig || !list.querySelector(':scope > .hist-group-head'))) return;
+  stripRunGroupHeads(list);
+  list.dataset.runGroupSig = sig;
+  if (!grouped) return;
+  let lastKey = null;
+  for (const r of rows) {
+    if (!r.el || r.el.parentNode !== list) continue;
+    const key = runProjectKey(r);
+    if (key === lastKey) continue;
+    lastKey = key;
+    const head = document.createElement('div');
+    head.className = 'hist-group-head';
+    const name = document.createElement('span');
+    name.textContent = runProjectLabel(r);
+    const count = document.createElement('span');
+    count.className = 'pill-count';
+    count.textContent = String(rows.filter((x) => runProjectKey(x) === key).length);
+    head.append(name, count);
+    list.insertBefore(head, r.el);
+  }
+}
+
+// Stable-partition by project: groups appear in the order of their most
+// important run (rows arrive cmpTabRuns-sorted), and each group keeps that
+// internal order — attention still outranks within a project.
+function groupRunsByProject(rows) {
+  const order = [];
+  const byKey = new Map();
+  for (const r of rows) {
+    const k = runProjectKey(r);
+    if (!byKey.has(k)) { byKey.set(k, []); order.push(k); }
+    byKey.get(k).push(r);
+  }
+  return order.flatMap((k) => byKey.get(k));
+}
+
+let runningFilterRestored = false;
 function renderOverview() {
   const list = $('#run-list');
   if (!list) return;
-  const rows = overviewRuns();
+  const all = overviewRuns();
   hideDetailBar(list);
+  if (!runningFilterRestored) {
+    runningFilterRestored = true;
+    try { state.runningFilter = localStorage.getItem(RUNNING_FILTER_KEY) || ''; } catch { /* ignore */ }
+  }
+  // A filter whose project no longer has live runs falls back to All.
+  if (state.runningFilter && !all.some((r) => runProjectKey(r) === state.runningFilter)) {
+    state.runningFilter = '';
+  }
+  paintRunningFilter(all);
+  const rows = state.runningFilter
+    ? all.filter((r) => runProjectKey(r) === state.runningFilter)
+    : groupRunsByProject(all);
   // Overview is kind-agnostic (live scans/agentgen included), so the empty copy
   // must not claim "pipelines" specifically.
   paintRunList(list, rows, 'No active runs — start one from New.', 'mini');
+  paintRunGroupHeads(list, rows, !state.runningFilter && rows.length > 0);
 
   // "N pipelines executing" counts LIVE PIPELINES (the sub-text is pipeline-framed);
-  // "needs input" counts live runs with a pending question.
-  const live = rows.filter(isLive);
+  // "needs input" counts live runs with a pending question. Both count the FULL
+  // set — a project filter changes the list, not the header (History's rule).
+  const live = all.filter(isLive);
   const livePipes = live.filter(isPipelineRun);
   const needs = live.filter((r) => r.pendingQuestion).length;
   const sub = $('#running-sub');
@@ -10171,6 +10405,9 @@ function renderOverview() {
 function renderFocusView(runId) {
   const list = $('#run-list');
   if (!list) return;
+  // The detail page is about ONE pipeline: no project pills, no group headers.
+  if (el.runningFilter) el.runningFilter.hidden = true;
+  stripRunGroupHeads(list);
   const r = runs.get(runId);
   if (!r) {
     // On a COLD boot the runs map is still empty — it is seeded by the WS hello.
@@ -10243,10 +10480,16 @@ function paintDetailBar(host, subject = null) {
     bar.append(back, title, status);
     host.parentNode.insertBefore(bar, host);
   }
-  // A deep-linked detail view has no recorded origin, so it falls back to the
-  // list that owns this pipeline (History for a finished one) rather than always
-  // offering Running, which would be a dead end for a finished run.
-  const origin = state.detailOrigin || state.pipelineOwner || 'running';
+  // The back target: a LIVE pipeline always returns to Running — it has no
+  // History row to return to (renderHistory suppresses live pipelines), so a
+  // recorded "history" origin (sidebar click while reading History) would be a
+  // dead end. Only for a TERMINAL pipeline does the recorded origin win: a
+  // lingering finisher opened from the Running list goes back to that list,
+  // where its card still is. A deep link has no origin and falls back to the
+  // owning list.
+  const origin = state.pipelineOwner === 'running'
+    ? 'running'
+    : (state.detailOrigin || state.pipelineOwner || 'running');
   const back = bar.querySelector('.detail-back');
   back.onclick = () => { location.hash = origin; };
   back.textContent = `← ${origin === 'history' ? 'History' : 'Running'}`;

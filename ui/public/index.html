@@ -367,6 +367,9 @@
             <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
           </div>
 
+          <!-- Project-filter pills, mirroring History's toolbar (same classes,
+               same look). Hidden while empty and on a pipeline detail page. -->
+          <div class="hist-filter" id="runningFilter" aria-label="Filter running pipelines by project" hidden></div>
           <div class="run-list" id="run-list"></div>
 
           <!-- clone target for one run card (Task 3 fills it).

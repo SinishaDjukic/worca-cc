@@ -115,17 +115,28 @@ function installFreeze() {
 
   const RUNS = [];   // hello entries
   const FRAMES = []; // post-hello frames, in order
-  const run = (n, title, { stepper = STEPPER, status = 'running' } = {}) => {
+  const run = (n, title, { stepper = STEPPER, status = 'running', projectDir = P.dir } = {}) => {
     const runId = `fz-run-${n}`;
     const pipelineId = `f2ee000${n.toString(16)}`;
-    RUNS.push({ runId, title, projectDir: P.dir, status, startedAt: T0, kind: 'run', stepper, pipelineId });
+    RUNS.push({ runId, title, projectDir, status, startedAt: T0, kind: 'run', stepper, pipelineId });
     return { runId, pipelineId };
   };
 
   const DONE_TO_REVIEW = [['clarify', 'done', 1], ['plan', 'done', 1], ['refine', 'done', 1], ['implement', 'done', 1], ['review', 'done', 1]];
+  const logf = (runId, source, text, stepIndex, cycle, level = 'info') =>
+    ({ type: 'log', runId, source, level, text, ts: Date.parse(T0), ...(stepIndex != null ? { stepIndex, cycle } : {}) });
   {
     const { runId, pipelineId } = run(1, 'R1 · Executing — implement, cycle 2, sub-agents');
-    FRAMES.push(...phases(runId, [...DONE_TO_REVIEW, ['implement', 'start', 2]]),
+    FRAMES.push(
+      logf(runId, 'phase', 'preflight (done)', null, null, 'phase'),
+      logf(runId, 'clarify', 'no blocking questions', 0, 1),
+      logf(runId, 'planner', 'exploring the codebase', 1, 1),
+      logf(runId, 'refiner', 'plan v2 written', 2, 1),
+      logf(runId, 'implementer', 'wrote src/example.mjs', 3, 1),
+      logf(runId, 'reviewer', 'verdict: 1 major — back to implement', 4, 1, 'warn'),
+      logf(runId, 'implementer', 'fixing the flagged issue', 3, 2),
+      logf(runId, 'implementer', 'tests green', 3, 2),
+      ...phases(runId, [...DONE_TO_REVIEW, ['implement', 'start', 2]]),
       stateFrame(runId, pipelineId, { steps: stepsUpTo(3, { cycle: 2 }), totalCostUsd: 1.27 }),
       { type: 'subagent', runId, transition: 'spawn', ...sub('fz-s1', 's2_0', 2, 'wire the endpoint', 'running') },
       { type: 'subagent', runId, transition: 'spawn', ...sub('fz-s2', 's2_0', 2, 'write the tests', 'running') },
@@ -192,7 +203,8 @@ function installFreeze() {
     FRAMES.push({ type: 'title', runId, title: 'R10 · Just started — provisional title', provisional: true });
   }
   {
-    const { runId, pipelineId } = run(11, 'R11 · Parallel implementers', { stepper: STEPPER_PAR });
+    // A second project, so the Running view's project pills + grouping show.
+    const { runId, pipelineId } = run(11, 'R11 · Parallel implementers', { stepper: STEPPER_PAR, projectDir: '/frozen/projects/notes-app' });
     FRAMES.push(...phases(runId, [['clarify', 'done', 1], ['plan', 'done', 1], ['refine', 'done', 1],
       ['implement', 'start', 1, { nodeId: 's2_0' }], ['implement', 'start', 1, { nodeId: 's2_1' }]]),
       { ...stateFrame(runId, pipelineId, { steps: stepsUpTo(3), totalCostUsd: 0.6 }), stepper: STEPPER_PAR },
