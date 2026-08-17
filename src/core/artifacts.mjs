@@ -1761,7 +1761,7 @@ export function lookupPipelineRow(key, id) {
  *                         `run.json` is missing. THROWS when the lookup fails.
  *   pipelineDirOf(id)  -> the durable artifact dir, for rescue-before-remove.
  *   retainOf(id)       -> a derived retained-work record, or null once no recorded
- *                         checkout is still present.
+ *                         checkout is still present. THROWS when the lookup fails.
  *
  * THREE STATES, NEVER TWO. A DB *failure* must never masquerade as "no pipelines
  * row", because the row-less disposition is RECLAIM: if an unopenable sqlite file
@@ -1953,16 +1953,24 @@ export async function runDirForRow(row) {
   const dirById = await runDirIndex(pipelinesDir);
   const indexed = dirById.get(row.id);
   if (indexed) return indexed;
-  // Production ids are 8-hex and therefore covered by runDirIndex. Keep the
-  // by-id reader tolerant of older/manual rows whose directory suffix does not
-  // match that shape (the archive resolver already has this behaviour).
-  try {
-    const entries = await readdir(pipelinesDir, { withFileTypes: true });
-    const suffix = `-${row.id}`;
-    const hit = entries.find((e) => e.isDirectory() && (e.name === row.id || e.name.endsWith(suffix)));
-    if (hit) return join(pipelinesDir, hit.name);
-  } catch { /* normal fallback below */ }
+  // Production ids are 8-hex and always covered by runDirIndex; this fallback
+  // serves older/manual rows via the SAME matcher archive uses (findRunDir),
+  // adopting its case-insensitive suffix-first precedence deliberately (F11).
+  const hit = await findRunDir(pipelinesDir, row.id);
+  if (hit) return hit;
   return join(pipelinesDir, row.id);
+}
+
+/** Find the on-disk run dir for an id under pipelinesDir (basename ends in -<id>).
+ *  Case-insensitive suffix pass first, exact-basename pass second — the archive
+ *  resolver's historical behavior. */
+export async function findRunDir(pipelinesDir, id) {
+  let entries;
+  try { entries = await readdir(pipelinesDir, { withFileTypes: true }); } catch { return null; }
+  const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const e of entries) if (e.isDirectory() && new RegExp(`-${esc}$`, 'i').test(e.name)) return join(pipelinesDir, e.name);
+  for (const e of entries) if (e.isDirectory() && e.name === id) return join(pipelinesDir, e.name);
+  return null;
 }
 
 /** Read a pipeline-local artifact file as text, or null if absent. */
@@ -1989,21 +1997,7 @@ export async function readRunArtifactJson(key, id, relPath) {
  * @param {object} [opts]
  */
 export async function listWorkspacePipelines(workspaceKey, primaryDir = null, opts = {}) {
-  const pipelinesDir = join(workspaceStorePath(workspaceKey), 'pipelines');
-  const dirById = await runDirIndex(pipelinesDir);
-  const rows = getDb().prepare(`
-    SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
-    FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL ORDER BY started_at DESC
-  `).all(workspaceKey);
-  const out = [];
-  for (const row of rows) {
-    row.dir = dirById.get(row.id) || join(pipelinesDir, row.id);
-    out.push(await rowToHistoryEntry(row, primaryDir, opts));
-  }
-  out.sort((a, b) => b.mtime - a.mtime);
-  return out;
+  return listPipelines(primaryDir, opts, workspaceKey);
 }
 
 /**

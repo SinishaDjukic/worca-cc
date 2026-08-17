@@ -1,16 +1,23 @@
 // test/pipeline-delete.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, chmod, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { deletePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
-import { recordArtifact, listArtifacts, writeStoreMeta, readPipelineByKey } from '../src/core/artifacts.mjs';
+import {
+  recordArtifact, listArtifacts, writeStoreMeta, readPipelineByKey, retainedWorkFor, runDirForRow,
+} from '../src/core/artifacts.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
-import { listLocalBranches, createWorktree, sweepRunRoots } from '../src/core/worktree.mjs';
+import {
+  listLocalBranches, createWorktree, sweepRunRoots, snapshotWorktreePatch,
+} from '../src/core/worktree.mjs';
+import { writeRunManifest, updateRunManifest } from '../src/core/run-manifest.mjs';
+import { deleteWorkspace } from '../src/core/workspaces.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 const created = [];
@@ -146,6 +153,9 @@ test('discardRetainedWorktrees snapshots untracked work, removes only the checko
     },
   });
   try {
+    getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+      .run(JSON.stringify({ version: 1 }), 'retain11');
+    const before = getDb().prepare('SELECT updated_at, resume_point FROM pipelines WHERE id = ?').get('retain11');
     const report = await discardRetainedWorktrees({ key: 'proj-00000001', id: 'retain11' });
     assert.equal(report.discarded, true);
     assert.equal(existsSync(wt.worktreeDir), false, 'retained checkout reclaimed');
@@ -159,6 +169,10 @@ test('discardRetainedWorktrees snapshots untracked work, removes only the checko
     assert.equal(saved.state.branch.commitFailed, undefined);
     assert.equal(saved.state.branch.worktreeRemoved, true);
     assert.ok((await listArtifacts('retain11')).some((a) => a.kind === 'retained-work-patch'));
+    assert.equal(report.remaining, 0, 'nothing left retained after a full discard');
+    const afterRow = getDb().prepare('SELECT updated_at, resume_point FROM pipelines WHERE id = ?').get('retain11');
+    assert.equal(afterRow.updated_at, before.updated_at, 'discard must not restamp updated_at (stats proxy)');
+    assert.equal(afterRow.resume_point, before.resume_point, 'discard must not clobber resume_point');
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }
@@ -427,6 +441,142 @@ test('deleting a LEGACY run touches no run root (there is none) and still succee
     assert.equal(report.runRoot, null, 'no run root was reported for a legacy run');
     assert.equal(existsSync(pdir), false, 'the pipeline dir is still removed');
     assert.ok(existsSync(other), "another pipeline's run root is untouched");
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('snapshotWorktreePatch writes the patch to the given file (no in-memory string)', async () => {
+  const repo = await freshRepo();
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'snapfile1', sourceBranch: 'main', featureBranch: 'worca-cc/snapfile1',
+  });
+  await writeFile(join(wt.worktreeDir, 'x.bin'), 'binary-ish\n');
+  const out = join(tmpdir(), `worca-snap-${Date.now()}.patch`);
+  const res = await snapshotWorktreePatch(wt.worktreeDir, out);
+  assert.equal(res.ok, true);
+  assert.equal(res.file, out);
+  assert.ok(res.bytes > 0);
+  assert.match(await readFile(out, 'utf8'), /x\.bin/);
+  assert.equal(existsSync(`${out}.part`), false, 'no temp file left behind');
+  await rm(out, { force: true });
+});
+
+test('snapshotWorktreePatch on a clean tree is success with no file (discard-after-manual-commit must not fail)', async () => {
+  const repo = await freshRepo();
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'snapclean1', sourceBranch: 'main', featureBranch: 'worca-cc/snapclean1',
+  });
+  const out = join(tmpdir(), `worca-snap-clean-${Date.now()}.patch`);
+  const res = await snapshotWorktreePatch(wt.worktreeDir, out);
+  assert.equal(res.ok, true);
+  assert.equal(res.file, null);
+  assert.equal(existsSync(out), false, 'no 0-byte patch is left behind');
+});
+
+test('discard reports the truth when a checkout survives removal (and keeps its stamp + run root)', async () => {
+  if (typeof process.getuid === 'function' && process.getuid() === 0) return; // chmod is inert under root
+  const repo = await freshRepo();
+  const prev = process.env.WORCA_HOME;
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'retainkeep', sourceBranch: 'main', featureBranch: 'worca-cc/retainkeep',
+  });
+  await writeFile(join(wt.worktreeDir, 'kept.txt'), 'uncommitted\n');
+  await freshStore(repo, {
+    id: 'retainkp1', base: 'retain-keep', datePrefix: '04-06-26', status: 'done',
+    branch: {
+      source: 'main', feature: wt.branch, worktreeDir: wt.worktreeDir,
+      commitFailed: { code: 'commit_failed', step: 'commit', message: 'hook', at: new Date().toISOString() },
+    },
+  });
+  const runRoot = join(worcaHome(), 'runs', 'retainkp1');
+  await mkdir(runRoot, { recursive: true });
+  // Make removal fail while the snapshot still works: the worktree DIR is made
+  // read-only, so `git add -A` / `git diff` still READ it (the index lives in the
+  // main repo's .git), but neither `git worktree remove --force` nor the rm
+  // backstop can unlink its contents. (Assumes a non-root test user, like the
+  // rest of the suite.)
+  await chmod(wt.worktreeDir, 0o555);
+  try {
+    // freshStore hardcodes store key 'proj-00000001' (NOT projectKey(repo)), so
+    // the discard must address the row by key — projectDir would miss it.
+    const report = await discardRetainedWorktrees({ key: 'proj-00000001', id: 'retainkp1' });
+    assert.equal(report.remaining, 1, 'the surviving checkout is counted');
+    assert.equal(report.discarded, false, 'discarded must not claim success');
+    assert.ok(report.warnings.some((w) => /worktree still exists/.test(w)));
+    assert.ok(existsSync(runRoot), 'the run root is kept while a checkout survives');
+    const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get('retainkp1');
+    assert.ok(retainedWorkFor(row), 'the DB retention stamp survives a failed removal');
+  } finally {
+    await chmod(wt.worktreeDir, 0o755);
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('discard honors a manifest-only retention (DB stamp lost in the F2 crash window)', async () => {
+  const repo = await freshRepo();
+  const prev = process.env.WORCA_HOME;
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'manifonly', sourceBranch: 'main', featureBranch: 'worca-cc/manifonly',
+  });
+  await writeFile(join(wt.worktreeDir, 'm.txt'), 'kept\n');
+  await freshStore(repo, { id: 'manifly01', base: 'manif-only', datePrefix: '04-06-26', status: 'error' });
+  const runRoot = join(worcaHome(), 'runs', 'manifly01');
+  await mkdir(runRoot, { recursive: true });
+  await writeRunManifest(runRoot, { pipelineId: 'manifly01', runRootMode: 'detached', isWorkspace: false, members: [] });
+  await updateRunManifest(runRoot, {
+    retain: { reason: 'commit_failed', members: [{ projectKey: null, worktreeDir: wt.worktreeDir, branch: wt.branch }] },
+  });
+  try {
+    // Address by store key: freshStore hardcodes 'proj-00000001' (see Task 9).
+    const report = await discardRetainedWorktrees({ key: 'proj-00000001', id: 'manifly01' });
+    assert.equal(report.discarded, true, 'manifest-only retention is discardable, not a permanent wedge');
+    assert.equal(existsSync(wt.worktreeDir), false, 'the checkout is reclaimed');
+    assert.equal(report.patches.length, 1, 'a recovery patch was saved first');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('runDirForRow matches the archive resolver: case-insensitive -<id> suffix', async () => {
+  const prev = process.env.WORCA_HOME;
+  try {
+    await freshStore(await freshRepo(), {
+      id: 'casemix', base: 'x', datePrefix: '04-06-26', status: 'done',
+    });
+    // Rename the run dir to an upper-cased suffix the current readdir fallback misses.
+    const pipelinesDir = join(process.env.WORCA_HOME, '.worca-cc', 'store', 'proj-00000001', 'pipelines');
+    const [dir] = (await readdir(pipelinesDir)).filter((d) => d.endsWith('-casemix'));
+    await rename(join(pipelinesDir, dir), join(pipelinesDir, dir.toUpperCase()));
+    const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get('casemix');
+    const resolved = await runDirForRow(row);
+    assert.match(resolved, /-CASEMIX$/, 'resolves case-insensitively, like findRunDir');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('deleteWorkspace refuses while a member pipeline has retained uncommitted work', async () => {
+  const WKEY = 'wks-retain-0000abcd'; // MUST satisfy WORKSPACE_KEY_RE (8-hex tail)
+  const repoA = await freshRepo();
+  const wtA = await createWorktree({ projectDir: repoA, pipelineId: 'retainwd', sourceBranch: 'main', featureBranch: 'worca-cc/retainwd-a' });
+  await writeFile(join(wtA.worktreeDir, 'a.txt'), 'kept\n');
+  const prev = process.env.WORCA_HOME;
+  await freshWorkspaceStore({
+    wkey: WKEY, id: 'retainwd', base: 'retained-del', datePrefix: '04-06-26', status: 'done',
+    members: [{ projectDir: repoA, branch: { source: 'main', feature: wtA.branch, worktreeDir: wtA.worktreeDir, commitFailed: { code: 'commit_failed', step: 'commit', message: 'hook', at: new Date().toISOString() } } }],
+  });
+  // freshWorkspaceStore seeds only the pipelines row; deleteWorkspace's
+  // membership-first check needs the registry row too. Insert AFTER
+  // freshWorkspaceStore (its _resetForTests() wipes anything earlier).
+  const now = new Date().toISOString();
+  getDb().prepare('INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES (?,?,?,?,?)')
+    .run(WKEY, 'Retain Del WS', '', now, now);
+  try {
+    await assert.rejects(() => deleteWorkspace(WKEY), (e) => e.code === 'RETAINED_WORKTREE');
+    await discardRetainedWorktrees({ workspaceKey: WKEY, id: 'retainwd' });
+    const after = await deleteWorkspace(WKEY);
+    assert.equal(after.ok, true, 'delete succeeds once the retention is resolved');
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }

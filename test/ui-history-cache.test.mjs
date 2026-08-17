@@ -12,7 +12,7 @@ import { JSDOM } from 'jsdom';
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
-const CACHE_KEY = 'worca-cc.history.cache.v2';
+const CACHE_KEY = 'worca-cc.history.cache.v1';
 
 async function boot({ fetchHandler } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
@@ -65,9 +65,9 @@ test('instant paint from cache before the /api/history fetch resolves, then SWR 
   const ctx = await boot({
     fetchHandler: (url) => (url.endsWith('/api/history') ? deferred : null),
   });
-  // Pre-seed a valid cache BEFORE navigating to History.
+  // Pre-seed a valid v1 cache BEFORE navigating to History.
   ctx.window.localStorage.setItem(CACHE_KEY, JSON.stringify({
-    v: 2, ts: 1700000000000, ghAvailable: true,
+    v: 1, ts: 1700000000000, ghAvailable: true,
     pipelines: [{ id: 'c1', projectKey: 'k1', projectName: 'K1', title: 'Cached', status: 'done', startedAt: '2026-01-01T00:00:00Z' }],
   }));
   ctx.showHistory();
@@ -128,8 +128,24 @@ test('writeHistoryCache strips the live `pr` field before persisting', async () 
   const raw = ctx.window.localStorage.getItem(CACHE_KEY);
   assert.ok(raw, 'a cache was written from the fresh skeleton');
   const parsed = JSON.parse(raw);
-  assert.equal(parsed.v, 2);
+  assert.equal(parsed.v, 1);
   assert.ok(parsed.pipelines.length >= 1);
   assert.ok(parsed.pipelines.every((row) => !('pr' in row)), 'no persisted row carries a live pr');
   await ctx.settle();
+});
+
+test('writeHistoryCache strips the live retainedWork field before persisting', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.endsWith('/api/history')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [
+          { id: 'r1', projectKey: 'k1', title: 'R', status: 'done', startedAt: '2026-01-01T00:00:00Z',
+            retainedWork: { reason: 'commit_failed', members: [{ worktreeDir: '/tmp/x' }] } },
+        ], ghAvailable: false }) })
+      : null),
+  });
+  ctx.showHistory();
+  await ctx.settle();
+  const parsed = JSON.parse(ctx.window.localStorage.getItem(CACHE_KEY));
+  assert.ok(parsed.pipelines.every((row) => !('retainedWork' in row)),
+    'retainedWork is a live existsSync-derived fact; caching it paints stale banners');
 });

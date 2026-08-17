@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { createWorktree } from '../src/core/worktree.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { readPipelineForResume, readPipelineByKey } from '../src/core/artifacts.mjs';
@@ -147,6 +148,8 @@ test('detached: a failed teardown commit retains the worktree + run root and per
     assert.equal(liveManifest.retain.members[0].worktreeDir, st.branch.worktreeDir);
     const durableManifest = JSON.parse(await readFile(join(st.pipelineDir, 'run.json'), 'utf8'));
     assert.equal(durableManifest.retain.reason, 'commit_failed', 'retain is written before the durable copy');
+    const patchText = await readFile(join(st.pipelineDir, 'retained-work.patch'), 'utf8');
+    assert.match(patchText, /diff --git/, 'a durable patch exists the moment work is retained');
   });
 });
 
@@ -680,4 +683,81 @@ test('legacy: a failed teardown commit survives a DB round trip and keeps the ch
     assert.equal(saved.state.branch.commitFailed.step, 'commit');
     assert.equal(saved.state.branch.worktreeRemoved, false);
   });
+});
+
+test('a worktree that vanished mid-run is not retained (nothing to retain)', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const res = await orch._commitWork({ worktreeDir: join(repo, 'no-such-dir'), branch: 'worca/x' });
+  assert.equal(res.ok, true, 'missing checkout is the clean no-op, not a retention trigger');
+  assert.equal(res.committed, false);
+});
+
+test('a commit failure with no branch record synthesizes one so retention is machine-readable', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  orch.state.branch = null; // the abnormal row shape F6 describes
+  const kept = await orch._recordCommitFailure(
+    { ok: false, step: 'commit', message: 'hook failed' },
+    { info: { worktreeDir: join(repo, 'wt'), branch: 'worca/x' }, branchRecord: null },
+  );
+  assert.equal(kept, true);
+  assert.equal(orch.state.branch.commitFailed.code, 'commit_failed');
+  assert.equal(orch.state.branch.worktreeDir, join(repo, 'wt'));
+  assert.equal(orch.state.branch.worktreeRemoved, false);
+});
+
+test('the retention stamp is durable in the DB before _recordCommitFailure returns', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  orch.state.id = 'rcf00001'; // writeState keys its UPSERT on state.id
+  orch.state.branch = { feature: 'worca/x', worktreeDir: join(repo, 'wt') };
+  const kept = await orch._recordCommitFailure(
+    { ok: false, step: 'commit', message: 'hook failed' },
+    { info: { worktreeDir: join(repo, 'wt'), branch: 'worca/x' }, branchRecord: orch.state.branch },
+  );
+  assert.equal(kept, true);
+  const persisted = await readPipelineByKey(projectKey(repo), 'rcf00001');
+  assert.equal(persisted.state.branch.commitFailed.code, 'commit_failed',
+    'the row is durable before any caller-side persist runs');
+});
+
+test('legacy workspace: the scalar mirror is NOT stamped removed while a member is retained', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const info = { worktreeDir: join(repo, 'wt-a'), branch: 'worca/x' };
+  orch.branchInfos = new Map([['proj-a', info]]);
+  orch.state.branches = { 'proj-a': { feature: 'worca/x', worktreeDir: info.worktreeDir } };
+  orch.state.branch = { feature: 'worca/x', worktreeDir: info.worktreeDir }; // the scalar mirror
+  orch._commitWork = async () => ({ ok: false, step: 'commit', message: 'x' });
+  await orch._teardownWorktreeAll();
+  assert.notEqual(orch.state.branch.worktreeRemoved, true,
+    'a retained checkout must never be recorded as removed');
+  assert.equal(orch.state.branches['proj-a'].commitFailed.code, 'commit_failed');
+  assert.equal(orch.state.branches['proj-a'].worktreeRemoved, false);
+});
+
+test('workspace members snapshot to distinct retained-work-<key>.patch files', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'snapkey01', sourceBranch: 'main', featureBranch: 'worca-cc/snapkey01',
+  });
+  await writeFile(join(wt.worktreeDir, 'w.txt'), 'x\n');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-snapkey-'));
+  orch.pipeline = { id: 'snapkey01', dir };
+  orch.isWorkspace = true;
+  await orch._snapshotRetained({ worktreeDir: wt.worktreeDir }, 'proj-0000abcd');
+  assert.ok(existsSync(join(dir, 'retained-work-proj-0000abcd.patch')),
+    'member patches must not collide on one filename');
 });

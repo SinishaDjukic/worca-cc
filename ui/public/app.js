@@ -7390,8 +7390,8 @@ const HISTORY_FILTER_KEY = 'worca-cc.history.project'; // stores a projectKey; '
 // Only stable FS + local-git skeleton fields are persisted — never the live `pr`
 // (a gh fact that goes stale); Phase-2 fills PR state over the WS. Bump the .vN
 // suffix on any shape change (there is no migration helper).
-const HISTORY_CACHE_KEY = 'worca-cc.history.cache.v2';
-const HISTORY_CACHE_VER = 2;
+const HISTORY_CACHE_KEY = 'worca-cc.history.cache.v1';
+const HISTORY_CACHE_VER = 1;
 const HISTORY_CACHE_MAX = 500;   // cap persisted rows (rows are newest-first)
 
 function readHistoryCache() {
@@ -7409,7 +7409,8 @@ function readHistoryCache() {
 
 function writeHistoryCache(pipelines, ghAvailable) {
   try {
-    const slim = pipelines.slice(0, HISTORY_CACHE_MAX).map(({ pr, ...rest }) => rest); // never persist live PR
+    const slim = pipelines.slice(0, HISTORY_CACHE_MAX)
+      .map(({ pr, retainedWork, ...rest }) => rest); // never persist live PR or retention facts
     localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(
       { v: HISTORY_CACHE_VER, ts: Date.now(), ghAvailable: !!ghAvailable, pipelines: slim }));
   } catch { /* quota / serialization: skip cache, never throw */ }
@@ -7931,21 +7932,27 @@ function renderRetainedWork(node, p) {
   }
   const archiveNote = document.createElement('p');
   archiveNote.textContent = 'Archive is disabled until the retained worktree has been recovered or discarded.';
-  banner.append(title, intro, list, archiveNote);
+  const clearNote = document.createElement('p');
+  clearNote.textContent = 'After committing manually, use "Discard worktree" to remove the now-redundant checkout and clear this warning (a patch of anything still uncommitted is saved first). Your changes are already staged in that checkout, so git status will list them under "Changes to be committed".';
+  banner.append(title, intro, list, archiveNote, clearNote);
 }
 
 function addRecoveryPatchLink(node, projectDir, p, artifacts) {
   const banner = node.querySelector('.retained-banner');
-  if (!banner || banner.hidden || !Array.isArray(artifacts) ||
-      !artifacts.some((a) => a && a.kind === 'diff-patch')) return;
+  if (!banner || banner.hidden || !Array.isArray(artifacts)) return;
+  const retained = artifacts.some((a) => a && a.kind === 'retained-work-patch');
+  const diff = artifacts.some((a) => a && a.kind === 'diff-patch');
+  if (!retained && !diff) return;
   if (banner.querySelector('.retained-patch-link')) return;
   const line = document.createElement('p');
   line.className = 'retained-patch-link';
   line.appendChild(document.createTextNode('Alternate recovery: '));
   const link = document.createElement('a');
   link.href = `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`;
-  link.download = `diff-patch-${p.id}.patch`;
-  link.textContent = 'download the pipeline diff patch';
+  link.download = retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch`;
+  link.textContent = retained
+    ? 'download the recovery patch (snapshot taken when the work was retained)'
+    : 'download the pipeline diff patch';
   link.addEventListener('click', (e) => e.stopPropagation());
   line.appendChild(link);
   banner.appendChild(line);
@@ -7960,7 +7967,7 @@ function setupDiscardWorktreeButton(node, projectDir, p) {
   if (!members.length) return;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const msg = 'Discard the retained worktree?\n\nThe uncommitted work currently exists only in the retained worktree. A recovery patch will be saved in the pipeline directory before anything is removed. The pipeline history and feature branch will be kept; the branch does not contain this work.\n\nContinue?';
+    const msg = 'Discard the retained worktree?\n\nAny work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed. If you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.\n\nContinue?';
     if (!window.confirm(msg)) return;
     btn.disabled = true;
     const previous = btn.textContent;
@@ -7970,13 +7977,24 @@ function setupDiscardWorktreeButton(node, projectDir, p) {
       const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      if (data.remaining > 0) {
+        // Partial failure: the checkout is still on disk, so the retained state
+        // is still true — repaint nothing away, tell the user what happened.
+        btn.disabled = false;
+        btn.textContent = previous;
+        showViewer('Discard incomplete',
+          'The retained worktree could not be fully removed:\n\n' +
+          `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
+          'The retained-work warning stays until the checkout is gone.');
+        return;
+      }
       p.retainedWork = null;
       writeHistoryCache(state.historyAll, state.ghAvailable);
       paintHistory();
       const paths = Array.isArray(data.patches) ? data.patches : [];
       showViewer('Retained worktree discarded', paths.length
         ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
-        : 'The retained worktree no longer existed; nothing needed to be removed.');
+        : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.');
     } catch (err) {
       btn.disabled = false;
       btn.textContent = previous;

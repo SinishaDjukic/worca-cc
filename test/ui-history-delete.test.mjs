@@ -95,7 +95,7 @@ test('discard saves a patch, clears the warning, and re-enables Archive', async 
         request = { url, method: opts.method };
         return Promise.resolve({
           ok: true, status: 200,
-          json: async () => ({ ok: true, discarded: true, patches: ['/store/p1/retained-work.patch'] }),
+          json: async () => ({ ok: true, discarded: true, remaining: 0, patches: ['/store/p1/retained-work.patch'] }),
         });
       }
       if (url.includes('/api/history')) return runs([row], false);
@@ -111,7 +111,7 @@ test('discard saves a patch, clears the warning, and re-enables Archive', async 
   assert.equal(request.method, 'POST');
   assert.match(request.url, /\/api\/runs\/p1\/discard-worktree\?projectKey=/);
   assert.match(confirmText, /exists only in the retained worktree/);
-  assert.match(confirmText, /recovery patch will be saved/);
+  assert.match(confirmText, /recovery patch of uncommitted changes will be saved/);
   const card = window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-retained-badge').hidden, true);
   assert.equal(card.querySelector('.hist-discard').hidden, true);
@@ -195,4 +195,44 @@ test('declining the confirm popup makes no request', async () => {
   window.document.querySelector('.hist-delete').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(called, false, 'no DELETE when the user cancels');
+});
+
+test('a failed discard keeps the banner, the badge, the Archive block — and lets the user retry', async () => {
+  const row = { ...FIN, retainedWork: RETAINED };
+  const { window, showHistory } = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/discard-worktree')) {
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ ok: true, discarded: false, remaining: 1,
+            patches: ['/store/p1/retained-work.patch'],
+            warnings: ['proj-0000abcd: worktree still exists at /tmp/retained-p1'] }),
+        });
+      }
+      if (url.includes('/api/history')) return runs([row], false);
+      return null;
+    },
+  });
+  window.confirm = () => true;
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  window.document.querySelector('.hist-discard').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  assert.equal(card.querySelector('.hist-retained-badge').hidden, false, 'badge stays');
+  assert.equal(card.querySelector('.hist-delete').disabled, true, 'Archive stays blocked');
+  const discardBtn = card.querySelector('.hist-discard');
+  assert.equal(discardBtn.disabled, false, 'the user can retry');
+  assert.match(discardBtn.textContent, /Discard/);
+  assert.match(window.document.querySelector('#viewer').textContent, /worktree still exists/);
+});
+
+test('the banner explains how to clear the warning after a manual commit', async () => {
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([{ ...FIN, retainedWork: RETAINED }], false) : null),
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const banner = window.document.querySelector('#history .retained-banner');
+  assert.match(banner.textContent, /After committing manually, use .*Discard worktree/i);
 });

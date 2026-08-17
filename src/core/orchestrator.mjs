@@ -48,7 +48,10 @@ import {
   readStepQuestions,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
-import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
+import {
+  assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
+  retainedWorkPatchName,
+} from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { worcaHome } from './projects.mjs';
@@ -85,7 +88,7 @@ import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } 
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
-  isValidSourceRef,
+  isValidSourceRef, snapshotWorktreePatch,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 
@@ -1375,6 +1378,7 @@ class Orchestrator extends EventEmitter {
     const commit = await this._commitWork(info);
     const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
     if (retained) {
+      await this._snapshotRetained(info);
       this.workDir = this.projectDir;
       await this._persist().catch(() => {});
       return;
@@ -1417,11 +1421,14 @@ class Orchestrator extends EventEmitter {
     if (this.branchInfos.size === 0) return;
     const entries = [...this.branchInfos.entries()]; // [projectKey, info]
     this.branchInfos = new Map(); // guard against a double teardown
+    let anyRetained = false;
     for (const [projectKey_, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
       const commit = await this._commitWork(info, branchRecord);
       if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
+        anyRetained = true;
+        await this._snapshotRetained(info, projectKey_);
         this.workDirs.delete(projectKey_);
         continue;
       }
@@ -1446,8 +1453,10 @@ class Orchestrator extends EventEmitter {
       }
       this.workDirs.delete(projectKey_);
     }
-    // Keep the scalar mirror coherent for late observers.
-    if (this.state.branch) {
+    // Keep the scalar mirror coherent for late observers — but never claim a
+    // retained checkout was removed (the detached twin guards the same way,
+    // via !retainedMembers.length).
+    if (this.state.branch && !anyRetained) {
       this.state.branch.worktreeRemoved = true;
       this.state.branch.branchKept = true;
     }
@@ -1518,6 +1527,7 @@ class Orchestrator extends EventEmitter {
       // outlive the run root.
       await removeInjectedPaths(wt, injected);
       if (retained) {
+        await this._snapshotRetained(info, key);
         retainedMembers.push({
           projectKey: key,
           worktreeDir: wt,
@@ -1615,6 +1625,28 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Best-effort durable copy of the retained work, written the moment retention
+   * is decided — a crash or manual deletion before an explicit discard must not
+   * leave the checkout as the only copy. Failure (or a clean tree) keeps the
+   * worktree as the source of truth (same failure class as the commit itself).
+   */
+  async _snapshotRetained(info, key = null) {
+    const pipelineDir = this.pipeline?.dir;
+    if (!pipelineDir || !info?.worktreeDir) return;
+    const name = retainedWorkPatchName(this.isWorkspace ? key : null);
+    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
+    if (snap.ok && snap.file) {
+      recordArtifact(this.pipeline.id, 'retained-work-patch', name);
+      this._log('git', 'info', `Retained-work recovery patch saved: ${name}`);
+    } else if (snap.ok) {
+      this._log('git', 'info', 'Retained-work snapshot skipped: nothing uncommitted to save.');
+    } else {
+      this._log('git', 'warn',
+        `retained-work patch not saved (git ${snap.step}: ${snap.message}); the worktree is the only copy`);
+    }
+  }
+
+  /**
    * Stamp a failed teardown commit on its persisted branch record and emit both
    * human-readable durable traces. Returns true when the caller must keep the
    * checkout containing the uncommitted work.
@@ -1628,16 +1660,26 @@ class Orchestrator extends EventEmitter {
       message,
       at: new Date().toISOString(),
     };
-    if (branchRecord) {
-      branchRecord.commitFailed = record;
-      branchRecord.worktreeRemoved = false;
-      branchRecord.branchKept = true;
-    } else {
+    let target = branchRecord;
+    if (!target) {
+      // Synthesize the record: retention must ALWAYS be visible to
+      // retainedWorkFor/archive/discard, not only to a human reading warnings.
+      // branchRecord came FROM state.branches[key] / state.branch, so a null one
+      // means that slot is empty — this never overwrites a non-null record.
+      target = { feature: info?.branch || null, worktreeDir: info?.worktreeDir || null };
+      if (this.isWorkspace && key != null) {
+        this.state.branches[key] = target;
+      } else {
+        this.state.branch = target;
+      }
       await this._recordRunWarning(
         `${key ? `${key}: ` : ''}commit failed at git ${result.step} (${message}) with no branch record; ` +
-        `the worktree at ${info?.worktreeDir || '(unknown)'} is retained`,
+        `synthesized one for the retained worktree at ${info?.worktreeDir || '(unknown)'}`,
       );
     }
+    target.commitFailed = record;
+    target.worktreeRemoved = false;
+    target.branchKept = true;
     const prefix = key ? `${key}: ` : '';
     this._log('git', 'warn',
       `${prefix}commit failed at git ${result.step} (${message}) — KEEPING the worktree at ${info?.worktreeDir}`);
@@ -1645,6 +1687,16 @@ class Orchestrator extends EventEmitter {
       await appendAudit(this.pipeline.dir,
         `Commit FAILED for \`${info?.branch || '(unknown)'}\` at git ${result.step}: ${message}. ` +
         `Worktree RETAINED at \`${info?.worktreeDir || '(unknown)'}\`.`).catch(() => {});
+    }
+    // Persist NOW. The callers' later _persist() is best-effort/swallowed; the
+    // retention stamp must not ride on it (F2's crash window). _persist() also
+    // swallows internally, so call the writer directly to observe a real failure.
+    try {
+      await writeState(this.pipeline?.dir ?? null, this.state);
+    } catch (e) {
+      this._log('git', 'error',
+        `retention stamp could not be persisted (${e?.message || e}); ` +
+        'the run.json retain record is the only durable copy');
     }
     return true;
   }
@@ -1673,6 +1725,12 @@ class Orchestrator extends EventEmitter {
     const gitOpts = { cwd, ignoreAbort: true };
     const status = await this._git(['status', '--porcelain'], gitOpts);
     if (!status.ok) {
+      if (!existsSync(cwd)) {
+        // The checkout is gone: there is no work to retain, and stamping
+        // commitFailed would create an unclearable phantom retention (F15).
+        this._log('git', 'warn', `commit skipped: worktree missing at ${cwd}`);
+        return { ok: true, committed: false, sha: null };
+      }
       const message = status.stderr.trim() || `exit ${status.code}`;
       this._log('git', 'warn', `commit skipped: git status failed: ${message}`);
       return { ok: false, step: 'status', message };

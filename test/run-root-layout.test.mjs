@@ -490,6 +490,19 @@ test('sweep: retainOf keeps a terminal root when the manifest has no retain bloc
   assert.deepEqual(res.keep, [e.runRoot]);
 });
 
+test('sweep: a throwing retainOf skips the root untouched (three-state doctrine)', async () => {
+  const home = await tmp('worca-cc-rr-retain-throw-');
+  const repo = await freshRepo();
+  const e = await seedRunRoot(home, 'retain04', repo);
+  const res = await sweepRunRoots({
+    worcaHome: home, statusOf: () => 'done',
+    retainOf: () => { throw new Error('db exploded'); }, log: () => {},
+  });
+  assert.ok(!res.removed.includes(e.runRoot), 'retention-unknown must never mean remove');
+  assert.ok(existsSync(e.runRoot), 'run root untouched');
+  assert.ok(res.failed.includes(e.runRoot), 'reported as SKIPPED, not silently ignored');
+});
+
 test('sweep: `interrupted` explicitly survives — the crash-recovery guard', async () => {
   const home = await tmp('worca-cc-rr-int-');
   const repo = await freshRepo();
