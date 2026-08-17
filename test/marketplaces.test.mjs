@@ -12,6 +12,7 @@ import {
   readMarketplaces, writeMarketplaces, normalizeMarketplaceUrl, marketplaceId,
   addMarketplace, syncMarketplace, refreshAllMarketplaces, removeMarketplace,
   listMarketplaces, resolveInstallSource, marketplacesFile,
+  hostRepoRoot, seedBuiltinMarketplace,
 } from '../src/core/marketplaces.mjs';
 import { repoCacheDir, repoSlug } from '../src/core/plugin-repo.mjs';
 import { writePluginsLock, pluginsRoot } from '../src/core/plugins-lock.mjs';
@@ -246,4 +247,46 @@ test('addMarketplace of a manifest-less repo falls back to the scan (E15)', asyn
   const entry = await addMarketplace(root);
   assert.equal(entry.plugins.length, 1); // discovered by the depth 0-1 scan
   assert.equal(entry.plugins[0].name, 'solo');
+});
+
+test('seedBuiltinMarketplace: seeds once from an injected root, never resurrects after removal', () => {
+  writeMarketplaces({ seededBuiltin: false, marketplaces: {} });
+  const rootDir = join(scratch, 'host-root');
+  mkdirSync(join(rootDir, '.git'), { recursive: true });
+  writeFileSync(join(rootDir, 'worca-cc-marketplace.json'),
+    JSON.stringify({ name: 'Worca CC Official', description: 'bundled', plugins: [] }));
+  const r1 = seedBuiltinMarketplace({ rootDir });
+  assert.equal(r1.seeded, true);
+  const entry = readMarketplaces().marketplaces[r1.id];
+  assert.equal(entry.builtin, true);
+  assert.equal(entry.name, 'Worca CC Official');
+  assert.equal(entry.lastSync, null);
+  assert.deepEqual(entry.plugins, []);
+  assert.equal(seedBuiltinMarketplace({ rootDir }).seeded, false, 'idempotent');
+  removeMarketplace(r1.id);
+  assert.equal(seedBuiltinMarketplace({ rootDir }).seeded, false, 'removal never resurrects');
+  assert.ok(!readMarketplaces().marketplaces[r1.id]);
+});
+
+test('seedBuiltinMarketplace: no host checkout -> not seeded, flag stays false', () => {
+  writeMarketplaces({ seededBuiltin: false, marketplaces: {} });
+  const r = seedBuiltinMarketplace({ rootDir: null });
+  assert.equal(r.seeded, false);
+  assert.equal(readMarketplaces().seededBuiltin, false, 'a later run from a real checkout can still seed');
+});
+
+test('hostRepoRoot: resolves to this repo (it has the marketplace manifest + .git)', () => {
+  const root = hostRepoRoot();
+  assert.ok(root, 'worca-cc checkout detected');
+  assert.ok(existsSync(join(root, 'worca-cc-marketplace.json')));
+});
+
+test('seedBuiltinMarketplace: injected root with a manifest but NO .git is skipped (E7)', () => {
+  writeMarketplaces({ seededBuiltin: false, marketplaces: {} });
+  const rootDir = join(scratch, 'no-git-root');
+  mkdirSync(rootDir, { recursive: true });
+  writeFileSync(join(rootDir, 'worca-cc-marketplace.json'),
+    JSON.stringify({ name: 'Worca CC Official', plugins: [] })); // manifest present, .git absent
+  assert.equal(seedBuiltinMarketplace({ rootDir }).seeded, false);
+  assert.equal(readMarketplaces().seededBuiltin, false, 'a real checkout can still seed later');
 });

@@ -222,3 +222,46 @@ export function resolveInstallSource(name, { repo } = {}) {
   if (hits.length > 1) return { candidates: hits };
   return null;
 }
+
+/** The checkout the host code runs from: two dirs above src/core/. Only a real
+ *  marketplace checkout counts (must have worca-cc-marketplace.json + .git) —
+ *  an npm-dist install without either returns null and seeding is skipped. */
+export function hostRepoRoot() {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  return existsSync(join(root, 'worca-cc-marketplace.json')) && existsSync(join(root, '.git'))
+    ? root : null;
+}
+
+/** First-run builtin seed (spec §4.2): register the host checkout as a
+ *  local-path marketplace. NO git operations — plugins:[] / lastSync:null; the
+ *  first sync happens via the Plugins view's background refresh or an explicit
+ *  `worca marketplace refresh`. seededBuiltin is set only on success, so a
+ *  removed builtin never auto-returns, while a non-checkout host stays eligible
+ *  to seed on a later run from a real checkout. */
+export function seedBuiltinMarketplace({ rootDir = hostRepoRoot() } = {}) {
+  const state = readMarketplaces();
+  if (state.seededBuiltin) return { seeded: false, reason: 'already-seeded' };
+  // Same contract as hostRepoRoot for an INJECTED rootDir too: a real checkout must
+  // carry both the manifest and .git, else this is an npm-dist dir — skip (E7).
+  if (!rootDir || !existsSync(join(rootDir, 'worca-cc-marketplace.json')) || !existsSync(join(rootDir, '.git'))) {
+    return { seeded: false, reason: 'no-host-checkout' };
+  }
+  const url = resolve(rootDir);
+  const id = marketplaceId(url);
+  let name = 'Worca CC Official';
+  let description = '';
+  try {
+    const raw = JSON.parse(readFileSync(join(rootDir, 'worca-cc-marketplace.json'), 'utf8'));
+    if (typeof raw?.name === 'string' && raw.name.trim()) name = raw.name.trim();
+    if (typeof raw?.description === 'string') description = raw.description.trim();
+  } catch { /* keep defaults */ }
+  if (!state.marketplaces[id]) {
+    state.marketplaces[id] = {
+      id, url, name, description, builtin: true,
+      addedAt: new Date().toISOString(), lastSync: null, plugins: [], warnings: [],
+    };
+  }
+  state.seededBuiltin = true;
+  writeMarketplaces(state);
+  return { seeded: true, id };
+}
