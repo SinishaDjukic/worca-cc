@@ -114,6 +114,12 @@ npmjs.com → the package → **Settings** → **Trusted Publisher** → GitHub 
 | Repository | `worca-cc` (the GitHub repo name, as-is) |
 | Workflow filename | `release-npm-app.yml` |
 | Environment | *(leave empty unless the job declares one)* |
+| Allowed actions | `npm publish` only |
+
+Leave **`npm stage publish`** unchecked — staged publishing is a separate
+review-then-promote flow these workflows do not use. Note that the allowlist
+covers publishing but says nothing about moving a dist-tag, so the GA `rc`
+promote step runs `continue-on-error` — see §4.2.
 
 The workflow filename is matched **exactly**, and the registration covers
 **one package only** — `@worca/ui`'s publisher grants nothing to `@worca/app`,
@@ -199,7 +205,14 @@ git push --follow-tags
 ```
 
 The workflow publishes under `latest` and moves `rc` forward to the same
-version, so `@rc` never resolves behind `@latest`.
+version, so `@rc` never resolves behind `@latest`. That promote step is marked
+`continue-on-error`: the publish preceding it is already irreversible, so a
+credential rejection there must not paint a successful release red. If it does
+fail, `rc` simply stays behind and you re-point it by hand:
+
+```bash
+npm dist-tag add @worca/app@0.2.0 rc
+```
 
 > **Do not use `npm version minor` to close out an RC line.** From
 > `0.2.0-rc.3`, semver's rules make `major`, `minor`, and `patch` all collapse
