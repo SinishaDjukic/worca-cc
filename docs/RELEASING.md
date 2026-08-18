@@ -126,6 +126,12 @@ used in §3.3 (npmjs.com → Access Tokens), and — recommended — set the pac
 publishing access to **"Require two-factor authentication or trusted
 publishing"** so a leaked token cannot publish it.
 
+Note that 2FA applies to *interactive* publishes only: the bootstrap in §3.3
+will prompt for a one-time password (`npm publish … --otp=<code>`), while
+tag-driven releases authenticate as the repository over OIDC and never need
+one. That asymmetry is the point — the automated path is the one that stays
+usable without a human holding a phone.
+
 ### 3.6 GitHub side
 
 Nothing to configure beyond the workflow file itself. There is no `NPM_TOKEN`
@@ -296,5 +302,6 @@ previously working pipeline breaks.
 | `provenance generation failed` / repository mismatch | `repository.url` does not point at the building repo |
 | `You must sign up for private packages` | Missing `--access public` / `publishConfig.access` on a scoped package |
 | `You cannot publish over the previously published versions` | The version was already published — bump it; it cannot be reused |
+| `npm error code EOTP` | A manual publish against a 2FA-protected account — re-run with `--otp=<code>`. Never seen from CI, which authenticates over OIDC |
 | Workflow never starts | Only the commit was pushed, not the tag, or the tag does not match the prefix pattern |
 | `@rc` resolves behind `@latest` | The GA promote step did not run — re-point it with `npm dist-tag add` |
