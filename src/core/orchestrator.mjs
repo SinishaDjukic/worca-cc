@@ -2291,13 +2291,14 @@ class Orchestrator extends EventEmitter {
    * The ONE `error`-level line for a terminally failed node or decomposed task.
    * A pause/abort is not a failure, and a recoverable error that retried logged
    * its own `warn` in _recover — both stay silent. `err.stream` is set by the
-   * runner only when the detail actually came from the CLI's stderr. Clipped:
-   * the runner's exit detail is already tail-capped, and every stderr line was
-   * streamed as its own warn — this line is the verdict, not the transcript.
+   * runner only when the detail actually came from the CLI's stderr. Clipped
+   * head+tail: the runner's exit detail is already tail-capped (the cause sits
+   * at the END), and every stderr line was streamed as its own warn — this line
+   * is the verdict, not the transcript.
    */
   _logStepFailure(node, stepIndex, cycle, err) {
     if (isAbort(err) || isPause(err)) return;
-    this._log(node.key, 'error', `step failed: ${clip(err?.message || err, 500)}`, {
+    this._log(node.key, 'error', `step failed: ${clipMiddle(err?.message || err, 500)}`, {
       nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
       ...(err?.stream ? { stream: err.stream } : {}),
     });
@@ -4195,6 +4196,18 @@ function clip(text, n) {
   if (!text) return '';
   const s = String(text).replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/** clip(), but keeping HEAD and TAIL with an ellipsis between when over budget.
+ *  For runner exit details the frame ("claude exited with code N") leads and
+ *  the terminal cause sits at the END — the runner tail-caps for that reason —
+ *  so a head-only clip discards exactly the cause. Tail gets the larger share. */
+function clipMiddle(text, n) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  if (s.length <= n) return s;
+  const head = Math.floor((n - 1) / 3);
+  return s.slice(0, head) + '…' + s.slice(-(n - 1 - head));
 }
 
 /**

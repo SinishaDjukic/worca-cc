@@ -116,3 +116,16 @@ test('a usage-limit pause reaching _runDecomposedTask marks the task + step paus
   assert.equal(listTasks('p-red')[0].finishedAt, null, 'a paused task has not finished');
   assert.equal(logs.filter((l) => l.level === 'error').length, 0, 'a pause is not a failure');
 });
+
+test('_logStepFailure keeps the TAIL of a long message — the terminal cause — not just the head', () => {
+  const { orch, logs } = loggedOrch();
+  // Asymmetric on purpose: the symmetric 'x'.repeat(5000) test above cannot
+  // tell a head clip from a tail clip, which is how the head-clip regression
+  // shipped. The runner tail-caps because the cause sits at the END.
+  const err = new Error(`claude exited with code 1: ${'x'.repeat(600)} ROOT CAUSE: repo not clean`);
+  orch._logStepFailure({ key: 'implementer', nodeId: 'n7' }, 3, 2, err);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0].text, /^step failed: claude exited with code 1/, 'frame (head) survives');
+  assert.match(logs[0].text, /ROOT CAUSE: repo not clean$/, 'the cause (tail) survives');
+  assert.ok(logs[0].text.length <= 520, `still clipped (got ${logs[0].text.length})`);
+});
