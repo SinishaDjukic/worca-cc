@@ -1,0 +1,113 @@
+name: Release @worca/app to npm
+
+# Tag-driven release. The git tag is the trigger AND the source of truth for
+# the published version and dist-tag:
+#
+#   worca-app-v0.1.0        -> publishes 0.1.0 under the `latest` dist-tag
+#   worca-app-v0.1.0-rc.1   -> publishes 0.1.0-rc.1 under the `rc` dist-tag
+#
+# The `worca-app-` prefix keeps this package's tags distinct from every other
+# releasable in this repo (see docs/RELEASING.md).
+on:
+  push:
+    tags:
+      - "worca-app-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1, which ships bundled
+      # with Node >= 24.5. Rely on the bundled npm rather than
+      # `npm install -g npm@latest` (that self-upgrade intermittently races and
+      # fails with MODULE_NOT_FOUND 'promise-retry'). Fail loudly if the
+      # bundled npm is ever too old.
+      - name: Verify npm supports Trusted Publishing
+        run: |
+          NPM_VERSION="$(npm --version)"
+          echo "npm version: $NPM_VERSION"
+          node -e 'const [a,b,c] = process.argv[1].split(".").map(Number); if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) { console.error(`npm ${process.argv[1]} is < 11.5.1 (required for Trusted Publishing)`); process.exit(1); }' "$NPM_VERSION"
+
+      - name: Validate tag matches package.json version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${TAG_NAME#worca-app-v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No build step: plain Node ESM plus a vanilla HTML/CSS/JS frontend.
+      - name: Run tests
+        run: npm test
+
+      - name: Determine npm dist-tag
+        id: dist-tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#worca-app-v}"
+          if echo "$VERSION" | grep -q -- '-rc\.'; then
+            echo "tag=rc" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Auth is via OIDC Trusted Publishing (no NPM_TOKEN in this repo).
+      # Provenance is generated automatically under OIDC; --provenance makes
+      # the requirement explicit so a misconfiguration fails the job instead of
+      # silently publishing an unattested tarball.
+      - name: Publish to npm
+        run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
+
+      # Without this, `rc` stays parked on the last release candidate forever
+      # and `npm install @worca/app@rc` resolves BEHIND `@latest`. On a GA
+      # release, move `rc` forward to the released version.
+      - name: Promote rc dist-tag to the GA release
+        if: steps.dist-tag.outputs.tag == 'latest'
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: npm dist-tag add "@worca/app@${TAG_NAME#worca-app-v}" rc
+
+  release:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#worca-app-v}"
+          PRERELEASE=""
+          if echo "$VERSION" | grep -q -- '-rc\.'; then
+            PRERELEASE="--prerelease"
+          fi
+          gh release create "$TAG_NAME" \
+            --title "@worca/app $VERSION" \
+            --generate-notes \
+            $PRERELEASE
