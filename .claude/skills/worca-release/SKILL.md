@@ -18,8 +18,12 @@ something here doesn't fit; do not restate its contents back to the user.
 
 - `/worca-release` — print status and stop
 - `/worca-release --rc` — cut the next release candidate
-- `/worca-release --version:micro` — stable release, patch bump
-- `/worca-release --version:minor` — stable release, minor bump
+- `/worca-release --stable` — close out the current RC line
+- `/worca-release --version:micro` — stable release from stable, patch bump
+- `/worca-release --version:minor` — stable release from stable, minor bump
+
+`--stable` and `--version:*` are mutually exclusive, and which one applies is
+decided by the current version, not by preference — see Step 2.
 
 ---
 
@@ -74,22 +78,38 @@ Read the current version:
 node -p "require('./package.json').version"
 ```
 
-**For `--rc`** (semver pre-release, `X.Y.Z-rc.N`):
+The current version decides which flags are legal. Reject the wrong one rather
+than silently ignoring it — a flag that cannot change the outcome must not be
+accepted as if it did.
+
+**`--rc`** (semver pre-release, `X.Y.Z-rc.N`) — legal from either state:
 
 - Already a pre-release → increment N: `0.1.0-rc.4` → `0.1.0-rc.5`
 - Stable → open the next **minor** line as an RC: `0.1.0` → `0.2.0-rc.1`
 
-Ask the user to confirm the target line if the jump isn't obviously right.
+The stable → next-minor jump is a default, not a law. If the user wants a patch
+line instead (`0.0.1` → `0.0.2-rc.1`) or a major one, ask before computing.
 
-**For `--version:micro` / `--version:minor`** (stable):
+**`--stable`** — legal **only from a pre-release**. Strip the suffix; that is
+the release:
 
-1. Strip any pre-release suffix first: `0.2.0-rc.3` → `0.2.0`
-2. Then apply the bump **only if the strip didn't already produce the target**:
-   - Closing out an RC line: `0.2.0-rc.3` → `0.2.0` (no further bump)
-   - From a stable version, `micro`: `0.2.0` → `0.2.1`
-   - From a stable version, `minor`: `0.2.0` → `0.3.0`
+- `0.2.0-rc.3` → `0.2.0`
 
-Never compute the stable version with `npm version minor`. From `0.2.0-rc.3`,
+There is no bump to choose here. The micro-vs-minor decision was made when the
+RC line was opened, and the whole point of the RCs was to rehearse this exact
+number. If the current version is already stable, stop: there is no RC line to
+close out, and the user wants `--version:micro` or `--version:minor`.
+
+**`--version:micro` / `--version:minor`** — legal **only from a stable
+version**:
+
+- `micro`: `0.2.0` → `0.2.1`
+- `minor`: `0.2.0` → `0.3.0`
+
+If the current version is a pre-release, stop: the line is already set, and
+neither flag can change what ships. The user wants `--stable`.
+
+Never compute a stable version with `npm version minor`. From `0.2.0-rc.3`,
 semver makes `major`, `minor`, and `patch` all collapse to `0.2.0` — the
 command doesn't say what you'll get. Always pass the literal version.
 
