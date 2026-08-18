@@ -3640,6 +3640,26 @@ function flashCopyBtn(btn, msg) {
   btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
 }
 
+// Copy a branch name from a history-card head. The button is icon-only, so
+// feedback is a brief copy→check icon swap (class-driven) instead of the text
+// flash flashCopyBtn does; the title mirrors it for hover/AT users.
+async function copyBranchToClipboard(btn, branch) {
+  let ok = true;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(branch);
+    else ok = legacyCopy(branch);
+  } catch {
+    ok = legacyCopy(branch);
+  }
+  btn.classList.toggle('copied', ok);
+  btn.title = ok ? 'Copied' : 'Copy failed';
+  clearTimeout(btn._copyTimer);
+  btn._copyTimer = setTimeout(() => {
+    btn.classList.remove('copied');
+    btn.title = 'Copy branch name';
+  }, 1200);
+}
+
 function legacyCopy(text) {
   try {
     const ta = document.createElement('textarea');
@@ -8967,9 +8987,27 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
     totalEl.title = typeof p.totalCostUsd === 'number' ? estTitle(p.totalCostUsd) : '';
   }
 
-  // Branch name under the date/cost (left column; hidden when empty via :empty).
+  // Branch line under the date/cost (left column): "source → destination" plus a
+  // copy button for the destination. Legacy rows may lack sourceBranch — then the
+  // source half (and arrow) stays hidden; no destination hides the whole row.
   const branchEl = node.querySelector('.hist-branch');
-  if (branchEl) branchEl.textContent = p.branch || '';
+  if (branchEl) {
+    const feature = p.branch || '';
+    const source = p.sourceBranch || '';
+    branchEl.hidden = !feature;
+    branchEl.querySelector('.hist-branch-dst').textContent = feature;
+    const srcEl = branchEl.querySelector('.hist-branch-src');
+    srcEl.textContent = source;
+    srcEl.hidden = !source;
+    // SVG elements have no `hidden` IDL property (HTMLElement-only) — assigning
+    // `.hidden` would set a dead expando and leave the attribute in place.
+    branchEl.querySelector('.hist-branch-arrow').toggleAttribute('hidden', !source);
+    const copyBtn = branchEl.querySelector('.hist-branch-copy');
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // the head is an expand toggle — copy must not open the card
+      copyBranchToClipboard(copyBtn, feature);
+    });
+  }
 
   // Cost-pause note in the head. The reason is also stamped on the card so a
   // later budget repaint can re-gate Resume without refetching the record.

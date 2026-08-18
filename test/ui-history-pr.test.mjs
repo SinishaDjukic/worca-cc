@@ -42,16 +42,69 @@ const SURVIVED = {
   projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj',
 };
 
-test('survived entry: branch line under meta + green/red diff chip', async () => {
+test('survived entry: source → destination branch line + green/red diff chip', async () => {
   const { window, showHistory } = await boot({
     fetchHandler: (url) => (url.includes('/api/history') ? runs([SURVIVED], true) : null),
   });
   showHistory();
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
-  assert.equal(card.querySelector('.h-meta .hist-branch').textContent, 'worca-cc/feat-1');
+  const row = card.querySelector('.h-meta .hist-branch');
+  assert.equal(row.hidden, false);
+  assert.equal(row.querySelector('.hist-branch-src').textContent, 'main');
+  assert.equal(row.querySelector('.hist-branch-src').hidden, false);
+  // The arrow is an SVG element: no `hidden` IDL property, so assert on the
+  // ATTRIBUTE — a `.hidden = false` expando would pass while Chrome still hides it.
+  assert.equal(row.querySelector('.hist-branch-arrow').hasAttribute('hidden'), false);
+  assert.equal(row.querySelector('.hist-branch-dst').textContent, 'worca-cc/feat-1');
+  assert.equal(row.querySelector('.hist-branch-copy').hidden, false);
   assert.equal(card.querySelector('.hist-diff .diff-add').textContent, '+12');
   assert.equal(card.querySelector('.hist-diff .diff-del').textContent, '−5');
+});
+
+test('legacy entry without sourceBranch: destination only, no arrow', async () => {
+  const LEGACY = { ...SURVIVED, id: 'pl', sourceBranch: null };
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([LEGACY], true) : null),
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const row = window.document.querySelector('#history .hist-card .h-meta .hist-branch');
+  assert.equal(row.hidden, false);
+  assert.equal(row.querySelector('.hist-branch-src').hidden, true);
+  assert.equal(row.querySelector('.hist-branch-arrow').hasAttribute('hidden'), true);
+  assert.equal(row.querySelector('.hist-branch-dst').textContent, 'worca-cc/feat-1');
+});
+
+test('entry without a feature branch hides the whole branch row', async () => {
+  const NOBRANCH = { ...SURVIVED, id: 'pn', branch: null, sourceBranch: null, survived: false };
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([NOBRANCH], true) : null),
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const row = window.document.querySelector('#history .hist-card .h-meta .hist-branch');
+  assert.equal(row.hidden, true);
+});
+
+test('copy button copies the destination branch and does not expand the card', async () => {
+  const { window, showHistory } = await boot({
+    fetchHandler: (url) => (url.includes('/api/history') ? runs([SURVIVED], true) : null),
+  });
+  let copied = null;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: { writeText: (t) => { copied = t; return Promise.resolve(); } },
+    configurable: true,
+  });
+  showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const card = window.document.querySelector('#history .hist-card');
+  const btn = card.querySelector('.hist-branch-copy');
+  btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(copied, 'worca-cc/feat-1');
+  assert.equal(card.querySelector('.hist-head').getAttribute('aria-expanded'), 'false',
+    'copy click must not toggle the card open');
 });
 
 test('Create-PR button shows when gh available; click opens PR + merge pill', async () => {

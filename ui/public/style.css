@@ -813,8 +813,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .h-meta .hist-time:empty{display:none;}
 
 /* Branch name under the date/cost (left column). */
-.h-meta .hist-branch{display:block;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-top:4px;}
-.h-meta .hist-branch:empty{display:none;}
+.h-meta .hist-branch{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);margin-top:4px;}
+.h-meta .hist-branch[hidden]{display:none;}   /* author display:flex beats the UA [hidden] rule */
+.hist-branch .hist-branch-src{color:var(--ink-3);font-weight:500;}
+.hist-branch .hist-branch-arrow{flex:0 0 auto;color:var(--ink-3);}
+.hist-branch .hist-branch-arrow[hidden]{display:none;}
+.hist-branch-copy{display:inline-flex;align-items:center;justify-content:center;padding:3px;background:none;border:0;border-radius:6px;color:var(--ink-3);cursor:pointer;}
+.hist-branch-copy:hover{background:var(--line);color:var(--ink);}
+.hist-branch-copy .ico-check{display:none;}
+.hist-branch-copy.copied .ico-copy{display:none;}
+.hist-branch-copy.copied .ico-check{display:block;color:var(--green-ink);}
 
 /* Right-side cluster, before the chevron: lines changed, merge pill, Create PR. */
 .hist-aside{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
