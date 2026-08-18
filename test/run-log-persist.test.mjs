@@ -43,3 +43,25 @@ test('a mock run persists the full log stream to live-log.ndjson and indexes it'
   // the preflight line is emitted BEFORE the pipeline dir exists -> proves pre-bind buffering
   assert.ok(lines.some((l) => l.source === 'preflight'), 'pre-pipeline (preflight) lines captured');
 });
+
+test('the stderr provenance tag round-trips to the NDJSON', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-rlp-proj-'));
+  const orch = createOrchestrator({ projectDir, prompt: 'demo task', auto: true, claude: { mock: true } });
+
+  // The mock spawns nothing, so a real run's stderr never appears here — push one
+  // through the same reducer the runner feeds to prove the field is persisted and
+  // not dropped by _log's attr projection. Emitted BEFORE run() so it rides the
+  // writer's pre-bind buffer (push() is a no-op once the run closes the writer).
+  orch._onAgentEvent('planner', { type: 'stderr', stream: 'err', text: 'Overloaded, retrying in 4s' },
+    { nodeId: 'n1', stepIndex: 0, cycle: 1 });
+  const res = await orch.run();
+
+  const lines = (await readFile(join(res.pipelineDir, RUN_LOG_FILE), 'utf8'))
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const errLine = lines.find((l) => l.text === 'Overloaded, retrying in 4s');
+  assert.ok(errLine, 'the stderr line persisted');
+  assert.equal(errLine.stream, 'err', 'provenance survives to disk');
+  assert.equal(errLine.level, 'warn');
+  assert.ok(lines.every((l) => l.stream === undefined || l.stream === 'err'),
+    'no other line invents a stream value');
+});

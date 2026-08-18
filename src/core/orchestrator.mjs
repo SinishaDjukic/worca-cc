@@ -150,6 +150,35 @@ const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
 const MAX_QUESTION_ROUNDS = 3;
 
 /**
+ * `attr` marking a log line whose text came from a subprocess's stderr.
+ *
+ * ONE convention for every subprocess worca spawns — the agent CLI (framed
+ * line-by-line by claude-runner), git (`_git`), and graphify. It records the
+ * origin CHANNEL, never the severity: each call site keeps the level it already
+ * had, because these git/graphify lines are worca's own summaries of a failure,
+ * not raw stderr echoes. Frozen and shared: `_log` only reads from `attr`.
+ */
+const ERR_STREAM = Object.freeze({ stream: 'err' });
+
+/** The `: <stderr>` suffix for a failed subprocess result, or '' when it said
+ *  nothing. runGraphifyUpdate already returns its child's stderr and the log
+ *  line used to drop it — tagging a line as stderr-derived while discarding the
+ *  stderr would make the tag a lie. Clipped: a build failure can be verbose. */
+function errDetail(res, max = 200) {
+  const text = (res?.stderr || '').trim().replace(/\s+/g, ' ');
+  return text ? `: ${clip(text, max)}` : '';
+}
+
+/** attr for a log line whose text embeds subprocess output: ERR_STREAM only
+ *  when the subprocess actually said something on stderr. A `|| 'exit N'`
+ *  fallback carries no stderr bytes — tagging it would make the tag a lie
+ *  (the same rule errDetail documents for the text itself). */
+export function errStreamAttr(stderrText, extra = null) {
+  if (!(stderrText && String(stderrText).trim())) return extra;
+  return extra ? { ...extra, ...ERR_STREAM } : ERR_STREAM;
+}
+
+/**
  * Build the synthetic implementer node for one decomposed task. Pure (exported for
  * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
  * prompt can warn about the shared working tree (see implementerBody).
@@ -1321,7 +1350,9 @@ class Orchestrator extends EventEmitter {
       this._log(
         'graph',
         'warn',
-        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`,
+        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`
+          + errDetail(res),
+        errStreamAttr(res?.stderr),
       );
     }
   }
@@ -1357,7 +1388,10 @@ class Orchestrator extends EventEmitter {
         await appendAudit(this.pipeline.dir, `Preflight: built graphify graph for ${m.projectKey} (AST-only).`).catch(() => {});
       } else {
         this.toolInstructions.set(m.projectKey, '');
-        this._log('graph', 'warn', `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`);
+        this._log('graph', 'warn',
+          `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`
+            + errDetail(res),
+          errStreamAttr(res?.stderr));
       }
     });
   }
@@ -1396,7 +1430,7 @@ class Orchestrator extends EventEmitter {
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
-      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`);
+      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
     }
     if (this.pipeline) {
       await appendAudit(
@@ -1443,7 +1477,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`);
+        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1551,7 +1585,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`);
+        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1618,8 +1652,8 @@ class Orchestrator extends EventEmitter {
    * survives teardown inside the pipeline artifact dir) and `run.json.warnings` (the
    * live manifest, copied out before removal). Never throws.
    */
-  async _recordRunWarning(text) {
-    this._log('worktree', 'warn', text);
+  async _recordRunWarning(text, attr = null) {
+    this._log('worktree', 'warn', text, attr);
     if (!this.runRoot) return;
     try {
       const cur = (await readRunManifest(this.runRoot)) || {};
@@ -1646,7 +1680,8 @@ class Orchestrator extends EventEmitter {
       this._log('git', 'info', 'Retained-work snapshot skipped: nothing uncommitted to save.');
     } else {
       this._log('git', 'warn',
-        `retained-work patch not saved (git ${snap.step}: ${snap.message}); the worktree is the only copy`);
+        `retained-work patch not saved (git ${snap.step}: ${snap.message}); the worktree is the only copy`,
+        snap.fromStderr ? ERR_STREAM : null);
     }
   }
 
@@ -1679,6 +1714,7 @@ class Orchestrator extends EventEmitter {
       await this._recordRunWarning(
         `${key ? `${key}: ` : ''}commit failed at git ${result.step} (${message}) with no branch record; ` +
         `synthesized one for the retained worktree at ${info?.worktreeDir || '(unknown)'}`,
+        result.fromStderr ? ERR_STREAM : null,
       );
     }
     target.commitFailed = record;
@@ -1686,7 +1722,8 @@ class Orchestrator extends EventEmitter {
     target.branchKept = true;
     const prefix = key ? `${key}: ` : '';
     this._log('git', 'warn',
-      `${prefix}commit failed at git ${result.step} (${message}) — KEEPING the worktree at ${info?.worktreeDir}`);
+      `${prefix}commit failed at git ${result.step} (${message}) — KEEPING the worktree at ${info?.worktreeDir}`,
+      result.fromStderr ? ERR_STREAM : null);
     if (this.pipeline) {
       await appendAudit(this.pipeline.dir,
         `Commit FAILED for \`${info?.branch || '(unknown)'}\` at git ${result.step}: ${message}. ` +
@@ -1719,7 +1756,9 @@ class Orchestrator extends EventEmitter {
    *   worktree. With the DEFAULT empty array — every legacy run — the method keeps
    *   today's bare `git add -A` byte-identically (§10 rollback contract).
    * @returns {Promise<{ok:true,committed:boolean,sha:string|null}|
-   *                   {ok:false,step:'status'|'add'|'commit',message:string}>}
+   *                   {ok:false,step:'status'|'add'|'commit',message:string,fromStderr:boolean}>}
+   *   `fromStderr` records whether `message` embeds real stderr bytes (vs. the
+   *   `exit N` fallback), so the caller's warn can tag its provenance truthfully.
    */
   async _commitWork(info, branchRecord = this.state.branch, { excludePathspecs = [] } = {}) {
     const cwd = info?.worktreeDir;
@@ -1736,8 +1775,8 @@ class Orchestrator extends EventEmitter {
         return { ok: true, committed: false, sha: null };
       }
       const message = status.stderr.trim() || `exit ${status.code}`;
-      this._log('git', 'warn', `commit skipped: git status failed: ${message}`);
-      return { ok: false, step: 'status', message };
+      this._log('git', 'warn', `commit skipped: git status failed: ${message}`, errStreamAttr(status.stderr));
+      return { ok: false, step: 'status', message, fromStderr: !!status.stderr.trim() };
     }
     if (!status.stdout.trim()) {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
@@ -1748,8 +1787,8 @@ class Orchestrator extends EventEmitter {
       : await this._git(['add', '-A'], gitOpts);
     if (!add.ok) {
       const message = add.stderr.trim() || `exit ${add.code}`;
-      this._log('git', 'warn', `commit skipped: git add failed: ${message}`);
-      return { ok: false, step: 'add', message };
+      this._log('git', 'warn', `commit skipped: git add failed: ${message}`, errStreamAttr(add.stderr));
+      return { ok: false, step: 'add', message, fromStderr: !!add.stderr.trim() };
     }
     // §8.8 status recheck: with mounts present the porcelain gate above is never
     // clean, so a run whose agent changed nothing would attempt a commit that fails
@@ -1782,7 +1821,7 @@ class Orchestrator extends EventEmitter {
       // node_modules today and do not detached). Retry ONCE with hooks disabled for
       // that invocation only, logging both facts.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
-      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`);
+      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
         ['-c', 'core.hooksPath=', '-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator',
          'commit', '-m', msg],
@@ -1798,8 +1837,8 @@ class Orchestrator extends EventEmitter {
     }
     if (!commit.ok) {
       const message = commit.stderr.trim() || `exit ${commit.code}`;
-      this._log('git', 'warn', `commit failed: ${message}`);
-      return { ok: false, step: 'commit', message };
+      this._log('git', 'warn', `commit failed: ${message}`, errStreamAttr(commit.stderr));
+      return { ok: false, step: 'commit', message, fromStderr: !!commit.stderr.trim() };
     }
     const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
     const sha = ref.ok ? ref.stdout.trim() : null;
@@ -2144,10 +2183,14 @@ class Orchestrator extends EventEmitter {
   /**
    * Run the decomposed implement stage. Rewrite + persist the UI stepper into per-phase
    * / per-task cells, then run each phase IN ORDER (tasks within a phase in PARALLEL,
-   * shared working tree). Abort immediately on the first genuine task failure. Stages
-   * the combined tree itself (the guard returns early from _runStep, skipping its tail
-   * stage). Returns the dispatcher's [{node,result,ctx}] shape with ONE synthetic
-   * implementer result so the reviewer step sees a settled 'code' producer.
+   * shared working tree). The FIRST genuine task failure aborts the phase IMMEDIATELY:
+   * a per-task rejection observer fires the phase-local AbortController while siblings
+   * are still running (allSettled alone reports failures only after every sibling has
+   * finished), and the thrown phase error is that first failure — never a cancelled
+   * sibling's AbortError. Stages the combined tree itself (the guard returns early from
+   * _runStep, skipping its tail stage). Returns the dispatcher's [{node,result,ctx}]
+   * shape with ONE synthetic implementer result so the reviewer step sees a settled
+   * 'code' producer.
    */
   async _runDecomposedImplement(implNode, stepIndex, cycle, bus) {
     const phases = bus.decomposition.phases;
@@ -2164,24 +2207,58 @@ class Orchestrator extends EventEmitter {
       updatePhaseStatus(this.pipeline.id, ph.ordinal, 'running', new Date().toISOString());
       await appendAudit(this.pipeline.dir, `Phase ${ph.ordinal}: ${tasks.length} task(s) starting.`);
 
+      // Abort-immediately on the FIRST genuine (non-abort, non-pause) failure.
+      // The per-task rejection observer below fires phaseAbort WHILE siblings are
+      // still running — before Promise.allSettled resolves — so one failed task
+      // cancels its in-flight siblings (SIGTERM via ctx.signal) instead of letting
+      // them burn their full runtime under a doomed phase. AbortErrors (this very
+      // cancel cascade, or stop()) and PauseErrors never trigger it: the first
+      // cancellation must not mask the real cause, and pause keeps its own unwind
+      // below. A sibling parked on an interactive recovery prompt is not
+      // signal-reachable (_ask settles only via answer()/pause()/stop()), so the
+      // trigger also rejects an open recovery prompt exactly the way pause() does —
+      // the phase is failing and must not wait on a now-meaningless human answer.
       const phaseAbort = new AbortController();
+      let firstError = null;
+      const noteFailure = (task, reason) => {
+        if (firstError || isAbort(reason) || isPause(reason)) return;
+        firstError = { task, reason };
+        phaseAbort.abort();
+        if (this.pendingQuestion?.kind === 'recovery') {
+          const pq = this.pendingQuestion;
+          this.pendingQuestion = null;
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          pq.reject(e);
+        }
+      };
       const settled = await Promise.allSettled(tasks.map((task) => {
         const taskNode = decomposedTaskNode(implNode, task, tasks, this.pipeline.dir);
-        return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        const p = this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        // Side observer only: the raw promise still flows into allSettled (which
+        // attaches its own handlers, so no unhandled-rejection either way), and
+        // the .catch derivative resolves after noteFailure swallows the reason.
+        p.catch((reason) => noteFailure(task, reason));
+        return p;
       }));
 
       // Pause lands between decomposed phases (coarse but safe): aborted tasks of
-      // this phase re-run on resume as part of the whole decomposed step.
+      // this phase re-run on resume as part of the whole decomposed step. Pause
+      // outranks a recorded failure, exactly as before the observer existed.
       if (this.pauseRequested) throw pauseErr();
 
-      // Abort-immediately on the FIRST genuine (non-abort) failure.
-      let firstError = null;
-      settled.forEach((r, k) => {
-        if (r.status === 'rejected' && !isAbort(r.reason) && !firstError) {
-          firstError = { task: tasks[k], reason: r.reason };
-          phaseAbort.abort();
-        }
-      });
+      // Selection: noteFailure recorded the FIRST genuine failure in settle order
+      // (its handler runs before allSettled's own for the same promise), so a
+      // cancelled sibling's AbortError can never become the phase error. The scan
+      // is a pure backstop preserving the old task-order selection if the observer
+      // somehow saw nothing genuine.
+      if (!firstError) {
+        settled.forEach((r, k) => {
+          if (r.status === 'rejected' && !isAbort(r.reason) && !isPause(r.reason) && !firstError) {
+            firstError = { task: tasks[k], reason: r.reason };
+          }
+        });
+      }
       if (firstError) {
         updatePhaseStatus(this.pipeline.id, ph.ordinal, 'error', new Date().toISOString());
         await appendAudit(this.pipeline.dir,
@@ -2207,10 +2284,13 @@ class Orchestrator extends EventEmitter {
   /**
    * Run one decomposed task through the standard node machinery: _nodeStep records its
    * own pipeline step (distinct nodeId), _nodeCtx wires its own onEvent (so sub-agents
-   * are attributed to this task), and the producer runner runs the implementer with the
-   * self-contained TASK file authoritative (ctx.node.taskPath). The phase-local abort is
-   * folded with the run-wide signal so a sibling failure cancels it. updateTaskStatus
-   * tracks running/done/error. Errors propagate.
+   * are attributed to this task), and the standard attempt loop (`_runNodeAttempts`:
+   * recovery + usage-limit pause) runs the implementer with the self-contained TASK
+   * file authoritative (ctx.node.taskPath). The phase-local abort is folded with the
+   * run-wide signals into ctx.signal; _runDecomposedImplement's rejection observer
+   * fires it on the first genuine sibling failure, killing this task's runner
+   * mid-flight (it then settles as an AbortError — recorded 'error', logged silently,
+   * same as stop()). updateTaskStatus tracks running/done/error/paused. Errors propagate.
    */
   async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
     this._nodeStep(taskNode, stepIndex, cycle, 'start');
@@ -2220,15 +2300,45 @@ class Orchestrator extends EventEmitter {
     ctx.signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal, phaseAbort.signal]); // sibling-failure/pause cancel
     let status = 'done';
     try {
-      const runner = this._runners[taskNode.runnerType];
-      await runner(ctx); // producer -> runImplementer({ ..., taskPath: ctx.node.taskPath })
+      // Through _runNodeAttempts, not a bare runner call: a decomposed task gets
+      // the SAME recovery/usage-limit treatment as a normal node (the bare call
+      // also bypassed the terminal error line entirely — a failed decomposed run
+      // used to produce zero error-level lines).
+      await this._runNodeAttempts(taskNode, stepIndex, cycle, ctx);
     } catch (err) {
+      // Same conversion _runNode applies (2317-2319): a usage-limit/user pause
+      // unwinds through _runNodeAttempts as a pause, and a pause is NOT this
+      // task's failure — without it the finally stamps the task row and the
+      // stepper cell 'error' on a merely paused, resumable run, and
+      // _buildResumePoint sees no 'paused' step.
+      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+        status = 'paused';
+        throw pauseErr();
+      }
       status = 'error';
+      this._logStepFailure(taskNode, stepIndex, cycle, err);
       throw err;
     } finally {
       updateTaskStatus(this.pipeline.id, task.id, status, new Date().toISOString());
-      this._nodeStep(taskNode, stepIndex, cycle, status === 'error' ? 'error' : 'done');
+      this._nodeStep(taskNode, stepIndex, cycle, status);
     }
+  }
+
+  /**
+   * The ONE `error`-level line for a terminally failed node or decomposed task.
+   * A pause/abort is not a failure, and a recoverable error that retried logged
+   * its own `warn` in _recover — both stay silent. `err.stream` is set by the
+   * runner only when the detail actually came from the CLI's stderr. Clipped
+   * head+tail: the runner's exit detail is already tail-capped (the cause sits
+   * at the END), and every stderr line was streamed as its own warn — this line
+   * is the verdict, not the transcript.
+   */
+  _logStepFailure(node, stepIndex, cycle, err) {
+    if (isAbort(err) || isPause(err)) return;
+    this._log(node.key, 'error', `step failed: ${clipMiddle(err?.message || err, 500)}`, {
+      nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
+      ...(err?.stream ? { stream: err.stream } : {}),
+    });
   }
 
   /**
@@ -2255,6 +2365,8 @@ class Orchestrator extends EventEmitter {
         endMark = 'paused';
         throw pauseErr();
       }
+      // Terminal node failure — see _logStepFailure.
+      this._logStepFailure(node, stepIndex, cycle, err);
       throw err;
     } finally {
       this._nodeStep(node, stepIndex, cycle, endMark);
@@ -2305,7 +2417,8 @@ class Orchestrator extends EventEmitter {
       return await runner(ctx);
     } catch (err) {
       if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
-        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
+        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`,
+          err?.stream ? ERR_STREAM : null);
         await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
         ctx.resumeSessionId = undefined;
         return await runner(ctx);
@@ -2455,7 +2568,7 @@ class Orchestrator extends EventEmitter {
    *  classes are serialized so only one recovery prompt is open at a time (the
    *  gate holds a single pendingQuestion). Returns 'retry' | 'abort'. */
   async _recover({ node, cls, err, attempt }) {
-    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`);
+    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`, err?.stream ? ERR_STREAM : null);
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
     if (this.auto) {
@@ -2926,6 +3039,21 @@ class Orchestrator extends EventEmitter {
       }
       return;
     }
+    // Agent stderr (`stream:'err'`), one framed line per event. Handled HERE,
+    // beside the other envelope guards, because a stderr event carries no `raw`:
+    // routing it through the cost block and the five lifecycle reducers below
+    // only to have each no-op is noise. It is always main-stream (stderr has no
+    // parent_tool_use_id), so the source is the plain role and `sub` is never set.
+    //
+    // Level is `warn`, not `error`: what actually lands here is mostly 429/529
+    // retry text and subprocess chatter. Genuine failures arrive as a `result`
+    // event with is_error on STDOUT — see the non-zero-exit path in
+    // claude-runner.mjs — and are logged at `error` by the node failure handler.
+    if (e.type === 'stderr') {
+      const text = (e.text || '').trim();
+      if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
+      return;
+    }
     // Capture actual spend before anything returns early. The runner tags the
     // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
@@ -3268,7 +3396,7 @@ class Orchestrator extends EventEmitter {
         'orchestrator: initial checkpoint',
       ], { cwd: dir });
       if (!commit.ok) {
-        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`);
+        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`, errStreamAttr(commit.stderr));
       }
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
@@ -3418,7 +3546,7 @@ class Orchestrator extends EventEmitter {
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._git(args, { cwd: dir });
       if (!res.ok && res.stderr && res.stderr.trim()) {
-        this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`);
+        this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }
     }
   }
@@ -3651,6 +3779,10 @@ class Orchestrator extends EventEmitter {
       if (attr.stepIndex != null) evt.stepIndex = attr.stepIndex;
       if (attr.cycle != null) evt.cycle = attr.cycle;
       if (attr.sub) evt.sub = true;        // drives sub-agent web styling
+      // Origin channel of the text: 'err' when it came from a subprocess's
+      // stderr (agent CLI, git, graphify). Provenance, not severity — the level
+      // says how bad it is, this says where it came from.
+      if (attr.stream) evt.stream = attr.stream;
     }
     this._emit('log', evt);
     this.logWriter.push(evt); // persist the full stream (buffered; flushed on a timer)
@@ -3803,8 +3935,12 @@ function sumStepActive(steps) {
   return sum;
 }
 
-function isAbort(err) {
-  return err && (err.name === 'AbortError' || /aborted|stopped/i.test(err.message || ''));
+export function isAbort(err) {
+  // NAME only. Every abort/stop throw in this codebase stamps name='AbortError'
+  // (see stop()/_checkAbort/claude-runner); sniffing the message here also
+  // matched real CLI failures containing "aborted"/"stopped" and swallowed
+  // their terminal error line, recovery, and decomposed failure detection.
+  return !!err && err.name === 'AbortError';
 }
 
 /** Pause sentinel: thrown to unwind _dispatch when pause() was requested. */
@@ -4097,6 +4233,18 @@ function clip(text, n) {
   if (!text) return '';
   const s = String(text).replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/** clip(), but keeping HEAD and TAIL with an ellipsis between when over budget.
+ *  For runner exit details the frame ("claude exited with code N") leads and
+ *  the terminal cause sits at the END — the runner tail-caps for that reason —
+ *  so a head-only clip discards exactly the cause. Tail gets the larger share. */
+function clipMiddle(text, n) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  if (s.length <= n) return s;
+  const head = Math.floor((n - 1) / 3);
+  return s.slice(0, head) + '…' + s.slice(-(n - 1 - head));
 }
 
 /**

@@ -54,12 +54,35 @@ test('.log-filters .log-f resets the global select width:100%', () => {
 
 // ---------- DOM structure the CSS relies on ----------
 
-test('run-card template keeps the three pills as siblings in one .log-filters bar', () => {
+test('run-card template keeps every control as a sibling in one .log-filters bar', () => {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'));
   const tpl = dom.window.document.getElementById('run-card-tpl');
   assert.ok(tpl, 'run-card template must exist');
   const bar = tpl.content.querySelector('.run-log-head .log-filters');
   assert.ok(bar, 'run-card head must contain a .log-filters bar');
   const pills = [...bar.children].map((el) => el.className);
-  assert.deepEqual(pills, ['log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step']);
+  assert.deepEqual(pills, [
+    'log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step', 'log-f log-f-cycle',
+    'log-f log-search', 'log-f log-copy',
+  ]);
+});
+
+test('the search box and copy button are labelled and typed for a11y', () => {
+  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'));
+  const bar = dom.window.document.getElementById('run-card-tpl')
+    .content.querySelector('.run-log-head .log-filters');
+  const search = bar.querySelector('.log-search');
+  assert.equal(search.tagName, 'INPUT');
+  assert.equal(search.getAttribute('type'), 'search');
+  assert.ok(search.getAttribute('aria-label'), 'search needs an aria-label (placeholder is not one)');
+  const copy = bar.querySelector('.log-copy');
+  assert.equal(copy.tagName, 'BUTTON');
+  assert.equal(copy.getAttribute('type'), 'button', 'must not submit an enclosing form');
+  assert.ok(copy.getAttribute('aria-label'), 'copy needs an aria-label');
+});
+
+test('the cycle separator is a styled rule, not a log line', () => {
+  const body = ruleBody('.log-sep');
+  assert.ok(body, '.log-sep rule must exist');
+  assert.match(body, /display:\s*flex/, 'the label sits between two rules');
 });

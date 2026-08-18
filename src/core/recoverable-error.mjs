@@ -7,14 +7,22 @@
 // the 401 auth string captured from the terminal result(is_error:true) event —
 // into its reject text: `claude exited with code N: <cause>` (claude-runner.mjs:298).
 //
-// CAVEAT (accepted, see YAGNI): detection is purely message-based, so a genuine
-// bug whose message happens to contain a recoverable keyword (e.g. an app error
-// literally mentioning "network" or "quota") will be classed recoverable and
-// retried. Structured error-code detection is out of scope.
+// CAVEAT (accepted, see YAGNI): detection is message-based unless the producer
+// stamped `errorClass` (claude-runner does, on the non-zero-exit path only —
+// spawn-failure errors stay unstamped and keep message-sniff classification), so
+// a genuine bug whose message happens to contain a recoverable keyword (e.g. an
+// app error literally mentioning "network" or "quota") will be classed
+// recoverable and retried. Structured error-code detection is out of scope.
 //
 // @param {Error|string|unknown} err
 // @returns {'auth'|'usage_limit'|'rate_limit'|'quota'|'network'|null}
 export function classifyError(err) {
+  // A producer that saw MORE evidence than the message carries stamps the
+  // verdict directly: claude-runner classifies the FULL stderr stream line-by-
+  // line, then tail-caps the message. Re-sniffing the capped message here could
+  // only lose an early marker (or mint a fake one at the slice boundary), so a
+  // stamp — including an explicit null — is authoritative.
+  if (err && typeof err === 'object' && err.errorClass !== undefined) return err.errorClass;
   const msg = String((err && err.message) || err || '');
   if (/\b401\b|invalid authentication|authentication_error|please run .*login|not logged in/i.test(msg)) return 'auth';
   // Session/usage caps that only clear after a multi-hour reset (the CLI prints
@@ -27,4 +35,17 @@ export function classifyError(err) {
   if (/credit balance|usage limit|quota|insufficient_quota|billing/i.test(msg)) return 'quota';
   if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|connection (refused|reset|closed|error)|closed mid-response|response above may be incomplete/i.test(msg)) return 'network';
   return null;
+}
+
+// Precedence for folding per-line classes into the one whole-text class — the
+// SAME order as the regex chain above. First-match-wins there equals
+// strongest-class-wins here, because every per-line match (the patterns are
+// unanchored) is also a whole-text match.
+const CLASS_ORDER = ['auth', 'usage_limit', 'rate_limit', 'quota', 'network'];
+
+/** Fold two classification results, keeping the higher-precedence class. */
+export function strongestClass(a, b) {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return CLASS_ORDER.indexOf(a) <= CLASS_ORDER.indexOf(b) ? a : b;
 }

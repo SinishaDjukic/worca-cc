@@ -271,7 +271,14 @@ export async function createWorktree({
   }
   const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    throw new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
+    // kills the spawned git and git() resolves ok:false (spawn's 'error' yields
+    // "The operation was aborted" — or whatever git wrote before dying, which
+    // may not mention the abort at all). Stamp the name every other abort/stop
+    // site sets so isAbort callers classify the stop as a stop, not a failure.
+    if (signal?.aborted) err.name = 'AbortError';
+    throw err;
   }
   return { worktreeDir, branch, sourceBranch, reusedExisting };
 }
@@ -328,14 +335,14 @@ export async function snapshotWorktreePatch(worktreeDir, outFile) {
   }
   const add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
   if (!add.ok) {
-    return { ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}` };
+    return { ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() };
   }
   const part = `${outFile}.part`;
   const diff = await git(worktreeDir, ['diff', '--binary', `--output=${part}`, 'HEAD', '--'],
     { timeout: SLOW_GIT_TIMEOUT_MS });
   if (!diff.ok) {
     await rm(part, { force: true }).catch(() => {});
-    return { ok: false, step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}` };
+    return { ok: false, step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}`, fromStderr: !!diff.stderr.trim() };
   }
   let bytes = 0;
   try { bytes = (await stat(part)).size; } catch { /* treated as empty below */ }
