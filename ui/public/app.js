@@ -113,6 +113,7 @@ const el = {
   mdFileName: $('#mdFileName'),
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
+  extrasPills: $('#extrasPills'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
   formMsg: $('#form-msg'),
@@ -4535,15 +4536,191 @@ el.mdFile.addEventListener('change', async () => {
   }
 });
 
-el.extras.addEventListener('change', () => {
-  const files = el.extras.files;
-  if (files && files.length) {
-    const names = [...files].map((f) => f.name).join(', ');
-    el.extrasNote.textContent = `${files.length} file(s) will be uploaded and copied into the pipeline's extras/ folder: ${names}`;
-  } else {
-    el.extrasNote.textContent = 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
+// Selected extra files live in this array, not in the <input>: a FileList is
+// read-only, and both per-file removal and re-picking the same file after a
+// removal need mutable state. The input is only the OS picker trigger.
+let extrasFiles = [];
+
+function renderExtrasPills() {
+  el.extrasPills.textContent = '';
+  el.extrasPills.hidden = extrasFiles.length === 0;
+  for (const f of extrasFiles) {
+    const pill = document.createElement('span');
+    pill.className = 'extra-pill';
+    const name = document.createElement('span');
+    name.className = 'extra-pill-name';
+    name.textContent = f.name;
+    name.title = f.name;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'extra-pill-x';
+    x.setAttribute('aria-label', `Remove ${f.name}`);
+    x.textContent = '×';
+    x.addEventListener('click', () => {
+      extrasFiles = extrasFiles.filter((e) => e !== f);
+      renderExtrasPills();
+    });
+    pill.append(name, x);
+    el.extrasPills.appendChild(pill);
   }
+  el.extrasNote.textContent = extrasFiles.length
+    ? `${extrasFiles.length} file(s) will be uploaded and copied into the pipeline's extras/ folder.`
+    : 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
+}
+
+el.extras.addEventListener('change', () => {
+  const picked = el.extras.files ? [...el.extras.files] : [];
+  for (const f of picked) {
+    const at = extrasFiles.findIndex((e) => e.name === f.name);
+    if (at >= 0) extrasFiles[at] = f; // same name re-picked: newest wins
+    else extrasFiles.push(f);
+  }
+  el.extras.value = ''; // so picking the same file again still fires `change`
+  renderExtrasPills();
 });
+
+// ---------------------------------------------------------------------------
+// @-mention autocomplete: typing "@" in a prompt textarea pops up the attached
+// extra files; pick by mouse or ArrowUp/Down + Enter/Tab. One shared popup
+// serves both the prompt and the markdown textareas.
+// ---------------------------------------------------------------------------
+const mentionPopup = document.createElement('div');
+mentionPopup.id = 'mention-popup';
+mentionPopup.className = 'mention-popup';
+mentionPopup.hidden = true;
+document.body.appendChild(mentionPopup);
+
+// Popup state: which textarea it serves, the candidate names, the highlighted
+// row, and where the "@token" being completed starts in the textarea value.
+const mention = { ta: null, items: [], sel: 0, start: 0 };
+
+function closeMentionPopup() {
+  mention.ta = null;
+  mention.items = [];
+  mentionPopup.hidden = true;
+  mentionPopup.textContent = '';
+}
+
+// The "@token" under the caret, or null. The "@" must start a word (begin of
+// text or after whitespace/punctuation) and the token can't contain spaces.
+function mentionTokenAt(ta) {
+  const upToCaret = ta.value.slice(0, ta.selectionStart ?? 0);
+  const at = upToCaret.lastIndexOf('@');
+  if (at < 0) return null;
+  if (at > 0 && !/[\s([{'"`,;:]/.test(upToCaret[at - 1])) return null;
+  const token = upToCaret.slice(at + 1);
+  if (/\s/.test(token)) return null;
+  return { start: at, token };
+}
+
+// Caret viewport coordinates via a hidden mirror div (textareas expose no
+// caret rect). Best-effort: with no layout engine it degrades to the
+// textarea's top-left corner, and the popup is clamped to the viewport.
+function mentionAnchor(ta, tokenStart) {
+  const rect = ta.getBoundingClientRect();
+  let x = rect.left, y = rect.bottom;
+  try {
+    const cs = window.getComputedStyle(ta);
+    const mirror = document.createElement('div');
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderWidth', 'boxSizing']) {
+      mirror.style[p] = cs[p];
+    }
+    mirror.style.position = 'fixed';
+    mirror.style.visibility = 'hidden';
+    mirror.style.whiteSpace = 'pre-wrap';
+    mirror.style.overflowWrap = 'break-word';
+    mirror.style.width = `${rect.width}px`;
+    mirror.textContent = ta.value.slice(0, tokenStart);
+    const marker = document.createElement('span');
+    marker.textContent = '@';
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+    const lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 18;
+    x = rect.left + marker.offsetLeft - ta.scrollLeft;
+    y = rect.top + marker.offsetTop + lineH - ta.scrollTop;
+    mirror.remove();
+  } catch { /* jsdom / measurement failure: anchor to the textarea itself */ }
+  return { x, y };
+}
+
+function renderMentionPopup() {
+  mentionPopup.textContent = '';
+  mention.items.forEach((name, i) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'mention-item' + (i === mention.sel ? ' sel' : '');
+    item.textContent = name;
+    // mousedown, not click: it fires before the textarea loses focus.
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      applyMention(name);
+    });
+    mentionPopup.appendChild(item);
+  });
+  mentionPopup.hidden = mention.items.length === 0;
+  if (mention.items.length) {
+    const { x, y } = mentionAnchor(mention.ta, mention.start);
+    const maxX = Math.max(0, (window.innerWidth || 0) - 330);
+    mentionPopup.style.left = `${Math.min(x, maxX)}px`;
+    mentionPopup.style.top = `${y + 4}px`;
+  }
+}
+
+function applyMention(name) {
+  const ta = mention.ta;
+  const caret = ta.selectionStart ?? ta.value.length;
+  const before = ta.value.slice(0, mention.start);
+  const after = ta.value.slice(caret);
+  const inserted = `@${name} `;
+  ta.value = before + inserted + after;
+  const pos = before.length + inserted.length;
+  ta.setSelectionRange(pos, pos);
+  closeMentionPopup();
+  ta.focus();
+}
+
+function refreshMentionPopup(ta) {
+  const tok = mentionTokenAt(ta);
+  const names = extrasFiles.map((f) => f.name);
+  if (!tok || !names.length) return closeMentionPopup();
+  const q = tok.token.toLowerCase();
+  // Prefix matches first, then substring matches — both case-insensitive.
+  const starts = names.filter((n) => n.toLowerCase().startsWith(q));
+  const contains = q ? names.filter((n) => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q)) : [];
+  const items = [...starts, ...contains];
+  if (!items.length) return closeMentionPopup();
+  mention.ta = ta;
+  mention.start = tok.start;
+  mention.sel = Math.min(mention.sel, items.length - 1);
+  if (mention.items.join('\n') !== items.join('\n')) mention.sel = 0;
+  mention.items = items;
+  renderMentionPopup();
+}
+
+function attachMentionAutocomplete(ta) {
+  ta.addEventListener('input', () => refreshMentionPopup(ta));
+  ta.addEventListener('click', () => refreshMentionPopup(ta));
+  ta.addEventListener('blur', () => { if (mention.ta === ta) closeMentionPopup(); });
+  ta.addEventListener('keydown', (e) => {
+    if (mentionPopup.hidden || mention.ta !== ta) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = mention.items.length;
+      mention.sel = (mention.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      renderMentionPopup();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      applyMention(mention.items[mention.sel]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMentionPopup();
+    }
+  });
+}
+
+attachMentionAutocomplete(el.prompt);
+attachMentionAutocomplete(el.promptMarkdown);
 
 // Read a File as base64 (without the data: URL prefix).
 function fileToBase64(file) {
@@ -4561,7 +4738,7 @@ function fileToBase64(file) {
 
 // Collect the selected extra files as [{ name, dataBase64 }] for upload.
 async function collectExtras() {
-  const files = el.extras.files ? [...el.extras.files] : [];
+  const files = [...extrasFiles];
   const out = [];
   for (const f of files) {
     try {

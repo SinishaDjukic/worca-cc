@@ -362,6 +362,24 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .file .state{color:var(--ink-3);font-size:12.5px;}
 .file-load{display:inline-block;margin-top:8px;}
 
+/* extra-file pills: one removable pill per selected file, under the picker */
+.extras-pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;}
+.extra-pill{display:inline-flex;align-items:center;gap:5px;background:var(--field);border:1px solid var(--line-2);
+  color:var(--ink-2);font-weight:600;font-size:12px;padding:4px 6px 4px 12px;border-radius:999px;max-width:260px;}
+.extra-pill-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.extra-pill-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
+  font-size:14px;line-height:1;padding:3px 6px;border-radius:50%;transition:.15s;}
+.extra-pill-x:hover{color:var(--red-ink);background:var(--red-bg);}
+
+/* @-mention popup: attached-file completions anchored under the prompt caret */
+.mention-popup{position:fixed;z-index:70;min-width:180px;max-width:320px;max-height:210px;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow);padding:5px;}
+.mention-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--ink-2);
+  font-family:inherit;font-weight:500;font-size:12.5px;padding:7px 10px;border-radius:8px;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mention-item:hover{background:var(--field);}
+.mention-item.sel{background:var(--field);color:var(--ink);}
+
 /* switch */
 .switch-row{display:flex;align-items:center;gap:12px;}
 .switch{width:44px;height:26px;border-radius:999px;background:var(--line-2);position:relative;
