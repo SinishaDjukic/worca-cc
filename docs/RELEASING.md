@@ -169,6 +169,12 @@ like a bad credential.
 
 Assumes §3 is done. Work on a release branch, never directly on `dev`.
 
+> The `/worca-release` skill (`.claude/skills/worca-release/`) automates
+> everything in this section — preconditions, version arithmetic, tagging, and
+> the post-publish verification in §4.3. Use it in preference to running the
+> commands by hand; what follows is the specification it implements, and the
+> fallback when something goes wrong.
+
 ### 4.1 Release candidates
 
 `npm version`'s own tagging writes a bare `v0.2.0`, which is the wrong shape
