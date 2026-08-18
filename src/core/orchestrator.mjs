@@ -2183,10 +2183,14 @@ class Orchestrator extends EventEmitter {
   /**
    * Run the decomposed implement stage. Rewrite + persist the UI stepper into per-phase
    * / per-task cells, then run each phase IN ORDER (tasks within a phase in PARALLEL,
-   * shared working tree). Abort immediately on the first genuine task failure. Stages
-   * the combined tree itself (the guard returns early from _runStep, skipping its tail
-   * stage). Returns the dispatcher's [{node,result,ctx}] shape with ONE synthetic
-   * implementer result so the reviewer step sees a settled 'code' producer.
+   * shared working tree). The FIRST genuine task failure aborts the phase IMMEDIATELY:
+   * a per-task rejection observer fires the phase-local AbortController while siblings
+   * are still running (allSettled alone reports failures only after every sibling has
+   * finished), and the thrown phase error is that first failure — never a cancelled
+   * sibling's AbortError. Stages the combined tree itself (the guard returns early from
+   * _runStep, skipping its tail stage). Returns the dispatcher's [{node,result,ctx}]
+   * shape with ONE synthetic implementer result so the reviewer step sees a settled
+   * 'code' producer.
    */
   async _runDecomposedImplement(implNode, stepIndex, cycle, bus) {
     const phases = bus.decomposition.phases;
@@ -2203,27 +2207,58 @@ class Orchestrator extends EventEmitter {
       updatePhaseStatus(this.pipeline.id, ph.ordinal, 'running', new Date().toISOString());
       await appendAudit(this.pipeline.dir, `Phase ${ph.ordinal}: ${tasks.length} task(s) starting.`);
 
+      // Abort-immediately on the FIRST genuine (non-abort, non-pause) failure.
+      // The per-task rejection observer below fires phaseAbort WHILE siblings are
+      // still running — before Promise.allSettled resolves — so one failed task
+      // cancels its in-flight siblings (SIGTERM via ctx.signal) instead of letting
+      // them burn their full runtime under a doomed phase. AbortErrors (this very
+      // cancel cascade, or stop()) and PauseErrors never trigger it: the first
+      // cancellation must not mask the real cause, and pause keeps its own unwind
+      // below. A sibling parked on an interactive recovery prompt is not
+      // signal-reachable (_ask settles only via answer()/pause()/stop()), so the
+      // trigger also rejects an open recovery prompt exactly the way pause() does —
+      // the phase is failing and must not wait on a now-meaningless human answer.
       const phaseAbort = new AbortController();
+      let firstError = null;
+      const noteFailure = (task, reason) => {
+        if (firstError || isAbort(reason) || isPause(reason)) return;
+        firstError = { task, reason };
+        phaseAbort.abort();
+        if (this.pendingQuestion?.kind === 'recovery') {
+          const pq = this.pendingQuestion;
+          this.pendingQuestion = null;
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          pq.reject(e);
+        }
+      };
       const settled = await Promise.allSettled(tasks.map((task) => {
         const taskNode = decomposedTaskNode(implNode, task, tasks, this.pipeline.dir);
-        return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        const p = this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        // Side observer only: the raw promise still flows into allSettled (which
+        // attaches its own handlers, so no unhandled-rejection either way), and
+        // the .catch derivative resolves after noteFailure swallows the reason.
+        p.catch((reason) => noteFailure(task, reason));
+        return p;
       }));
 
       // Pause lands between decomposed phases (coarse but safe): aborted tasks of
-      // this phase re-run on resume as part of the whole decomposed step.
+      // this phase re-run on resume as part of the whole decomposed step. Pause
+      // outranks a recorded failure, exactly as before the observer existed.
       if (this.pauseRequested) throw pauseErr();
 
-      // Abort-immediately on the FIRST genuine (non-abort) failure.
-      let firstError = null;
-      settled.forEach((r, k) => {
-        // _runNodeAttempts converts a pause into a PauseError (it used to reach
-        // here as the runner's AbortError) — a pause is not the phase's failure
-        // either; it surfaces via pauseRequested downstream exactly as before.
-        if (r.status === 'rejected' && !isAbort(r.reason) && !isPause(r.reason) && !firstError) {
-          firstError = { task: tasks[k], reason: r.reason };
-          phaseAbort.abort();
-        }
-      });
+      // Selection: noteFailure recorded the FIRST genuine failure in settle order
+      // (its handler runs before allSettled's own for the same promise), so a
+      // cancelled sibling's AbortError can never become the phase error. The scan
+      // is a pure backstop preserving the old task-order selection if the observer
+      // somehow saw nothing genuine.
+      if (!firstError) {
+        settled.forEach((r, k) => {
+          if (r.status === 'rejected' && !isAbort(r.reason) && !isPause(r.reason) && !firstError) {
+            firstError = { task: tasks[k], reason: r.reason };
+          }
+        });
+      }
       if (firstError) {
         updatePhaseStatus(this.pipeline.id, ph.ordinal, 'error', new Date().toISOString());
         await appendAudit(this.pipeline.dir,
@@ -2250,10 +2285,12 @@ class Orchestrator extends EventEmitter {
    * Run one decomposed task through the standard node machinery: _nodeStep records its
    * own pipeline step (distinct nodeId), _nodeCtx wires its own onEvent (so sub-agents
    * are attributed to this task), and the standard attempt loop (`_runNodeAttempts`:
-   * recovery + usage-limit pause) runs the implementer with the
-   * self-contained TASK file authoritative (ctx.node.taskPath). The phase-local abort is
-   * folded with the run-wide signal so a sibling failure cancels it. updateTaskStatus
-   * tracks running/done/error/paused. Errors propagate.
+   * recovery + usage-limit pause) runs the implementer with the self-contained TASK
+   * file authoritative (ctx.node.taskPath). The phase-local abort is folded with the
+   * run-wide signals into ctx.signal; _runDecomposedImplement's rejection observer
+   * fires it on the first genuine sibling failure, killing this task's runner
+   * mid-flight (it then settles as an AbortError — recorded 'error', logged silently,
+   * same as stop()). updateTaskStatus tracks running/done/error/paused. Errors propagate.
    */
   async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
     this._nodeStep(taskNode, stepIndex, cycle, 'start');
