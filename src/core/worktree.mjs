@@ -271,7 +271,14 @@ export async function createWorktree({
   }
   const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    throw new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
+    // kills the spawned git and git() resolves ok:false (spawn's 'error' yields
+    // "The operation was aborted" — or whatever git wrote before dying, which
+    // may not mention the abort at all). Stamp the name every other abort/stop
+    // site sets so isAbort callers classify the stop as a stop, not a failure.
+    if (signal?.aborted) err.name = 'AbortError';
+    throw err;
   }
   return { worktreeDir, branch, sourceBranch, reusedExisting };
 }
