@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/SinishaDjukic/worca-cc.git"
+    "url": "git+https://github.com/SinishaDjukic/worca-cc.git"
   },
   "homepage": "https://github.com/SinishaDjukic/worca-cc#readme",
   "bugs": {
