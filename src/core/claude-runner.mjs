@@ -35,6 +35,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { prepareModelEnv } from './model-env.mjs';
+import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,9 +43,11 @@ import { dirname, join } from 'node:path';
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The
-// audit trail, the UI error banner, and classifyError all consume that message;
-// an uncapped stderrBuf (hundreds of KB of MCP/retry chatter) must not ride
-// into them when every stderr line was already streamed as its own warn event.
+// audit trail and the UI error banner consume that message; an uncapped
+// stderrBuf (hundreds of KB of MCP/retry chatter) must not ride into them when
+// every stderr line was already streamed as its own warn event. Classification
+// does NOT ride on the capped message: recovery markers are classified line-by-
+// line as stderr streams (see rlErr) and stamped on the error as `errorClass`.
 const STDERR_DETAIL_MAX = 2000;
 
 /**
@@ -370,6 +373,9 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     let resultText = '';
     let assistantText = '';
     let stderrBuf = '';
+    // Strongest recovery class seen across ALL stderr lines — classified at
+    // receive time, so it survives both the rolling trim and the tail cap.
+    let stderrClass = null;
     // In stream-json mode claude reports failures (auth, unknown/unavailable
     // model, API errors) as a terminal `result` event with is_error:true on
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
@@ -464,7 +470,15 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // `stream:'err'` tags the origin channel; the orchestrator decides the level.
     const rlErr = createInterface({ input: child.stderr });
     rlErr.on('line', (line) => {
+      // Classify BEFORE buffering: the class must see every line ever printed —
+      // an early 401 or session-limit notice followed by hundreds of KB of MCP
+      // chatter would otherwise scroll past both the trim and the tail cap.
+      stderrClass = strongestClass(stderrClass, classifyError(line));
       stderrBuf += line + '\n';        // still the source of the exit-code detail
+      // Rolling tail: bound memory against chatty MCP servers. Trim at 4x the
+      // cap down to 2x — amortized, and the kept tail always exceeds
+      // STDERR_DETAIL_MAX so the close handler's `… ` marker still fires.
+      if (stderrBuf.length > STDERR_DETAIL_MAX * 4) stderrBuf = stderrBuf.slice(-STDERR_DETAIL_MAX * 2);
       const text = line.trim();
       // A pause/stop SIGTERMs the child: whatever it writes while dying (and the
       // torn fragment readline flushes at stream end) is not run output.
@@ -490,6 +504,12 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         // Tail, not head: the terminal cause sits at the END of a long stderr.
         const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
         const err = new Error(`${bin} exited with code ${code}: ${detail}`);
+        // The recovery class, judged on the FULL evidence: the per-line stream
+        // class when stderr fed the detail, else the (already fully in-memory)
+        // stdout errorDetail. classifyError() returns this stamp verbatim, so
+        // the tail cap above can never starve recovery — or flip an early auth
+        // failure into 'network' because connection chatter filled the tail.
+        err.errorClass = fromStderr ? stderrClass : classifyError(raw);
         // Mark the origin channel so the orchestrator can tag its `error` log
         // line with stream:'err' without sniffing the message. Absent when the
         // detail came from the stdout `result` envelope (the common case — see
