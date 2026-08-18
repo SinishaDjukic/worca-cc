@@ -2253,7 +2253,7 @@ class Orchestrator extends EventEmitter {
    * recovery + usage-limit pause) runs the implementer with the
    * self-contained TASK file authoritative (ctx.node.taskPath). The phase-local abort is
    * folded with the run-wide signal so a sibling failure cancels it. updateTaskStatus
-   * tracks running/done/error. Errors propagate.
+   * tracks running/done/error/paused. Errors propagate.
    */
   async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
     this._nodeStep(taskNode, stepIndex, cycle, 'start');
@@ -2269,12 +2269,21 @@ class Orchestrator extends EventEmitter {
       // used to produce zero error-level lines).
       await this._runNodeAttempts(taskNode, stepIndex, cycle, ctx);
     } catch (err) {
+      // Same conversion _runNode applies (2317-2319): a usage-limit/user pause
+      // unwinds through _runNodeAttempts as a pause, and a pause is NOT this
+      // task's failure — without it the finally stamps the task row and the
+      // stepper cell 'error' on a merely paused, resumable run, and
+      // _buildResumePoint sees no 'paused' step.
+      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+        status = 'paused';
+        throw pauseErr();
+      }
       status = 'error';
       this._logStepFailure(taskNode, stepIndex, cycle, err);
       throw err;
     } finally {
       updateTaskStatus(this.pipeline.id, task.id, status, new Date().toISOString());
-      this._nodeStep(taskNode, stepIndex, cycle, status === 'error' ? 'error' : 'done');
+      this._nodeStep(taskNode, stepIndex, cycle, status);
     }
   }
 

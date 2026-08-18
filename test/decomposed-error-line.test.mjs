@@ -1,8 +1,13 @@
 // A decomposed task failure must log the SAME terminal error line a normal
 // node failure logs — previously the decomposed path bypassed _runNode's catch
 // and a failed run produced ZERO error-level lines.
-import { test } from 'node:test';
+import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getDb, _resetForTests } from '../src/core/db.mjs';
+import { writeDecomposition, listTasks } from '../src/core/artifacts.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
 function loggedOrch() {
@@ -70,4 +75,44 @@ test('an aborted decomposed task (sibling failure cancel) logs no error line', a
     orch._runDecomposedTask({ key: 'implementer', nodeId: 's_impl_p1_t2', runnerType: 'producer' },
       { id: 'p1t2', title: 'Slice two' }, 2, 1, {}, new AbortController()));
   assert.equal(logs.filter((l) => l.level === 'error').length, 0);
+});
+
+let home;
+beforeEach(async () => {
+  _resetForTests();
+  home = await mkdtemp(join(tmpdir(), 'worca-cc-decomp-'));
+  process.env.WORCA_HOME = home;
+  // A pipeline row must exist (FK target for the decomposition rows).
+  getDb().prepare(
+    "INSERT INTO pipelines (id, project_key, started_at) VALUES ('p-red','proj-1', '2026-06-09')"
+  ).run();
+  writeDecomposition('p-red', [
+    { ordinal: 1, tasks: [{ id: 'p1t1', title: 'Slice A', file: 'tasks/p1-t1.md', nodeId: 's_impl_p1_t1' }] },
+  ]);
+});
+after(async () => {
+  _resetForTests();
+  delete process.env.WORCA_HOME;
+  if (home) await rm(home, { recursive: true, force: true });
+});
+
+test('a usage-limit pause reaching _runDecomposedTask marks the task + step paused, not error', async () => {
+  const { orch, logs } = loggedOrch();
+  orch.pipeline = { id: 'p-red', dir: home };
+  orch._nodeCtx = () => ({});
+  orch._bindNodeIo = () => ({});
+  orch.pauseRequested = true;                       // _pauseForLimit already fired
+  orch._runNodeAttempts = async () => {             // attempt loop unwinds as a pause
+    const e = new Error('paused'); e.name = 'PauseError'; throw e;
+  };
+  const taskNode = { key: 'implementer', nodeId: 's_impl_p1_t1', runnerType: 'producer' };
+  await assert.rejects(
+    () => orch._runDecomposedTask(taskNode, { id: 'p1t1', title: 'Slice A' }, 2, 1, {}, new AbortController()),
+    (err) => err?.name === 'PauseError',
+  );
+  const step = orch.state.steps.find((s) => s.nodeId === 's_impl_p1_t1');
+  assert.equal(step?.status, 'paused', 'stepper cell must be paused, not error');
+  assert.equal(listTasks('p-red')[0].status, 'paused', 'task row must be paused');
+  assert.equal(listTasks('p-red')[0].finishedAt, null, 'a paused task has not finished');
+  assert.equal(logs.filter((l) => l.level === 'error').length, 0, 'a pause is not a failure');
 });
