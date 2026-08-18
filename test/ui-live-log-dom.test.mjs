@@ -93,3 +93,22 @@ test('eviction never leaves a separator leading the pane', async () => {
     'the now-boundary-less "Cycle 2" rule was dropped with its predecessor');
   assert.equal(pane.querySelectorAll('.log-sep').length, 0);
 });
+
+test('card rebuild keeps the search term when a dropdown selection vanishes', async () => {
+  const { window } = await bootLive();
+  const { upsertRun, buildRunCard, onLog } = window.__np;
+  const r = upsertRun({ runId: 'r-search', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  r.el = buildRunCard(r);
+  onLog(r, { source: 'planner', level: 'info', text: 'an error appeared', ts: 0, stepIndex: 0, cycle: 1 });
+  onLog(r, { source: 'planner', level: 'info', text: 'all good', ts: 0, stepIndex: 0, cycle: 1 });
+  // User had cycle '7' + search 'error'; the cycle rotated out of the facets.
+  r.logFilter = { source: '', level: '', step: '', cycle: '7', search: 'error' };
+  // Finish/resume rebuilds the card: the stale cycle falls back to "all"…
+  r.el = buildRunCard(r);
+  assert.equal(r.logFilter.cycle, '', 'vanished cycle falls back to all');
+  assert.equal(r.logFilter.search, 'error', 'free text has no facet to vanish — must survive');
+  assert.equal(r.el.querySelector('.log-search').value, 'error', 'rebuilt box shows the active term');
+  const lines = r.el.querySelectorAll('.log .log-line');
+  assert.equal(lines.length, 1, 'pane still narrowed by the term');
+  assert.match(lines[0].textContent, /an error appeared/);
+});

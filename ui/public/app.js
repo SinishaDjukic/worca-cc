@@ -3792,7 +3792,10 @@ function paintLogFilters(r, root = r.el) {
   // A selection whose value vanished from the facets (log rotation, rebuild)
   // fell back to "all" in the DOM; mirror that into the model and repaint so
   // the pane never stays filtered by a value the dropdowns no longer show.
-  const effective = readLogFilterFrom(root, r.logFilter.search);
+  // Search is free text — no facet can vanish from it, so reconciliation must
+  // never touch it. The DOM box may be a fresh empty clone (rebuild) or
+  // mid-keystroke ahead of the debounce; the model owns the term here.
+  const effective = { ...readLogFilterFrom(root), search: r.logFilter.search };
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
     || String(effective.step) !== String(r.logFilter.step)
@@ -9802,6 +9805,10 @@ function buildRunCard(r) {
   // through the run's current filter, and offer the facets seen so far.
   // paintLogFilters may repaint once more if a stale selection fell back to
   // "all" — cheap, and it keeps the pane and the dropdowns consistent.
+  // The clone's search box is born empty; mirror the run's stored term so the
+  // visible bar matches the filter the repaint below actually applies.
+  const searchBox = node.querySelector('.log-search');
+  if (searchBox) searchBox.value = r.logFilter.search || '';
   repaintFilteredLog(r, node);
   paintLogFilters(r, node);
 
