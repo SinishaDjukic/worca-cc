@@ -1,19 +1,44 @@
 {
-  "name": "worca-cc",
-  "version": "0.1.0",
-  "description": "Worca CC — deterministic multi-agent pipeline that drives Claude Code (headless) through Plan -> Refine -> Implement -> Review, with a CLI, an installable /worca skill, and a web UI.",
+  "name": "@worca/app",
+  "version": "0.0.1",
+  "description": "Worca — deterministic multi-agent pipeline that drives Claude Code (headless) through Plan -> Refine -> Implement -> Review, with a CLI, an installable /worca skill, and a web UI.",
+  "license": "MIT",
+  "author": "Sinisha Djukic",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/denislavprinov/maestro.git"
+    "url": "git+https://github.com/SinishaDjukic/worca-cc.git"
   },
-  "homepage": "https://github.com/denislavprinov/maestro#readme",
+  "homepage": "https://github.com/SinishaDjukic/worca-cc#readme",
+  "bugs": {
+    "url": "https://github.com/SinishaDjukic/worca-cc/issues"
+  },
+  "keywords": [
+    "worca",
+    "pipeline",
+    "orchestrator",
+    "claude-code",
+    "ai-agents",
+    "autonomous-coding"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "worca": "src/cli/worca-cc.mjs"
   },
+  "files": [
+    "src/",
+    "ui/server.mjs",
+    "ui/public/",
+    "agents/",
+    "skills/",
+    "scripts/install.mjs",
+    "README.md"
+  ],
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning ui/server.mjs",
     "cli": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs",
