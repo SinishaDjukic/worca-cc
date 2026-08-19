@@ -248,16 +248,14 @@ npm view @worca/app dist-tags
 #    before telling anyone to install it.
 npm view @worca/app@<VERSION> dist.attestations
 
-# 3. GA only: `rc` must not trail `latest`. The promote step runs
-#    continue-on-error, so it can silently not have happened.
+# 3. Both pointers read as expected.
 npm dist-tag ls @worca/app
 ```
 
-If `rc` is behind `latest` after a stable release, re-point it:
-
-```bash
-npm dist-tag add @worca/app@<VERSION> rc
-```
+After a GA release `rc` still points at the last release candidate, and that is
+correct — the OIDC credential is granted `npm publish` only and cannot move a
+dist-tag, so nothing promotes it. Report it as expected, not as a fault. The
+next `--rc` moves it ahead of `latest` again.
 
 ---
 

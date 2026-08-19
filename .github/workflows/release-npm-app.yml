@@ -80,21 +80,6 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
 
-      # Without this, `rc` stays parked on the last release candidate forever
-      # and `npm install @worca/app@rc` resolves BEHIND `@latest`. On a GA
-      # release, move `rc` forward to the released version.
-      # The npm trusted-publisher allowlist grants `npm publish`; whether the
-      # OIDC credential may also move a dist-tag is not something that form
-      # lets you grant. The publish above has already succeeded and cannot be
-      # undone by this step failing, so a rejection here must not fail the
-      # release — it just leaves `rc` behind, to be re-pointed by hand.
-      - name: Promote rc dist-tag to the GA release
-        if: steps.dist-tag.outputs.tag == 'latest'
-        continue-on-error: true
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: npm dist-tag add "@worca/app@${TAG_NAME#worca-app-v}" rc
-
   release:
     needs: build-and-publish
     runs-on: ubuntu-latest
