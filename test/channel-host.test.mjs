@@ -19,6 +19,17 @@ import {
 
 useTempHome(after);
 
+// The fake child processes below (makeFakeProc) are plain EventEmitters over
+// in-memory PassThroughs: unlike a real spawned child, they hold no libuv
+// handle. channel-host's rpc() unrefs its timeout timer — correct in
+// production, where an in-flight RPC must not keep the process alive — so with
+// nothing else ref'd the loop drains before the timer can fire, and any test
+// awaiting an RPC timeout is cancelled with "Promise resolution is still
+// pending but the event loop has already resolved". Hold one ref'd handle for
+// the lifetime of the file to model what a real child would keep open.
+const keepLoopAlive = setInterval(() => {}, 60_000);
+after(() => clearInterval(keepLoopAlive));
+
 const NAME = 'fixture-chat';
 const SCHEMA = [{ key: 'token', type: 'text', label: 'Token', secret: true, required: true }];
 
