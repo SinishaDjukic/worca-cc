@@ -470,17 +470,22 @@
                     Back
                   </button>
                   <h1 class="hd-title"></h1>
+                  <span class="hist-merge" hidden></span>
+                  <button type="button" class="hd-pr" hidden>Create PR</button>
+                  <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
+                </div>
+                <!-- Status pip leads the META line, not row 1: it reads as the icon
+                     for the status WORD it now sits next to (same pairing the list
+                     card uses), and row 1 stays title + PR actions. -->
+                <div class="hd-row2">
                   <span class="hd-sic hist-sic" role="img">
                     <svg class="sic sic-done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     <svg class="sic sic-stopped" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <svg class="sic sic-paused" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
                     <svg class="sic sic-error" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
                   </span>
-                  <span class="hist-merge" hidden></span>
-                  <button type="button" class="hd-pr" hidden>Create PR</button>
-                  <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
+                  <div class="hd-meta mono"></div>
                 </div>
-                <div class="hd-meta mono"></div>
                 <div class="hd-row3">
                   <span class="hd-base mono"></span>
                   <button type="button" class="hd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">

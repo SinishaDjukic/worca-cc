@@ -832,8 +832,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-branch-copy.copied .ico-copy{display:none;}
 .hist-branch-copy.copied .ico-check{display:block;color:var(--green-ink);}
 
-/* Right-side cluster on the card: Create PR + the open-detail chevron button. */
-.hist-aside{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
+/* Right-side cluster on the card: Create PR + the open-detail chevron button.
+   `align-self:center` (not the parent's `align-items:flex-start`) pins the cluster
+   to the card's vertical middle, the same escape hatch `.hist-card .hist-sic` uses
+   on the other side of the row. */
+.hist-aside{display:flex;align-items:center;align-self:center;gap:10px;flex:0 0 auto;}
 /* Base rule only. The v2 card hosts `.hist-diff` INSIDE `.hist-diff-pill`, whose
    appended `.hist-diff-pill .hist-diff` (0,2,0) outranks this; the tints come from
    the bare `.diff-add`/`.diff-del` rules further down. */
@@ -1604,7 +1607,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    global one would touch every other view. */
 .hd .mono,.hist-card .mono,#shipit-modal .mono{font-family:var(--mono);}
 
-.hd-header{background:var(--panel);border-bottom:1px solid var(--line);padding:20px 32px 18px;}
+/* Card, not a full-bleed band: same border/radius/shadow language as `.card`, and
+   its own 20px/32px margin box supplies the inset the screen itself cannot — 
+   `.hist-screen-detail` keeps `padding:0` so the sticky `.hd-tabs` can still pin
+   flush to the scrollport top. Inner padding drops 32 -> 24 so the title lands a
+   card-like distance from the border instead of 56px from the viewport edge. */
+.hd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow);margin:20px 32px 0;padding:20px 24px 18px;}
 .hd-row1{display:flex;align-items:center;gap:14px;}
 .hd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1638,8 +1647,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .diff-add{color:var(--green-ink);}
 .diff-del{color:var(--red-ink);}
 
-.hd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px;
+/* Row 2 = status pip + meta line. The 12px top gap moved here from `.hd-meta`
+   IN PLACE: leaving it on the child would stack under this row's own margin and
+   double the space under the title. */
+.hd-row2{display:flex;align-items:center;gap:10px;margin-top:12px;}
+/* Meta line is now a flex CHILD, so it takes the row's leftover width (min-width:0
+   lets it wrap instead of pushing the pip off-row). */
+.hd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;flex:1;
   font:400 12.5px var(--mono);color:var(--ink-3);}
+/* 30px is the row-1 size; on a 12.5px meta line the pip shrinks to match the text. */
+.hd-row2 .hd-sic{width:24px;height:24px;}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
 .hd-diffcounts{display:inline-flex;align-items:center;gap:6px;}
 .hd-dot{font-weight:700;color:var(--ink);}
@@ -1649,7 +1666,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-status-word.st-stopped,.hd-status-word.st-error,
 .hist-status-word.st-stopped,.hist-status-word.st-error{color:var(--red-ink);}
 .hd-status-word.st-paused,.hist-status-word.st-paused{color:var(--amber-ink);}
-.hd-row3{display:flex;align-items:center;gap:8px;margin-top:14px;min-width:0;}
+/* 14px -> 6px: the branch chip and the Resume/Archive buttons carry ~8px of their
+   own vertical padding, so the row reads far further from the meta line than the
+   number says. 6px + that padding lands on the same optical gap as row1->row2. */
+.hd-row3{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0;}
 .hd-base{color:var(--ink-3);font-size:12px;white-space:nowrap;}
 .hd-base[hidden]{display:none;}
 .hd-branch-copy{display:flex;align-items:center;gap:9px;min-width:0;padding:8px 12px;
