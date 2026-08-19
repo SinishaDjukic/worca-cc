@@ -167,7 +167,9 @@ like a bad credential.
 
 ## 4. Regular release procedure
 
-Assumes §3 is done. Work on a release branch, never directly on `dev`.
+Assumes §3 is done. Release commits land on `dev` itself: the version bump has
+to be on the released branch, because the next release computes its number from
+`package.json`.
 
 > The `/worca-release` skill (`.claude/skills/worca-release/`) automates
 > everything in this section — preconditions, version arithmetic, tagging, and
@@ -185,14 +187,15 @@ yourself. That is the whole recipe, for every release:
 # first RC of a new line — `latest` is untouched, users stay on the old version
 npm version 0.2.0-rc.1 --no-git-tag-version
 git commit -am "chore(release): @worca/app 0.2.0-rc.1"
-git tag worca-app-v0.2.0-rc.1
-git push --follow-tags
+git tag -a worca-app-v0.2.0-rc.1 -m "@worca/app 0.2.0-rc.1"
+git push origin HEAD && git push origin worca-app-v0.2.0-rc.1
 
 # subsequent RCs — `prerelease` walks -rc.2, -rc.3, ...
-npm version prerelease --no-git-tag-version
-git commit -am "chore(release): @worca/app $(node -p "require('./package.json').version")"
-git tag "worca-app-v$(node -p "require('./package.json').version")"
-git push --follow-tags
+npm version prerelease --no-git-tag-version >/dev/null
+V=$(node -p "require('./package.json').version")
+git commit -am "chore(release): @worca/app $V"
+git tag -a "worca-app-v$V" -m "@worca/app $V"
+git push origin HEAD && git push origin "worca-app-v$V"
 ```
 
 Testers opt in with:
@@ -206,8 +209,8 @@ npm install @worca/app@rc
 ```bash
 npm version 0.2.0 --no-git-tag-version
 git commit -am "chore(release): @worca/app 0.2.0"
-git tag worca-app-v0.2.0
-git push --follow-tags
+git tag -a worca-app-v0.2.0 -m "@worca/app 0.2.0"
+git push origin HEAD && git push origin worca-app-v0.2.0
 ```
 
 The workflow publishes under `latest` and moves `rc` forward to the same
@@ -234,8 +237,11 @@ npm dist-tag add @worca/app@0.2.0 rc
 - **Release from a clean tree.** `--no-git-tag-version` skips npm's own
   clean-tree check, so this one is on you: the tag must describe exactly what
   CI will build.
-- **Push the tag, not just the commit.** `git push` alone pushes no tags and
-  triggers nothing. Use `--follow-tags`.
+- **Push the tag explicitly, and make it annotated.** `git push` alone pushes
+  no tags, and `--follow-tags` pushes *only annotated* ones — so `git tag <name>`
+  followed by `git push --follow-tags` succeeds, pushes the commit, and silently
+  leaves the tag local with no workflow fired. Use `git tag -a … -m …` plus
+  `git push origin <tag>`, then verify with `git ls-remote --tags origin`.
 - **Verify after the fact:**
 
   ```bash

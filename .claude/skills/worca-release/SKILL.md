@@ -138,18 +138,32 @@ means a runtime directory left it. Report either and stop.
 `npm version`'s own tagging writes a bare `v0.2.0`, which is the wrong shape
 for this repo — bump without a tag and create the prefixed tag yourself:
 
+The version bump belongs on the branch being released — `dev` — because the
+next release computes its number from `package.json`. A bump parked on a side
+branch leaves the line stale.
+
 ```bash
 npm version <VERSION> --no-git-tag-version
 git add package.json package-lock.json
 git commit -m "chore(release): @worca/app <VERSION>"
-git tag worca-app-v<VERSION>
-git push --follow-tags
+git tag -a worca-app-v<VERSION> -m "@worca/app <VERSION>"
+git push origin HEAD
+git push origin worca-app-v<VERSION>
 ```
 
 Substitute the literal computed version — e.g. `npm version 0.2.0-rc.1
---no-git-tag-version`, `git tag worca-app-v0.2.0-rc.1`.
+--no-git-tag-version`, `git tag -a worca-app-v0.2.0-rc.1 -m "@worca/app 0.2.0-rc.1"`.
 
-`git push` alone pushes no tags and triggers nothing. Use `--follow-tags`.
+**The tag must be annotated (`-a`) and pushed explicitly.** `git push` alone
+pushes no tags, and `--follow-tags` pushes *only annotated* ones — so the
+obvious-looking `git tag <name>` + `git push --follow-tags` reports success,
+pushes the commit, silently leaves the tag local, and fires no workflow.
+
+Confirm the tag actually landed before moving on:
+
+```bash
+git ls-remote --tags origin "worca-app-v<VERSION>"
+```
 
 ---
 
