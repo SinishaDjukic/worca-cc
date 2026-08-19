@@ -204,6 +204,23 @@ Testers opt in with:
 npm install @worca/app@rc
 ```
 
+### 4.1b Naming the target explicitly
+
+The arithmetic above infers the next number, which is right for routine
+releases and wrong for a jump the defaults cannot reach — a major line, or a
+patch line opened as an RC. State the target instead of nudging the inference:
+
+```bash
+/worca-release --rc --version:1.0.0        # -> 1.0.0-rc.1
+/worca-release --stable --version:1.0.0    # -> 1.0.0
+```
+
+The target must be strictly greater than the highest published version
+(`npm view @worca/app version`) — anything equal or lower is already burned and
+would fail the publish *after* the tag exists. And closing out an RC line with a
+different number than the RCs rehearsed is refused: if `1.0.0-rc.3` is current,
+`--stable --version:2.0.0` stops and asks.
+
 ### 4.2 GA release
 
 ```bash
