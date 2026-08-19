@@ -42,12 +42,6 @@ test('a log frame with sub:true renders a .log-line.sub-agent; a main line does 
   ctx.window.location.hash = 'running';
   ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   ctx.recv({ type: 'phase', runId: 'p1', phase: 'plan', cycle: 0 });  // mounts the card
-  // The log PANE only renders at detail density (a card in a LIST is .mini and
-  // shows a rail + peek instead), so open the run's detail view — the real path a
-  // reader takes to a log. Forcing the class here instead would be undone by the
-  // next list repaint, which re-asserts .mini for every card it paints.
-  ctx.window.location.hash = 'running/p1';
-  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   ctx.recv({ type: 'log', runId: 'p1', source: 'planner ▸ research auth', level: 'info', text: 'hi', sub: true });
   await new Promise((r) => setTimeout(r, 0));
   const card = ctx.window.document.querySelector('[data-run-id="p1"]');

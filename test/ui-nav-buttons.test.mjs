@@ -101,8 +101,7 @@ test('running child rows are buttons with no href and still deep-link', async ()
   assert.equal(row.getAttribute('href'), null, 'no href → no hover preview');
   click(window, row);
   await tick();
-  assert.equal(window.location.hash, '#pipeline/auth-fix',
-    'child row still focuses the run, via the one canonical pipeline url');
+  assert.equal(window.location.hash, '#running/auth-fix', 'child row still focuses the run');
   assert.equal(window.document.querySelectorAll('.nav a, .topnav a').length, 0,
     'no anchors remain anywhere in the menus');
 });
@@ -110,10 +109,7 @@ test('running child rows are buttons with no href and still deep-link', async ()
 test('reload on #running/<id> keeps the Running view (no reset to New)', async () => {
   const { window } = await boot('http://localhost:4317/#running/auth-fix');
   const doc = window.document;
-  await tick(); await tick();
+  await tick(); await tick();   // let the not-yet-known-run bounce (#running) settle
   assert.equal(hidden(doc, 'new'), true, 'must not fall back to the New view');
   assert.equal(hidden(doc, 'running'), false, 'Running view restored from the deep link');
-  // The legacy detail url is normalized in place — replaceState, so this reload
-  // did not push an entry the reader would have to Back through twice.
-  assert.equal(window.location.hash, '#pipeline/auth-fix', 'and canonicalized');
 });

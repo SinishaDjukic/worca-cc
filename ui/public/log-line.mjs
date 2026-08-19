@@ -29,9 +29,38 @@ export function logLineText(rec) {
   return `${logLineTime(rec.ts)} ${src}${rec.text == null ? '' : String(rec.text)}`;
 }
 
-/** A whole (already filtered) sequence of records as newline-joined text. */
+/** A whole (already filtered) sequence of records as newline-joined text, with
+ *  the SAME "Cycle N" rules the pane draws (one cycleSeparatorBefore walk) —
+ *  without them a copied re-run repeats its steps with no visible boundary.
+ *  Rendered as `── Cycle N ──`: the pane's rule lines are CSS, plain text
+ *  needs the dashes. */
 export function serializeLog(recs) {
-  return (recs || []).filter(Boolean).map(logLineText).join('\n');
+  const out = [];
+  let prevCycle = null;
+  for (const rec of recs || []) {
+    if (!rec) continue;
+    const sep = cycleSeparatorBefore(prevCycle, rec);
+    if (sep) out.push(`── ${sep} ──`);
+    if (rec.cycle != null) prevCycle = rec.cycle;
+    out.push(logLineText(rec));
+  }
+  return out.join('\n');
+}
+
+/** One persisted NDJSON record projected to the UI log-record shape. EVERY
+ *  consumer of the persisted log goes through here — the live-card resume seed
+ *  and the History replay must agree on which fields survive, or an axis works
+ *  in one pane while silently dead in the other (`cycle` was dropped by one of
+ *  three hand-rolled copies of this projection). `cycle` drives the cycle
+ *  picker AND the "── Cycle N ──" separators; `stream` is stderr provenance.
+ *  Absent attribution stays ABSENT (the filters test `!= null`). */
+export function projectLogRecord(rec) {
+  return {
+    source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
+    ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
+    ...(rec.cycle != null ? { cycle: rec.cycle } : {}),
+    ...(rec.stream ? { stream: rec.stream } : {}),
+  };
 }
 
 /**
@@ -42,14 +71,16 @@ export function serializeLog(recs) {
  * re-run is otherwise indistinguishable from its first pass. A rule drawn at the
  * boundary makes that legible without the reader having to filter for it.
  *
- * `prev` must be the previously RENDERED record, not the previous record in the
- * model — otherwise a filter that hides an entire cycle would leave an orphan
- * separator for a cycle with no lines under it. A null `prev` (first line in the
- * pane) yields null: no leading "Cycle 1" header.
+ * `prevCycle` is the cycle of the last RENDERED record that HAD one — the
+ * caller carries it past cycle-less notices (artifact events, git/orchestrator
+ * lines), which land exactly at rewind boundaries and must not mask them. It
+ * must come from rendered records, not the model, so a filter that hides an
+ * entire cycle cannot orphan a separator. null (no cycled record rendered yet)
+ * yields null: no leading "Cycle 1" header.
  */
-export function cycleSeparatorBefore(prev, rec) {
+export function cycleSeparatorBefore(prevCycle, rec) {
   if (!rec || rec.cycle == null) return null;
-  if (!prev || prev.cycle == null) return null;
-  if (String(prev.cycle) === String(rec.cycle)) return null;
+  if (prevCycle == null) return null;
+  if (String(prevCycle) === String(rec.cycle)) return null;
   return `Cycle ${rec.cycle}`;
 }

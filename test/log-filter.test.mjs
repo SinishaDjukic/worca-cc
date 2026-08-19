@@ -3,7 +3,7 @@
 // {source, level, step} filter shows, and which facet values the dropdowns offer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { logLineVisible, logFacets } from '../ui/public/log-filter.mjs';
+import { logLineVisible, logFacets, compileLogFilter } from '../ui/public/log-filter.mjs';
 
 const L = (over = {}) => ({ source: 'planner', level: 'info', text: 'x', ts: 1, ...over });
 
@@ -111,4 +111,32 @@ test('search composes with the dropdown axes (AND)', () => {
   assert.equal(logLineVisible(rec, { source: 'implementer', level: 'debug', step: '1', cycle: '2', search: 'read' }), true);
   assert.equal(logLineVisible(rec, { source: 'implementer', level: 'debug', step: '1', cycle: '2', search: 'write' }), false);
   assert.equal(logLineVisible(rec, { source: 'planner', search: 'read' }), false);
+});
+
+// ── compiled filters ────────────────────────────────────────────────────────
+
+test('compileLogFilter matches logLineVisible on every axis', () => {
+  const recs = [
+    L({ source: 'implementer', level: 'debug', stepIndex: 1, cycle: 2, text: '→ Read a.js' }),
+    L({ source: 'planner', text: 'hello' }),
+    L({ cycle: 1 }), L({}),
+  ];
+  const filters = [
+    null, {}, { search: 'READ' }, { level: 'debug' }, { source: 'implementer' },
+    { step: '1' }, { cycle: '2' }, { source: 'implementer', level: 'debug', step: '1', cycle: '2', search: 'read' },
+  ];
+  for (const f of filters) {
+    const pred = compileLogFilter(f);
+    for (const rec of recs) assert.equal(pred(rec), logLineVisible(rec, f), JSON.stringify({ f, rec }));
+  }
+});
+
+test('compileLogFilter lowercases the term once, at compile time', () => {
+  let reads = 0;
+  const filter = { get search() { reads++; return 'GRAPH'; } };
+  const pred = compileLogFilter(filter);
+  const before = reads;
+  pred(L({ text: 'building the graph' }));
+  pred(L({ text: 'no match here' }));
+  assert.equal(reads, before, 'the filter object is not re-read per record');
 });

@@ -327,3 +327,17 @@ test('resolveDefaultBranch falls back to the HEAD SHA on a detached HEAD with no
   const resolved = await resolveDefaultBranch(dir);
   assert.equal(resolved, sha, 'should return the SHA, never the literal "main"');
 });
+
+test('createWorktree names an aborted `git worktree add` AbortError (a stop is not a git failure)', async () => {
+  const repo = await freshRepo();
+  const ac = new AbortController();
+  ac.abort();
+  await assert.rejects(
+    () => createWorktree({ projectDir: repo, pipelineId: 'ab1', sourceBranch: 'main', featureBranch: 'worca-cc/ab1', signal: ac.signal }),
+    (err) => {
+      assert.equal(err.name, 'AbortError');
+      assert.match(err.message, /git worktree add failed/);
+      return true;
+    },
+  );
+});

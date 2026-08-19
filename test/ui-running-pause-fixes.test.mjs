@@ -82,18 +82,13 @@ test('(e) .btn-resume has a base pill style in the green family, like .btn-pause
 
 // (f) The author display rules defeat the UA [hidden] rule — must be patched per
 // class, same as .questions-toggle[hidden] / .hist-pr[hidden] / .subs-bar[hidden].
-// .btn-stop was added to the same rule once a finished pipeline started hiding the
-// controls it cannot honour; the assertion is order-insensitive so the rule can
-// keep growing without a rewrite here.
-test('(f) [hidden] hides Pause/Resume/Stop despite their author display rules', () => {
+test('(f) [hidden] hides Pause/Resume despite their author display rules', () => {
   const css = readFileSync(cssPath, 'utf8');
-  const rule = /([^{}]*\.btn-pause\[hidden\][^{}]*)\{([^}]*)\}/.exec(css);
-  assert.ok(rule, 'need a .btn-pause[hidden] rule — otherwise the paused card shows BOTH buttons and two margin-left:auto split the row');
-  assert.match(rule[2], /display:\s*none/);
-  for (const cls of ['.btn-pause', '.btn-resume', '.btn-stop']) {
-    assert.ok(rule[1].includes(`${cls}[hidden]`),
-      `${cls} declares its own display, so [hidden] is inert on it until the patch rule names it`);
-  }
+  assert.match(
+    css,
+    /\.btn-pause\[hidden\]\s*,\s*\.btn-resume\[hidden\]\s*\{[^}]*display:\s*none/,
+    'need .btn-pause[hidden],.btn-resume[hidden]{display:none;} — otherwise the paused card shows BOTH buttons and two margin-left:auto split the row'
+  );
 });
 
 // (g) Dead rule: pause sits between resume and stop in the DOM, so this `+`

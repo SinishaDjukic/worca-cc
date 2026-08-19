@@ -373,6 +373,22 @@ function writeLegacy(key, cfg) {
 }
 
 /**
+ * Tri-state resolution for the boolean toggles (fanOut / askQuestions), shared by
+ * setStep and setNodeModel so the two write paths cannot drift:
+ *   boolean  -> that value          (the toggle sent it)
+ *   null     -> undefined = cleared (an explicit "inherit the default again")
+ *   absent   -> the previous value  (a model/effort write must not wipe a toggle)
+ * @param {unknown} next
+ * @param {unknown} prev
+ * @returns {boolean|undefined}
+ */
+function inheritOr(next, prev) {
+  if (typeof next === 'boolean') return next;
+  if (next === null) return undefined;
+  return typeof prev === 'boolean' ? prev : undefined;
+}
+
+/**
  * Set (or clear) the model + effort for one agent step. An empty model => inherit
  * the global/CLI default; an empty effort => model default. Effort must be supported
  * by the chosen model. fanOut is preserved when the caller omits it (only the toggle
@@ -399,15 +415,13 @@ export async function setStep(projectDir, step, selection = {}) {
   const cfg = readRaw(projectDir);
   const prev = cfg.steps[step] || {};
   // model/effort keep replace semantics (undefined => cleared); fanOut is preserved
-  // when the caller omits it (only the toggle sends it), and set when a boolean.
-  const fanOut = typeof selection.fanOut === 'boolean'
-    ? selection.fanOut
-    : (typeof prev.fanOut === 'boolean' ? prev.fanOut : undefined);
+  // when the caller omits it (only the toggle sends it), set when a boolean, and
+  // CLEARED on an explicit null — the New-Pipeline accordion prunes a toggle back
+  // to "inherit" when it matches the resolved default (newpipeline-ux-design.md §4.5).
+  const fanOut = inheritOr(selection.fanOut, prev.fanOut);
   // askQuestions mirrors fanOut: preserved when omitted (only the toggle sends
-  // it), set when a boolean (spec 2026-07-11 §4).
-  const askQuestions = typeof selection.askQuestions === 'boolean'
-    ? selection.askQuestions
-    : (typeof prev.askQuestions === 'boolean' ? prev.askQuestions : undefined);
+  // it), set when a boolean (spec 2026-07-11 §4), cleared on null.
+  const askQuestions = inheritOr(selection.askQuestions, prev.askQuestions);
 
   const steps = { ...cfg.steps };
   if (!model && !effort && fanOut === undefined && askQuestions === undefined) delete steps[step];
@@ -587,7 +601,7 @@ export async function readRunConfig(projectDir) {
  * Set (or clear) the model+effort+fanOut+askQuestions for one node instance of a
  * workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
  * askQuestions are preserved when the caller omits them (read from the existing
- * row) and set when a boolean. Writes only the config_workflow_nodes table
+ * row), set when a boolean, and cleared on an explicit null. Writes only the config_workflow_nodes table
  * (legacy view + extra untouched). Model/effort validate against the effective
  * catalog exactly like setStep (design §4.5 — the two write paths must not
  * disagree); rows persisted before this hardening are validated only when
@@ -618,9 +632,9 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
     'SELECT fan_out, ask_questions FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
   const prevFanOut = prev && prev.fan_out !== null && prev.fan_out !== undefined ? !!prev.fan_out : undefined;
-  const fanOut = typeof selection.fanOut === 'boolean' ? selection.fanOut : prevFanOut;
+  const fanOut = inheritOr(selection.fanOut, prevFanOut);
   const prevAsk = prev && prev.ask_questions !== null && prev.ask_questions !== undefined ? !!prev.ask_questions : undefined;
-  const askQuestions = typeof selection.askQuestions === 'boolean' ? selection.askQuestions : prevAsk;
+  const askQuestions = inheritOr(selection.askQuestions, prevAsk);
   const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, fanOut, askQuestions });
 
   tx(() => {
@@ -664,6 +678,41 @@ export async function setFeedbackCycles(projectDir, workflowId, fbId, maxCycles)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(project_key, workflow_id, fb_id) DO UPDATE SET max_cycles = excluded.max_cycles
     `).run(key, workflowId, fbId, n);
+  });
+}
+
+/**
+ * Drop every per-project override for one workflow — the New-Pipeline accordion's
+ * "Reset to defaults" (newpipeline-ux-design.md §4.5). Deletes the workflow's
+ * config_workflow_nodes + config_workflow_feedbacks rows, so each node falls back
+ * to the workflow's own defaults and then the agent registry.
+ *
+ * For the built-in default workflow it ALSO clears the legacy per-role `steps`
+ * blob: that is where the Default workflow's overrides actually live, so a reset
+ * that skipped it would leave the page showing "all defaults" while the run still
+ * used the old models. customModels / activeWorkflowId / extra are untouched.
+ *
+ * @param {string} projectDir
+ * @param {string} workflowId
+ * @returns {Promise<void>}
+ */
+export async function resetWorkflowConfig(projectDir, workflowId) {
+  const id = String(workflowId || '').trim();
+  if (!id) throw new Error('workflowId is required');
+  const key = projectKey(projectDir);
+  const clearLegacy = id === 'wf_default';
+  const cfg = clearLegacy ? readRaw(projectDir) : null;
+  getDb();
+  tx(() => {
+    prepare('DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ?').run(key, id);
+    prepare('DELETE FROM config_workflow_feedbacks WHERE project_key = ? AND workflow_id = ?').run(key, id);
+    if (clearLegacy) {
+      prepare(`
+        INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+        VALUES (?, '{}', ?, NULL, '{}')
+        ON CONFLICT(project_key) DO UPDATE SET steps = '{}'
+      `).run(key, JSON.stringify(cfg.customModels || []));
+    }
   });
 }
 

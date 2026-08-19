@@ -13,22 +13,41 @@ function h(doc, tag, cls, text) {
 
 const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 
+// Inline feather-style icons for card action buttons (stroke follows currentColor).
+const ICONS = {
+  bin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
+  refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+};
+
+// icon button: <button class=cls>[svg] label</button>. innerHTML is a fixed
+// ICONS constant (never caller data), so no injection surface.
+function iconBtn(doc, cls, icon, label) {
+  const b = h(doc, 'button', cls);
+  b.type = 'button';
+  b.innerHTML = ICONS[icon];
+  b.appendChild(doc.createTextNode(label));
+  return b;
+}
+
 // contributions -> "2 agents · 1 source · 1 skill". Arrays (listInstalledPlugins)
 // or plain counts are both tolerated.
 function contribSummary(c) {
   const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
   const parts = [
     [n(c && c.agents), 'agent'], [n(c && c.taskSources), 'source'],
-    [n(c && c.models), 'model'],
+    [n(c && c.chatChannels), 'chat channel'], [n(c && c.models), 'model'],
     [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
   ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
   return parts.join(' · ') || 'no contributions';
 }
 
-// renderPluginList(plugins) -> <div.pl-list> of cards. Action buttons + the
-// enable checkbox carry data-name and a pl-* class so app.js can wire ONE
-// delegated listener on the list container.
-export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
+// renderPluginList(plugins, {channelStatus}) -> <div.pl-list> of cards.
+// Action buttons + the enable checkbox carry data-name and a pl-* class so
+// app.js can wire ONE delegated listener on the list container. channelStatus
+// rows (GET /api/chat/status) add per-channel live badges; the badge carries
+// data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
+// in place.
+export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
   const root = h(doc, 'div', 'pl-list');
   for (const p of plugins || []) {
     const card = h(doc, 'section', 'card plugin-card');
@@ -49,6 +68,17 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     head.appendChild(toggle);
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
+    if (p.repo || p.marketplaceName) {
+      const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
+      card.appendChild(h(doc, 'small', 'pl-provenance hint mono',
+        p.pinnedSha ? `${prov} @ ${sha7(p.pinnedSha)}` : prov));
+    }
+    const chRows = (channelStatus || []).filter((c) => c.plugin === p.name);
+    if (chRows.length) {
+      const chans = h(doc, 'div', 'pl-channels');
+      for (const c of chRows) chans.appendChild(channelBadge(doc, c));
+      card.appendChild(chans);
+    }
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
       const b = h(doc, 'button', `btn-ghost ${cls}`, label);
@@ -60,9 +90,19 @@ export function renderPluginList(plugins, { doc = globalThis.document } = {}) {
     root.appendChild(card);
   }
   if (!plugins || !plugins.length) {
-    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Add a GitHub repo to get started.'));
+    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Browse Available below or add a marketplace.'));
   }
   return root;
+}
+
+// One live channel badge: dot color by connection state + platform label.
+// Exported so app.js can re-render a single badge on a channel-status event.
+export function channelBadge(doc, c) {
+  const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting' }[c.state] || 'red';
+  const b = h(doc, 'span', `badge ${stateCls} pl-channel`, `${c.displayName || c.channelId} · ${c.state}`);
+  b.dataset.channelKey = `${c.plugin}/${c.channelId}`;
+  if (c.detail) b.title = c.detail;
+  return b;
 }
 
 // renderOrphanList(orphans) -> <div.pl-orphans> of "leftover data" rows.
@@ -87,7 +127,7 @@ export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
 }
 
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.
-// entry: { name, repoUrl, sha } (a /api/plugins/repo discovery row + repo/sha);
+// entry: { name, repoUrl, sha } (a marketplace snapshot plugin + the marketplace's url/lastSync.sha);
 // inventory: buildInstallInventory shape. Secrets render red; setup commands verbatim.
 export function renderInstallConsent(entry, inventory, { doc = globalThis.document } = {}) {
   const inv = inventory || {};
@@ -109,6 +149,18 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     const row = h(doc, 'div', 'pl-consent-row', s.displayName || s.id);
     for (const key of s.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
     sources.appendChild(row);
+  }
+  if ((inv.chatChannels || []).length) {
+    const channels = section(`Chat channels (${inv.chatChannels.length})`);
+    for (const ch of inv.chatChannels) {
+      const dirs = [ch.inbound && 'inbound', ch.outbound && 'outbound'].filter(Boolean).join(' + ');
+      const row = h(doc, 'div', 'pl-consent-row',
+        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}) — runs a persistent worker`);
+      for (const key of ch.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
+      channels.appendChild(row);
+    }
+    channels.appendChild(h(doc, 'div', 'pl-consent-row pl-channel-warn',
+      'Inbound chat can pause/stop/approve runs: anyone holding the bot token or in an allowed chat controls worca-cc.'));
   }
   // Models (design §9.4): the base URL renders VERBATIM — a model's env can
   // redirect all API traffic for that model, so the reviewer must see where.
@@ -182,15 +234,29 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
   return root;
 }
 
-// renderConfigForm(sources: [{id, schema, values}]) — one <form.pl-config-form>
+// renderConfigForm(sections) — one <form.pl-config-form>
 // per task source. secret:true fields (text-only per normalizeManifest) render
 // type=password, NEVER prefilled; a stored value arrives redacted as {set:true}
 // -> placeholder '(set)' + data-set="1" so collect can skip it untouched.
-export function renderConfigForm(sources, { doc = globalThis.document } = {}) {
+// Accepts the legacy array of sources OR the full { sources, channels } config
+// payload. Channel forms carry data-channel-id (collectConfigForm routes the
+// PUT accordingly) and a small platform heading so mixed plugins stay legible.
+export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'pl-config');
-  for (const src of sources || []) {
+  const sources = Array.isArray(sections) ? sections : (sections?.sources || []);
+  const channels = Array.isArray(sections) ? [] : (sections?.channels || []);
+  const rows = [
+    ...sources.map((x) => ({ ...x, _kind: 'source' })),
+    ...channels.map((x) => ({ ...x, _kind: 'channel' })),
+  ];
+  for (const src of rows) {
     const form = h(doc, 'form', 'pl-config-form');
-    form.dataset.sourceId = src.id || '';
+    if (src._kind === 'channel') {
+      form.dataset.channelId = src.id || '';
+      form.appendChild(h(doc, 'div', 'pl-config-h', `${src.displayName || src.id} (${src.platform || 'chat'} channel)`));
+    } else {
+      form.dataset.sourceId = src.id || '';
+    }
     for (const f of src.schema || []) {
       const field = h(doc, 'div', 'field');
       field.appendChild(h(doc, 'label', '', f.label || f.key));
@@ -225,14 +291,16 @@ export function renderConfigForm(sources, { doc = globalThis.document } = {}) {
   return root;
 }
 
-// collectConfigForm(formEl) -> { sourceId, values }. An untouched {set:true}
-// secret (data-set="1", still empty) is OMITTED — saving never wipes a secret.
+// collectConfigForm(formEl) -> { sourceId | channelId, values }. An untouched
+// {set:true} secret (data-set="1", still empty) is OMITTED — saving never
+// wipes a secret. Channel forms carry data-channel-id instead of data-source-id.
 export function collectConfigForm(formEl) {
   const values = {};
   for (const input of formEl.querySelectorAll('[data-key]')) {
     if (input.dataset.set === '1' && input.value === '') continue;
     values[input.dataset.key] = input.value;
   }
+  if (formEl.dataset.channelId) return { channelId: formEl.dataset.channelId, values };
   return { sourceId: formEl.dataset.sourceId || '', values };
 }
 
@@ -270,5 +338,93 @@ export function renderReferences409(refs, { doc = globalThis.document } = {}) {
     ul.appendChild(h(doc, 'li', 'mono', text));
   }
   root.appendChild(ul);
+  return root;
+}
+
+// relTime(iso) -> "just now"/"5m ago"/"3h ago"/"2d ago"/ISO date fallback. Pure,
+// jsdom-safe (tests pass a fixed `now`). Exported for reuse + unit tests (C4).
+export function relTime(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return String(iso || 'unknown');
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24); if (d < 30) return `${d}d ago`;
+  return String(iso).slice(0, 10);
+}
+
+// renderAvailableList(marketplaces) -> <div.pl-available> of installable cards
+// across every marketplace snapshot (GET /api/marketplaces). Install buttons
+// carry data-name + data-marketplace for app.js's delegated listener; installed
+// plugins render a badge instead; a never-synced marketplace renders no button
+// (there is no sha to pin yet — Refresh first).
+export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
+  const root = h(doc, 'div', 'pl-available');
+  const mkts = marketplaces || [];
+  let cards = 0;
+  for (const m of mkts) {
+    for (const p of m.plugins || []) {
+      cards++;
+      const card = h(doc, 'section', 'card pl-avail-card');
+      card.dataset.name = p.name;
+      card.dataset.marketplace = m.id;
+      const head = h(doc, 'div', 'pl-head');
+      head.appendChild(h(doc, 'b', 'pl-name', p.name));
+      head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
+      head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-badge', m.name || m.id));
+      if (p.installed) {
+        head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
+      } else if (m.lastSync) {
+        const b = h(doc, 'button', 'btn btn-primary btn-mini pl-install-avail', 'Install…');
+        b.type = 'button';
+        b.dataset.name = p.name;
+        b.dataset.marketplace = m.id;
+        head.appendChild(b);
+      }
+      card.appendChild(head);
+      if (p.description) card.appendChild(h(doc, 'small', 'hint', p.description));
+      card.appendChild(h(doc, 'small', 'pl-avail-src hint mono', m.url)); // C10: unspoofable source url
+      root.appendChild(card);
+    }
+  }
+  if (!mkts.length) root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces yet — add one below.'));
+  else if (!cards) root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins discovered in your marketplaces.'));
+  return root;
+}
+
+// renderMarketplaceList(marketplaces) -> <div.pl-mkts> of registry rows with
+// Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
+// lines; the snapshot stays usable (stale) per spec §4.6.
+export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
+  const root = h(doc, 'div', 'pl-mkts');
+  for (const m of marketplaces || []) {
+    const row = h(doc, 'div', 'card pl-mkt-row');
+    row.dataset.id = m.id;
+    const head = h(doc, 'div', 'pl-head');
+    head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
+    if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
+    const actions = h(doc, 'div', 'pl-mkt-actions');
+    for (const [cls, icon, label] of [
+      ['btn-ghost pl-mkt-refresh', 'refresh', 'Refresh'],
+      ['pl-remove pl-mkt-remove', 'bin', 'Remove'],
+    ]) {
+      const b = iconBtn(doc, cls, icon, label);
+      b.dataset.id = m.id;
+      actions.appendChild(b);
+    }
+    head.appendChild(actions);
+    row.appendChild(head);
+    row.appendChild(h(doc, 'small', 'pl-mkt-url hint mono', m.url));
+    const n = (m.plugins || []).length;
+    row.appendChild(h(doc, 'small', 'pl-mkt-sync hint', m.lastSync
+      ? `${sha7(m.lastSync.sha)} · synced ${relTime(m.lastSync.at, now)} · ${n} plugin${n === 1 ? '' : 's'}`
+      : 'never synced — refresh to discover plugins'));
+    for (const w of m.warnings || []) row.appendChild(h(doc, 'div', 'pl-mkt-warning hint err', w));
+    root.appendChild(row);
+  }
+  if (!(marketplaces || []).length) {
+    root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces registered.'));
+  }
   return root;
 }

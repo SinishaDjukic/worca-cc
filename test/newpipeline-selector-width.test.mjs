@@ -17,8 +17,10 @@ function ruleBody(selector) {
   return m ? m[1] : null;
 }
 
-test('.stage-cfg .select-wrap is wide enough to show long model + effort values', () => {
-  const body = ruleBody('.stage-cfg .select-wrap');
-  assert.ok(body, '.stage-cfg .select-wrap rule must exist');
+test('the agent row\'s .select-wrap is wide enough to show long model + effort values', () => {
+  // The controls moved from the always-open .stage-cfg card into the accordion
+  // row body (newpipeline-ux-design.md §4.7); the width guarantee travels with them.
+  const body = ruleBody('.agent-row-body .select-wrap');
+  assert.ok(body, '.agent-row-body .select-wrap rule must exist');
   assert.match(body, /width:\s*180px/, 'selector wrap should be 180px so long model IDs fit');
 });

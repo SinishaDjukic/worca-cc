@@ -62,7 +62,6 @@ test('run-card template keeps every control as a sibling in one .log-filters bar
   assert.ok(bar, 'run-card head must contain a .log-filters bar');
   const pills = [...bar.children].map((el) => el.className);
   assert.deepEqual(pills, [
-    'log-f log-clear',
     'log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step', 'log-f log-f-cycle',
     'log-f log-search', 'log-f log-copy',
   ]);
@@ -80,10 +79,6 @@ test('the search box and copy button are labelled and typed for a11y', () => {
   assert.equal(copy.tagName, 'BUTTON');
   assert.equal(copy.getAttribute('type'), 'button', 'must not submit an enclosing form');
   assert.ok(copy.getAttribute('aria-label'), 'copy needs an aria-label');
-  const clear = bar.querySelector('.log-clear');
-  assert.equal(clear.tagName, 'BUTTON');
-  assert.equal(clear.getAttribute('type'), 'button', 'must not submit an enclosing form');
-  assert.ok(clear.getAttribute('aria-label'), 'clear needs an aria-label');
 });
 
 test('the cycle separator is a styled rule, not a log line', () => {

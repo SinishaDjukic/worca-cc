@@ -309,7 +309,7 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
 test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    assert.deepEqual(Object.keys(j).sort(), ['costLimitResetPeriod', 'default', 'pipelineCostLimitUsd',
+    assert.deepEqual(Object.keys(j).sort(), ['chat', 'costLimitResetPeriod', 'default', 'pipelineCostLimitUsd',
       'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');

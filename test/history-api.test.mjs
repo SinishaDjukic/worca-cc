@@ -8,16 +8,16 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { writeClarify, writeReview } from '../src/core/artifacts.mjs';
-import { seedPipeline } from './helpers/db-seed.mjs';
+import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 
-let homeDir, srv, base, prevHome, alphaKey, alphaId;
+let homeDir, srv, base, prevHome, alphaKey, alphaId, alphaDir, proj;
 
 // The server shares the git-info runner singleton; reset it (and the hasGh memo)
 // before each test so a stub from one test never bleeds into the next.
@@ -31,10 +31,10 @@ before(async () => {
   // Seed via the production writer; pin the store_meta name to 'Alpha' so the
   // projectName assertion is deterministic (createPipeline's ensureMeta would derive
   // the temp-dir basename otherwise).
-  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-histapi-proj-'));
+  proj = await mkdtemp(join(tmpdir(), 'worca-cc-histapi-proj-'));
   const seeded = await seedPipeline(proj, { title: 'Alpha run', status: 'done',
     startedAt: '2026-06-01T00:00:00Z', updatedAt: '2026-06-01T00:00:00Z' });
-  alphaId = seeded.id; alphaKey = seeded.key;
+  alphaId = seeded.id; alphaKey = seeded.key; alphaDir = seeded.dir;
   writeStoreMeta(alphaKey, 'project', { key: alphaKey, name: 'Alpha', path: proj });
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
@@ -130,4 +130,48 @@ test('GET /api/history/:key/:id includes clarify Q&A and per-cycle reviews', asy
   assert.deepEqual(j.reviews.map((x) => [x.kind, x.cycle]), [['impl', 1], ['impl', 2]]);
   assert.equal(j.reviews[0].issues[0].severity, 'major');
   assert.equal(j.reviews[0].issues[0].location, 'src/x.mjs:10');
+});
+
+// ── Task 2 — inline diff-patch routes ────────────────────────────────────────────
+test('GET /api/history/:key/:id/diff serves the persisted patch inline', async () => {
+  const patch = 'diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-a\n+b\n';
+  await writeFile(join(alphaDir, 'diff-patch.patch'), patch);
+  const r = await fetch(`${base}/api/history/${alphaKey}/${alphaId}/diff`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /text\/x-diff/); // express appends "; charset=utf-8"
+  assert.equal(r.headers.get('content-disposition'), null);    // inline, not attachment
+  assert.equal(await r.text(), patch);
+
+  // A zero-length patch is a real (rare) outcome — diffPatch() returns '' when git
+  // fails and persistDiffPatch writes it verbatim. readRunArtifactText answers ''
+  // (which is != null), so this must be 200 + empty body, NOT 404: an empty patch
+  // is not a missing artifact.
+  await writeFile(join(alphaDir, 'diff-patch.patch'), '');
+  const empty = await fetch(`${base}/api/history/${alphaKey}/${alphaId}/diff`);
+  assert.equal(empty.status, 200);
+  assert.equal(await empty.text(), '');
+});
+
+test('GET /api/history/:key/:id/diff -> 404 when absent / malformed key', async () => {
+  assert.equal((await fetch(`${base}/api/history/${alphaKey}/no-such-id/diff`)).status, 404);
+  assert.equal((await fetch(`${base}/api/history/..%2fevil/x/diff`)).status, 404);
+});
+
+test('workspace /diff route: key validation + concatenated patch round-trip', async () => {
+  assert.equal((await fetch(`${base}/api/workspaces/..%2fevil/runs/x/diff`)).status, 404);
+
+  // seedWorkspacePipeline(primaryDir, workspaceKey, state, projects) -> { id, dir }
+  // (no `key` in the return, unlike seedPipeline's { id, dir, key }).
+  const wk = 'wks-team-a-00000001';
+  const seeded = await seedWorkspacePipeline(
+    proj, wk, { title: 'ws run', status: 'done' },
+    [{ projectKey: alphaKey, projectDir: proj, projectName: 'alpha' }],
+  );
+  // Byte-for-byte the shape the workspace-marker parsing consumes
+  // (orchestrator.mjs:3443 joins members as `# <projectKey>\n<patch>` with '\n\n').
+  const patch = `# ${alphaKey}\ndiff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-x\n+y\n`;
+  await writeFile(join(seeded.dir, 'diff-patch.patch'), patch);
+  const r = await fetch(`${base}/api/workspaces/${wk}/runs/${seeded.id}/diff`);
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), patch);
 });

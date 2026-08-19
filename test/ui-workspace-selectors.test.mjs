@@ -60,23 +60,8 @@ test('beginRun is positional with an opts 4th arg (C2), single legacy call site 
   assert.match(js, /beginRun\(data\.runId, projectDir, title,\s*target === 'workspace' \? \{ workspaceId, workspaceName, projectNames: workspaceProjectNames \} : \{\}\)/);
 });
 
-test('VIEW_NAMES keeps the 14 real views (composer preserved + projects + plugins + guardrails + models + stats, C1) and adds the pipeline resolver route', () => {
-  // The 14 sections, in order, still open the array. 'pipeline' follows as a
-  // 15th entry that is NOT a [data-view] section: it is the canonical detail URL
-  // (#pipeline/<id>), rewritten by showView to the view that owns the pipeline
-  // (Running while live, History once finished). It has to be listed or the
-  // hashchange/boot guards would treat the deep link as unknown.
-  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings',/);
-  assert.match(js, /'pipeline'\];/);
-  // Strip the // comments first — the array spans lines and its entries are not
-  // one-per-line, so a comment would otherwise swallow the entry after it.
-  const names = js.match(/const VIEW_NAMES = \[([\s\S]*?)\];/)[1]
-    .replace(/\/\/[^\n]*/g, '')
-    .split(',').map((t) => t.trim()).filter((t) => t.startsWith("'"));
-  assert.equal(names.length, 15);
-  assert.equal(names[names.length - 1], "'pipeline'");
-  assert.ok(!/section class="view[^"]*" data-view="pipeline"/.test(html),
-    'pipeline resolves to another view; it must not have a section of its own');
+test('VIEW_NAMES is the 14-entry array with composer preserved + projects + plugins + guardrails + models + stats (C1)', () => {
+  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'\];/);
 });
 
 test('composer-core is imported INSIDE app.js via ES6 import (C7), not a separate script tag', () => {

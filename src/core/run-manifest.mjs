@@ -10,13 +10,17 @@
 // Phase 1 writes the MINIMAL manifest (pipelineId, runRootMode, isWorkspace,
 // members[]) so the boot sweep and pipeline-delete have member real dirs from the
 // very first detached run. Phase 3 EXTENDS the same file with injectedPaths,
-// skillResolutions, renames, bytes, warnings, and capabilities — every read here is
-// deliberately shape-tolerant so a manifest from either phase parses.
+// skillResolutions, renames, bytes, warnings, capabilities, and the teardown
+// `retain` record — every read here is deliberately shape-tolerant so a manifest
+// from either phase parses.
 
 import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat } from 'node:fs/promises';
 import { join, resolve, sep, basename, dirname } from 'node:path';
 
 export const RUN_MANIFEST_FILE = 'run.json';
+
+/** Stable machine-readable reasons why a terminal run root must be retained. */
+export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed' });
 
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11). */
 export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', 'repos']);

@@ -61,7 +61,10 @@ async function bootHist({ fetchHandler } = {}) {
   await new Promise((r) => setTimeout(r, 0));
   const selectProject = () => { const s = window.document.querySelector('#projectSelect'); s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true })); };
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, selectProject, showHistory };
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  const showDetail = (key, id) => { window.location.hash = `history/${key}/${id}`; window.dispatchEvent(new window.Event('hashchange')); };
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  return { window, selectProject, showHistory, showDetail, settle };
 }
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
@@ -118,16 +121,17 @@ test('PULSE SCOPING: a history-rendered card has no pulsing square', async () =>
   };
   const ctx = await bootHist({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }], live: [] }) });
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      // MOST-SPECIFIC FIRST: the keyed detail URL has the list URL as a prefix.
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }], live: [] }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const detail = ctx.window.document.querySelector('#history .hist-detail');
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
+  const detail = ctx.window.document.querySelector('#hist-detail .hd');
 
   // squares exist (finished sub) but none is the pulsing hook
   assert.ok(detail.querySelector('.run-flow .node .fan .sq'), 'history paints a (grey) square');

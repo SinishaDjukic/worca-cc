@@ -53,6 +53,22 @@ test('done plugin pipeline reports completed with a diffstat summary (capabiliti
   assert.ok(Array.isArray(calls[0].links), 'links array present (empty: no branch/PR in bundle)');
 });
 
+test("error/stopped rows report 'failed' even WITHOUT results.json (design PR12: terminal error paths now report)", async () => {
+  const calls = [];
+  setMockSourceResponses({ reportResult: (args) => { calls.push(args); return { ok: true }; } });
+  for (const [status, i] of [['error', 0], ['stopped', 1]]) {
+    const p = await createPipeline(await mkdtemp(join(tmpdir(), 'worca-cc-wb-')), {
+      promptText: '# x', sourceType: 'plugin', sourceMeta: META, title: 'Broken run',
+    });
+    getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, p.id);
+    // no results.json on purpose: failed runs often die before _buildResults
+    const out = await retryWriteback(p.id);
+    assert.deepEqual(out, { ok: true }, status);
+    assert.equal(calls[i].status, 'failed', `row status '${status}' maps to 'failed'`);
+    assert.match(calls[i].summary, new RegExp(`— ${status}`), 'summary carries the raw status');
+  }
+});
+
 test('connector capabilities {writeBack:false} skips the report', async () => {
   const calls = [];
   setMockSourceResponses({

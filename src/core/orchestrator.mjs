@@ -48,7 +48,10 @@ import {
   readStepQuestions,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch } from './git-info.mjs';
-import { assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary } from './results.mjs';
+import {
+  assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
+  retainedWorkPatchName,
+} from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
 import { worcaHome } from './projects.mjs';
@@ -62,6 +65,7 @@ import {
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
+  RETAIN_REASONS,
 } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, MCP_GRANT_MODE } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
@@ -84,7 +88,7 @@ import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } 
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
-  isValidSourceRef,
+  isValidSourceRef, snapshotWorktreePatch,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 
@@ -163,6 +167,15 @@ const ERR_STREAM = Object.freeze({ stream: 'err' });
 function errDetail(res, max = 200) {
   const text = (res?.stderr || '').trim().replace(/\s+/g, ' ');
   return text ? `: ${clip(text, max)}` : '';
+}
+
+/** attr for a log line whose text embeds subprocess output: ERR_STREAM only
+ *  when the subprocess actually said something on stderr. A `|| 'exit N'`
+ *  fallback carries no stderr bytes — tagging it would make the tag a lie
+ *  (the same rule errDetail documents for the text itself). */
+export function errStreamAttr(stderrText, extra = null) {
+  if (!(stderrText && String(stderrText).trim())) return extra;
+  return extra ? { ...extra, ...ERR_STREAM } : ERR_STREAM;
 }
 
 /**
@@ -729,6 +742,7 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', {
           status: 'stopped',
@@ -742,6 +756,7 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', {
         status: 'error',
@@ -978,6 +993,7 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
@@ -988,6 +1004,7 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
@@ -1335,7 +1352,7 @@ class Orchestrator extends EventEmitter {
         'warn',
         `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`
           + errDetail(res),
-        ERR_STREAM,
+        errStreamAttr(res?.stderr),
       );
     }
   }
@@ -1374,17 +1391,16 @@ class Orchestrator extends EventEmitter {
         this._log('graph', 'warn',
           `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`
             + errDetail(res),
-          ERR_STREAM);
+          errStreamAttr(res?.stderr));
       }
     });
   }
 
   /**
    * Tear down the per-pipeline worktree (C1). Retention policy:
-   *   - ALWAYS remove the checkout dir and KEEP the feature branch — done, error,
-   *     or stopped alike. The branch carries every change made up to the stop/error
-   *     point so the user can recover or merge the agent's work; the worktree is
-   *     just the disposable checkout.
+   *   - Remove the checkout and keep the feature branch after a successful (or
+   *     unnecessary) commit. If git status/add/commit fails, retain the checkout
+   *     so its uncommitted work remains recoverable.
    * Always force:true — agents have edited files, so the non-force path would
    * refuse and leak. Idempotent; safe to call when setup never ran.
    */
@@ -1397,7 +1413,14 @@ class Orchestrator extends EventEmitter {
     // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
     // for the reviewer's diff only — it never creates a commit). On error/stop this
     // is what captures the partial work made up to that point.
-    await this._commitWork(info).catch(() => {});
+    const commit = await this._commitWork(info);
+    const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
+    if (retained) {
+      await this._snapshotRetained(info);
+      this.workDir = this.projectDir;
+      await this._persist().catch(() => {});
+      return;
+    }
     // branch:null — the branch is always kept (done/error/stopped alike); only the
     // disposable checkout is removed.
     const res = await removeWorktree({
@@ -1407,7 +1430,7 @@ class Orchestrator extends EventEmitter {
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
-      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
+      this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
     }
     if (this.pipeline) {
       await appendAudit(
@@ -1421,6 +1444,7 @@ class Orchestrator extends EventEmitter {
       this.state.branch.branchKept = true;
     }
     this.workDir = this.projectDir;
+    await this._persist().catch(() => {});
   }
 
   /**
@@ -1435,10 +1459,17 @@ class Orchestrator extends EventEmitter {
     if (this.branchInfos.size === 0) return;
     const entries = [...this.branchInfos.entries()]; // [projectKey, info]
     this.branchInfos = new Map(); // guard against a double teardown
+    let anyRetained = false;
     for (const [projectKey_, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
-      await this._commitWork(info, branchRecord).catch(() => {});
+      const commit = await this._commitWork(info, branchRecord);
+      if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
+        anyRetained = true;
+        await this._snapshotRetained(info, projectKey_);
+        this.workDirs.delete(projectKey_);
+        continue;
+      }
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
@@ -1446,7 +1477,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
+        this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1460,8 +1491,10 @@ class Orchestrator extends EventEmitter {
       }
       this.workDirs.delete(projectKey_);
     }
-    // Keep the scalar mirror coherent for late observers.
-    if (this.state.branch) {
+    // Keep the scalar mirror coherent for late observers — but never claim a
+    // retained checkout was removed (the detached twin guards the same way,
+    // via !retainedMembers.length).
+    if (this.state.branch && !anyRetained) {
       this.state.branch.worktreeRemoved = true;
       this.state.branch.branchKept = true;
     }
@@ -1497,6 +1530,7 @@ class Orchestrator extends EventEmitter {
     const pipelineDir = this.pipeline?.dir || null;
     const entries = [...this.branchInfos.entries()];   // [projectKey, info]
     this.branchInfos = new Map();                      // guard against a double teardown
+    const retainedMembers = [];
     for (const [key, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const wt = info.worktreeDir;
@@ -1517,12 +1551,32 @@ class Orchestrator extends EventEmitter {
         } catch { /* best-effort: a missing file needs no strip */ }
       }
       // (3) commit onto the kept branch, excluding every injected path.
-      const branchRecord = (this.state.branches && this.state.branches[key]) || null;
-      await this._commitWork(info, branchRecord, { excludePathspecs: this._excludePathspecs(key) })
-        .catch(() => {});
+      // Single-project rows persist state.branch; workspace rows persist the
+      // per-member map inside workspace_meta. Updating state.branches for a
+      // single run would be in-memory-only on the DB round trip.
+      const branchRecord = this.isWorkspace
+        ? ((this.state.branches && this.state.branches[key]) || null)
+        : this.state.branch;
+      const commit = await this._commitWork(
+        info, branchRecord, { excludePathspecs: this._excludePathspecs(key) },
+      );
+      const retained = await this._recordCommitFailure(commit, { key, info, branchRecord });
       // (4) remove what worca-cc injected, so nothing can be committed dangling or
       // outlive the run root.
       await removeInjectedPaths(wt, injected);
+      if (retained) {
+        await this._snapshotRetained(info, key);
+        retainedMembers.push({
+          projectKey: key,
+          worktreeDir: wt,
+          branch: info.branch,
+          step: commit.step,
+          message: commit.message,
+          at: branchRecord?.commitFailed?.at || new Date().toISOString(),
+        });
+        this.workDirs.delete(key);
+        continue;
+      }
       // (5) remove the checkout; the branch is always kept.
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
@@ -1531,7 +1585,7 @@ class Orchestrator extends EventEmitter {
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
-        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, ERR_STREAM);
+        this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
       if (this.pipeline) {
         await appendAudit(
@@ -1546,7 +1600,7 @@ class Orchestrator extends EventEmitter {
       this.workDirs.delete(key);
     }
     // Keep the scalar mirror coherent for late observers.
-    if (this.state.branch) {
+    if (this.state.branch && !retainedMembers.length) {
       this.state.branch.worktreeRemoved = true;
       this.state.branch.branchKept = true;
     }
@@ -1564,16 +1618,30 @@ class Orchestrator extends EventEmitter {
       // (7) §8.11 stray scan — nothing outside the known set is silently lost.
       const strays = await scanStrayEntries({ runRoot: this.runRoot, pipelineDir });
       for (const w of strays) await this._recordRunWarning(w);
+      // Persist the retention decision before copying the manifest. The copy is
+      // the durable explanation after a normal teardown removes the run root.
+      await updateRunManifest(this.runRoot, {
+        retain: retainedMembers.length ? {
+          reason: RETAIN_REASONS.COMMIT_FAILED,
+          at: retainedMembers[0].at,
+          members: retainedMembers,
+        } : null,
+      });
       // (8) §5.2 durable ledger: the run root is about to disappear.
       await copyRunManifestTo(this.runRoot, pipelineDir);
       // (9) guarded removal (§8.13).
-      const removal = await rmGuarded(this.runRoot, {
-        worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
-      });
-      if (removal.removed) {
-        this._log('worktree', 'info', `Run root removed at ${this.runRoot}.`);
+      if (retainedMembers.length) {
+        this._log('worktree', 'warn',
+          `Run root retained at ${this.runRoot} because ${retainedMembers.length} worktree commit(s) failed.`);
       } else {
-        this._log('worktree', 'warn', `run root NOT removed: ${removal.reason}`);
+        const removal = await rmGuarded(this.runRoot, {
+          worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
+        });
+        if (removal.removed) {
+          this._log('worktree', 'info', `Run root removed at ${this.runRoot}.`);
+        } else {
+          this._log('worktree', 'warn', `run root NOT removed: ${removal.reason}`);
+        }
       }
     }
     await this._persist().catch(() => {});
@@ -1584,8 +1652,8 @@ class Orchestrator extends EventEmitter {
    * survives teardown inside the pipeline artifact dir) and `run.json.warnings` (the
    * live manifest, copied out before removal). Never throws.
    */
-  async _recordRunWarning(text) {
-    this._log('worktree', 'warn', text);
+  async _recordRunWarning(text, attr = null) {
+    this._log('worktree', 'warn', text, attr);
     if (!this.runRoot) return;
     try {
       const cur = (await readRunManifest(this.runRoot)) || {};
@@ -1595,9 +1663,89 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Best-effort durable copy of the retained work, written the moment retention
+   * is decided — a crash or manual deletion before an explicit discard must not
+   * leave the checkout as the only copy. Failure (or a clean tree) keeps the
+   * worktree as the source of truth (same failure class as the commit itself).
+   */
+  async _snapshotRetained(info, key = null) {
+    const pipelineDir = this.pipeline?.dir;
+    if (!pipelineDir || !info?.worktreeDir) return;
+    const name = retainedWorkPatchName(this.isWorkspace ? key : null);
+    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
+    if (snap.ok && snap.file) {
+      recordArtifact(this.pipeline.id, 'retained-work-patch', name);
+      this._log('git', 'info', `Retained-work recovery patch saved: ${name}`);
+    } else if (snap.ok) {
+      this._log('git', 'info', 'Retained-work snapshot skipped: nothing uncommitted to save.');
+    } else {
+      this._log('git', 'warn',
+        `retained-work patch not saved (git ${snap.step}: ${snap.message}); the worktree is the only copy`,
+        snap.fromStderr ? ERR_STREAM : null);
+    }
+  }
+
+  /**
+   * Stamp a failed teardown commit on its persisted branch record and emit both
+   * human-readable durable traces. Returns true when the caller must keep the
+   * checkout containing the uncommitted work.
+   */
+  async _recordCommitFailure(result, { key = null, info, branchRecord } = {}) {
+    if (result?.ok !== false) return false;
+    const message = result.message || `git ${result.step || 'commit'} failed`;
+    const record = {
+      code: RETAIN_REASONS.COMMIT_FAILED,
+      step: result.step,
+      message,
+      at: new Date().toISOString(),
+    };
+    let target = branchRecord;
+    if (!target) {
+      // Synthesize the record: retention must ALWAYS be visible to
+      // retainedWorkFor/archive/discard, not only to a human reading warnings.
+      // branchRecord came FROM state.branches[key] / state.branch, so a null one
+      // means that slot is empty — this never overwrites a non-null record.
+      target = { feature: info?.branch || null, worktreeDir: info?.worktreeDir || null };
+      if (this.isWorkspace && key != null) {
+        this.state.branches[key] = target;
+      } else {
+        this.state.branch = target;
+      }
+      await this._recordRunWarning(
+        `${key ? `${key}: ` : ''}commit failed at git ${result.step} (${message}) with no branch record; ` +
+        `synthesized one for the retained worktree at ${info?.worktreeDir || '(unknown)'}`,
+        result.fromStderr ? ERR_STREAM : null,
+      );
+    }
+    target.commitFailed = record;
+    target.worktreeRemoved = false;
+    target.branchKept = true;
+    const prefix = key ? `${key}: ` : '';
+    this._log('git', 'warn',
+      `${prefix}commit failed at git ${result.step} (${message}) — KEEPING the worktree at ${info?.worktreeDir}`,
+      result.fromStderr ? ERR_STREAM : null);
+    if (this.pipeline) {
+      await appendAudit(this.pipeline.dir,
+        `Commit FAILED for \`${info?.branch || '(unknown)'}\` at git ${result.step}: ${message}. ` +
+        `Worktree RETAINED at \`${info?.worktreeDir || '(unknown)'}\`.`).catch(() => {});
+    }
+    // Persist NOW. The callers' later _persist() is best-effort/swallowed; the
+    // retention stamp must not ride on it (F2's crash window). _persist() also
+    // swallows internally, so call the writer directly to observe a real failure.
+    try {
+      await writeState(this.pipeline?.dir ?? null, this.state);
+    } catch (e) {
+      this._log('git', 'error',
+        `retention stamp could not be persisted (${e?.message || e}); ` +
+        'the run.json retain record is the only durable copy');
+    }
+    return true;
+  }
+
+  /**
    * Commit every change in the worktree onto the feature branch so the kept
    * branch actually carries the agent's work after the worktree is removed.
-   * Best-effort: never throws; logs and returns null on any failure. Skips
+   * Best-effort: never throws; returns a discriminated result. Skips
    * cleanly when the working tree is clean (no diff from the checkpoint), which
    * is the truthful "no change needed" outcome. Records the SHA on state.branch.
    * @param {{worktreeDir:string, branch:string}} info the branch being kept
@@ -1607,29 +1755,40 @@ class Orchestrator extends EventEmitter {
    * @param {{excludePathspecs?:string[]}} [opts] §8.8 exclusion set for this
    *   worktree. With the DEFAULT empty array — every legacy run — the method keeps
    *   today's bare `git add -A` byte-identically (§10 rollback contract).
-   * @returns {Promise<string|null>} the new commit SHA, or null when nothing committed.
+   * @returns {Promise<{ok:true,committed:boolean,sha:string|null}|
+   *                   {ok:false,step:'status'|'add'|'commit',message:string,fromStderr:boolean}>}
+   *   `fromStderr` records whether `message` embeds real stderr bytes (vs. the
+   *   `exit N` fallback), so the caller's warn can tag its provenance truthfully.
    */
   async _commitWork(info, branchRecord = this.state.branch, { excludePathspecs = [] } = {}) {
     const cwd = info?.worktreeDir;
-    if (!cwd) return null;
+    if (!cwd) return { ok: true, committed: false, sha: null };
     // ignoreAbort on every call: teardown runs after stop/error has aborted the
     // signal, so binding it would no-op these commands and lose the partial work.
     const gitOpts = { cwd, ignoreAbort: true };
     const status = await this._git(['status', '--porcelain'], gitOpts);
     if (!status.ok) {
-      this._log('git', 'warn', `commit skipped: git status failed: ${status.stderr.trim()}`, ERR_STREAM);
-      return null;
+      if (!existsSync(cwd)) {
+        // The checkout is gone: there is no work to retain, and stamping
+        // commitFailed would create an unclearable phantom retention (F15).
+        this._log('git', 'warn', `commit skipped: worktree missing at ${cwd}`);
+        return { ok: true, committed: false, sha: null };
+      }
+      const message = status.stderr.trim() || `exit ${status.code}`;
+      this._log('git', 'warn', `commit skipped: git status failed: ${message}`, errStreamAttr(status.stderr));
+      return { ok: false, step: 'status', message, fromStderr: !!status.stderr.trim() };
     }
     if (!status.stdout.trim()) {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
-      return null;
+      return { ok: true, committed: false, sha: null };
     }
     const add = excludePathspecs.length
       ? await this._git(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
       : await this._git(['add', '-A'], gitOpts);
     if (!add.ok) {
-      this._log('git', 'warn', `commit skipped: git add failed: ${add.stderr.trim()}`, ERR_STREAM);
-      return null;
+      const message = add.stderr.trim() || `exit ${add.code}`;
+      this._log('git', 'warn', `commit skipped: git add failed: ${message}`, errStreamAttr(add.stderr));
+      return { ok: false, step: 'add', message, fromStderr: !!add.stderr.trim() };
     }
     // §8.8 status recheck: with mounts present the porcelain gate above is never
     // clean, so a run whose agent changed nothing would attempt a commit that fails
@@ -1638,7 +1797,7 @@ class Orchestrator extends EventEmitter {
       const staged = await this._git(['diff', '--cached', '--quiet'], gitOpts);
       if (staged.ok) {   // exit 0 => nothing staged
         this._log('git', 'info', 'No changes to commit (working tree clean).');
-        return null;
+        return { ok: true, committed: false, sha: null };
       }
     }
     const title = this.state.title || this.baseName || 'changes';
@@ -1662,7 +1821,7 @@ class Orchestrator extends EventEmitter {
       // node_modules today and do not detached). Retry ONCE with hooks disabled for
       // that invocation only, logging both facts.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
-      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, ERR_STREAM);
+      this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
         ['-c', 'core.hooksPath=', '-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator',
          'commit', '-m', msg],
@@ -1677,8 +1836,9 @@ class Orchestrator extends EventEmitter {
       }
     }
     if (!commit.ok) {
-      this._log('git', 'warn', `commit failed: ${commit.stderr.trim() || `exit ${commit.code}`}`, ERR_STREAM);
-      return null;
+      const message = commit.stderr.trim() || `exit ${commit.code}`;
+      this._log('git', 'warn', `commit failed: ${message}`, errStreamAttr(commit.stderr));
+      return { ok: false, step: 'commit', message, fromStderr: !!commit.stderr.trim() };
     }
     const ref = await this._git(['rev-parse', 'HEAD'], gitOpts);
     const sha = ref.ok ? ref.stdout.trim() : null;
@@ -1689,7 +1849,7 @@ class Orchestrator extends EventEmitter {
         `Committed agent work to \`${info.branch}\` at \`${sha.slice(0, 10)}\`.`,
       ).catch(() => {});
     }
-    return sha;
+    return { ok: true, committed: true, sha };
   }
 
   // ── phase helpers ─────────────────────────────────────────────────────────────
@@ -2023,10 +2183,14 @@ class Orchestrator extends EventEmitter {
   /**
    * Run the decomposed implement stage. Rewrite + persist the UI stepper into per-phase
    * / per-task cells, then run each phase IN ORDER (tasks within a phase in PARALLEL,
-   * shared working tree). Abort immediately on the first genuine task failure. Stages
-   * the combined tree itself (the guard returns early from _runStep, skipping its tail
-   * stage). Returns the dispatcher's [{node,result,ctx}] shape with ONE synthetic
-   * implementer result so the reviewer step sees a settled 'code' producer.
+   * shared working tree). The FIRST genuine task failure aborts the phase IMMEDIATELY:
+   * a per-task rejection observer fires the phase-local AbortController while siblings
+   * are still running (allSettled alone reports failures only after every sibling has
+   * finished), and the thrown phase error is that first failure — never a cancelled
+   * sibling's AbortError. Stages the combined tree itself (the guard returns early from
+   * _runStep, skipping its tail stage). Returns the dispatcher's [{node,result,ctx}]
+   * shape with ONE synthetic implementer result so the reviewer step sees a settled
+   * 'code' producer.
    */
   async _runDecomposedImplement(implNode, stepIndex, cycle, bus) {
     const phases = bus.decomposition.phases;
@@ -2043,24 +2207,58 @@ class Orchestrator extends EventEmitter {
       updatePhaseStatus(this.pipeline.id, ph.ordinal, 'running', new Date().toISOString());
       await appendAudit(this.pipeline.dir, `Phase ${ph.ordinal}: ${tasks.length} task(s) starting.`);
 
+      // Abort-immediately on the FIRST genuine (non-abort, non-pause) failure.
+      // The per-task rejection observer below fires phaseAbort WHILE siblings are
+      // still running — before Promise.allSettled resolves — so one failed task
+      // cancels its in-flight siblings (SIGTERM via ctx.signal) instead of letting
+      // them burn their full runtime under a doomed phase. AbortErrors (this very
+      // cancel cascade, or stop()) and PauseErrors never trigger it: the first
+      // cancellation must not mask the real cause, and pause keeps its own unwind
+      // below. A sibling parked on an interactive recovery prompt is not
+      // signal-reachable (_ask settles only via answer()/pause()/stop()), so the
+      // trigger also rejects an open recovery prompt exactly the way pause() does —
+      // the phase is failing and must not wait on a now-meaningless human answer.
       const phaseAbort = new AbortController();
+      let firstError = null;
+      const noteFailure = (task, reason) => {
+        if (firstError || isAbort(reason) || isPause(reason)) return;
+        firstError = { task, reason };
+        phaseAbort.abort();
+        if (this.pendingQuestion?.kind === 'recovery') {
+          const pq = this.pendingQuestion;
+          this.pendingQuestion = null;
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          pq.reject(e);
+        }
+      };
       const settled = await Promise.allSettled(tasks.map((task) => {
         const taskNode = decomposedTaskNode(implNode, task, tasks, this.pipeline.dir);
-        return this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        const p = this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
+        // Side observer only: the raw promise still flows into allSettled (which
+        // attaches its own handlers, so no unhandled-rejection either way), and
+        // the .catch derivative resolves after noteFailure swallows the reason.
+        p.catch((reason) => noteFailure(task, reason));
+        return p;
       }));
 
       // Pause lands between decomposed phases (coarse but safe): aborted tasks of
-      // this phase re-run on resume as part of the whole decomposed step.
+      // this phase re-run on resume as part of the whole decomposed step. Pause
+      // outranks a recorded failure, exactly as before the observer existed.
       if (this.pauseRequested) throw pauseErr();
 
-      // Abort-immediately on the FIRST genuine (non-abort) failure.
-      let firstError = null;
-      settled.forEach((r, k) => {
-        if (r.status === 'rejected' && !isAbort(r.reason) && !firstError) {
-          firstError = { task: tasks[k], reason: r.reason };
-          phaseAbort.abort();
-        }
-      });
+      // Selection: noteFailure recorded the FIRST genuine failure in settle order
+      // (its handler runs before allSettled's own for the same promise), so a
+      // cancelled sibling's AbortError can never become the phase error. The scan
+      // is a pure backstop preserving the old task-order selection if the observer
+      // somehow saw nothing genuine.
+      if (!firstError) {
+        settled.forEach((r, k) => {
+          if (r.status === 'rejected' && !isAbort(r.reason) && !isPause(r.reason) && !firstError) {
+            firstError = { task: tasks[k], reason: r.reason };
+          }
+        });
+      }
       if (firstError) {
         updatePhaseStatus(this.pipeline.id, ph.ordinal, 'error', new Date().toISOString());
         await appendAudit(this.pipeline.dir,
@@ -2086,10 +2284,13 @@ class Orchestrator extends EventEmitter {
   /**
    * Run one decomposed task through the standard node machinery: _nodeStep records its
    * own pipeline step (distinct nodeId), _nodeCtx wires its own onEvent (so sub-agents
-   * are attributed to this task), and the producer runner runs the implementer with the
-   * self-contained TASK file authoritative (ctx.node.taskPath). The phase-local abort is
-   * folded with the run-wide signal so a sibling failure cancels it. updateTaskStatus
-   * tracks running/done/error. Errors propagate.
+   * are attributed to this task), and the standard attempt loop (`_runNodeAttempts`:
+   * recovery + usage-limit pause) runs the implementer with the self-contained TASK
+   * file authoritative (ctx.node.taskPath). The phase-local abort is folded with the
+   * run-wide signals into ctx.signal; _runDecomposedImplement's rejection observer
+   * fires it on the first genuine sibling failure, killing this task's runner
+   * mid-flight (it then settles as an AbortError — recorded 'error', logged silently,
+   * same as stop()). updateTaskStatus tracks running/done/error/paused. Errors propagate.
    */
   async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
     this._nodeStep(taskNode, stepIndex, cycle, 'start');
@@ -2099,15 +2300,45 @@ class Orchestrator extends EventEmitter {
     ctx.signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal, phaseAbort.signal]); // sibling-failure/pause cancel
     let status = 'done';
     try {
-      const runner = this._runners[taskNode.runnerType];
-      await runner(ctx); // producer -> runImplementer({ ..., taskPath: ctx.node.taskPath })
+      // Through _runNodeAttempts, not a bare runner call: a decomposed task gets
+      // the SAME recovery/usage-limit treatment as a normal node (the bare call
+      // also bypassed the terminal error line entirely — a failed decomposed run
+      // used to produce zero error-level lines).
+      await this._runNodeAttempts(taskNode, stepIndex, cycle, ctx);
     } catch (err) {
+      // Same conversion _runNode applies (2317-2319): a usage-limit/user pause
+      // unwinds through _runNodeAttempts as a pause, and a pause is NOT this
+      // task's failure — without it the finally stamps the task row and the
+      // stepper cell 'error' on a merely paused, resumable run, and
+      // _buildResumePoint sees no 'paused' step.
+      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
+        status = 'paused';
+        throw pauseErr();
+      }
       status = 'error';
+      this._logStepFailure(taskNode, stepIndex, cycle, err);
       throw err;
     } finally {
       updateTaskStatus(this.pipeline.id, task.id, status, new Date().toISOString());
-      this._nodeStep(taskNode, stepIndex, cycle, status === 'error' ? 'error' : 'done');
+      this._nodeStep(taskNode, stepIndex, cycle, status);
     }
+  }
+
+  /**
+   * The ONE `error`-level line for a terminally failed node or decomposed task.
+   * A pause/abort is not a failure, and a recoverable error that retried logged
+   * its own `warn` in _recover — both stay silent. `err.stream` is set by the
+   * runner only when the detail actually came from the CLI's stderr. Clipped
+   * head+tail: the runner's exit detail is already tail-capped (the cause sits
+   * at the END), and every stderr line was streamed as its own warn — this line
+   * is the verdict, not the transcript.
+   */
+  _logStepFailure(node, stepIndex, cycle, err) {
+    if (isAbort(err) || isPause(err)) return;
+    this._log(node.key, 'error', `step failed: ${clipMiddle(err?.message || err, 500)}`, {
+      nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
+      ...(err?.stream ? { stream: err.stream } : {}),
+    });
   }
 
   /**
@@ -2134,17 +2365,8 @@ class Orchestrator extends EventEmitter {
         endMark = 'paused';
         throw pauseErr();
       }
-      // Terminal node failure (recovery already gave up, or the error was never
-      // recoverable): the ONE `error`-level line of the agent log. A pause/abort
-      // is not a failure, and a recoverable error that retried logged its own
-      // `warn` in _recover — neither reaches here. `err.stream` is set by the
-      // runner only when the detail actually came from the CLI's stderr.
-      if (!isAbort(err) && !isPause(err)) {
-        this._log(node.key, 'error', `step failed: ${err?.message || err}`, {
-          nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
-          ...(err?.stream ? { stream: err.stream } : {}),
-        });
-      }
+      // Terminal node failure — see _logStepFailure.
+      this._logStepFailure(node, stepIndex, cycle, err);
       throw err;
     } finally {
       this._nodeStep(node, stepIndex, cycle, endMark);
@@ -2195,7 +2417,8 @@ class Orchestrator extends EventEmitter {
       return await runner(ctx);
     } catch (err) {
       if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
-        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`);
+        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`,
+          err?.stream ? ERR_STREAM : null);
         await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
         ctx.resumeSessionId = undefined;
         return await runner(ctx);
@@ -2345,7 +2568,7 @@ class Orchestrator extends EventEmitter {
    *  classes are serialized so only one recovery prompt is open at a time (the
    *  gate holds a single pendingQuestion). Returns 'retry' | 'abort'. */
   async _recover({ node, cls, err, attempt }) {
-    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`);
+    this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`, err?.stream ? ERR_STREAM : null);
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
     if (this.auto) {
@@ -3173,7 +3396,7 @@ class Orchestrator extends EventEmitter {
         'orchestrator: initial checkpoint',
       ], { cwd: dir });
       if (!commit.ok) {
-        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`, ERR_STREAM);
+        this._log('git', 'warn', `initial commit failed: ${commit.stderr.trim()}`, errStreamAttr(commit.stderr));
       }
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
@@ -3226,9 +3449,12 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
-   * source that produced it. Runs right after _buildResults() on BOTH terminal
-   * done paths so results.json exists for the summary, and the row status is
-   * already persisted 'done' (statusToResult -> 'completed'). NEVER throws and
+   * source that produced it. Runs on EVERY terminal path — after
+   * _buildResults() on the done paths (results.json exists for the summary;
+   * statusToResult -> 'completed') and after persist on the stopped/error
+   * branches (statusToResult -> 'failed'; the summary is thinner because
+   * results.json may not exist — chat-connectivity design PR12 closed the old
+   * success-only gap). NEVER throws and
    * never fails the run: a failure emits a warn `log` event and the results view
    * offers a manual retry via the same retryWriteback (Task 15 endpoint, Task 21
    * button). Prompt/markdown
@@ -3709,8 +3935,12 @@ function sumStepActive(steps) {
   return sum;
 }
 
-function isAbort(err) {
-  return err && (err.name === 'AbortError' || /aborted|stopped/i.test(err.message || ''));
+export function isAbort(err) {
+  // NAME only. Every abort/stop throw in this codebase stamps name='AbortError'
+  // (see stop()/_checkAbort/claude-runner); sniffing the message here also
+  // matched real CLI failures containing "aborted"/"stopped" and swallowed
+  // their terminal error line, recovery, and decomposed failure detection.
+  return !!err && err.name === 'AbortError';
 }
 
 /** Pause sentinel: thrown to unwind _dispatch when pause() was requested. */
@@ -4003,6 +4233,18 @@ function clip(text, n) {
   if (!text) return '';
   const s = String(text).replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/** clip(), but keeping HEAD and TAIL with an ellipsis between when over budget.
+ *  For runner exit details the frame ("claude exited with code N") leads and
+ *  the terminal cause sits at the END — the runner tail-caps for that reason —
+ *  so a head-only clip discards exactly the cause. Tail gets the larger share. */
+function clipMiddle(text, n) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  if (s.length <= n) return s;
+  const head = Math.floor((n - 1) / 3);
+  return s.slice(0, head) + '…' + s.slice(-(n - 1 - head));
 }
 
 /**

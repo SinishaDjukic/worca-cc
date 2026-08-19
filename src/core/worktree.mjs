@@ -14,7 +14,8 @@
 // single source of truth for what reaches `git branch`.
 
 import { spawn } from 'node:child_process';
-import { mkdir, rm, realpath, readdir, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, rm, realpath, readdir, rename, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
@@ -270,7 +271,14 @@ export async function createWorktree({
   }
   const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    throw new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
+    // kills the spawned git and git() resolves ok:false (spawn's 'error' yields
+    // "The operation was aborted" — or whatever git wrote before dying, which
+    // may not mention the abort at all). Stamp the name every other abort/stop
+    // site sets so isAbort callers classify the stop as a stop, not a failure.
+    if (signal?.aborted) err.name = 'AbortError';
+    throw err;
   }
   return { worktreeDir, branch, sourceBranch, reusedExisting };
 }
@@ -308,6 +316,43 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
     steps.push({ step: 'branch-delete', ok: r.ok, stderr: r.stderr.trim() });
   }
   return { ok: steps.every((s) => s.ok), steps };
+}
+
+/**
+ * Stage every remaining change and render a binary-capable patch against HEAD
+ * DIRECTLY INTO outFile (no in-memory patch string — agent-created artifacts can
+ * be huge). Staging is intentional: it makes untracked files part of the patch.
+ * Uses the slow git timeout: big binary diffs legitimately take time.
+ * Crash-safe: streams to `<outFile>.part` and renames on success, so a
+ * SIGKILL/timeout/full disk can never leave a TRUNCATED patch under the final
+ * name. A clean tree is SUCCESS with `file: null` (nothing to save is not a
+ * failure — discard after a manual commit relies on it). A git failure returns
+ * without removing anything so the checkout stays authoritative.
+ */
+export async function snapshotWorktreePatch(worktreeDir, outFile) {
+  if (!worktreeDir || !outFile) {
+    return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
+  }
+  const add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
+  if (!add.ok) {
+    return { ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() };
+  }
+  const part = `${outFile}.part`;
+  const diff = await git(worktreeDir, ['diff', '--binary', `--output=${part}`, 'HEAD', '--'],
+    { timeout: SLOW_GIT_TIMEOUT_MS });
+  if (!diff.ok) {
+    await rm(part, { force: true }).catch(() => {});
+    return { ok: false, step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}`, fromStderr: !!diff.stderr.trim() };
+  }
+  let bytes = 0;
+  try { bytes = (await stat(part)).size; } catch { /* treated as empty below */ }
+  if (!bytes) {
+    // Nothing uncommitted: a 0-byte "recovery patch" on disk would be a lie.
+    await rm(part, { force: true }).catch(() => {});
+    return { ok: true, file: null, bytes: 0 };
+  }
+  await rename(part, outFile);
+  return { ok: true, file: outFile, bytes };
 }
 
 function firstLine(text) {
@@ -367,12 +412,15 @@ export const RUN_ROOT_REMOVE = new Set(['done', 'stopped', 'error']);
  *                                         same DB-free reason as the two above. May
  *                                         degrade to null: it is consulted after the
  *                                         disposition and only names a copy target.
+ * @param {Function} [args.retainOf]       (id) => retained-work record | null. DB
+ *                                         fallback when the manifest is absent or
+ *                                         its recorded worktrees are no longer live.
  * @param {Function} [args.log]            (level, message) sink; defaults to console
  * @returns {Promise<{keep:string[], removed:string[], quarantined:string[],
  *                    failed:string[], warnings:string[]}>}
  */
 export async function sweepRunRoots({
-  worcaHome, statusOf, membersOf, pipelineDirOf, log,
+  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, log,
 } = {}) {
   const out = { keep: [], removed: [], quarantined: [], failed: [], warnings: [] };
   const say = typeof log === 'function'
@@ -409,6 +457,35 @@ export async function sweepRunRoots({
     if (status && RUN_ROOT_KEEP.has(status)) {
       out.keep.push(dir);
       say('info', `keep ${dir} (${status})`);
+      continue;
+    }
+
+    // A manifest retain record is live only while at least one named checkout
+    // still exists. This makes manual recovery/removal self-clearing instead of
+    // leaking the run root forever. The DB callback is an independent fallback.
+    const manifestRetain = manifest?.retain;
+    const manifestMembers = Array.isArray(manifestRetain?.members) ? manifestRetain.members : [];
+    let retained = manifestMembers.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))
+      ? manifestRetain
+      : null;
+    // Same three-state doctrine as statusOf/membersOf: "retention unknown" must
+    // never collapse into "remove", so a lookup throw skips this root untouched
+    // and is reported in `failed` + logged loudly (it must NOT abort the sweep —
+    // this call site is outside the statusOf try/catch).
+    if (!retained && typeof retainOf === 'function') {
+      try {
+        retained = await retainOf(id);
+      } catch (err) {
+        const reason = `skip ${dir}: retention lookup FAILED (${err?.message || err}) — leaving it untouched`;
+        out.failed.push(dir);
+        out.warnings.push(reason);
+        say('warn', reason);
+        continue;
+      }
+    }
+    if (retained) {
+      out.keep.push(dir);
+      say('info', `keep ${dir} (${status || 'no row'}, retained: ${retained.reason || 'unknown'})`);
       continue;
     }
     if (status && !RUN_ROOT_REMOVE.has(status)) {

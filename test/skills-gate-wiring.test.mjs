@@ -135,7 +135,7 @@ test('detached + ZERO required skills (the default workflow) still assembles the
 //     hard-fails before any node.
 test('detached + declared skills forwards the validated resolutions and mounts them', async () => {
   const repo = await freshRepo();
-  const agentsDir = await agentsDirRequiring(['imagegen']);      // a REAL bundled skill
+  const agentsDir = await agentsDirRequiring(['worca']);      // a REAL bundled skill
   await withMode('detached', async () => {
     const orch = createOrchestrator({
       projectDir: repo, prompt: 'x', auto: true, claude: { mock: true },
@@ -150,18 +150,18 @@ test('detached + declared skills forwards the validated resolutions and mounts t
       const runRoot = join(worcaHome(), 'runs', s.id);
       const m = await readRunManifest(runRoot);
       if (m?.injectedSkillNames) {
-        live = { m, mounted: existsSync(join(s.branch.worktreeDir, '.claude', 'skills', 'imagegen', 'SKILL.md')) };
+        live = { m, mounted: existsSync(join(s.branch.worktreeDir, '.claude', 'skills', 'worca', 'SKILL.md')) };
       }
     });
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].get('imagegen')?.source, 'bundle', 'the VALIDATED resolutions Map is forwarded');
+    assert.equal(calls[0].get('worca')?.source, 'bundle', 'the VALIDATED resolutions Map is forwarded');
     assert.ok(live, 'the manifest was readable during the run');
     assert.ok(live.mounted, 'the bundle skill is delivered by the assembly mount (§5.6 entry class 3)');
-    assert.deepEqual(live.m.injectedSkillNames, ['imagegen']);
-    assert.equal(live.m.skillResolutions.imagegen.source, 'bundle');
-    assert.deepEqual(live.m.skillResolutions.imagegen.requiredBy, ['implementer']);
+    assert.deepEqual(live.m.injectedSkillNames, ['worca']);
+    assert.equal(live.m.skillResolutions.worca.source, 'bundle');
+    assert.deepEqual(live.m.skillResolutions.worca.requiredBy, ['implementer']);
   });
 });
 
@@ -189,7 +189,7 @@ test('detached + an UNRESOLVABLE declared skill still hard-fails before any node
 // (3) Legacy: no assembly at all, and today's injectSkills delivery + audit line.
 test('legacy (pinned) + declared skills: NO assembleRunContext, today\'s worktree injection and audit line', async () => {
   const repo = await freshRepo();
-  const agentsDir = await agentsDirRequiring(['imagegen']);
+  const agentsDir = await agentsDirRequiring(['worca']);
   await withMode('legacy', async () => {
     const orch = createOrchestrator({
       projectDir: repo, prompt: 'x', auto: true, claude: { mock: true },
@@ -201,7 +201,7 @@ test('legacy (pinned) + declared skills: NO assembleRunContext, today\'s worktre
     let mounted = false;
     orch.on('state', (s) => {
       if (mounted || !s.branch?.worktreeDir) return;
-      mounted = existsSync(join(s.branch.worktreeDir, '.claude', 'skills', 'imagegen', 'SKILL.md'));
+      mounted = existsSync(join(s.branch.worktreeDir, '.claude', 'skills', 'worca', 'SKILL.md'));
     });
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));
@@ -211,7 +211,7 @@ test('legacy (pinned) + declared skills: NO assembleRunContext, today\'s worktre
     assert.equal(orch.mcpConfigPath, null);
     // Today's audit line, verbatim — and NO context audit line.
     const audit = auditText(orch.getState().id);
-    assert.match(audit, /Skills: injected imagegen into 1 worktree\(s\)\./);
+    assert.match(audit, /Skills: injected worca into 1 worktree\(s\)\./);
     assert.doesNotMatch(audit, /^Context: /m, 'and no context audit line');
   });
 });

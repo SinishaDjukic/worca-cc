@@ -40,16 +40,14 @@ test('the per-project header sticks just below the pinned toolbar, not behind it
 test('the History scroll area drops its top padding so sticky elements pin flush (kills the peek-through band)', () => {
   const body = ruleBody('body.view-history .main');
   assert.ok(body, 'body.view-history .main rule must exist');
-  assert.match(body, /padding-top:\s*0/, 'no top padding for sticky to fight while History is active');
+  assert.match(body, /padding(-top)?:\s*0/, 'no top padding for sticky to fight while History is active');
+  assert.match(body, /display:\s*flex/, '.main is the bounded column that gives the two-screen track its height');
 });
 
-test('the History view re-applies the 26px top inset internally so the unscrolled layout is unchanged', () => {
+test('the History scrollport has no top padding; the 26px inset rides on the topbar', () => {
   // matched directly on the stylesheet because attribute selectors are awkward through ruleBody()
-  assert.match(
-    css,
-    /\.view\[data-view="history"\]\s*\{[^}]*padding-top:\s*26px/,
-    'the view itself carries the top inset that .main no longer provides',
-  );
+  assert.match(css, /\.hist-screen\s*\{[^}]*padding:\s*0 32px/, 'scroller has zero top padding for sticky');
+  assert.match(css, /\.hist-screen-list\s+\.topbar\s*\{[^}]*padding-top:\s*26px/, 'the inset moved onto the topbar');
 });
 
 // ---------- DOM behavior (boot the real app under jsdom) ----------

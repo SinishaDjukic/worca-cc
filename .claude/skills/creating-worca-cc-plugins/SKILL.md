@@ -56,6 +56,19 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 | `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options` |
 | `taskSources[].inputs[]` | per-run UI — see next table. **Exactly one `task-browser` required** |
 
+## Marketplace manifest (repo-level, optional)
+
+A repo can declare itself a **marketplace** with `worca-cc-marketplace.json` at its root:
+
+```json
+{ "name": "My Plugins", "description": "…", "plugins": ["plugins/one", "plugins/two"] }
+```
+
+Listed dirs (any depth, no `..`) each contain a `worca-cc-plugin.json`; when the file is
+present it is the complete plugin list (the depth 0–1 auto-scan is skipped). Repos without
+it still work as implicit marketplaces via the scan. The worca-cc repo itself is a
+marketplace (its 5 bundled plugins live under `plugins/`), registered by default.
+
 ## UI is schema-driven — pick from these widgets
 
 You declare shapes; the host renders them. There is no way to ship a custom component.
@@ -126,7 +139,7 @@ Payload arrives on stdin, one JSON frame leaves on stdout, process exits. 30s ti
 
 ## The one example worth reading
 
-`examples/plugins/github-source/` — a complete, zero-dependency GitHub Issues source:
+`plugins/github-source/` — a complete, zero-dependency GitHub Issues source:
 ETag revalidation via `ctx.state`, `remote-select` repo picker, a filter micro-syntax,
 `{"$env":"GH_TOKEN"}` token config, and write-back that comments and optionally closes the issue.
 Copy its shape.
@@ -148,7 +161,10 @@ Copy its shape.
 worca plugin validate ./my-plugin --strict && worca plugin doctor my-plugin
 ```
 
-Both clean, plus at least one real (non-mock) `exec` per op. Then push and install by URL:
-`worca plugin add <repo-url>` → `worca plugin install <name>`.
+Both clean, plus at least one real (non-mock) `exec` per op.
+Then push and let users register the repo as a marketplace:
+`worca marketplace add <repo-url>` (or Plugins → Add marketplace in the UI) →
+install from the Available list or `worca plugin install <name>`.
+Removing a marketplace never removes installed plugins.
 Installs are SHA-pinned; users see a consent inventory listing every agent's tools and every
 secret you request, so keep both minimal.

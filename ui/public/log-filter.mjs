@@ -21,24 +21,34 @@
 
 const SUB_SEP = ' ▸ ';
 
+/** Compile a filter into a predicate. Per-axis normalization (notably the
+ *  search term's toLowerCase) happens ONCE here instead of once per record —
+ *  a repaint runs the predicate over up to MAX_LOG_LINES records per
+ *  keystroke tick. Same semantics as logLineVisible by construction. */
+export function compileLogFilter(filter) {
+  if (!filter) return () => true;
+  const level = filter.level || '';
+  const source = filter.source || '';
+  const hasStep = filter.step !== undefined && filter.step !== '';
+  const step = hasStep ? String(filter.step) : '';
+  const hasCycle = filter.cycle !== undefined && filter.cycle !== '';
+  const cycle = hasCycle ? String(filter.cycle) : '';
+  const term = filter.search ? String(filter.search).toLowerCase() : '';
+  return (rec) => {
+    if (level && (rec.level || 'info') !== level) return false;
+    if (source) {
+      const src = rec.source || '';
+      if (src !== source && !src.startsWith(source + SUB_SEP)) return false;
+    }
+    if (hasStep && (rec.stepIndex == null || String(rec.stepIndex) !== step)) return false;
+    if (hasCycle && (rec.cycle == null || String(rec.cycle) !== cycle)) return false;
+    if (term && !String(rec.text || '').toLowerCase().includes(term)) return false;
+    return true;
+  };
+}
+
 export function logLineVisible(rec, filter) {
-  if (!filter) return true;
-  if (filter.level && (rec.level || 'info') !== filter.level) return false;
-  if (filter.source) {
-    const src = rec.source || '';
-    if (src !== filter.source && !src.startsWith(filter.source + SUB_SEP)) return false;
-  }
-  if (filter.step !== undefined && filter.step !== '') {
-    if (rec.stepIndex == null || String(rec.stepIndex) !== String(filter.step)) return false;
-  }
-  if (filter.cycle !== undefined && filter.cycle !== '') {
-    if (rec.cycle == null || String(rec.cycle) !== String(filter.cycle)) return false;
-  }
-  if (filter.search) {
-    const term = String(filter.search).toLowerCase();
-    if (!String(rec.text || '').toLowerCase().includes(term)) return false;
-  }
-  return true;
+  return compileLogFilter(filter)(rec);
 }
 
 // Distinct facet values the filter dropdowns offer, from the lines seen so far:

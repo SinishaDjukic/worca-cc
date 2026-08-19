@@ -1,10 +1,10 @@
 // test/github-source-connector.test.mjs — GitHub Issues connector, pure unit
 // tests with an injected fake fetch (no network, no shim child). The connector
-// is plain ESM so it imports directly from examples/.
+// is plain ESM so it imports directly from plugins/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import createTaskSource, { parseFilter } from '../examples/plugins/github-source/connector/index.mjs';
+import createTaskSource, { parseFilter } from '../plugins/github-source/connector/index.mjs';
 
 // ── harness ────────────────────────────────────────────────────────────────────
 function res(status, body, headers = {}) {

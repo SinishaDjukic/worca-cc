@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { WORCA_PLUGIN_API } from '../src/core/plugin-api.mjs';
+import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
-  normalizeManifest, validatePluginDir, apiSatisfies, PLUGIN_NAME_RE,
+  normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
 } from '../src/core/plugin-manifest.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-manifest-'));
@@ -28,8 +28,9 @@ const SRC = (over = {}) => ({
   ...over,
 });
 
-test('WORCA_PLUGIN_API is the integer 1', () => {
-  assert.equal(WORCA_PLUGIN_API, 1);
+test('WORCA_PLUGIN_API is the integer 2; host still speaks API 1', () => {
+  assert.equal(WORCA_PLUGIN_API, 2);
+  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2]);
 });
 
 test('minimal { name } manifest normalizes with full defaults', () => {
@@ -38,7 +39,7 @@ test('minimal { name } manifest normalizes with full defaults', () => {
   assert.deepEqual(r.warnings, []);
   assert.deepEqual(r.manifest, {
     name: 'my-plugin', version: null, description: '', author: '', homepage: '', license: '',
-    engines: { worcaApi: null }, setup: { node: false, python: null }, taskSources: [],
+    engines: { worcaApi: null }, setup: { node: false, python: null }, taskSources: [], chatChannels: [],
     models: [], modelSecrets: [],
   });
 });
@@ -52,23 +53,36 @@ test('name: kebab-case required', () => {
   assert.equal(PLUGIN_NAME_RE.test('github-source'), true);
 });
 
-test('engines.worca-cc-api: tiny range checker (no npm semver dep)', () => {
+test('engines.worca-cc-api: range checked against the host API SET (no npm semver dep)', () => {
   assert.equal(apiSatisfies('>=1'), true);
-  assert.equal(apiSatisfies('>=1 <2'), true);
+  assert.equal(apiSatisfies('>=1 <2'), true);    // old API-1 manifests keep installing on the API-2 host
   assert.equal(apiSatisfies('1'), true);
   assert.equal(apiSatisfies('=1'), true);
-  assert.equal(apiSatisfies('>=2'), false);
+  assert.equal(apiSatisfies('>=2'), true);       // satisfied by member 2
+  assert.equal(apiSatisfies('>=2 <3'), true);
+  assert.equal(apiSatisfies('2'), true);
   assert.equal(apiSatisfies('<1'), false);
-  assert.equal(apiSatisfies('2'), false);
+  assert.equal(apiSatisfies('>=3'), false);
   assert.equal(apiSatisfies(''), true);          // unset -> unconstrained
   assert.equal(apiSatisfies('^1.0.0'), false);   // unsupported syntax fails CLOSED
   assert.equal(apiSatisfies('>=1.2.3'), true);   // minor/patch tolerated; integer compared
+  assert.equal(apiSatisfies('>=2', 1), false);   // back-compat: single-API number arg
   const ok = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } });
   assert.equal(ok.ok, true);
   assert.equal(ok.manifest.engines.worcaApi, '>=1 <2');
-  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=2' } });
+  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=3' } });
   assert.equal(bad.ok, false);
-  assert.match(bad.errors[0], /not satisfied by host plugin API 1/);
+  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2\]/);
+});
+
+test('negotiatedApi: highest satisfying host API drives the child apiVersion', () => {
+  assert.equal(negotiatedApi('>=1 <2'), 1);      // API-1 connector keeps receiving 1
+  assert.equal(negotiatedApi('>=2 <3'), 2);
+  assert.equal(negotiatedApi('>=1'), 2);         // open range -> newest
+  assert.equal(negotiatedApi(''), 2);            // unconstrained -> newest
+  assert.equal(negotiatedApi(null), 2);
+  assert.equal(negotiatedApi('>=3'), null);      // unsatisfiable
+  assert.equal(negotiatedApi('garbage'), null);  // fail closed
 });
 
 test('version optional: absent -> null (pinned SHA becomes the version downstream)', () => {
@@ -236,6 +250,118 @@ test('validatePluginDir: missing/corrupt manifest', () => {
   const corrupt = validatePluginDir(mkPluginDir({ 'worca-cc-plugin.json': '{nope' }));
   assert.equal(corrupt.ok, false);
   assert.match(corrupt.problems[0].message, /invalid JSON/);
+});
+
+// ── chatChannels (API 2, design §4.2) ─────────────────────────────────────────
+
+const CH = (over = {}) => ({
+  id: 'main', platform: 'telegram', module: './channel/worker.mjs', ...over,
+});
+
+test('chatChannels: normalize with defaults (ingress connect, both capabilities)', () => {
+  const r = normalizeManifest({
+    name: 'telegram-chat',
+    engines: { 'worca-cc-api': '>=2 <3' },
+    chatChannels: [CH({
+      displayName: 'Telegram',
+      configSchema: [{ key: 'botToken', secret: true, required: true }],
+    })],
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.warnings, []);
+  const c = r.manifest.chatChannels[0];
+  assert.deepEqual(c, {
+    id: 'main', displayName: 'Telegram', platform: 'telegram',
+    module: './channel/worker.mjs', ingress: 'connect',
+    capabilities: { inbound: true, outbound: true },
+    configSchema: [{
+      key: 'botToken', type: 'text', label: 'botToken',
+      secret: true, required: true, default: null, help: null, options: [],
+    }],
+  });
+});
+
+test('chatChannels: displayName defaults to id; platform lowercased', () => {
+  const r = normalizeManifest({ name: 'p', chatChannels: [CH({ platform: 'Telegram' })] });
+  assert.equal(r.ok, true);
+  assert.equal(r.manifest.chatChannels[0].displayName, 'main');
+  assert.equal(r.manifest.chatChannels[0].platform, 'telegram');
+});
+
+test('chatChannels: NO task-browser requirement (that rule is taskSources-only)', () => {
+  const r = normalizeManifest({ name: 'p', chatChannels: [CH()] });
+  assert.equal(r.ok, true, (r.errors || []).join('; '));
+});
+
+test('chatChannels: id/platform/module/ingress validation', () => {
+  const bad = (over, re) => {
+    const r = normalizeManifest({ name: 'p', chatChannels: [CH(over)] });
+    assert.equal(r.ok, false, JSON.stringify(over));
+    assert.match(r.errors.join('\n'), re);
+  };
+  bad({ id: 'Bad_Id' }, /"id" must be kebab-case/);
+  bad({ platform: '' }, /"platform" must be a non-empty kebab-case hint/);
+  bad({ module: 'channel/worker.mjs' }, /"module" must start with "\.\/"/);
+  bad({ module: './a/../../etc' }, /must not contain "\.\."/);
+  bad({ ingress: 'poll' }, /"ingress" must be connect\|webhook/);
+  const wh = normalizeManifest({ name: 'p', chatChannels: [CH({ ingress: 'webhook' })] });
+  assert.equal(wh.ok, true);
+  assert.equal(wh.manifest.chatChannels[0].ingress, 'webhook');
+});
+
+test('chatChannels: capabilities cannot disable both directions', () => {
+  const r = normalizeManifest({
+    name: 'p',
+    chatChannels: [CH({ capabilities: { inbound: false, outbound: false } })],
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /cannot disable both inbound and outbound/);
+  const inOnly = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { outbound: false } })] });
+  assert.equal(inOnly.ok, true);
+  assert.deepEqual(inOnly.manifest.chatChannels[0].capabilities, { inbound: true, outbound: false });
+});
+
+test('chatChannels: duplicate ids rejected; unknown fields warn (strict errors)', () => {
+  const dup = normalizeManifest({ name: 'p', chatChannels: [CH(), CH()] });
+  assert.equal(dup.ok, false);
+  assert.match(dup.errors.join('\n'), /duplicate chatChannels id "main"/);
+  const unk = normalizeManifest({ name: 'p', chatChannels: [CH({ webhookPath: '/x' })] });
+  assert.equal(unk.ok, true);
+  assert.match(unk.warnings.join('\n'), /unknown field "webhookPath" ignored/);
+});
+
+test('chatChannels: configSchema shares the taskSources field semantics', () => {
+  const r = normalizeManifest({
+    name: 'p',
+    chatChannels: [CH({
+      configSchema: [
+        { key: 'tenantType', type: 'select', options: ['multi-tenant', 'single-tenant'], default: 'multi-tenant' },
+        { key: 'bad id!' },
+      ],
+    })],
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join('\n'), /"key" must be an identifier, got "bad id!"/);
+  const sel = normalizeManifest({
+    name: 'p',
+    chatChannels: [CH({ configSchema: [{ key: 's', type: 'select' }] })],
+  });
+  assert.equal(sel.ok, false);
+  assert.match(sel.errors.join('\n'), /select fields need "options"/);
+});
+
+test('validatePluginDir: chatChannels module must exist on disk', () => {
+  const dir = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', chatChannels: [CH()] }),
+  });
+  const v = validatePluginDir(dir);
+  assert.equal(v.ok, false);
+  assert.match(v.problems.map((p) => p.message).join('\n'), /chatChannels "main": module \.\/channel\/worker\.mjs not found/);
+  const ok = validatePluginDir(mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', chatChannels: [CH()] }),
+    'channel/worker.mjs': 'export function createChannelWorker() {}',
+  }));
+  assert.equal(ok.ok, true, JSON.stringify(ok.problems));
 });
 
 // ── models + modelSecrets (design §9.1) ──────────────────────────────────────

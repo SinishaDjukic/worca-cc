@@ -48,13 +48,12 @@ test('hello with two live pipelines renders two child rows + live badge', async 
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '2');
 });
 
-test('a pending question shows pulsing person marker + parent roll-up', async () => {
+test('a pending question shows pulsing "?" marker + parent roll-up', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix', { pendingQuestion: { id: 'q1', kind: 'clarify', questions: [{ question: 'x?', options: ['a'] }] } })] });
   const q = window.document.querySelector('#nav-running-children .nav-child .child-q');
-  assert.ok(q, 'awaiting-input marker present');
-  assert.ok(q.querySelector('svg'), 'person icon, not a text glyph');
-  assert.equal(q.textContent, '', 'no leftover "?" text');
+  assert.ok(q, 'awaiting-input "?" marker present');
+  assert.equal(q.textContent, '?');
   assert.equal(window.document.querySelector('#nav-running-rollup').hidden, false);
 });
 
@@ -206,6 +205,37 @@ test('paused pipelines get their own badge; running badge excludes them', async 
   assert.ok(window.document.querySelector('#nav-paused-badge .pause-flag'), 'pause flag icon present');
 });
 
+// Green is spent only on work in flight. At zero the running badge takes the
+// sidebar's inert-inventory grey (the treatment History/Projects/Workspaces
+// get), so a permanently green pill cannot dilute the green that should catch
+// the eye. It is greyed, not hidden: History et al. show a grey 0 too, and
+// Running would otherwise be the only nav item bare at rest.
+test('the running badge is green only while something is running, grey at zero', async () => {
+  const { window, recv } = await boot();
+  const badge = window.document.querySelector('#nav-running-count');
+  assert.equal(badge.textContent, '0');
+  assert.ok(badge.classList.contains('n-grey'), 'zero is inert — grey, like History');
+  assert.ok(!badge.classList.contains('n-run'), 'no green when nothing runs');
+  assert.equal(badge.hidden, false, 'greyed, not hidden');
+
+  recv({ type: 'hello', runs: [live('auth-fix')] });
+  assert.equal(badge.textContent, '1');
+  assert.ok(badge.classList.contains('n-run'), 'green once work is in flight');
+  assert.ok(!badge.classList.contains('n-grey'));
+
+  // ...and back to grey when the last run finishes.
+  recv({ type: 'done', runId: 'auth-fix', status: 'done' });
+  assert.equal(badge.textContent, '0');
+  assert.ok(badge.classList.contains('n-grey'), 'green must not linger past the work');
+  assert.ok(!badge.classList.contains('n-run'));
+});
+
+test('index.html ships the running badge grey — zero is its resting state', () => {
+  const html = readFileSync(htmlPath, 'utf8');
+  assert.match(html, /<span class="nav-count n-grey" id="nav-running-count">0<\/span>/,
+    'the static badge must not be green before any run exists');
+});
+
 // Workspace runs list every member project in the child hint (clamped by CSS).
 test('a workspace run lists all member projects in the child hint', async () => {
   const { window, recv } = await boot();
@@ -231,30 +261,12 @@ test('run-created broadcast materializes a child row with project metadata', asy
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });
 
-// Finishing the FOCUSED run KEEPS the reader on that pipeline.
-//
-// This replaces the older "drop to Overview" behaviour (Q&A #5), which made sense
-// while the focused view was only the list filtered to one card. It is now the
-// pipeline's detail view, and the moment a run finishes is the moment its results
-// matter most — so the route is rewritten to the canonical #pipeline/<id>, which
-// resolves to Running while the finished run lingers there and to History once it
-// has left. Either way the reader stays on the pipeline they were reading.
-test('finishing the focused run keeps the reader on it, via the canonical route', async () => {
+// v3: finishing the FOCUSED run falls back to the Overview (Q&A #5).
+test('finishing the focused run falls back to Overview', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
-  window.location.hash = 'pipeline/auth-fix';
+  window.location.hash = 'running/auth-fix';
   window.dispatchEvent(new window.Event('hashchange'));
   recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // focused run finishes
-  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/auth-fix',
-    'the canonical url covers the transition, so nothing navigates');
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/auth-fix',
-    'and it stays put — no rewrite, so no extra history entry to trap Back');
-  assert.ok(window.document.querySelector('#run-list .run-card[data-run-id="auth-fix"]'),
-    'the finished pipeline is still the one card on screen');
-  // The pipeline changed hands while being read: it belongs to History now.
-  const active = window.document.querySelector('.nav button[data-nav].active');
-  assert.equal(active && active.dataset.nav, 'history', 'the sidebar follows it');
-  assert.match(window.document.querySelector('.detail-bar .detail-back').textContent, /History/,
-    'and so does the way back');
+  assert.equal(window.location.hash.replace(/^#/, ''), 'running', 'hash dropped to Overview');
 });

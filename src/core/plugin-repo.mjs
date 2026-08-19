@@ -1,13 +1,15 @@
 // src/core/plugin-repo.mjs
-// Git plumbing for the plugin store (spec §4.3, §6.1-6.2): bare fetch cache,
-// manifest discovery at tree depth 0/1, update candidate preview, and
-// git-archive export of a pinned SHA. All git/tar via execFile — injectable as
-// opts.exec for tests: async (cmd, args, opts?) => { stdout, stderr }.
+// Git plumbing for the plugin store (spec §4.1, §4.3, §6.1-6.2): bare fetch
+// cache, manifest discovery (a root worca-cc-marketplace.json when present, else
+// tree depth 0/1), update candidate preview, and git-archive export of a pinned
+// SHA. All git/tar via execFile — injectable as opts.exec for tests:
+// async (cmd, args, opts?) => { stdout, stderr }.
 // The cache lives at <pluginsRoot>/.cache/<slug>.git — NEVER on any execution
 // path; exports contain no .git, so repo hooks are inert (spec §8).
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,17 +19,65 @@ import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
-  execFileP(cmd, args, { maxBuffer: 16 * 1024 * 1024, ...opts });
+  execFileP(cmd, args, {
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 120_000,
+    killSignal: 'SIGKILL',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    ...opts,
+  });
+
+/** Filesystem slug for a repo URL — shared by the bare-cache dir and marketplace
+ *  ids. Injective: a readable prefix plus an 8-hex digest of the EXACT input, so
+ *  distinct urls (http vs https, /a/b vs /a-b, unicode, .git.git) never collide
+ *  onto one id/cache dir. */
+export function repoSlug(repoUrl) {
+  const s = String(repoUrl);
+  const readable = s
+    .replace(/^[a-z+]+:\/\//i, '').replace(/\.git$/i, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'repo';
+  return `${readable}-${createHash('sha1').update(s).digest('hex').slice(0, 8)}`;
+}
 
 /** Bare-cache path for a repo URL: <pluginsRoot>/.cache/<slug>.git. */
 export function repoCacheDir(repoUrl) {
-  const slug = String(repoUrl)
-    .replace(/^[a-z+]+:\/\//i, '')
-    .replace(/\.git$/i, '')
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 100) || 'repo';
-  return join(pluginsRoot(), '.cache', `${slug}.git`);
+  return join(pluginsRoot(), '.cache', `${repoSlug(repoUrl)}.git`);
+}
+
+/** Validate a raw worca-cc-marketplace.json (spec §4.1). Paths are repo-relative
+ *  dirs, any depth: no absolute, no '..'/'.' segments, no backslashes, no empties. */
+export function parseMarketplaceManifest(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, errors: ['not a JSON object'] };
+  }
+  const structural = []; // whole-file problems -> ok:false (caller falls back to the scan)
+  if (typeof raw.name !== 'string' || !raw.name.trim()) structural.push('"name" is required');
+  if (!Array.isArray(raw.plugins)) structural.push('"plugins" must be an array of repo-relative dirs');
+  if (structural.length) return { ok: false, errors: structural };
+  const warnings = []; // per-entry problems -> skipped entries, manifest still authoritative
+  const plugins = [];
+  for (const d of raw.plugins) {
+    // Segment charset is deliberately strict: it blocks '..'/absolute paths AND
+    // any segment beginning with '-', which would otherwise be parsed as a git
+    // option when the subdir is passed as a positional to `git archive`/`ls-tree`
+    // (see the `--` pathspec guards in fetchCandidate/exportVersion). '=' is
+    // outside the class, so `--output=/x` is rejected on both counts.
+    if (typeof d !== 'string' || !d.trim() || d.includes('\\') || d.startsWith('/')
+        || d.split('/').some((seg) =>
+          !/^[A-Za-z0-9._-]+$/.test(seg) || seg === '.' || seg === '..' || seg.startsWith('-'))) {
+      warnings.push(`invalid plugin path ${JSON.stringify(d)} — skipped`);
+      continue;
+    }
+    plugins.push(d.replace(/\/+$/, ''));
+  }
+  return {
+    ok: true,
+    name: raw.name.trim(),
+    description: typeof raw.description === 'string' ? raw.description.trim() : '',
+    plugins,
+    warnings,
+  };
 }
 
 async function gitDir(cache, args, exec) {
@@ -49,9 +99,13 @@ async function ensureCache(repoUrl, exec) {
 }
 
 /**
- * `worca plugin add`: clone/refresh the bare cache, then scan the HEAD tree
- * for worca-cc-plugin.json at depth 0 and 1 (spec §4.3).
- * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>, warnings:string[]}}
+ * `worca plugin add`: clone/refresh the bare cache, then discover plugins in the
+ * HEAD tree. A root worca-cc-marketplace.json (spec §4.1), when present and
+ * structurally valid, is AUTHORITATIVE — its listed dirs (any depth) are the only
+ * candidates, even when the list is empty. Without one, the depth 0/1 scan of
+ * spec §4.3 applies unchanged.
+ * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
+ *   warnings:string[], marketplace:{name:string, description:string}|null}}
  */
 export async function addPluginRepo(repoUrl, { exec = defaultExec } = {}) {
   // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
@@ -61,12 +115,41 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec } = {}) {
   }
   const cache = await ensureCache(repoUrl, exec);
   const sha = (await gitDir(cache, ['rev-parse', 'HEAD'], exec)).trim();
-  const paths = (await gitDir(cache, ['ls-tree', '-r', '--name-only', sha], exec))
-    .split('\n').map((s) => s.trim()).filter(Boolean)
-    .filter((p) => p === 'worca-cc-plugin.json' || /^[^/]+\/worca-cc-plugin\.json$/.test(p));
-  const discovered = [];
+  const allPaths = (await gitDir(cache, ['ls-tree', '-r', '--name-only', sha], exec))
+    .split('\n').map((s) => s.trim()).filter(Boolean);
   const warnings = [];
-  for (const p of paths) {
+  let marketplace = null;
+  let manifestPaths = null; // null -> fall back to the depth 0-1 scan
+  if (allPaths.includes('worca-cc-marketplace.json')) {
+    let mp = null;
+    try {
+      mp = parseMarketplaceManifest(JSON.parse(await gitDir(cache, ['show', `${sha}:worca-cc-marketplace.json`], exec)));
+    } catch {
+      mp = { ok: false, errors: ['invalid JSON'] };
+    }
+    if (mp.ok) {
+      marketplace = { name: mp.name, description: mp.description };
+      warnings.push(...(mp.warnings || []).map((w) => `worca-cc-marketplace.json: ${w}`));
+      manifestPaths = [];
+      for (const dir of mp.plugins) {
+        const p = `${dir}/worca-cc-plugin.json`;
+        if (!allPaths.includes(p)) {
+          warnings.push(`worca-cc-marketplace.json: ${dir}/worca-cc-plugin.json not found in repo — skipped`);
+          continue;
+        }
+        manifestPaths.push(p);
+      }
+    } else {
+      warnings.push(`worca-cc-marketplace.json: ${mp.errors.join('; ')} — falling back to depth 0-1 scan`);
+    }
+  }
+  if (manifestPaths === null) {
+    manifestPaths = allPaths
+      .filter((p) => p === 'worca-cc-plugin.json' || /^[^/]+\/worca-cc-plugin\.json$/.test(p));
+  }
+  const discovered = [];
+  const seenNames = new Set();
+  for (const p of manifestPaths) {
     const subdir = p === 'worca-cc-plugin.json' ? '' : p.slice(0, -'/worca-cc-plugin.json'.length);
     let raw;
     try {
@@ -77,9 +160,14 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec } = {}) {
     }
     const res = normalizeManifest(raw, { dir: subdir || '.' });
     if (!res.ok) { warnings.push(...res.errors); continue; }
+    if (seenNames.has(res.manifest.name)) {
+      warnings.push(`${p}: duplicate plugin name "${res.manifest.name}" — first entry wins, skipped`);
+      continue;
+    }
+    seenNames.add(res.manifest.name);
     discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest });
   }
-  return { repoUrl, sha, discovered, warnings };
+  return { repoUrl, sha, discovered, warnings, marketplace };
 }
 
 /** `<sourceId>.<key>` for every secret configSchema field of a manifest. */
@@ -197,7 +285,7 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   const scratch = await mkdtemp(join(tmpdir(), 'worca-cc-export-'));
   const tarFile = join(scratch, 'export.tar');
   try {
-    await gitDir(cache, ['archive', '--format=tar', '-o', tarFile, ...(sub ? [sha, sub] : [sha])], exec);
+    await gitDir(cache, ['archive', '--format=tar', '-o', tarFile, ...(sub ? [sha, '--', sub] : [sha])], exec);
     const strip = sub ? ['--strip-components', String(sub.split('/').length)] : [];
     await exec('tar', ['-xf', tarFile, '-C', versionDir, ...strip]);
   } catch (err) {

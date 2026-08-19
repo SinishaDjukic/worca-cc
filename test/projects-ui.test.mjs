@@ -15,7 +15,24 @@ test('the free-text project path field is gone', () => {
 test('the project selector and add-form exist in markup', () => {
   assert.ok(html.includes('id="projectSelect"'), 'missing #projectSelect');
   assert.ok(html.includes('id="add-project"'), 'missing #add-project form');
-  assert.ok(html.includes('id="project-delete"'), 'missing #project-delete button');
+});
+
+// Removing a project is rare and destructive, so it belongs in the Projects
+// view (with the app's confirmModal) rather than one tab-stop from a picker
+// used on every run — which is exactly where removing a WORKSPACE has always
+// lived. Both target panes now link to their manager instead.
+test('New Pipeline has no inline project-delete; it links to the Projects view', () => {
+  assert.ok(!html.includes('id="project-delete"'), 'the inline delete button must be gone');
+  assert.ok(!appjs.includes('projectDelete'), 'app.js must not wire an inline delete');
+  assert.match(html, /id="projectHint"[^>]*>[^<]*<a href="#projects" data-nav="projects">Manage projects<\/a>/,
+    'the project hint must link to the Projects view');
+  // ...and the workspace pane keeps the pattern it already had.
+  assert.match(html, /<a href="#workspaces" data-nav="workspaces">Manage workspaces<\/a>/);
+});
+
+test('the Projects view still owns project removal', () => {
+  assert.ok(appjs.includes('async function deleteProject('), 'the Projects-view delete must survive');
+  assert.ok(appjs.includes('confirmLabel: \'Remove project\''), 'it must keep the app confirm dialog');
 });
 
 test('app.js loads and uses the project registry', () => {

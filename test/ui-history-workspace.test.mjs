@@ -36,7 +36,9 @@ async function boot({ local, fetchHandler } = {}) {
     const u = String(url);
     reqs.push({ url: u, method: (opts && opts.method) || 'GET' });
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/history')) return histResp(HISTORY);
+    // endsWith, not includes: the keyed detail URL /api/history/<key>/<id> would
+    // otherwise be swallowed by the list arm.
+    if (u.endsWith('/api/history')) return histResp(HISTORY);
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
   };
@@ -47,7 +49,10 @@ async function boot({ local, fetchHandler } = {}) {
   await import(appPath + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const show = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, show, reqs };
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  const showDetail = (key, id) => { window.location.hash = `history/${key}/${id}`; window.dispatchEvent(new window.Event('hashchange')); };
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  return { window, show, reqs, showDetail, settle };
 }
 const filterTo = (window, key) => {
   const pill = [...window.document.querySelectorAll('#historyFilter .hist-pill')].find((p) => p.dataset.projectKey === key);
@@ -103,9 +108,9 @@ test('filtering to the workspace pill shows only its runs (literal path-segment 
 // to the workspace-aware endpoints (the slashed projectKey 404s on the single-
 // project routes). Single-project rows keep the old URLs (byte-identity). ──
 
-test('expanding a workspace row fetches GET /api/workspaces/<wksId>/runs/<id> (not /api/history/...)', async () => {
+test('opening a workspace row fetches GET /api/workspaces/<wksId>/runs/<id> (not /api/history/...)', async () => {
   const detailReqs = [];
-  const { window, show, reqs } = await boot({
+  const { window, show, reqs, settle } = await boot({
     fetchHandler: (u) => {
       if (/\/api\/workspaces\/.+\/runs\//.test(u)) { detailReqs.push(u); return Promise.resolve({ ok: true, status: 200, json: async () => PIPELINE_DETAIL }); }
       return null;
@@ -117,22 +122,19 @@ test('expanding a workspace row fetches GET /api/workspaces/<wksId>/runs/<id> (n
   await new Promise((r) => setTimeout(r, 0));
   const card = window.document.querySelector('#history .hist-card');
   card.querySelector('.hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  await settle();
 
+  assert.equal(window.location.hash.replace(/^#/, ''), 'history/workspaces/wks-iot-9f3a1c20/w2',
+    'the card click navigates to the run\'s detail screen');
   assert.equal(detailReqs.length, 1, 'one detail fetch');
   assert.match(detailReqs[0], /\/api\/workspaces\/wks-iot-9f3a1c20\/runs\/w2$/, 'workspace-aware detail URL with the BARE wks id');
   // It must NOT have hit the single-project key route (which would 404 on the slash).
   assert.ok(!reqs.some((r) => r.url.includes('/api/history/workspaces')), 'never builds /api/history/workspaces%2F...');
-  // The shared {state,...} shape renders the stepper (no detail-error note).
-  assert.equal(card.querySelector('.detail-error'), null, 'detail rendered from the workspace route');
+  // The shared {state,...} shape renders the stepper (no error state).
+  assert.equal(window.document.querySelector('#hist-detail .hd-error').hidden, true, 'detail rendered from the workspace route');
 });
 
-// The title used to open a markdown modal, whose fetch is what this case checked.
-// The modal is gone — the title now links to the pipeline — so what is left to
-// verify is that a WORKSPACE-scoped row links by the same bare pipeline id, and
-// fetches nothing at all. (The workspace-aware detail URL rule this used to cover
-// is asserted by the expand case above, which still fetches it.)
-test('the title of a workspace row links to the pipeline and fetches nothing', async () => {
+test('opening a workspace row (title click) fetches the workspace route for the markdown viewer', async () => {
   const viewReqs = [];
   const { window, show } = await boot({
     fetchHandler: (u) => {
@@ -146,30 +148,30 @@ test('the title of a workspace row links to the pipeline and fetches nothing', a
   await new Promise((r) => setTimeout(r, 0));
   window.document.querySelector('#history .hist-card .h-meta b').dispatchEvent(new window.Event('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(window.location.hash.replace(/^#/, ''), 'pipeline/w2',
-    'the canonical pipeline url, by the bare id — workspace scoping is not part of the identity');
-  assert.equal(viewReqs.length, 0, 'no detail fetch: navigating is not opening a dialog');
+  assert.equal(viewReqs.length, 1);
+  assert.match(viewReqs[0], /\/api\/workspaces\/wks-iot-9f3a1c20\/runs\/w2$/);
 });
 
-test('deleting a workspace row sends DELETE /api/runs/<id>?workspaceId=<wksId> (not ?projectKey=...)', async () => {
+test('archiving a workspace row sends DELETE /api/runs/<id>?workspaceId=<wksId> (not ?projectKey=...)', async () => {
   const delReqs = [];
-  const { window, show } = await boot({
+  const { window, show, showDetail, settle } = await boot({
     fetchHandler: (u, opts) => {
       if (opts.method === 'DELETE' && /\/api\/runs\//.test(u)) { delReqs.push(u); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, warnings: [] }) }); }
+      if (/\/api\/workspaces\/.+\/runs\//.test(u)) return Promise.resolve({ ok: true, status: 200, json: async () => PIPELINE_DETAIL });
       return null;
     },
   });
   show();
   await new Promise((r) => setTimeout(r, 0));
-  filterTo(window, 'workspaces/wks-iot-9f3a1c20');
-  await new Promise((r) => setTimeout(r, 0));
-  const card = window.document.querySelector('#history .hist-card');
-  card.querySelector('.hist-head').dispatchEvent(new window.Event('click', { bubbles: true })); // reveal delete btn
-  await new Promise((r) => setTimeout(r, 0));
-  const del = card.querySelector('.hist-delete');
-  assert.equal(del.hidden, false, 'delete shown for a finished workspace run');
+  // Archive lives on the DETAIL screen now, behind confirmModal (not window.confirm).
+  showDetail('workspaces/wks-iot-9f3a1c20', 'w2');
+  await settle();
+  const del = window.document.querySelector('#hist-detail .hd-archive');
+  assert.equal(del.hidden, false, 'archive shown for a finished workspace run');
   del.dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  await settle();
+  window.document.querySelector('#confirm-ok').click();
+  await settle(5);
 
   assert.equal(delReqs.length, 1);
   assert.match(delReqs[0], /\/api\/runs\/w2\?workspaceId=wks-iot-9f3a1c20$/, 'delete routes by bare workspaceId');
@@ -178,7 +180,7 @@ test('deleting a workspace row sends DELETE /api/runs/<id>?workspaceId=<wksId> (
 
 test('single-project rows keep the OLD URLs (byte-identity): /api/history/:key/:id + ?projectKey=', async () => {
   const seen = [];
-  const { window, show } = await boot({
+  const { window, show, showDetail, settle } = await boot({
     fetchHandler: (u, opts) => {
       if (u.includes('/api/history/alpha-00000001/')) { seen.push(u); return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { id: 'p1', status: 'done', stepper: null, steps: [] }, auditMarkdown: '# a' } ) }); }
       if (opts.method === 'DELETE' && /\/api\/runs\//.test(u)) { seen.push(u + ' [DELETE]'); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }); }
@@ -187,13 +189,12 @@ test('single-project rows keep the OLD URLs (byte-identity): /api/history/:key/:
   });
   show();
   await new Promise((r) => setTimeout(r, 0));
-  filterTo(window, 'alpha-00000001');
-  await new Promise((r) => setTimeout(r, 0));
-  const card = window.document.querySelector('#history .hist-card');
-  card.querySelector('.hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  card.querySelector('.hist-delete').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  showDetail('alpha-00000001', 'p1');
+  await settle();
+  window.document.querySelector('#hist-detail .hd-archive').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await settle();
+  window.document.querySelector('#confirm-ok').click();
+  await settle(5);
 
   assert.ok(seen.some((u) => /\/api\/history\/alpha-00000001\/p1$/.test(u)), 'project detail uses the by-key history route');
   assert.ok(seen.some((u) => /\/api\/runs\/p1\?projectKey=alpha-00000001 \[DELETE\]$/.test(u)), 'project delete still sends ?projectKey=');

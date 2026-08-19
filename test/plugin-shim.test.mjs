@@ -45,6 +45,7 @@ function installFixture() {
   mkdirSync(join(cur, 'connector'), { recursive: true });
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
     name: NAME,
+    engines: { 'worca-cc-api': '>=1 <2' }, // API-1 plugin: must negotiate apiVersion 1 on an API-2 host
     taskSources: [{
       id: 'main',
       displayName: 'Mock Echo',
@@ -78,7 +79,7 @@ test('real child round-trip: op/args echo back; config+state arrive via stdin', 
   assert.deepEqual(result.args, { a: 1, s: 'x' });
   assert.equal(result.token, 'sekret', 'secret config travelled via stdin, not env/argv');
   assert.equal(result.cursor, 'page-1', 'state snapshot readable through ctx.state.get');
-  assert.equal(result.api, 1, 'ctx.apiVersion = WORCA_PLUGIN_API');
+  assert.equal(result.api, 1, 'ctx.apiVersion negotiated down to 1 for a ">=1 <2" manifest');
 });
 
 test('connector-thrown error maps to PluginOpError with the connector kind', async () => {
