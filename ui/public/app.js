@@ -857,6 +857,16 @@ function runNode(node, status, isSelf) {
   const d = document.createElement('div');
   d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
   d.dataset.id = node.id;
+  // The History detail wires a click on these nodes to the Logs tab's `source`
+  // filter (wireHdGraphLogLinks). The source a node's lines carry is its AGENT
+  // KEY on a server-built manifest (orchestrator.mjs:2953 logs under node.key)
+  // but its uiPhase on CLIENT_DEFAULT_STEPPER, whose nodes carry no key at all;
+  // `preflight` is a real log source that is neither (orchestrator.mjs:518-524).
+  // The Done bookend emits nothing, so it deliberately gets NO attribute and
+  // stays inert. Data-only on purpose: the live Running card renders this same
+  // markup and binds no handler to it.
+  const logSource = node.id === 'preflight' ? 'preflight' : (node.key || node.uiPhase || '');
+  if (logSource) d.dataset.logSource = logSource;
   d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
   const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
   // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
@@ -9042,7 +9052,58 @@ async function loadLiveLogs(panel, logUrl) {
       copyLogToClipboard(e.target.closest('.log-copy'), recs.filter(compileLogFilter(filter)));
     });
 
+    // The History run-graph's node click drives THIS bar (wireHdGraphLogLinks).
+    // It hands over an ORDERED CANDIDATE LIST rather than one string because the
+    // source a node's lines carry differs by manifest vintage (agent key on a
+    // server-built manifest, uiPhase on the legacy default): the first candidate
+    // this run actually logged under wins, so neither vintage has to be detected.
+    // When the run logged under none of them, candidates[0] is injected as an
+    // option so the dropdown reads honestly and the box says "(no lines match
+    // the filter)" instead of the click silently doing nothing. That injection
+    // survives every repaint because fillFilterSelect — the one thing that would
+    // wipe it — runs ONCE above, outside paint().
+    //
+    // Membership is tested against the SELECT'S OWN OPTIONS, not facets.sources:
+    // the facets never learn about an injected value, so a facet test would
+    // re-inject a duplicate on every call — and Design Contract 3 (no toggle, a
+    // re-click re-applies) makes repeat calls routine. Checking the options keeps
+    // the setter idempotent AND lets a second click reuse the option the first
+    // one added.
+    //
+    // Only `source` is touched; level/step/cycle/search are the user's, and the
+    // bar's change listener re-reads the select via readLogFilterFrom into this
+    // same object, so a later change event preserves the pick instead of
+    // clobbering it.
+    const sourceSel = bar.querySelector('.log-f-source');
+    const hasSourceOption = (v) => [...sourceSel.options].some((o) => o.value === v);
+    panel.__setLogSource = (candidates) => {
+      const list = (Array.isArray(candidates) ? candidates : [candidates]).filter(Boolean).map(String);
+      if (!list.length) return;
+      const pick = list.find(hasSourceOption) || list[0];
+      if (!hasSourceOption(pick)) {
+        const opt = document.createElement('option');
+        opt.value = pick;
+        opt.textContent = pick;
+        sourceSel.appendChild(opt);
+      }
+      sourceSel.value = pick;
+      filter.source = pick;
+      paint();
+    };
+
     paint();
+
+    // A click that OPENED this tab ran before the fetch above resolved, so its
+    // intent was parked on the panel element and is drained here — after the
+    // first paint, and exactly once. Element-scoped rather than module-scoped so
+    // it cannot outlive the screen. Deliberately INSIDE the try: on the error
+    // path the slot is left intact, the catch clears panel.dataset.loaded so the
+    // tab re-arms, and the intent survives to that retry.
+    const pending = panel.__pendingLogSource;
+    if (pending) {
+      panel.__pendingLogSource = null;
+      panel.__setLogSource(pending);
+    }
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;
     panel.dataset.loaded = ''; // allow a retry on the next open
@@ -9319,6 +9380,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
   initHdTabs(screen, rec, data);
+  wireHdGraphLogLinks(screen);   // AFTER initHdTabs: it reads hdTabCells
 
   if (ship && ship.id === parsed.id && ship.projectKey === parsed.projectKey) {
     // The list button's click already proved "no PR" — but the history CACHE strips
@@ -9991,6 +10053,11 @@ const HD_TABS = [
 // The live tab cells of the OPEN detail, so refreshHdFromRow can repaint the one
 // body that reads mutable record fields (Overview). Reset on every initHdTabs.
 let hdTabCells = null;
+// initHdTabs' own activate(), hoisted out so the run-graph node links can switch
+// to the Logs tab. Same lifetime as hdTabCells — both are reassigned by every
+// initHdTabs and belong to exactly one open screen. Storing the REFERENCE keeps
+// activate's three closures (cells, record, data) intact; nothing is re-derived.
+let hdActivateTab = null;
 
 function initHdTabs(screen, record, data) {
   const bar = screen.querySelector('.hd-tabs');
@@ -10000,6 +10067,7 @@ function initHdTabs(screen, record, data) {
   const tabs = HD_TABS.filter((t) => t.visible(data));
   const cells = new Map();
   hdTabCells = cells;
+  hdActivateTab = activate;
   for (const t of tabs) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -10065,6 +10133,100 @@ function initHdTabs(screen, record, data) {
     }
   }
   activate(data.results ? 'diff' : 'overview');
+}
+
+// Legacy manifests (CLIENT_DEFAULT_STEPPER — a run that predates state.stepper)
+// name their nodes by uiPhase, but the lines those runs logged carry the agent
+// ROLE. This is UI_PHASE (workflows.mjs:387-392) read backwards. The candidate
+// list keeps BOTH spellings and the log's own dropdown picks the winner, so
+// neither vintage has to be detected — and the phase spelling can never win by
+// accident, because no log line has ever carried a phase string as its source
+// (_onAgentEvent is only ever called with node.key, orchestrator.mjs:2953).
+// The STAMP'S OWN spelling stays first, so a workflow that legitimately keys an
+// agent `review` or `plan` still resolves to itself whenever the run logged
+// under it; the legacy role is strictly a fallback.
+// Only the phases CLIENT_DEFAULT_STEPPER can actually render are listed;
+// `clarify` is absent because its key and its phase are the same string
+// (workflows.mjs:388), so the single-candidate path already resolves it.
+const LEGACY_PHASE_SOURCE = {
+  plan: 'planner', refine: 'refiner', implement: 'implementer', review: 'reviewer',
+};
+
+/** Ordered log-source candidates for one node's data-log-source stamp. */
+function logSourceCandidates(src) {
+  const alt = LEGACY_PHASE_SOURCE[src];
+  return alt && alt !== src ? [src, alt] : [src];
+}
+
+// Make the History detail's run-graph nodes drive the Logs tab's `source` filter:
+// click a node -> open Logs, narrow to that agent, scroll the panel into view.
+// ONLY `source` is set; level/step/cycle/search stay the user's, and a second
+// click on the same node re-applies rather than toggling (there is no selected
+// state to keep in sync with a hand-edited dropdown).
+//
+// No-op when the run has no live-log artifact: initHdTabs then renders no Logs
+// tab at all, so the graph stays unlinked, unstyled and inert — nothing invites
+// a click that could not do anything. MUST run after initHdTabs (it reads
+// hdTabCells/hdActivateTab) and after buildRunGraph (it reads the built nodes);
+// both hold at the single call site, with no await between them.
+function wireHdGraphLogLinks(screen) {
+  const graph = screen.querySelector('.hd-graph');
+  if (!graph || !hdTabCells || !hdTabCells.has('logs')) return;
+  graph.classList.add('linked');
+
+  // A div that behaves like a link must SAY so and be reachable without a mouse.
+  // `link`, not `button`: button is children-presentational and would prune this
+  // node's status caption, duration, cost and model line out of the a11y tree —
+  // information a run with no sub-agents can find nowhere else. Done gets
+  // neither attribute, because it has no data-log-source to match.
+  //
+  // Unlike the delegated listeners below, this pass is a SNAPSHOT: it decorates
+  // the nodes that exist right now. That is enough on this screen — the only
+  // repaint a History detail ever does is paintRunGraph, which mutates nodes in
+  // place and writes no attribute on a NODE's root element (its only data-*
+  // writes are host.dataset.wiresSig/ns on .run-flow itself, app.js:1025/1032) —
+  // and nothing here re-runs buildRunGraph's structural rebuild. If that ever
+  // changes, this pass has to move with it; the listeners would not.
+  for (const el of graph.querySelectorAll('.run-node[data-log-source]')) {
+    el.setAttribute('role', 'link');
+    el.tabIndex = 0;
+    const label = el.querySelector('.nmeta b');
+    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : el.dataset.logSource}`);
+  }
+
+  const open = (node) => {
+    const cell = hdTabCells && hdTabCells.get('logs');
+    // Both module globals are assigned by the same two lines of initHdTabs, so a
+    // half-set pair is unreachable — but this function dereferences both, so it
+    // guards both.
+    if (!cell || !hdActivateTab) return;
+    const list = logSourceCandidates(node.dataset.logSource);
+    // Park the intent when the panel has not fetched yet (loadLiveLogs drains it
+    // after its first paint); apply it directly when it has. Setting it BEFORE
+    // activate() is load-bearing: activate() is what triggers the fetch.
+    if (typeof cell.sec.__setLogSource === 'function') cell.sec.__setLogSource(list);
+    else cell.sec.__pendingLogSource = list;
+    hdActivateTab('logs');
+    cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
+  };
+
+  // Delegated, so the real event target — always a descendant (.nmeta b, .nic
+  // svg, .nstat), never the node div — still resolves, and so a STRUCTURAL
+  // rebuild (buildRunGraph wiping host.innerHTML when the node-id signature
+  // changes, app.js:913) could not orphan the handler. The Done bookend carries
+  // no data-log-source, so the selector skips it.
+  graph.addEventListener('click', (e) => {
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    if (node && graph.contains(node)) open(node);
+  });
+
+  graph.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    if (!node || !graph.contains(node)) return;
+    e.preventDefault();   // Space would otherwise scroll the detail body too
+    open(node);
+  });
 }
 
 // Overview is the ONLY tab body that reads mutable record fields

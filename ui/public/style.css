@@ -1610,6 +1610,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .hd-body{padding:0 32px 40px;}
 .hd-graph{margin-top:18px;}
+/* History detail only: a run-graph node is a link into the Logs tab's `source`
+   filter (wireHdGraphLogLinks). `.linked` is added only when the run HAS a Logs
+   tab, so an inert graph never shows a pointer, and the Done bookend carries no
+   data-log-source so it stays unstyled. The live Running card renders the same
+   markup and is deliberately untouched by this rule. Specificity (0,4,0) beats
+   `.run-flow .node{cursor:default}` (1114) regardless of source order — that
+   base rule is pinned by test/ui-run-flow-css.test.mjs:55 and must not move. The
+   ring is the stylesheet's standard focus treatment (1940-1952) rather than the
+   node's own --c accent: --c is a pastel set inline by runNode (860) and would
+   sit near 2:1 against the graph's #FBFBF9 field. */
+.hd-graph.linked .run-node[data-log-source]{cursor:pointer;}
+.hd-graph.linked .run-node[data-log-source]:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .hd-error{margin-top:24px;color:var(--red-ink);font-size:12.5px;}
 .hd-error[hidden]{display:none;}
 .hist-sic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
