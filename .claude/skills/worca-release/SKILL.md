@@ -22,8 +22,16 @@ something here doesn't fit; do not restate its contents back to the user.
 - `/worca-release --version:micro` — stable release from stable, patch bump
 - `/worca-release --version:minor` — stable release from stable, minor bump
 
-`--stable` and `--version:*` are mutually exclusive, and which one applies is
-decided by the current version, not by preference — see Step 2.
+`--version:` also accepts a **literal target** — `--version:1.0.0` — which
+pairs with either mode and says the number outright instead of relying on
+inferred arithmetic:
+
+- `/worca-release --rc --version:1.0.0` → `1.0.0-rc.1` (suffix appended)
+- `/worca-release --stable --version:1.0.0` → `1.0.0`
+
+Prefer the literal form for any jump the defaults would not reach — a major
+release, or opening a patch line as an RC. See Step 2 for which combinations
+are legal.
 
 ---
 
@@ -78,17 +86,47 @@ Read the current version:
 node -p "require('./package.json').version"
 ```
 
+`--version:` carries one of two things, and which one decides everything
+below:
+
+- a **keyword** — `micro` or `minor` — meaning "infer the number"
+- a **literal target** — anything matching `X.Y.Z` — meaning "use this number"
+
 The current version decides which flags are legal. Reject the wrong one rather
 than silently ignoring it — a flag that cannot change the outcome must not be
 accepted as if it did.
+
+### With a literal target
+
+The target is the release line. It is honoured as given; no arithmetic.
+
+- `--rc --version:1.0.0` → `1.0.0-rc.1`, appending the suffix. If the current
+  version is already on that line (`1.0.0-rc.2`), continue it: `1.0.0-rc.3`.
+  Never restart a line's numbering at `rc.1` — that number is burned.
+- `--stable --version:1.0.0` → `1.0.0` exactly.
+
+Two rejections, both hard:
+
+1. **The target must be strictly greater than the highest published version**
+   (`npm view @worca/app version`). Reject anything equal or lower: the number
+   is already burned and the publish would fail after the tag exists.
+2. **`--stable --version:X.Y.Z` while on a pre-release of a *different* line**
+   — e.g. on `1.0.0-rc.3` with `--version:2.0.0`. Stop and ask. Shipping a
+   number the RCs never rehearsed defeats the point of having cut them.
+
+`--version:<literal>` requires `--rc` or `--stable`. On its own it does not say
+which one you mean; do not guess.
+
+### Without a target
 
 **`--rc`** (semver pre-release, `X.Y.Z-rc.N`) — legal from either state:
 
 - Already a pre-release → increment N: `0.1.0-rc.4` → `0.1.0-rc.5`
 - Stable → open the next **minor** line as an RC: `0.1.0` → `0.2.0-rc.1`
 
-The stable → next-minor jump is a default, not a law. If the user wants a patch
-line instead (`0.0.1` → `0.0.2-rc.1`) or a major one, ask before computing.
+The stable → next-minor jump is only a default. For a major line, or a patch
+line, say so with `--version:` rather than talking the skill out of its
+arithmetic.
 
 **`--stable`** — legal **only from a pre-release**. Strip the suffix; that is
 the release:
@@ -98,7 +136,7 @@ the release:
 There is no bump to choose here. The micro-vs-minor decision was made when the
 RC line was opened, and the whole point of the RCs was to rehearse this exact
 number. If the current version is already stable, stop: there is no RC line to
-close out, and the user wants `--version:micro` or `--version:minor`.
+close out, and the user wants a keyword or a literal target.
 
 **`--version:micro` / `--version:minor`** — legal **only from a stable
 version**:
@@ -107,11 +145,26 @@ version**:
 - `minor`: `0.2.0` → `0.3.0`
 
 If the current version is a pre-release, stop: the line is already set, and
-neither flag can change what ships. The user wants `--stable`.
+neither keyword can change what ships. The user wants `--stable`.
 
 Never compute a stable version with `npm version minor`. From `0.2.0-rc.3`,
 semver makes `major`, `minor`, and `patch` all collapse to `0.2.0` — the
 command doesn't say what you'll get. Always pass the literal version.
+
+### Worked examples
+
+| Current | Invocation | Result |
+| --- | --- | --- |
+| `0.1.0` | `--rc` | `0.2.0-rc.1` (inferred next minor) |
+| `0.1.0` | `--rc --version:1.0.0` | `1.0.0-rc.1` |
+| `1.0.0-rc.2` | `--rc` | `1.0.0-rc.3` |
+| `1.0.0-rc.2` | `--rc --version:1.0.0` | `1.0.0-rc.3` (same line, continues) |
+| `1.0.0-rc.3` | `--stable` | `1.0.0` |
+| `1.0.0-rc.3` | `--stable --version:1.0.0` | `1.0.0` (identical, just explicit) |
+| `1.0.0-rc.3` | `--stable --version:2.0.0` | **stop** — RCs rehearsed 1.0.0 |
+| `0.1.0` | `--stable` | **stop** — no RC line open |
+| `1.0.0-rc.3` | `--version:minor` | **stop** — line already set |
+| any | `--version:0.1.0` | **stop** — already published |
 
 **Print the computed version and confirm with the user before proceeding.**
 
@@ -195,16 +248,14 @@ npm view @worca/app dist-tags
 #    before telling anyone to install it.
 npm view @worca/app@<VERSION> dist.attestations
 
-# 3. GA only: `rc` must not trail `latest`. The promote step runs
-#    continue-on-error, so it can silently not have happened.
+# 3. Both pointers read as expected.
 npm dist-tag ls @worca/app
 ```
 
-If `rc` is behind `latest` after a stable release, re-point it:
-
-```bash
-npm dist-tag add @worca/app@<VERSION> rc
-```
+After a GA release `rc` still points at the last release candidate, and that is
+correct — the OIDC credential is granted `npm publish` only and cannot move a
+dist-tag, so nothing promotes it. Report it as expected, not as a fault. The
+next `--rc` moves it ahead of `latest` again.
 
 ---
 

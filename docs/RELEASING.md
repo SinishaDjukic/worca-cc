@@ -117,9 +117,10 @@ npmjs.com → the package → **Settings** → **Trusted Publisher** → GitHub 
 | Allowed actions | `npm publish` only |
 
 Leave **`npm stage publish`** unchecked — staged publishing is a separate
-review-then-promote flow these workflows do not use. Note that the allowlist
-covers publishing but says nothing about moving a dist-tag, so the GA `rc`
-promote step runs `continue-on-error` — see §4.2.
+review-then-promote flow these workflows do not use. Note that this allowlist
+is the *whole* grant: the OIDC credential can publish and nothing else. It
+cannot move a dist-tag — `npm dist-tag add` under it fails `E401` — which is
+why no workflow here tries. See §5 for what that means for `rc`.
 
 The workflow filename is matched **exactly**, and the registration covers
 **one package only** — `@worca/ui`'s publisher grants nothing to `@worca/app`,
@@ -204,6 +205,23 @@ Testers opt in with:
 npm install @worca/app@rc
 ```
 
+### 4.1b Naming the target explicitly
+
+The arithmetic above infers the next number, which is right for routine
+releases and wrong for a jump the defaults cannot reach — a major line, or a
+patch line opened as an RC. State the target instead of nudging the inference:
+
+```bash
+/worca-release --rc --version:1.0.0        # -> 1.0.0-rc.1
+/worca-release --stable --version:1.0.0    # -> 1.0.0
+```
+
+The target must be strictly greater than the highest published version
+(`npm view @worca/app version`) — anything equal or lower is already burned and
+would fail the publish *after* the tag exists. And closing out an RC line with a
+different number than the RCs rehearsed is refused: if `1.0.0-rc.3` is current,
+`--stable --version:2.0.0` stops and asks.
+
 ### 4.2 GA release
 
 ```bash
@@ -213,15 +231,8 @@ git tag -a worca-app-v0.2.0 -m "@worca/app 0.2.0"
 git push origin HEAD && git push origin worca-app-v0.2.0
 ```
 
-The workflow publishes under `latest` and moves `rc` forward to the same
-version, so `@rc` never resolves behind `@latest`. That promote step is marked
-`continue-on-error`: the publish preceding it is already irreversible, so a
-credential rejection there must not paint a successful release red. If it does
-fail, `rc` simply stays behind and you re-point it by hand:
-
-```bash
-npm dist-tag add @worca/app@0.2.0 rc
-```
+The workflow publishes under `latest`. It does **not** touch `rc` — see §5 for
+why, and for what `rc` therefore means.
 
 > **Do not use `npm version minor` to close out an RC line.** From
 > `0.2.0-rc.3`, semver's rules make `major`, `minor`, and `patch` all collapse
@@ -271,7 +282,15 @@ Every other tag name is convention. Ours:
 | Tag | Meaning |
 | --- | --- |
 | `latest` | Stable. What a bare `npm install` gives you. |
-| `rc` | The current release candidate. Ahead of `latest` while a line is baking; equal to `latest` immediately after a GA release. |
+| `rc` | The **most recent release candidate**. Ahead of `latest` while a line is baking; behind it in the window between a GA release and the next RC. |
+
+`rc` sitting behind `latest` for a while is expected here, not a fault. The
+OIDC credential that publishes these releases is granted `npm publish` and
+nothing else — it cannot run `npm dist-tag add`, so no workflow can promote
+`rc` on a GA release. Rather than keep a step that fails `E401` on every stable
+release, or hold a long-lived token just to move a pointer, `rc` simply means
+what its name says: the last candidate published. Cutting the next RC moves it
+ahead again.
 
 Two mechanics that explain why this matters:
 
@@ -329,4 +348,4 @@ previously working pipeline breaks.
 | `You cannot publish over the previously published versions` | The version was already published — bump it; it cannot be reused |
 | `npm error code EOTP` | A manual publish against a 2FA-protected account — re-run with `--otp=<code>`. Never seen from CI, which authenticates over OIDC |
 | Workflow never starts | Only the commit was pushed, not the tag, or the tag does not match the prefix pattern |
-| `@rc` resolves behind `@latest` | The GA promote step did not run — re-point it with `npm dist-tag add` |
+| `@rc` resolves behind `@latest` | Expected between a GA release and the next RC — see §5. Only a concern if it persists across several release lines |
