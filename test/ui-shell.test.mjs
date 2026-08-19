@@ -19,7 +19,8 @@ test('nav targets: the base set + workspaces + projects + stats (workspace-creat
 });
 test('shell hooks present (base + workspace surfaces)', () => {
   for (const id of [
-    'run-card-tpl', 'hist-card-tpl', 'run-list', 'nav-running-count', 'nav-history-count',
+    'run-card-tpl', 'hist-card-tpl', 'hist-detail-tpl', 'shipit-modal',
+    'run-list', 'nav-running-count', 'nav-history-count',
     'nav-workspaces-count', 'ws-card-tpl', 'ws-list', 'target-seg', 'target-project-pane',
     'target-workspace-pane', 'workspaceSelect', 'ws-members', 'wiz-close', 'wiz-abort', 'wiz-desc',
   ])

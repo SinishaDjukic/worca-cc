@@ -86,7 +86,8 @@ test('the templates host .run-flow, not the retired .stages.compact', async () =
   const { window } = await bootLive();
   assert.equal(window.document.querySelectorAll('.stages.compact').length, 0, 'no .stages.compact in the DOM');
   assert.ok(window.document.querySelector('#run-card-tpl').content.querySelector('.run-flow'), 'run template hosts .run-flow');
-  assert.ok(window.document.querySelector('#hist-card-tpl').content.querySelector('.run-flow'), 'hist template hosts .run-flow');
+  // History's graph moved off the (now link-only) list card onto the detail screen.
+  assert.ok(window.document.querySelector('#hist-detail-tpl').content.querySelector('.run-flow'), 'hist detail template hosts .run-flow');
 });
 
 test('manifestFor falls back to the legacy default when state has no stepper', async () => {

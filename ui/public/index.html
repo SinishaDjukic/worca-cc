@@ -385,113 +385,145 @@
 
         <!-- ===== VIEW: HISTORY ===== -->
         <section class="view hidden" data-view="history">
-          <div class="topbar">
-            <div>
-              <h1>History</h1>
-              <div class="sub">Completed and stopped pipelines</div>
+          <div class="hist-shell" id="hist-shell">
+            <div class="hist-screen hist-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>History</h1>
+                  <div class="sub">Completed and stopped pipelines</div>
+                </div>
+                <button type="button" id="refresh-history" class="btn-ghost" style="padding:11px 20px">Refresh</button>
+              </div>
+
+              <!-- Project filter pills: "All Projects" + one per project that has history.
+                   Built by renderHistoryPills() from the /api/history dataset. -->
+              <div class="hist-filter" id="historyFilter" aria-label="Filter history by project"></div>
+
+              <div class="run-list" id="history"></div>
+
+              <!-- clone target for one history card. The card is a LINK to the detail
+                   screen (#history/<projectKey>/<id>) — it never expands in place. -->
+              <template id="hist-card-tpl">
+                <section class="card hist-card">
+                  <div class="hist-head" role="button" tabindex="0">
+                    <span class="hist-sic" role="img">
+                      <svg class="sic sic-done" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                      <svg class="sic sic-stopped" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                      <svg class="sic sic-paused" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                      <svg class="sic sic-error" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
+                    </span>
+                    <div class="h-meta">
+                      <b></b>
+                      <span class="badge hist-retained-badge" hidden>Work retained</span>
+                      <div class="hist-meta-line">
+                        <span class="hist-status-word"></span>
+                        <!-- Plain <span>s: each segment is typed by its own
+                             .hist-day/.hist-clock/.hist-time rule, not by an element
+                             selector. -->
+                        <span class="hm-seg hist-day-seg"><span class="hm-dot">·</span><span class="hist-day"></span></span>
+                        <span class="hm-seg hist-clock-seg"><span class="hm-dot">·</span><span class="hist-clock"></span></span>
+                        <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
+                        <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
+                        <span class="hist-diff-pill" hidden>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
+                          <span class="hist-diff mono" aria-label="lines changed"></span>
+                          <span class="hist-nodiff mono" hidden>no diff</span>
+                        </span>
+                      </div>
+                      <span class="hist-branch mono" hidden>
+                        <span class="hist-branch-src" hidden></span>
+                        <svg class="hist-branch-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-label="into" role="img" hidden><path d="M4 12h15M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        <span class="hist-branch-dst"></span>
+                        <button type="button" class="hist-branch-copy" title="Copy branch name" aria-label="Copy branch name">
+                          <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
+                          <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        </button>
+                        <!-- "Copied" feedback on the CARD too, not just the detail header.
+                             Same mechanism as `.hd-copied`: no JS, purely the CSS sibling of
+                             copyBranchToClipboard's own ~1200ms `.copied` window, and NO
+                             `hidden` attribute (that would desync the a11y tree from the
+                             visual state). -->
+                        <span class="hist-copied">Copied</span>
+                      </span>
+                      <span class="hist-pausenote" hidden></span>
+                    </div>
+                    <div class="hist-aside">
+                      <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
+                      <button type="button" class="hist-open" aria-label="Open run details">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </template>
             </div>
-            <button type="button" id="refresh-history" class="btn-ghost" style="padding:11px 20px">Refresh</button>
+            <div class="hist-screen hist-screen-detail" id="hist-detail" aria-hidden="true"></div>
           </div>
 
-          <!-- Project filter pills: "All Projects" + one per project that has history.
-               Built by renderHistoryPills() from the /api/history dataset. -->
-          <div class="hist-filter" id="historyFilter" aria-label="Filter history by project"></div>
-
-          <div class="run-list" id="history"></div>
-
-          <!-- clone target for one history card (Task 5 fills it) -->
-          <template id="hist-card-tpl">
-            <section class="card hist-card">
-              <div class="hist-head" role="button" tabindex="0" aria-expanded="false">
-                <span class="badge"></span>
-                <span class="badge hist-retained-badge" hidden>Work retained</span>
-                <div class="h-meta">
-                  <b></b><small></small><span class="hist-time mono"></span><span class="hist-total mono"></span>
-                  <span class="hist-branch mono" hidden>
-                    <span class="hist-branch-src" hidden></span>
-                    <svg class="hist-branch-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-label="into" role="img" hidden><path d="M4 12h15M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                    <span class="hist-branch-dst"></span>
-                    <button type="button" class="hist-branch-copy" title="Copy branch name" aria-label="Copy branch name">
-                      <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
-                      <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                    </button>
+          <!-- clone target for the History detail screen (#history/<projectKey>/<id>) -->
+          <template id="hist-detail-tpl">
+            <div class="hd">
+              <header class="hd-header">
+                <div class="hd-row1">
+                  <button type="button" class="hd-back btn-ghost" aria-label="Back to history">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="hd-title"></h1>
+                  <span class="hd-sic hist-sic" role="img">
+                    <svg class="sic sic-done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <svg class="sic sic-stopped" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                    <svg class="sic sic-paused" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                    <svg class="sic sic-error" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
                   </span>
-                  <span class="hist-pausenote" hidden></span>
-                </div>
-                <div class="hist-aside">
-                  <span class="hist-diff" aria-label="lines changed"></span>
                   <span class="hist-merge" hidden></span>
-                  <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
-                  <button type="button" class="hist-resume btn-ghost" hidden>Resume</button>
+                  <button type="button" class="hd-pr" hidden>Create PR</button>
+                  <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
                 </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-              </div>
-              <div class="hist-detail" hidden>
-                <div class="retained-banner" role="alert" hidden></div>
-                <div class="run-flow-wrap"><div class="run-flow"></div></div>
-                <!-- Results view (Layer 1 mechanical + Layer 2 overview) -->
-                <div class="results-section"></div>
-                <!-- Diff dropdown (New/Changed files) — collapsed by default -->
-                <div class="diff-bar" hidden>
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>
-                    Diff
-                    <span class="sb-count diff-changed grey"></span>
-                    <span class="sb-count diff-removed grey"></span>
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div class="hd-meta mono"></div>
+                <div class="hd-row3">
+                  <span class="hd-base mono"></span>
+                  <button type="button" class="hd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                    <span class="hd-branch-name"></span>
+                    <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
+                    <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   </button>
-                  <div class="subs-panel diff-panel" hidden></div>
-                </div>
-                <!-- Overview dropdown (Layer-2 summary) — collapsed; Generate button built on first expand -->
-                <div class="overview-bar" hidden>
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    Overview
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <!-- NO `hidden` attribute: the caption is driven purely by the CSS
+                       sibling rule off copyBranchToClipboard's own 1200ms `.copied`
+                       window. Shipping `hidden` here would leave the node hidden from
+                       assistive tech while visually shown, because the author rule
+                       outranks the UA [hidden] rule either way. -->
+                  <span class="hd-copied">Copied</span>
+                  <span class="hd-spacer"></span>
+                  <!-- The label lives in its own span: the busy states ("Resuming…" /
+                       "Archiving…") swap ONLY that node, so the inline SVG survives and
+                       the error path can restore the word. -->
+                  <button type="button" class="hd-resume btn-ghost" hidden>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
+                    <span class="hd-btn-label">Resume</span>
                   </button>
-                  <div class="subs-panel overview-panel" hidden></div>
-                </div>
-                <div class="subs-bar" hidden>
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
-                    Agents
-                    <span class="sb-count grey"></span>
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <button type="button" class="hd-archive" hidden>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    <span class="hd-btn-label">Archive</span>
                   </button>
-                  <div class="subs-panel" hidden></div>
                 </div>
-                <!-- Clarify dropdown (Q&A) — under Sub-agents -->
-                <div class="clarify-bar" hidden>
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    Clarify
-                    <span class="sb-count grey"></span>
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-                  <div class="subs-panel clarify-panel" hidden></div>
-                </div>
-                <!-- Live logs dropdown — under Clarify -->
-                <div class="logs-bar" hidden>
-                  <button type="button" class="btn-subs" aria-expanded="false">
-                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>
-                    Live logs
-                    <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-                  <div class="subs-panel logs-panel" hidden></div>
-                </div>
-                <div class="hist-actions">
+                <!-- The inline error lives on the HEADER, not in .hd-body, so an archive
+                     failure is not pushed below the fold by a long Diff or Logs tab.
+                     Both writers (the load-failure path and the archive catch) resolve
+                     it with screen.querySelector, so the position is free to be correct. -->
+                <div class="hd-error" hidden></div>
+              </header>
+              <div class="hd-body">
+                <div class="hd-banners">
+                  <span class="badge hist-retained-badge" hidden>Work retained</span>
+                  <div class="retained-banner" role="alert" hidden></div>
                   <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
-                  <button type="button" class="hist-delete btn-danger" hidden>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-                      <line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>
-                    </svg>
-                    Archive
-                  </button>
                 </div>
+                <div class="hd-graph"><div class="run-flow-wrap"><div class="run-flow"></div></div></div>
+                <div class="hd-tabs" role="tablist"></div>
+                <div class="hd-sections"></div>
               </div>
-            </section>
+            </div>
           </template>
         </section>
         <!-- /view history -->
@@ -1107,6 +1139,44 @@
         <div class="confirm-actions">
           <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
           <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== "Ship it?" PR confirm modal (History detail) ===== -->
+    <!-- No z-index of its own: #confirm-modal.viewer-modal{z-index:60} (style.css:781)
+         exists because #confirm-modal precedes #plugin-modal in the DOM, and this
+         dialog never coexists with another overlay — the Escape guard and the
+         double-open guard keep them mutually exclusive. -->
+    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Open a pull request">
+      <div class="card shipit-card">
+        <div class="shipit-ico-wrap">
+          <div class="shipit-spark"></div>
+          <div class="shipit-ico">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.4"></circle><circle cx="6.5" cy="18" r="2.4"></circle><circle cx="17.5" cy="12" r="2.4"></circle><path d="M6.5 8.4v7.2M8.9 17c4.1 0 6-1.8 6.2-3.6M8.9 7c4.1 0 6 1.8 6.2 3.6"></path></svg>
+          </div>
+        </div>
+        <h2>Ship it?</h2>
+        <p class="shipit-sub"></p>
+        <div class="shipit-summary mono">
+          <span class="shipit-files"></span>
+          <!-- spec §5.10 writes the summary as "N files · +A −R"; the middot is markup
+               so the CSS can drop it when the file count is absent. -->
+          <span class="shipit-dot">·</span>
+          <span class="diff-add shipit-add"></span>
+          <span class="diff-del shipit-del"></span>
+          <span class="shipit-break"></span>
+          <b class="shipit-branch"></b>
+          <span class="shipit-arrow">→</span>
+          <span class="shipit-base"></span>
+        </div>
+        <!-- `hint err`, not `err`: style.css has no standalone .err rule, only
+             .hint.err (:284). .hint sets display:block, so .shipit-err ships an
+             explicit [hidden] twin. -->
+        <div class="shipit-err hint err" hidden></div>
+        <div class="shipit-actions">
+          <button type="button" class="shipit-cancel btn-ghost">Cancel</button>
+          <button type="button" class="shipit-ok">Open pull request</button>
         </div>
       </div>
     </div>

@@ -56,10 +56,11 @@ import {
 } from './composer-core.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
-import {
-  statusChip, diffBadges, mergeFindings,
-  sourceBadge, reportResultControl, workflowPickerLabel,
-} from './results-view.mjs';
+// Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
+// lost their last app.js caller with the retired card accordion. They stay EXPORTED
+// from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
+import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
+import { splitPatchSections, parseFileSection, patchIndex, sectionKey } from './diff-view.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
@@ -134,6 +135,8 @@ const el = {
   history: $('#history'),
   historyFilter: $('#historyFilter'),
   refreshHistory: $('#refresh-history'),
+  histShell: $('#hist-shell'),
+  histDetail: $('#hist-detail'),
   navHistoryCount: $('#nav-history-count'),
   navWorkspacesCount: $('#nav-workspaces-count'),
 
@@ -2715,12 +2718,11 @@ if (typeof window !== 'undefined') {
     stepSkillsFromSteps,
     stepGraphifyFromSteps,
     nodeLabelLookup,
-    historyBadge,
     statusPill,
     buildHistCard,
-    paintClarifyBar,
+    histStatusMeta,
+    histPrEligible,
     pauseRun,
-    setupResumeButton,
     nodeKindFor,
     upsertRun,
     buildRunCard,
@@ -6012,12 +6014,16 @@ function renderProjectsList() {
 
 // ---- Reusable confirmation modal -> Promise<boolean> ------------------------
 // With opts.checkbox: { label } it resolves { ok, checked } instead.
-function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', checkbox = null } = {}) {
+// opts.danger tints the OK button red for a destructive action (opt-in, so no
+// existing caller changes). `done` always removes it again — the modal is shared,
+// and the tint must never leak into the next, harmless confirmation.
+function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', checkbox = null, danger = false } = {}) {
   return new Promise((resolve) => {
     el.confirmTitle.textContent = title;
     el.confirmMessage.textContent = message;
     el.confirmOk.textContent = confirmLabel;
     el.confirmCancel.textContent = cancelLabel;
+    el.confirmOk.classList.toggle('danger', !!danger);
     // opt-in checkbox: shown only when requested, always reset to unchecked
     el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
     el.confirmCheckbox.checked = false;
@@ -6027,6 +6033,7 @@ function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm
 
     const done = (val) => {
       const checked = el.confirmCheckbox.checked;
+      el.confirmOk.classList.remove('danger');   // never leak the tint to the next caller
       el.confirmModal.classList.add('hidden');
       el.confirmCheckboxWrap.classList.add('hidden');
       el.confirmOk.removeEventListener('click', onOk);
@@ -7836,7 +7843,7 @@ async function pauseRun(runId, btn) {
 // run's pipelineId; the server starts a fresh live run (new runId) that announces
 // itself over the WS. Drop the old paused run object so the pipeline doesn't
 // double-show (paused card + new live card share a pipelineId), then land on the
-// live Overview. Mirrors setupResumeButton's history-card path.
+// live Overview. Mirrors the detail screen's Resume path.
 // Carry the paused run's log into the resumed run so the live card shows ALL
 // logs continuously. Resume mints a NEW runId with a fresh buffer, so without
 // this the pre-pause lines (on the old run object, or only on disk) would be
@@ -8218,7 +8225,7 @@ function restoreHistoryFilter() {
 }
 
 // Loading affordance for Refresh: disable + spin the button and mark the list
-// aria-busy. Mirrors the per-button busy idiom in setupPrButton/setupDeleteButton.
+// aria-busy. Mirrors the per-button busy idiom in setupPrButton/setupHdActions.
 function setHistoryLoading(on) {
   const btn = el.refreshHistory;                         // #refresh-history
   if (btn) { btn.disabled = !!on; btn.classList.toggle('busy', !!on); }
@@ -8269,21 +8276,21 @@ function cssEscape(s) {
   return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
 }
 
-// Rebuild the .hist-merge + .hist-pr nodes from the template so a re-patch (e.g. a
-// Refresh after a link was already rendered) starts from the Create-PR BUTTON again:
-// setupPrButton early-returns if it cannot find `.hist-pr` (a prior button->link
-// swap did btn.replaceWith(link)), so that swap must be undone first. Cloning fresh
-// nodes also drops any click listener a prior setupPrButton attached.
+// Rebuild the .hist-pr node from the template so a re-patch (e.g. a Refresh after a
+// link was already rendered) starts from the Create-PR BUTTON again: setupPrButton
+// early-returns if it cannot find `.hist-pr` (a prior button->link swap did
+// btn.replaceWith(link)), so that swap must be undone first. Cloning a fresh node
+// also drops any click listener a prior setupPrButton attached.
+// No merge half any more — the v2 card template has no `.hist-merge` (the pill is
+// detail-only), so cloning one would throw on every PR patch. The fresh button is
+// inserted BEFORE `.hist-open` so the chevron stays last in the aside.
 function resetPrCluster(card) {
   const aside = card.querySelector('.hist-aside');
   if (!aside) return;
-  const tpl = $('#hist-card-tpl').content;
-  const freshMerge = tpl.querySelector('.hist-merge').cloneNode(true);  // <span class="hist-merge" hidden>
-  const freshPr = tpl.querySelector('.hist-pr').cloneNode(true);        // <button class="hist-pr btn-ghost" hidden>
-  const curMerge = aside.querySelector('.hist-merge');
+  const freshPr = $('#hist-card-tpl').content.querySelector('.hist-pr').cloneNode(true);
   const curPr = aside.querySelector('.hist-pr, .hist-pr-link');         // button OR the swapped-in link
-  if (curMerge) curMerge.replaceWith(freshMerge); else aside.appendChild(freshMerge);
-  if (curPr) curPr.replaceWith(freshPr); else aside.appendChild(freshPr);
+  if (curPr) curPr.replaceWith(freshPr);
+  else aside.insertBefore(freshPr, aside.querySelector('.hist-open'));
 }
 
 function patchHistoryPr({ projectKey, id, pr }) {
@@ -8292,6 +8299,11 @@ function patchHistoryPr({ projectKey, id, pr }) {
   const row = state.historyAll.find((r) => r && r.id === id && r.projectKey === projectKey);
   if (row) row.pr = pr || null;
 
+  // 1b) Keep an OPEN detail screen for this run in step. BEFORE the `!card`
+  //     early-out below: the deep-link case this hook exists for is exactly the
+  //     one where the matching list card is filtered off-screen.
+  hdSyncPr(projectKey, id, row);
+
   // 2) Patch ONLY the matching live card in place. NEVER call paintHistory() here —
   //    a full repaint blows away expand state + the lazily-fetched stepper.
   const sel = `.hist-card[data-pipeline-id="${cssEscape(id)}"][data-project-key="${cssEscape(projectKey)}"]`;
@@ -8299,8 +8311,11 @@ function patchHistoryPr({ projectKey, id, pr }) {
   if (!card) return;                                         // off-screen (filtered out) — model is enough
   resetPrCluster(card);
   setupPrButton(card, row?.projectDir || null, row || { id, projectKey, pr }, state.ghAvailable);
+  // A MERGED enrichment retires the diff pill — merged work is already in the base
+  // branch, so its line counts stop being the story.
+  renderHistDiffPill(card.querySelector('.hist-diff-pill'), row || { id, projectKey, pr });
   // No setMergePill: clarification B — merged-or-not is shown by the link swap inside
-  // setupPrButton (OPEN->"View PR", MERGED->"Merged"); the .hist-merge pill stays hidden.
+  // setupPrButton (OPEN->"View PR", MERGED->"Merged"); the pill is detail-only now.
 }
 
 // Enrichment terminated (final WS batch, failed POST, or the watchdog): any entry
@@ -8313,11 +8328,15 @@ function finalizeHistoryPr() {
   for (const row of state.historyAll) {
     if (!row || row.pr !== undefined) continue;        // already resolved (object or null)
     row.pr = null;                                      // resolved: no open/merged PR
+    // Same reason as in patchHistoryPr: before the `!card` continue, or a
+    // deep-linked eligible run keeps `pr === undefined` and never offers Create PR.
+    hdSyncPr(row.projectKey, row.id, row);
     const sel = `.hist-card[data-pipeline-id="${cssEscape(row.id)}"][data-project-key="${cssEscape(row.projectKey)}"]`;
     const card = el.history.querySelector(sel);
     if (!card) continue;                                // off-screen — model update is enough
     resetPrCluster(card);
     setupPrButton(card, row.projectDir || null, row, state.ghAvailable);
+    renderHistDiffPill(card.querySelector('.hist-diff-pill'), row);
   }
 }
 
@@ -8413,6 +8432,9 @@ function paintHistory() {
   }
   renderHistoryPills();
   renderHistory();
+  // An open detail screen re-reads its (possibly late-arriving, possibly mutated)
+  // list row from the same dataset. No-op when no detail is open.
+  refreshHdFromRow();
 }
 
 // Render #history from state.historyAll filtered by state.historyFilter.
@@ -8497,45 +8519,12 @@ function histEmpty(text) {
   return div;
 }
 
-// Map a pipeline status to { cls, text } for the collapsed-card badge.
-function historyBadge(p) {
-  const s = String(p.status || '').toLowerCase();
-  if (s === 'done' || s === 'complete' || s === 'completed') return { cls: 'badge green', text: 'DONE' };
-  if (s === 'stopped' || s === 'aborted') return { cls: 'badge red', text: 'STOPPED' };
-  if (s === 'error' || s === 'failed') return { cls: 'badge red', text: 'ERROR' };
-  if (s === 'interrupted') return { cls: 'badge red', text: 'INTERRUPTED' };
-  if (s === 'paused') return { cls: 'badge paused', text: 'PAUSED' };
-  if (s === 'pausing') return { cls: 'badge running', text: 'PAUSING…' };
-  if (p.live || s === 'running' || s === 'starting') return { cls: 'badge running', text: 'RUNNING' };
-  return { cls: 'badge', text: s ? s.toUpperCase() : 'UNKNOWN' };
-}
-
-// Render the +added / −removed line-count chip for a survived branch. Colors are
-// class-driven (green add / red del). Nothing for branches that did not survive.
-// NOTE: the minus glyph is U+2212 (−), not an ASCII hyphen; the jsdom test
-// asserts it byte-for-byte, so keep this exact character.
-function renderHistDiff(host, p) {
-  if (!host) return;
-  host.textContent = '';
-  if (!p || !p.survived) return;
-  const added = Number.isFinite(+p.added) ? +p.added : 0;
-  const removed = Number.isFinite(+p.removed) ? +p.removed : 0;
-  const add = document.createElement('span');
-  add.className = 'diff-add';
-  add.textContent = `+${added}`;
-  const del = document.createElement('span');
-  del.className = 'diff-del';
-  del.textContent = `−${removed}`; // U+2212 minus
-  host.append(add, del);
-  host.title = `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
-}
-
-// Wire the Create-PR button. Shown only when gh is available AND the feature
-// branch survived AND we know its source. Click pushes + opens the PR, then
-// swaps itself for a link and reveals the mergeability pill.
+// Wire the list card's Create-PR button. Eligibility is `histPrEligible` (shared
+// with the detail screen); a click navigates to the detail page and arms the
+// "Ship it?" modal rather than POSTing from here. No `.hist-merge` lookup — the
+// mergeability pill is detail-only now.
 function setupPrButton(node, projectDir, p, ghAvailable) {
   const btn = node.querySelector('.hist-pr');
-  const mergeEl = node.querySelector('.hist-merge');
   if (!btn) return;
 
   // A PR already open or merged for this branch -> never offer "Create PR";
@@ -8557,8 +8546,12 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
     return;
   }
 
-  const eligible = ghAvailable && p.survived && p.branch && p.sourceBranch;
-  if (!eligible) { btn.hidden = true; return; }
+  // ONE shared predicate with paintHdPr and the pendingShipIt consumer. It adds the
+  // workspace clause the open-coded gate was missing: POST /api/pr has no workspace
+  // arm and its key regex rejects a `workspaces/…` composite with a 404, so offering
+  // "Create PR" there could only ever end in a failed ship. `ghAvailable` stays a
+  // parameter (the three call sites keep passing it) — the GATE reads state itself.
+  if (!histPrEligible(p)) { btn.hidden = true; return; }
 
   // PR state not yet resolved for this entry (Phase-2 enrichment still in flight).
   // Keep the button hidden instead of flashing "Create PR" on an entry that may
@@ -8569,39 +8562,12 @@ function setupPrButton(node, projectDir, p, ghAvailable) {
   if (p.pr === undefined) { btn.hidden = true; return; }
 
   btn.hidden = false;
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation(); // never toggle the card when clicking the button
-    btn.disabled = true;
-    const label = btn.textContent;
-    btn.textContent = 'Creating…';
-    try {
-      const res = await fetch('/api/pr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id }),
-      });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      const link = document.createElement('a');
-      link.className = 'hist-pr-link';
-      link.href = data.url || '#';
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = data.existed ? 'View PR' : 'PR opened';
-      btn.replaceWith(link);
-      if (mergeEl) {
-        setMergePill(mergeEl, data.mergeable);
-        // If GitHub hasn't computed mergeability yet (UNKNOWN -> "checking…"),
-        // re-check once after a short pause so the pill never sticks.
-        if (String(data.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
-          scheduleMergeRecheck(mergeEl, { projectDir: p.projectDir || projectDir, projectKey: p.projectKey, id: p.id });
-        }
-      }
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = label;
-      btn.title = `Could not open PR: ${err.message}`;
-    }
+  // The list card never fires the PR call itself: it hands the intent to the detail
+  // screen, which owns the "Ship it?" confirm modal and every PR control from here on.
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation(); // never let the whole-card navigation double-fire
+    pendingShipIt = { id: p.id, projectKey: p.projectKey };
+    location.hash = `history/${histDetailParam(p)}`;
   });
 }
 
@@ -8743,47 +8709,6 @@ function setupDiscardWorktreeButton(node, projectDir, p) {
   });
 }
 
-// Wire the Archive button in the expanded card. Shown only for finished entries.
-// Confirms via window.confirm (the app's destructive-action convention), then
-// DELETEs the pipeline — which archives it — and drops the card from the list.
-function setupDeleteButton(node, projectDir, p) {
-  const btn = node.querySelector('.hist-delete');
-  if (!btn) return;
-  if (!isDeletableEntry(p)) { btn.hidden = true; return; }
-  btn.hidden = false;
-  if (p.retainedWork) {
-    btn.disabled = true;
-    btn.title = 'Recover or discard the retained uncommitted work before archiving.';
-    return;
-  }
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation(); // never toggle the card
-    const label = p.title || p.id || 'this entry';
-    const msg = `Archive "${label}"?\n\nThis removes it from History and deletes its local ` +
-      `branch/worktree. Its cost and outcome are kept for Statistics; the remote branch is kept. ` +
-      `This cannot be undone.`;
-    if (!window.confirm(msg)) return;
-    btn.disabled = true;
-    const prev = btn.textContent;
-    btn.textContent = 'Archiving…';
-    try {
-      const qs = runActionQuery(projectDir, p);
-      const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}?${qs.toString()}`, { method: 'DELETE' });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      // Drop from the in-memory dataset and repaint so the list, the per-project
-      // section/count, and the pills all stay consistent (removing a project's
-      // last pipeline also drops its pill).
-      state.historyAll = state.historyAll.filter((r) => !(r && r.id === p.id && r.projectKey === p.projectKey));
-      paintHistory();
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = prev;
-      btn.title = `Could not delete: ${err.message}`;
-    }
-  });
-}
-
 // Resume a paused pipeline from its history card. POST /api/resume returns the
 // new live runId; the run announces itself over the WS — mirror beginRun's
 // post-launch block so the user lands on the live card immediately.
@@ -8791,7 +8716,7 @@ function setupDeleteButton(node, projectDir, p) {
 const PAUSED_STATUSES = ['paused', 'pausing', 'interrupted'];
 
 // Disable a history Resume button while a total-budget pause is still blocked by
-// the current window. Shared by setupResumeButton (first paint) and
+// the current window. Shared by setupHdActions (first paint) and
 // refreshHistResumeGating (every later budget change).
 function applyHistResumeGate(btn, pauseReason, budget) {
   const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
@@ -8801,112 +8726,39 @@ function applyHistResumeGate(btn, pauseReason, budget) {
     : '';
 }
 
-// Re-gate every mounted history Resume button from the dataset.pauseReason stamp
-// buildHistCard left behind, so a budget change unblocks them without a refetch.
+// Re-gate the mounted history Resume button from the dataset.pauseReason stamp
+// paintHdBanners left behind, so a budget change unblocks it without a refetch.
+// Detail-screen roots ONLY: Resume left the list card with the accordion.
 function refreshHistResumeGating() {
-  const host = el.history;
-  if (!host) return;
-  for (const card of host.querySelectorAll('.hist-card')) {
-    const btn = card.querySelector('.hist-resume');
+  const roots = el.histDetail ? [...el.histDetail.querySelectorAll('.hd')] : [];
+  for (const root of roots) {
+    const btn = root.querySelector('.hd-resume');
     if (!btn || btn.hidden) continue;
-    applyHistResumeGate(btn, card.dataset.pauseReason || '', budgetState.budget);
+    // An IN-FLIGHT resume owns its button outright: applyHistResumeGate would
+    // re-enable it mid-POST (second click = second POST /api/resume).
+    if (btn.dataset.resumeState === 'busy') continue;
+    // A FAILED one does not get to opt out of budget gating for the life of the
+    // screen (the detail screen is never rebuilt, and nothing clears the flag) —
+    // otherwise a `cost_total` block that lands later leaves the button enabled and
+    // the user clicks into a guaranteed 403. Re-gate, then restore the D3 error
+    // title when gating did not take the button away.
+    applyHistResumeGate(btn, root.dataset.pauseReason || '', budgetState.budget);
+    if (btn.dataset.resumeState === 'error' && btn.dataset.resumeError && !btn.disabled) {
+      btn.title = btn.dataset.resumeError;
+    }
   }
 }
 
-// cb-override from an expanded History card: same confirmation as the Running
-// card, then setupResumeButton's POST -> upsert -> land-on-the-live-card recipe
+// cb-override from the History detail screen: same confirmation as the Running
+// card, then resumePipeline's POST -> upsert -> land-on-the-live-card recipe
 // with the persistent per-pipeline cap override.
 async function histCostOverride(projectDir, id, record, btn) {
   const ok = await confirmModal({ ...COST_OVERRIDE_CONFIRM });
   if (!ok) return;
-  const p = record || {};
-  btn.disabled = true;
-  const label = btn.textContent;
-  btn.textContent = 'Resuming…';
-  try {
-    const res = await fetch('/api/resume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipelineId: id, ignoreCostCap: true }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-    upsertRun({
-      runId: data.runId,
-      title: p.title || id,
-      projectDir: p.projectDir || projectDir || '',
-      status: 'starting',
-      pipelineId: id,
-      local: true,
-    });
-    const prior = [...runs.values()].find(
-      (x) => x.runId !== data.runId && x.pipelineId === id && Array.isArray(x.logLines) && x.logLines.length
-    );
-    await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(id, p));
-    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
-    hideViewer();
-    updateNavCounts();
-    location.hash = `running/${data.runId}`;   // land on the continuous live card
-    renderRunningView();
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = label;
-    btn.title = `Could not resume: ${err.message}`;
-  }
-}
-
-function setupResumeButton(node, projectDir, p) {
-  const btn = node.querySelector('.hist-resume');
-  if (!btn) return;
-  if (String(p.status || '').toLowerCase() !== 'paused') { btn.hidden = true; return; }
-  btn.hidden = false;
-  applyHistResumeGate(btn, (typeof p.pauseReason === 'string' ? p.pauseReason : ''), budgetState.budget);
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation(); // never toggle the card when clicking the button
-    btn.disabled = true;
-    const label = btn.textContent;
-    btn.textContent = 'Resuming…';
-    try {
-      const res = await fetch('/api/resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipelineId: p.id }),
-      });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      upsertRun({
-        runId: data.runId,
-        title: p.title || p.id,
-        projectDir: p.projectDir || projectDir || '',
-        status: 'starting',
-        pipelineId: p.id,
-        local: true,
-      });
-      // Seed the resumed run with the pre-pause log so the live card is continuous.
-      // Prefer an in-memory paused run sharing this pipelineId (exact, no fetch);
-      // otherwise fall back to the persisted NDJSON (resume from History / reload).
-      const prior = [...runs.values()].find(
-        (x) => x.runId !== data.runId && x.pipelineId === p.id && Array.isArray(x.logLines) && x.logLines.length
-      );
-      await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(p.id, p));
-      // Carry the branch label onto the resumed card (prior paused run, else the
-      // history record) so it doesn't blank until the first state event lands.
-      const nr = runs.get(data.runId);
-      if (nr) {
-        const feat = (prior && prior.branchFeature) || (p.branch && p.branch.feature) || null;
-        if (feat) { nr.branchFeature = feat; paintRunCard(nr); }
-      }
-      if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
-      hideViewer();
-      updateNavCounts();
-      location.hash = `running/${data.runId}`;   // land on the continuous live card
-      renderRunningView();
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = label;
-      btn.title = `Could not resume: ${err.message}`;
-    }
-  });
+  // `id` is spread ON TOP of the record, not used as a fallback: resumePipeline
+  // POSTs `p.id`, so `resumePipeline(record || { id }, …)` would silently ignore
+  // the explicit parameter whenever `record` is truthy and make the signature lie.
+  await resumePipeline({ ...(record || {}), id }, projectDir, btn, { ignoreCostCap: true });
 }
 
 // Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
@@ -8951,118 +8803,123 @@ function scheduleMergeRecheck(mergeEl, body) {
   if (t && typeof t.unref === 'function') t.unref();
 }
 
-// Build one expandable history card from a (disk or live) record. The collapsed
-// card shows only list-feed data (badge/title/timestamp); the tinted stepper is
-// lazily fetched + rendered on first expand.
+// Build one history card from a (disk or live) record. The card is a LINK: the
+// whole head navigates to the detail screen (#history/<projectKey>/<id>); it never
+// expands in place. Interactive descendants (title, copy, Create PR) opt out.
 function buildHistCard(projectDir, p, ghAvailable = false) {
   const tpl = $('#hist-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
   const id = p.id || '';
+  // patchHistoryPr / finalizeHistoryPr locate cards by BOTH stamps.
   node.dataset.pipelineId = id;
-  node.dataset.projectKey = p.projectKey || ''; // composite key for the §3.6 in-place PR patch selector
+  node.dataset.projectKey = p.projectKey || '';
 
-  const badge = node.querySelector('.badge');
-  if (badge) {
-    const { cls, text } = historyBadge(p);
-    badge.className = cls;
-    badge.textContent = text;
-    // Plugin provenance badge (§11) — null for prompt/markdown rows.
-    const src = sourceBadge(p);
-    if (src) badge.after(src);
-  }
+  paintHistStatusIcon(node.querySelector('.hist-sic'), p);
+  const { word, family } = histStatusMeta(p);
+  const wordEl = node.querySelector('.hist-status-word');
+  wordEl.textContent = word;
+  wordEl.className = `hist-status-word st-${family}`;
 
   const titleEl = node.querySelector('.h-meta b');
-  const title = p.title || id || '(untitled)';
-  if (titleEl) {
-    titleEl.textContent = title; // project shown by the pill / section header
-    titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewPipeline(projectDir, id, p.title, p); });
-  }
-  const whenEl = node.querySelector('.h-meta small');
-  if (whenEl) whenEl.textContent = fmtDate(p.startedAt || p.mtime);
-  const timeEl = node.querySelector('.hist-time');
-  if (timeEl) timeEl.textContent = typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '';
-  const totalEl = node.querySelector('.hist-total');
-  if (totalEl) {
-    totalEl.textContent = typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '';
-    totalEl.title = typeof p.totalCostUsd === 'number' ? estTitle(p.totalCostUsd) : '';
-  }
+  titleEl.textContent = p.title || id || '(untitled)'; // project shown by the pill / section header
+  titleEl.addEventListener('click', (e) => { e.stopPropagation(); viewPipeline(projectDir, id, p.title, p); });
+  const src = sourceBadge(p);   // provenance sits in the META line (null for prompt/markdown rows)
+  if (src) node.querySelector('.hist-meta-line').appendChild(src);
 
-  // Branch line under the date/cost (left column): "source → destination" plus a
-  // copy button for the destination. Legacy rows may lack sourceBranch — then the
-  // source half (and arrow) stays hidden; no destination hides the whole row.
+  const { day, clock } = splitDateStamp(p.startedAt || p.mtime);
+  const seg = (name, text) => {
+    const wrapEl = node.querySelector(`.hist-${name}-seg`);
+    if (!text) { wrapEl.hidden = true; return; }
+    node.querySelector(`.hist-${name}`).textContent = text;
+  };
+  seg('day', day);
+  seg('clock', clock);
+  seg('time', typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '');
+  seg('total', typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '');
+  if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
+
+  renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
+
+  // Branch line: "source → destination" plus a copy button for the destination.
+  // Legacy rows may lack sourceBranch — then the source half (and arrow) stays
+  // hidden; no destination hides the whole row.
   const branchEl = node.querySelector('.hist-branch');
-  if (branchEl) {
-    const feature = p.branch || '';
-    const source = p.sourceBranch || '';
-    branchEl.hidden = !feature;
-    branchEl.querySelector('.hist-branch-dst').textContent = feature;
-    const srcEl = branchEl.querySelector('.hist-branch-src');
-    srcEl.textContent = source;
-    srcEl.hidden = !source;
-    // SVG elements have no `hidden` IDL property (HTMLElement-only) — assigning
-    // `.hidden` would set a dead expando and leave the attribute in place.
-    branchEl.querySelector('.hist-branch-arrow').toggleAttribute('hidden', !source);
-    const copyBtn = branchEl.querySelector('.hist-branch-copy');
-    copyBtn.addEventListener('click', (e) => {
-      e.stopPropagation(); // the head is an expand toggle — copy must not open the card
-      copyBranchToClipboard(copyBtn, feature);
-    });
-  }
+  const feature = p.branch || '';
+  const source = p.sourceBranch || '';
+  branchEl.hidden = !feature;
+  branchEl.querySelector('.hist-branch-dst').textContent = feature;
+  const srcEl = branchEl.querySelector('.hist-branch-src');
+  srcEl.textContent = source;
+  srcEl.hidden = !source;
+  // SVG elements have no `hidden` IDL property (HTMLElement-only) — assigning
+  // `.hidden` would set a dead expando and leave the attribute in place.
+  branchEl.querySelector('.hist-branch-arrow').toggleAttribute('hidden', !source);
+  const copyBtn = branchEl.querySelector('.hist-branch-copy');
+  copyBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // copy must not navigate to the detail screen
+    copyBranchToClipboard(copyBtn, feature);
+  });
 
-  // Cost-pause note in the head. The reason is also stamped on the card so a
-  // later budget repaint can re-gate Resume without refetching the record.
+  // Pause note. Resume + its budget gating live on the detail page now; the
+  // dataset stamp survives for parity/debugging.
   const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
   if (pauseReason) node.dataset.pauseReason = pauseReason;
   const noteEl = node.querySelector('.hist-pausenote');
-  if (noteEl) {
-    const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
-      && pauseReason.startsWith('cost_');
-    noteEl.hidden = !costPaused;
-    noteEl.textContent = costPaused
-      ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
-      : '';
-    noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
-  }
+  const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
+    && pauseReason.startsWith('cost_');
+  noteEl.hidden = !costPaused;
+  noteEl.textContent = costPaused
+    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit') : '';
+  noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
 
-  // Right-side cluster (before the chevron): lines changed + Create-PR button.
-  renderHistDiff(node.querySelector('.hist-diff'), p);
-  renderRetainedWork(node, p);
+  renderRetainedWork(node, p);           // badge only — the card has no banner node
   setupPrButton(node, projectDir, p, ghAvailable);
-  setupDiscardWorktreeButton(node, projectDir, p);
-  setupDeleteButton(node, projectDir, p);
-  setupResumeButton(node, projectDir, p);
 
+  // Whole-card click -> detail page. Interactive descendants opt out.
+  const go = () => {
+    histReturnFocus = { id: p.id, projectKey: p.projectKey };   // Esc/Back come home here
+    location.hash = `history/${histDetailParam(p)}`;
+  };
   const head = node.querySelector('.hist-head');
-  const detail = node.querySelector('.hist-detail');
-  if (head && detail) {
-    const toggle = () => toggleHistCard(projectDir, id, head, detail, p);
-    head.addEventListener('click', toggle);
-    head.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggle(); }
-    });
-  }
-
+  head.addEventListener('click', (e) => {
+    if (e.target.closest('button, a')) return;
+    go();
+  });
+  head.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') && !e.target.closest('button, a')) {
+      e.preventDefault();
+      go();
+    }
+  });
+  node.querySelector('.hist-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
   return node;
 }
 
-// Expand/collapse a history card. On the FIRST expand, lazily fetch the saved
-// state and render the tinted stepper, caching it so re-expand doesn't refetch.
-function toggleHistCard(projectDir, id, head, detail, record) {
-  const expanded = head.getAttribute('aria-expanded') === 'true';
-  if (expanded) {
-    head.setAttribute('aria-expanded', 'false');
-    detail.hidden = true;
-    return;
+// Diff pill: merged PR -> hidden ("the diff is no longer the story"); survived
+// with changes -> +A −R; survived with none -> "no diff"; branch gone -> hidden.
+// NOTE: the minus glyph is U+2212 (−), not an ASCII hyphen; the jsdom test
+// asserts it byte-for-byte, so keep this exact character.
+function renderHistDiffPill(pill, p) {
+  if (!pill) return;
+  const merged = p && p.pr && typeof p.pr === 'object' && String(p.pr.state || '').toUpperCase() === 'MERGED';
+  if (!p || !p.survived || merged) { pill.hidden = true; return; }
+  pill.hidden = false;
+  const added = Number.isFinite(+p.added) ? +p.added : 0;
+  const removed = Number.isFinite(+p.removed) ? +p.removed : 0;
+  const diffEl = pill.querySelector('.hist-diff');
+  const noneEl = pill.querySelector('.hist-nodiff');
+  const has = added > 0 || removed > 0;
+  noneEl.hidden = has;
+  diffEl.hidden = !has;
+  diffEl.textContent = '';
+  if (has) {
+    const add = document.createElement('span'); add.className = 'diff-add'; add.textContent = `+${added}`;
+    const del = document.createElement('span'); del.className = 'diff-del'; del.textContent = `−${removed}`; // U+2212
+    diffEl.append(add, ' ', del);
+    pill.title = `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
   }
-  head.setAttribute('aria-expanded', 'true');
-  detail.hidden = false;
-  if (detail.dataset.loaded === '1') return; // cached — don't refetch
-  detail.dataset.loaded = '1';
-  loadHistDetail(projectDir, id, detail, record);
 }
 
-// Fetch GET /api/runs/:id and tint this card's stepper from data.state. On
-// failure, show a small inline notice and allow a retry on the next expand.
 // Resolve the saved-pipeline detail URL ({state, auditMarkdown}) for a history
 // record. A workspace run (target==='workspace', projectKey="workspaces/<wkey>")
 // MUST use the workspace-aware route — the /api/history/:key/:id key regex
@@ -9091,46 +8948,15 @@ function historyLogUrl(id, record) {
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/log`;
 }
 
-// Render the Layer-1 results section: summary chips, key-things-to-check (review
-// issues, reusing the .issue.sev-* gate styles), New/Changed file lists, plus the
-// Layer-2 "Generate overview" button. ctx = { id, projectKey, projectDir, overview }.
-// Render the Layer-1 results header: the single status pill ("Clean" / "N to check")
-// and the key-things-to-check list. New/Changed file lists moved to the Diff dropdown
-// (paintDiffBar); the Layer-2 overview moved to the Overview dropdown (paintOverviewBar).
-// The "+X / −Y" line-count pill was dropped — renderHistDiff() already shows that next
-// to the Create-PR button.
-function renderResults(host, results, row) {
-  host.innerHTML = '';
-  if (!results) { host.textContent = 'No results for this run.'; return; }
-
-  // Status pill only.
-  const chips = document.createElement('div');
-  chips.className = 'results-chips';
-  const status = document.createElement('span');
-  status.className = 'results-chip';
-  status.textContent = statusChip(results);
-  chips.appendChild(status);
-  // Plugin provenance (§11): source badge + manual write-back retry (§7.5).
-  // Prompt/markdown rows produce a null badge — nothing rendered.
-  const src = sourceBadge(row);
-  if (src) chips.appendChild(src);
-  if (row && row.source_type === 'plugin') {
-    chips.appendChild(reportResultControl(row.id, {
-      post: async (url) => { const r = await fetch(url, { method: 'POST' }); return safeJson(r); },
-    }));
+// Twin of historyLogUrl with /diff instead of /log. There is deliberately NO
+// /api/runs/:id?projectDir= fallback — parity with logs (spec §7).
+function historyDiffUrl(id, record) {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/diff`;
   }
-  host.appendChild(chips);
-
-  // Key things to check (review issues) — reuse the .issue.sev-* gate styles.
-  const checks = results.keyThingsToCheck || [];
-  const checksWrap = document.createElement('div'); checksWrap.className = 'results-checks';
-  if (!checks.length) {
-    const okEl = document.createElement('div'); okEl.className = 'results-clean';
-    okEl.textContent = 'Clean — no blocking issues flagged.'; checksWrap.appendChild(okEl);
-  } else {
-    checksWrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
-  }
-  host.appendChild(checksWrap);
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/diff`;
 }
 
 // Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
@@ -9153,244 +8979,6 @@ function issueList(rows) {
     ul.appendChild(li);
   });
   return ul;
-}
-
-function fileList(title, files) {
-  const sec = document.createElement('div'); sec.className = 'results-files';
-  const h = document.createElement('div'); h.className = 'results-files-h'; h.textContent = `${title} (${files.length})`; sec.appendChild(h);
-  const ul = document.createElement('ul');
-  files.forEach((f) => {
-    const li = document.createElement('li');
-    const name = f.from ? `${f.from} → ${f.path}` : f.path;
-    const counts = f.binary ? 'binary' : (f.added != null ? `+${f.added} −${f.removed}` : '');
-    li.textContent = `${f.status}  ${name}  ${counts}`.trim();
-    ul.appendChild(li);
-  });
-  sec.appendChild(ul); return sec;
-}
-
-// Layer-2 fetch: POST /api/runs/:id/overview, then paint narrative + merged checks.
-async function loadOverview(host, btn, ctx, results, force) {
-  btn.disabled = true; btn.textContent = 'Generating…';
-  try {
-    const qs = new URLSearchParams();
-    if (ctx.projectKey) qs.set('key', ctx.projectKey); else qs.set('projectDir', ctx.projectDir || '');
-    if (force) qs.set('force', '1');
-    const res = await fetch(`/api/runs/${encodeURIComponent(ctx.id)}/overview?${qs}`, { method: 'POST' });
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-    paintOverview(host, data.overview, results);
-    btn.dataset.ran = '1';
-    btn.textContent = 'Regenerate overview';
-  } catch (e) {
-    host.textContent = `Overview failed: ${e.message}`;
-    btn.textContent = 'Retry overview';
-  } finally { btn.disabled = false; }
-}
-
-function paintOverview(host, overview, results) {
-  host.innerHTML = '';
-  if (!overview) return;
-  if (overview.narrative) {
-    const n = document.createElement('div'); n.className = 'results-narrative'; n.textContent = overview.narrative; host.appendChild(n);
-  }
-  const merged = mergeFindings(results.keyThingsToCheck || [], overview.diffFindings || []);
-  if (merged.length) host.appendChild(issueList(merged));
-  if (overview.diffCheckTruncated) {
-    const w = document.createElement('div'); w.className = 'results-trunc';
-    w.textContent = 'Diff was large — agent saw hunk headers only.'; host.appendChild(w);
-  }
-}
-
-async function loadHistDetail(projectDir, id, detail, record) {
-  try {
-    const url = historyDetailUrl(projectDir, id, record);
-    const res = await fetch(url);
-    const data = await safeJson(res);
-    if (!res.ok) {
-      throw new Error((data && data.error) || `HTTP ${res.status}`);
-    }
-    if (!data || !data.state) {
-      // 200 but no saved state.json yet (e.g. an in-progress run not persisted).
-      throw new Error('no saved details for this pipeline yet');
-    }
-    // A prior failed expand may have left a "Could not load details…" note in
-    // this card. On a successful retry, clear it so the stepper isn't shown
-    // alongside a stale error.
-    const stale = detail.querySelector('.detail-error');
-    if (stale) stale.remove();
-    // Cost-pause banner above the stepper, mirroring the Running card. Wired with
-    // DIRECT listeners like setupResumeButton/setupDeleteButton — History has no
-    // container-level click delegate to extend.
-    const oldBanner = detail.querySelector('.cost-banner');
-    if (oldBanner) oldBanner.remove();
-    const histPauseReason = record && typeof record.pauseReason === 'string' ? record.pauseReason : '';
-    if (histPauseReason.startsWith('cost_')) {
-      const banner = renderCostPauseBanner(
-        { pauseReason: histPauseReason, pipelineId: id, totalCostUsd: data.state.totalCostUsd },
-        { budget: budgetState.budget || {},
-          fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
-      const settingsBtn = banner.querySelector('.cb-settings');
-      if (settingsBtn) settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); location.hash = 'settings'; });
-      const overrideBtn = banner.querySelector('.cb-override');
-      if (overrideBtn) {
-        overrideBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          histCostOverride(projectDir, id, record, overrideBtn);   // fire-and-forget (sync handler)
-        });
-      }
-      detail.prepend(banner);
-    }
-    const host = detail.querySelector('.run-flow');
-    if (host) buildRunGraph(host, data.state.stepper); // null stepper -> legacy default
-    paintHistStepper(detail, data.state);
-    // Same Map->object projection as the live call-site (see paintRunCard).
-    const histSubsBar = detail.querySelector('.subs-bar');
-    if (histSubsBar) {
-      const groups = subsGroupsForRender(data.state.subAgents, data.state.steps, data.state.stepper);
-      paintSubsBar(
-        histSubsBar, groups,
-        cycleAwareLabel(data.state.stepper, data.state.subAgents, Object.keys(groups)),
-        stepSkillsFromSteps(data.state.steps), stepGraphifyFromSteps(data.state.steps),
-        stepStatusByKey(data.state.steps, data.state.stepper),
-      );
-    }
-    // Clarify Q&A + Live logs, as dropdowns under the Sub-agents bar.
-    paintClarifyBar(detail.querySelector('.clarify-bar'), data.clarify, data.stepQuestions);
-    // Results header (status pill + checks). Diff + Overview are separate dropdowns.
-    const resHost = detail.querySelector('.results-section');
-    if (resHost) renderResults(resHost, data.results, data.state);
-    paintDiffBar(detail.querySelector('.diff-bar'), data.results);
-    paintOverviewBar(detail.querySelector('.overview-bar'), {
-      id, projectKey: record && record.projectKey, projectDir, overview: data.overview,
-    }, data.results);
-    const hasLog = Array.isArray(data.artifacts) && data.artifacts.some((a) => a.kind === 'live-log');
-    paintLiveLogsBar(detail.querySelector('.logs-bar'), historyLogUrl(id, record), hasLog);
-    addRecoveryPatchLink(detail, projectDir, record || { id }, data.artifacts);
-    if (typeof data.state.totalCostUsd === 'number') {
-      const card = detail.closest('.hist-card');
-      const totalEl = card && card.querySelector('.hist-total');
-      if (totalEl) {
-        totalEl.textContent = fmtUsd(data.state.totalCostUsd);
-        totalEl.title = estTitle(data.state.totalCostUsd);
-      }
-    }
-    if (typeof data.state.totalActiveMs === 'number') {
-      const card = detail.closest('.hist-card');
-      const t = card && card.querySelector('.hist-time');
-      if (t) t.textContent = fmtDuration(data.state.totalActiveMs);
-    }
-  } catch (e) {
-    detail.dataset.loaded = ''; // allow a retry on the next expand
-    let note = detail.querySelector('.detail-error');
-    if (!note) {
-      note = document.createElement('div');
-      note.className = 'detail-error';
-      detail.appendChild(note);
-    }
-    note.textContent = `Could not load details: ${e.message}`;
-  }
-}
-
-// Render the saved clarify Q&A into a history card's .hist-detail (READ-ONLY — no
-// option buttons, no free-text, no submit; History is a record, not an interaction).
-// The section inserts BEFORE .hist-actions so Delete stays last. Idempotent: any prior
-// section is removed first (a cached re-expand must never stack duplicates). Shape comes
-// straight from readPipelineExtras:
-// clarify={questions:[{id,question,options,allowFreeText}], answers:[{id,question,choice}]};
-// stepQuestions=[{stepKey,round,agentKey,questions,answers}] (per-step ask rounds).
-// Paint the Clarify dropdown from saved clarify + stepQuestions Q&A (read-only);
-// the .sb-count badge shows the MERGED count of both. Hidden when both are empty.
-function paintClarifyBar(barEl, clarify, stepQuestions) {
-  if (!barEl) return;
-  const questions = Array.isArray(clarify && clarify.questions) ? clarify.questions : [];
-  const answers = Array.isArray(clarify && clarify.answers) ? clarify.answers : [];
-  const stepQ = Array.isArray(stepQuestions) ? stepQuestions.filter((r) => r && (r.questions || []).length) : [];
-  if (!questions.length && !answers.length && !stepQ.length) { barEl.hidden = true; return; }
-  barEl.hidden = false;
-  barEl._clarify = { questions, answers, stepQ };
-
-  const btn = barEl.querySelector('.btn-subs');
-  const panel = barEl.querySelector('.clarify-panel');
-  const count = barEl.querySelector('.sb-count');
-  const total = questions.length + stepQ.reduce((n, r) => n + r.questions.length, 0);
-  if (count) { count.textContent = String(total); count.classList.remove('grey'); }
-
-  if (panel && btn && btn.getAttribute('aria-expanded') === 'true') {
-    renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
-  }
-  if (btn && btn.dataset.bound !== '1') {
-    btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      const open = btn.getAttribute('aria-expanded') === 'true';
-      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-      if (panel) {
-        panel.hidden = open;
-        if (!open) renderClarifyPanel(panel, barEl._clarify.questions, barEl._clarify.answers, barEl._clarify.stepQ);
-      }
-    });
-  }
-}
-
-// Render each question with its chosen answer into the clarify panel (idempotent).
-function renderClarifyPanel(panelEl, questions, answers, stepQuestions) {
-  panelEl.innerHTML = '';
-  const addBlocks = (qs, as, offset) => {
-    const byId = new Map((as || []).map((a) => [a.id, a]));
-    (qs || []).forEach((q, i) => {
-      const block = document.createElement('div');
-      block.className = 'qblock';
-      const qtext = document.createElement('div');
-      qtext.className = 'qtext';
-      const qn = document.createElement('span');
-      qn.className = 'qn';
-      qn.textContent = String(offset + i + 1);
-      qtext.appendChild(qn);
-      qtext.appendChild(document.createTextNode(typeof q.question === 'string' ? q.question : ''));
-      block.appendChild(qtext);
-      const ans = byId.get(q.id);
-      const aLine = document.createElement('div');
-      aLine.className = 'hist-answer';
-      const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
-      aLine.textContent = chosen ? `Answer: ${chosen}` : 'Answer: (none)';
-      block.appendChild(aLine);
-      panelEl.appendChild(block);
-    });
-    return offset + (qs || []).length;
-  };
-  let n = addBlocks(questions, answers, 0);
-  for (const r of Array.isArray(stepQuestions) ? stepQuestions : []) {
-    const head = document.createElement('div');
-    head.className = 'hint';
-    head.style.margin = '8px 0 4px';
-    const cyc = String(r.stepKey || '').split('#')[1];
-    head.textContent = `${r.agentKey || 'agent'} — round ${r.round}${cyc ? ` · cycle ${cyc}` : ''}`;
-    panelEl.appendChild(head);
-    n = addBlocks(r.questions, r.answers, n);
-  }
-}
-
-// Paint the Live-logs dropdown. Hidden unless a 'live-log' artifact exists. The
-// NDJSON is lazy-loaded on first open (uncapped, can be large) and cached.
-function paintLiveLogsBar(barEl, logUrl, hasLog) {
-  if (!barEl) return;
-  if (!hasLog) { barEl.hidden = true; return; }
-  barEl.hidden = false;
-  const btn = barEl.querySelector('.btn-subs');
-  const panel = barEl.querySelector('.logs-panel');
-  if (btn && btn.dataset.bound !== '1') {
-    btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      const open = btn.getAttribute('aria-expanded') === 'true';
-      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-      if (!panel) return;
-      panel.hidden = open;
-      if (!open && panel.dataset.loaded !== '1') {
-        panel.dataset.loaded = '1';
-        loadLiveLogs(panel, logUrl);
-      }
-    });
-  }
 }
 
 // Fetch the persisted NDJSON and render each line with the SAME buildLogLine() the
@@ -9461,87 +9049,6 @@ async function loadLiveLogs(panel, logUrl) {
   }
 }
 
-// Paint the Diff dropdown. Always-on "changed"/"removed" header badges (greyed at
-// zero); the New/Changed file lists render into the panel on first open (lazy, like
-// Live logs). Hidden only when the run has no assembled results.
-function paintDiffBar(barEl, results) {
-  if (!barEl) return;
-  if (!results) { barEl.hidden = true; return; }
-  barEl.hidden = false;
-  barEl._results = results;
-
-  const [changed, removed] = diffBadges(results);
-  const changedEl = barEl.querySelector('.diff-changed');
-  const removedEl = barEl.querySelector('.diff-removed');
-  if (changedEl) { changedEl.textContent = changed.text; changedEl.classList.toggle('grey', changed.n === 0); }
-  if (removedEl) { removedEl.textContent = removed.text; removedEl.classList.toggle('grey', removed.n === 0); }
-
-  const btn = barEl.querySelector('.btn-subs');
-  const panel = barEl.querySelector('.diff-panel');
-  if (btn && btn.dataset.bound !== '1') {
-    btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      const open = btn.getAttribute('aria-expanded') === 'true';
-      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-      if (!panel) return;
-      panel.hidden = open;
-      if (!open && panel.dataset.loaded !== '1') {
-        panel.dataset.loaded = '1';
-        renderDiffPanel(panel, barEl._results);
-      }
-    });
-  }
-}
-
-// Build the Diff panel body: the New + Changed file lists (moved out of renderResults).
-function renderDiffPanel(panel, results) {
-  panel.innerHTML = '';
-  panel.appendChild(fileList('New files', results.newFiles || []));
-  panel.appendChild(fileList('Changed files', results.changedFiles || []));
-}
-
-// Paint the Overview dropdown. Collapsed by default; the Generate/Regenerate button is
-// built into the panel on FIRST open, so when no overview exists the button only appears
-// after the user expands. A pre-generated overview is painted immediately on first open.
-function paintOverviewBar(barEl, ctx, results) {
-  if (!barEl) return;
-  if (!results) { barEl.hidden = true; return; }
-  barEl.hidden = false;
-  barEl._ctx = ctx; barEl._results = results;
-
-  const btn = barEl.querySelector('.btn-subs');
-  const panel = barEl.querySelector('.overview-panel');
-  if (btn && btn.dataset.bound !== '1') {
-    btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      const open = btn.getAttribute('aria-expanded') === 'true';
-      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-      if (!panel) return;
-      panel.hidden = open;
-      if (!open && panel.dataset.loaded !== '1') {
-        panel.dataset.loaded = '1';
-        buildOverviewPanel(panel, barEl._ctx, barEl._results);
-      }
-    });
-  }
-}
-
-// Build the Overview panel body (relocated from renderResults): the Generate/Regenerate
-// button + a host the narrative/findings paint into. Disabled when there is no diff.
-function buildOverviewPanel(panel, ctx, results) {
-  panel.innerHTML = '';
-  const hasDiff = !!(results.summary && (results.summary.filesNew || results.summary.filesChanged || results.summary.filesDeleted));
-  const ov = document.createElement('div'); ov.className = 'results-overview';
-  const btn = document.createElement('button'); btn.className = 'results-overview-btn';
-  btn.textContent = ctx.overview ? 'Regenerate overview' : 'Generate overview';
-  btn.disabled = !hasDiff; // no diff -> nothing to summarize
-  if (!hasDiff) btn.title = 'No file changes to summarize';
-  btn.addEventListener('click', () => loadOverview(ov, btn, ctx, results, !!ctx.overview || btn.dataset.ran === '1'));
-  panel.appendChild(btn);
-  panel.appendChild(ov);
-  if (ctx.overview) { btn.dataset.ran = '1'; paintOverview(ov, ctx.overview, results); }
-}
-
 // Per-node max cycle from a saved run's steps[] (history's loop-count source).
 function histNodeCycle(st) {
   const out = {};
@@ -9608,6 +9115,1471 @@ function renderHistoryError(message) {
   el.history.innerHTML = '';
   el.history.appendChild(histEmpty(`Could not load history: ${message}`));
 }
+
+// ---------------------------------------------------------------------------
+// History detail screen (#history/<projectKey>/<id>)
+// ---------------------------------------------------------------------------
+// The param after "history/" is "<projectKey>/<id>". projectKey contains a slash
+// ONLY as the fixed "workspaces/<wk>" prefix, and ids never contain "/", so
+// splitting at the LAST slash is unambiguous.
+function histDetailParam(p) { return `${p.projectKey}/${p.id}`; }
+
+function parseHistDetailParam(param) {
+  const s = String(param || '');
+  const i = s.lastIndexOf('/');
+  if (i <= 0 || i === s.length - 1) return null;
+  const projectKey = s.slice(0, i);
+  const id = s.slice(i + 1);
+  return { projectKey, id, workspace: projectKey.startsWith('workspaces/') };
+}
+
+let histDetailState = null; // { key, id, record, data, screen } while open
+// One-shot "the user pressed Create PR on the list card" intent, consumed by
+// openHistDetail unconditionally so it can never strand across visits.
+let pendingShipIt = null;   // { id, projectKey } | null
+// Spec §11. The card that opened the detail, by DATA STAMPS rather than by node:
+// a repaint between open and close replaces the element, so closeHistDetail
+// re-queries. A deep link leaves this null and the restore is simply skipped.
+let histReturnFocus = null; // { id, projectKey } | null
+
+function routeHistoryDetail(param, { instant = false } = {}) {
+  const parsed = parseHistDetailParam(param);
+  if (!parsed) { closeHistDetail({ instant }); return; }
+  // Re-routing to the already-open run is a no-op (hashchange echo). Drop any
+  // pending ship-it intent on that path: openHistDetail is the only consumer, so
+  // leaving it set here would strand a one-shot flag that auto-opens the modal on
+  // some later, unrelated visit to the same run.
+  if (histDetailState && histDetailState.key === parsed.projectKey && histDetailState.id === parsed.id) {
+    pendingShipIt = null;
+    return;
+  }
+  openHistDetail(parsed, { instant });
+}
+
+function histRecordFor(parsed) {
+  const hit = (state.historyAll || []).find((r) => r && r.id === parsed.id && r.projectKey === parsed.projectKey);
+  if (hit) return hit;
+  // Deep link before the list loaded: a minimal record is enough for the keyed
+  // detail/log/diff URL builders (they only read projectKey/target). It has NO
+  // pauseReason and NO retainedWork — neither lives in the detail payload — so
+  // the row is re-resolved once the list lands.
+  return parsed.workspace
+    ? { id: parsed.id, projectKey: parsed.projectKey, target: 'workspace' }
+    : { id: parsed.id, projectKey: parsed.projectKey };
+}
+
+function openHistDetail(parsed, { instant = false } = {}) {
+  const host = el.histDetail;
+  const shell = el.histShell;
+  if (!host || !shell) return;
+  // A detail->detail hop never passes through closeHistDetail, so without this the
+  // screen is swapped underneath an open ship-it modal whose confirm handler still
+  // closes over the PREVIOUS record — one click would open a PR for the run the
+  // user just navigated away from. No-op when nothing is open.
+  closeShipItModal();
+  const record = histRecordFor(parsed);
+  histDetailState = { key: parsed.projectKey, id: parsed.id, record, data: null, screen: null };
+
+  host.innerHTML = '';
+  host.scrollTop = 0;                       // a prior visit's scroll must not carry over
+  const screen = $('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
+  host.appendChild(screen);
+  histDetailState.screen = screen;
+
+  screen.querySelector('.hd-back').addEventListener('click', () => { location.hash = 'history'; });
+  screen.querySelector('.hd-title').textContent = record.title || parsed.id;
+  paintHistStatusIcon(screen.querySelector('.hd-sic'), record);
+
+  if (instant) shell.classList.add('no-anim');
+  shell.classList.add('detail-open');
+  host.setAttribute('aria-hidden', 'false');
+  host.removeAttribute('inert');   // the previous close left it inert for the slide;
+                                   // focus() below is a no-op inside an inert subtree
+  // The off-screen list must not stay tabbable behind the detail. `aria-hidden`
+  // alone does NOT remove focusability — only `inert` does — so set BOTH.
+  const list = shell.querySelector('.hist-screen-list');
+  if (list) { list.setAttribute('aria-hidden', 'true'); list.setAttribute('inert', ''); }
+  // AFTER the mount and AFTER the list went inert (spec §11): leaving
+  // document.activeElement inside a subtree as it becomes inert is invalid, and
+  // `.hd-back` is the one control that is always present on this screen.
+  screen.querySelector('.hd-back').focus({ preventScroll: true });
+  if (instant) rafSafe(() => shell.classList.remove('no-anim'));
+
+  // Consume the one-shot ship-it intent HERE, not inside the async loader, so a
+  // failed detail fetch cannot strand it for a later, unrelated visit.
+  const ship = pendingShipIt;
+  pendingShipIt = null;
+  loadHistDetailScreen(screen, record, parsed, ship);
+}
+
+// Double rAF: one frame is not always enough for the browser to commit the
+// pre-transition style, and jsdom has no requestAnimationFrame unless
+// pretendToBeVisual — fall back to a macrotask there.
+function rafSafe(fn) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(fn));
+  else setTimeout(fn, 0);
+}
+
+function closeHistDetail({ instant = false } = {}) {
+  closeShipItModal();   // no-op when nothing is open; the modal is a TOP-LEVEL
+                        // overlay, so emptying #hist-detail would not dismiss it
+  const shell = el.histShell;
+  const host = el.histDetail;
+  if (!shell || !host) return;
+  if (!shell.classList.contains('detail-open')) { histDetailState = null; return; }
+  histDetailState = null;
+  host.setAttribute('aria-hidden', 'true');
+  // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
+  const list = shell.querySelector('.hist-screen-list');
+  if (list) { list.removeAttribute('aria-hidden'); list.removeAttribute('inert'); }
+  // Hand focus back to the card the detail was opened from, re-queried by the
+  // same stamped selector patchHistoryPr uses — the node itself may have been
+  // replaced by a repaint while the detail was up. One-shot: a subsequent deep
+  // link must not inherit it.
+  const back = histReturnFocus;
+  histReturnFocus = null;
+  // NOT on the instant path: that one runs from showView, which hides this whole
+  // section a few lines later — focusing a card inside a `display:none` subtree
+  // just drops focus to <body>. The restore is for list<->detail hops.
+  if (back && el.history && !instant) {
+    const sel = `.hist-card[data-pipeline-id="${cssEscape(back.id)}"]`
+      + `[data-project-key="${cssEscape(back.projectKey)}"] .hist-head`;
+    const node = el.history.querySelector(sel);
+    if (node) node.focus({ preventScroll: true });   // absent (archived/filtered) -> skip
+  }
+  // AFTER the focus hand-off (leaving activeElement inside a freshly-inert subtree
+  // is invalid): the screen stays MOUNTED until transitionend, so `aria-hidden`
+  // alone would leave .hd-back, the tab pills and .hd-archive tabbable behind the
+  // list for the whole slide. openHistDetail clears it.
+  host.setAttribute('inert', '');
+  if (instant) {
+    shell.classList.add('no-anim');
+    shell.classList.remove('detail-open');
+    host.innerHTML = '';
+    rafSafe(() => shell.classList.remove('no-anim'));
+    return;
+  }
+  shell.classList.remove('detail-open');
+  // Empty the screen after the slide (or via the timeout under reduced motion /
+  // jsdom, where transitionend never fires natively). transitionend BUBBLES, so
+  // a descendant's hover transition would otherwise clear the DOM mid-slide —
+  // hence the target + propertyName guard.
+  const clear = () => { if (!histDetailState) host.innerHTML = ''; };
+  const onEnd = (e) => {
+    if (e.target !== host || e.propertyName !== 'transform') return;
+    host.removeEventListener('transitionend', onEnd);
+    clear();
+  };
+  host.addEventListener('transitionend', onEnd);
+  const t = setTimeout(() => { host.removeEventListener('transitionend', onEnd); clear(); }, 600);
+  if (t && typeof t.unref === 'function') t.unref();
+}
+
+// `ship` (4th param) is the consumed pendingShipIt token: the list card's
+// Create-PR click, honored once the screen has its data.
+async function loadHistDetailScreen(screen, record, parsed, ship = null) {
+  let data;
+  // (1) FETCH — this try owns network/shape failures only.
+  try {
+    const url = historyDetailUrl(record.projectDir || null, parsed.id, record);
+    const res = await fetch(url);
+    data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!data || !data.state) throw new Error('no saved details for this pipeline yet');
+  } catch (e) {
+    if (!histDetailState || histDetailState.screen !== screen) return; // navigated away mid-fetch
+    const err = screen.querySelector('.hd-error');
+    if (err) { err.hidden = false; err.textContent = `Could not load run: ${e.message}`; }
+    return;
+  }
+  if (!histDetailState || histDetailState.screen !== screen) return;   // navigated away mid-fetch
+  histDetailState.data = data;
+
+  // (2) RE-RESOLVE THE RECORD. This is not belt-and-braces — without it the
+  // deep-link upgrade is lost on the real boot path. showView's history branch
+  // calls loadHistoryView() BEFORE routeHistoryDetail(), so on a cache-COLD deep
+  // link the list fetch is issued first and (at equal await depth) its
+  // continuation runs first — the list paint happens while this screen's `data`
+  // is still null, and nothing else would re-resolve the record afterwards. The
+  // minimal {id, projectKey} stub would then stick for the life of the screen.
+  const row = (state.historyAll || []).find(
+    (r) => r && r.id === parsed.id && r.projectKey === parsed.projectKey);
+  if (row) histDetailState.record = row;
+  const rec = histDetailState.record;
+
+  // (3) PAINT — deliberately OUTSIDE the fetch try. A painter bug must not be
+  // reported as `Could not load run: …` with the header actions silently unbound.
+  screen.querySelector('.hd-title').textContent = data.state.title || rec.title || parsed.id;
+  paintHistStatusIcon(screen.querySelector('.hd-sic'), { ...rec, status: data.state.status });
+
+  const flow = screen.querySelector('.run-flow');
+  if (flow) buildRunGraph(flow, data.state.stepper); // null stepper -> legacy default
+  paintHistStepper(screen, data.state);
+
+  paintHdHeaderMeta(screen, rec, data);
+  setupHdActions(screen, rec, data);
+  initHdTabs(screen, rec, data);
+
+  if (ship && ship.id === parsed.id && ship.projectKey === parsed.projectKey) {
+    // The list button's click already proved "no PR" — but the history CACHE strips
+    // `pr` from persisted rows, so after the hop the matched record may read
+    // pr === undefined again. Honor the click-time fact instead of re-deriving
+    // (else the intent is dropped on essentially every cache-warm navigation).
+    if (rec.pr === undefined) rec.pr = null;
+    paintHdPr(screen, rec, data);
+    // Two belts, both load-bearing:
+    //  - `!rec.pr` — the stale-button -> double-POST race is fixed at the source
+    //    (the ship path calls patchHistoryPr); this is the backstop.
+    //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run
+    //    whose own detail button paintHdPr just deliberately hid (workspace runs,
+    //    gh gone, branch deleted between paint and click), and confirming fires a
+    //    POST /api/pr that 404s.
+    if (!rec.pr && histPrEligible(rec)) openShipItModal(rec, data);
+  }
+}
+
+// Status icon + family. Table-driven so the list card and the detail header can
+// share one source of truth.
+//
+// This does NOT mirror the retired status badge — three mappings diverge
+// DELIBERATELY:
+//   interrupted / pausing / live|running|starting all land in the amber 'paused'
+// family, because the icon column answers "can this be resumed?" (interrupted IS
+// resumable), not "did it fail?".
+const HIST_STATUS_FAMILY = {
+  done: 'done', complete: 'done', completed: 'done',
+  stopped: 'stopped', aborted: 'stopped',
+  error: 'error', failed: 'error',
+  paused: 'paused', pausing: 'paused', interrupted: 'paused',
+};
+function histStatusMeta(p) {
+  const s = String((p && p.status) || '').toLowerCase();
+  const family = HIST_STATUS_FAMILY[s]
+    || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
+  const word = s === 'pausing' ? 'Pausing…'
+    : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
+  return { family: family || 'paused', word };
+}
+function paintHistStatusIcon(host, p) {
+  if (!host) return;
+  const { family, word } = histStatusMeta(p);
+  host.className = host.className.replace(/\bst-\w+\b/g, '').replace(/\s+/g, ' ').trim() + ` st-${family}`;
+  host.title = word;
+  host.setAttribute('aria-label', word);
+  for (const svg of host.querySelectorAll('.sic')) {
+    svg.toggleAttribute('hidden', !svg.classList.contains(`sic-${family}`));
+  }
+}
+
+// --- "Ship it?" confirm modal + the detail header's PR control ---------------
+// `pendingShipIt` is declared with histDetailState above — the list card's
+// Create-PR path is its only writer, openHistDetail its only consumer.
+
+// Teardown handle for the OPEN ship-it modal (null when closed). closeHistDetail
+// calls through it: the modal is a top-level overlay, not a child of the detail
+// screen, so emptying #hist-detail would otherwise leave a full-screen overlay
+// (and a live document keydown listener) over the LIST — after which the
+// double-open guard below makes Create PR permanently dead.
+let shipItClose = null;
+function closeShipItModal() { if (shipItClose) shipItClose(); }
+
+function openShipItModal(record, data) {
+  const modal = document.getElementById('shipit-modal');
+  if (!modal) return;
+  if (!modal.classList.contains('hidden')) return;  // double-open guard: a second open
+                                                    // would stack a second onOk -> two POSTs
+  const q = (sel) => modal.querySelector(sel);
+  q('.shipit-sub').textContent =
+    `This opens a pull request for ${record.title || record.id} and puts it up for review.`;
+  const sums = data && data.results && data.results.summary;
+  // 'D' rows already count inside filesChanged — do not add filesDeleted.
+  const nFiles = sums ? (sums.filesNew || 0) + (sums.filesChanged || 0) : null;
+  const added = sums ? sums.linesAdded : (record.survived ? record.added : null);
+  const removed = sums ? sums.linesRemoved : (record.survived ? record.removed : null);
+  q('.shipit-files').textContent = nFiles != null ? `${nFiles} file${nFiles === 1 ? '' : 's'}` : '';
+  q('.shipit-add').textContent = added != null ? `+${added}` : '';
+  q('.shipit-del').textContent = removed != null ? `−${removed}` : '';   // U+2212 — a COUNT
+  q('.shipit-branch').textContent = record.branch || '';
+  q('.shipit-base').textContent = record.sourceBranch || '';
+  // Spec §5.10: omit the whole summary line when there is nothing to summarize.
+  // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
+  // and requires `branch`, so that clause could never be false.)
+  q('.shipit-summary').hidden = nFiles == null && added == null;
+  const err = q('.shipit-err');
+  err.hidden = true; err.textContent = '';
+  const okBtn = q('.shipit-ok');
+  okBtn.disabled = false; okBtn.textContent = 'Open pull request';
+  modal.classList.remove('hidden');
+  okBtn.focus();
+
+  // `closed` is load-bearing, not defensive noise. Cancel is NOT disabled while the
+  // POST is in flight, so this sequence is reachable: confirm -> cancel mid-flight
+  // -> `.hd-pr` is still visible (record.pr is not set yet) -> click it -> the
+  // `!hidden` guard above passes -> a SECOND generation of listeners attaches. When
+  // the first fetch finally settles, a non-idempotent `done()` would hide the
+  // freshly-opened modal, null out the NEW generation's `shipItClose` handle (so
+  // closeHistDetail can no longer tear it down) and leave its document keydown
+  // listener attached — after which every further open stacks another `onOk`, i.e.
+  // one click = N POSTs. That is exactly the double-POST these guards prevent.
+  let closed = false;
+  const done = () => {
+    if (closed) return;                              // idempotent: only the first call acts
+    closed = true;
+    modal.classList.add('hidden');
+    if (shipItClose === done) shipItClose = null;    // never clobber a newer generation's handle
+    okBtn.removeEventListener('click', onOk);
+    q('.shipit-cancel').removeEventListener('click', onCancel);
+    modal.removeEventListener('click', onBackdrop);
+    document.removeEventListener('keydown', onKey);
+  };
+  shipItClose = done;
+  const onCancel = () => done();
+  const onBackdrop = (e) => { if (e.target === modal) done(); };
+  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  const onOk = async () => {
+    okBtn.disabled = true;
+    okBtn.textContent = 'Opening…';
+    try {
+      const res = await fetch('/api/pr', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }),
+      });
+      const dd = await safeJson(res);
+      if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+      const pr = { state: 'OPEN', url: dd.url || '#', number: null };
+      record.pr = pr;
+      done();
+      // Keep the LIST card in step. Without this the card behind the detail keeps
+      // its stale "Create PR" button — list<->detail hops deliberately do NOT
+      // reload — so pressing Back and clicking it again sets pendingShipIt and
+      // re-opens this modal for a run that already has an OPEN PR, firing a second
+      // POST /api/pr. patchHistoryPr updates the model row, calls resetPrCluster +
+      // setupPrButton on the live card, and — through hdSyncPr — repaints the
+      // detail control too. It no-ops safely for an off-screen/filtered card, so
+      // the explicit detail paint below stays.
+      patchHistoryPr({ projectKey: record.projectKey, id: record.id, pr });
+      const screen = histDetailState && histDetailState.screen;
+      if (screen) {
+        paintHdPr(screen, record, histDetailState.data);
+        const mergeEl = screen.querySelector('.hist-merge');
+        if (mergeEl) {
+          setMergePill(mergeEl, dd.mergeable);
+          // GitHub computes mergeability asynchronously; re-check once so the
+          // "checking…" pill never sticks.
+          if (String(dd.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
+            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id });
+          }
+        }
+      }
+    } catch (e2) {
+      // The user cancelled (or navigated) while this POST was in flight and a new
+      // generation may already own the modal — do not re-enable its button or
+      // stamp a stale error onto it.
+      if (closed) return;
+      okBtn.disabled = false;
+      okBtn.textContent = 'Open pull request';
+      err.hidden = false;
+      err.textContent = `Could not open PR: ${e2.message}`;
+    }
+  };
+  okBtn.addEventListener('click', onOk);
+  q('.shipit-cancel').addEventListener('click', onCancel);
+  modal.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKey);
+}
+
+// THE single PR-eligibility predicate. Every caller uses it: paintHdPr (below),
+// setupPrButton (the list card) and the pendingShipIt consumer.
+//
+// `target !== 'workspace'` is MANDATORY and is the ONE clause the existing list
+// gate (app.js:8571) is missing. POST /api/pr has NO workspace arm and its key
+// regex (ui/server.mjs:1637) rejects a `workspaces/...` composite with a 404 — yet
+// workspace rows DO satisfy the other three clauses, because listAllPipelines hands
+// rowToHistoryEntry the workspace's primary member dir as repoDir
+// (artifacts.mjs:1549-1556), so `survived`/`branch`/`sourceBranch` are all really
+// computed for them.
+function histPrEligible(p) {
+  return !!(state.ghAvailable && p && p.survived && p.branch && p.sourceBranch
+    && p.target !== 'workspace');
+}
+
+// Keep the OPEN detail's PR control in step with the two PR-resolution paths
+// (patchHistoryPr per-entry, finalizeHistoryPr terminal). Called from inside both,
+// BEFORE their `if (!card)` early-outs — otherwise a deep-linked run whose list
+// card is filtered off-screen never gets its control resolved.
+function hdSyncPr(projectKey, id, row) {
+  if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
+  if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
+  if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
+  paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+}
+
+// Detail-header PR control from the record's tri-state (undefined = enrichment
+// pending -> hidden; null = resolved/none -> Create when eligible; object = link).
+// Link-first, matching setupPrButton's order (app.js:8552-8569): a merged-but-
+// branch-gone run still shows "Merged".
+function paintHdPr(screen, record, data) {
+  const btn = screen.querySelector('.hd-pr');
+  const link = screen.querySelector('.hd-pr-link');
+  if (!btn || !link) return;
+  btn.hidden = true;
+  link.hidden = true;
+  const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
+  const prState = pr ? String(pr.state || '').toUpperCase() : '';
+  if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
+    link.hidden = false;
+    link.href = pr.url;
+    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
+    link.classList.toggle('merged', prState === 'MERGED');
+    return;
+  }
+  if (!histPrEligible(record) || record.pr === undefined) return;
+  btn.hidden = false;
+  // Property assignment, NOT addEventListener: paintHdPr re-runs (the patchHistoryPr
+  // / finalizeHistoryPr hooks, refreshHdFromRow, post-ship) and refreshHdFromRow
+  // REPLACES histDetailState.record — a one-time bound listener would keep the stale
+  // first record in its closure; reassigning onclick always captures the current one.
+  btn.onclick = () => openShipItModal(record, data);
+}
+
+// --- detail header: meta line, branch copy, Resume, Archive, banners --------
+
+// "8/17/2026, 8:54:42 PM" -> { day, clock } (locale-driven; no comma -> clock '').
+// fmtDate returns '' for a falsy value, so a record with no timestamp yields two
+// empty segments and the painter skips both — never "Invalid Date".
+function splitDateStamp(iso) {
+  const s = fmtDate(iso);
+  const i = s.indexOf(', ');
+  return i === -1 ? { day: s, clock: '' } : { day: s.slice(0, i), clock: s.slice(i + 2) };
+}
+
+function hdDot() {
+  const d = document.createElement('span');
+  d.className = 'hd-dot';
+  d.textContent = '·';
+  return d;
+}
+
+function paintHdHeaderMeta(screen, record, data) {
+  const st = data.state;
+  const meta = screen.querySelector('.hd-meta');
+  meta.innerHTML = '';
+  const { family, word } = histStatusMeta({ status: st.status });
+  const w = document.createElement('span');
+  w.className = `hd-status-word st-${family}`;
+  w.textContent = word;
+  meta.appendChild(w);
+  const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
+  for (const [cls, text, strong] of [
+    ['hd-day', day, false],
+    ['hd-clock', clock, false],
+    ['hd-dur', typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '', true],
+    ['hd-cost', typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '', true],
+  ]) {
+    if (!text) continue;
+    meta.appendChild(hdDot());
+    const seg = document.createElement('span');
+    seg.className = cls + (strong ? ' strong' : '');
+    seg.textContent = text;
+    if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
+    meta.appendChild(seg);
+  }
+  // +A −R: persisted results first (done runs), else the live list counts.
+  const sums = data.results && data.results.summary;
+  const added = sums ? sums.linesAdded : (record.survived ? record.added : null);
+  const removed = sums ? sums.linesRemoved : (record.survived ? record.removed : null);
+  if (added != null && removed != null) {
+    meta.appendChild(hdDot());
+    // One wrapper, NOT `meta.append(a, ' ', r)`: a bare text node inside a
+    // `display:flex;gap:8px` container becomes its own anonymous flex item and
+    // buys an extra 8px gap between the two counts.
+    const counts = document.createElement('span');
+    counts.className = 'hd-diffcounts';
+    const a = document.createElement('span'); a.className = 'diff-add'; a.textContent = `+${added}`;
+    const r = document.createElement('span'); r.className = 'diff-del'; r.textContent = `−${removed}`; // U+2212
+    counts.append(a, r);
+    meta.appendChild(counts);
+  }
+  // Branch row.
+  const base = screen.querySelector('.hd-base');
+  const copyBtn = screen.querySelector('.hd-branch-copy');
+  const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
+  const feature = br.feature || (typeof st.branch === 'string' ? st.branch : '') || record.branch || '';
+  const source = br.source || record.sourceBranch || '';
+  base.textContent = source ? `${source} →` : '';
+  base.hidden = !source;
+  copyBtn.hidden = !feature;
+  if (feature) {
+    screen.querySelector('.hd-branch-name').textContent = feature;
+    if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
+      copyBtn.dataset.bound = '1';
+      // Read the CURRENTLY PAINTED name at click time, never the load-time
+      // `feature` string. This binder is bound once while paintHdHeaderMeta
+      // re-runs and rewrites `.hd-branch-name` (deep link: the first paint takes
+      // st.branch.feature, the later row supplies record.branch) — closing over
+      // `feature` is the same stale-capture class hdCurrentRecord exists to kill,
+      // applied to a string instead of a record.
+      copyBtn.addEventListener('click', () => {
+        const name = screen.querySelector('.hd-branch-name').textContent || '';
+        if (name) copyBranchToClipboard(copyBtn, name);
+      });
+    }
+  }
+}
+
+// Busy-label target. Both DETAIL buttons carry an inline SVG, so a bare
+// `btn.textContent = 'Resuming…'` DELETES the icon, and the error path restores
+// text only — the icon never comes back. Prefer the `.hd-btn-label` span the
+// detail template ships; fall back to the button itself for any caller that
+// passes a plain, icon-less button.
+function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
+
+// The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
+// the detail header and the cost-override path.
+async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false } = {}) {
+  const labelEl = btnLabelEl(btn);
+  btn.disabled = true;
+  // Claim the button for the duration of the round-trip (and keep the failure
+  // message afterwards). `applyHistResumeGate` writes `btn.disabled` and
+  // `btn.title = ''` UNCONDITIONALLY, and refreshHistResumeGating now runs from
+  // every paintHistory() while a detail screen with data is open — including the
+  // `pipelines-changed` force-reload this very resume triggers. Without the claim
+  // that broadcast re-enables `.hd-resume` mid-POST (a second click = a second
+  // POST /api/resume) and wipes the `Could not resume: …` title D3 relies on. The
+  // detail screen is never rebuilt, so the dataset flag really does survive there.
+  // It does NOT protect the LIST button, and the claim is not what makes that
+  // safe: renderHistory() rebuilds every card, destroying flag, label and title
+  // alike — the status quo, unchanged here. Precedent: startSubmitInFlight.
+  btn.dataset.resumeState = 'busy';
+  const label = labelEl.textContent;
+  labelEl.textContent = 'Resuming…';
+  try {
+    const res = await fetch('/api/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ignoreCostCap ? { pipelineId: p.id, ignoreCostCap: true } : { pipelineId: p.id }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    upsertRun({
+      runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',
+      status: 'starting', pipelineId: p.id, local: true,
+    });
+    // Seed the resumed run with the pre-pause log so the live card is continuous.
+    // Prefer an in-memory paused run sharing this pipelineId (exact, no fetch);
+    // otherwise fall back to the persisted NDJSON (resume from History / reload).
+    const prior = [...runs.values()].find(
+      (x) => x.runId !== data.runId && x.pipelineId === p.id && Array.isArray(x.logLines) && x.logLines.length
+    );
+    await seedResumedLog(data.runId, prior ? prior.logLines : null, prior ? null : historyLogUrl(p.id, p));
+    // Carry the branch label onto the resumed card so it doesn't blank until the
+    // first state event lands. History LIST entries carry `branch` as a STRING,
+    // which the old object-only read missed.
+    const nr = runs.get(data.runId);
+    if (nr) {
+      const feat = (prior && prior.branchFeature)
+        || (p.branch && typeof p.branch === 'object' ? p.branch.feature : null)
+        || (typeof p.branch === 'string' ? p.branch : null);
+      if (feat) { nr.branchFeature = feat; paintRunCard(nr); }
+    }
+    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    hideViewer();
+    updateNavCounts();
+    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    renderRunningView();
+  } catch (err) {
+    // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
+    // card is rebuilt wholesale by renderHistory(), which drops flag, label and
+    // title together — status quo, unchanged here.
+    btn.dataset.resumeState = 'error';
+    btn.dataset.resumeError = `Could not resume: ${err.message}`;
+    btn.disabled = false;
+    labelEl.textContent = label;
+    btn.title = btn.dataset.resumeError;             // D3: the server's 400 surfaces here
+  }
+}
+
+const HD_RESUMABLE = new Set(['paused', 'interrupted']);
+
+// { screen, record } the Discard-worktree listener is currently bound to, so
+// paintHdBanners can re-bind when either changes (see the comment inside it).
+let hdDiscardBound = null;
+
+// Retained work is a LIST-row field (and the server gates it on existsSync of the
+// worktree). A deep-linked or cache-warm detail has no authoritative value, so
+// derive a PROVISIONAL one from the state.branch.commitFailed stamp and let the
+// real row correct it in BOTH directions once it lands. Idempotent.
+//
+// AUTHORITATIVE vs PROVISIONAL is the whole contract: rowToHistoryEntry ALWAYS
+// emits the `pauseReason` and `retainedWork` keys, so hasOwnProperty is a valid
+// "this record came from the server" test; writeHistoryCache STRIPS retainedWork,
+// so a cache-warm row genuinely lacks the key — as does the deep-link stub.
+//
+// The derived value is deliberately NOT written back onto `record`: that object
+// lives in state.historyAll, so materializing a derived retention would grow a
+// "Work retained" badge on the LIST card, computed from a commitFailed stamp the
+// server would have suppressed via its existsSync gate. Instead a provisional
+// retention paints the banner from a throwaway carrier and binds NO Discard — the
+// button appears one fetch later, when the authoritative row arrives.
+//
+// LIMIT: the provisional derivation is single-project only. A workspace run's
+// retention comes from workspace_meta.branches, and the detail payload carries no
+// equivalent — so a deep-linked workspace run shows no banner and an ENABLED
+// Archive until its list row lands. The server's 409 is the real guard.
+function hdRetainedFor(record, st) {
+  if (record && Object.prototype.hasOwnProperty.call(record, 'retainedWork')) {
+    return { retained: record.retainedWork || null, provisional: false };
+  }
+  if (record && record.target === 'workspace') return { retained: null, provisional: true };
+  const br = st && st.branch && typeof st.branch === 'object' ? st.branch : {};
+  const derived = (!br.commitFailed || !br.worktreeDir || br.worktreeRemoved === true) ? null : {
+    reason: br.commitFailed.code || 'unknown',
+    members: [{
+      projectKey: record.projectKey || null, worktreeDir: br.worktreeDir,
+      branch: br.feature || null, code: br.commitFailed.code || null,
+      step: br.commitFailed.step || null, message: br.commitFailed.message || '',
+      at: br.commitFailed.at || null,
+    }],
+  };
+  return { retained: derived, provisional: true };
+}
+
+function paintHdBanners(screen, record, data) {
+  const st = data.state;
+  const banners = screen.querySelector('.hd-banners');
+
+  // Cost-pause banner. pauseReason lives on LIST rows only (rowToState has none),
+  // so a deep link gets it late — rebuild idempotently instead of once.
+  const pauseReason = typeof record.pauseReason === 'string' ? record.pauseReason : '';
+  if (pauseReason) screen.dataset.pauseReason = pauseReason; else delete screen.dataset.pauseReason;
+  // Rebuild the cost banner ONLY when the reason actually changed. An
+  // unconditional remove+rebuild detaches the `.cb-override` button mid-flight:
+  // that click awaits confirmModal then resumePipeline, and ANY paintHistory()
+  // inside that window (a `pipelines-changed` broadcast, a WS reconnect's
+  // onHello -> loadHistoryView) would replace the node — after which
+  // resumePipeline writes disabled / 'Resuming…' / the D3 title to a DETACHED
+  // button while the user faces a fresh, enabled one. `.hd-resume` is protected by
+  // dataset.resumeState; this path needs NODE STABILITY instead, because its host
+  // is what gets replaced.
+  const oldBanner = banners.querySelector('.cost-banner');
+  const wantCost = pauseReason.startsWith('cost_');
+  if (oldBanner && (!wantCost || oldBanner.dataset.pauseReason !== pauseReason)) oldBanner.remove();
+  if (wantCost && !banners.querySelector('.cost-banner')) {
+    const banner = renderCostPauseBanner(
+      { pauseReason, pipelineId: record.id, totalCostUsd: st.totalCostUsd },
+      { budget: budgetState.budget || {}, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
+    const settingsBtn = banner.querySelector('.cb-settings');
+    if (settingsBtn) settingsBtn.addEventListener('click', () => { location.hash = 'settings'; });
+    const overrideBtn = banner.querySelector('.cb-override');
+    if (overrideBtn) {
+      overrideBtn.addEventListener('click', () => {
+        const r = hdCurrentRecord(record);   // never the load-time object
+        histCostOverride(r.projectDir || null, r.id, r, overrideBtn); // fire-and-forget
+      });
+    }
+    banner.dataset.pauseReason = pauseReason;   // what the conditional rebuild keys on
+    banners.prepend(banner);
+  }
+
+  // Retained work. renderRetainedWork rebuilds the banner from scratch each call
+  // (and tolerates a missing node), so it is safe to re-run;
+  // `setupDiscardWorktreeButton` is NOT idempotent (it adds a listener on every
+  // call), so it must be bound at most once PER RECORD OBJECT.
+  //
+  // "Per record object", not "per screen". The bound handler closes over the
+  // record it was handed and mutates THAT object on success
+  // (`p.retainedWork = null`) before calling paintHistory(). On the deep-link path
+  // refreshHdFromRow REPLACES histDetailState.record with the real list row, so a
+  // bind-once-per-screen guard would leave the handler mutating the orphaned
+  // minimal record: the POST succeeds and the worktree really is discarded, but
+  // the repaint reads the still-retained ROW — the banner stays and Archive stays
+  // disabled until a full reload. Re-bind whenever the record identity changes,
+  // dropping the stale listener by replacing the button node first
+  // (addEventListener leaves no removal handle).
+  const { retained, provisional } = hdRetainedFor(record, st);
+  // renderRetainedWork only READS `p.retainedWork`, so a provisional paint may use
+  // a throwaway carrier; every MUTATING helper below is handed `record` itself.
+  renderRetainedWork(screen, provisional ? { ...record, retainedWork: retained } : record);
+  let dbtn = screen.querySelector('.hist-discard');
+  if (retained && !provisional) {
+    // Keyed on BOTH screen and record: a new visit builds a fresh screen from the
+    // template (unbound button) while `record` may be the very same list-row
+    // object, so a record-only key would skip the bind on the new screen.
+    if (!hdDiscardBound || hdDiscardBound.screen !== screen || hdDiscardBound.record !== record) {
+      if (dbtn) { const fresh = dbtn.cloneNode(true); dbtn.replaceWith(fresh); dbtn = fresh; }
+      hdDiscardBound = { screen, record };
+      setupDiscardWorktreeButton(screen, record.projectDir || null, record);
+    }
+  } else {
+    // Provisional retention shows the banner but NOT the action: discarding must
+    // act on the authoritative row (which arrives one fetch later and re-runs this
+    // painter), never on a stub or a cache-warm row whose retention we inferred.
+    hdDiscardBound = null;
+    if (dbtn) dbtn.hidden = true;   // renderRetainedWork does not touch this button
+  }
+  // Must run AFTER renderRetainedWork unhides the banner: addRecoveryPatchLink
+  // bails on a hidden banner and self-guards against duplicates.
+  addRecoveryPatchLink(screen, record.projectDir || null, record, data.artifacts);
+  return retained;
+}
+
+// THE record accessor for detail-screen click handlers. `setupHdActions` binds
+// Resume and Archive exactly once and is deliberately NEVER re-run (re-running it
+// would double-bind), while `refreshHdFromRow` REPLACES histDetailState.record —
+// with the authoritative list row on the deep-link path, and with a freshly-minted
+// row object after any forced reload. Closing over the load-time `record`
+// therefore means acting on a superseded object: on a deep link that object is the
+// minimal {id, projectKey} stub, so Resume would land a running card titled with
+// the raw run id and projectDir '' (blank project name, branch label lost) and
+// Archive would put the raw id where D2's spec-verbatim copy wants the run title.
+// Resolve at CLICK time instead; `record` stays only as the fallback for the
+// (impossible-in-practice) case of a click after the state was cleared.
+function hdCurrentRecord(fallback) {
+  return (histDetailState && histDetailState.record) || fallback;
+}
+
+function hdSetArchiveGate(btn, retained) {
+  if (!btn) return;
+  // An IN-FLIGHT archive owns its button outright — the mirror of
+  // refreshHistResumeGating's `resumeState === 'busy'` guard. The DELETE removes a
+  // worktree and a branch (seconds, not milliseconds), and any repaint inside that
+  // window — a `pipelines-changed` broadcast for ANOTHER pipeline reaches here
+  // through refreshHdFromRow — would otherwise re-enable a button still reading
+  // "Archiving…" (second click = second DELETE, whose 404 stamps an error for an
+  // archive that in fact succeeded).
+  if (btn.dataset.archiveState === 'busy') return;
+  btn.disabled = !!retained;
+  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.' : '';
+}
+
+function setupHdActions(screen, record, data) {
+  const st = data.state;
+  const status = String(st.status || '').toLowerCase();
+  const retained = paintHdBanners(screen, record, data);
+
+  // Resume: paused + interrupted only (D3).
+  const resumeBtn = screen.querySelector('.hd-resume');
+  if (HD_RESUMABLE.has(status)) {
+    resumeBtn.hidden = false;
+    applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget);
+    resumeBtn.addEventListener('click', () => {
+      const r = hdCurrentRecord(record);              // never the load-time object
+      resumePipeline(r, r.projectDir || null, resumeBtn);
+    });
+  }
+
+  // Archive: honest copy (D2), confirmModal (not window.confirm). Deletability is
+  // judged on the AUTHORITATIVE detail status (a deep link's minimal record has none).
+  const archiveBtn = screen.querySelector('.hd-archive');
+  if (isDeletableEntry({ ...record, status: st.status })) {
+    archiveBtn.hidden = false;
+    hdSetArchiveGate(archiveBtn, retained);
+    archiveBtn.addEventListener('click', async () => {
+      if (archiveBtn.disabled) return;
+      const r = hdCurrentRecord(record);              // never the load-time object
+      // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
+      // run-title context line above it is ours). `.confirm-message` already
+      // declares white-space:pre-line, so the blank line renders as a paragraph.
+      const ok = await confirmModal({
+        title: 'Archive this pipeline?',
+        message: `${r.title || r.id}\n\nIt moves out of History. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.`,
+        confirmLabel: 'Archive',
+        danger: true,
+      });
+      if (!ok) return;
+      const label = btnLabelEl(archiveBtn);
+      archiveBtn.dataset.archiveState = 'busy';   // read by hdSetArchiveGate
+      archiveBtn.disabled = true;
+      label.textContent = 'Archiving…';
+      try {
+        const qs = runActionQuery(r.projectDir || null, r);
+        const res = await fetch(`/api/runs/${encodeURIComponent(r.id)}?${qs.toString()}`, { method: 'DELETE' });
+        const dd = await safeJson(res);
+        if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+        state.historyAll = state.historyAll.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
+        // The same guard loadHistoryView uses ("never cache empty/error"):
+        // archiving the LAST pipeline would otherwise persist `{pipelines: []}`
+        // and the next boot would paint an empty History from cache before the
+        // network answers.
+        if (state.historyAll.length) writeHistoryCache(state.historyAll, state.ghAvailable);
+        paintHistory();
+        location.hash = 'history';
+      } catch (err) {
+        // Cleared only on failure: the success path navigates back to the list and
+        // the screen (button included) is discarded.
+        delete archiveBtn.dataset.archiveState;
+        archiveBtn.disabled = false;
+        label.textContent = 'Archive';
+        const errEl = screen.querySelector('.hd-error');   // spec §5.2: inline error
+        if (errEl) { errEl.hidden = false; errEl.textContent = `Could not archive: ${err.message}`; }
+      }
+    });
+  }
+
+  paintHdPr(screen, record, data);
+}
+
+// Re-run only the IDEMPOTENT painters after the open detail's real list row
+// arrives (deep-link case) or changes. NEVER re-runs setupHdActions — that would
+// double-bind the Resume/Archive listeners.
+//
+// There is deliberately NO `row === histDetailState.record` early-out. The row and
+// the detail's record are usually the SAME object (histRecordFor returns it), and
+// the flows that matter mutate it in place before calling paintHistory():
+// setupDiscardWorktreeButton sets `p.retainedWork = null`, and the ship-it path
+// sets `record.pr`. An identity guard would skip exactly those repaints and strand
+// a cleared worktree behind a live banner + a disabled Archive. The painters are
+// cheap and idempotent, and paintHistory() is not a hot path.
+//
+// Because this function REPLACES histDetailState.record, the bind-once handlers
+// setupHdActions installed must resolve the record through hdCurrentRecord() at
+// click time — do NOT "fix" a stale-record symptom by calling setupHdActions from
+// here; that double-binds both buttons.
+function refreshHdFromRow() {
+  if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
+  const row = (state.historyAll || []).find(
+    (r) => r && r.id === histDetailState.id && r.projectKey === histDetailState.key);
+  if (!row) return;                       // archived / filtered out of the model entirely
+  histDetailState.record = row;
+  const { screen, data } = histDetailState;
+  paintHdHeaderMeta(screen, row, data);
+  const retained = paintHdBanners(screen, row, data);   // corrects in BOTH directions
+  hdSetArchiveGate(screen.querySelector('.hd-archive'), retained);
+  refreshHistResumeGating();
+  paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
+  refreshHdOverviewTab();   // the one tab body that reads mutable record fields
+}
+
+// --- section tabs: pill row + lazily-built section bodies -------------------
+
+const HD_TAB_ICONS = {
+  diff: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/></svg>',
+  overview: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  agents: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>',
+  clarify: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  logs: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>',
+};
+
+function hdClarifyCount(data) {
+  const q = (data.clarify && Array.isArray(data.clarify.questions)) ? data.clarify.questions.length : 0;
+  const stepQ = Array.isArray(data.stepQuestions)
+    ? data.stepQuestions.reduce((n, r) => n + ((r && r.questions) || []).length, 0) : 0;
+  return q + stepQ;
+}
+
+const HD_TABS = [
+  // File count = filesNew + filesChanged ONLY: deleted files carry status 'D'
+  // INSIDE changedFiles (results.mjs:22-53; NEW_STATUS is {A,C}) and are ALSO
+  // counted in filesDeleted, so adding filesDeleted double-counts every deletion
+  // against the rendered file list.
+  { key: 'diff', label: 'Diff',
+    badge: (d) => (d.results && d.results.summary
+      ? String((d.results.summary.filesNew || 0) + (d.results.summary.filesChanged || 0)) : null),
+    visible: () => true, build: (...a) => buildHdDiff(...a) },
+  { key: 'overview', label: 'Overview', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
+  { key: 'agents', label: 'Agents',
+    badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
+    visible: () => true, build: (...a) => buildHdAgents(...a) },
+  { key: 'clarify', label: 'Clarify',
+    badge: (d) => String(hdClarifyCount(d)),
+    visible: (d) => hdClarifyCount(d) > 0, build: (...a) => buildHdClarify(...a) },
+  { key: 'logs', label: 'Logs', badge: () => null,
+    visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
+    build: (...a) => buildHdLogs(...a) },
+];
+
+// The live tab cells of the OPEN detail, so refreshHdFromRow can repaint the one
+// body that reads mutable record fields (Overview). Reset on every initHdTabs.
+let hdTabCells = null;
+
+function initHdTabs(screen, record, data) {
+  const bar = screen.querySelector('.hd-tabs');
+  const secs = screen.querySelector('.hd-sections');
+  bar.innerHTML = '';
+  secs.innerHTML = '';
+  const tabs = HD_TABS.filter((t) => t.visible(data));
+  const cells = new Map();
+  hdTabCells = cells;
+  for (const t of tabs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hd-tab';
+    btn.dataset.sec = t.key;
+    btn.id = `hd-tab-${t.key}`;
+    btn.setAttribute('role', 'tab');
+    btn.innerHTML = HD_TAB_ICONS[t.key];          // static markup, no interpolation
+    btn.appendChild(document.createTextNode(' ' + t.label));
+    const badge = t.badge(data);
+    if (badge != null) {
+      const b = document.createElement('span');
+      b.className = 'hd-tab-badge';
+      b.textContent = badge;
+      btn.appendChild(b);
+    }
+    bar.appendChild(btn);
+    const sec = document.createElement('div');
+    sec.className = 'hd-sec';
+    sec.dataset.sec = t.key;
+    sec.id = `hd-sec-${t.key}`;
+    sec.setAttribute('role', 'tabpanel');
+    sec.setAttribute('aria-labelledby', btn.id);
+    btn.setAttribute('aria-controls', sec.id);
+    // Two panels scroll internally (.hd-diff-rows, .hd-sec-logs .log) and neither
+    // is reliably reachable by keyboard otherwise; tabindex=0 on the panel is the
+    // standard tabs remedy and costs nothing on the other three.
+    sec.tabIndex = 0;
+    sec.hidden = true;
+    secs.appendChild(sec);
+    cells.set(t.key, { tab: t, btn, sec });
+    btn.addEventListener('click', () => activate(t.key));
+  }
+  function activate(key) {
+    // TWO PHASES on purpose. Building inside the toggle loop means a throwing
+    // builder aborts the loop mid-iteration: every cell after the active one keeps
+    // its previous `.active`/`hidden` state, so the user is left with two lit pills
+    // and/or two visible sections — and later tasks explicitly design for builders
+    // that may throw (the retry contract below). Toggle everything first, then
+    // build exactly the newly-activated section.
+    let pending = null;
+    for (const [k, { tab, btn, sec }] of cells) {
+      const on = k === key;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      sec.hidden = !on;
+      if (on && sec.dataset.loaded !== '1') pending = { tab, sec };
+    }
+    if (pending) {
+      // Stamp AFTER the builder returns: a builder that throws leaves the tab
+      // un-stamped and retries on the next activation instead of being stuck
+      // permanently empty. The Logs builder kicks off an async loadLiveLogs and
+      // returns immediately, so its own `dataset.loaded = ''` error reset still
+      // lands after this stamp — the retry contract holds.
+      //
+      // hdCurrentRecord(), NOT the captured `record`: activate() runs at CLICK
+      // time, and refreshHdFromRow REPLACES histDetailState.record (deep link, and
+      // every pipelines-changed forced reload). Closing over the load-time object
+      // is exactly what the record-identity rule forbids — a tab first opened
+      // after the real row landed would otherwise still render the minimal stub.
+      pending.tab.build(pending.sec, hdCurrentRecord(record), data);
+      pending.sec.dataset.loaded = '1';
+    }
+  }
+  activate(data.results ? 'diff' : 'overview');
+}
+
+// Overview is the ONLY tab body that reads mutable record fields
+// (record.retainedWork -> the WORKTREE card, record.projectName / sourceBranch ->
+// the chips). Diff and Logs touch the record only for URL building (id /
+// projectKey / target, all stable across row instances), and Agents / Clarify read
+// `data` alone. So when the authoritative row lands (deep link) or a forced reload
+// mints a new row, repaint just that one body — cheap, and it avoids tearing down
+// the Diff selection or the Logs filter/scroll state that a blanket rebuild would.
+// Only if it was already built; an unbuilt tab picks the current record up anyway
+// via hdCurrentRecord() in activate().
+function refreshHdOverviewTab() {
+  if (!hdTabCells || !histDetailState || !histDetailState.screen || !histDetailState.data) return;
+  const cell = hdTabCells.get('overview');
+  if (!cell || cell.sec.dataset.loaded !== '1') return;
+  if (!histDetailState.screen.contains(cell.sec)) return;   // cells belong to a superseded screen
+  buildHdOverview(cell.sec, hdCurrentRecord(), histDetailState.data);   // the accessor, like every other consumer
+}
+
+// --- Diff tab: file list + patch viewer -------------------------------------
+
+// File rows for the Diff tab. Single-project: results.newFiles + changedFiles.
+// Workspace: one group per results.perProject[<key>] (a workspace results object
+// has NO top-level file arrays), with the project key carried so patch sections
+// resolve per project.
+function hdDiffFileRows(results) {
+  const rows = [];
+  const push = (project, r) => {
+    for (const f of r.newFiles || []) rows.push({ project, f, isNew: true });
+    for (const f of r.changedFiles || []) rows.push({ project, f, isNew: false });
+  };
+  if (results.perProject && typeof results.perProject === 'object') {
+    for (const [key, r] of Object.entries(results.perProject)) push(key, r || {});
+  } else {
+    push(null, results);
+  }
+  return rows;
+}
+
+// Per-file count chip. A file entry carries EITHER {added,removed} OR
+// {binary:true} — never both (results.mjs:22-53).
+function hdFileCountsHtml(f) {
+  if (f.binary) return '<span class="hint">binary</span>';
+  if (f.added == null) return '';
+  return `<span class="diff-add">+${f.added}</span> <span class="diff-del">−${f.removed}</span>`; // U+2212
+}
+
+function buildHdDiff(sec, record, data) {
+  sec.innerHTML = '';
+  const results = data.results;
+  if (!results) {
+    const empty = document.createElement('div');
+    empty.className = 'hd-diff-empty';
+    const line = document.createElement('div');
+    line.textContent = 'No diff captured for this run.';
+    empty.appendChild(line);
+    if (String(data.state.status || '').toLowerCase() !== 'done') {
+      const sub = document.createElement('div');
+      sub.className = 'hint';
+      sub.textContent = 'Diffs are captured when a run completes.';
+      empty.appendChild(sub);
+    }
+    sec.appendChild(empty);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'hd-diff';
+  const listCard = document.createElement('div');
+  listCard.className = 'hd-diff-list';
+  const pane = document.createElement('div');
+  pane.className = 'hd-diff-pane';
+  grid.append(listCard, pane);
+  sec.appendChild(grid);
+
+  const sums = results.summary || {};
+  const head = document.createElement('div');
+  head.className = 'hd-diff-list-head';
+  // NOT + filesDeleted: 'D' rows already count in filesChanged (see HD_TABS).
+  const nFiles = (sums.filesNew || 0) + (sums.filesChanged || 0);
+  head.innerHTML = `<b>${nFiles} file${nFiles === 1 ? '' : 's'} changed</b>` +
+    `<span class="mono"><span class="diff-add">+${sums.linesAdded || 0}</span> ` +
+    `<span class="diff-del">−${sums.linesRemoved || 0}</span></span>`; // U+2212
+  listCard.appendChild(head);
+
+  const rowsHost = document.createElement('div');
+  rowsHost.className = 'hd-diff-rows';
+  listCard.appendChild(rowsHost);
+
+  const rows = hdDiffFileRows(results);
+  // patchPromise memoizes the ONE fetch (concurrent selects await the same
+  // promise — a bare boolean flag would let a second click read a null index
+  // mid-flight); selEpoch drops the stale continuation when the user picks
+  // another file while the patch is still downloading (without it both selects
+  // resume after the await and append two bodies to the same pane).
+  const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
+
+  function ensurePatch() {
+    if (!pstate.patchPromise) {
+      pstate.patchPromise = (async () => {
+        pstate.error = null;
+        try {
+          const res = await fetch(historyDiffUrl(record.id, record));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          pstate.index = patchIndex(splitPatchSections(await res.text()));
+        } catch (e) {
+          pstate.error = e.message;
+          // Drop the memo, exactly as the Logs tab re-arms itself: keeping a SETTLED
+          // rejection here would show "Could not load the patch: …" for every file
+          // for the life of the screen, recoverable only through Back + reopen.
+          // Concurrent awaiters already hold this promise, so they still settle.
+          pstate.patchPromise = null;
+        }
+      })();
+    }
+    return pstate.patchPromise;
+  }
+
+  async function select(rowEl, entry) {
+    const epoch = ++pstate.selEpoch;
+    for (const r of rowsHost.querySelectorAll('.hd-diff-file')) r.classList.toggle('active', r === rowEl);
+    pane.innerHTML = '';
+    const ph = document.createElement('div');
+    ph.className = 'hd-diff-pane-head mono';
+    ph.innerHTML = `<span class="hd-diff-path">${escapeHtml(entry.f.path)}</span>`
+      + `<span>${hdFileCountsHtml(entry.f)}</span>`;
+    pane.appendChild(ph);
+
+    await ensurePatch();
+    if (epoch !== pstate.selEpoch) return; // a newer selection took the pane
+
+    const body = document.createElement('div');
+    body.className = 'hd-diff-body mono';
+    const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
+    if (!section) {
+      body.classList.add('hint');
+      body.textContent = pstate.error
+        ? `Could not load the patch: ${pstate.error}`
+        : '(no textual diff for this file)';
+      pane.appendChild(body);
+      return;
+    }
+    const parsed = parseFileSection(section.raw);
+    if (parsed.binary || !parsed.hunks.length) {
+      body.classList.add('hint');
+      body.textContent = '(no textual diff for this file)';
+      pane.appendChild(body);
+      return;
+    }
+    for (const hunk of parsed.hunks) {
+      const hh = document.createElement('div');
+      hh.className = 'hd-dl hd-dl-hunk';
+      hh.textContent = hunk.header;
+      body.appendChild(hh);
+      for (const line of hunk.lines) {
+        const dl = document.createElement('div');
+        dl.className = `hd-dl hd-dl-${line.kind}`;
+        // ASCII prefixes on purpose: this is a verbatim patch a user may copy —
+        // a U+2212 here yields something `git apply` rejects. U+2212 stays in the
+        // COUNT chips above.
+        dl.textContent = (line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ') + line.text;
+        body.appendChild(dl);
+      }
+    }
+    if (parsed.truncated) {
+      const t = document.createElement('div');
+      t.className = 'hint hd-diff-trunc';
+      t.textContent = '(large file — diff truncated at 500 KB)';
+      body.appendChild(t);
+    }
+    pane.appendChild(body);
+  }
+
+  let lastProject = null;
+  let first = null;
+  for (const entry of rows) {
+    if (entry.project && entry.project !== lastProject) {
+      lastProject = entry.project;
+      const gh = document.createElement('div');
+      gh.className = 'hd-diff-proj mono';
+      gh.textContent = entry.project;
+      rowsHost.appendChild(gh);
+    }
+    const rowEl = document.createElement('div');
+    rowEl.className = 'hd-diff-file' + (entry.f.status === 'D' ? ' deleted' : '') + (entry.isNew ? ' new' : '');
+    rowEl.setAttribute('role', 'button');
+    rowEl.tabIndex = 0;
+    const path = document.createElement('span');
+    path.className = 'hd-diff-path mono';
+    path.textContent = entry.f.path;
+    path.title = entry.f.from ? `${entry.f.from} → ${entry.f.path}` : entry.f.path;
+    const counts = document.createElement('span');
+    counts.className = 'mono hd-diff-counts';
+    counts.innerHTML = hdFileCountsHtml(entry.f);
+    rowEl.append(path, counts);
+    // `select` is async and fire-and-forget from all three call sites, so it needs
+    // an explicit sink: node --test fails the WHOLE file on an unhandled rejection
+    // and pins it on whichever test happens to be in flight.
+    const pick = () => { select(rowEl, entry).catch(() => {}); };
+    rowEl.addEventListener('click', pick);
+    rowEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
+    });
+    rowsHost.appendChild(rowEl);
+    if (!first) first = { rowEl, entry };
+  }
+  if (first) select(first.rowEl, first.entry).catch(() => {});
+  else {
+    const none = document.createElement('div');
+    none.className = 'hint hd-diff-none';
+    none.textContent = '(no files changed)';
+    pane.appendChild(none);
+  }
+}
+
+// --- Overview tab: verdict, stat cards, task card ---------------------------
+
+function hdStatCard(kind, label, value, sub) {
+  const card = document.createElement('div');
+  card.className = `hd-ov-card hd-ov-card-${kind}`;
+  const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = label;
+  const v = document.createElement('div'); v.className = 'hd-ov-value mono'; v.textContent = value;
+  card.append(l, v);
+  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub mono'; s.textContent = sub; card.appendChild(s); }
+  return card;
+}
+
+// Workspace results have NO top-level keyThingsToCheck — findings live under
+// perProject[<key>].keyThingsToCheck (the rollup summary only counts them), so a
+// workspace run would otherwise always read "Clean".
+function hdChecks(r) {
+  if (!r) return [];
+  if (r.perProject && typeof r.perProject === 'object') {
+    return Object.entries(r.perProject).flatMap(([k, pr]) =>
+      ((pr && pr.keyThingsToCheck) || []).map((c) => ({ ...c, location: c.location ? `${k}: ${c.location}` : k })));
+  }
+  return r.keyThingsToCheck || [];
+}
+
+function buildHdOverview(sec, record, data) {
+  sec.innerHTML = '';
+  const st = data.state;
+  const results = data.results;
+  const wrap = document.createElement('div');
+  wrap.className = 'hd-ov';
+  sec.appendChild(wrap);
+
+  // 1) Verdict banner (+ findings list).
+  const verdict = document.createElement('div');
+  verdict.className = 'hd-ov-verdict';
+  const chip = document.createElement('span');
+  chip.className = 'hd-ov-chip';
+  const checks = hdChecks(results);
+  if (results && !checks.length) {
+    verdict.classList.add('clean');
+    chip.classList.add('clean');
+    chip.textContent = 'Clean';
+    verdict.append(chip, document.createTextNode(' Clean — no blocking issues flagged.'));
+  } else if (results) {
+    verdict.classList.add('warn');
+    chip.classList.add('warn');
+    chip.textContent = String(checks.length);
+    verdict.append(chip, document.createTextNode(
+      ` ${checks.length} thing${checks.length === 1 ? '' : 's'} to check`));
+  } else {
+    const { family, word } = histStatusMeta({ status: st.status });
+    verdict.classList.add('none');
+    chip.classList.add(`st-${family}`);
+    chip.textContent = word;
+    verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
+  }
+  wrap.appendChild(verdict);
+  if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+
+  // 2) Stat cards.
+  const grid = document.createElement('div');
+  grid.className = 'hd-ov-grid';
+  const steps = Array.isArray(st.steps) ? st.steps : [];
+  const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
+  grid.appendChild(hdStatCard('duration', 'DURATION',
+    typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
+    `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
+  const costCard = hdStatCard('cost', 'COST',
+    typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '—',
+    `across ${steps.length} step${steps.length === 1 ? '' : 's'}`);
+  if (typeof st.totalCostUsd === 'number') costCard.querySelector('.hd-ov-value').title = estTitle(st.totalCostUsd);
+  grid.appendChild(costCard);
+  const wt = st.branch && typeof st.branch === 'object' ? st.branch : {};
+  // `worktreeRemoved` is ABSENT on a paused run, `true` after teardown
+  // (orchestrator.mjs:1443/1489/1498/1597/1604) and explicitly `false` on the
+  // commit-failure path (:1721, asserted by test/run-root-teardown.test.mjs:145).
+  // So it is tri-state, and `!== true` is the correct test for all three — do NOT
+  // "simplify" it to `=== false`, which would read `released` for every paused run.
+  // Running rows are in History too (listAllPipelines filters only
+  // `archived_at IS NULL`), and a live run's worktree is very much still on disk —
+  // gating on PAUSED_STATUSES alone printed the live path under "released".
+  const wtStatus = String(st.status || '').toLowerCase();
+  const wtLive = PAUSED_STATUSES.includes(wtStatus) || ['running', 'starting'].includes(wtStatus);
+  const retained = !!record.retainedWork || (wtLive && !!wt.worktreeDir && wt.worktreeRemoved !== true);
+  // NOTE: `record.retainedWork` is stripped from the localStorage cache
+  // (app.js:8161) and absent from a deep link's stub, so this card can read
+  // `released` for a commit-failed run until the authoritative row lands. That
+  // window closes ONLY because refreshHdOverviewTab() repaints this body from
+  // refreshHdFromRow — nothing else ever rebuilds a tab. (Do not "simplify" that
+  // call away: the header painters run on every row arrival, but the tab bodies do
+  // not, so without it the card would read `released` for the life of the screen.)
+  grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
+  wrap.appendChild(grid);
+
+  // 3) Task card.
+  const task = document.createElement('div');
+  task.className = 'hd-ov-task';
+  const th = document.createElement('div'); th.className = 'hd-ov-task-h'; th.textContent = 'Task';
+  task.appendChild(th);
+  const prompt = String(st.prompt || '').trim();
+  const p = document.createElement('p');
+  const LIMIT = 600;
+  if (prompt.length > LIMIT) {
+    p.textContent = prompt.slice(0, LIMIT) + '…';
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'hd-ov-more';
+    more.textContent = 'Show more';
+    more.addEventListener('click', () => { p.textContent = prompt; more.remove(); });
+    task.append(p, more);
+  } else {
+    p.textContent = prompt || '(no prompt recorded)';
+    task.appendChild(p);
+  }
+  const chips = document.createElement('div');
+  chips.className = 'hd-ov-chips';
+  const subCount = Array.isArray(st.subAgents) ? st.subAgents.length : 0;
+  for (const text of [
+    record.projectName || record.projectKey || '',
+    (st.branch && typeof st.branch === 'object' ? st.branch.source : '') || record.sourceBranch || '',
+    subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '',
+  ]) {
+    if (!text) continue;
+    const c = document.createElement('span');
+    c.className = 'hd-ov-tag mono';
+    c.textContent = text;
+    chips.appendChild(c);
+  }
+  task.appendChild(chips);
+  wrap.appendChild(task);
+}
+
+// One sub-agent's wall time. `durationMs` is authoritative when the orchestrator
+// recorded it; everything else on a sub-agent row except id/status/skills may be
+// null (listSubAgents, artifacts.mjs:387-411), so fall back to the timestamp pair
+// and give up rather than render a negative or NaN span.
+function hdSubDuration(s) {
+  if (s && s.durationMs != null && Number.isFinite(Number(s.durationMs))) return Number(s.durationMs);
+  const a = s && s.startedAt ? Date.parse(s.startedAt) : NaN;
+  const b = s && s.finishedAt ? Date.parse(s.finishedAt) : NaN;
+  return Number.isFinite(a) && Number.isFinite(b) && b >= a ? b - a : null;
+}
+
+// Agents tab: one card per MAIN agent that ran (subsGroupsForRender derives the
+// groups from state.steps[], so skill-only / graphify-only agents get a card too),
+// each carrying its sub-agent rows. Same grouping + pill helpers as the Running
+// view's renderSubsTree, laid out as rows rather than a tree.
+function buildHdAgents(sec, record, data) {
+  sec.innerHTML = '';
+  const st = data.state;
+  const groups = subsGroupsForRender(st.subAgents, st.steps, st.stepper);
+  const keys = Object.keys(groups);
+  if (!keys.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hint hd-ag-empty';
+    empty.textContent = '(no sub-agents recorded)';
+    sec.appendChild(empty);
+    return;
+  }
+  const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys);
+  const skillsByGroup = stepSkillsFromSteps(st.steps);
+  const graphifyByGroup = stepGraphifyFromSteps(st.steps);
+  const statusOf = stepStatusByKey(st.steps, st.stepper);
+
+  for (const key of keys) {
+    const list = Array.isArray(groups[key]) ? groups[key] : [];
+    const card = document.createElement('div');
+    card.className = 'hd-ag-group';
+    // Non-empty: roll up from the rows. Empty: the main agent's own step status —
+    // subGroupStatus would report a bare 'done' for an agent that is still running.
+    const gstat = list.length ? subGroupStatus(list) : (statusOf[key] || 'done');
+    const durSum = list.reduce((n, s) => n + (hdSubDuration(s) || 0), 0);
+    const costSum = list.reduce((n, s) => n + (Number(s && s.costUsd) || 0), 0);
+    const metaBits = [
+      `${list.length} sub-agent${list.length === 1 ? '' : 's'}`,
+      durSum ? fmtDuration(durSum) : '',
+      costSum ? fmtUsd4(costSum) : '',
+    ].filter(Boolean).join(' · ');
+    const head = document.createElement('div');
+    head.className = 'hd-ag-head';
+    head.innerHTML =
+      `<b>${escapeHtml(labelOf(key))}</b>` +
+      `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
+      graphifyCountPillHtml(graphifyByGroup[key]) +
+      `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
+      skillPillsHtml(skillsByGroup[key]);
+    card.appendChild(head);
+    if (!list.length) {
+      const note = document.createElement('div');
+      note.className = 'hint hd-ag-none';
+      note.textContent = 'No sub-agents spawned';
+      card.appendChild(note);
+    }
+    for (const s of list) {
+      const rstat = subRowStatus(s && s.status);
+      const dur = hdSubDuration(s);
+      const row = document.createElement('div');
+      row.className = 'hd-ag-row';
+      // skillPillsHtml goes LAST, exactly as renderSubsTree emits it
+      // (the `.subs-tree li .subs-skills` rule below is extended to `.hd-ag-row`,
+      // giving the pill block `flex:0 0 100%`), so a mid-row pill block would
+      // force-wrap the line: the status chip, duration and cost would drop onto a
+      // second row with the chip floated alone at the far right by
+      // `margin-left:auto`. Last = the pills get their own row under a complete
+      // first line, which is the intended design.
+      row.innerHTML =
+        `<span class="hd-ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
+        agentTypePillHtml(s && s.subagentType) +
+        graphifyCountPillHtml(s && s.graphifyCount) +
+        `<span class="st ${rstat}">${SUBS_STAT_TEXT[rstat] || rstat}</span>` +
+        `<span class="hd-ag-dur mono">${dur != null ? escapeHtml(fmtDuration(dur)) : ''}</span>` +
+        `<span class="hd-ag-cost mono">${s && s.costUsd != null ? escapeHtml(fmtUsd4(s.costUsd)) : ''}</span>` +
+        skillPillsHtml(s && s.skills);
+      card.appendChild(row);
+    }
+    sec.appendChild(card);
+  }
+}
+
+// Clarify tab: the run's own clarification round first, then one captioned block
+// per mid-run step round. Every question is a card with its ASK line and its ANS
+// line, so an unanswered question still reads as a question that was asked.
+function buildHdClarify(sec, record, data) {
+  sec.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'hd-cl';
+  sec.appendChild(wrap);
+  // readPipelineExtras already UNWRAPS clarify to {questions:[…], answers:[…]};
+  // answers are {id, question, choice}.
+  const questions = (data.clarify && data.clarify.questions) || [];
+  const answers = (data.clarify && data.clarify.answers) || [];
+  const byId = new Map(answers.map((a) => [a.id, a]));
+  const addCard = (q, ans) => {
+    const card = document.createElement('div');
+    card.className = 'hd-cl-card';
+    const qRow = document.createElement('div');
+    qRow.className = 'hd-cl-q';
+    const qChip = document.createElement('span');
+    qChip.className = 'hd-cl-chip ask mono';
+    qChip.textContent = 'ASK';
+    const qText = document.createElement('span');
+    qText.textContent = typeof q.question === 'string' ? q.question : '';
+    qRow.append(qChip, qText);
+    const aRow = document.createElement('div');
+    aRow.className = 'hd-cl-a';
+    const aChip = document.createElement('span');
+    aChip.className = 'hd-cl-chip ans mono';
+    aChip.textContent = 'ANS';
+    const aText = document.createElement('span');
+    const chosen = ans && typeof ans.choice === 'string' ? ans.choice.trim() : '';
+    aText.textContent = chosen || '(none)';
+    aRow.append(aChip, aText);
+    card.append(qRow, aRow);
+    wrap.appendChild(card);
+  };
+  for (const q of questions) addCard(q, byId.get(q.id));
+  for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
+    if (!((r && r.questions) || []).length) continue;
+    const caption = document.createElement('div');
+    caption.className = 'hint hd-cl-caption';
+    const cyc = String(r.stepKey || '').split('#')[1];
+    caption.textContent = `${r.agentKey || r.nodeId || 'agent'} — round ${r.round}${cyc ? ` · cycle ${cyc}` : ''}`;
+    wrap.appendChild(caption);
+    const rById = new Map((r.answers || []).map((a) => [a.id, a]));
+    for (const q of r.questions) addCard(q, rById.get(q.id));
+  }
+}
+
+// Logs tab: no fork of the log stack. loadLiveLogs owns the markup (the filter bar
+// cloned from #run-card-tpl + the .log box), the fetch, the facets, the filter and
+// the cycle separators, so the detail gets exactly the Running view's behavior.
+function buildHdLogs(sec, record, _data) {
+  sec.classList.add('hd-sec-logs');
+  // Safe to call on a section initHdTabs has already stamped: loadLiveLogs has no
+  // dataset.loaded guard of its own (its callers own that), and its error
+  // path clears panel.dataset.loaded — the SAME flag the tab uses — so a failed
+  // fetch re-arms the tab to retry on the next activation.
+  //
+  // `.catch` is not decoration: loadLiveLogs is async and called fire-and-forget,
+  // and its first statements (buildLogFilterBar(), panel.innerHTML = '') sit OUTSIDE
+  // its own try. An unhandled rejection fails the entire node --test file and
+  // misattributes it to another test.
+  loadLiveLogs(sec, historyLogUrl(record.id, record)).catch(() => {});
+}
+
+// Escape on the History detail screen navigates back to the list — but never
+// while an overlay modal is open (those own Escape). Capture-phase so the guard
+// reads each modal's PRE-close state; the viewer's own handler and confirmModal's
+// per-invocation handler run in bubble phase after.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (currentView() !== 'history') return;
+  if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
+  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
+  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
+  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  const ship = document.getElementById('shipit-modal');
+  if (ship && !ship.classList.contains('hidden')) return;
+  location.hash = 'history';
+}, true);
 
 async function viewPipeline(projectDir, id, title, record) {
   if (!id) return;
@@ -9906,7 +10878,7 @@ function subsPillText(byNode) {
 
 // Paint the "Sub-agents" pill + (lazily) its tree panel from a by-node grouping.
 // Hidden entirely when there are no sub-agents. The disclosure (aria-expanded +
-// [hidden] + chevron rotate) mirrors toggleHistCard. Idempotent: the click
+// [hidden] + chevron rotate) is the shared bar idiom. Idempotent: the click
 // handler is bound once (dataset guard), the count/text repaint every call.
 function paintSubsBar(barEl, byNode, labelOf, stepSkills, stepGraphify, statusByKey) {
   if (!barEl) return;
@@ -10548,6 +11520,10 @@ function showView(name, param = '') {
   // not inside the [data-view] section, so leaving Settings with the pointer or
   // focus parked on an icon would otherwise leave it floating over the next view.
   if (currentShownView === 'settings' && name !== 'settings') hideInfoTip();
+  // Leaving History resets the two-screen track, so the next visit lands on the
+  // list instead of a stale detail screen sliding in behind the new view.
+  if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: true });
+  const prevView = currentShownView;
   currentShownView = name;
 
   // Focus selection lives only while on the Running view.
@@ -10587,7 +11563,14 @@ function showView(name, param = '') {
       if (sr && !isPaused(sr) && (sr._finished || isTerminalStatus(sr.status))) acknowledgeRun(state.selectedRunId);
     }
   }
-  if (name === 'history') loadHistoryView();
+  if (name === 'history') {
+    // List<->detail hops stay in-view: do NOT refetch /api/history on every hop —
+    // a reload re-triggers PR enrichment and the cache branch strips `pr` from
+    // every row, blanking resolved PR pills mid-navigation. Refresh is the
+    // refresh affordance; pipelines-changed broadcasts still force-reload.
+    if (prevView !== 'history') loadHistoryView();
+    routeHistoryDetail(param, { instant: prevView !== 'history' });
+  }
   if (name === 'stats') loadStatsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();

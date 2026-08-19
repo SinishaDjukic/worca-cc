@@ -34,7 +34,10 @@ async function boot({ fetchHandler } = {}) {
   await new Promise((r) => setTimeout(r, 0));
   const selectProject = () => { const s = window.document.querySelector('#projectSelect'); s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true })); };
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, selectProject, showHistory };
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  const showDetail = (key, id) => { window.location.hash = `history/${key}/${id}`; window.dispatchEvent(new window.Event('hashchange')); };
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  return { window, selectProject, showHistory, showDetail, settle };
 }
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
@@ -61,7 +64,7 @@ test('a pipeline with no timing data renders a blank time chip', async () => {
   assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-time').textContent, '');
 });
 
-test('expanding a card paints per-phase duration from saved steps (refine cycles summed; never-run blank; 0ms -> 0s)', async () => {
+test('the detail screen paints per-phase duration from saved steps (refine cycles summed; never-run blank; 0ms -> 0s)', async () => {
   const state = {
     phase: 'done', status: 'done', cycle: 2, totalActiveMs: 8500,
     steps: [
@@ -75,17 +78,17 @@ test('expanding a card paints per-phase duration from saved steps (refine cycles
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 8500 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 8500 }]);
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
+  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.dur').textContent, '4s');
   assert.equal(byStep.refine.querySelector('.dur').textContent, '3s', 'refine cycles summed (2500ms -> 3s)');
   assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'executed sub-ms phase shows 0s');
@@ -105,18 +108,18 @@ test('clarify active time shows in its own Clarify stage chip (no longer folds i
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="plan"]');
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
+  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="plan"]');
   assert.equal(planStage.querySelector('.dur').textContent, '2s', 'plan(2000) -> 2s in the Plan chip (clarify no longer folded in)');
-  const clarifyStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="clarify"]');
+  const clarifyStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="clarify"]');
   assert.equal(clarifyStage.querySelector('.dur').textContent, '1s', 'clarify(1000) -> 1s in its own Clarify chip');
 });
 
@@ -133,17 +136,17 @@ test('history ignores a dangling runningSince (saved data is treated as final)',
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'running', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 2000 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'running', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 2000 }]);
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
+  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'finalized 0ms; dangling clock ignored');
 });
 
@@ -233,16 +236,16 @@ test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', 
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
+  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s0_0"]');
   assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s on the s0_0 cell');
 });
 
@@ -267,15 +270,15 @@ test('an untagged clarify step (old run) does NOT fold on a per-node manifest', 
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const planStage = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s0_0"]');
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
+  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s0_0"]');
   assert.equal(planStage.querySelector('.dur').textContent, '2s', 'only the plan step (2000) shows; clarify not folded');
 });

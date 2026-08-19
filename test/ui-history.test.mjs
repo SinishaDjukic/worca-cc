@@ -91,25 +91,47 @@ async function boot({ fetchHandler } = {}) {
     window.location.hash = 'history';
     window.dispatchEvent(new window.Event('hashchange'));
   }
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  function showDetail(key, id) {
+    window.location.hash = `history/${key}/${id}`;
+    window.dispatchEvent(new window.Event('hashchange'));
+  }
+  // Three macrotasks covers fetch -> safeJson -> paint for the detail load.
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 
-  return { window, calls, wsBox, selectProject, showHistory };
+  return { window, calls, wsBox, selectProject, showHistory, showDetail, settle };
 }
 
 function runsListResponse(pipelines, live = []) {
   return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 }
+const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
-test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav count=2', async () => {
+const KEY = 'proj-0000abcd';
+// MOST-SPECIFIC FIRST: the keyed detail URL /api/history/<key>/<id> has both
+// /api/history and /api/history/pr as prefixes, so every arm matches with endsWith.
+const armsFor = (rows, detailById) => (url) => {
+  if (url.endsWith('/api/history/pr')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+  for (const [id, payload] of Object.entries(detailById || {})) {
+    if (url.endsWith(`/api/history/${KEY}/${id}`)) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => payload });
+    }
+  }
+  if (url.endsWith('/api/history')) return runsList(rows);
+  return null;
+};
+const row = (over) => ({ projectKey: KEY, projectName: 'Proj', projectDir: '/x/proj', ...over });
+
+// ---------------------------------------------------------------------------
+// Card anatomy (the v2 list card: icon + title + meta line + branch row)
+// ---------------------------------------------------------------------------
+
+test('history renders 2 .hist-card divs (no <li>), status icon + word, nav count=2', async () => {
   const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) {
-        return runsListResponse([
-          { id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' },
-          { id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' },
-        ]);
-      }
-      return null;
-    },
+    fetchHandler: armsFor([
+      row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }),
+      row({ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' }),
+    ]),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
@@ -119,96 +141,138 @@ test('history renders 2 .hist-card divs (no <li>), badges DONE/STOPPED, nav coun
   assert.equal(cards.length, 2, 'two history cards rendered');
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> emitted');
 
-  // Status badges only: each card also carries a hidden .hist-retained-badge.
-  const badges = [...doc.querySelectorAll('#history .badge:not(.hist-retained-badge)')];
-  assert.equal(badges[0].textContent, 'DONE');
-  assert.ok(badges[0].classList.contains('green'), 'done badge is green');
-  assert.equal(badges[1].textContent, 'STOPPED');
-  assert.ok(badges[1].classList.contains('red'), 'stopped badge is red');
+  // The status .badge is gone: the icon carries the family, the word the label.
+  assert.equal(doc.querySelectorAll('#history .badge:not(.hist-retained-badge)').length, 0,
+    'the status badge pill was replaced by the icon + word');
+  assert.ok(cards[0].querySelector('.hist-sic').classList.contains('st-done'), 'done -> green check family');
+  assert.equal(cards[0].querySelector('.hist-status-word').textContent, 'Done');
+  assert.ok(cards[0].querySelector('.hist-status-word').classList.contains('st-done'));
+  assert.ok(cards[1].querySelector('.hist-sic').classList.contains('st-stopped'), 'stopped -> red square family');
+  assert.equal(cards[1].querySelector('.hist-status-word').textContent, 'Stopped');
+  // Exactly one glyph is shown per family.
+  const shown = [...cards[0].querySelectorAll('.hist-sic .sic')].filter((s) => !s.hasAttribute('hidden'));
+  assert.deepEqual(shown.map((s) => s.getAttribute('class')), ['sic sic-done']);
 
-  // Titles surface in .h-meta b.
+  // Titles surface in .h-meta b (a cross-file contract).
   assert.equal(cards[0].querySelector('.h-meta b').textContent, 'Done run');
 
   assert.equal(doc.querySelector('#nav-history-count').textContent, '2', 'nav count reflects rendered cards');
 });
 
-test('interrupted entry renders an INTERRUPTED red badge', async () => {
+test('interrupted lands in the amber paused family with the word "Interrupted"', async () => {
   const ctx = await boot({
-    fetchHandler: (url) => (url.includes('/api/history')
-      ? runsListResponse([{ id: 'pi', title: 'Stuck', status: 'interrupted', startedAt: '2026-06-02T00:00:00Z',
-                            projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj' }])
-      : null),
+    fetchHandler: armsFor([row({ id: 'pi', title: 'Stuck', status: 'interrupted', startedAt: '2026-06-02T00:00:00Z' })]),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  const badge = ctx.window.document.querySelector('#history .badge');
-  assert.equal(badge.textContent, 'INTERRUPTED');
-  assert.ok(badge.classList.contains('red'), 'interrupted badge is red');
+  const card = ctx.window.document.querySelector('#history .hist-card');
+  // The icon column answers "can this be resumed?", so interrupted is amber, not red.
+  assert.ok(card.querySelector('.hist-sic').classList.contains('st-paused'));
+  assert.equal(card.querySelector('.hist-status-word').textContent, 'Interrupted');
+  assert.equal(card.querySelector('.hist-sic').getAttribute('aria-label'), 'Interrupted');
 });
 
-test('expanding a card toggles aria-expanded, unhides detail, tints stepper from fetched state', async () => {
+test('the meta line renders day · clock · duration · cost, and hides each segment when absent', async () => {
   const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) {
-        return runsListResponse([{ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' }]);
-      }
-      // Lazy per-card detail fetch: GET /api/runs/:id?projectDir=...
-      if (url.includes('/api/runs/p-stop')) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({ state: { phase: 'implement', status: 'stopped', cycle: 1 }, auditMarkdown: '' }),
-        });
-      }
-      return null;
-    },
+    fetchHandler: armsFor([
+      row({ id: 'full', title: 'Full', status: 'done', startedAt: '2026-01-01T09:30:00Z', totalActiveMs: 83000, totalCostUsd: 0.42 }),
+      row({ id: 'bare', title: 'Bare', status: 'done', startedAt: null }),
+    ]),
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const [full, bare] = ctx.window.document.querySelectorAll('#history .hist-card');
+
+  // fmtDate is toLocaleString() — locale AND timezone dependent, so assert
+  // presence/structure only, never a literal day/clock string.
+  assert.equal(full.querySelector('.hist-day-seg').hidden, false);
+  assert.ok(full.querySelector('.hist-day').textContent.length > 0);
+  assert.equal(full.querySelector('.hist-clock-seg').hidden, false);
+  assert.ok(full.querySelector('.hist-clock').textContent.length > 0);
+  assert.equal(full.querySelector('.hist-time').textContent, '1m 23s');
+  assert.equal(full.querySelector('.hist-total').textContent, '$0.42');
+  assert.match(full.querySelector('.hist-total').title, /[Ee]stimat/);
+
+  assert.equal(bare.querySelector('.hist-day-seg').hidden, true, 'no timestamp -> no day segment');
+  assert.equal(bare.querySelector('.hist-clock-seg').hidden, true);
+  assert.equal(bare.querySelector('.hist-time-seg').hidden, true, 'no totalActiveMs -> no duration segment');
+  assert.equal(bare.querySelector('.hist-total-seg').hidden, true, 'no totalCostUsd -> no cost segment');
+});
+
+test('the diff pill shows +A −R, falls back to "no diff", and hides when merged or gone', async () => {
+  const base = { status: 'done', startedAt: '2026-01-01T00:00:00Z', branch: 'worca-cc/f', sourceBranch: 'main' };
+  const ctx = await boot({
+    fetchHandler: armsFor([
+      row({ ...base, id: 'counts', title: 'Counts', survived: true, added: 12, removed: 5 }),
+      row({ ...base, id: 'zero', title: 'Zero', survived: true, added: 0, removed: 0 }),
+      row({ ...base, id: 'merged', title: 'Merged', survived: true, added: 9, removed: 1,
+            pr: { state: 'MERGED', url: 'https://gh/x/pull/1' } }),
+      row({ ...base, id: 'gone', title: 'Gone', survived: false, added: 3, removed: 2 }),
+    ]),
+  });
+  ctx.showHistory();
+  await new Promise((r) => setTimeout(r, 0));
+  const [counts, zero, merged, gone] = ctx.window.document.querySelectorAll('#history .hist-card');
+
+  const pill = (c) => c.querySelector('.hist-diff-pill');
+  assert.equal(pill(counts).hidden, false);
+  assert.equal(counts.querySelector('.hist-diff .diff-add').textContent, '+12');
+  assert.equal(counts.querySelector('.hist-diff .diff-del').textContent, '−5'); // U+2212, not '-'
+  assert.equal(counts.querySelector('.hist-nodiff').hidden, true);
+
+  assert.equal(pill(zero).hidden, false);
+  assert.equal(zero.querySelector('.hist-diff').hidden, true);
+  assert.equal(zero.querySelector('.hist-nodiff').hidden, false, 'zero changes reads "no diff"');
+
+  assert.equal(pill(merged).hidden, true, 'a merged PR retires the pill');
+  assert.equal(pill(gone).hidden, true, 'a branch that did not survive has no counts to show');
+});
+
+// ---------------------------------------------------------------------------
+// Navigation (the card is a link to #history/<projectKey>/<id>)
+// ---------------------------------------------------------------------------
+
+test('clicking a card navigates to its detail screen, which tints the stepper from the fetched state', async () => {
+  const ctx = await boot({
+    fetchHandler: armsFor(
+      [row({ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' })],
+      { 'p-stop': { state: { phase: 'implement', status: 'stopped', cycle: 1 }, auditMarkdown: '' } },
+    ),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
   const doc = ctx.window.document;
   const card = doc.querySelector('#history .hist-card');
-  const head = card.querySelector('.hist-head');
-  const detail = card.querySelector('.hist-detail');
-  assert.equal(head.getAttribute('aria-expanded'), 'false', 'starts collapsed');
-  assert.equal(detail.hidden, true, 'detail starts hidden');
+  assert.equal(card.querySelector('.hist-head').hasAttribute('aria-expanded'), false,
+    'the head is a link, not a disclosure');
 
-  // Click the head (NOT the title) to expand.
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
+  card.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.settle();
 
-  assert.equal(head.getAttribute('aria-expanded'), 'true', 'expanded after click');
-  assert.equal(detail.hidden, false, 'detail unhidden after expand');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), `history/${KEY}/p-stop`);
+  assert.ok(doc.querySelector('#hist-shell').classList.contains('detail-open'), 'the detail screen slid in');
 
   // Tinted stepper: phase=implement, status=stopped => preflight/plan/refine done,
   // implement stopped, review/done pending.
   const byId = {};
-  for (const n of detail.querySelectorAll('.run-node[data-id]')) byId[n.dataset.id] = n;
+  for (const n of doc.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byId[n.dataset.id] = n;
   assert.ok(byId.preflight.classList.contains('is-done'), 'preflight done');
   assert.ok(byId.plan.classList.contains('is-done'), 'plan done');
   assert.ok(byId.refine.classList.contains('is-done'), 'refine done');
   assert.ok(byId.implement.classList.contains('is-stopped'), 'implement stopped (halt cell)');
   assert.ok(byId.implement.querySelector('.nstat.stopped svg'), 'stopped X badge at halt cell');
   assert.ok(byId.review.classList.contains('is-pending'), 'review pending');
-  assert.ok(!byId.review.classList.contains('is-done'), 'review not done');
-
-  // Collapse again toggles aria-expanded back + re-hides.
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  assert.equal(head.getAttribute('aria-expanded'), 'false', 'collapses on second click');
-  assert.equal(detail.hidden, true, 'detail re-hidden');
 });
 
-test('clicking the title opens the viewer modal (distinct from expand)', async () => {
-  let detailFetches = 0;
+test('clicking the title opens the viewer modal and does NOT navigate', async () => {
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) {
-        return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      }
-      if (url.includes('/api/runs/p-done')) {
-        detailFetches++;
+      if (url.endsWith('/api/history/pr')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      if (url.endsWith(`/api/history/${KEY}/p-done`)) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { phase: 'done', status: 'done' }, auditMarkdown: '# saved audit' }) });
       }
+      if (url.endsWith('/api/history')) return runsList([row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' })]);
       return null;
     },
   });
@@ -217,45 +281,43 @@ test('clicking the title opens the viewer modal (distinct from expand)', async (
 
   const doc = ctx.window.document;
   const card = doc.querySelector('#history .hist-card');
-  const head = card.querySelector('.hist-head');
-
-  // Click the title -> viewer opens; the head must NOT expand.
   card.querySelector('.h-meta b').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  await ctx.settle();
 
-  assert.equal(head.getAttribute('aria-expanded'), 'false', 'title click did not expand the card');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'history', 'title click did not navigate');
   const viewer = doc.querySelector('#viewer-card');
   assert.equal(viewer.classList.contains('hidden'), false, 'viewer modal opened');
   assert.match(doc.querySelector('#viewer').textContent, /saved audit/, 'viewer shows the saved markdown');
 });
 
-test('keyboard: Enter on the head toggles expand', async () => {
+test('Enter on the head navigates, and so does the open-details chevron', async () => {
+  const detail = { state: { phase: 'done', status: 'done' } };
   const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) {
-        return runsListResponse([{ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      }
-      if (url.includes('/api/runs/p-done')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { phase: 'done', status: 'done' } }) });
-      }
-      return null;
-    },
+    fetchHandler: armsFor([row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' })],
+      { 'p-done': detail }),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
 
   const doc = ctx.window.document;
-  const head = doc.querySelector('#history .hist-head');
-  head.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(head.getAttribute('aria-expanded'), 'true', 'Enter expands the card');
+  doc.querySelector('#history .hist-head')
+    .dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await ctx.settle();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), `history/${KEY}/p-done`, 'Enter opens the detail');
 
   // DONE state tints every node done.
-  const detail = doc.querySelector('#history .hist-detail');
-  const nodes = [...detail.querySelectorAll('.run-node[data-id]')];
+  const nodes = [...doc.querySelectorAll('#hist-detail .hd .run-node[data-id]')];
   assert.ok(nodes.length > 0);
   assert.ok(nodes.every((n) => n.classList.contains('is-done')), 'DONE tints every node done');
-  assert.ok(detail.querySelector('.run-node[data-id="done"] .nstat.done svg'), 'done badge present');
+  assert.ok(doc.querySelector('#hist-detail .hd .run-node[data-id="done"] .nstat.done svg'), 'done badge present');
+
+  // Back to the list, then in again through the chevron button.
+  ctx.window.location.hash = 'history';
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await ctx.settle();
+  doc.querySelector('#history .hist-open').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await ctx.settle();
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), `history/${KEY}/p-done`, 'the chevron opens it too');
 });
 
 test('empty history renders a .hist-empty div (no <li>)', async () => {
@@ -295,9 +357,11 @@ test('history load error renders a .hist-empty div (no <li>)', async () => {
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> in error state');
 });
 
-const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
+// ---------------------------------------------------------------------------
+// The stepper the detail screen paints from the saved manifest
+// ---------------------------------------------------------------------------
 
-test('History card renders the persisted manifest nodes on expand', async () => {
+test('the detail screen renders the persisted manifest nodes', async () => {
   const customState = {
     status: 'stopped', phase: 'refine', cycle: 1, steps: [],
     stepper: {
@@ -312,44 +376,38 @@ test('History card renders the persisted manifest nodes on expand', async () => 
       ],
     },
   };
-  const { window, showHistory } = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Custom', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' }]);
-      return null;
-    },
+  const ctx = await boot({
+    fetchHandler: armsFor([row({ id: 'p1', title: 'Custom', status: 'stopped', startedAt: '2026-06-02T00:00:00Z' })],
+      { p1: { state: customState, auditMarkdown: '' } }),
   });
-  showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail(KEY, 'p1');
+  await ctx.settle();
 
-  const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
+  const hd = ctx.window.document.querySelector('#hist-detail .hd');
+  const labels = [...hd.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
   assert.deepEqual(labels, ['Preflight', 'Plan', 'Refine Plan', 'Manual Tests Checklist', 'Manual web UI testing', 'Done']);
   // stopped at refine (cell idx 2) -> that node is is-stopped, earlier done.
-  assert.ok(detail.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-stopped'));
-  assert.ok(detail.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
+  assert.ok(hd.querySelector('.run-node[data-id="s1_0"]').classList.contains('is-stopped'));
+  assert.ok(hd.querySelector('.run-node[data-id="s0_0"]').classList.contains('is-done'));
 });
 
-test('History card without a saved manifest still renders the legacy seven', async () => {
+test('a run without a saved manifest still renders the legacy seven', async () => {
   const legacyState = { status: 'done', phase: 'done', steps: [] }; // no .stepper
-  const { window, showHistory } = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/runs/')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: legacyState, auditMarkdown: '' }) });
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Old', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
-      return null;
-    },
+  const ctx = await boot({
+    fetchHandler: armsFor([row({ id: 'p1', title: 'Old', status: 'done', startedAt: '2026-06-02T00:00:00Z' })],
+      { p1: { state: legacyState, auditMarkdown: '' } }),
   });
-  showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail(KEY, 'p1');
+  await ctx.settle();
 
-  const detail = window.document.querySelector('#history .hist-card .hist-detail');
-  const labels = [...detail.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
+  const hd = ctx.window.document.querySelector('#hist-detail .hd');
+  const labels = [...hd.querySelectorAll('.run-node .nmeta b')].map((e) => e.textContent);
   assert.deepEqual(labels, ['Preflight', 'Clarify', 'Plan', 'Refine', 'Implement', 'Review', 'Done']);
-  assert.ok([...detail.querySelectorAll('.run-node[data-id]')].every((n) => n.classList.contains('is-done')));
+  assert.ok([...hd.querySelectorAll('.run-node[data-id]')].every((n) => n.classList.contains('is-done')));
 });
 
 test('Refresh shows a busy spinner/disabled affordance, cleared by the final history-pr batch', async () => {
@@ -381,7 +439,7 @@ test('Refresh shows a busy spinner/disabled affordance, cleared by the final his
   assert.equal(doc.querySelector('#history').getAttribute('aria-busy'), 'false', 'aria-busy cleared');
 });
 
-test('History card shows per-node model·effort from the saved manifest', async () => {
+test('the detail screen shows per-node model·effort from the saved manifest', async () => {
   const customState = {
     status: 'done', phase: 'done', cycle: 0, steps: [],
     stepper: {
@@ -396,7 +454,9 @@ test('History card shows per-node model·effort from the saved manifest', async 
       ],
     },
   };
-  const { window, showHistory } = await boot({
+  const arms = armsFor([row({ id: 'p1', title: 'Custom', status: 'done', startedAt: '2026-06-02T00:00:00Z' })],
+    { p1: { state: customState, auditMarkdown: '' } });
+  const ctx = await boot({
     fetchHandler: (url) => {
       if (url.includes('/api/config')) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({
@@ -405,26 +465,20 @@ test('History card shows per-node model·effort from the saved manifest', async 
           efforts: ['high'],
         }) });
       }
-      if (url.includes('/api/runs/')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: customState, auditMarkdown: '' }) });
-      }
-      if (url.includes('/api/history')) {
-        return runsList([{ id: 'p1', title: 'Custom', status: 'done', startedAt: '2026-06-02T00:00:00Z' }]);
-      }
-      return null;
+      return arms(url);
     },
   });
-  showHistory();
+  ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  window.document.querySelector('#history .hist-head').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
+  ctx.showDetail(KEY, 'p1');
+  await ctx.settle();
 
-  const detail = window.document.querySelector('#history .hist-card .hist-detail');
+  const hd = ctx.window.document.querySelector('#hist-detail .hd');
   // model · effort renders as a visible .nmodel sub-line (friendly model label,
   // resolved from state.models loaded at boot via loadConfig); a step with neither
   // model nor effort shows the "default" placeholder.
-  assert.equal(detail.querySelector('.run-node[data-id="s0_0"] .nmodel').textContent, 'Opus 4.8 · high');
-  assert.equal(detail.querySelector('.run-node[data-id="s1_0"] .nmodel').textContent, 'default');
+  assert.equal(hd.querySelector('.run-node[data-id="s0_0"] .nmodel').textContent, 'Opus 4.8 · high');
+  assert.equal(hd.querySelector('.run-node[data-id="s1_0"] .nmodel').textContent, 'default');
 });
 
 test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice -> count 1)', async () => {
@@ -445,26 +499,25 @@ test('history feeds loopCounts from st.steps[] cycles (self-cycle fired twice ->
     ],
   };
   const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsListResponse([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
+    fetchHandler: armsFor([row({ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' })],
+      { p1: { state, auditMarkdown: '' } }),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail(KEY, 'p1');
+  await ctx.settle();
   // The adapter's cycle map is the public contract; assert it directly.
   const counts = ctx.window.__np.loopCounts(state.stepper, ctx.window.__np.histNodeCycle(state));
   assert.equal(counts.s1_0, 1, 'two cycles -> one loop-back badge');
   // Summed dur/cost still paint into the graph node.
-  const node = ctx.window.document.querySelector('#history .hist-detail .run-node[data-id="s1_0"]');
+  const node = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s1_0"]');
   assert.equal(node.querySelector('.dur').textContent, '3s');
   assert.equal(node.querySelector('.cost').textContent, '$0.03');
 });
 
-test('expanded history card renders clarify Q&A but not reviews', async () => {
+test('History never renders review sections, even when the payload carries them', async () => {
+  // The server still sends `reviews`; History is a record of the run, not a
+  // review surface, so nothing paints them anywhere on the detail screen.
   const detailPayload = {
     state: { phase: 'done', status: 'done', cycle: 2, steps: [] },
     auditMarkdown: '',
@@ -472,94 +525,26 @@ test('expanded history card renders clarify Q&A but not reviews', async () => {
       questions: [{ id: 'q1', question: 'Postgres or SQLite?', options: ['pg', 'sqlite', ''], allowFreeText: true }],
       answers: [{ id: 'q1', question: 'Postgres or SQLite?', choice: 'sqlite' }],
     },
-    // Server still sends reviews; the History expand must IGNORE them (not render).
     reviews: [
       { kind: 'impl', cycle: 1, issues: [{ severity: 'major', title: 'Missing null-check', detail: 'guard input', location: 'src/x.mjs:10' }], summary: 'one issue' },
       { kind: 'impl', cycle: 2, issues: [], summary: 'resolved' },
     ],
+    results: null, overview: null, stepQuestions: [], artifacts: [],
   };
   const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) {
-        return runsListResponse([{ id: 'p-ex', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      }
-      if (url.includes('/api/runs/p-ex')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => detailPayload });
-      }
-      return null;
-    },
+    fetchHandler: armsFor([row({ id: 'p-ex', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' })],
+      { 'p-ex': detailPayload }),
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0)); // let the lazy detail fetch resolve
+  ctx.showDetail(KEY, 'p-ex');
+  await ctx.settle();
 
-  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
-
-  // Clarify is now a dropdown bar under Sub-agents; open it to read the Q&A.
-  const clarifyBar = detail.querySelector('.clarify-bar');
-  assert.ok(clarifyBar && !clarifyBar.hidden, 'clarify dropdown rendered');
-  clarifyBar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  const panel = clarifyBar.querySelector('.clarify-panel');
-  assert.match(panel.textContent, /Postgres or SQLite\?/);
-  assert.match(panel.textContent, /sqlite/);
-  // Read-only: the panel content carries no form controls (the disclosure toggle
-  // lives on the bar, not in the panel).
-  assert.equal(panel.querySelectorAll('input,button,select,textarea').length, 0, 'clarify is read-only in History');
-
-  // Reviews must NOT render in History anymore, even though the payload carries them.
-  assert.equal(detail.querySelector('.hist-reviews'), null, 'reviews section is not rendered');
-  assert.equal(detail.querySelector('.hist-cycle-tag'), null, 'no review cycle tags rendered');
-});
-
-test('history detail omits clarify/reviews sections when both are empty', async () => {
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsListResponse([{ id: 'p-bare', title: 'Bare', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      if (url.includes('/api/runs/p-bare')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({
-          state: { phase: 'done', status: 'done', steps: [] }, auditMarkdown: '',
-          clarify: { questions: [], answers: [] }, reviews: [],
-        }) });
-      }
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.window.document.querySelector('#history .hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
-  assert.equal(detail.querySelector('.hist-clarify'), null, 'no clarify section when empty');
-  assert.equal(detail.querySelector('.hist-reviews'), null, 'no reviews section when empty');
-});
-
-test('history detail clarify/review section is not duplicated on a cached re-expand', async () => {
-  const payload = {
-    state: { phase: 'done', status: 'done', steps: [] }, auditMarkdown: '',
-    clarify: { questions: [{ id: 'q1', question: 'Q?', options: ['', '', ''], allowFreeText: true }], answers: [] },
-    reviews: [],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsListResponse([{ id: 'p-rx', title: 'R', status: 'done', startedAt: '2026-01-01T00:00:00Z' }]);
-      if (url.includes('/api/runs/p-rx')) return Promise.resolve({ ok: true, status: 200, json: async () => payload });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  const head = ctx.window.document.querySelector('#history .hist-head');
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // expand (fetch)
-  await new Promise((r) => setTimeout(r, 0));
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // collapse
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true })); // re-expand (cached, no refetch)
-  await new Promise((r) => setTimeout(r, 0));
-  const detail = ctx.window.document.querySelector('#history .hist-card .hist-detail');
-  const clarifyBars = detail.querySelectorAll('.clarify-bar');
-  assert.equal(clarifyBars.length, 1, 'exactly one clarify bar after re-expand');
-  // Open the dropdown: the question renders exactly once (renderClarifyPanel resets
-  // the panel each open, so a cached re-expand never duplicates the Q&A).
-  clarifyBars[0].querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  assert.equal(clarifyBars[0].querySelectorAll('.clarify-panel .qblock').length, 1, 'question rendered once, not duplicated');
+  const hd = ctx.window.document.querySelector('#hist-detail .hd');
+  assert.equal(hd.querySelector('.hist-reviews'), null, 'reviews section is not rendered');
+  assert.equal(hd.querySelector('.hist-cycle-tag'), null, 'no review cycle tags rendered');
+  assert.doesNotMatch(hd.textContent, /Missing null-check/, 'no review issue leaks onto the screen');
+  // The clarify answer, by contrast, IS reachable — through its own tab.
+  const clarifyTab = [...hd.querySelectorAll('.hd-tab')].find((t) => /Clarify/i.test(t.textContent));
+  assert.ok(clarifyTab, 'a Clarify tab is offered when the run has Q&A');
 });

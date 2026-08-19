@@ -47,9 +47,11 @@ const STEPPER = { version: 1, steps: [
   { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
 ], feedbacks: [] };
 
-test('dropdown header reads "Agents" (not "Sub-agents") in both run + history templates', async () => {
+test('dropdown header reads "Agents" (not "Sub-agents") in the run-card template', async () => {
   const { window } = await boot();
-  for (const tplId of ['#run-card-tpl', '#hist-card-tpl']) {
+  // #hist-card-tpl dropped: History's Agents dropdown is the detail screen's tab now,
+  // and the v2 list card carries no `.subs-bar` at all.
+  for (const tplId of ['#run-card-tpl']) {
     const tpl = window.document.querySelector(tplId);
     const clone = tpl.content.firstElementChild.cloneNode(true);
     const bar = clone.querySelector('.subs-bar');

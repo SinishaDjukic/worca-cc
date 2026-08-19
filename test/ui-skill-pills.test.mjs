@@ -114,11 +114,13 @@ test('§7.4 a malformed overflow tag renders no pill (and no empty pill row)', a
   assert.equal(panel.querySelector('.subs-step .subs-skills'), null, 'no pills -> no container');
 });
 
-// §7.5 reload: the HISTORY twin renders the persisted array through the exact
-// chain loadHistDetail uses (subsGroupsForRender + stepSkillsFromSteps ->
-// paintSubsBar -> renderSubsTree on panel open). Proves the new label shapes are
-// not just persisted (test/skill-persist) but PAINTED after a reload.
-test('§7.5 reload: a persisted 64+overflow:6 step array paints 65 pills in the history twin', async () => {
+// §7.5 reload: a persisted step array renders through the exact chain the
+// reload paths use (subsGroupsForRender + stepSkillsFromSteps -> paintSubsBar ->
+// renderSubsTree on panel open). Proves the new label shapes are not just
+// persisted (test/skill-persist) but PAINTED after a reload. History's own
+// Agents rendering is the detail screen's tab now — covered by
+// test/ui-history-detail.test.mjs — so this drives the run-card template.
+test('§7.5 reload: a persisted 64+overflow:6 step array paints 65 pills', async () => {
   const { window } = await bootLive();
   const { subsGroupsForRender, stepSkillsFromSteps, paintSubsBar } = window.__np;
   // The shape /api/runs/:id returns for a finished run (rowToState + stepRowToStep).
@@ -129,8 +131,7 @@ test('§7.5 reload: a persisted 64+overflow:6 step array paints 65 pills in the 
       skills: ['skill:brainstorming', 'mcp:playwright:browser_navigate'] }],
     stepper: { agents: [['plan']] },
   };
-  // The HISTORY twin specifically — loadHistDetail paints the #hist-card-tpl .subs-bar.
-  const tpl = window.document.querySelector('#hist-card-tpl');
+  const tpl = window.document.querySelector('#run-card-tpl');
   const bar = tpl.content.firstElementChild.cloneNode(true).querySelector('.subs-bar');
   const groups = subsGroupsForRender(state.subAgents, state.steps, state.stepper);
   paintSubsBar(bar, groups, (k) => k, stepSkillsFromSteps(state.steps), {}, {});
