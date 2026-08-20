@@ -36,33 +36,6 @@ async function bootLive() {
   return { window };
 }
 
-test('renderSubsTree renders a per-sub-agent type pill (raw value, present-only-when-set)', async () => {
-  const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
-  const panel = window.document.createElement('div');
-  const byNode = { 'n1|1': [
-    { id: 'a1', label: 'AR sheet', status: 'running',  subagentType: 'Explore' },
-    { id: 'a2', label: 'AR items', status: 'finished', subagentType: 'general-purpose' },
-    { id: 'a3', label: 'AR none',  status: 'finished' }, // no type -> no pill
-  ] };
-  renderSubsTree(panel, byNode, () => 'Plan');
-
-  const rows = panel.querySelectorAll('.subs-tree li');
-  assert.equal(rows[0].querySelector('.agent-type-pill').textContent, 'Explore');
-  assert.equal(rows[1].querySelector('.agent-type-pill').textContent, 'general-purpose'); // raw, verbatim
-  assert.equal(rows[2].querySelector('.agent-type-pill'), null, 'untyped sub-agent has no type pill');
-});
-
-test('renderSubsTree escapes the sub-agent type (no HTML injection)', async () => {
-  const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
-  const panel = window.document.createElement('div');
-  const evil = '<img src=x onerror=alert(1)>';
-  renderSubsTree(panel, { 's0_0': [{ id: 't1', label: 'ok', status: 'running', subagentType: evil }] }, (id) => id);
-  assert.equal(panel.querySelectorAll('img').length, 0, 'malicious type does not create an <img>');
-  assert.match(panel.querySelector('.agent-type-pill').innerHTML, /&lt;img/, 'type rendered as escaped text');
-});
-
 test('agentTypePillHtml: raw value, escaped, empty string when absent', async () => {
   const { window } = await bootLive();
   const { agentTypePillHtml } = window.__np;
@@ -70,6 +43,11 @@ test('agentTypePillHtml: raw value, escaped, empty string when absent', async ()
   assert.equal(agentTypePillHtml(''), '');
   assert.equal(agentTypePillHtml(null), '');
   assert.equal(agentTypePillHtml(undefined), '');
+  // The "escaped" half of the name: the value is interpolated into innerHTML by
+  // rdAgentsBody and buildHdAgents, so markup must come back inert.
+  assert.equal(agentTypePillHtml('<img src=x onerror=alert(1)>'),
+    '<span class="agent-type-pill">&lt;img src=x onerror=alert(1)&gt;</span>');
+  assert.equal(agentTypePillHtml('a"b'), '<span class="agent-type-pill">a&quot;b</span>');
 });
 
 test('onSubagent merges subagentType onto the run record', async () => {

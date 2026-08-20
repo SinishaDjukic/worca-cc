@@ -105,7 +105,7 @@ test('cost_pipeline pause renders the amber banner with an enabled Resume', asyn
   assert.match(banner.textContent, /pipeline cost limit/);
   assert.ok(banner.querySelector('.cb-override'), 'override action offered');
   assert.equal(card.querySelector('.btn-resume').disabled, false, 'per-pipeline pause never blocks Resume');
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · cost limit');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · cost limit');
 });
 
 test('cb-override: confirm modal -> single resume POST with ignoreCostCap:true', async () => {
@@ -146,7 +146,7 @@ test('cost_total pause: red banner, Resume disabled with reset-date tooltip', as
   const resume = card.querySelector('.btn-resume');
   assert.equal(resume.disabled, true);
   assert.match(resume.title, /Total budget reached/);
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · total budget');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · total budget');
 });
 
 test('budget-changed unblocking re-enables Resume and clears the total banner', async () => {
@@ -181,7 +181,7 @@ test('a non-cost pause leaves the banner hidden and the pill plain', async () =>
   const ctx = await boot();
   const card = await pausedRun(ctx, undefined);   // manual pause carries no reason
   assert.equal(card.querySelector('.cost-banner').hidden, true);
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused');
   assert.equal(card.querySelector('.btn-resume').disabled, false);
 });
 
@@ -290,5 +290,5 @@ test('reload parity: a hello-seeded paused run with pauseReason renders the bann
   // Without makeRun declaring the field, upsertRun's CREATE path drops it.
   assert.equal(ctx.window.__np.getRun('r9').pauseReason, 'cost_pipeline');
   assert.ok(card.querySelector('.cost-banner.cb-pipeline'), 'banner survives a reload');
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · cost limit');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · cost limit');
 });

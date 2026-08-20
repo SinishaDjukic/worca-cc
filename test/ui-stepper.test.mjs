@@ -38,8 +38,7 @@ async function bootLive() {
   const selectProject = () => { const s = window.document.querySelector('#projectSelect'); s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true })); };
   const showRunning = () => { window.location.hash = '#running'; window.dispatchEvent(new window.Event('hashchange')); };
   const emit = (msg) => wsInstances[0]._fire('message', { data: JSON.stringify(msg) });
-  const chipText = () => window.document.querySelector('#run-list [data-run-id] .chip').textContent;
-  return { window, selectProject, showRunning, emit, chipText };
+  return { window, selectProject, showRunning, emit };
 }
 
 test('buildRunGraph renders one .col per manifest step with node labels', async () => {

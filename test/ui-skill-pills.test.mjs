@@ -37,34 +37,26 @@ async function bootLive() {
   return { window };
 }
 
-test('renderSubsTree renders main-agent header pills + per-sub-agent row pills, escaped, kind-classed', async () => {
+test('skillPillsHtml renders main-agent header pills + per-sub-agent row pills, escaped, kind-classed', async () => {
   const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
+  const { skillPillsHtml } = window.__np;
   const panel = window.document.createElement('div');
-  const byNode = { 'n1|1': [
-    { id: 'a1', label: 'AR sheet', status: 'finished', skills: ['skill:graphify'] },
-    { id: 'a2', label: 'AR items', status: 'finished' }, // no skills -> no pill row
-  ] };
   const stepSkills = { 'n1|1': ['skill:graphify', 'mcp:playwright', 'mcp:<x>'] };
-  renderSubsTree(panel, byNode, (k) => 'Plan', stepSkills);
+  panel.innerHTML = skillPillsHtml(stepSkills['n1|1']);
 
-  const head = panel.querySelector('.subs-step .subs-skills'); // header pill row
+  const head = panel.querySelector('.subs-skills'); // header pill row
   const headPills = [...head.querySelectorAll('.skill-pill')].map((e) => e.textContent);
   assert.deepEqual(headPills, ['graphify', 'playwright', '<x>']);          // names only, escaped
   assert.ok(head.querySelector('.skill-pill.is-mcp'), 'mcp pill carries is-mcp');
   assert.ok(head.querySelector('.skill-pill.is-skill'), 'skill pill carries is-skill');
   assert.equal(head.querySelector('.skill-pill').innerHTML, 'graphify');   // not raw "skill:graphify"
-
-  const rows = panel.querySelectorAll('.subs-tree li');
-  assert.ok(rows[0].querySelector('.subs-skills .skill-pill'), 'sub-agent with skills gets a pill row');
-  assert.equal(rows[1].querySelector('.subs-skills'), null, 'sub-agent without skills gets no pill row');
 });
 
 // §7.4: three label kinds must render — skill:<slug>, mcp:<server>[:<tool>],
 // and §7.1's overflow:<n> sentinel (a muted `+N more` pill, never a label pill).
 test('§7.4 three-part MCP labels render "<server> · <tool>" with .is-mcp-tool + a raw-tag tooltip', async () => {
   const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
+  const { skillPillsHtml } = window.__np;
   const panel = window.document.createElement('div');
   const stepSkills = { 'n1|1': [
     'skill:graphify',
@@ -72,9 +64,9 @@ test('§7.4 three-part MCP labels render "<server> · <tool>" with .is-mcp-tool 
     'mcp:playwright:browser_click',   // same server, second tool -> its OWN pill
     'mcp:echo',                       // legacy two-part shape still renders
   ] };
-  renderSubsTree(panel, { 'n1|1': [] }, () => 'Plan', stepSkills);
+  panel.innerHTML = skillPillsHtml(stepSkills['n1|1']);
 
-  const head = panel.querySelector('.subs-step .subs-skills');
+  const head = panel.querySelector('.subs-skills');
   assert.deepEqual([...head.querySelectorAll('.skill-pill')].map((e) => e.textContent),
     ['graphify', 'playwright · browser_navigate', 'playwright · browser_click', 'echo']);
   const toolPills = head.querySelectorAll('.skill-pill.is-mcp.is-mcp-tool');
@@ -88,13 +80,12 @@ test('§7.4 three-part MCP labels render "<server> · <tool>" with .is-mcp-tool 
 
 test('§7.1/§7.4 the overflow sentinel renders as a muted "+N more" pill, last, with a cap tooltip', async () => {
   const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
+  const { skillPillsHtml } = window.__np;
   const panel = window.document.createElement('div');
   const labels = Array.from({ length: 64 }, (_, i) => `mcp:srv:tool_${i}`);
-  renderSubsTree(panel, { 'n1|1': [{ id: 'a1', label: 'AR', status: 'finished', skills: ['skill:x', 'overflow:2'] }] },
-    () => 'Plan', { 'n1|1': [...labels, 'overflow:6'] });
+  panel.innerHTML = skillPillsHtml([...labels, 'overflow:6']);
 
-  const head = panel.querySelector('.subs-step .subs-skills');
+  const head = panel.querySelector('.subs-skills');
   const pills = [...head.querySelectorAll('.skill-pill')];
   assert.equal(pills.length, 65, '64 label pills + exactly one overflow pill');
   assert.equal(pills.at(-1).textContent, '+6 more', 'the sentinel is rendered LAST (renderer never re-sorts)');
@@ -102,28 +93,26 @@ test('§7.1/§7.4 the overflow sentinel renders as a muted "+N more" pill, last,
   assert.ok(!pills.at(-1).classList.contains('is-skill'), 'it is not a label pill');
   assert.match(pills.at(-1).getAttribute('title') || '', /64/, 'the tooltip names the cap');
   // The per-sub-agent row renders it too (same helper, both call sites).
-  const row = panel.querySelector('.subs-tree li .subs-skills');
-  assert.equal(row.querySelector('.skill-pill.is-overflow').textContent, '+2 more');
+  const rowHtml = skillPillsHtml(['skill:x', 'overflow:2']);
+  panel.innerHTML = rowHtml;
+  assert.equal(panel.querySelector('.skill-pill.is-overflow').textContent, '+2 more');
 });
 
 test('§7.4 a malformed overflow tag renders no pill (and no empty pill row)', async () => {
   const { window } = await bootLive();
-  const { renderSubsTree } = window.__np;
+  const { skillPillsHtml } = window.__np;
   const panel = window.document.createElement('div');
-  renderSubsTree(panel, { 'n1|1': [] }, () => 'Plan', { 'n1|1': ['overflow:0', 'overflow:nope'] });
-  assert.equal(panel.querySelector('.subs-step .subs-skills'), null, 'no pills -> no container');
+  panel.innerHTML = skillPillsHtml(['overflow:0', 'overflow:nope']);
+  assert.equal(panel.querySelector('.subs-skills'), null, 'no pills -> no container');
 });
 
 // §7.5 reload: a persisted step array renders through the exact chain the
-// reload paths use (subsGroupsForRender + stepSkillsFromSteps -> paintSubsBar ->
-// renderSubsTree on panel open). Proves the new label shapes are not just
-// persisted (test/skill-persist) but PAINTED after a reload. History's own
-// Agents rendering is the detail screen's tab now — covered by
-// test/ui-history-detail.test.mjs — so this drives the run-card template.
+// reload paths use (subsGroupsForRender + stepSkillsFromSteps -> skillPillsHtml).
+// Proves the new label shapes are not just persisted (test/skill-persist) but
+// PAINTED after a reload, for both the main-agent group header and a sub-agent row.
 test('§7.5 reload: a persisted 64+overflow:6 step array paints 65 pills', async () => {
   const { window } = await bootLive();
-  const { subsGroupsForRender, stepSkillsFromSteps, paintSubsBar } = window.__np;
-  // The shape /api/runs/:id returns for a finished run (rowToState + stepRowToStep).
+  const { subsGroupsForRender, stepSkillsFromSteps, skillPillsHtml } = window.__np;
   const skills = [...Array.from({ length: 64 }, (_, i) => `mcp:srv:tool_${i}`), 'overflow:6'];
   const state = {
     steps: [{ key: '2:plan', nodeId: 'plan', stepIndex: 2, cycle: 0, status: 'done', skills }],
@@ -131,19 +120,15 @@ test('§7.5 reload: a persisted 64+overflow:6 step array paints 65 pills', async
       skills: ['skill:brainstorming', 'mcp:playwright:browser_navigate'] }],
     stepper: { agents: [['plan']] },
   };
-  const tpl = window.document.querySelector('#run-card-tpl');
-  const bar = tpl.content.firstElementChild.cloneNode(true).querySelector('.subs-bar');
   const groups = subsGroupsForRender(state.subAgents, state.steps, state.stepper);
-  paintSubsBar(bar, groups, (k) => k, stepSkillsFromSteps(state.steps), {}, {});
-  assert.ok(!bar.hidden, 'the reloaded run has agents -> the bar is shown');
-  bar.querySelector('.btn-subs').dispatchEvent(new window.Event('click', { bubbles: true })); // open -> renderSubsTree
-
-  const head = bar.querySelector('.subs-panel .subs-step .subs-skills');
-  assert.equal(head.querySelectorAll('.skill-pill').length, 65, '64 label pills + the sentinel');
-  assert.equal(head.querySelector('.skill-pill.is-overflow').textContent, '+6 more');
-  assert.equal(head.querySelectorAll('.skill-pill.is-mcp-tool').length, 64, 'all three-part labels survived');
-  const row = bar.querySelector('.subs-panel .subs-tree li .subs-skills');
-  assert.deepEqual([...row.querySelectorAll('.skill-pill')].map((e) => e.textContent),
+  const key = Object.keys(groups)[0];
+  const host = window.document.createElement('div');
+  host.innerHTML = skillPillsHtml(stepSkillsFromSteps(state.steps)[key]);
+  assert.equal(host.querySelectorAll('.skill-pill').length, 65, '64 label pills + the sentinel');
+  assert.equal(host.querySelector('.skill-pill.is-overflow').textContent, '+6 more');
+  assert.equal(host.querySelectorAll('.skill-pill.is-mcp-tool').length, 64, 'all three-part labels survived');
+  host.innerHTML = skillPillsHtml(groups[key][0].skills);
+  assert.deepEqual([...host.querySelectorAll('.skill-pill')].map((e) => e.textContent),
     ['brainstorming', 'playwright · browser_navigate'], 'the sub-agent row reloads its pills too');
 });
 

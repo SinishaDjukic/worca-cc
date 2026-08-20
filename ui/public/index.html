@@ -344,41 +344,158 @@
 
         <!-- ===== VIEW: RUNNING ===== -->
         <section class="view hidden" data-view="running">
+          <div class="run-shell" id="run-shell">
+            <div class="run-screen run-screen-list">
           <div class="topbar">
             <div>
               <h1>Running</h1>
               <div class="sub" id="running-sub">0 pipelines executing · 0 need your input</div>
             </div>
             <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
+            <div class="run-density" role="group" aria-label="List density">
+              <button type="button" class="rc-dseg" data-density="compact" aria-pressed="false" title="Compact — three runs per screen">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="5" width="18" height="3" rx="1.5"></rect><rect x="3" y="10.5" width="18" height="3" rx="1.5"></rect><rect x="3" y="16" width="18" height="3" rx="1.5"></rect></svg>
+              </button>
+              <button type="button" class="rc-dseg" data-density="detailed" aria-pressed="true" title="Detailed — one run with graph and log">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"></rect><path d="M6.5 8.5h7" stroke-linecap="round"></path><path d="M6.5 12.5h11" stroke-linecap="round" opacity=".45"></path><path d="M6.5 16h8" stroke-linecap="round" opacity=".45"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Inert status line (design D14): the per-card question pills are the
+               affordance; this only says how many runs are parked. No listener,
+               no role=button, no tabindex. -->
+          <div class="run-ask-banner" hidden>
+            <span class="rab-mark" aria-hidden="true">?</span>
+            <span class="rab-text"></span>
           </div>
 
           <div class="run-list" id="run-list"></div>
 
           <!-- clone target for one run card (Task 3 fills it) -->
           <template id="run-card-tpl">
-            <section class="card run-card" data-run-id="">
-              <div class="run-top">
-                <div><div class="run-title"></div><div class="run-meta"><span class="rm-text"></span><span class="run-time mono"></span><span class="run-cost mono"></span></div></div>
-                <span class="pill-run"><span class="pdot"></span><span class="pill-text"></span></span>
+            <section class="card run-card" data-run-id="" data-density="detailed">
+              <div class="rc-head" role="button" tabindex="0">
+                <span class="rc-sic" role="img">
+                  <svg class="sic sic-spin" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round"></path></svg>
+                  <svg class="sic sic-ask" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9.1 9a3 3 0 1 1 4.6 2.5c-.9.6-1.7 1.2-1.7 2.3"></path><path d="M12 17.4h.01"></path></svg>
+                  <svg class="sic sic-pause" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                  <svg class="sic sic-check" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <svg class="sic sic-square" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                  <svg class="sic sic-bang" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
+                </span>
+                <div class="rc-body">
+                  <div class="rc-title run-title"></div>
+                  <div class="rc-meta">
+                    <span class="rc-status-word"></span>
+                    <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
+                    <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
+                    <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
+                  </div>
+                  <span class="rc-branch mono" hidden>
+                    <span class="rc-base" hidden></span>
+                    <button type="button" class="rc-branch-copy" title="Copy branch name" aria-label="Copy branch name">
+                      <span class="rc-branch-name"></span>
+                      <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
+                      <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                    <!-- "Copied" feedback with NO JS: the CSS sibling of copyBranchToClipboard's
+                         own 1200ms `.copied` window (app.js:3666-3672), exactly like .hd-copied
+                         (index.html:501) / .hist-copied. No `hidden` attribute — that would
+                         desync the a11y tree from the visual. -->
+                    <span class="rc-copied">Copied</span>
+                  </span>
+                </div>
+                <div class="rc-acts">
+                  <span class="rc-qpill" hidden></span>
+                  <button type="button" class="btn-resume" title="Resume — restart this paused pipeline where it left off" aria-label="Resume" hidden><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg></button>
+                  <button type="button" class="btn-pause" title="Pause — gracefully stop the session so it can be resumed" aria-label="Pause"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg></button>
+                  <button type="button" class="btn-stop" title="Stop this pipeline" aria-label="Stop"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg></button>
+                  <button type="button" class="rc-open" title="Open run" aria-label="Open run"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                </div>
               </div>
-              <div class="run-flow-wrap"><div class="run-flow"></div></div>
-              <div class="run-foot"><span class="chip"></span><button type="button" class="btn-resume sm" title="Resume — restart this paused pipeline where it left off" hidden><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg> Resume</button><button type="button" class="btn-pause sm" title="Pause — gracefully stop the session so it can be resumed"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg> Pause</button><button type="button" class="btn-stop sm"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg> Stop</button></div>
+              <div class="rc-compact">
+                <span class="rc-step-chip"></span>
+                <span class="rc-step-name"></span>
+                <span class="rc-step-model mono" hidden></span>
+              </div>
               <div class="cost-banner" hidden></div>
-              <div class="subs-bar" hidden>
-                <button type="button" class="btn-subs" aria-expanded="false">
-                  <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>
-                  Agents
-                  <span class="sb-count grey"></span>
-                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-                <div class="subs-panel" hidden></div>
-              </div>
-              <div class="run-log">
-                <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
-                <div class="log"></div>
-              </div>
+              <div class="rc-detailed">
+                <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                <div class="run-log">
+                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                  <div class="log"></div>
+                </div>
+              </div><!-- /.rc-detailed -->
               <div class="qpanel hidden"></div>
             </section>
+          </template>
+            </div>
+            <div class="run-screen run-screen-detail" id="run-detail" aria-hidden="true" inert></div>
+          </div>
+
+          <!-- clone target for the Running detail screen (#running/<runId>) -->
+          <template id="run-detail-tpl">
+            <div class="rd">
+              <header class="rd-header">
+                <div class="rd-row1">
+                  <button type="button" class="rd-back btn-ghost" aria-label="Back to running list">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="rd-title"></h1>
+                  <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
+                </div>
+                <div class="rd-meta mono"></div>
+                <div class="rd-row3">
+                  <span class="rd-base mono" hidden></span>
+                  <button type="button" class="rd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                    <span class="rd-branch-name"></span>
+                    <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
+                    <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <!-- NO `hidden`: the caption is driven purely by the CSS sibling rule
+                       off copyBranchToClipboard's own 1200ms `.copied` window
+                       (app.js:3666-3672), exactly as .hd-copied does (index.html:501). -->
+                  <span class="rd-copied">Copied</span>
+                  <span class="rd-spacer"></span>
+                  <!-- One control for Pause/Resume (spec §5.2 row 3). The label lives in
+                       its own span so a busy state swaps only the word and the inline SVG
+                       survives — the .hd-btn-label idiom. NB none of the three wired
+                       handlers actually swaps the label today (pauseRun:7831-7850 and
+                       stopRun:7806-7825 only set `disabled`; resumeRunFromCard:7920
+                       replaces the whole textContent), so the span is for
+                       paintRdHeader's Pause/Resume swap, not for a busy state. -->
+                  <button type="button" class="rd-pause" data-action="pause" hidden>
+                    <svg class="ico-pause" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                    <svg class="ico-play" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
+                    <span class="rd-btn-label">Pause</span>
+                  </button>
+                  <button type="button" class="rd-stop" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                    <span class="rd-btn-label">Stop</span>
+                  </button>
+                </div>
+                <!-- Inline error slot for failed actions, on the HEADER so it is never
+                     pushed below the fold by the graph or a tab body (mirrors .hd-error). -->
+                <div class="rd-error" hidden></div>
+              </header>
+              <div class="rd-body">
+                <div class="rd-banners">
+                  <div class="retained-banner" role="alert" hidden></div>
+                  <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
+                </div>
+                <div class="rd-graph"><div class="run-flow-wrap"><div class="run-flow"></div></div></div>
+                <div class="rd-questions" hidden><div class="qpanel hidden"></div></div>
+                <!-- C12: the tab engine does `screen.querySelector('.rd-tabs').innerHTML = ''`.
+                     These two hosts MUST exist in the template or Task 7's tab bar
+                     silently paints NOTHING (initDetailTabs returns early on a
+                     missing host). Mirrors index.html:528-529 (.hd-tabs / .hd-sections),
+                     including the role="tablist" the engine does NOT set itself. -->
+                <div class="rd-tabs" role="tablist"></div>
+                <div class="rd-sections"></div>
+              </div>
+            </div>
           </template>
         </section>
         <!-- /view running -->
@@ -1182,6 +1299,36 @@
         <div class="shipit-actions">
           <button type="button" class="shipit-cancel btn-ghost">Cancel</button>
           <button type="button" class="shipit-ok">Open pull request</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== "Stop this pipeline?" confirm modal (Running card + detail) ===== -->
+    <!-- No z-index of its own: it inherits .viewer-modal's z-index:50
+         (style.css:781) and, following #shipit-modal in the DOM, paints above every
+         other z-index:50 overlay. NOT above #confirm-modal, which carries an
+         explicit z-index:60 (style.css:785) and would win from anywhere in the
+         document — that is fine, because the two never coexist: the Running Escape
+         guard bails while #confirm-modal is open, openStopModal refuses to open
+         twice, and no flow opens both. Do not "fix" this with a z-index of its
+         own; the .cb-override confirm on the detail page depends on #confirm-modal
+         staying on top. -->
+    <div id="stop-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
+      <div class="card stop-card">
+        <h2 id="stop-title" class="stop-title">Stop this pipeline?</h2>
+        <p class="stop-body">Agents in flight are cancelled at their next checkpoint. The run moves to History as stopped; its worktree and branch stay in place so you can resume from there.</p>
+        <div class="stop-ident">
+          <div class="stop-ident-title"></div>
+          <div class="stop-ident-branch" hidden></div>
+        </div>
+        <!-- `hint err`, not `err`: style.css has no standalone .err rule, only
+             .hint.err (:286). .hint (:285) sets display:block, so .stop-err ships
+             an explicit [hidden] twin in the stylesheet — same as .shipit-err
+             (base :1891, [hidden] :1896). -->
+        <div class="stop-err hint err" hidden></div>
+        <div class="stop-actions">
+          <button type="button" class="stop-cancel">Keep running</button>
+          <button type="button" class="stop-confirm">Stop pipeline</button>
         </div>
       </div>
     </div>

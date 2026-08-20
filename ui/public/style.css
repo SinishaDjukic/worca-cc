@@ -25,6 +25,20 @@
   --amber-bg:#FCE8C8; --amber:#E6962A; --amber-ink:#A66510;
   --seq:#B7B7BC;
 
+  /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
+     is the pale field it sits on. Task 11 adds --amber-wash-2/--amber-line/
+     --radio-ring beside it. */
+  --amber-wash:#FEF7EC;
+
+  /* Question panel (design §9): the remaining literals in the Running mockup that
+     no existing token already carries. The two hexes §9 also lists as "new" are
+     NOT added — they are already the values of --violet (:24) and --peach-ink
+     (:21); use those tokens.
+     Do NOT name those two hexes here, or anywhere else in this stylesheet: Task 12
+     asserts each appears EXACTLY ONCE, and its regex reads the raw file, so a
+     mention inside a comment counts as a second occurrence and reds the test. */
+  --amber-wash-2:#FEFAF3; --amber-line:#F5D9A8; --radio-ring:#D6D6D2;
+
   --r-card:24px;
   --r-ctrl:14px;
   --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
@@ -187,9 +201,6 @@ body{
 /* Finished-but-unseen marker: static green/red "●" in the same end slot (no pulse). */
 .child-q.ok  { color: var(--green); font-size: 12px; animation: none; }
 .child-q.bad { color: var(--red);   font-size: 12px; animation: none; }
-
-/* Overview cards are clickable to focus */
-#run-list .run-card .run-top { cursor: pointer; }
 
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;
@@ -556,12 +567,22 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---------- Running ---------- */
 .run-list{display:flex;flex-direction:column;gap:18px;}
+
+/* "N pipelines are waiting on your answers" — inert status line above the list
+   (design D14). Amber family; the circle inverts to --panel so it still reads
+   against the pale wash. */
+.run-ask-banner{display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:13px 18px;
+  background:var(--amber-wash);border:1px solid var(--amber);border-radius:16px;}
+.run-ask-banner[hidden]{display:none;}   /* author display:flex beats the UA [hidden] rule */
+.run-ask-banner .rab-mark{flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  width:26px;height:26px;border-radius:50%;background:var(--panel);
+  color:var(--amber-ink);font-weight:700;font-size:14px;}
+.run-ask-banner .rab-text{flex:1;font-weight:500;font-size:13px;color:var(--amber-ink);}
+
 .run-card{padding:22px 24px;}
-.run-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;}
 .run-title{font-weight:700;font-size:16px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px;}
 .run-title .hash{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);font-weight:500;}
 .run-title.title-provisional{opacity:.65;font-style:italic;}
-.run-meta{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12.5px;margin-top:4px;}
 .pill-run{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
   font-weight:600;font-size:12.5px;white-space:nowrap;}
 .pill-run .pdot{width:7px;height:7px;border-radius:50%;animation:pulse 1.3s ease-in-out infinite;}
@@ -584,20 +605,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* empty state for the running list */
 .run-empty{color:var(--ink-3);padding:24px;text-align:center;}
 
-.run-foot{display:flex;align-items:center;gap:10px;}
 .chip{background:var(--field);color:var(--ink-2);font-weight:600;font-size:12px;padding:7px 13px;border-radius:999px;}
-.chip.qcount{background:var(--amber-bg);color:var(--amber-ink);}
-.btn-stop.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
-.btn-pause.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
-.btn-resume.sm{margin-left:auto;padding:8px 15px;font-size:12px;}
-.btn-pause.sm + .btn-stop.sm{margin-left:0;}
 
 /* expand to live log */
 .btn-expand{margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:var(--field);
   border:none;border-radius:999px;padding:8px 15px;font-family:inherit;font-weight:600;font-size:12px;
   color:var(--ink-2);cursor:pointer;transition:background .15s;}
 .btn-expand:hover{background:var(--line-2);}
-.btn-expand + .btn-stop.sm{margin-left:0;}
+/* The `.btn-expand + .btn-stop.sm` reset that sat here keyed off a `.btn-stop.sm`
+   rule the card redesign removed; nothing emits that pair any more. */
 .btn-expand .chev{transition:transform .2s;}
 .btn-expand[aria-expanded="true"] .chev{transform:rotate(180deg);}
 .run-log{margin-top:16px;}
@@ -628,32 +644,87 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   color:var(--amber-ink);font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;vertical-align:middle;}
 .attn-flag svg{stroke:var(--amber-ink);}
 
-/* ---------- Questions panel ---------- */
-.qpanel,.question-card{margin-top:18px;border:1.5px solid var(--amber-bg);background:#FFFDF8;border-radius:18px;padding:20px 22px;}
-.qpanel-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+/* ---------- Questions panel (run card + run detail) ---------- */
+/* The CARD is the base (design §4.3: 19px number circles, 12.5px options); the
+   detail screen scales up through `.rd-questions .qpanel …` (§5.4), which wins on
+   SPECIFICITY, so this block's position in the file does not matter.
+   The legacy `q-`-prefixed twin selectors that used to share every rule here had
+   ZERO emitters left in ui/ and test/ and are dropped with this rewrite. They are
+   deliberately NOT spelled out below, even though the suite's sweep strips comments
+   first — keeping the prose free of them means a future sweep that forgets to
+   strip still passes. */
+.qpanel{margin-top:18px;padding:14px 16px 13px;background:var(--amber-wash);
+  border:1px solid var(--amber-bg);border-radius:14px;}
+.qpanel-head{display:flex;align-items:center;gap:11px;}
 .qpanel-head svg{stroke:var(--amber-ink);flex:0 0 auto;}
-.qpanel-head b{font-size:15px;font-weight:700;}
-.qpanel-head .qcount{margin-left:auto;background:var(--amber-bg);color:var(--amber-ink);
-  font-weight:700;font-size:11.5px;padding:5px 11px;border-radius:999px;}
-.qblock,.q-block{padding:18px 0;border-top:1px solid var(--line);}
-.qblock:first-of-type,.q-block:first-of-type{border-top:none;}
-.qtext,.q-question{font-weight:600;font-size:14px;margin:0 0 12px;display:flex;align-items:flex-start;gap:10px;line-height:1.45;}
-.qtext .qn{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;
-  font-size:11.5px;font-weight:700;display:grid;place-items:center;margin-top:1px;}
-.qopts,.q-options{display:flex;flex-direction:column;align-items:stretch;gap:9px;margin-bottom:11px;}
-.qopt,.q-option{font-family:inherit;font-weight:600;font-size:13px;color:var(--ink);background:#fff;
-  border:1.5px solid var(--line-2);border-radius:11px;padding:12px 16px;cursor:pointer;transition:.14s;text-align:left;width:100%;}
-.qopt:hover,.q-option:hover{border-color:var(--ink-3);}
-.qopt.sel,.q-option.selected{background:var(--ink);color:#fff;border-color:var(--ink);}
-.qopt:focus-visible,.q-option:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.qfree,.q-free input{width:100%;font-family:inherit;font-size:13.5px;color:var(--ink);background:var(--field);
-  border:1.5px solid transparent;border-radius:11px;padding:11px 14px;transition:.14s;}
-.qfree::placeholder,.q-free input::placeholder{color:var(--ink-3);}
-.qfree:focus,.q-free input:focus{outline:none;background:#fff;border-color:var(--ink);}
-.qfree.has{background:#fff;border-color:var(--ink);}
-.q-free{display:flex;gap:8px;align-items:stretch;}
-.q-free-label{display:block;font-size:12px;color:var(--ink-3);margin:4px 0;line-height:1.45;}
-.qpanel-foot,.q-submit-row{margin-top:18px;padding-top:18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;}
+.qpanel-head b{flex:1;min-width:0;font-weight:600;font-size:12.5px;color:var(--amber-ink);}
+.qpanel-head .qcount{margin-left:auto;flex:0 0 auto;background:var(--amber-bg);color:var(--amber-ink);
+  font-weight:700;font-size:11.5px;padding:4px 10px;border-radius:999px;}
+.qblock{padding:13px 0 0;}
+.qtext{font-weight:500;font-size:13px;margin:0 0 9px;display:flex;align-items:flex-start;
+  gap:9px;line-height:1.45;}
+.qtext .qn{flex:0 0 auto;width:19px;height:19px;border-radius:50%;background:var(--ink);color:#fff;
+  font-family:var(--mono);font-size:10.5px;font-weight:600;display:grid;place-items:center;margin-top:1px;}
+/* the option column and the free-text field line up under the number circle */
+.qopts{display:flex;flex-direction:column;align-items:stretch;gap:7px;margin:0 0 7px;padding-left:28px;}
+.qopt{display:flex;align-items:center;gap:8px;font-family:inherit;font-weight:500;font-size:12.5px;
+  color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:11px;
+  padding:10px 14px;cursor:pointer;transition:.14s;text-align:left;width:100%;}
+/* Radio + white check drawn entirely in CSS: renderClarifyBody keeps emitting a
+   bare <button> with one text node (§4.3 — styling only, no markup change), and
+   an inline data-URI background needs no extra element and no positioning context. */
+.qopt::before{content:'';flex:0 0 auto;width:15px;height:15px;border-radius:50%;
+  border:1.5px solid var(--radio-ring);background:var(--panel);}
+.qopt.sel::before{border-color:var(--green);
+  background:var(--green) center/9px 9px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");}
+.qopt:hover{border-color:var(--ink-3);}
+.qopt.sel{background:var(--green-bg);color:var(--ink);border-color:var(--green);}
+.qopt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.qfree{width:100%;font-family:inherit;font-size:12.5px;color:var(--ink);background:var(--field);
+  border:1.5px solid var(--line);border-radius:11px;padding:10px 14px;transition:.14s;}
+.qfree::placeholder{color:var(--ink-3);}
+/* `.has` is toggled by renderClarifyBody's own input handler the moment the field
+   holds a non-empty, non-option value — the green border IS that state. */
+.qfree:focus{outline:none;background:var(--panel);border-color:var(--green);}
+.qfree.has{background:var(--panel);border-color:var(--green);}
+.qblock > .qfree{margin-left:28px;width:calc(100% - 28px);}
+.qpanel-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;}
+.qpanel-foot .btn-go{padding:9px 18px;font-size:12px;gap:8px;}
+/* secondary "Open run" — card only (§4.3) */
+.qopen{padding:9px 16px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);
+  font-family:inherit;font-weight:600;font-size:12px;color:var(--ink);cursor:pointer;transition:.14s;}
+.qopen:hover{background:var(--field);}
+.qopen:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---- run-detail variant: the mockup's larger metrics (design §5.4) ---- */
+/* NO `animation` here: Task 6 already put `animation:wr-rise …` on the
+   `.rd-questions` WRAPPER (and neutralizes it under reduced motion). Animating
+   the child too nests the two transforms — 20px of travel and opacity squared.
+   `margin-top:0` also stays where Task 6 put it (its EOF rule comes LATER in the
+   file, so it still wins); this rule must not restate it. */
+.rd-questions .qpanel{padding:22px 24px 20px;background:var(--amber-wash-2);
+  border:1.5px solid var(--amber-line);border-radius:var(--r-card);}
+.rd-questions .qpanel-head{gap:12px;padding-bottom:16px;border-bottom:1px solid var(--amber-line);}
+.rd-questions .qpanel-head b{font-size:15px;color:var(--ink);}
+.rd-questions .qpanel-head .qcount{font-weight:600;font-size:11.5px;padding:5px 12px;}
+.rd-questions .qblock{padding-top:18px;}
+.rd-questions .qtext{font-weight:600;font-size:14px;line-height:1.5;gap:11px;margin-bottom:12px;}
+.rd-questions .qtext .qn{width:22px;height:22px;font-size:11.5px;}
+/* the detail panel is wide enough to drop the number-circle indent */
+.rd-questions .qopts{gap:9px;margin:12px 0 0;padding-left:0;}
+.rd-questions .qblock > .qfree{margin-left:0;width:100%;padding:13px 16px;border-radius:13px;font-size:13.5px;}
+.rd-questions .qopt{gap:11px;padding:13px 16px;border-radius:13px;font-size:13.5px;}
+.rd-questions .qopt::before{width:17px;height:17px;}
+.rd-questions .qopt.sel::before{background-size:10px 10px;}
+.rd-questions .qpanel-foot{margin-top:20px;padding-top:16px;border-top:1px solid var(--amber-line);}
+.rd-questions .qpanel-foot .btn-go{padding:13px 22px;font-size:13.5px;gap:9px;}
+
+/* "N of M answered" (§5.4): left slot of the footer, submit on the right. The
+   base .qpanel-foot is justify-content:flex-end — with a counter present the row
+   becomes space-between, and `margin-right:auto` on the counter achieves that
+   WITHOUT a second .qpanel-foot rule that the footer test would then contradict. */
+.qanswered{margin-right:auto;font:500 11.5px var(--mono);color:var(--ink-3);}
+.rd-questions .qanswered{font-size:12.5px;}
 
 /* ---------- Gate (cycle gate) ---------- */
 .gate-intro{font-size:13px;color:var(--ink-2);margin:0 0 14px;line-height:1.5;}
@@ -805,8 +876,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 }
 
 /* ---------- per-pipeline cost (per-node cost is the graph's .nrun .cost) ---------- */
-.run-meta .run-cost{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
-.run-meta .run-cost:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
+/* The `.run-meta .run-cost` pair that lived here went with `.run-meta` itself:
+   the redesigned card emits `.run-cost` inside `.rc-seg`, which owns its own
+   type scale and prints its separator as a real `.rc-dot` node. */
 /* Edited IN PLACE, not appended: this selector is (0,2,0) and an appended bare
    `.hist-total{…}` (0,1,0) would never win. The `margin-left:10px` is gone — the
    v2 meta line is a flex row with its own gap. */
@@ -814,8 +886,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .h-meta .hist-total:empty{display:none;}
 
 /* ---------- per-pipeline duration (twin of cost) ---------- */
-.run-meta .run-time{font-family:var(--mono);font-weight:600;color:var(--ink-2);}
-.run-meta .run-time:not(:empty)::before{content:'·';margin:0 8px;color:var(--ink-3);}
+/* `.run-meta .run-time` removed with its cost twin above, for the same reason. */
 /* Same in-place treatment as `.h-meta .hist-total` above. */
 .h-meta .hist-time{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--ink);}
 .h-meta .hist-time:empty{display:none;}
@@ -1164,62 +1235,29 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
-/* "Sub-agents" disclosure pill + its tree panel (Run card only — History's
-   accordion bars went with the detail-screen redesign). */
-.subs-bar{margin-top:14px;}
-.subs-bar[hidden]{display:none;}
-.btn-subs{display:inline-flex;align-items:center;gap:9px;background:var(--field);border:none;border-radius:999px;padding:9px 15px 9px 13px;font-family:inherit;font-weight:600;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .15s;}
-.btn-subs:hover{background:var(--line-2);}
-.btn-subs .ico{width:15px;height:15px;stroke:var(--ink-2);stroke-width:1.9;}
-.btn-subs .sb-count{display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-ink);font-weight:700;font-size:11px;padding:3px 9px;border-radius:999px;}
-.btn-subs .sb-count.grey{background:#fff;color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--line-2);}
-.btn-subs .chev{transition:transform .2s;stroke:var(--ink-3);}
-.btn-subs[aria-expanded="true"] .chev{transform:rotate(180deg);}
-.subs-panel{margin-top:14px;border:1px solid var(--line);border-radius:18px;background:#FBFBF9;padding:8px 20px 16px;}
-.subs-panel[hidden]{display:none;}
-.subs-legend{display:flex;align-items:center;gap:18px;padding:12px 0 4px;font-size:11.5px;font-weight:600;color:var(--ink-3);}
-.subs-legend .lk{display:flex;align-items:center;gap:7px;}
-.subs-legend .sq{width:9px;height:9px;border-radius:2px;}
-.subs-legend .sq.on{background:var(--blue);}
-.subs-legend .sq.off{background:var(--ink-3);opacity:.5;}
-.subs-step{padding:13px 0;border-top:1px solid var(--line);}
-.subs-step:first-of-type{border-top:none;}
-.subs-step-head{display:flex;align-items:center;gap:10px;}
-.subs-step-head .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
-.subs-step-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
-/* Selector lists EXTENDED in place for the History detail Agents tab, never
-   duplicated: `.subs-stat` is only ever styled here, so a bare appended
+/* Selector lists that used to pair the retired run-card tree with the History
+   detail's Agents tab. `.subs-stat` is only ever styled here, so a bare appended
    `.subs-stat.stop{…}` would tie on specificity and still lose to this rule's
-   ancestor scope. Same reasoning for `.st`, `.agent-type-pill` and the
-   full-row `.subs-skills` rule below. */
-.hd-ag-head .subs-stat,.subs-step-head .subs-stat{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;letter-spacing:.02em;text-transform:uppercase;}
-.hd-ag-head .subs-stat.run,.subs-step-head .subs-stat.run{background:var(--blue-bg);color:var(--blue-ink);}
-.hd-ag-head .subs-stat.done,.subs-step-head .subs-stat.done{background:var(--green-bg);color:var(--green-ink);}
-.hd-ag-head .subs-stat.stop,.subs-step-head .subs-stat.stop{background:var(--red-bg);color:var(--red-ink);}
-.subs-step-head .subs-n{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--ink-3);}
-.subs-step .subs-empty{margin-top:8px;padding-left:5px;font-size:12px;font-weight:500;color:var(--ink-3);font-style:italic;}
-.subs-tree{list-style:none;margin:8px 0 0;padding:0 0 0 5px;}
-.subs-tree li{position:relative;padding:6px 0 6px 28px;font-size:12.5px;font-weight:500;color:var(--ink-2);display:flex;align-items:center;gap:9px;}
-.subs-tree li::before{content:"";position:absolute;left:5px;top:-3px;height:calc(50% + 3px);width:1.5px;background:var(--line-2);}
-.subs-tree li::after{content:"";position:absolute;left:5px;top:50%;width:15px;height:1.5px;background:var(--line-2);}
-.subs-tree li .led{width:7px;height:7px;border-radius:2px;flex:0 0 auto;background:var(--ink-3);opacity:.55;}
-.subs-tree li .led.on{background:var(--blue);opacity:1;}
-.subs-tree li .ag-name{min-width:0;}
-.hd-ag-row .st,.subs-tree li .st{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;padding:2px 8px;border-radius:6px;white-space:nowrap;}
-.hd-ag-row .st.done,.subs-tree li .st.done{background:var(--green-bg);color:var(--green-ink);}
-.hd-ag-row .st.run,.subs-tree li .st.run{background:var(--blue-bg);color:var(--blue-ink);}
-.hd-ag-row .st.stop,.subs-tree li .st.stop{background:var(--red-bg);color:var(--red-ink);}
+   ancestor scope — extend in place, never duplicate. Same for `.st`,
+   `.agent-type-pill` and the full-row `.subs-skills` rule below. */
+.rd-ag-head .subs-stat,.hd-ag-head .subs-stat{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;letter-spacing:.02em;text-transform:uppercase;}
+.rd-ag-head .subs-stat.run,.hd-ag-head .subs-stat.run{background:var(--blue-bg);color:var(--blue-ink);}
+.rd-ag-head .subs-stat.done,.hd-ag-head .subs-stat.done{background:var(--green-bg);color:var(--green-ink);}
+.rd-ag-head .subs-stat.stop,.hd-ag-head .subs-stat.stop{background:var(--red-bg);color:var(--red-ink);}
+.hd-ag-row .st{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;padding:2px 8px;border-radius:6px;white-space:nowrap;}
+.hd-ag-row .st.done{background:var(--green-bg);color:var(--green-ink);}
+.hd-ag-row .st.run{background:var(--blue-bg);color:var(--blue-ink);}
+.hd-ag-row .st.stop{background:var(--red-bg);color:var(--red-ink);}
 
 /* Skill / MCP pills — main-agent group header + per sub-agent row. Flex-wrap so
    pills reflow onto multiple lines as the window shrinks (cf. .agent-chips, .fan). */
 .subs-skills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-.subs-tree li{flex-wrap:wrap;}                       /* let the pill row drop below name/status */
 /* The BASE .subs-skills rule above is unscoped and reaches the Agents tab on its
    own; this FULL-ROW rule is not, and buildHdAgents emits skillPillsHtml into
    BOTH the group head and every row. Without the extension the pills stay inline
    — and in the head they land to the right of `.hd-ag-meta{margin-left:auto}`,
    jammed against the card edge. */
-.hd-ag-head .subs-skills,.hd-ag-row .subs-skills,.subs-tree li .subs-skills{flex:0 0 100%;margin-top:6px;}  /* own full row, aligned under .ag-name */
+.hd-ag-head .subs-skills,.rd-ag-head .subs-skills,.hd-ag-row .subs-skills{flex:0 0 100%;margin-top:6px;}  /* own full row, aligned under the name cell */
 .skill-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;}
 .skill-pill.is-skill{background:var(--blue-bg);color:var(--blue-ink);}
 .skill-pill.is-mcp{background:var(--green-bg);color:var(--green-ink);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--green-ink) 18%, transparent);}
@@ -1235,7 +1273,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Sub-agent type pill — the raw Task/Agent subagent_type, inline next to the row
    name (cf. skill pills). Uses the shared violet token (defined :root, l.24) so it
    reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
-.hd-ag-row .agent-type-pill,.subs-tree li .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
+.rd-ag-name .agent-type-pill,.hd-ag-row .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
 /* graphify-use count badge (amber) — how many times an agent / sub-agent invoked the
    graphify CLI. Rendered INLINE: in the phase/node header next to the status, and on a
    sub-agent row right after the violet type pill. inline-block + parent flex `gap` size
@@ -1837,15 +1875,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ag-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 20px;border-top:1px solid var(--line);}
 /* NOT `.hd-ag-row:first-of-type` — `:first-of-type` is per ELEMENT TYPE, and
    `.hd-ag-head` is the first `div` in the card, so no row would ever match it and
-   the first row's border would double up with the head's `border-bottom`. (The
-   same latent bug already sits at .subs-step:first-of-type, defeated there by the
-   legend div.) */
+   the first row's border would double up with the head's `border-bottom`. */
 .hd-ag-head + .hd-ag-row{border-top:none;}
 .hd-ag-name{min-width:0;flex:1 1 200px;font:500 13px var(--sans);color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* NO `.hd-ag-row .st{margin-left:auto}` here — the in-place extension of
-   `.subs-tree li .st,.hd-ag-row .st` already carries `margin-left:auto` along
-   with the font; a second bare rule is pure duplication. */
+   `.hd-ag-row .st` already carries `margin-left:auto` along with the font;
+   a second bare rule is pure duplication. */
 .hd-ag-dur{width:90px;text-align:right;font-size:11.5px;color:var(--ink-2);}
 .hd-ag-cost{width:80px;text-align:right;font-size:11.5px;color:var(--ink-2);}
 
@@ -1982,3 +2018,439 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.hist-open:focus-visible,
 .hist-branch-copy:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---------- Running list card v2 (.rc-*) ----------
+   Appended at EOF, after every surviving `.run-*` / `.btn-*` rule — the Running
+   block is not contiguous (it also lives at ~557-600 and ~1109) and .btn-pause /
+   .btn-resume / .btn-stop have base rules at 237-254, so a mid-file append would
+   lose the source-order tie. Same reasoning as the History list card v2 block. */
+/* margin-bottom replaces `.run-top`'s own 18px, which this task deletes:
+   `.run-flow-wrap` (:1109) has only a BOTTOM margin, so without this the graph
+   would sit flush against the header until Task 4 adds `.rc-detailed{margin-top:18px}`. */
+.rc-head{display:flex;align-items:flex-start;gap:13px;cursor:pointer;margin-bottom:18px;}
+.rc-head:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rc-sic{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+  border-radius:50%;flex:0 0 auto;align-self:center;}
+.rc-sic .sic[hidden]{display:none;}
+.rc-sic.st-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.rc-sic.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.rc-sic.st-green{background:var(--green-bg);color:var(--green-ink);}
+.rc-sic.st-red{background:var(--red-bg);color:var(--red-ink);}
+.rc-sic .sic-spin{animation:wr-spin 1.15s linear infinite;transform-origin:50% 50%;}
+.rc-body{flex:1;min-width:0;}
+.rc-title{display:block;font-weight:600;font-size:14.5px;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rc-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:5px;
+  color:var(--ink-3);font-size:12.5px;}
+.rc-meta .rc-seg{display:inline-flex;align-items:center;gap:7px;}
+.rc-dot{font:700 16px/1 var(--mono);color:var(--ink);}
+.rc-status-word{font:600 12px var(--sans);display:inline-flex;align-items:center;gap:7px;}
+/* the 7px status accent dot before the word; currentColor = the family ink */
+.rc-meta .rc-status-word::before{content:'';width:7px;height:7px;border-radius:50%;
+  background:currentColor;flex:0 0 auto;}
+.rc-status-word.st-peach{color:var(--peach-ink);}
+.rc-status-word.st-blue{color:var(--blue-ink);}
+.rc-status-word.st-violet{color:var(--violet-ink);}
+.rc-status-word.st-amber{color:var(--amber-ink);}
+.rc-status-word.st-green{color:var(--green-ink);}
+.rc-status-word.st-red{color:var(--red-ink);}
+.rc-meta .run-time,.rc-meta .run-cost{font-weight:700;color:var(--ink);}
+.rc-branch{display:flex;align-items:center;gap:6px;margin-top:6px;min-width:0;
+  font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);}
+.rc-branch[hidden]{display:none;}      /* author display:flex beats the UA [hidden] rule */
+.rc-base{color:var(--ink-3);font-weight:500;white-space:nowrap;}
+.rc-base[hidden]{display:none;}
+.rc-branch-copy{display:inline-flex;align-items:center;gap:8px;min-width:12ch;
+  padding:4px 10px;border:1px solid var(--line);border-radius:9px;background:var(--field);
+  font:700 11.5px var(--mono);color:var(--ink);cursor:pointer;}
+.rc-branch-copy:hover{border-color:var(--ink-3);background:var(--panel);}
+.rc-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rc-branch-copy .ico-check{display:none;}
+.rc-branch-copy.copied .ico-copy{display:none;}
+.rc-branch-copy.copied .ico-check{display:inline;color:var(--green-ink);}
+/* "Copied" caption — the CSS-only mechanism .hd-copied / .hist-copied use, driven
+   off copyBranchToClipboard's own 1200ms `.copied` window (app.js:3666-3672). */
+.rc-copied{display:none;font:500 11px var(--sans);color:var(--green-ink);}
+.rc-branch-copy.copied + .rc-copied{display:inline;}
+.rc-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto;align-self:center;margin-left:auto;}
+.rc-qpill{display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;
+  background:var(--amber-bg);color:var(--amber-ink);font:700 11.5px var(--sans);white-space:nowrap;}
+.rc-qpill[hidden]{display:none;}
+/* the four 30px icon buttons; .rc-open mirrors .hist-open exactly */
+.rc-acts .btn-pause,.rc-acts .btn-resume,.rc-acts .btn-stop,.rc-open{
+  display:inline-flex;align-items:center;justify-content:center;gap:0;
+  width:30px;height:30px;padding:0;border-radius:9px;background:var(--panel);cursor:pointer;}
+.rc-acts .btn-pause,.rc-acts .btn-resume{border:1px solid var(--amber);color:var(--amber-ink);}
+.rc-acts .btn-pause:hover,.rc-acts .btn-resume:hover{background:var(--amber-bg);}
+.rc-acts .btn-stop{border:1px solid var(--red);color:var(--red-ink);}
+.rc-acts .btn-stop:hover{background:var(--red-bg);}
+/* The base `.btn-pause[hidden],.btn-resume[hidden]` rule (254) ties on specificity
+   with `.rc-acts .btn-pause` above and would LOSE on source order — a paused card
+   would show both buttons. Re-state it at the cluster's specificity. */
+.rc-acts .btn-pause[hidden],.rc-acts .btn-resume[hidden]{display:none;}
+.rc-open{border:1px solid var(--line);color:var(--ink-2);}
+.rc-open:hover{background:var(--ink);color:#fff;border-color:var(--ink);}
+.rc-open:focus-visible,.rc-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* ---------- Running redesign: shared keyframes (C2 — declared ONCE, here) ----------
+   @keyframes are name-resolved, not cascaded, so their position relative to the
+   rules that use them is irrelevant; what matters is that there is exactly one of
+   each. Tasks 5, 6, 7, 10 and 12 grep before adding and add nothing. */
+@keyframes wr-spin{to{transform:rotate(360deg);}}
+@keyframes wr-pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
+@keyframes wr-rise{0%{transform:translateY(10px);opacity:0;}100%{transform:translateY(0);opacity:1;}}
+@keyframes wr-blink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
+/* Placed AFTER the rule it neutralizes — source order, not specificity, is what wins. */
+@media (prefers-reduced-motion: reduce){
+  .rc-sic .sic-spin{animation:none;}
+}
+
+/* ---------- Running list: density toggle + compact card body ---------- */
+/* .topbar is `justify-content:space-between` with three children now; pushing the
+   pill right keeps pill + toggle together as the right-hand group. */
+#running-status-pill{margin-left:auto;}
+.run-density{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:999px;
+  background:var(--field);flex:0 0 auto;align-self:center;}
+/* `.rc-dseg`, not `.rd-seg`: the density toggle is LIST chrome, and the Global
+   Constraints reserve `.rd-*` for the run DETAIL — `.rd-seg` also sits one
+   character from C1's `secClass:'rd-sec'`, which the tab engine writes into the
+   detail screen. */
+.run-density .rc-dseg{display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;
+  color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
+.run-density .rc-dseg:hover{color:var(--ink);}
+.run-density .rc-dseg[aria-pressed="true"]{background:var(--ink);color:#fff;}
+.run-density .rc-dseg:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* One body per density. The other is display:none — which zeroes its scrollers, so
+   setRunDensity stashes .log scrollTop + .run-flow-wrap scrollLeft across the flip. */
+.run-card[data-density="compact"] .rc-detailed{display:none;}
+.run-card[data-density="detailed"] .rc-compact{display:none;}
+.rc-compact{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:14px;}
+.rc-step-chip{padding:4px 10px;border-radius:999px;font:700 11px var(--mono);
+  letter-spacing:.04em;background:var(--field);color:var(--ink-2);white-space:nowrap;}
+.rc-step-chip.st-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.rc-step-chip.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.rc-step-chip.st-green{background:var(--green-bg);color:var(--green-ink);}
+.rc-step-chip.st-red{background:var(--red-bg);color:var(--red-ink);}
+.rc-step-name{min-width:0;font:600 14.5px var(--sans);color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rc-step-model{font:400 12px var(--mono);color:var(--ink-3);margin-left:auto;white-space:nowrap;}
+.rc-step-model[hidden]{display:none;}
+/* .run-top's old 18px bottom margin used to open this gap. */
+.rc-detailed{margin-top:18px;}
+
+/* ---------- Running two-screen shell (twin of the History track, 1591-1603) ---------- */
+.view[data-view="running"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
+.run-shell{position:relative;height:100%;overflow:hidden;}
+/* NO top padding on the scroller itself — T7's sticky .rd-tabs must pin flush to
+   the scrollport top, exactly as .hist-screen does for .hd-tabs. */
+.run-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
+  transition:transform .46s cubic-bezier(.65,.02,.28,1);}
+.run-screen-list .topbar{padding-top:26px;}
+.run-screen-list{transform:translateX(0);}
+.run-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
+.run-shell.detail-open .run-screen-list{transform:translateX(-100%);}
+.run-shell.detail-open .run-screen-detail{transform:translateX(0);}
+.run-shell.no-anim .run-screen{transition:none;}
+/* Same reasoning as body.view-history .main (222) and .topnav (227): .main stops
+   scrolling and becomes the bounded column so each screen owns its scrollport,
+   and the compact top-nav (<1080px, a SIBLING of the views) re-applies the gutter
+   .main just dropped. */
+body.view-running .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
+/* style.css has no base .mono rule (only ancestor-scoped ones) — scope one to the
+   new subtree, exactly as :1608 does for .hd/.hist-card/#shipit-modal. */
+.rd .mono{font-family:var(--mono);}
+
+/* ---------- Running detail: header card ---------- */
+/* Card, not a full-bleed band: .run-screen-detail keeps padding:0 so the sticky
+   tabs can pin, and this margin box supplies the inset (mirrors .hd-header:1615). */
+.rd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow);margin:20px 32px 0;padding:20px 24px 18px;}
+.rd-body{padding:0 32px 40px;}
+.rd-row1{display:flex;align-items:center;gap:14px;}
+.rd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-status{flex:0 0 auto;}
+.rd-status[hidden]{display:none;}
+/* The design's slower, softer pulse; .pill-run .pdot (567) supplies the 7px dot
+   and the family fill, this only re-times it. `.parked` = nothing is running. */
+.rd-status .pdot{animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-status.parked .pdot{animation:none;}
+.rd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;margin-top:12px;
+  font:400 12.5px var(--mono);color:var(--ink-3);}
+.rd-meta .strong{font-weight:700;color:var(--ink);}
+.rd-dot{font-weight:700;color:var(--ink);}
+.rd-row3{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0;}
+.rd-base{color:var(--ink-3);font-size:12px;white-space:nowrap;}
+.rd-base[hidden]{display:none;}
+.rd-branch-copy{display:flex;align-items:center;gap:9px;min-width:16ch;padding:8px 12px;
+  border:1px solid var(--line);border-radius:9px;background:var(--field);
+  font:700 12px var(--mono);color:var(--ink);cursor:pointer;}
+.rd-branch-copy[hidden]{display:none;}
+.rd-branch-copy:hover{border-color:var(--ink-3);background:var(--panel);}
+.rd-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-branch-copy .ico-check{display:none;}
+.rd-branch-copy.copied .ico-copy{display:none;}
+.rd-branch-copy.copied .ico-check{display:inline;color:var(--green-ink);}
+.rd-copied{display:none;font:500 11.5px var(--sans);color:var(--green-ink);}
+.rd-branch-copy.copied + .rd-copied{display:inline;}
+.rd-spacer{flex:1 1 24px;}
+.rd-pause{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--amber-bg);
+  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--amber-ink);cursor:pointer;}
+.rd-pause[hidden]{display:none;}
+.rd-pause:hover:not([disabled]){background:var(--amber-bg);border-color:var(--amber);}
+.rd-pause[disabled]{opacity:.55;cursor:not-allowed;}
+/* Only one of the two glyphs shows; data-action decides which. */
+.rd-pause[data-action="pause"] .ico-play,.rd-pause[data-action="resume"] .ico-pause{display:none;}
+.rd-stop{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
+  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--red-ink);cursor:pointer;}
+.rd-stop[hidden]{display:none;}
+.rd-stop:hover:not([disabled]){background:var(--red-bg);border-color:var(--red);}
+.rd-error{margin-top:24px;color:var(--red-ink);font-size:12.5px;}
+.rd-error[hidden]{display:none;}
+/* .btn-ghost declares no focus ring and .rd-back is focused programmatically by
+   openRunDetail — same reasoning as the .hd-back arm. */
+.rd-back{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+.rd-back:focus-visible,.rd-pause:focus-visible,.rd-stop:focus-visible,
+.rd-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* MUST sit after the rules above: @media contributes no specificity, so an
+   earlier placement would lose the source-order tie (see the note at :1927-1932). */
+@media (prefers-reduced-motion: reduce){
+  .run-screen{transition:none;}
+  .rd-status .pdot,.rd-status.parked .pdot{animation:none;}
+}
+
+/* ---------- Running detail: pipeline graph ---------- */
+/* The dot-grid panel spec §5.3 asks for is already `.run-flow-wrap` —
+   radial-gradient var(--line-2) 1.1px at 22px 22px, 18px radius, horizontal
+   scroll. This only supplies the margin box; the wrap's own legacy
+   `margin:0 0 18px` is zeroed so it does not double up with .rd-graph's. */
+.rd-graph{margin-top:18px;}
+.rd-graph .run-flow-wrap{margin:0;}
+
+/* ---------- Running detail: banners ---------- */
+/* align-items:flex-start, NOT the default stretch: `.hist-discard` is an
+   inline-flex button with no width and a stretching column would blow it up to
+   the full body width. Only the two BANNERS want the full row. Same shape as
+   .hd-banners. */
+.rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
+/* Both reused banners carry legacy margins from their old hosts —
+   `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
+   which double up with this column's own gap. */
+.rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
+/* NOT `:empty` — the container always holds its two template children, just
+   hidden. Key the margin off "has a visible child", as .hd-banners does. */
+.rd-banners:has(> :not([hidden])){margin-top:18px;}
+
+/* ---------- Running detail: question panel ---------- */
+/* Container only — the panel's own restyle (larger metrics, green-tinted picked
+   options, the "N of M answered" footer, "Open run") is T11 for BOTH mounts. */
+.rd-questions{margin-top:18px;animation:wr-rise .3s cubic-bezier(.2,.7,.3,1) both;}
+/* Explicit twin: the UA [hidden] rule is (0,0,0) and loses to any author
+   `display`, so without this the panel would render even while hidden. */
+.rd-questions[hidden]{display:none;}
+/* .qpanel ships `margin-top:18px` which would double up with the wrapper's.
+   T11 rewrites the .qpanel block mid-file but does NOT restate this rule, so it
+   stays the last word on margin-top for the detail mount. */
+.rd-questions .qpanel{margin-top:0;}
+
+/* MUST sit after the rule it neutralizes — @media contributes no specificity. */
+@media (prefers-reduced-motion: reduce){
+  .rd-questions{animation:none;}
+}
+
+/* ---------- Running detail: tab bodies ---------- */
+/* NB: no `.mono` rule here. `.rd .mono{font-family:var(--mono);}` already ships
+   and `#run-detail-tpl`'s root IS `<div class="rd">`, so the subtree is covered;
+   a second `#run-detail .mono` would be dead weight. (History's twin is the
+   `.hd .mono,.hist-card .mono,#shipit-modal .mono` rule mid-file.) */
+
+/* Section tabs (§5.5 + C12). WITHOUT these rules the pill row renders as three
+   unstyled native buttons and nothing pins on scroll. Twin of
+   `.hd-tabs`/`.hd-tab`/`.hd-tab-badge`/`.hd-sec`; `.run-screen-detail` keeps
+   `padding:0` precisely so `top:0` pins flush to the scrollport (D12).
+   NO horizontal margin, deliberately: both hosts live INSIDE `.rd-body`, which
+   carries `padding:0 32px 40px` — the exact shape of `.hd-body` and `.hd-tabs`,
+   which carries no margin for precisely this reason. Adding `margin:0 32px` here
+   would double the inset to 64px AND stop the pinned bar's `background:var(--bg)`
+   32px short on each side, so scrolled content would show through the gutters
+   behind it. */
+.rd-tabs{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+  padding:18px 0 14px;background:var(--bg);}
+.rd-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
+  border-radius:999px;background:var(--panel);font:600 13.5px var(--sans);color:var(--ink-2);cursor:pointer;}
+.rd-tab:hover{border-color:var(--ink-3);color:var(--ink);}
+.rd-tab.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+.rd-tab:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-tab-badge{padding:2px 8px;border-radius:999px;background:var(--field);color:var(--ink-3);
+  font:600 10.5px var(--mono);}
+.rd-tab.active .rd-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
+/* .rd-sections needs no rule of its own — the inset comes from .rd-body's
+   padding, exactly as .hd-sections does. */
+.rd-sec{margin-top:4px;}
+/* Explicit twin, exactly as `.hd-sec[hidden]`: the UA [hidden] rule is (0,0,0)
+   and loses to any author `display`, so the moment a `.rd-sec-*` body gets one,
+   every inactive panel would render at once. */
+.rd-sec[hidden]{display:none;}
+.rd-sec:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* Live log tab (§5.6): white pane, --line border, 16px radius, bounded height.
+   The pane is the shared `.log` markup inside a `.run-log` block, so `.run-log .log`
+   is (0,2,0) and so is this — source order is what makes it win, which is why the
+   rule lives at the END of the file and must not be moved above it. */
+.rd-sec-logs .log{min-height:300px;max-height:520px;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;}
+/* §9's fourth keyframe: the blinking green caret at the tail of a LIVE log.
+   CSS-only (a ::after on the pane) so no JS has to keep an element last after
+   every append; Task 9 stamps `.rd-terminal` on the screen when the run ends and
+   the caret disappears — "the log stops growing" (D8). */
+.rd-sec-logs .log::after{content:'';display:inline-block;width:7px;height:13px;
+  vertical-align:-2px;margin-left:2px;background:var(--green);
+  animation:wr-blink 1.05s step-end infinite;}
+/* Descendant form on purpose: Task 9 stamps `.rd-terminal` on the SCREEN
+   (`screen.classList.toggle('rd-terminal', terminal)`), which is an ancestor of
+   `.rd-sec-logs` — do not "fix" this to `.rd-terminal.rd-sec-logs`. */
+.rd-terminal .rd-sec-logs .log::after{display:none;}
+/* The pane's OTHER empty state: a live run whose filter matches none of its
+   lines. A caret blinking after "(no lines match the filter)" reads as a tail
+   about to print. Keyed on `data-empty` and not on emptiness in general —
+   rdRepaintLog stamps it only when r.logLines is non-empty, so a fresh live run
+   with zero lines correctly keeps its caret. */
+.rd-sec-logs .log[data-empty]::after{display:none;}
+
+/* Overview tab (§5.7). The stat cards, the task card and the chips deliberately
+   reuse History's `.hd-ov-*` rules — hdStatCard emits those class names, so
+   re-declaring them here would fork one card design into two. Only the
+   current-state banner is new. */
+.rd-ov-state{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 20px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.rd-ov-chip{padding:5px 12px;border-radius:999px;font:600 11.5px var(--sans);
+  background:var(--field);color:var(--ink-2);}
+.rd-ov-chip.st-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.rd-ov-chip.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.rd-ov-chip.st-green{background:var(--green-bg);color:var(--green-ink);}
+.rd-ov-chip.st-red{background:var(--red-bg);color:var(--red-ink);}
+.rd-ov-copy{min-width:0;font:400 13px var(--sans);color:var(--ink-2);}
+
+/* Agents tab (§5.8). History's card shell, but the spec's four-column GRID row
+   instead of its flex row — which is why these carry their own class names
+   rather than extending `.hd-ag-*`. */
+.rd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.rd-ag-group + .rd-ag-group{margin-top:14px;}
+.rd-ag-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:15px 20px;
+  border-bottom:1px solid var(--line);}
+.rd-ag-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
+.rd-ag-meta{color:var(--ink-3);font-size:11.5px;margin-left:auto;}
+.rd-ag-none{padding:12px 20px;}
+.rd-ag-row{display:grid;grid-template-columns:1fr 130px 96px 84px;align-items:center;gap:10px;
+  padding:12px 20px;border-top:1px solid var(--line);}
+/* NOT `:first-of-type` — `.rd-ag-head` is the first div in the card, so no row
+   would ever match it (the same trap the `.hd-ag-head + .hd-ag-row` rule
+   documents). */
+.rd-ag-head + .rd-ag-row{border-top:none;}
+.rd-ag-name{display:flex;align-items:center;gap:9px;min-width:0;font:500 13px var(--sans);color:var(--ink);}
+.rd-ag-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-ag-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--ink-3);}
+.rd-ag-dot.run{background:var(--blue);animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-ag-dot.done{background:var(--green);}
+.rd-ag-dot.stop{background:var(--red);}
+.rd-ag-state{font:500 12px var(--sans);}
+.rd-ag-state.run{color:var(--blue-ink);}
+.rd-ag-state.done{color:var(--green-ink);}
+.rd-ag-state.stop{color:var(--red-ink);}
+.rd-ag-dur,.rd-ag-cost{text-align:right;font-size:11.5px;color:var(--ink-2);}
+/* skillPillsHtml emits `.subs-skills` into the head AND every row; in a grid row
+   it must claim a full line of its own, the grid twin of the flex rule above. */
+.rd-ag-row .subs-skills{grid-column:1/-1;margin-top:6px;}
+/* AFTER the rules it neutralizes — source order, not specificity, is what makes
+   this win in this stylesheet. */
+@media (prefers-reduced-motion: reduce){
+  .rd-ag-dot.run{animation:none;}
+  .rd-sec-logs .log::after{animation:none;}
+}
+
+/* ---------- Running detail: terminal state (D8) ---------- */
+/* NOTE: `.rd-status.parked .pdot{animation:none;}` is NOT repeated here — the
+   header CSS already ships it (its (0,3,0) beats `.pill-run .pdot`), and a second
+   copy would only make the sweep noisier. This task adds the class. */
+
+/* A finished run stops moving. `runStepperView` only nulls activeId when the
+   status is exactly 'done', so a STOPPED or ERRORED run's frontier node can still
+   be `now` and its wire would march forever. Neutralize the three motions the
+   graph carries rather than fighting the adapter.
+   VERIFIED selector shapes at HEAD: nodes carry BOTH `node` and `run-node`
+   (`.run-flow .node.run-node`), the glow rule is `.run-flow .node.is-active`, the
+   wire rule is `.run-flow .wires path.wire-live` and the fan rule is
+   `.run-flow .node .fan .sq.on`. Each override below is one class deeper than the
+   rule it beats, so it wins on specificity, not source order. */
+.rd-graph.settled .run-flow .wires path.wire-live{animation:none;}
+/* Belt-and-braces: `runStatusOf` already returns 'stopped'/'done' for every node
+   once the run is halted, so a terminal graph carries no `.is-active` — these two
+   are no-ops today and exist only so a future adapter change cannot resurrect the
+   glow. `.is-paused` is included because a run halted while parked keeps
+   `nodeStatus === 'pause'`. */
+.rd-graph.settled .run-flow .run-node.is-active{animation:none;}
+.rd-graph.settled .run-flow .run-node.is-paused{animation:none;}
+.rd-graph.settled .run-flow .run-node .fan .sq.on{animation:none;}
+
+.rd-history-link{flex:0 0 auto;font:600 12.5px var(--sans);color:var(--blue-ink);text-decoration:none;}
+.rd-history-link:hover{text-decoration:underline;}
+.rd-history-link[hidden]{display:none;}
+.rd-history-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---------- "Stop this pipeline?" confirm modal (design §6) ---------- */
+/* WIDTH GOES ON `#stop-modal .card`, NOT `.stop-card`. The markup is
+   `<div class="card stop-card">` inside `.viewer-modal`, and
+   `.viewer-modal .card{width:min(860px,100%);…}` (:786) is (0,2,0): a bare
+   `.stop-card{width:…}` (0,1,0) loses no matter where it is appended. Exact
+   precedent: `#shipit-modal .card` (:1864). */
+#stop-modal .card{width:min(560px,100%);}
+.stop-card{padding:24px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.stop-title{margin:0 0 12px;font:700 17px/1.25 var(--sans);letter-spacing:-.015em;}
+.stop-body{margin:0;font:400 13.5px/1.6 var(--sans);color:var(--ink-2);}
+.stop-ident{margin-top:14px;padding:11px 13px;background:var(--field);border-radius:14px;
+  font:400 12px/1.6 var(--mono);color:var(--ink-2);word-break:break-all;}
+/* author display rule beats the UA [hidden] rule — a branch-less run must not
+   leave a blank mono line in the block */
+.stop-ident-branch[hidden]{display:none;}
+.stop-err{margin-top:12px;}
+/* MANDATORY twin: the node is `class="hint err" hidden` and `.hint` (:285) sets
+   display:block, which always beats the UA `[hidden]{display:none}`. Same as
+   `.shipit-err[hidden]` (:1896). */
+.stop-err[hidden]{display:none;}
+.stop-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
+.stop-cancel{padding:11px 20px;border:1.5px solid var(--line-2);border-radius:999px;
+  background:var(--panel);font:600 13.5px var(--sans);color:var(--ink);cursor:pointer;}
+.stop-cancel:hover{background:var(--field);}
+.stop-confirm{padding:11px 20px;border:1.5px solid transparent;border-radius:999px;
+  background:var(--red-bg);font:600 13.5px var(--sans);color:var(--red-ink);cursor:pointer;}
+/* The mockup's hover is #F7D2CD — a shade §9 does not name and no token carries.
+   brightness() keeps the darker-on-hover intent inside the existing palette (and
+   out of Task 12's "one occurrence per new literal" assertion). */
+.stop-confirm:hover{filter:brightness(.97);}
+.stop-confirm:disabled{opacity:.6;cursor:default;}
+.stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---------- reduced motion for the Running redesign ---------- */
+/* MUST be the LAST block in the file: @media contributes no specificity, so a
+   (0,1,0) `animation:none` here would LOSE the source-order tie against any
+   `animation:wr-*` rule appended after it — exactly the trap documented at
+   :748-763 for the four legacy names and at :1927-1940 for the ship-it set. */
+@media (prefers-reduced-motion: reduce){
+  /* #stop-modal is a top-level overlay, outside the shell — named explicitly. */
+  #stop-modal .card{animation:none;}
+  /* PSEUDO-ELEMENTS DO NOT INHERIT `animation`, so the `*` blanket below cannot
+     reach the live-log caret — it has to be named. (Task 7's own reduced-motion
+     block already carries this rule; the duplicate here is deliberate belt-and-
+     braces, because this block is the one guaranteed to be last.) */
+  .rd-sec-logs .log::after{animation:none;}
+  /* One scoped blanket for every ELEMENT inside the two Running screens: the
+     status avatar spinner, the pulsing status/agent accent dots and the question
+     panel's rise. `!important` (like the `*{transition:none !important}` rule in
+     the legacy block) because enumerating them would restate selectors owned by
+     Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
+     own reduced-motion block (:1253-1258) is unaffected — it substitutes
+     box-shadows, and only its redundant `animation:none` is overridden. */
+  .run-shell *{animation:none !important;}
+}

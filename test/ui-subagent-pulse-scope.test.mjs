@@ -84,7 +84,7 @@ function pulses(el) {
   return !!el && el.classList.contains('sq') && el.classList.contains('on') && !!el.closest('.fan');
 }
 
-test('PULSE SCOPING: live graph square pulses; the tree panel never does', async () => {
+test('PULSE SCOPING: only the live graph square is in the pulsing scope', async () => {
   const ctx = await boot();
   ctx.selectProject();
   ctx.window.location.hash = 'running';
@@ -99,18 +99,6 @@ test('PULSE SCOPING: live graph square pulses; the tree panel never does', async
   const graphSq = card.querySelector('.run-flow .node .fan .sq.on');
   assert.ok(graphSq, 'live running sub paints a graph .fan .sq.on');
   assert.ok(pulses(graphSq), 'the graph square is the pulsing scope');
-
-  // open the tree and assert NOTHING under it pulses
-  const bar = card.querySelector('.subs-bar');
-  assert.ok(!bar.hidden, 'pill visible with one sub');
-  bar.querySelector('.btn-subs').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
-  const panel = card.querySelector('.subs-panel');
-  assert.ok(panel.querySelector('.subs-tree li'), 'tree rendered a row');
-  for (const el of panel.querySelectorAll('.sq, .led')) {
-    assert.ok(!pulses(el), 'no tree/legend square is in the pulsing scope');
-  }
-  assert.equal(panel.querySelectorAll('.fan .sq.on').length, 0, 'tree has zero .fan .sq.on');
 });
 
 test('PULSE SCOPING: a history-rendered card has no pulsing square', async () => {

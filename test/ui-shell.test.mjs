@@ -19,14 +19,15 @@ test('nav targets: the base set + workspaces + projects + stats (workspace-creat
 });
 test('shell hooks present (base + workspace surfaces)', () => {
   for (const id of [
-    'run-card-tpl', 'hist-card-tpl', 'hist-detail-tpl', 'shipit-modal',
+    'run-card-tpl', 'run-detail-tpl', 'run-shell', 'run-detail', 'stop-modal',
+    'hist-card-tpl', 'hist-detail-tpl', 'shipit-modal',
     'run-list', 'nav-running-count', 'nav-history-count',
     'nav-workspaces-count', 'ws-card-tpl', 'ws-list', 'target-seg', 'target-project-pane',
     'target-workspace-pane', 'workspaceSelect', 'ws-members', 'wiz-close', 'wiz-abort', 'wiz-desc',
   ])
     assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
 });
-test('run-card template: 6 steps + qpanel + stop', () => {
+test('run-card template v2: header cluster + graph + qpanel + stop, no run-foot / subs-bar', () => {
   const m = html.match(/<template id="run-card-tpl">([\s\S]*?)<\/template>/);
   assert.ok(m, 'missing run-card-tpl');
   const tpl = m[1];
@@ -36,6 +37,9 @@ test('run-card template: 6 steps + qpanel + stop', () => {
   assert.ok(!tpl.includes('data-step'), 'tpl should no longer carry static data-step stages');
   assert.ok(tpl.includes('qpanel'), 'tpl missing qpanel slot');
   assert.ok(tpl.includes('btn-stop'), 'tpl missing btn-stop');
+  assert.ok(tpl.includes('rc-head'), 'tpl missing the v2 header row');
+  assert.ok(!tpl.includes('run-foot'), '.run-foot removed (design §7)');
+  assert.ok(!tpl.includes('subs-bar'), '.subs-bar removed (design §7)');
 });
 test('scan loader carries role=status + aria-live=polite (A11y)', () => {
   const m = html.match(/class="ws-loader"[^>]*>/);

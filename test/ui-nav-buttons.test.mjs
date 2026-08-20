@@ -109,7 +109,9 @@ test('running child rows are buttons with no href and still deep-link', async ()
 test('reload on #running/<id> keeps the Running view (no reset to New)', async () => {
   const { window } = await boot('http://localhost:4317/#running/auth-fix');
   const doc = window.document;
-  await tick(); await tick();   // let the not-yet-known-run bounce (#running) settle
+  await tick(); await tick();   // let boot's showView + the detail mount settle
   assert.equal(hidden(doc, 'new'), true, 'must not fall back to the New view');
   assert.equal(hidden(doc, 'running'), false, 'Running view restored from the deep link');
+  assert.ok(doc.querySelector('#run-shell').classList.contains('detail-open'),
+    'the deep link lands on the detail screen, not the list');
 });

@@ -88,7 +88,7 @@ test('failed resume restores the Resume button: enabled, icon intact, error logg
   assert.ok(getRun('r1'), 'failed resume must keep the paused run');
   assert.equal(btn.disabled, false, 'button must be re-enabled after failure');
   assert.match(btn.innerHTML, /<svg/i, 'failure must restore the play icon, not leave bare text');
-  assert.match(btn.textContent, /Resume/);
+  assert.match(btn.title, /Resume/, 'failure restores the stock tooltip too');
   assert.ok(
     r.logLines.some((l) => /resume failed: pipeline not found/.test(String(l.text))),
     'server error must land in the card log'
