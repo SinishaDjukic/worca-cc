@@ -38,11 +38,12 @@ async function bootLive() {
 }
 
 // (a) Resume button placement — it must right-align like Pause/Stop, not drift left.
-test('(a) .btn-resume.sm right-aligns via margin-left:auto, like .btn-pause.sm', () => {
+test('(a) the header action cluster right-aligns via margin-left:auto', () => {
   const css = readFileSync(cssPath, 'utf8');
-  const m = css.match(/\.btn-resume\.sm\s*\{([^}]*)\}/);
-  assert.ok(m, '.btn-resume.sm rule missing — Resume button has no small-footer styling');
-  assert.match(m[1], /margin-left:\s*auto/, '.btn-resume.sm must right-align like .btn-pause.sm');
+  const m = css.match(/\.rc-acts\s*\{([^}]*)\}/);
+  assert.ok(m, '.rc-acts rule missing — the header action cluster has no layout');
+  assert.match(m[1], /margin-left:\s*auto/, '.rc-acts must right-align Pause/Stop/chevron in the header');
+  assert.match(css, /\.rc-acts \.btn-pause,[^{]*\.rc-open\{[^}]*width:\s*30px/, '30px icon buttons');
 });
 
 // (c) A paused run's frontier node must read as paused, not "running…".
@@ -63,21 +64,21 @@ test('(d) run-card meta renders branch feature and refreshes when branch arrives
   const { upsertRun, buildRunCard, onState } = window.__np;
   const r = upsertRun({ runId: 'rb1', title: 't', projectDir: '/tmp/proj', status: 'running' });
   r.el = buildRunCard(r);
-  const meta = () => r.el.querySelector('.rm-text').textContent;
-  assert.doesNotMatch(meta(), /feat\/x/, 'no branch before it is known');
-  // Branch arrives on a later state snapshot — the meta line must refresh.
+  const chip = () => r.el.querySelector('.rc-branch');
+  assert.equal(chip().hidden, true, 'no branch chip before it is known');
+  // Branch arrives on a later state snapshot — the chip must refresh.
   onState(r, { branch: { feature: 'feat/x' } });
-  assert.match(meta(), /feat\/x/, 'branch feature must appear in the meta line after onState');
+  assert.equal(chip().hidden, false, 'branch feature must appear in the chip after onState');
+  assert.equal(r.el.querySelector('.rc-branch-name').textContent, 'feat/x');
 });
 
 // (e) Resume must be a real pill, not a bare native button.
-test('(e) .btn-resume has a base pill style in the green family, like .btn-pause', () => {
+test('(e) Pause/Resume render as amber-outline icon buttons in the cluster', () => {
   const css = readFileSync(cssPath, 'utf8');
-  const m = css.match(/\.btn-resume\s*\{([^}]*)\}/);
-  assert.ok(m, '.btn-resume base rule missing — Resume renders as an unstyled browser button');
-  assert.match(m[1], /display:\s*inline-flex/);
-  assert.match(m[1], /var\(--green-bg\)/);
-  assert.match(m[1], /border-radius:\s*999px/);
+  const m = css.match(/\.rc-acts \.btn-pause,\.rc-acts \.btn-resume\{([^}]*)\}/);
+  assert.ok(m, '.rc-acts .btn-pause,.rc-acts .btn-resume rule missing');
+  assert.match(m[1], /border:\s*1px solid var\(--amber\)/);
+  assert.match(m[1], /color:\s*var\(--amber-ink\)/);
 });
 
 // (f) The author display rules defeat the UA [hidden] rule — must be patched per
@@ -89,6 +90,8 @@ test('(f) [hidden] hides Pause/Resume despite their author display rules', () =>
     /\.btn-pause\[hidden\]\s*,\s*\.btn-resume\[hidden\]\s*\{[^}]*display:\s*none/,
     'need .btn-pause[hidden],.btn-resume[hidden]{display:none;} — otherwise the paused card shows BOTH buttons and two margin-left:auto split the row'
   );
+  assert.match(css, /\.rc-acts \.btn-pause\[hidden\],\.rc-acts \.btn-resume\[hidden\]\{[^}]*display:\s*none/,
+    'the cluster must re-state [hidden] at its own specificity, or .rc-acts .btn-pause wins on source order');
 });
 
 // (g) Dead rule: pause sits between resume and stop in the DOM, so this `+`

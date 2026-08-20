@@ -33,7 +33,10 @@ async function boot({ fetchHandler } = {}) {
   await new Promise((r) => setTimeout(r, 0));
   const selectProject = () => { const s = window.document.querySelector('#projectSelect'); s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true })); };
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, selectProject, showHistory };
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  const showDetail = (key, id) => { window.location.hash = `history/${key}/${id}`; window.dispatchEvent(new window.Event('hashchange')); };
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  return { window, selectProject, showHistory, showDetail, settle };
 }
 const runsList = (pipelines, live = []) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live }) });
 
@@ -63,7 +66,7 @@ test('the history total is tooltip-labelled as an estimate with the exact value'
   assert.match(total.title, /\$0\.4200/, 'tooltip shows the exact 4-dp value');
 });
 
-test('expanding a card paints per-phase cost from saved steps (refine cycles summed)', async () => {
+test('the detail screen paints per-phase cost from saved steps (refine cycles summed)', async () => {
   const state = {
     phase: 'done', status: 'done', cycle: 2, totalCostUsd: 0.30,
     steps: [
@@ -77,18 +80,18 @@ test('expanding a card paints per-phase cost from saved steps (refine cycles sum
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.30 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      // MOST-SPECIFIC FIRST: the keyed detail URL has the list URL as a prefix.
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.30 }]);
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  const head = ctx.window.document.querySelector('#history .hist-head');
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
+  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.10');
   assert.equal(byStep.refine.querySelector('.cost').textContent, '$0.10', 'refine cycles summed');
   assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.07');
@@ -107,20 +110,19 @@ test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays b
   };
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.includes('/api/history')) return runsList([{ id: 'p1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0 }]);
-      if (url.includes('/api/runs/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
+      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0 }]);
       return null;
     },
   });
   ctx.showHistory();
   await new Promise((r) => setTimeout(r, 0));
-  // collapsed total is a truthful $0.00
+  // the card total is a truthful $0.00
   assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-total').textContent, '$0.00');
-  const head = ctx.window.document.querySelector('#history .hist-head');
-  head.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 0));
+  ctx.showDetail('k1', 'p1');
+  await ctx.settle();
   const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#history .hist-detail .run-node[data-id]')) byStep[s.dataset.id] = s;
+  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
   assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.00', 'executed zero shows $0.00');
   assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.00');
   assert.equal(byStep.refine.querySelector('.cost').textContent, '', 'never-run refine stays blank');

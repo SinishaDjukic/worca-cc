@@ -167,63 +167,9 @@ test('reduced-motion disables the fan square pulse', () => {
   assert.match(css, /prefers-reduced-motion[\s\S]*\.run-flow \.node \.fan \.sq\.on[\s\S]*animation:\s*none/);
 });
 
-test('Sub-agents pill: rounded button, sb-count blue default + grey variant, chev rotate', () => {
-  // .subs-bar shares its margin/hidden rules with the History clarify/logs bars
-  // (grouped selector), so match the grouped rule rather than a standalone one.
-  assert.match(css, /\.subs-bar[^{]*\{[^}]*margin-top:\s*14px/, '.subs-bar margin rule missing');
-  const btn = ruleBody('.btn-subs');
-  assert.ok(btn, '.btn-subs rule missing');
-  assert.match(btn, /border-radius:\s*999px/, 'pill is fully rounded');
-  assert.match(btn, /cursor:\s*pointer/);
-  const cnt = ruleBody('.btn-subs .sb-count');
-  assert.ok(cnt, '.sb-count rule missing');
-  assert.match(cnt, /background:\s*var\(--blue-bg\)/, 'default count is blue');
-  assert.match(cnt, /color:\s*var\(--blue-ink\)/);
-  assert.ok(ruleBody('.btn-subs .sb-count.grey'), '.sb-count.grey variant missing');
-  const panel = ruleBody('.subs-panel');
-  assert.ok(panel, '.subs-panel rule missing');
-  assert.match(panel, /border-radius:\s*18px/);
-  assert.match(css, /\.subs-panel\[hidden\]\{[^}]*display:\s*none/);
-  assert.match(css, /\.btn-subs\[aria-expanded="true"\] \.chev\{[^}]*rotate\(180deg\)/,
-    'open pill rotates the chevron');
-});
-
-test('tree legend + step + connector-row CSS, and NO animation on tree squares', () => {
-  assert.ok(ruleBody('.subs-legend'), '.subs-legend rule missing');
-  assert.ok(ruleBody('.subs-legend .sq.on'), 'legend active swatch');
-  assert.ok(ruleBody('.subs-legend .sq.off'), 'legend finished swatch');
-  const step = ruleBody('.subs-step');
-  assert.ok(step, '.subs-step rule missing');
-  assert.match(step, /border-top:\s*1px solid var\(--line\)/);
-  assert.ok(ruleBody('.subs-step-head .dot'), '.dot rule missing');
-  assert.match(css, /\.subs-step-head \.subs-stat\.run\{[^}]*background:\s*var\(--blue-bg\)/);
-  assert.match(css, /\.subs-step-head \.subs-stat\.done\{[^}]*background:\s*var\(--green-bg\)/);
-  assert.match(css, /\.subs-step-head \.subs-stat\.stop\{[^}]*background:\s*var\(--red-bg\)/);
-  assert.ok(ruleBody('.subs-step-head .subs-n'), '.subs-n rule missing');
-
-  const li = ruleBody('.subs-tree li');
-  assert.ok(li, '.subs-tree li rule missing');
-  assert.match(li, /position:\s*relative/, 'rows are positioned for ::before/::after connectors');
-  assert.ok(ruleBody('.subs-tree li::before') || /\.subs-tree li::before/.test(css), 'vertical connector');
-  assert.ok(ruleBody('.subs-tree li::after') || /\.subs-tree li::after/.test(css), 'horizontal connector');
-  assert.ok(ruleBody('.subs-tree li .led'), 'row .led rule missing');
-  assert.ok(ruleBody('.subs-tree li .led.on'), 'lit row .led variant missing');
-  assert.match(css, /\.subs-tree li \.st\.run\{[^}]*background:\s*var\(--blue-bg\)/);
-  assert.match(css, /\.subs-tree li \.st\.done\{[^}]*background:\s*var\(--green-bg\)/);
-  assert.match(css, /\.subs-tree li \.st\.stop\{[^}]*background:\s*var\(--red-bg\)/);
-
-  // The ONLY sqPulse user stays the graph fan (re-assert the scoping after the tree CSS lands).
-  const animRules = [...css.matchAll(/([^{}]+)\{[^}]*animation:\s*sqPulse[^}]*\}/g)].map((m) => m[1].trim());
-  for (const sel of animRules) assert.equal(sel, '.run-flow .node .fan .sq.on');
-  // No tree rule may reference sqPulse / any animation on .led or .subs squares.
-  assert.doesNotMatch(css, /\.subs-tree[^{]*\{[^}]*animation/, 'tree rows never animate');
-  assert.doesNotMatch(css, /\.subs-legend[^{]*\{[^}]*animation/, 'legend never animates');
-});
-
 test('skill pills: .subs-skills flex-wraps; row pills take their own full line; pills are rounded', () => {
   assert.match(ruleBody('.subs-skills'), /flex-wrap:\s*wrap/, '.subs-skills wraps');
-  assert.match(css, /\.subs-tree li\{[^}]*flex-wrap:\s*wrap/, '.subs-tree li wraps so pills drop below name/status');
-  assert.match(ruleBody('.subs-tree li .subs-skills'), /flex:\s*0 0 100%/, 'row pill container takes a full row');
+  assert.match(ruleBody('.hd-ag-row .subs-skills'), /flex:\s*0 0 100%/, 'row pill container takes a full row');
   assert.match(ruleBody('.skill-pill'), /border-radius:\s*999px/, 'pills are rounded like the house style');
 });
 
@@ -252,10 +198,4 @@ test('graphify pill is inline & content-sized (no full-row / own-line override)'
   // the own-line header override (direct child of .subs-step) is gone -> pill is inline in the header
   assert.doesNotMatch(css, /\.subs-step\s*>\s*\.graphify-pill/,
     'header graphify pill must not be a block child of .subs-step');
-});
-
-test('Agents dropdown: .subs-empty placeholder is muted', () => {
-  const body = ruleBody('.subs-empty');
-  assert.ok(body, '.subs-empty rule missing');
-  assert.match(body, /color:\s*var\(--ink-3\)/, 'placeholder uses the muted ink token');
 });

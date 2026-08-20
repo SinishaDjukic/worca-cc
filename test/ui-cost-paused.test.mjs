@@ -69,8 +69,11 @@ async function boot({ budget = okBudget(), fetchHandler } = {}) {
   const recv = (obj) => wsBox.ws.dispatch('message', { data: JSON.stringify(obj) });
   const showRunning = () => { window.location.hash = 'running'; window.dispatchEvent(new window.Event('hashchange')); };
   const showHistory = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
+  // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).
+  const showDetail = (key, id) => { window.location.hash = `history/${key}/${id}`; window.dispatchEvent(new window.Event('hashchange')); };
+  const settle = async (n = 3) => { for (let i = 0; i < n; i++) await tick(); };
   await tick();  // let the boot /api/budget land
-  return { window, wsBox, box, fetchCalls, tick, recv, showRunning, showHistory };
+  return { window, wsBox, box, fetchCalls, tick, recv, showRunning, showHistory, showDetail, settle };
 }
 
 const historyList = (pipelines) =>
@@ -102,7 +105,7 @@ test('cost_pipeline pause renders the amber banner with an enabled Resume', asyn
   assert.match(banner.textContent, /pipeline cost limit/);
   assert.ok(banner.querySelector('.cb-override'), 'override action offered');
   assert.equal(card.querySelector('.btn-resume').disabled, false, 'per-pipeline pause never blocks Resume');
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · cost limit');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · cost limit');
 });
 
 test('cb-override: confirm modal -> single resume POST with ignoreCostCap:true', async () => {
@@ -143,7 +146,7 @@ test('cost_total pause: red banner, Resume disabled with reset-date tooltip', as
   const resume = card.querySelector('.btn-resume');
   assert.equal(resume.disabled, true);
   assert.match(resume.title, /Total budget reached/);
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · total budget');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · total budget');
 });
 
 test('budget-changed unblocking re-enables Resume and clears the total banner', async () => {
@@ -178,28 +181,30 @@ test('a non-cost pause leaves the banner hidden and the pill plain', async () =>
   const ctx = await boot();
   const card = await pausedRun(ctx, undefined);   // manual pause carries no reason
   assert.equal(card.querySelector('.cost-banner').hidden, true);
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused');
   assert.equal(card.querySelector('.btn-resume').disabled, false);
 });
 
-test('history: pausenote in head; expanded detail shows the banner; hist-resume gated', async () => {
-  const ENTRIES = [
-    { id: 'h1', title: 'Pipe cap', status: 'paused', pauseReason: 'cost_pipeline', startedAt: '2026-01-01T00:00:00Z' },
-    { id: 'h2', title: 'Total cap', status: 'paused', pauseReason: 'cost_total', startedAt: '2026-01-01T00:00:00Z' },
-  ];
-  const ctx = await boot({
-    budget: blockedBudget(),
-    fetchHandler: (url) => {
-      if (url.includes('/api/history')) return historyList(ENTRIES);
-      if (url.includes('/api/runs/h1')) {
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: async () => ({ state: { phase: 'implement', status: 'paused', totalCostUsd: 5.2, steps: [] } }),
-        });
-      }
-      return null;
-    },
-  });
+// Resume + the cost-pause banner moved to the History DETAIL screen; the card
+// keeps only the pausenote caption and the dataset.pauseReason stamp.
+const PAUSED_ENTRIES = [
+  { id: 'h1', projectKey: 'k1', title: 'Pipe cap', status: 'paused', pauseReason: 'cost_pipeline', startedAt: '2026-01-01T00:00:00Z' },
+  { id: 'h2', projectKey: 'k1', title: 'Total cap', status: 'paused', pauseReason: 'cost_total', startedAt: '2026-01-01T00:00:00Z' },
+];
+const pausedDetail = (id) => Promise.resolve({
+  ok: true, status: 200,
+  json: async () => ({ state: { id, phase: 'implement', status: 'paused', totalCostUsd: 5.2, steps: [] } }),
+});
+// MOST-SPECIFIC FIRST: the keyed detail URL has the list URL as a prefix.
+const pausedArms = (url) => {
+  if (url.endsWith('/api/history/k1/h1')) return pausedDetail('h1');
+  if (url.endsWith('/api/history/k1/h2')) return pausedDetail('h2');
+  if (url.endsWith('/api/history')) return historyList(PAUSED_ENTRIES);
+  return null;
+};
+
+test('history: pausenote on the card; the detail screen shows the banner and gates Resume', async () => {
+  const ctx = await boot({ budget: blockedBudget(), fetchHandler: pausedArms });
   ctx.showHistory();
   await ctx.tick();
   const cards = ctx.window.document.querySelectorAll('#history .hist-card');
@@ -214,18 +219,19 @@ test('history: pausenote in head; expanded detail shows the banner; hist-resume 
   assert.ok(note2.classList.contains('total'), 'total-budget note uses the red modifier');
   assert.equal(cards[1].dataset.pauseReason, 'cost_total', 'reason stamped for later re-gating');
 
-  // Gating: only the total-cap row is blocked while the budget is over.
-  assert.equal(cards[0].querySelector('.hist-resume').disabled, false);
-  const gated = cards[1].querySelector('.hist-resume');
+  // The total-cap run is blocked while the budget is over.
+  ctx.showDetail('k1', 'h2');
+  await ctx.settle();
+  const gated = ctx.window.document.querySelector('#hist-detail .hd-resume');
   assert.equal(gated.disabled, true);
   assert.match(gated.title, /Total budget reached/);
 
-  // Expanding the per-pipeline row prepends the banner into the detail.
-  cards[0].querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await ctx.tick();
-  await ctx.tick();
-  const detailBanner = cards[0].querySelector('.hist-detail .cost-banner');
-  assert.ok(detailBanner, 'expanded detail shows the cost-pause banner');
+  // The per-pipeline one is not, and its detail carries the cost-pause banner.
+  ctx.showDetail('k1', 'h1');
+  await ctx.settle();
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').disabled, false);
+  const detailBanner = ctx.window.document.querySelector('#hist-detail .hd-banners .cost-banner');
+  assert.ok(detailBanner, 'the detail screen shows the cost-pause banner');
   assert.ok(detailBanner.classList.contains('cb-pipeline'));
   assert.ok(detailBanner.querySelector('.cb-override'), 'override offered from History too');
 
@@ -233,29 +239,23 @@ test('history: pausenote in head; expanded detail shows the banner; hist-resume 
   detailBanner.querySelector('.cb-override').click();
   await ctx.tick();
   ctx.window.document.querySelector('#confirm-ok').click();
-  await ctx.tick();
-  await ctx.tick();
+  await ctx.settle();
   const posts = ctx.fetchCalls.filter((c) => c.url.includes('/api/resume'));
   assert.equal(posts.length, 1);
   assert.deepEqual(JSON.parse(posts[0].opts.body), { pipelineId: 'h1', ignoreCostCap: true });
 });
 
-test('history: a budget-changed unblock re-enables a gated hist-resume', async () => {
-  const ENTRIES = [
-    { id: 'h2', title: 'Total cap', status: 'paused', pauseReason: 'cost_total', startedAt: '2026-01-01T00:00:00Z' },
-  ];
-  const ctx = await boot({
-    budget: blockedBudget(),
-    fetchHandler: (url) => (url.includes('/api/history') ? historyList(ENTRIES) : null),
-  });
+test('history: a budget-changed unblock re-enables the gated detail Resume', async () => {
+  const ctx = await boot({ budget: blockedBudget(), fetchHandler: pausedArms });
   ctx.showHistory();
   await ctx.tick();
-  assert.equal(ctx.window.document.querySelector('#history .hist-resume').disabled, true);
+  ctx.showDetail('k1', 'h2');
+  await ctx.settle();
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').disabled, true);
   ctx.box.budget = okBudget();
   ctx.recv({ type: 'budget-changed', action: null });
-  await ctx.tick();
-  await ctx.tick();
-  assert.equal(ctx.window.document.querySelector('#history .hist-resume').disabled, false);
+  await ctx.settle();
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').disabled, false);
 });
 
 test('reload parity: a hello-seeded paused run with pauseReason renders the banner', async () => {
@@ -290,5 +290,5 @@ test('reload parity: a hello-seeded paused run with pauseReason renders the bann
   // Without makeRun declaring the field, upsertRun's CREATE path drops it.
   assert.equal(ctx.window.__np.getRun('r9').pauseReason, 'cost_pipeline');
   assert.ok(card.querySelector('.cost-banner.cb-pipeline'), 'banner survives a reload');
-  assert.equal(card.querySelector('.pill-run .pill-text').textContent, 'Paused · cost limit');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · cost limit');
 });

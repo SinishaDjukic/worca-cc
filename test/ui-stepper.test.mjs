@@ -38,8 +38,7 @@ async function bootLive() {
   const selectProject = () => { const s = window.document.querySelector('#projectSelect'); s.value = PROJECT; s.dispatchEvent(new window.Event('change', { bubbles: true })); };
   const showRunning = () => { window.location.hash = '#running'; window.dispatchEvent(new window.Event('hashchange')); };
   const emit = (msg) => wsInstances[0]._fire('message', { data: JSON.stringify(msg) });
-  const chipText = () => window.document.querySelector('#run-list [data-run-id] .chip').textContent;
-  return { window, selectProject, showRunning, emit, chipText };
+  return { window, selectProject, showRunning, emit };
 }
 
 test('buildRunGraph renders one .col per manifest step with node labels', async () => {
@@ -86,7 +85,8 @@ test('the templates host .run-flow, not the retired .stages.compact', async () =
   const { window } = await bootLive();
   assert.equal(window.document.querySelectorAll('.stages.compact').length, 0, 'no .stages.compact in the DOM');
   assert.ok(window.document.querySelector('#run-card-tpl').content.querySelector('.run-flow'), 'run template hosts .run-flow');
-  assert.ok(window.document.querySelector('#hist-card-tpl').content.querySelector('.run-flow'), 'hist template hosts .run-flow');
+  // History's graph moved off the (now link-only) list card onto the detail screen.
+  assert.ok(window.document.querySelector('#hist-detail-tpl').content.querySelector('.run-flow'), 'hist detail template hosts .run-flow');
 });
 
 test('manifestFor falls back to the legacy default when state has no stepper', async () => {

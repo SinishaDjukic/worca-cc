@@ -1539,6 +1539,29 @@ app.get('/api/history/:key/:id/log', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/history/:key/:id/diff -> the run's persisted diff-patch.patch, inline
+// (text/x-diff). Exists only for runs that reached done (results are built on
+// the done path only); everything else 404s and the UI shows its empty state.
+// Key validation mirrors the /log route (:1529); the artifact read follows the
+// recovery-patch route's readRunArtifactText pattern (:1408) — the log routes
+// themselves use the specialized readRunLogText. The relPath is the CONSTANT
+// DIFF_PATCH_FILE: readRunArtifactText does not guard traversal, so no route may
+// ever pass user input there.
+// ---------------------------------------------------------------------------
+app.get('/api/history/:key/:id/diff', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const text = await readRunArtifactText(req.params.key, req.params.id, DIFF_PATCH_FILE);
+    if (text == null) return res.status(404).json({ error: 'no diff' });
+    res.type('text/x-diff').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/runs/:id?projectKey=...  (or ?projectDir=...)
 // ARCHIVE a FINISHED pipeline: reclaims everything on disk — its store folder,
 // its shared plan/review markdown, its artifacts index rows, and its local
@@ -2034,6 +2057,19 @@ app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
     const text = await readRunLogText(`workspaces/${req.params.id}`, req.params.runId);
     if (text == null) return res.status(404).json({ error: 'no log' });
     res.type('application/x-ndjson').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/workspaces/:id/runs/:runId/diff', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const text = await readRunArtifactText(`workspaces/${req.params.id}`, req.params.runId, DIFF_PATCH_FILE);
+    if (text == null) return res.status(404).json({ error: 'no diff' });
+    res.type('text/x-diff').send(text);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

@@ -57,14 +57,17 @@ test('a pending question shows pulsing "?" marker + parent roll-up', async () =>
   assert.equal(window.document.querySelector('#nav-running-rollup').hidden, false);
 });
 
-test('focus route shows only the selected card', async () => {
+test('#running/<id> opens the detail screen and leaves the list intact', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
   window.location.hash = 'running/auth-fix';
   window.dispatchEvent(new window.Event('hashchange'));
+  // The single-card focus view is gone (spec §7): #running/<id> is a second
+  // SCREEN now, so the list behind it still holds every run.
   const cards = window.document.querySelectorAll('#run-list .run-card');
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].dataset.runId, 'auth-fix');
+  assert.equal(cards.length, 2);
+  assert.ok(window.document.querySelector('#run-shell').classList.contains('detail-open'));
+  assert.equal(window.document.querySelector('#run-detail .rd-title').textContent, 'auth-fix');
 });
 
 test('a run finishing live lingers as a greyed child row, then drops once opened', async () => {
@@ -178,9 +181,11 @@ test('seed-on-first-hello: a pre-existing terminal run is NOT a lingerer', async
   assert.equal(rows.length, 0);
 });
 
-// v2: a live NON-pipeline run (e.g. a scan) still renders on the Overview (no
-// regression), but gets NO child tab (Q&A #1, pipeline-only tabs).
-test('a live non-pipeline run shows on Overview but has no child tab', async () => {
+// v2 + D7: a live NON-pipeline run (e.g. a scan) gets no child tab AND no
+// Overview card — Running is pipelines only, and a scan's progress belongs to its
+// wizard. This deliberately reverses the Q&A #3 carve-out the original of this
+// test locked in.
+test('a live non-pipeline run renders nowhere in Running', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('scan-1', { kind: 'scan' })] });
   const tabs = window.document.querySelectorAll('#nav-running-children .nav-child');
@@ -188,8 +193,8 @@ test('a live non-pipeline run shows on Overview but has no child tab', async () 
   window.location.hash = 'running';   // Overview only paints #run-list while on the Running view
   window.dispatchEvent(new window.Event('hashchange'));
   const cards = window.document.querySelectorAll('#run-list .run-card');
-  assert.equal(cards.length, 1, 'scan still renders as an Overview card');
-  assert.equal(cards[0].dataset.runId, 'scan-1');
+  assert.equal(cards.length, 0, 'and no Overview card either');
+  assert.ok(window.document.querySelector('#run-list .run-empty'), 'the list shows its empty state');
 });
 
 // Running badge split: green = running count, amber (with pause flag) = paused
@@ -261,12 +266,15 @@ test('run-created broadcast materializes a child row with project metadata', asy
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });
 
-// v3: finishing the FOCUSED run falls back to the Overview (Q&A #5).
-test('finishing the focused run falls back to Overview', async () => {
+// D8 (was Q&A #5): finishing the run whose DETAIL page is open no longer bounces
+// to the list — the page stays and goes terminal. The old single-card focus view
+// had to bounce because it rendered nothing once the run finished.
+test('finishing the open run keeps its detail page', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
   window.location.hash = 'running/auth-fix';
   window.dispatchEvent(new window.Event('hashchange'));
-  recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // focused run finishes
-  assert.equal(window.location.hash.replace(/^#/, ''), 'running', 'hash dropped to Overview');
+  recv({ type: 'done', runId: 'auth-fix', status: 'done' });        // open run finishes
+  assert.equal(window.location.hash.replace(/^#/, ''), 'running/auth-fix', 'no redirect');
+  assert.ok(window.document.querySelector('#run-shell').classList.contains('detail-open'));
 });

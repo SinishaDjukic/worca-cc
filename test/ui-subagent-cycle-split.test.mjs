@@ -64,15 +64,3 @@ test('cycleAwareLabel falls back to uiPhase when the stepper lacks the nodeId', 
   assert.equal(label(`s1_0${SEP}1`), 'Refine', 'resolved via uiPhase against the legacy default label');
 });
 
-test('renderSubsTree renders one step per cycle group with cycle-suffixed headers', async () => {
-  const { window } = await boot();
-  const panel = window.document.createElement('div');
-  panel.className = 'subs-panel';
-  const subs = [
-    { id: 'r0', nodeId: 's1_0', uiPhase: 'refine', cycle: 1, label: 'a', status: 'finished' },
-    { id: 'r1', nodeId: 's1_0', uiPhase: 'refine', cycle: 2, label: 'b', status: 'running' },
-  ];
-  window.__np.renderSubsTree(panel, window.__np.subsByNodeCycleArrays(subs), window.__np.cycleAwareLabel(STEPPER, subs));
-  const heads = [...panel.querySelectorAll('.subs-step-head b')].map((b) => b.textContent);
-  assert.deepEqual(heads, ['Refine Plan · cycle 1', 'Refine Plan · cycle 2']);
-});

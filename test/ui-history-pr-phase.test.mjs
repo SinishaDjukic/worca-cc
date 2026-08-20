@@ -58,17 +58,12 @@ const ROW = (over = {}) => ({
 
 const cardSel = (id, key) => `#history .hist-card[data-pipeline-id="${id}"][data-project-key="${key}"]`;
 
-test('history-pr OPEN batch swaps Create-PR -> "View PR" link in place, merge pill stays hidden', async () => {
+test('history-pr OPEN batch swaps Create-PR -> "View PR" link in place, without repainting the list', async () => {
   const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW()]) : null) });
   ctx.showHistory();
   await ctx.tick();
   const card = ctx.window.document.querySelector('#history .hist-card');
   assert.equal(card.querySelector('.hist-pr').hidden, true, 'Create-PR hidden until Phase-2 resolves (progressive reveal)');
-
-  // Expand the card first; the in-place patch must NOT collapse it (no full repaint).
-  card.querySelector('.hist-head').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  await ctx.tick();
-  assert.equal(card.querySelector('.hist-head').getAttribute('aria-expanded'), 'true');
 
   const token = ctx.prTokens().at(-1);
   assert.ok(token != null, 'client POSTed a load token');
@@ -79,8 +74,11 @@ test('history-pr OPEN batch swaps Create-PR -> "View PR" link in place, merge pi
   const link = card.querySelector('.hist-pr-link');
   assert.equal(link.getAttribute('href'), 'https://gh/x/pull/8');
   assert.equal(link.textContent, 'View PR');
-  assert.equal(card.querySelector('.hist-merge').hidden, true, 'mergeability pill stays hidden (clarification B)');
-  assert.equal(card.querySelector('.hist-head').getAttribute('aria-expanded'), 'true', 'expand survived the patch');
+  // The patch is IN PLACE: no full repaint (which would swap the node) and no
+  // navigation to the detail screen.
+  assert.equal(ctx.window.document.querySelector('#history .hist-card'), card, 'the card node itself survived the patch');
+  assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'history', 'the patch never navigates');
+  assert.equal(card.querySelector('.hist-merge'), null, 'the merge pill left the list card (detail-only now)');
 });
 
 test('history-pr MERGED batch renders a "Merged" link', async () => {
