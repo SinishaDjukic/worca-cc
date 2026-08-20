@@ -294,7 +294,7 @@ body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
 
-.input,.select,.textarea,
+.input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{
   width:100%;font-family:inherit;font-size:14px;color:var(--ink);
   background:var(--field);border:1.5px solid transparent;border-radius:var(--r-ctrl);
@@ -382,6 +382,78 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   font-family:inherit;font-weight:600;font-size:12.5px;cursor:pointer;color:var(--ink);white-space:nowrap;}
 .file .state{color:var(--ink-3);font-size:12.5px;}
 .file-load{display:inline-block;margin-top:8px;}
+
+/* extra-file pills: one removable pill per selected file, under the picker */
+.extras-pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;}
+.extra-pill{display:inline-flex;align-items:center;gap:5px;background:var(--field);border:1px solid var(--line-2);
+  color:var(--ink-2);font-weight:600;font-size:12px;padding:4px 6px 4px 12px;border-radius:999px;max-width:260px;}
+.extra-pill-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.extra-pill-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
+  font-size:14px;line-height:1;padding:3px 6px;border-radius:50%;transition:.15s;}
+.extra-pill-x:hover{color:var(--red-ink);background:var(--red-bg);}
+
+/* @-mention popup: attached-file completions anchored under the prompt caret */
+.mention-popup{position:fixed;z-index:70;min-width:180px;max-width:320px;max-height:210px;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow);padding:5px;}
+.mention-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--ink-2);
+  font-family:inherit;font-weight:500;font-size:12.5px;padding:7px 10px;border-radius:8px;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mention-item:hover{background:var(--field);}
+.mention-item.sel{background:var(--field);color:var(--ink);}
+
+/* @-mention highlighting: a textarea cannot colour part of its own text, so a
+   backdrop mirrors the text underneath it and paints the valid mentions. The
+   textarea keeps its glyphs (and its caret, selection, spellcheck and undo
+   stack) but renders them transparent; the backdrop carries the field fill it
+   gave up. .mention-ok sets COLOUR ONLY — any metric-affecting property would
+   advance the backdrop's glyphs differently and drift the two layers apart.
+
+   Two box-model choices, both load-bearing, neither optional:
+
+   1. The wrapper is inline-block, NOT block. A textarea is inline-block by UA
+      default, so the inline margin-top:11px on #prompt/#promptMarkdown does not
+      collapse today; a block wrapper would turn it into a collapsible block
+      margin that escapes through .source-pane and .field (neither has a border
+      or padding to stop it) and merges with the preceding margin-bottom:18px,
+      deleting the gap.
+   2. It deliberately does NOT set vertical-align. An inline-block with no
+      in-flow line boxes takes its baseline from its bottom margin edge
+      (CSS 2.1 s10.8.1), and the only in-flow child here is a display:block
+      textarea — whose internal content is a separate rendering context and
+      contributes no line box to the wrapper. So the wrapper resolves exactly
+      where the bare textarea did (whose UA overflow:auto gave it the same
+      rule). vertical-align:top would instead align it to the line-box top,
+      deleting the strut descent below it and shrinking #prompt-pane and
+      #markdown-pane by ~6px. Making the textarea display:block removes the
+      line box INSIDE the wrapper, which is what keeps the backdrop's height
+      equal to the textarea's. */
+.ta-hl{position:relative;display:inline-block;width:100%;}
+.ta-hl > textarea.textarea,
+.ta-hl > textarea.textarea:focus{display:block;position:relative;z-index:1;
+  background:transparent;color:transparent;caret-color:var(--ink);}
+.ta-hl > textarea.textarea::selection{background:rgba(25,25,27,.16);}
+/* font-weight/style/variant/stretch are the ONLY text-layout properties the two
+   layers do not already share: Chrome's UA `font: -webkit-small-control`
+   shorthand on <textarea> resets them, while this div would inherit them from
+   body (Poppins ships 400/500/600/700, so this is not hypothetical). Pin them to
+   the textarea's reset values. Do NOT pin letter-spacing/word-spacing/
+   text-indent/text-align/text-transform/tab-size — those are outside the font
+   shorthand, so both layers inherit them, and pinning would CREATE the
+   divergence it means to prevent. */
+.ta-hl-back{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  line-height:1.5;white-space:pre-wrap;overflow-wrap:break-word;border-color:transparent;
+  font-weight:400;font-style:normal;font-variant:normal;font-stretch:normal;}
+.ta-hl:focus-within .ta-hl-back{background:#fff;}
+.mention-ok{color:var(--blue-ink);}
+
+/* High Contrast forces the textarea's transparent text back to CanvasText while
+   its background stays transparent, so both layers' glyphs would paint at once,
+   and it flattens --blue-ink to black anyway. Opt the whole trick out. */
+@media (forced-colors: active){
+  .ta-hl-back{display:none;}
+  .ta-hl > textarea.textarea,
+  .ta-hl > textarea.textarea:focus{color:CanvasText;background:Canvas;}
+}
 
 /* switch */
 .switch-row{display:flex;align-items:center;gap:12px;}
