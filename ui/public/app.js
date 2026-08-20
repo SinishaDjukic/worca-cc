@@ -4375,6 +4375,7 @@ function syncSourceToggle() {
   el.promptPane.classList.toggle('hidden', plugin || val !== 'prompt');
   el.markdownPane.classList.toggle('hidden', plugin || val !== 'markdown');
   if (el.pluginSourcePane) el.pluginSourcePane.classList.toggle('hidden', !plugin);
+  refreshMentionHighlights();
 }
 el.sourceRadios.forEach((r) => r.addEventListener('change', syncSourceToggle));
 
@@ -4531,6 +4532,7 @@ el.mdFile.addEventListener('change', async () => {
   try {
     const text = await f.text();
     el.promptMarkdown.value = text;
+    scheduleMentionHighlight(el.promptMarkdown);
   } catch (e) {
     el.mdFileName.textContent = `failed to read: ${e.message}`;
   }
@@ -4566,6 +4568,8 @@ function renderExtrasPills() {
   el.extrasNote.textContent = extrasFiles.length
     ? `${extrasFiles.length} file(s) will be uploaded and copied into the pipeline's extras/ folder.`
     : 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
+  rebuildMentionIndex();
+  refreshMentionHighlights();
 }
 
 el.extras.addEventListener('change', () => {
@@ -4678,6 +4682,7 @@ function applyMention(name) {
   ta.setSelectionRange(pos, pos);
   closeMentionPopup();
   ta.focus();
+  scheduleMentionHighlight(ta);
 }
 
 function refreshMentionPopup(ta) {
@@ -4721,6 +4726,266 @@ function attachMentionAutocomplete(ta) {
 
 attachMentionAutocomplete(el.prompt);
 attachMentionAutocomplete(el.promptMarkdown);
+
+// ---------------------------------------------------------------------------
+// @-mention highlighting: a mention that names a currently-attached extra file
+// renders blue; everything else stays normal ink. A textarea cannot colour part
+// of its own text, so each one is wrapped in a `.ta-hl` and given a `.ta-hl-back`
+// backdrop that mirrors the same characters. The textarea sits on top with
+// transparent glyphs — it keeps the caret, selection, spellcheck, undo stack and
+// `.value` semantics; only the colour comes from underneath.
+// ---------------------------------------------------------------------------
+
+// Same left-boundary class mentionTokenAt uses (app.js:4610, verified
+// character-for-character), so "bob@example.com" is never a mention.
+// Deliberately duplicated rather than extracted: hoisting a shared const would
+// mean editing the autocomplete block this feature is not otherwise touching.
+const MENTION_LEFT_BOUNDARY = /[\s([{'"`,;:]/;
+// Punctuation that may TRAIL a mention — but only when it is itself terminal.
+const MENTION_RIGHT_PUNCT = /[)\]}'"`,;:.!?]/;
+// Past this, colouring is dropped and the backdrop becomes a plain mirror: a
+// pasted novel must not turn every keystroke into a full re-layout.
+const MENTION_HL_MAX_CHARS = 20000;
+
+// A mention ends cleanly at end-of-text, at whitespace, or at trailing
+// punctuation that is followed by end-of-text, whitespace, or more punctuation.
+// Punctuation glued to more name characters belongs to a LONGER name, so with
+// only "a.txt" attached, "@a.txt.bak" must light up nothing at all — it names a
+// file that is not here, and painting its prefix blue is exactly the false claim
+// this feature exists to prevent. The same test keeps "@a.txt.", "@a.txt,",
+// "@a.txt...", "(@a.txt)" and '"@a.txt".' blue.
+function mentionEndsCleanly(text, end) {
+  if (end >= text.length) return true;
+  const c = text[end];
+  if (/\s/.test(c)) return true;
+  if (!MENTION_RIGHT_PUNCT.test(c)) return false;
+  const n = text[end + 1];
+  return n === undefined || /\s/.test(n) || MENTION_RIGHT_PUNCT.test(n);
+}
+
+// Rebuilt only when the attachment set changes — never on the keystroke path.
+// Buckets are keyed by first character and sorted longest-first so the greedy
+// match is the first hit, not a search.
+let mentionIndex = { byFirstChar: new Map() };
+
+function rebuildMentionIndex() {
+  const byFirstChar = new Map();
+  for (const f of extrasFiles) {
+    const n = f && f.name;
+    if (!n) continue;
+    const bucket = byFirstChar.get(n[0]);
+    if (bucket) bucket.push(n); else byFirstChar.set(n[0], [n]);
+  }
+  for (const bucket of byFirstChar.values()) bucket.sort((a, b) => b.length - a.length);
+  mentionIndex = { byFirstChar };
+}
+
+// Flat [start, end, start, end, ...] ranges of valid mentions, each including
+// the leading "@". One left-to-right pass: indexOf skips ordinary text at native
+// speed and real work happens only at an "@", bounded by the number of attached
+// names sharing the next character. Progress is guaranteed: a match sets
+// i = end - 1 where end >= i + 2, so the next indexOf starts strictly ahead.
+function scanMentions(text) {
+  const marks = [];
+  const { byFirstChar } = mentionIndex;
+  if (!byFirstChar.size || !text) return marks;
+  let i = text.indexOf('@');
+  while (i >= 0) {
+    if (i === 0 || MENTION_LEFT_BOUNDARY.test(text[i - 1])) {
+      const bucket = byFirstChar.get(text[i + 1]);       // undefined when "@" is last
+      if (bucket) {
+        for (const name of bucket) {                    // longest first
+          const end = i + 1 + name.length;
+          if (text.startsWith(name, i + 1) && mentionEndsCleanly(text, end)) {
+            marks.push(i, end);
+            i = end - 1;                                // resume past the match
+            break;
+          }
+        }
+      }
+    }
+    i = text.indexOf('@', i + 1);
+  }
+  return marks;
+}
+
+// Resolved through `window.` like the ResizeObserver sites in this file
+// (app.js:1831, :1937): a bare lookup would miss a window-only test stub, and
+// jsdom 29.1.1 has no rAF at all (measured) — hence the macrotask fallback.
+const mentionRaf = (fn) =>
+  (typeof window.requestAnimationFrame === 'function'
+    ? window.requestAnimationFrame(fn)
+    : setTimeout(fn, 0));
+
+// One repaint per frame per textarea, at most.
+function scheduleMentionHighlight(ta) {
+  const st = ta && ta._mentionHl;
+  if (!st || st.queued) return;
+  st.queued = true;
+  mentionRaf(() => { st.queued = false; repaintMentionHighlight(ta); });
+}
+
+// `marks` is a flat [start, end, start, end, ...] list of ranges to paint blue,
+// each range including its leading "@". Task 2 fills it in; here it is empty.
+function paintMentionBackdrop(back, text, marks) {
+  const nodes = [];
+  let at = 0;
+  for (let k = 0; k < marks.length; k += 2) {
+    if (marks[k] > at) nodes.push(document.createTextNode(text.slice(at, marks[k])));
+    const span = document.createElement('span');
+    span.className = 'mention-ok';
+    span.textContent = text.slice(marks[k], marks[k + 1]);   // textContent, never innerHTML
+    nodes.push(span);
+    at = marks[k + 1];
+  }
+  if (at < text.length) nodes.push(document.createTextNode(text.slice(at)));
+  // A textarea reserves a line box for the caret position after a trailing
+  // newline, and shows one line when empty; a `white-space:pre-wrap` div drops
+  // the line box that would follow its LAST forced break. Add <br> in exactly
+  // those two cases and NOT otherwise: an unconditional <br> makes the backdrop
+  // one line-height TALLER than the textarea for every prompt that does not end
+  // in a newline, which breaks `ta.scrollHeight === back.scrollHeight` — the
+  // only reliable metric-drift detector this feature has. One <br> is enough
+  // for any number of trailing newlines, because only the final break's line
+  // box is dropped. <br> contributes nothing to textContent, so
+  // `back.textContent === ta.value` stays exactly true either way.
+  if (!text || text.endsWith('\n')) nodes.push(document.createElement('br'));
+  // Spread bound: the 20 000-char cap (Task 4) and a minimum mention length of
+  // 2 chars ("@" + a 1-char name) cap `marks` at 6 667 pairs, so `nodes` peaks
+  // near 13 335 — an order of magnitude under V8's ~65 535 argument limit.
+  back.replaceChildren(...nodes);
+}
+
+// The backdrop is `overflow:hidden`, which is still programmatically scrollable.
+function syncMentionScroll(ta) {
+  const st = ta._mentionHl;
+  if (st.back.scrollTop !== ta.scrollTop) st.back.scrollTop = ta.scrollTop;
+  if (st.back.scrollLeft !== ta.scrollLeft) st.back.scrollLeft = ta.scrollLeft;
+}
+
+// An overflowing textarea grows a scrollbar out of its own content width
+// (::-webkit-scrollbar is 10px here, style.css:769, and the rule is unqualified
+// so it applies to textareas). The backdrop does not scroll and so keeps that
+// strip, wrapping a column later than the textarea — a full line of divergence,
+// not a nudge. Hand it back the same width: with padding 13px 15px
+// (style.css:280) and paddingRight = 15 + 10, the backdrop's content box is
+// borderBox - 3 - 15 - 25 = borderBox - 43, and the textarea's is
+// clientWidth - 30 = (borderBox - 3 - 10) - 30 = borderBox - 43. Identical.
+//
+// offsetWidth and clientWidth are INTEGER-ROUNDED but the border is 1.5px a side
+// (style.css:279), so their difference for one and the same box reads 3 or 4
+// depending on where the fractional border edges snap. Taking that literally
+// writes a phantom 1px gutter with no scrollbar present, narrowing the
+// backdrop's content box and moving a wrap point — exactly the drift this
+// function exists to stop. The real scrollbar is 10px, so anything under 4px is
+// rounding noise. Under jsdom every geometry read is 0, `raw` is negative, and
+// nothing is written.
+function syncMentionGutter(ta) {
+  const st = ta._mentionHl;
+  const raw = ta.offsetWidth - ta.clientWidth - st.borderX;
+  const gutter = raw >= 4 ? Math.round(raw) : 0;
+  if (gutter !== st.gutter) {
+    st.gutter = gutter;
+    st.back.style.paddingRight = `${st.padRight + gutter}px`;
+  }
+}
+
+function repaintMentionHighlight(ta) {
+  const st = ta._mentionHl;
+  if (!st) return;
+  const text = ta.value;
+  const marks = text.length > MENTION_HL_MAX_CHARS ? [] : scanMentions(text);
+  const marksKey = marks.length ? marks.join(',') : '';
+  // Compared, never concatenated: a redundant trigger (a pane revealed, extras
+  // re-rendered with an unchanged set) must not allocate a copy of the prompt
+  // just to decide to do nothing.
+  if (text !== st.text || marksKey !== st.marksKey) {
+    paintMentionBackdrop(st.back, text, marks);
+    st.text = text;
+    st.marksKey = marksKey;
+  }
+  syncMentionGutter(ta);
+  syncMentionScroll(ta);
+}
+
+// Geometry-only refresh: no scan, no DOM rebuild. The metrics can change with
+// no `input` and no hook — dragging the resize grip, or a window resize adding
+// or removing the scrollbar. (.grid.single is minmax(0,864px) at style.css:260,
+// so the column really does narrow below an 864px viewport.)
+function syncMentionMetrics(ta) {
+  if (!ta || !ta._mentionHl) return;
+  syncMentionGutter(ta);
+  syncMentionScroll(ta);
+}
+
+function attachMentionHighlight(ta) {
+  if (!ta || ta._mentionHl) return;                       // idempotent
+  const cs = window.getComputedStyle(ta);                 // window.* — bare throws under jsdom
+  const num = (v) => parseFloat(v) || 0;                  // jsdom returns "0" / "medium" / ""
+  const wrap = document.createElement('div');
+  wrap.className = 'ta-hl';
+  const back = document.createElement('div');
+  back.className = 'ta-hl-back';
+  back.setAttribute('aria-hidden', 'true');               // the textarea is the accessible copy
+  // The margin must ride on the wrapper, or the textarea starts 11px below the
+  // backdrop's top edge (the backdrop is inset:0 on the wrapper's PADDING box,
+  // which excludes margins). `cs` is LIVE in a browser, so this loop must run
+  // BEFORE `ta.style.margin = '0px'` below — do not reorder. (jsdom snapshots
+  // it, so jsdom would not catch the mistake.) The wrapper is inline-block (see
+  // the CSS block), so this margin does not collapse away the way a block
+  // wrapper's would.
+  for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+    wrap.style[`margin${side}`] = cs[`margin${side}`] || '0px';
+  }
+  // In place: #markdown-pane keeps a sibling ".md file" row after its textarea,
+  // and the accordion suite pins the prompt's position in the form.
+  ta.parentNode.insertBefore(wrap, ta);
+  wrap.append(back, ta);                                  // backdrop first: it stacks below
+  ta.style.margin = '0px';
+  const st = ta._mentionHl = {
+    back,
+    queued: false,
+    text: null,
+    marksKey: null,
+    gutter: 0,
+    padRight: num(cs.paddingRight),
+    borderX: num(cs.borderLeftWidth) + num(cs.borderRightWidth),
+  };
+  ta.addEventListener('input', () => scheduleMentionHighlight(ta));
+  ta.addEventListener('scroll', () => syncMentionScroll(ta));
+  // A ResizeObserver on the textarea covers the grip drag and every reflow that
+  // changes its border box. Resolved through `window.` and typeof-guarded, like
+  // app.js:1831 / :1937 / :8514 — jsdom 29.1.1 has none (measured), and the one
+  // test that stubs it sets window.ResizeObserver only. (Full-page zoom is NOT
+  // covered and does not need to be: it scales device pixels, not the CSS-px
+  // boxes both layers are laid out in.)
+  if (typeof window.ResizeObserver === 'function') {
+    st.ro = new window.ResizeObserver(() => syncMentionMetrics(ta));
+    st.ro.observe(ta);
+  }
+  scheduleMentionHighlight(ta);
+}
+
+// Both textareas at once: called whenever the answer changed for reasons other
+// than typing — files added or removed, a pane or the view revealed.
+function refreshMentionHighlights() {
+  scheduleMentionHighlight(el.prompt);
+  scheduleMentionHighlight(el.promptMarkdown);
+}
+
+attachMentionHighlight(el.prompt);
+attachMentionHighlight(el.promptMarkdown);
+
+// A webfont swap changes the line count without changing the textarea's box, so
+// no ResizeObserver fires — but a scrollbar can appear or vanish. jsdom has no
+// document.fonts at all (measured), hence the truthiness guard before the
+// optional chain.
+if (document.fonts && typeof document.fonts.ready?.then === 'function') {
+  document.fonts.ready.then(() => {
+    syncMentionMetrics(el.prompt);
+    syncMentionMetrics(el.promptMarkdown);
+  }).catch(() => { /* font loading is best-effort; the next keystroke re-syncs */ });
+}
 
 // Read a File as base64 (without the data: URL prefix).
 function fileToBase64(file) {
@@ -10738,7 +11003,7 @@ function showView(name, param = '') {
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
-  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); }
+  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights(); }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
