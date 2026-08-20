@@ -65,6 +65,15 @@ body{
 .app{display:flex;height:100vh;}
 
 /* ---------- Sidebar ---------- */
+/* `width` is inert while .app is a flex row — flex-basis determines the used
+   main size, and that is what actually animates (measured: 298 -> 270.8 ->
+   125.1 -> 76 over 200ms). `width` is listed too so the fallback path animates
+   if the flex context ever changes. It must stay a TRANSITION: the blanket at
+   :905 kills every transition under prefers-reduced-motion, but only four
+   selectors' animations.
+   This comment is deliberately OUTSIDE the braces. ruleBody() in
+   test/ui-pinned-sidebar.test.mjs:16-20 captures up to the first closing brace,
+   so a comment inside a rule body truncates the capture. */
 .sidebar{
   width:298px;flex:0 0 298px;
   background:var(--panel);
@@ -72,8 +81,10 @@ body{
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
   overflow-y:auto;
+  transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
+             width .2s cubic-bezier(.65,.02,.28,1);
 }
-.brand{display:flex;align-items:center;padding:0 8px;margin-bottom:24px;}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;margin-bottom:24px;}
 .brand .logo{height:36px;width:auto;display:block;}
 
 .nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;}
@@ -2503,6 +2514,201 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .stop-confirm:hover{filter:brightness(.97);}
 .stop-confirm:disabled{opacity:.6;cursor:default;}
 .stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---------- Collapsible sidebar: the 76px icon rail ---------- */
+/* No rule here restyles anything the expanded 298px column already had: 21 of
+   the 39 are scoped under `.sidebar.collapsed`, and the other 18
+   (`.brand .logo-mark`, `.side-toggle*`, `.nav .rail-tile*`, `.spend-ring*`)
+   style nodes that exist only because of this feature. The <1080px breakpoint
+   (:920-922) still hides the sidebar outright and hands over to .topnav —
+   collapse is a preference that only exists above it, and the two never overlap.
+   HOUSE RULE for this whole block: no comment inside a rule body, and no
+   closing brace in any comment — ruleBody() stops its capture at the first one
+   and both would break the tests. */
+.brand .logo-mark{display:none;width:32px;height:32px;border-radius:50%;}
+.side-toggle{display:flex;align-items:center;justify-content:center;
+  width:30px;height:30px;flex:0 0 auto;padding:0;border:0;border-radius:9px;
+  background:transparent;color:var(--ink-3);cursor:pointer;}
+.side-toggle svg{width:17px;height:17px;}
+.side-toggle:hover{background:var(--field);color:var(--ink);}
+.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* 76 - 1px border-right - 36px padding = a 39px content box. But
+   ::-webkit-scrollbar (:898) makes the vertical gutter SPACE-CONSUMING, and the
+   rail's own scroll height is ~967px with four runs — on a 900px window that
+   gutter takes another 10px and shoves the icon column 5px off centre. Suppress
+   it here only; the rail still scrolls by wheel and keyboard, and the base
+   overflow-y is deliberately NOT restated (a test asserts it isn't). */
+.sidebar.collapsed{width:76px;flex:0 0 76px;padding:22px 18px 18px;
+  scrollbar-width:none;}
+.sidebar.collapsed::-webkit-scrollbar{width:0;height:0;}
+.sidebar.collapsed .brand{flex-direction:column;gap:6px;margin-bottom:8px;padding:0;}
+.sidebar.collapsed .logo{display:none;}
+.sidebar.collapsed .logo-mark{display:block;}
+.sidebar.collapsed .side-toggle{width:40px;height:40px;margin:10px 0 8px;border-radius:12px;}
+/* The mock's two chevrons are exact mirror images of one path (verified:
+   reflecting M15 6l-5 6 5 6M7 5v14 about x=12 gives M9 6l5 6-5 6M17 5v14, which
+   is byte-for-byte the mock's collapsed glyph at Worca Running.dc.html:136), so
+   one glyph plus a flip keeps the states from ever drifting apart. */
+.sidebar.collapsed .side-toggle svg{width:18px;height:18px;transform:scaleX(-1);}
+
+/* `:not(.rail-tile)` is LOAD-BEARING on both rules below. Run tiles are
+   <button>s inside .nav, so without the guard the first rule would force them
+   to 40x40 and the second would hide their .child-dot and .child-q — the two
+   things a tile exists to show. `:not()` contributes its argument's
+   specificity, so the first rule is (0,4,1) and out-ranks `.nav button`
+   (:91, 0,1,1), `.nav button:hover` (:100, 0,2,1) and `.nav button.nav-cta`
+   (:109, 0,2,1). `flex:0 0 auto` is NOT decoration: .nav is a column flex
+   container whose items default to shrinkable, and these boxes are fixed-size
+   by design. */
+.sidebar.collapsed .nav{align-items:center;gap:6px;}
+.sidebar.collapsed .nav button:not(.rail-tile){position:relative;flex:0 0 auto;
+  width:40px;height:40px;padding:0;gap:0;justify-content:center;border-radius:12px;}
+/* NOT display:none. This span is the ONLY source of an accessible name for
+   every nav button — index.html carries no aria-label on any of the 12 and the
+   SVGs carry no title element — and display:none removes it from the
+   accessibility tree. Measured in Chrome: eleven buttons announced with no
+   name, and Running announced as "4" (the count span survives, so
+   name-from-contents wins). Same visually-hidden recipe as .sr-only
+   (:1603-1604), plus the clip-path .sr-only does not carry — `clip` is
+   deprecated and its successor is what modern engines honour. position:absolute
+   takes it out of flow, so the 40px square still centres its glyph, and the
+   button above is position:relative. Both
+   nav-count badges carry .nav-count, so the two :not() guards keep this off
+   them, and the child combinator keeps it off the nested nav-paused-count. */
+.sidebar.collapsed .nav button:not(.rail-tile) > span:not(.nav-count):not(.nav-rollup){
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
+/* New pipeline is the one filled control on the rail; outlined-at-rest only
+   makes sense next to labels. These are (0,4,1) and (0,5,1), so they outrank
+   `.nav button:hover` (:100, 0,2,1), `.nav button.nav-cta` (:109, 0,2,1),
+   `.nav button.nav-cta:hover` (:111, 0,3,1) and `.nav button.nav-cta.active`
+   (:112, 0,3,1). Without its own hover the rail's only filled control is
+   hover-dead: the (0,4,1) fill would beat the (0,3,1) hover and nothing would
+   change. brightness() keeps the mock's darker-on-hover intent inside the
+   palette, and matches ten existing hover rules in this file. */
+.sidebar.collapsed .nav button.nav-cta{background:var(--ink);color:#fff;}
+.sidebar.collapsed .nav button.nav-cta svg{stroke:#fff;}
+.sidebar.collapsed .nav button.nav-cta:hover{filter:brightness(.55);}
+
+/* Section headers keep their text node — ui-nav-sections.test.mjs:26-35 asserts
+   the source order. (They are not exposed as named a11y nodes in either state,
+   so that is NOT the reason.) 26px hairline, per the mock. */
+.sidebar.collapsed .nav-sect{width:26px;height:1px;margin:10px auto;padding:0;
+  font-size:0;letter-spacing:0;background:var(--line);overflow:hidden;}
+.sidebar.collapsed .nav-sep{width:26px;margin-top:auto;}
+
+.sidebar.collapsed .nav-count{position:absolute;top:-2px;right:-2px;margin:0;
+  min-width:17px;height:17px;padding:0 4px;font-size:10px;
+  border:2px solid var(--panel);}
+/* Two rules, not one grouped selector: grouped, the only thing a test can reach
+   is the selector TEXT, and that assertion was proven vacuous. A grey zero
+   pinned to a 40px square is noise, and the paused pill would land in the same
+   corner as the live count. #nav-paused-badge has no rule of its own anywhere
+   in this file today — it is styled by .nav-count.n-paused (:125) — so this is
+   its first, and an id keeps it at (1,2,0), well clear of the badge rule above
+   and of `.nav-count[hidden]`. The paused signal is not lost: every paused run
+   still shows its amber dot on its own tile, and updateNavCounts puts the
+   number in the button's title AND aria-label. */
+.sidebar.collapsed .nav-count.n-grey{display:none;}
+.sidebar.collapsed #nav-paused-badge{display:none;}
+/* The 2px ring is what both sibling markers on the rail get (`.child-dot` and
+   `.child-q` below) and for the same reason. The dot's centre sits at 37,37 on a
+   40px square whose corner arc is centred 28,28 with r=12, and sqrt(9^2+9^2) is
+   12.73 — so more than half the dot overhangs the button, onto the white
+   sidebar, in the #fff that `.nav button.active .nav-rollup` (:140) gives it
+   while Running is the current view. Measured in Chrome: a faint crescent
+   instead of an alert. Everything here is border-box (:52), so the ring eats
+   into the 8px, it does not grow it. */
+.sidebar.collapsed .nav-rollup{position:absolute;right:-1px;bottom:-1px;margin:0;
+  border:2px solid var(--panel);}
+
+.sidebar.collapsed .side-foot{align-items:center;gap:8px;
+  padding-top:12px;border-top:1px solid var(--line);}
+
+/* ---- rail run tiles ---- */
+/* Scoped `.nav .rail-tile` (0,2,0) for the same reason `.nav .nav-child` is
+   scoped (:149-155): it has to outrank the generic `.nav button` (:91, 0,1,1).
+   `padding` and `gap` must be restated — the collapsed `padding:0` rule
+   deliberately excludes `.rail-tile`, so a tile would otherwise inherit
+   `padding:11px 13px` and hold its initials in an 8px content box.
+   `flex:0 0 auto` keeps the fixed 36px box out of the column flex shrink. */
+.sidebar.collapsed .nav-children{align-items:center;gap:5px;margin-top:5px;}
+.nav .rail-tile{position:relative;display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;flex:0 0 auto;padding:0;gap:0;
+  border:1.5px solid var(--line-2);border-radius:11px;
+  background:var(--panel);color:var(--ink-2);
+  font-family:var(--mono);font-size:11.5px;font-weight:400;cursor:pointer;
+  transition:border-color .15s,background .15s,color .15s;}
+/* `.nav button:hover` (:100) is (0,2,1) and OUT-SPECIFIES the (0,2,0) rule above,
+   so background and color have to be restated here at (0,3,0) or a hovered tile
+   turns var(--field) grey with var(--ink) initials. The mock's hover changes the
+   border only. Specificity is decided before source order — putting this rule
+   later cannot fix it. */
+.nav .rail-tile:hover{background:var(--panel);border-color:var(--ink);color:var(--ink-2);}
+/* Three (0,3,0) rules in a row, so SOURCE ORDER decides between them:
+   `:hover` first, `.lingering` next (a hovered lingering tile stays grey), and
+   `.active` last (a selected lingering tile must not render --ink-3 text on an
+   --ink fill). `.active` also has to beat `.nav button.active` (:101, 0,2,1),
+   which it does on class count. The expanded row gets the same precedence for
+   free, on specificity: `.nav .nav-child.active` (:177) is (0,3,0) and
+   `.nav-child.lingering` (:178) is only (0,2,0). */
+.nav .rail-tile.lingering{color:var(--ink-3);}
+.nav .rail-tile.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+.nav .rail-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* No `box-sizing:content-box`: the global border-box (:52) makes this a 9px
+   total — a 5px core inside a 2px panel ring, exactly the mock. content-box
+   would make it 13px, and 15.3px at the dotpulse peak, on a 36px tile. The
+   colour classes (:197-204) are UNSCOPED (0,2,0), so the tile's dot inherits its
+   family and its pulse for free, and this (0,3,0) rule still wins on geometry.
+   Reduced motion does NOT reach that pulse, here or on the expanded row:
+   `.child-dot{animation:none}` in the block at :914-915 is (0,1,0) and loses to
+   `.child-dot.peach{animation:dotpulse}` (0,2,0), and `.nav-rollup` is not on
+   that kill list at all. Both are pre-existing and out of this change's scope. */
+.nav .rail-tile .child-dot{position:absolute;right:-2px;bottom:-2px;margin:0;
+  width:9px;height:9px;border:2px solid var(--panel);}
+/* `margin:0` overrides the base .child-q's margin-left:6px (:207-211), which
+   would otherwise shove this absolutely-positioned badge off the corner. The
+   base `animation:pulse` is kept on purpose — a run waiting on you should
+   pulse — and the block at :914-915 names .child-q, which DOES reach it: both
+   are (0,1,0) and the kill list comes later in the file. */
+.nav .rail-tile .child-q{position:absolute;top:-5px;right:-5px;margin:0;
+  display:flex;align-items:center;justify-content:center;
+  width:15px;height:15px;border:2px solid var(--panel);border-radius:50%;
+  background:var(--amber);color:#fff;font-size:9px;font-weight:700;}
+
+/* ---- rail budget ring ---- */
+/* `.spend-ring` (0,1,0) ties `.spend-ind` (:1607-1608, 0,1,0) and wins the tie
+   on source order, which is what lets it override display / width / text-align /
+   border / border-radius / background / padding. The band rules at :1618-1622
+   are `.spend-ind.warn .spend-ind-meter` and friends — they style DESCENDANTS
+   the ring does not have, so they cannot reach it. `.spend-ind:focus-visible`
+   (:1610) is already identical to what a `.spend-ring:focus-visible` would say,
+   so no such rule is written. `:hover` is the one case order cannot fix. */
+.spend-ring{--ring-pct:0;--ring-fill:var(--blue-ink);--ring-track:var(--blue-bg);
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  width:38px;height:38px;padding:0;border:0;border-radius:50%;cursor:pointer;
+  background:conic-gradient(var(--ring-fill) 0% calc(var(--ring-pct) * 1%),
+                            var(--ring-track) 0%);}
+/* `.spend-ind:hover` (:1609, background:var(--line)) is (0,2,0) and
+   OUT-SPECIFIES a bare `.spend-ring` (0,1,0) — measured in Chrome: hovering set
+   background-image to `none` and the disc to a flat neutral fill, destroying the
+   arc. Specificity is decided before source order, so the gradient has to be
+   restated at (0,2,0). brightness() supplies the hover feedback the flat fill
+   used to. */
+.spend-ring:hover{background:conic-gradient(var(--ring-fill) 0% calc(var(--ring-pct) * 1%),
+                                            var(--ring-track) 0%);
+  filter:brightness(.96);}
+.spend-ring.warn{--ring-fill:var(--amber-ink);--ring-track:var(--amber-bg);}
+.spend-ring.over{--ring-fill:var(--red-ink);--ring-track:var(--red-bg);}
+/* No total limit means no denominator: a flat neutral ring, and the centre shows
+   the amount instead of a percentage nothing backs. var(--ink-3), not
+   var(--line) — var(--line) on var(--panel) is ~1.1:1 across a 5px annulus, i.e.
+   an absent ring, which is not the same thing as a neutral one. */
+.spend-ring.no-limit{--ring-fill:var(--ink-3);--ring-track:var(--ink-3);}
+.spend-ring-val{display:flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:50%;background:var(--panel);
+  font-family:var(--mono);font-size:9.5px;color:var(--ink-2);}
 
 /* ---------- reduced motion for the Running redesign ---------- */
 /* MUST be the LAST block in the file: @media contributes no specificity, so a

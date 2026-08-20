@@ -218,6 +218,58 @@ export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt =
   return btn;
 }
 
+/** Compact centre label for the ring: $4 · $317 · $3.2k · $12k. Four glyphs is
+ *  what fits inside a 28px disc at 9.5px mono.
+ *  NAME: `ringAmount`, not `compactUsd` — this module ALREADY declares
+ *  `compactUsd(fmt, v)` at :382 (the spend-chart y-axis formatter), and a second
+ *  top-level function declaration in an ES module is a fatal SyntaxError, not a
+ *  shadow: it takes down stats-view.mjs, app.js and the whole UI. */
+function ringAmount(n) {
+  const v = n || 0;
+  if (v >= 9950) return `$${Math.round(v / 1000)}k`;
+  // The ROUNDED value decides: 999.5 would otherwise fall through and render
+  // "$1000", five glyphs in a four-glyph disc.
+  if (Math.round(v) >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+  return `$${Math.round(v)}`;
+}
+
+/** Collapsed-rail budget ring — the sidebar indicator's 38px twin.
+ *  Keeps the `spend-ind` class because app.js routes the sidebar spend click
+ *  through `closest('.spend-ind')` (app.js:517). The arc percentage travels as the
+ *  custom property `--ring-pct` and the gradient is composed in the stylesheet,
+ *  so there is one definition of it and the cascade can swap the band colours by
+ *  class. With no total limit there is no denominator, so the ring shows a flat
+ *  neutral track and the amount rather than a fabricated percentage. */
+export function renderBudgetRing(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+  const b = budget || {};
+  const btn = h(doc, 'button', 'spend-ind spend-ring');
+  btn.type = 'button';
+  btn.dataset.nav = 'stats';
+  const hasLimit = b.totalLimitUsd != null;
+  const ratio = hasLimit ? b.windowSpendUsd / b.totalLimitUsd : 0;
+  // Clamped both ways: over-cap spend must not sweep past a full circle, and a
+  // refund must not sweep a negative arc.
+  const pct = b.blocked ? 100 : Math.max(0, Math.min(100, Math.round(ratio * 100)));
+
+  // `no-limit` is tested FIRST, unlike renderBudgetIndicator, which tests
+  // `blocked` first. Not a divergence: src/core/cost-budget.mjs:90 is
+  // `blocked = totalLimitUsd != null && windowSpendUsd >= totalLimitUsd`, and
+  // budgetStatus() is the only producer the UI ever sees, so a no-limit budget
+  // can never arrive blocked. Do not "fix" the order.
+  if (!hasLimit) btn.classList.add('no-limit');
+  else if (b.blocked) btn.classList.add('over');
+  else if (ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
+
+  btn.style.setProperty('--ring-pct', String(hasLimit ? pct : 0));
+  btn.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
+    (hasLimit ? ` of ${fmt.usd(b.totalLimitUsd)}` : ' — no total limit') +
+    ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate ` +
+    `(total_cost_usd), not authoritative billing`;
+  btn.appendChild(h(doc, 'span', 'spend-ring-val',
+    hasLimit ? `${pct}%` : ringAmount(b.windowSpendUsd)));
+  return btn;
+}
+
 /** Settings budget readout: meter + one summary line. */
 export function renderBudgetReadout(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
   const b = budget || {};
