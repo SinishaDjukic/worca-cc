@@ -2353,11 +2353,11 @@ function composerWfDomains() {
 function composerRenderList() {
   const listEl = composer.els.list, cntEl = composer.els.count;
   listEl.innerHTML = '';
-  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' pipeline' : ' pipelines');
+  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' workflow' : ' workflows');
   // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
   // domain shows an empty list under the chips, not the "no pipelines yet" copy.
   if (!composer.saved.length) {
-    listEl.innerHTML = '<div class="pl-empty">No saved pipelines yet — build one above and hit "Save pipeline".</div>';
+    listEl.innerHTML = '<div class="pl-empty">No saved workflows yet — build one above and hit "Save workflow".</div>';
     return;
   }
   // Domain filter chip row, inserted just before the list (reused across renders).
@@ -2395,7 +2395,7 @@ function composerRenderList() {
           `<div class="pl-meta">${meta}</div>` +
           `<div class="pl-chips">${chips}</div>` +
         `</div>` +
-        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
+        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
       `</div>` +
       `<div class="pl-body"></div>`;
     listEl.appendChild(wrap);

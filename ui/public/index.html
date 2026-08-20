@@ -46,7 +46,7 @@
           <div class="nav-sect">Build</div>
           <button type="button" data-nav="composer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
-            <span>Pipeline Composer</span>
+            <span>Workflow Composer</span>
           </button>
           <button type="button" data-nav="agents">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
@@ -193,32 +193,30 @@
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Task source switch and the workflow that will act on it, on one
-                     row — same proportion as Target/Project above. The panes below
-                     span the full width. -->
-                <div class="split-row">
-                  <div class="field field-compact">
-                    <label>Task source</label>
-                    <div class="seg" id="source-seg">
-                      <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
-                      <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
-                    </div>
-                    <!-- hidden radios kept as the source of truth read at submit -->
-                    <input type="radio" name="source" value="prompt" checked hidden />
-                    <input type="radio" name="source" value="markdown" hidden />
+                <!-- Workflow picker (Default + saved). app.js populates from GET
+                     /api/workflows. Choosing a workflow is a run decision, so it
+                     stays here; tuning its agents is not, and lives in Advanced.
+                     Own full-width line ABOVE the task source: the workflow frames
+                     what the run does, the source only says how the task arrives. -->
+                <div class="field field-compact">
+                  <label for="workflowSelect">Workflow</label>
+                  <div class="select-wrap">
+                    <select id="workflowSelect" class="select" aria-label="Workflow">
+                      <option value="wf_default">Default</option>
+                    </select>
                   </div>
+                </div>
 
-                  <!-- Workflow picker (Default + saved). app.js populates from GET
-                       /api/workflows. Choosing a workflow is a run decision, so it
-                       stays here; tuning its agents is not, and lives in Advanced. -->
-                  <div class="field field-compact">
-                    <label for="workflowSelect">Workflow</label>
-                    <div class="select-wrap">
-                      <select id="workflowSelect" class="select" aria-label="Workflow">
-                        <option value="wf_default">Default</option>
-                      </select>
-                    </div>
+                <!-- Task source switch; the panes below span the full width. -->
+                <div class="field field-compact">
+                  <label>Task source</label>
+                  <div class="seg" id="source-seg">
+                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
                   </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="source" value="prompt" checked hidden />
+                  <input type="radio" name="source" value="markdown" hidden />
                 </div>
 
                 <div class="field">
@@ -888,12 +886,12 @@
         </section>
         <!-- /view agent-create -->
 
-        <!-- ===== VIEW: PIPELINE COMPOSER ===== -->
+        <!-- ===== VIEW: WORKFLOW COMPOSER ===== -->
         <section class="view hidden" data-view="composer">
           <div class="topbar">
             <div>
-              <h1>Pipeline Composer</h1>
-              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a pipeline</div>
+              <h1>Workflow Composer</h1>
+              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a workflow</div>
             </div>
             <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">Reset to default</button>
           </div>
@@ -902,7 +900,7 @@
             <div class="palette">
               <span class="p-label">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
-                Agents · drag onto the canvas to build your pipeline
+                Agents · drag onto the canvas to build your workflow
                 <input id="composer-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or description">
               </span>
               <div id="composer-palette" style="display:contents"></div>
@@ -931,14 +929,14 @@
               <button type="button" class="btn-ghost" id="composer-clear" style="padding:10px 18px">Clear canvas</button>
               <button type="button" class="btn-go" id="composer-save">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                Save pipeline
+                Save workflow
               </button>
             </div>
           </section>
 
           <section class="card saved-card">
             <div class="saved-head">
-              <div><b>Saved pipelines</b><span class="cnt" id="composer-saved-count"></span></div>
+              <div><b>Saved workflows</b><span class="cnt" id="composer-saved-count"></span></div>
             </div>
             <div class="saved-list" id="composer-saved-list"></div>
           </section>

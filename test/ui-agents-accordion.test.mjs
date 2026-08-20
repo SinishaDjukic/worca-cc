@@ -558,17 +558,21 @@ test('flipping the target swaps the picker in place, leaving the switch put', as
   assert.equal(doc.querySelector('#target-seg').closest('.field'), segBefore, 'the switch must not move');
 });
 
-test('the task-source switch shares its row with the workflow picker, same proportion', async () => {
+test('the workflow picker owns the line above the task-source switch', async () => {
   const { window } = await boot();
   const doc = window.document;
-  const row = doc.querySelector('#source-seg').closest('.split-row');
-  assert.ok(row, 'the task source must sit in a split row');
-  assert.ok(row.querySelector('#workflowSelect'), 'the workflow picker shares that row');
-  // Both rows use one class, so the two proportions cannot drift apart.
-  assert.equal(doc.querySelector('#target-seg').closest('.split-row').className,
-    row.className, 'target and task rows must use the same row class');
-  // The textarea is NOT in the row — it spans the full width below it.
-  assert.ok(!row.querySelector('#prompt'), 'the prompt box must not be squeezed into the row');
+  const wfField = doc.querySelector('#workflowSelect').closest('.field');
+  const srcField = doc.querySelector('#source-seg').closest('.field');
+  assert.ok(wfField && srcField);
+  assert.notEqual(wfField, srcField, 'the workflow picker gets its own line');
+  assert.ok(!doc.querySelector('#source-seg').closest('.split-row'),
+    'the task source no longer shares a split row');
+  assert.ok(!wfField.querySelector('#source-seg'), 'nothing else rides the workflow line');
+  // Workflow first, task source under it.
+  assert.equal(wfField.compareDocumentPosition(srcField) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    window.Node.DOCUMENT_POSITION_FOLLOWING, 'the workflow picker sits above the task source');
+  // The textarea is NOT on either line — it spans the full width below them.
+  assert.ok(!srcField.querySelector('#prompt'), 'the prompt box must not be squeezed into the row');
 });
 
 test('the promoted fields sit in the intended order around the task box', async () => {
