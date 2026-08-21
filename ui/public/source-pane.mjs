@@ -34,13 +34,62 @@ function collectInputs(pane) {
   return inputs;
 }
 
-function taskRow(doc, t) {
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/**
+ * Task timestamps read as "how stale is this", so recent ones are relative
+ * ("3d ago") and older ones absolute ("28 May") — past a week, relative time
+ * stops distinguishing two tickets from each other. Always LOCAL time: the
+ * contract carries UTC ISO strings, and printing the Z value would be an hour
+ * or two off for most readers.
+ * @returns {{ text: string, title: string }} short label + full-precision hover
+ */
+export function formatUpdated(iso, now = Date.now()) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { text: String(iso), title: String(iso) };
+  const title = d.toLocaleString(undefined, {
+    day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const age = now - d.getTime();
+  let text;
+  if (age < 0 || age < MINUTE) text = 'just now';        // clock skew reads as "now"
+  else if (age < HOUR) text = `${Math.floor(age / MINUTE)}m ago`;
+  else if (age < DAY) text = `${Math.floor(age / HOUR)}h ago`;
+  else if (age < 7 * DAY) text = `${Math.floor(age / DAY)}d ago`;
+  else {
+    const sameYear = d.getFullYear() === new Date(now).getFullYear();
+    text = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
+  }
+  return { text, title };
+}
+
+function taskRow(doc, t, now) {
   const row = h(doc, 'div', 'sp-row');
   row.dataset.taskId = t.id;
-  row.appendChild(h(doc, 'span', 'sp-row-title', t.title));
+  // The id goes INSIDE the title span, not beside it: .sp-row is a
+  // space-between flex with exactly two children, so a third would spread all
+  // three across the row. Prefixing t.title in the connector would be worse
+  // still — that string also feeds the preview header and sourceMeta.title,
+  // which is stored on the pipeline and shown as provenance.
+  const title = h(doc, 'span', 'sp-row-title');
+  const id = t.id == null ? '' : String(t.id);
+  const text = t.title == null ? '' : String(t.title);
+  if (id && !text.startsWith(id)) title.appendChild(h(doc, 'span', 'sp-key', id));
+  title.appendChild(doc.createTextNode(text));
+  row.appendChild(title);
   const meta = h(doc, 'span', 'sp-row-meta');
   for (const l of t.labels || []) meta.appendChild(h(doc, 'span', 'sp-label', l));
-  if (t.updatedAt) meta.appendChild(h(doc, 'span', 'sp-updated mono', t.updatedAt));
+  if (t.updatedAt) {
+    // Say WHICH date it is: the summary contract carries only a last-modified
+    // time, so a bare date leaves the reader guessing created-vs-updated.
+    const { text, title } = formatUpdated(t.updatedAt, now);
+    const el = h(doc, 'span', 'sp-updated', `updated ${text}`);
+    el.title = `Updated ${title}`;
+    el.dataset.updatedAt = t.updatedAt;
+    meta.appendChild(el);
+  }
   row.appendChild(meta);
   return row;
 }
@@ -51,10 +100,15 @@ function taskRow(doc, t) {
 // dropdown populated ONCE on first focus via call(optionsFrom) (promise kept on
 // ._load for deterministic tests); task-browser -> debounced (300ms) search +
 // result list + preview (call getTask on pick) + hidden selected taskId.
-export function renderSourcePane(source, { call, doc = globalThis.document, timers } = {}) {
+export function renderSourcePane(source, { call, doc = globalThis.document, timers, now } = {}) {
+  const clock = typeof now === 'function' ? now : () => Date.now();
   const pane = h(doc, 'div', 'sp-pane');
   pane.dataset.plugin = source.plugin;
   pane.dataset.sourceId = source.sourceId;
+  // Set by the task-browser branch below; re-runs the listing with whatever
+  // the other inputs currently hold. Declared out here because those inputs
+  // may be built BEFORE the browser they filter.
+  let rerun = null;
   for (const input of source.inputs || []) {
     const field = h(doc, 'div', 'field');
     field.appendChild(h(doc, 'label', '', input.label || input.key));
@@ -111,17 +165,25 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
       const runSearch = async (text) => {
         results.replaceChildren(h(doc, 'div', 'hint', 'Searching…'));
         try {
-          const r = await call('listTasks', { inputs: collectInputs(pane), search: text });
+          const inputs = collectInputs(pane);
+          const r = await call('listTasks', { inputs, search: text });
           results.replaceChildren();
           const tasks = (r && r.tasks) || [];
-          for (const t of tasks) results.appendChild(taskRow(doc, t));
-          if (!tasks.length) results.appendChild(h(doc, 'div', 'hint', 'No tasks matched.'));
+          for (const t of tasks) results.appendChild(taskRow(doc, t, clock()));
+          if (!tasks.length) {
+            // Nothing asked for is not the same as nothing found — a source may
+            // legitimately list nothing until it is given something to go on.
+            const asked = text || Object.values(inputs).some((v) => String(v || '').trim());
+            results.appendChild(h(doc, 'div', 'hint', asked ? 'No tasks matched.' : 'Type to search.'));
+          }
         } catch (e) {
           results.replaceChildren(h(doc, 'div', 'hint err', `search failed: ${e.message}`));
         }
       };
       const debounced = debounce(runSearch, 300, timers);
       search.addEventListener('input', () => debounced(search.value.trim()));
+      rerun = () => debounced(search.value.trim());
+      pane._search = runSearch;                  // deterministic awaiting in tests
       results.addEventListener('click', (e) => {
         const row = e.target.closest('.sp-row');
         if (!row) return;
@@ -143,7 +205,116 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
     }
     pane.appendChild(field);
   }
+  // A filter the user types must actually take effect: every non-browser input
+  // re-runs the listing. Without this, editing a JQL/filter field changed
+  // nothing until you also touched the search box, which reads as "my filter
+  // is ignored". 'change' covers <select>, 'input' covers text; the shared
+  // debounce collapses the two when a browser fires both.
+  if (rerun) {
+    for (const node of pane.querySelectorAll('[data-input-key]')) {
+      if (node.classList.contains('sp-task-browser')) continue;
+      node.addEventListener('input', rerun);
+      node.addEventListener('change', rerun);
+    }
+    // Populate on open rather than showing an empty list until the user types.
+    pane._initial = pane._search('');
+  }
   return pane;
+}
+
+/** <option> per profile, accepting both {id,label} and bare id strings. */
+function profileOptions(doc, sel, profiles) {
+  for (const p of profiles || []) {
+    const id = typeof p === 'string' ? p : String(p.id || '');
+    const label = typeof p === 'string' ? '' : (p.label || '');
+    const opt = h(doc, 'option', '', label ? `${label} (${id})` : id);
+    opt.value = id;
+    sel.appendChild(opt);
+  }
+  return sel;
+}
+
+/** How the profile was arrived at, in words. An inherited or implicit profile
+ *  must not read as a deliberate choice — that is how the wrong one survives. */
+const VIA_NOTE = {
+  only: 'the only profile configured',
+  members: 'inherited from this workspace’s projects',
+  binding: '',
+};
+
+/**
+ * The standing profile row above the pane: which configuration this
+ * project/workspace pulls from, always visible once resolved.
+ *
+ * It stays on screen deliberately. The gate below answers "which instance?"
+ * once; this answers "which instance am I reading from right now?" every time,
+ * which is the check that catches a wrong binding before a run rather than
+ * after. Changing it REBINDS the scope (the same PUT the gate makes), so it is
+ * a persistent property of the project — never a per-run filter.
+ *
+ * @param {{source, profiles, profile, via, scopeLabel?}} info
+ * @param {{doc?, onChange?: (profileId: string) => any}} opts
+ */
+export function renderProfileBar(info, { doc = globalThis.document, onChange } = {}) {
+  const { source = {}, profiles = [], profile, via, scopeLabel = '' } = info || {};
+  const bar = h(doc, 'div', 'sp-profile-bar');
+  bar.dataset.plugin = source.plugin || '';
+  bar.dataset.sourceId = source.sourceId || '';
+  if (profile) bar.dataset.profile = profile;
+  bar.appendChild(h(doc, 'label', '', 'Profile'));
+
+  const sel = profileOptions(doc, h(doc, 'select', 'select sp-profile-sel'), profiles);
+  if (profile) sel.value = profile;
+  sel.addEventListener('change', () => { if (typeof onChange === 'function') onChange(sel.value); });
+  bar.appendChild(sel);
+
+  const note = VIA_NOTE[via] || '';
+  if (note) bar.appendChild(h(doc, 'small', 'hint', note));
+  else if (scopeLabel) bar.appendChild(h(doc, 'small', 'hint', `bound to ${scopeLabel}`));
+  return bar;
+}
+
+/**
+ * The gate shown INSTEAD of the pane when a multi-profile source has no
+ * resolved profile for the selected project/workspace.
+ *
+ * Why a gate and not a dropdown inside the pane: the choice is "which tracker
+ * does this project belong to", which is a property of the project, not of the
+ * run. Asked once and remembered, a wrong answer is visible immediately and
+ * fixable; asked every run, it is a control nobody reads until a pipeline has
+ * already been started against the wrong instance.
+ *
+ * @param {{source, profiles, via, candidates?, scopeLabel?}} info
+ *        via: 'none' (nothing bound) | 'conflict' (workspace members disagree)
+ * @param {{doc?, onPick: (profileId: string) => any}} opts
+ */
+export function renderProfileGate(info, { doc = globalThis.document, onPick } = {}) {
+  const { source = {}, profiles = [], via, candidates = [], scopeLabel = '' } = info || {};
+  const root = h(doc, 'div', 'sp-profile-gate');
+  const name = source.displayName || source.sourceId || 'This source';
+
+  if (!profiles.length) {
+    root.appendChild(h(doc, 'p', 'hint', `${name} has no profiles configured yet.`));
+    const link = h(doc, 'a', 'sp-profile-settings', 'Add one in Plugins settings');
+    link.href = '#plugins';
+    root.appendChild(link);
+    return root;
+  }
+
+  root.appendChild(h(doc, 'p', 'hint', via === 'conflict'
+    // Naming them is the point: the reader has to know it is ambiguous, and
+    // between WHICH instances, to fix it at the right project.
+    ? `The projects in ${scopeLabel || 'this workspace'} disagree about which ${name} profile to use (${candidates.join(', ')}). Pick the one this run should read from.`
+    : `Which ${name} profile does ${scopeLabel || 'this project'} pull from? Asked once, then remembered.`));
+
+  const sel = profileOptions(doc, h(doc, 'select', 'select sp-profile-sel'), profiles);
+  root.appendChild(sel);
+
+  const use = h(doc, 'button', 'btn btn-primary btn-mini sp-profile-use', 'Use this profile');
+  use.type = 'button';
+  use.addEventListener('click', () => { if (typeof onPick === 'function') onPick(sel.value); });
+  root.appendChild(use);
+  return root;
 }
 
 // collectSourcePane(paneEl) -> { inputs, taskId } | { error } when nothing picked.
