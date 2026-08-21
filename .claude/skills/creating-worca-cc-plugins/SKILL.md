@@ -54,6 +54,7 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 | `taskSources[].id` | kebab-case |
 | `taskSources[].module` | must start `./`, no `..`, no backslashes |
 | `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options` |
+| `taskSources[].multiProfile` | `true` → one install holds several independent configurations (two Jira servers, two orgs), each with its own config/secrets/state. Users create profiles in the UI and bind each project/workspace to one. Omit it and the source uses a single implicit `default` profile — identical to before profiles existed |
 | `taskSources[].inputs[]` | per-run UI — see next table. **Exactly one `task-browser` required** |
 
 ## Marketplace manifest (repo-level, optional)
@@ -102,14 +103,15 @@ export default function createTaskSource(ctx) {
 | `validateConfig` | `()` | `{ok:true, identity?}` \| `{ok:false, errors:[{field,message}]}` — gates the whole pane |
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
-| `reportResult` | `(id, {status, summary, links})` — **positional** | anything |
-| `capabilities` | `()` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
+| `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
+| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
 | custom | `(args)` | whatever the widget needs |
 
-`ctx` = `{ apiVersion, config, state: {get, set}, log }`.
+`ctx` = `{ apiVersion, profile, config, state: {get, set}, log }`.
 
 - `ctx.config` — `configSchema` values, defaults applied, `{"$env":"VAR"}` already resolved
 - `ctx.state.get/set` — a KV bag; `set` only *records*, the **host** persists it after a successful frame
+- `ctx.profile` — which profile this op runs against (`'default'` unless `multiProfile`). `config` and `state` are *already* that profile's bucket; the id is here so a connector that keeps its own on-disk storage can key it the same way
 - `ctx.log(level, msg)` — the only legal output channel
 
 Throw `Object.assign(new Error(msg), { kind })` to pick the error kind:
@@ -134,15 +136,25 @@ Payload arrives on stdin, one JSON frame leaves on stdout, process exits. 30s ti
 | Agent `.md` with no `.meta.json` sidecar | Registry silently ignores it (warn only) |
 | Workflow template referencing an agent key you don't ship | Template skipped at import |
 | Non-opaque task ids | `getTask(id)` receives exactly what `listTasks` emitted — keep them round-trippable |
+| Self-managed storage not keyed by `ctx.profile` | Two profiles share one cache/cookie jar/CLI config dir → one instance silently answers with the other's data. Hang every path you own off the profile id |
 | `getTask().body` not markdown | It becomes the pipeline prompt verbatim |
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
 
-## The one example worth reading
+## The example worth reading
 
 `plugins/github-source/` — a complete, zero-dependency GitHub Issues source:
 ETag revalidation via `ctx.state`, `remote-select` repo picker, a filter micro-syntax,
 `{"$env":"GH_TOKEN"}` token config, and write-back that comments and optionally closes the issue.
-Copy its shape.
+Copy its shape for a plain HTTP-API source.
+
+Patterns it doesn't show, for connectors that need them: with `multiProfile`, key any
+self-managed on-disk storage by `ctx.profile`. When wrapping an **external CLI** as the
+backend, keep a single subprocess seam with error-kind mapping, detach anything interactive
+(e.g. a browser login) so it outlives the 30s op timeout, and pin the CLI's config via an
+env var so nothing depends on the server's cwd. For **per-run write-back**, add a
+`writeBack` select to `inputs` (default `no`); the host pins the run's inputs on the row and
+passes them to `capabilities({inputs})` / `reportResult`, so only runs that opted in are
+reported.
 
 ## Where the host logic lives
 
@@ -151,7 +163,8 @@ Copy its shape.
 | Manifest schema + validation | `src/core/plugin-manifest.mjs` |
 | Install / update / uninstall lifecycle | `src/core/plugin-store.mjs` |
 | Child-process protocol | `src/core/plugin-shim.mjs`, `plugin-shim-child.mjs` |
-| Config / secrets / state | `src/core/plugin-config.mjs` |
+| Config / secrets / state (per-profile buckets) | `src/core/plugin-config.mjs` |
+| Profile → project/workspace binding resolution | `src/core/source-bindings.mjs` |
 | Widget rendering | `ui/public/source-pane.mjs`, `ui/public/plugins-view.mjs` |
 | CLI | `src/cli/worca-cc.mjs` (`worca plugin help`) |
 
