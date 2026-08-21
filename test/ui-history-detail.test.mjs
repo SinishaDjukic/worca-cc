@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { MAX_FILE_SECTION_RENDER_ITEMS } from '../ui/public/diff-view.mjs';
+import { MAX_HIGHLIGHT_INPUT_BYTES } from '../ui/public/syntax-highlight.mjs';
 
 // Behavior tests for the History DETAIL header: the meta line, the branch-copy
 // row, Resume, Archive (honest copy through confirmModal), and the retained-work
@@ -22,7 +24,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 
-async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
+async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
   const { window } = dom;
 
@@ -76,6 +78,7 @@ async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
   }
   globalThis.window = window;
   globalThis.document = window.document;
+  if (hljsLoader) window.__worcaTestHooks = { hljsLoader };
 
   await import(appPath + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0)); // let loadProjects/loadConfig settle
@@ -179,12 +182,16 @@ function historyArms(box) {
 
 // `box` is mutable so a test can withhold the list row at boot (the deep-link
 // case) and deliver it later through a `pipelines-changed` broadcast.
-async function bootDetail({ rows = [ROW], detail = DETAIL, budget = okBudget(), arms = null, deepLink = false } = {}) {
+async function bootDetail({
+  rows = [ROW], detail = DETAIL, budget = okBudget(), arms = null,
+  deepLink = false, hljsLoader = null,
+} = {}) {
   const box = { rows, detail, budget };
   const base = historyArms(box);
   const ctx = await boot({
     fetchHandler: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
     url: deepLink ? `http://localhost:4317/#${detailHash}` : 'http://localhost:4317/',
+    hljsLoader,
   });
   ctx.box = box;
   return ctx;
@@ -813,6 +820,9 @@ const patchArm = (body) => (url) => (
 );
 
 const filesOf = (doc) => [...doc.querySelectorAll('#hist-detail .hd-diff-file')];
+const fileOf = (doc, path, project = '') => filesOf(doc).find((button) => (
+  button.dataset.path === path && button.dataset.project === project
+));
 const paneOf = (doc) => doc.querySelector('#hist-detail .hd-diff-pane');
 
 test("Diff tab lists files and renders the selected file's hunks", async () => {
@@ -825,14 +835,15 @@ test("Diff tab lists files and renders the selected file's hunks", async () => {
 
   const rows = filesOf(doc);
   assert.equal(rows.length, 1);
-  assert.match(rows[0].textContent, /src\/a\.js/);
+  assert.equal(rows[0].querySelector('.hd-diff-path').textContent, 'a.js');
+  assert.equal(rows[0].dataset.path, 'src/a.js');
 
   const pane = paneOf(doc);
   assert.match(pane.textContent, /@@ -1,2 \+1,2 @@/);
   // ASCII +/- in the patch BODY on purpose: these lines are a verbatim unified
   // diff a user may copy, and a U+2212 yields a patch `git apply` rejects.
-  assert.equal(pane.querySelector('.hd-dl-add').textContent, '+new');
-  assert.equal(pane.querySelector('.hd-dl-del').textContent, '-old');
+  assert.equal(pane.querySelector('.hd-dl-add .hd-dl-code').textContent, '+new');
+  assert.equal(pane.querySelector('.hd-dl-del .hd-dl-code').textContent, '-old');
   assert.equal(pane.querySelector('.hd-dl-hunk').textContent, '@@ -1,2 +1,2 @@');
 
   // The patch is fetched from the /diff twin of historyLogUrl, exactly once.
@@ -874,7 +885,7 @@ test('a deleted file counted in filesChanged is not double-counted in the head',
   assert.match(head.textContent, /2 files changed/);
   assert.doesNotMatch(head.textContent, /3 files changed/);
   assert.equal(filesOf(doc).length, 2);
-  assert.ok(filesOf(doc)[1].classList.contains('deleted'), 'a D row is flagged for the strike-through');
+  assert.ok(fileOf(doc, 'src/gone.js').classList.contains('deleted'), 'a D row is flagged for the strike-through');
 });
 
 test('file in results but missing from the patch shows the no-textual-diff note', async () => {
@@ -899,9 +910,10 @@ test('file in results but missing from the patch shows the no-textual-diff note'
   const rows = filesOf(doc);
   assert.equal(rows.length, 2);
   // A binary entry carries {binary:true} and NEVER {added,removed}.
-  assert.match(rows[1].textContent, /binary/);
+  const binary = fileOf(doc, 'assets/logo.png');
+  assert.match(binary.textContent, /binary/);
 
-  click(window, rows[1]);
+  click(window, binary);
   await settle(window);
   const pane = paneOf(doc);
   assert.match(pane.textContent, /\(no textual diff for this file\)/);
@@ -977,7 +989,7 @@ test('a failed patch fetch re-arms the Diff tab for a retry', async () => {
   const doc = ctx.window.document;
   assert.match(paneOf(doc).textContent, /Could not load the patch: HTTP 503/);
 
-  click(ctx.window, filesOf(doc)[1]);
+  click(ctx.window, fileOf(doc, 'src/b.js'));
   await settle(ctx.window, 4);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/diff')).length, 2, 'the next select refetches');
   assert.match(paneOf(doc).textContent, /\+two/, 'and the retry renders');
@@ -1026,22 +1038,370 @@ diff --git a/a.js b/a.js
   const { window } = ctx;
   const doc = window.document;
 
-  const groups = [...doc.querySelectorAll('#hist-detail .hd-diff-proj')];
+  const groups = [...doc.querySelectorAll('#hist-detail .hd-tree-project')];
   assert.deepEqual(groups.map((g) => g.textContent), ['proj-a-00000001', 'proj-b-00000002']);
   const rows = filesOf(doc);
   assert.equal(rows.length, 2, 'the same file name appears once per project');
 
   // Auto-selection landed on the FIRST project's a.js.
   let pane = paneOf(doc);
-  assert.equal(pane.querySelector('.hd-dl-add').textContent, '+alpha');
-  assert.equal(pane.querySelector('.hd-dl-del').textContent, '-one');
+  assert.equal(pane.querySelector('.hd-dl-add .hd-dl-code').textContent, '+alpha');
+  assert.equal(pane.querySelector('.hd-dl-del .hd-dl-code').textContent, '-one');
 
   // The second same-named file resolves to the SECOND project's section.
-  click(window, rows[1]);
+  click(window, fileOf(doc, 'a.js', 'proj-b-00000002'));
   await settle(window);
   pane = paneOf(doc);
-  assert.equal(pane.querySelector('.hd-dl-add').textContent, '+beta');
+  assert.equal(pane.querySelector('.hd-dl-add .hd-dl-code').textContent, '+beta');
   assert.equal(pane.querySelector('.hd-dl-del'), null, 'proj-b removed nothing');
+});
+
+test('numbered rows keep exact copy cells, accessible gutters, identity data, and heading outline', async () => {
+  const ctx = await bootDetail({ detail: diffDetail(diffResults()), arms: patchArm(PATCH) });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  const section = secOf(doc, 'diff');
+  assert.equal(section.querySelector('h2.sr-only').textContent, 'Changed files and diff');
+  assert.equal(section.querySelector('.hd-diff-pane-head h3').textContent, 'src/a.js');
+  assert.equal(section.querySelector('.hd-tree-project'), null, 'single-project trees start at files');
+
+  const [context, deletion, addition] = [...section.querySelectorAll('.hd-dl-row')];
+  assert.deepEqual([context.dataset.old, context.dataset.new], ['1', '1']);
+  assert.deepEqual([deletion.dataset.old, deletion.dataset.new], ['2', '']);
+  assert.deepEqual([addition.dataset.old, addition.dataset.new], ['', '2']);
+  assert.equal(context.querySelector('.hd-dl-code').textContent, ' keep');
+  assert.equal(deletion.querySelector('.hd-dl-code').textContent, '-old');
+  assert.equal(addition.querySelector('.hd-dl-code').textContent, '+new');
+  assert.equal(deletion.querySelector('.hd-dl-n-old .sr-only').textContent, 'Old line 2');
+  assert.equal(deletion.querySelector('.hd-dl-n-new').getAttribute('aria-hidden'), 'true');
+  assert.equal(addition.querySelector('.hd-dl-n-new .hd-dl-n-v').getAttribute('aria-hidden'), 'true');
+
+  for (const item of section.querySelectorAll('.hd-dl-row,.hd-dl-hunk')) {
+    assert.ok(item.dataset.fileKey);
+    assert.equal(item.dataset.project, '');
+    assert.equal(item.dataset.path, 'src/a.js');
+    assert.equal(item.dataset.oldPath, 'src/a.js');
+    assert.equal(item.dataset.newPath, 'src/a.js');
+  }
+  assert.equal(section.querySelector('.hd-dl-hunk').classList.contains('hd-dl-row'), false);
+});
+
+test('omitted counts, zero ranges, and multiple hunks reset gutter counters', async () => {
+  const patch = `diff --git a/src/a.js b/src/a.js
+--- a/src/a.js
++++ b/src/a.js
+@@ -0,0 +1 @@
++first
+@@ -9 +20 @@
+-gone
++fresh
+`;
+  const results = diffResults({
+    summary: { linesAdded: 2, linesRemoved: 1 },
+    results: { changedFiles: [{ path: 'src/a.js', status: 'M', added: 2, removed: 1 }] },
+  });
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch) });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const rows = [...ctx.window.document.querySelectorAll('#hist-detail .hd-dl-row')];
+  assert.deepEqual(rows.map((row) => [row.dataset.old, row.dataset.new]), [
+    ['', '1'], ['9', ''], ['', '20'],
+  ]);
+  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .hd-dl-hunk').length, 2);
+});
+
+test('plain numbered rows connect before loader completion, then enhance in place', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const languages = [];
+  const loader = {
+    forLanguage(lang) {
+      languages.push(lang);
+      return gate;
+    },
+  };
+  const ctx = await bootDetail({
+    detail: diffDetail(diffResults()), arms: patchArm(PATCH), hljsLoader: loader,
+  });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  const row = doc.querySelector('#hist-detail .hd-dl-add');
+  const source = row.querySelector('.hd-dl-src');
+  const sign = row.querySelector('.hd-dl-sign');
+  const oldGutter = row.querySelector('.hd-dl-n-old');
+  const newGutter = row.querySelector('.hd-dl-n-new');
+  assert.equal(row.isConnected, true);
+  assert.equal(source.textContent, 'new');
+  assert.equal(source.querySelector('span'), null);
+  assert.deepEqual(languages, ['javascript']);
+
+  release({
+    lang: 'javascript',
+    highlight: (text) => text.replace(/new/g, '<span class="hljs-keyword">new</span>'),
+  });
+  await settle(ctx.window, 6);
+  assert.equal(row.querySelector('.hd-dl-src'), source);
+  assert.equal(row.querySelector('.hd-dl-sign'), sign);
+  assert.equal(row.querySelector('.hd-dl-n-old'), oldGutter);
+  assert.equal(row.querySelector('.hd-dl-n-new'), newGutter);
+  assert.ok(source.querySelector('.hljs-keyword'));
+  assert.equal(row.querySelector('.hd-dl-code').textContent, '+new');
+});
+
+test('unsupported and input-over-limit files never consult the loader', async () => {
+  const calls = [];
+  const loader = { forLanguage: async (lang) => { calls.push(lang); return null; } };
+  const unsupportedResults = diffResults({
+    results: { changedFiles: [{ path: 'main.tf', status: 'M', added: 1, removed: 0 }] },
+  });
+  const unsupportedPatch = `diff --git a/main.tf b/main.tf
+--- a/main.tf
++++ b/main.tf
+@@ -0,0 +1 @@
++enabled = true
+`;
+  const unsupported = await bootDetail({
+    detail: diffDetail(unsupportedResults), arms: patchArm(unsupportedPatch), hljsLoader: loader,
+  });
+  await openDetail(unsupported);
+  await settle(unsupported.window);
+
+  const huge = 'x'.repeat(MAX_HIGHLIGHT_INPUT_BYTES + 1);
+  const overResults = diffResults({
+    results: { changedFiles: [{ path: 'big.js', status: 'M', added: 1, removed: 0 }] },
+  });
+  const overPatch = `diff --git a/big.js b/big.js
+--- a/big.js
++++ b/big.js
+@@ -0,0 +1 @@
++${huge}
+`;
+  const over = await bootDetail({
+    detail: diffDetail(overResults), arms: patchArm(overPatch), hljsLoader: loader,
+  });
+  await openDetail(over);
+  await settle(over.window);
+  assert.deepEqual(calls, []);
+});
+
+test('invalid highlighter markup stays plain while a separate valid hunk commits', async () => {
+  const patch = `diff --git a/src/a.js b/src/a.js
+--- a/src/a.js
++++ b/src/a.js
+@@ -0,0 +1 @@
++valid
+@@ -0,0 +10 @@
++invalid
+`;
+  const results = diffResults({
+    summary: { linesAdded: 2, linesRemoved: 0 },
+    results: { changedFiles: [{ path: 'src/a.js', status: 'M', added: 2, removed: 0 }] },
+  });
+  const loader = {
+    async forLanguage() {
+      return {
+        lang: 'javascript',
+        highlight: (text) => (text === 'valid'
+          ? '<span class="hljs-keyword">valid</span>'
+          : '<img src=x>'),
+      };
+    },
+  };
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch), hljsLoader: loader });
+  await openDetail(ctx);
+  await settle(ctx.window, 6);
+  const sources = [...ctx.window.document.querySelectorAll('#hist-detail .hd-dl-src')];
+  assert.ok(sources[0].querySelector('.hljs-keyword'));
+  assert.equal(sources[1].children.length, 0);
+  assert.equal(sources[1].textContent, 'invalid');
+});
+
+test('CR and empty source rows survive detached highlighted staging exactly', async () => {
+  const patch = 'diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n'
+    + '@@ -0,0 +1,2 @@\r\n+x\r\n+\r\n';
+  const results = diffResults({
+    summary: { linesAdded: 2, linesRemoved: 0 },
+    results: { changedFiles: [{ path: 'src/a.js', status: 'M', added: 2, removed: 0 }] },
+  });
+  const loader = { async forLanguage() { return { lang: 'javascript', highlight: (text) => text }; } };
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch), hljsLoader: loader });
+  await openDetail(ctx);
+  await settle(ctx.window, 6);
+  const sources = [...ctx.window.document.querySelectorAll('#hist-detail .hd-dl-src')];
+  assert.equal(sources[0].textContent, 'x\r');
+  assert.equal(sources[1].textContent, '\r');
+});
+
+test('stale highlighter completion cannot mutate the newly selected file', async () => {
+  const results = diffResults({
+    summary: { filesChanged: 2, linesAdded: 2, linesRemoved: 1 },
+    results: {
+      changedFiles: [
+        { path: 'src/a.js', status: 'M', added: 1, removed: 1 },
+        { path: 'src/b.tf', status: 'M', added: 1, removed: 0 },
+      ],
+    },
+  });
+  const patch = `${PATCH}diff --git a/src/b.tf b/src/b.tf
+--- a/src/b.tf
++++ b/src/b.tf
+@@ -0,0 +1 @@
++value = true
+`;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loader = { forLanguage: () => gate };
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch), hljsLoader: loader });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  click(ctx.window, fileOf(doc, 'src/b.tf'));
+  await settle(ctx.window);
+  release({
+    lang: 'javascript',
+    highlight: (text) => `<span class="hljs-keyword">${text}</span>`,
+  });
+  await settle(ctx.window, 6);
+  assert.equal(paneOf(doc).querySelector('.hd-diff-path').textContent, 'src/b.tf');
+  assert.equal(paneOf(doc).querySelector('.hljs-keyword'), null);
+  assert.equal(paneOf(doc).querySelector('.hd-dl-code').textContent, '+value = true');
+});
+
+test('a patch resolving after navigation cannot append a body or start highlighting', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loaderCalls = [];
+  const ctx = await bootDetail({
+    detail: diffDetail(diffResults()),
+    arms: (url) => (url.endsWith('/diff')
+      ? gate.then(() => ({ ok: true, status: 200, text: async () => PATCH }))
+      : null),
+    hljsLoader: { async forLanguage(lang) { loaderCalls.push(lang); return null; } },
+  });
+  await openDetail(ctx);
+  const retiredPane = paneOf(ctx.window.document);
+  assert.equal(retiredPane.querySelector('.hd-diff-body'), null);
+  go(ctx.window, 'history');
+  await settle(ctx.window);
+  release();
+  await settle(ctx.window, 6);
+  assert.equal(retiredPane.querySelector('.hd-diff-body'), null);
+  assert.deepEqual(loaderCalls, []);
+});
+
+test('a highlighter resolving after navigation leaves the retired plain body untouched', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const ctx = await bootDetail({
+    detail: diffDetail(diffResults()), arms: patchArm(PATCH),
+    hljsLoader: { forLanguage: () => gate },
+  });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const retiredBody = paneOf(ctx.window.document).querySelector('.hd-diff-body');
+  assert.ok(retiredBody);
+  go(ctx.window, 'history');
+  await settle(ctx.window);
+  release({
+    lang: 'javascript',
+    highlight: (text) => `<span class="hljs-keyword">${text}</span>`,
+  });
+  await settle(ctx.window, 6);
+  assert.equal(retiredBody.querySelector('.hljs-keyword'), null);
+  assert.equal(retiredBody.querySelector('.hd-dl-add .hd-dl-code').textContent, '+new');
+});
+
+test('cross-extension rename uses the new path grammar and exposes both identities', async () => {
+  const results = diffResults({
+    results: {
+      changedFiles: [{
+        path: 'tools/new.py', from: 'tools/old.ts', status: 'R', added: 1, removed: 1,
+      }],
+    },
+  });
+  const patch = `diff --git a/tools/old.ts b/tools/new.py
+similarity index 80%
+rename from tools/old.ts
+rename to tools/new.py
+--- a/tools/old.ts
++++ b/tools/new.py
+@@ -1 +1 @@
+-const answer: number = 41;
++answer = 42
+`;
+  const calls = [];
+  const loader = { async forLanguage(lang) { calls.push(lang); return null; } };
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch), hljsLoader: loader });
+  await openDetail(ctx);
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  assert.deepEqual(calls, ['python']);
+  const heading = paneOf(doc).querySelector('h3.hd-diff-path');
+  assert.equal(heading.textContent, 'tools/new.py');
+  assert.equal(heading.title, 'tools/old.ts → tools/new.py');
+  assert.equal(heading.getAttribute('aria-label'), 'Renamed from tools/old.ts to tools/new.py');
+  for (const row of paneOf(doc).querySelectorAll('.hd-dl-row')) {
+    assert.equal(row.dataset.oldPath, 'tools/old.ts');
+    assert.equal(row.dataset.newPath, 'tools/new.py');
+  }
+});
+
+test('base rendering stops at the item cap and reports truncation without a KB claim', async () => {
+  const lines = Array.from({ length: MAX_FILE_SECTION_RENDER_ITEMS }, (_, index) => `+const n${index} = ${index};`);
+  const patch = `diff --git a/many.js b/many.js
+--- /dev/null
++++ b/many.js
+@@ -0,0 +1,${lines.length} @@
+${lines.join('\n')}
+`;
+  const results = diffResults({
+    summary: { filesNew: 1, filesChanged: 0, linesAdded: lines.length, linesRemoved: 0 },
+    results: {
+      newFiles: [{ path: 'many.js', status: 'A', added: lines.length, removed: 0 }],
+      changedFiles: [],
+    },
+  });
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch) });
+  await openDetail(ctx);
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-hunk,#hist-detail .hd-dl-row').length,
+    MAX_FILE_SECTION_RENDER_ITEMS);
+  const note = doc.querySelector('#hist-detail .hd-diff-trunc');
+  assert.match(note.textContent, /large file — diff truncated/);
+  assert.doesNotMatch(note.textContent, /KB/);
+  assert.equal(note.classList.contains('hd-dl-row'), false);
+  assert.match(doc.querySelector('#hist-detail .hd-diff-body').style.getPropertyValue('--hd-gutter-width'), /^calc\(/);
+});
+
+test('directory collapse changes no selection, pane body, or patch fetch', async () => {
+  const results = diffResults({
+    summary: { filesChanged: 2, linesAdded: 2, linesRemoved: 1 },
+    results: {
+      changedFiles: [
+        { path: 'src/a.js', status: 'M', added: 1, removed: 1 },
+        { path: 'src/b.js', status: 'M', added: 1, removed: 0 },
+      ],
+    },
+  });
+  const patch = `${PATCH}diff --git a/src/b.js b/src/b.js
+--- a/src/b.js
++++ b/src/b.js
+@@ -0,0 +1 @@
++two
+`;
+  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch) });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  const body = paneOf(doc).querySelector('.hd-diff-body');
+  const active = doc.querySelector('#hist-detail .hd-tree-file[aria-current="true"]');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tree-dir'));
+  assert.equal(paneOf(doc).querySelector('.hd-diff-body'), body);
+  assert.equal(doc.querySelector('#hist-detail .hd-tree-file[aria-current="true"]'), active);
+  assert.equal(ctx.calls.filter((call) => call.url.endsWith('/diff')).length, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -1270,7 +1630,7 @@ test('rapid selection does not stack two bodies in the pane', async () => {
   await settle(window, 6);
 
   assert.equal(doc.querySelectorAll('#hist-detail .hd-diff-body').length, 1);
-  assert.equal(paneOf(doc).querySelector('.hd-dl-add').textContent, '+two',
+  assert.equal(paneOf(doc).querySelector('.hd-dl-add .hd-dl-code').textContent, '+two',
     'the LAST selection owns the pane');
   // One fetch for three selections: the promise is memoized, not re-issued.
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/diff')).length, 1);
