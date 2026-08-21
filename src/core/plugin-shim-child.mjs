@@ -22,6 +22,10 @@ async function main() {
   const stateDelta = {};
   const ctx = {
     apiVersion: msg.apiVersion ?? 1,
+    // Which profile this op runs against. config/state are ALREADY that
+    // profile's — the id is here for connectors that keep their own storage and
+    // must key it the same way (e.g. a per-profile CLI config dir).
+    profile: typeof msg.profile === 'string' && msg.profile ? msg.profile : 'default',
     config: msg.config && typeof msg.config === 'object' ? msg.config : {},
     state: {
       get: async (k) => (k in stateDelta ? stateDelta[k] : (snapshot[k] ?? null)),

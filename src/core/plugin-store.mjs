@@ -449,12 +449,21 @@ export async function doctorPlugin(name) {
     try { shim = await import('./plugin-shim.mjs'); } // Task 11 module — may not exist yet
     catch (err) { if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err; }
     if (shim) {
+      const { listProfileIds } = await import('./plugin-config.mjs');
       for (const s of manifest.taskSources) {
-        try {
-          const r = await shim.callSource({ plugin: name, sourceId: s.id, op: 'validateConfig' });
-          c(`config:${s.id}`, r?.ok !== false, r?.ok === false ? JSON.stringify(r.errors ?? r) : 'validateConfig ok');
-        } catch (err) {
-          c(`config:${s.id}`, false, String(err?.message || err));
+        // A multi-profile source stores nothing in the implicit default bucket;
+        // validating that would flag a fully configured plugin as broken. Check
+        // each roster profile instead (falling back to the default bucket only
+        // when no profile exists yet — same "unconfigured" verdict either way).
+        const profiles = s.multiProfile ? listProfileIds(name) : [];
+        for (const profile of profiles.length ? profiles : [undefined]) {
+          const id = profile ? `config:${s.id}@${profile}` : `config:${s.id}`;
+          try {
+            const r = await shim.callSource({ plugin: name, sourceId: s.id, op: 'validateConfig', profile });
+            c(id, r?.ok !== false, r?.ok === false ? JSON.stringify(r.errors ?? r) : 'validateConfig ok');
+          } catch (err) {
+            c(id, false, String(err?.message || err));
+          }
         }
       }
     }

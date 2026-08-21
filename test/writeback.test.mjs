@@ -26,9 +26,9 @@ const RESULTS = {
   nitpicks: [],
 };
 
-async function seedDonePluginPipeline() {
+async function seedDonePluginPipeline(meta = META) {
   const p = await createPipeline(await mkdtemp(join(tmpdir(), 'worca-cc-wb-')), {
-    promptText: '# Fix login\n\nbody', sourceType: 'plugin', sourceMeta: META, title: 'Fix login',
+    promptText: '# Fix login\n\nbody', sourceType: 'plugin', sourceMeta: meta, title: 'Fix login',
   });
   getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(p.id);
   writeFileSync(join(p.dir, 'results.json'), JSON.stringify(RESULTS));
@@ -79,6 +79,31 @@ test('connector capabilities {writeBack:false} skips the report', async () => {
   const out = await retryWriteback(p.id);
   assert.deepEqual(out, { ok: true, skipped: true });
   assert.equal(calls.length, 0);
+});
+
+test('the run\'s pinned source inputs reach capabilities AND reportResult (per-run write-back)', async () => {
+  const caps = [];
+  const calls = [];
+  setMockSourceResponses({
+    // A jira-source-style connector: write-back is whatever THIS run chose.
+    capabilities: (args) => { caps.push(args); return { writeBack: args.inputs?.writeBack === 'yes', incrementalSync: false }; },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+
+  const optedIn = await seedDonePluginPipeline({ ...META, inputs: { writeBack: 'yes', jql: 'project = X' } });
+  assert.deepEqual(await retryWriteback(optedIn.id), { ok: true });
+  assert.deepEqual(caps[0], { inputs: { writeBack: 'yes', jql: 'project = X' } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].inputs, { writeBack: 'yes', jql: 'project = X' }, 'connector can re-check the run\'s choice');
+
+  const optedOut = await seedDonePluginPipeline({ ...META, inputs: { writeBack: 'no' } });
+  assert.deepEqual(await retryWriteback(optedOut.id), { ok: true, skipped: true });
+  assert.equal(calls.length, 1, 'an opted-out run is never reported');
+
+  // A row with no pinned inputs (predates the field) probes with an empty bag.
+  const legacy = await seedDonePluginPipeline();
+  assert.deepEqual(await retryWriteback(legacy.id), { ok: true, skipped: true });
+  assert.deepEqual(caps.at(-1), { inputs: {} });
 });
 
 test('reportResult failure returns {ok:false,error} and NEVER throws', async () => {

@@ -50,8 +50,10 @@ const BUSY_TIMEOUT_MS = 5000;
 const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
-/** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 17;
+/** Latest schema version. Bump + append a new migration step when the DDL grows.
+ *  Exported so migration tests assert "reached the module's current version"
+ *  instead of hardcoding the number — a schema bump then touches no test file. */
+export const SCHEMA_VERSION = 18;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -513,6 +515,29 @@ CREATE TABLE IF NOT EXISTS step_questions (
 );
 `;
 
+/**
+ * v18 (task-source profiles): which PROFILE of a plugin task source a project or
+ * workspace uses. One row per (scope, plugin, source) — a project that pulls from
+ * two different sources binds each independently.
+ *
+ * scope_type is 'project' | 'workspace'; scope_key is projects.key or
+ * workspaces.id respectively. Deliberately NOT a foreign key: a binding must
+ * survive a project being removed and re-added at the same path (the key is a
+ * path hash, so it comes back identical), and source-bindings.mjs already treats
+ * a row whose plugin/profile no longer exists as "no binding".
+ */
+const SOURCE_BINDINGS_DDL = `
+CREATE TABLE IF NOT EXISTS source_bindings (
+  scope_type TEXT NOT NULL,   -- 'project' | 'workspace'
+  scope_key  TEXT NOT NULL,   -- projects.key | workspaces.id
+  plugin     TEXT NOT NULL,
+  source_id  TEXT NOT NULL,
+  profile    TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key, plugin, source_id)
+);
+`;
+
 const GUARDRAIL_SETS_DDL = `
 CREATE TABLE IF NOT EXISTS guardrail_sets (
   id         TEXT PRIMARY KEY,
@@ -576,12 +601,27 @@ const INCREMENTAL_COLUMNS = {
 };
 
 /**
+ * Tables added after v1, keyed by name -> their IF-NOT-EXISTS DDL. Same hazard
+ * as INCREMENTAL_COLUMNS: a divergent ladder in another checkout can stamp the
+ * user_version past the step that creates one, so schemaGaps probes for them
+ * version-independently rather than trusting the stamp.
+ */
+const INCREMENTAL_TABLES = {
+  step_questions: STEP_QUESTIONS_DDL,
+  guardrail_sets: GUARDRAIL_SETS_DDL,
+  cost_ledger: COST_LEDGER_DDL,
+  model_cost_flags: MODEL_COST_FLAGS_DDL,
+  source_bindings: SOURCE_BINDINGS_DDL,
+};
+
+/**
  * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the
- * live schema, plus `stepQuestionsTable`/`guardrailSetsTable: true` flags when
- * those IF-NOT-EXISTS tables are missing (safe to reassert on any stamped DB).
- * Cheap and read-only: one PRAGMA table_info per known table + one sqlite_master
- * probe each, no writes. A table absent from INCREMENTAL_COLUMNS' map (table_info
- * returns []) is skipped — creating base tables is the version ladder's job.
+ * live schema, plus the names of any INCREMENTAL_TABLES that do not exist yet
+ * (their CREATEs are all IF-NOT-EXISTS, so reasserting one on any stamped DB is
+ * safe). Cheap and read-only: one PRAGMA table_info per known table + one
+ * sqlite_master probe, no writes. A table absent from INCREMENTAL_COLUMNS' map
+ * (table_info returns []) is skipped — creating base tables is the version
+ * ladder's job.
  */
 function schemaGaps(db) {
   const missing = [];
@@ -592,25 +632,10 @@ function schemaGaps(db) {
       if (!have.has(col)) missing.push({ table, col, type });
     }
   }
-  const hasStepQuestions = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'"
-  ).get().n > 0;
-  const hasGuardrailSets = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='guardrail_sets'"
-  ).get().n > 0;
-  const hasCostLedger = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
-  ).get().n > 0;
-  const hasModelCostFlags = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='model_cost_flags'"
-  ).get().n > 0;
-  return {
-    columns: missing,
-    stepQuestionsTable: !hasStepQuestions,
-    guardrailSetsTable: !hasGuardrailSets,
-    costLedgerTable: !hasCostLedger,
-    modelCostFlagsTable: !hasModelCostFlags,
-  };
+  const tables = Object.keys(INCREMENTAL_TABLES).filter((t) => db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(t).n === 0);
+  return { columns: missing, tables };
 }
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
@@ -619,10 +644,7 @@ function repairSchemaGaps(db, gaps) {
   for (const { table, col, type } of gaps.columns) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   }
-  if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
-  if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
-  if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
-  if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
+  for (const table of gaps.tables || []) db.exec(INCREMENTAL_TABLES[table]);
 }
 
 /**
@@ -638,8 +660,7 @@ function repairSchemaGaps(db, gaps) {
  */
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
-  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable) return; // clean — no lock
+  if (gaps.columns.length === 0 && gaps.tables.length === 0) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -666,7 +687,7 @@ function applySchemaV12(db) {
 /**
  * Incremental v12 -> v13 migration (plugin task-sources, spec 2026-07-12 §10):
  *   pipelines.source_type TEXT DEFAULT 'prompt'  -- 'prompt' | 'markdown' | 'plugin'
- *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,url,title}; NULL unless plugin
+ *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title}; NULL unless plugin
  *   workflows.origin      TEXT                   -- 'plugin:<name>' provenance; NULL = user-created
  * Implemented as a CONDITIONAL repair (same shape as applySchemaV12), NOT a plain
  * DDL string: the three columns live in INCREMENTAL_COLUMNS (hard rule above), so
@@ -791,6 +812,9 @@ export function migrate(db) {
     if (current < 15) applySchemaV15(db);
     if (current < 16) applySchemaV16(db);
     if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
+    // v17 -> v18 (task-source profiles): source_bindings. IF NOT EXISTS —
+    // reconcileSchema may already have created it on a divergently-stamped DB.
+    if (current < 18) db.exec(SOURCE_BINDINGS_DDL);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

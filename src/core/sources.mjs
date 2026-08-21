@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { callSource } from './plugin-shim.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
+import { listProfiles } from './plugin-config.mjs';
 import { normalizeManifest } from './plugin-manifest.mjs';
 import { getDb } from './db.mjs';
 import { runDirForRow, readStoreMeta } from './artifacts.mjs';
@@ -19,6 +20,12 @@ import { hasGh, findPrForBranch } from './git-info.mjs';
 /** Same resolve-against-projectDir semantics as artifacts.mjs#resolveAgainst. */
 function resolveAgainst(base, p) {
   return isAbsolute(p) ? p : resolve(base, p);
+}
+
+/** Profile roster for a plugin; never throws — the pane must render even when a
+ *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
+function safeProfiles(name) {
+  try { return listProfiles(name); } catch { return []; }
 }
 
 /**
@@ -50,6 +57,12 @@ export function listTaskSources() {
         sourceId: ts.id,
         displayName: ts.displayName || `${name}/${ts.id}`,
         inputs: ts.inputs || [],
+        // A multi-profile source cannot be used until the pane knows WHICH
+        // configuration to run against, so the roster ships with the listing —
+        // the New Pipeline pane resolves the project's binding against it
+        // without a second round trip.
+        multiProfile: ts.multiProfile === true,
+        profiles: ts.multiProfile === true ? safeProfiles(name) : [],
       });
     }
   }
@@ -68,9 +81,9 @@ function taskPromptText(task) {
 /**
  * Resolve a source descriptor to the pipeline's task input.
  *   { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
- * | { type:'plugin', plugin, sourceId, taskId, inputs? }
+ * | { type:'plugin', plugin, sourceId, taskId, inputs?, profile? }
  * @returns {Promise<{promptText:string, promptFile:string|null,
- *   sourceMeta:{plugin,sourceId,taskId,url,title}|null}>}
+ *   sourceMeta:{plugin,sourceId,taskId,profile,url,title}|null}>}
  */
 export async function resolveTaskInput(source, { projectDir } = {}) {
   const src = source && typeof source === 'object' ? source : { type: 'prompt', prompt: '' };
@@ -94,7 +107,10 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
   }
 
   if (type === 'plugin') {
-    const task = await callSource({ plugin: src.plugin, sourceId: src.sourceId, op: 'getTask', args: { id: src.taskId } });
+    const task = await callSource({
+      plugin: src.plugin, sourceId: src.sourceId, op: 'getTask',
+      args: { id: src.taskId }, profile: src.profile,
+    });
     if (!task) {
       throw new Error(`task-source ${src.plugin}/${src.sourceId}: task "${src.taskId}" not found`);
     }
@@ -105,6 +121,14 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
         plugin: src.plugin,
         sourceId: src.sourceId,
         taskId: src.taskId,
+        // Pinned on the ROW, not re-derived at write-back time: the project's
+        // binding may have moved to another tracker by then, and a result must
+        // always be reported to the instance the task actually came from.
+        profile: src.profile || null,
+        // The source-panel inputs at fetch time, pinned for the same reason:
+        // a per-RUN choice (e.g. jira-source's "Write result back") must gate
+        // this run's report with what the user picked when they started it.
+        inputs: src.inputs && typeof src.inputs === 'object' ? src.inputs : null,
         url: task.url ?? null,
         title: task.title ?? null,
       },
@@ -164,18 +188,29 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     try { ref = pipelineRow.source_ref ? JSON.parse(pipelineRow.source_ref) : null; } catch { ref = null; }
     if (!ref?.plugin || !ref?.sourceId || !ref?.taskId) return { ok: true, skipped: true };
 
-    // Capability probe with a TOLERANT DEFAULT. capabilities() is optional in the
-    // connector contract (§7.1: "defaults: writeBack true"): a connector without
-    // the op makes the child answer { ok:false, error:{ kind:'plugin', message:
-    // 'connector does not implement op "capabilities"' } } -> callSource throws
+    // Capability probe. capabilities() is optional in the connector contract
+    // (§7.1: "defaults: writeBack true"): a connector without the op makes the
+    // child answer { ok:false, error:{ kind:'plugin', message: 'connector does
+    // not implement op "capabilities"' } } -> callSource throws
     // PluginOpError('plugin') -> we default to writeBack:true. Transport errors
-    // (auth/network/timeout/protocol) ALSO default to true — the reportResult
-    // call below is the one that surfaces the real failure to the caller.
+    // (auth/network/timeout/protocol/rate-limit) FAIL CLOSED instead: the
+    // connector may have opted this run out via its inputs and we could not
+    // hear the answer, so writing would violate the opt-out — the caller
+    // surfaces the error and the results-view retry re-probes.
+    // The run's pinned source-panel inputs travel to BOTH ops so a connector
+    // can make write-back a per-run choice (jira-source's writeBack input):
+    // capabilities({inputs}) answers for THIS run.
+    const inputs = ref.inputs && typeof ref.inputs === 'object' ? ref.inputs : {};
     let writeBack = true;
     try {
-      const caps = await callSource({ plugin: ref.plugin, sourceId: ref.sourceId, op: 'capabilities', args: {} });
+      const caps = await callSource({
+        plugin: ref.plugin, sourceId: ref.sourceId, op: 'capabilities', args: { inputs }, profile: ref.profile,
+      });
       if (caps && caps.writeBack === false) writeBack = false;
-    } catch {
+    } catch (err) {
+      if ((err?.kind || 'plugin') !== 'plugin') {
+        return { ok: false, error: `write-back capability probe failed: ${err?.message || String(err)}` };
+      }
       writeBack = true;
     }
     if (!writeBack) return { ok: true, skipped: true };
@@ -183,12 +218,15 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     await callSource({
       plugin: ref.plugin,
       sourceId: ref.sourceId,
+      // The profile recorded when the task was fetched — see resolveTaskInput.
+      profile: ref.profile,
       op: 'reportResult',
       args: {
         id: ref.taskId,
         status: statusToResult(pipelineRow.status),
         summary: buildResultSummary(pipelineRow, resultsBundle),
         links: buildResultLinks(resultsBundle),
+        inputs,
       },
     });
     return { ok: true };

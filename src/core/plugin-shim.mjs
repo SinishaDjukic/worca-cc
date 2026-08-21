@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
-import { readPluginConfig, readPluginState, writePluginState } from './plugin-config.mjs';
+import { readPluginConfig, readPluginState, writePluginState, DEFAULT_PROFILE } from './plugin-config.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
 
@@ -125,17 +125,21 @@ export function scrubbedEnv() {
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
  * @returns {Promise<any>}
  */
-export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 30000, logger } = {}) {
+export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger } = {}) {
   const log = typeof logger === 'function'
     ? logger
     : (level, msg) => console.error(`[plugin:${plugin}] ${level}: ${msg}`);
+  // Which configuration of the source to run against (plugin-config.mjs
+  // profiles). Absent -> DEFAULT_PROFILE, which is what every single-profile
+  // source uses, so this parameter is invisible unless a plugin opts in.
+  const prof = profile || DEFAULT_PROFILE;
 
   if (mockMode()) {
     // Canned responses, no spawn, no plugin needed. reportResult additionally
     // records its args into the plugin state — mirroring the real-child
     // stateDelta path — so the offline smoke (Task 19) can assert write-back ran.
     const r = await mockCall(op, args);
-    if (op === 'reportResult') writePluginState(plugin, { lastReport: JSON.stringify(args) });
+    if (op === 'reportResult') writePluginState(plugin, { lastReport: JSON.stringify(args) }, prof);
     return r;
   }
 
@@ -144,8 +148,12 @@ export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 
     apiVersion,
     module: resolve(dir, source.module), // './'-relative, '..'-free (normalizeManifest)
     op,
-    config: readPluginConfig(plugin, source.configSchema),
-    state: readPluginState(plugin),
+    // The connector sees ONE profile's config/state and is told which — a
+    // connector that keeps its own storage (jira-source hangs a $JTR_CONFIG_DIR
+    // off it) needs the id, not just the values.
+    profile: prof,
+    config: readPluginConfig(plugin, source.configSchema, prof),
+    state: readPluginState(plugin, prof),
     args,
   });
 
@@ -191,7 +199,7 @@ export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 
     throw new PluginOpError(frame.error?.kind || 'plugin', frame.error?.message || `plugin "${plugin}" op "${op}" failed`);
   }
   if (frame.stateDelta && typeof frame.stateDelta === 'object' && Object.keys(frame.stateDelta).length) {
-    writePluginState(plugin, frame.stateDelta); // host-side persist; child never touches the store
+    writePluginState(plugin, frame.stateDelta, prof); // host-side persist; child never touches the store
   }
   return frame.result;
 }
