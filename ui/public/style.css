@@ -1892,7 +1892,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-diff-counts .hint,.hd-diff-pane-head .hint{display:inline;margin-top:0;}
 .hd-diff-pane-head .hd-diff-path{
   margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  font-size:12px;
+  font-size:12px;font-weight:400;
 }
 /* The patch is the tall thing on this screen, so it scrolls INSIDE its pane
    rather than pushing the whole detail screen down — same cap and mechanism as
@@ -1924,8 +1924,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-dl-n-new{left:var(--hd-gutter-width);}
 .hd-dl-code{min-width:100%;padding:0 18px 0 10px;white-space:pre;}
 .hd-dl-hunk,.hd-diff-note{grid-column:1/-1;padding-inline:18px;}
+/* Placeholder states are display:block bodies that pad 18px themselves. */
+.hd-diff-body.hint .hd-diff-note{padding-inline:0;}
 .hd-dl-hunk{white-space:pre;color:var(--ink-2);background:var(--field);}
 .hd-diff-trunc{padding-top:10px;color:var(--ink-2);}
+/* "N of M lines shown · Show K more lines": a real grid row spanning all three
+   tracks (like the hunk header), never display:contents. */
+.hd-dl-more{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:8px 18px;user-select:none;
+  border-top:1px solid var(--line);color:var(--ink-2);font:400 12px var(--sans);}
+.hd-dl-more-btn{border:none;background:none;color:var(--blue-ink);font:500 12.5px var(--sans);
+  cursor:pointer;padding:0;}
+.hd-dl-more-btn:hover{text-decoration:underline;}
+.hd-dl-more-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 .hd-dl-row.hd-dl-add > *{background:var(--green-bg);}
 .hd-dl-row.hd-dl-del > *{background:var(--red-bg);}
 .hd-tree{display:block;}

@@ -26,7 +26,10 @@ test('diff source grid has two sticky gutters and one widest-code track', () => 
   assert.match(bodyAfter('.hd-dl-code{'), /min-width:100%/);
   assert.match(bodyAfter('.hd-dl-code{'), /white-space:pre/);
   assert.match(bodyAfter('.hd-dl-hunk,.hd-diff-note{'), /grid-column:1\/-1/);
+  assert.match(bodyAfter('.hd-dl-more{'), /grid-column:1\/-1/, 'show-more spans all three tracks');
   assert.match(bodyAfter('.hd-diff-body.hint{'), /display:block/);
+  assert.match(bodyAfter('.hd-diff-body.hint .hd-diff-note{'), /padding-inline:0/,
+    'placeholder note is not padded twice inside the block body');
   assert.match(bodyAfter('.hd-dl-row.hd-dl-add > *{'), /background:var\(--green-bg\)/);
   assert.match(bodyAfter('.hd-dl-row.hd-dl-del > *{'), /background:var\(--red-bg\)/);
 });
@@ -72,6 +75,7 @@ test('tree native controls hide groups explicitly and preserve visible focus', (
   const panePath = bodyAfter('.hd-diff-pane-head .hd-diff-path{');
   assert.match(panePath, /margin:0/);
   assert.match(panePath, /font-size:12px/);
+  assert.match(panePath, /font-weight:400/, 'the h3 must not keep the UA bold');
 });
 
 function hex(value) {

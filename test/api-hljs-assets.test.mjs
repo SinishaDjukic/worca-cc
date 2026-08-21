@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { SUPPORTED_LANGUAGE_IDS } from '../ui/public/syntax-highlight.mjs';
+import { HLJS_GRAMMAR_IDS } from '../ui/public/hljs-loader.mjs';
 
 useTempHome(after);
 
@@ -51,10 +52,14 @@ test('dependency and lock pin the reviewed runtime package exactly', () => {
   assert.equal(lock.packages['node_modules/highlight.js'], undefined);
 });
 
-test('vendor core and every reviewed grammar are exact JavaScript ESM assets', async () => {
+test('vendor core and every reviewed or sub-language grammar are exact JavaScript ESM assets', async () => {
+  // The loader's closure needs grammars that are not primaries (mojolicious for
+  // perl); the server allowlist is HLJS_GRAMMAR_IDS, a superset of the primaries.
+  assert.ok(SUPPORTED_LANGUAGE_IDS.every((id) => HLJS_GRAMMAR_IDS.includes(id)));
+  assert.ok(HLJS_GRAMMAR_IDS.length > SUPPORTED_LANGUAGE_IDS.length);
   const paths = [
     '/vendor/hljs/core.min.js',
-    ...SUPPORTED_LANGUAGE_IDS.map((id) => `/vendor/hljs/languages/${id}.min.js`),
+    ...HLJS_GRAMMAR_IDS.map((id) => `/vendor/hljs/languages/${id}.min.js`),
     '/vendor/hljs/languages/javascript.min.js?retry=1',
   ];
   for (const pathname of paths) {

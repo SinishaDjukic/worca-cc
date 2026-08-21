@@ -4,8 +4,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { MAX_FILE_SECTION_RENDER_ITEMS } from '../ui/public/diff-view.mjs';
+import { MAX_FILE_SECTION_CODE_UNITS } from '../ui/public/diff-view.mjs';
 import { MAX_HIGHLIGHT_INPUT_BYTES } from '../ui/public/syntax-highlight.mjs';
+
+// app.js connects at most this many source rows per step (HD_DIFF_WINDOW_LINES);
+// app.js exports nothing, so the tests pin the number here.
+const WINDOW = 5000;
 
 // Behavior tests for the History DETAIL header: the meta line, the branch-copy
 // row, Resume, Archive (honest copy through confirmModal), and the retained-work
@@ -1348,32 +1352,195 @@ rename to tools/new.py
   }
 });
 
-test('base rendering stops at the item cap and reports truncation without a KB claim', async () => {
-  const lines = Array.from({ length: MAX_FILE_SECTION_RENDER_ITEMS }, (_, index) => `+const n${index} = ${index};`);
-  const patch = `diff --git a/many.js b/many.js
+const addedLinesPatch = (path, n, { header = null } = {}) => {
+  const lines = Array.from({ length: n }, (_, index) => `+const n${index + 1} = ${index + 1};`);
+  return `diff --git a/${path} b/${path}
 --- /dev/null
-+++ b/many.js
-@@ -0,0 +1,${lines.length} @@
++++ b/${path}
+${header || `@@ -0,0 +1,${n} @@`}
 ${lines.join('\n')}
 `;
-  const results = diffResults({
-    summary: { filesNew: 1, filesChanged: 0, linesAdded: lines.length, linesRemoved: 0 },
-    results: {
-      newFiles: [{ path: 'many.js', status: 'A', added: lines.length, removed: 0 }],
-      changedFiles: [],
-    },
+};
+const addedFileResults = (path, n) => diffResults({
+  summary: { filesNew: 1, filesChanged: 0, linesAdded: n, linesRemoved: 0 },
+  results: { newFiles: [{ path, status: 'A', added: n, removed: 0 }], changedFiles: [] },
+});
+const bodyOf = (doc) => doc.querySelector('#hist-detail .hd-diff-body');
+const rowsOf = (doc) => doc.querySelectorAll('#hist-detail .hd-dl-row');
+const moreOf = (doc) => doc.querySelector('#hist-detail .hd-dl-more');
+
+test('a long diff connects one window of rows plus an honest show-more row, never a truncation note', async () => {
+  const N = WINDOW + 1000;
+  const ctx = await bootDetail({
+    detail: diffDetail(addedFileResults('many.js', N)), arms: patchArm(addedLinesPatch('many.js', N)),
   });
-  const ctx = await bootDetail({ detail: diffDetail(results), arms: patchArm(patch) });
   await openDetail(ctx);
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
-  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-hunk,#hist-detail .hd-dl-row').length,
-    MAX_FILE_SECTION_RENDER_ITEMS);
-  const note = doc.querySelector('#hist-detail .hd-diff-trunc');
-  assert.match(note.textContent, /large file — diff truncated/);
+  assert.equal(rowsOf(doc).length, WINDOW);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-hunk').length, 1);
+  assert.equal(doc.querySelector('#hist-detail .hd-diff-trunc'), null, 'nothing was dropped, so no truncation note');
+  const more = moreOf(doc);
+  assert.ok(more, 'the hidden rows are one click away');
+  assert.equal(more.classList.contains('hd-dl-row'), false, 'a real grid row, not display:contents');
+  assert.equal(more.dataset.path, 'many.js', 'carries the same section identity as every other row');
+  assert.match(more.querySelector('.hd-dl-more-hint').textContent, /^5000 of 6000 lines shown$/);
+  const button = more.querySelector('button.hd-dl-more-btn');
+  assert.equal(button.type, 'button');
+  assert.equal(button.textContent, 'Show 1000 more lines');
+  assert.equal(more, bodyOf(doc).lastElementChild);
+  // The gutter is sized for the WIDEST number in the whole file up front, so
+  // expanding never shifts the columns.
+  assert.equal(bodyOf(doc).style.getPropertyValue('--hd-gutter-width'), 'calc(4ch + 16px)');
+
+  click(ctx.window, button);
+  await settle(ctx.window);
+  assert.equal(rowsOf(doc).length, N);
+  assert.equal(moreOf(doc), null);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-hunk').length, 1, 'the continued hunk gets no second header');
+  const last = [...rowsOf(doc)].at(-1);
+  assert.equal(last.dataset.new, String(N));
+  assert.equal(last.querySelector('.hd-dl-code').textContent, `+const n${N} = ${N};`);
+});
+
+test('show-more steps one window at a time, reporting the running total and the singular form', async () => {
+  const N = 2 * WINDOW + 1;
+  const ctx = await bootDetail({
+    detail: diffDetail(addedFileResults('big.js', N)), arms: patchArm(addedLinesPatch('big.js', N)),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  assert.equal(rowsOf(doc).length, WINDOW);
+  assert.equal(moreOf(doc).querySelector('button').textContent, `Show ${WINDOW} more lines`);
+
+  click(ctx.window, moreOf(doc).querySelector('button'));
+  await settle(ctx.window);
+  assert.equal(rowsOf(doc).length, 2 * WINDOW);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-more').length, 1, 'the used control is replaced, not stacked');
+  assert.match(moreOf(doc).querySelector('.hd-dl-more-hint').textContent, /^10000 of 10001 lines shown$/);
+  assert.equal(moreOf(doc).querySelector('button').textContent, 'Show 1 more line');
+
+  click(ctx.window, moreOf(doc).querySelector('button'));
+  await settle(ctx.window);
+  assert.equal(rowsOf(doc).length, N);
+  assert.equal(moreOf(doc), null);
+});
+
+test('a window boundary inside a hunk continues that hunk; later hunks still get their headers', async () => {
+  // hunk 1 fills the window exactly (WINDOW lines) and hunk 2 follows: the
+  // first window must not render hunk 2's header as a dangling last row.
+  const first = Array.from({ length: WINDOW }, (_, i) => `+a${i}`);
+  const second = ['+b1', '+b2', '+b3'];
+  const patch = `diff --git a/two.js b/two.js
+--- a/two.js
++++ b/two.js
+@@ -0,0 +1,${first.length} @@
+${first.join('\n')}
+@@ -10,0 +${first.length + 11},3 @@
+${second.join('\n')}
+`;
+  const ctx = await bootDetail({
+    detail: diffDetail(addedFileResults('two.js', first.length + 3)), arms: patchArm(patch),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  assert.equal(rowsOf(doc).length, WINDOW);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-dl-hunk').length, 1);
+  assert.equal(moreOf(doc).querySelector('button').textContent, 'Show 3 more lines');
+  click(ctx.window, moreOf(doc).querySelector('button'));
+  await settle(ctx.window);
+  const hunks = [...doc.querySelectorAll('#hist-detail .hd-dl-hunk')];
+  assert.equal(hunks.length, 2);
+  assert.equal(hunks[1].nextElementSibling.querySelector('.hd-dl-code').textContent, '+b1');
+  assert.equal(rowsOf(doc).length, WINDOW + 3);
+});
+
+test('the section-size cap still reports truncation, after the show-more row', async () => {
+  // ~9 code units per row: well over MAX_FILE_SECTION_CODE_UNITS, so the parser
+  // drops the tail (that loss is real and is said so), and the renderer windows
+  // the ~55k rows that survive.
+  const N = Math.ceil(MAX_FILE_SECTION_CODE_UNITS / 9) + 500;
+  const lines = Array.from({ length: N }, () => '+xxxxxxxx');
+  const patch = `diff --git a/huge.txt b/huge.txt
+--- /dev/null
++++ b/huge.txt
+@@ -0,0 +1,${N} @@
+${lines.join('\n')}
+`;
+  const ctx = await bootDetail({
+    detail: diffDetail(addedFileResults('huge.txt', N)), arms: patchArm(patch),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  assert.equal(rowsOf(doc).length, WINDOW);
+  const body = bodyOf(doc);
+  const note = body.querySelector('.hd-diff-trunc');
+  assert.equal(note.textContent, '(large file — diff truncated)');
   assert.doesNotMatch(note.textContent, /KB/);
-  assert.equal(note.classList.contains('hd-dl-row'), false);
-  assert.match(doc.querySelector('#hist-detail .hd-diff-body').style.getPropertyValue('--hd-gutter-width'), /^calc\(/);
+  assert.equal(note, body.lastElementChild, 'the note stays the last row');
+  assert.equal(note.previousElementSibling, moreOf(doc), 'show-more sits just above it');
+  const shown = Number(/^(\d+) of (\d+) lines shown$/.exec(moreOf(doc).querySelector('.hd-dl-more-hint').textContent)[2]);
+  assert.ok(shown > WINDOW && shown < N, `the total counts parsed rows only (${shown})`);
+});
+
+test('rows connected by show-more are highlighted once both the rows and the highlighter exist', async () => {
+  // Hunk 1 is ineligible for highlighting (its header count is wrong, so it
+  // stays plain) and fills the first window; hunk 2 is eligible but only
+  // connects after a click. Both orders must end with hunk 2 enhanced.
+  const bulk = Array.from({ length: WINDOW + 5 }, (_, i) => `+x${i}`);
+  const patch = `diff --git a/src/a.js b/src/a.js
+--- a/src/a.js
++++ b/src/a.js
+@@ -0,0 +1,2 @@
+${bulk.join('\n')}
+@@ -1 +1 @@
+-old
++valid
+`;
+  const results = diffResults({
+    summary: { linesAdded: bulk.length + 1, linesRemoved: 1 },
+    results: { changedFiles: [{ path: 'src/a.js', status: 'M', added: bulk.length + 1, removed: 1 }] },
+  });
+  const highlighter = {
+    lang: 'javascript',
+    highlight: (text) => text.replace(/valid/g, '<span class="hljs-keyword">valid</span>'),
+  };
+  const enhancedSources = (doc) => [...doc.querySelectorAll('#hist-detail .hd-dl-src')]
+    .filter((source) => source.querySelector('.hljs-keyword'))
+    .map((source) => source.textContent);
+
+  // Order A: the highlighter finishes first, the click comes later.
+  const ready = await bootDetail({
+    detail: diffDetail(results), arms: patchArm(patch),
+    hljsLoader: { async forLanguage() { return highlighter; } },
+  });
+  await openDetail(ready);
+  await settle(ready.window, 6);
+  assert.deepEqual(enhancedSources(ready.window.document), []);
+  click(ready.window, moreOf(ready.window.document).querySelector('button'));
+  await settle(ready.window);
+  assert.deepEqual(enhancedSources(ready.window.document), ['valid']);
+  assert.equal(rowsOf(ready.window.document).length, bulk.length + 2);
+
+  // Order B: the click lands while the grammar is still loading.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const late = await bootDetail({
+    detail: diffDetail(results), arms: patchArm(patch), hljsLoader: { forLanguage: () => gate },
+  });
+  await openDetail(late);
+  await settle(late.window, 5);
+  click(late.window, moreOf(late.window.document).querySelector('button'));
+  await settle(late.window);
+  assert.deepEqual(enhancedSources(late.window.document), []);
+  release(highlighter);
+  await settle(late.window, 6);
+  assert.deepEqual(enhancedSources(late.window.document), ['valid']);
+  const plain = [...late.window.document.querySelectorAll('#hist-detail .hd-dl-src')][0];
+  assert.equal(plain.children.length, 0, 'the ineligible hunk stays plain');
 });
 
 test('directory collapse changes no selection, pane body, or patch fetch', async () => {

@@ -95,7 +95,7 @@ import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs'
 import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
-import { SUPPORTED_LANGUAGE_IDS } from './public/syntax-highlight.mjs';
+import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -121,8 +121,10 @@ const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const require = createRequire(import.meta.url);
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
+// Primaries plus the sub-language grammars their instances register
+// (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
 const HLJS_LANGUAGE_FILES = new Set(
-  SUPPORTED_LANGUAGE_IDS.map((id) => `${id}.min.js`),
+  HLJS_GRAMMAR_IDS.map((id) => `${id}.min.js`),
 );
 
 function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.warn(msg)) {

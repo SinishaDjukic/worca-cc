@@ -4,10 +4,17 @@
 // workspace runs concatenate per-member patches, each prefixed with a
 // "# <projectKey>" comment line (orchestrator.mjs:3443).
 
+// The ONLY cap here: it bounds parsing work and is the only point where rows
+// are lost (and said so via `truncated`). Bounding the DOM is the renderer's
+// job — app.js connects rows in windows — so a 6,000-line lockfile hunk parses
+// in full and stays one click away instead of silently disappearing.
 export const MAX_FILE_SECTION_CODE_UNITS = 500_000;
-export const MAX_FILE_SECTION_RENDER_ITEMS = 5_000;
 
-const HUNK_RANGE_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
+// `[^\n]` rather than `.`: git copies the function-context line verbatim, and
+// `.` excludes CR, U+2028 and U+2029 — a header such as
+// `@@ -5,7 +5,7 @@ function f(sep = "\u2028") {` would otherwise lose its range,
+// blanking both gutters and disabling highlighting for the hunk.
+const HUNK_RANGE_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: [^\n]*)?$/;
 
 export function hunkRange(header) {
   const raw = String(header || '');
@@ -122,7 +129,6 @@ export function parseFileSection(raw) {
   }
   const res = { binary: false, truncated, hunks: [] };
   let hunk = null;
-  let retainedItems = 0;
   let oldNo = null;
   let newNo = null;
   let oldRemaining = 0;
@@ -141,11 +147,6 @@ export function parseFileSection(raw) {
       continue;
     }
     if (structuralLine.startsWith('@@')) {
-      if (retainedItems >= MAX_FILE_SECTION_RENDER_ITEMS) {
-        res.truncated = true;
-        break;
-      }
-      retainedItems += 1;
       const range = hunkRange(structuralLine);
       hunk = {
         header: structuralLine,
@@ -164,11 +165,6 @@ export function parseFileSection(raw) {
     }
     if (!hunk) continue; // still in the header block
     if (line.startsWith('\\')) continue; // "\ No newline at end of file"
-    if (retainedItems >= MAX_FILE_SECTION_RENDER_ITEMS) {
-      res.truncated = true;
-      break;
-    }
-    retainedItems += 1;
 
     const kind = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx';
     const source = kind === 'ctx'

@@ -11184,13 +11184,14 @@ function hdDiffRow(doc, line, meta) {
 function afterDiffPaint(win = window) {
   return new Promise((resolve) => {
     let settled = false;
+    let timer;
     const finish = () => {
       if (settled) return;
       settled = true;
       win.clearTimeout(timer);
       resolve();
     };
-    const timer = win.setTimeout(finish, 50);
+    timer = win.setTimeout(finish, 50);
     if (typeof win.requestAnimationFrame === 'function') {
       win.requestAnimationFrame(() => win.setTimeout(finish, 0));
     } else {
@@ -11199,16 +11200,45 @@ function afterDiffPaint(win = window) {
   });
 }
 
-async function enhanceDiffBody({ parsed, lang, refs, ownsBody }) {
-  const loading = diffHljsLoader.forLanguage(lang);
-  await afterDiffPaint();
-  const loaded = await loading;
-  if (!loaded || !ownsBody()) return;
-  if (!highlightParsed(parsed, lang, loaded.highlight) || !ownsBody()) return;
+// Source rows connected per step. The parser keeps every row under its
+// 500,000-code-unit section cap (diff-view.mjs); this bounds what one paint
+// CONNECTS, so a 250k-row generated diff cannot mint a million gutter/source
+// nodes at once while every hidden row stays one click away.
+const HD_DIFF_WINDOW_LINES = 5_000;
 
+// One selected file's render state, shared by the window appender and the
+// highlighter so rows connected by a later "Show more" still get enhanced.
+function hdDiffView(parsed, ownsBody) {
+  let totalLines = 0;
+  let digits = 3;
   for (const hunk of parsed.hunks) {
-    const marked = hunk.lines.filter((line) => Object.hasOwn(line, 'html'));
-    if (!marked.length || marked.length !== hunk.lines.length) continue;
+    totalLines += hunk.lines.length;
+    for (const line of hunk.lines) {
+      for (const no of [line.oldNo, line.newNo]) {
+        if (Number.isSafeInteger(no)) digits = Math.max(digits, String(no).length);
+      }
+    }
+  }
+  return {
+    parsed, ownsBody, digits, totalLines,
+    refs: new Map(),      // parsed line -> live .hd-dl-src
+    applied: new Set(),   // hunks whose highlight decision is final
+    highlighted: false,   // highlightParsed() has run and set line.html
+    hunkIndex: 0, lineIndex: 0, renderedLines: 0,
+  };
+}
+
+// Commit highlighted markup for every hunk whose rows are ALL connected. Stages
+// each hunk in detached DOM and verifies the exact source text before touching
+// the live rows; a hunk is decided once (valid or not) and never re-checked. A
+// hunk cut by a window boundary waits, plain, until its remaining rows connect.
+function hdApplyHighlights(view) {
+  const { parsed, refs, applied, ownsBody } = view;
+  for (const hunk of parsed.hunks) {
+    if (applied.has(hunk) || !hunk.lines.length) continue;
+    if (!hunk.lines.every((line) => Object.hasOwn(line, 'html') && refs.has(line))) continue;
+    if (!ownsBody()) return;
+    applied.add(hunk);
     const staged = [];
     let valid = true;
     for (const line of hunk.lines) {
@@ -11216,7 +11246,7 @@ async function enhanceDiffBody({ parsed, lang, refs, ownsBody }) {
       const holder = document.createElement('span');
       holder.innerHTML = line.html;
       const elements = [...holder.querySelectorAll('*')];
-      if (!liveSource || holder.textContent !== line.text
+      if (holder.textContent !== line.text
         || elements.some((el) => el.tagName !== 'SPAN'
           || [...el.attributes].some((attribute) => attribute.name !== 'class'))) {
         valid = false;
@@ -11224,9 +11254,76 @@ async function enhanceDiffBody({ parsed, lang, refs, ownsBody }) {
       }
       staged.push({ liveSource, nodes: [...holder.childNodes] });
     }
-    if (!valid || !ownsBody()) continue;
+    if (!valid) continue;
     for (const { liveSource, nodes } of staged) liveSource.replaceChildren(...nodes);
   }
+}
+
+async function enhanceDiffBody(view, lang) {
+  const loading = diffHljsLoader.forLanguage(lang);
+  await afterDiffPaint();
+  const loaded = await loading;
+  if (!loaded || !view.ownsBody()) return;
+  if (!highlightParsed(view.parsed, lang, loaded.highlight) || !view.ownsBody()) return;
+  view.highlighted = true;
+  hdApplyHighlights(view);
+}
+
+// Connect the next window of rows before `tail` (the size-cap note, or null).
+// A hunk header is free — it never ends a window, so a boundary always falls
+// after a source row — and a hunk cut by the boundary continues without a
+// second header. When rows remain, a real grid row reports the running total
+// and offers exactly the next window.
+function hdDiffAppendWindow(doc, body, view, meta, tail) {
+  const { parsed, refs } = view;
+  const frag = doc.createDocumentFragment();
+  let added = 0;
+  while (view.hunkIndex < parsed.hunks.length) {
+    if (added >= HD_DIFF_WINDOW_LINES && view.renderedLines < view.totalLines) break;
+    const hunk = parsed.hunks[view.hunkIndex];
+    if (view.lineIndex === 0) {
+      const hh = doc.createElement('div');
+      hh.className = 'hd-dl hd-dl-hunk';
+      setSectionData(hh, meta);
+      hh.textContent = hunk.header;
+      frag.appendChild(hh);
+    }
+    while (view.lineIndex < hunk.lines.length && added < HD_DIFF_WINDOW_LINES) {
+      const line = hunk.lines[view.lineIndex];
+      const rendered = hdDiffRow(doc, line, meta);
+      refs.set(line, rendered.source);
+      frag.appendChild(rendered.row);
+      view.lineIndex += 1;
+      view.renderedLines += 1;
+      added += 1;
+    }
+    if (view.lineIndex < hunk.lines.length) break;
+    view.hunkIndex += 1;
+    view.lineIndex = 0;
+  }
+  if (view.hunkIndex < parsed.hunks.length) {
+    const remaining = view.totalLines - view.renderedLines;
+    const next = Math.min(remaining, HD_DIFF_WINDOW_LINES);
+    const more = doc.createElement('div');
+    more.className = 'hd-dl hd-dl-more';
+    setSectionData(more, meta);
+    const hint = doc.createElement('span');
+    hint.className = 'hd-dl-more-hint';
+    hint.textContent = `${view.renderedLines} of ${view.totalLines} lines shown`;
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'hd-dl-more-btn';
+    button.textContent = `Show ${next} more line${next === 1 ? '' : 's'}`;
+    button.addEventListener('click', () => {
+      if (!view.ownsBody()) return;
+      more.remove();
+      hdDiffAppendWindow(doc, body, view, meta, tail);
+      if (view.highlighted) hdApplyHighlights(view);
+    });
+    more.append(hint, button);
+    frag.appendChild(more);
+  }
+  body.insertBefore(frag, tail);
 }
 
 function buildHdDiff(sec, record, data) {
@@ -11354,42 +11451,30 @@ function buildHdDiff(sec, record, data) {
       pane.appendChild(body);
       return;
     }
-    const refs = new Map();
-    let digits = 3;
-    for (const hunk of parsed.hunks) {
-      const hh = document.createElement('div');
-      hh.className = 'hd-dl hd-dl-hunk';
-      setSectionData(hh, meta);
-      hh.textContent = hunk.header;
-      body.appendChild(hh);
-      for (const line of hunk.lines) {
-        for (const no of [line.oldNo, line.newNo]) {
-          if (Number.isSafeInteger(no)) digits = Math.max(digits, String(no).length);
-        }
-        const rendered = hdDiffRow(document, line, meta);
-        refs.set(line, rendered.source);
-        body.appendChild(rendered.row);
-      }
-    }
+    const ownsBody = () => epoch === pstate.selEpoch
+      && body.isConnected
+      && pane.isConnected
+      && pane.contains(body)
+      && histDetailState?.screen?.contains(pane);
+    const view = hdDiffView(parsed, ownsBody);
+    // The size-cap note is about rows the PARSER dropped, so it stays the last
+    // row; every window (and the show-more control) is inserted above it.
+    let tail = null;
     if (parsed.truncated) {
-      const t = document.createElement('div');
-      t.className = 'hint hd-diff-note hd-diff-trunc';
-      setSectionData(t, meta);
-      t.textContent = '(large file — diff truncated)';
-      body.appendChild(t);
+      tail = document.createElement('div');
+      tail.className = 'hint hd-diff-note hd-diff-trunc';
+      setSectionData(tail, meta);
+      tail.textContent = '(large file — diff truncated)';
+      body.appendChild(tail);
     }
-    body.style.setProperty('--hd-gutter-width', `calc(${digits}ch + 16px)`);
+    hdDiffAppendWindow(document, body, view, meta, tail);
+    body.style.setProperty('--hd-gutter-width', `calc(${view.digits}ch + 16px)`);
     pane.appendChild(body);
 
     const syntaxPath = section.path || entry.f.path || section.oldPath;
     const lang = langForPath(syntaxPath);
     if (lang && canHighlightParsed(parsed)) {
-      const ownsBody = () => epoch === pstate.selEpoch
-        && body.isConnected
-        && pane.isConnected
-        && pane.contains(body)
-        && histDetailState?.screen?.contains(pane);
-      void enhanceDiffBody({ parsed, lang, refs, ownsBody }).catch(() => {});
+      void enhanceDiffBody(view, lang).catch(() => {});
     }
   }
 
