@@ -76,7 +76,7 @@ import {
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetIndicator, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
+import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -338,6 +338,90 @@ function scheduleReconnect() {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar collapse (icon rail). One boolean, one class. The collapsed state is
+// a user PREFERENCE, unrelated to the <1080px breakpoint where the sidebar is
+// hidden outright in favour of .topnav — the two never overlap.
+// Persistence mirrors readRunDensity/setRunDensity (:12376, :12426),
+// the only existing private-mode-safe pair in this file.
+// ---------------------------------------------------------------------------
+const SIDEBAR_KEY = 'worca-cc.sidebar.collapsed';
+
+function readSidebarCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_KEY) === '1'; }
+  catch { return false; }                    // private mode / storage disabled
+}
+
+let sidebarCollapsed = readSidebarCollapsed();
+
+function applySidebarCollapsed() {
+  const aside = $('.sidebar');
+  if (aside) aside.classList.toggle('collapsed', sidebarCollapsed);
+  const btn = $('#side-toggle');
+  if (btn) {
+    btn.setAttribute('aria-expanded', String(!sidebarCollapsed));
+    const label = sidebarCollapsed ? 'Expand menu' : 'Collapse menu';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    // The panel box and its divider never move; only the chevron turns round.
+    // Mirroring the whole glyph in CSS would swing the divider to the right
+    // edge, which reads as "the panel lives on the right" — the wrong claim.
+    const chev = btn.querySelector('svg .chev');
+    if (chev) chev.setAttribute('d', sidebarCollapsed ? 'M14 9l3 3-3 3' : 'M16 15l-3-3 3-3');
+  }
+  // The rail has no visible labels, so mirror each button's label into a native
+  // tooltip while collapsed (the mock does this on all twelve). Written by JS,
+  // never as markup: a static title= on the CTA or on Settings reds
+  // ui-nav-sections:48 / :57, whose regexes pin those open-tags verbatim.
+  // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
+  // Running is excluded — updateNavCounts owns its title (the live/paused
+  // counts). It has not run yet at the boot call below; showView (:13901) does.
+  // `:scope >` mirrors the CSS rule exactly: #nav-paused-badge nests its own
+  // <span id="nav-paused-count">, which a descendant query could reach.
+  // The dataset.nav fallback can only fire if a button ever loses its label
+  // span; an empty title would otherwise leave the button both tooltip-less and
+  // silently "handled".
+  for (const b of $$('.nav button[data-nav]:not([data-nav="running"])')) {
+    if (sidebarCollapsed) {
+      if (!b.dataset.railTitle) {
+        const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
+        b.title = (t && t.textContent.trim()) || b.dataset.nav;
+        b.dataset.railTitle = '1';
+      }
+    } else if (b.dataset.railTitle) {
+      b.removeAttribute('title');
+      delete b.dataset.railTitle;
+    }
+  }
+}
+
+function setSidebarCollapsed(v) {
+  sidebarCollapsed = !!v;
+  // A write that throws (private mode) must not stop the in-memory flip.
+  try { localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? '1' : '0'); }
+  catch { /* private mode */ }
+  applySidebarCollapsed();
+  updateNavCounts();             // Running's title/aria-label (both states)
+  renderPipelineTabs();          // child rows <-> initials tiles (phase 3)
+  paintBudget();                 // spend block <-> budget ring (phase 4)
+}
+
+$('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+// Restore before the first paint. `.sidebar` transitions width/flex-basis over
+// .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
+// not a gesture. This script is deferred, so the class lands after the first
+// style pass and the transition fires: measured in headless Chrome, the rail
+// slid 298px -> 76px on every reload (transitionstart at ~50ms, still 297px
+// wide). Suppress it for this one call, force the layout so the collapsed width
+// becomes the transition's start value, then hand the transition back.
+const railAtBoot = sidebarCollapsed ? $('.sidebar') : null;
+if (railAtBoot) railAtBoot.style.transition = 'none';
+applySidebarCollapsed();
+if (railAtBoot) {
+  void railAtBoot.offsetWidth;   // flush the un-transitioned layout
+  railAtBoot.style.transition = '';
+}
+
+// ---------------------------------------------------------------------------
 // Spend indicator. One /api/budget snapshot drives the sidebar block, the
 // compact topnav amount, and the New-view creation gate. Refreshed at boot, on
 // every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
@@ -368,7 +452,9 @@ function paintBudget() {
   const topAmt = document.getElementById('topnav-spend');
   if (!b) { if (topAmt) topAmt.hidden = true; return; }
   if (mount) {
-    mount.replaceChildren(renderBudgetIndicator(b,
+    // The rail has room for a 38px ring, not a labelled block with a meter.
+    const render = sidebarCollapsed ? renderBudgetRing : renderBudgetIndicator;
+    mount.replaceChildren(render(b,
       { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
   }
   if (topAmt) {
@@ -1865,7 +1951,13 @@ async function initComposer() {
   });
   let rt;
   window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
-  if (window.ResizeObserver) new window.ResizeObserver(() => composerDrawWires()).observe(composer.els.flow);
+  // Debounced like the window-resize path one line above (and deliberately
+  // sharing its `rt`): the sidebar's 200ms collapse transition resizes .main
+  // every frame, and an undebounced observer rebuilds every wire ~12 times per
+  // toggle.
+  if (window.ResizeObserver) new window.ResizeObserver(() => {
+    clearTimeout(rt); rt = setTimeout(composerDrawWires, 80);
+  }).observe(composer.els.flow);
 
   // palette from the registry (or embedded fallback)
   await refreshComposerPalette();
@@ -13495,6 +13587,87 @@ function paintRdHeader(screen, r) {
 
 let runningCollapsed = false; // in-memory only; auto-expanded whenever ≥1 child exists
 
+// The rail shows a 36px square per run instead of a titled row.
+
+// The run's display name for the TOOLTIP and the accessible name. The initials
+// deliberately read the raw title instead, so a blank one still degrades to '?'
+// rather than to 'UR'. `.trim()` before the fallback is load-bearing: a
+// whitespace-only title is TRUTHY, so `r.title || …` opens with a bare separator.
+function railName(r) {
+  return String(r.title || '').trim() || 'Untitled run';
+}
+
+// Initials are the mock's algorithm with two corrections it does not make:
+// `w[0]` is a UTF-16 CODE UNIT, so an emoji title yields a lone high surrogate
+// ('🎉 launch' -> "\ud83cL" -> "?L"); and 'ß'.toUpperCase() is 'SS', so a
+// two-glyph tile would render three. The final `|| '?'` covers a blank or
+// whitespace-only title, which splits to nothing.
+function railInitials(title) {
+  const firstGlyph = (w) => {
+    const c = [...w][0] || '';
+    return [...c.toUpperCase()][0] || c;
+  };
+  return String(title || '').split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(firstGlyph).join('') || '?';
+}
+
+// The word the tile's tooltip ends with. The two branches the expanded tab row
+// also has words for — pending-input and finished — are copied verbatim from it,
+// so the rail and the row can never disagree where both speak. The remaining
+// four are new: the expanded row deliberately renders NO end marker for a
+// paused/starting/pausing/plain-running run, and a 36px square with no label
+// needs a word for each. They intentionally do NOT follow statusPill
+// ('Stopped'/'Error'/'Implementing'/…), which is the run CARD's vocabulary; the
+// tile's sibling is the tab row, not the card. `starting` and `pausing` are
+// named explicitly because runDotClass gives them their own grey-pulse dot — a
+// grey-pulsing dot next to the word "Running" is the dot and the label
+// disagreeing on one 36px square. Because those two share a dot class AND a sig
+// marker, Step 4 puts this function's OUTPUT in the signature.
+function tabStatusWord(r) {
+  if (r.pendingQuestion != null) return 'Waiting for your input';
+  if (isPaused(r)) return 'Paused';
+  if (r._finished || isTerminalStatus(r.status)) {
+    return r.status === 'done' ? 'Completed' : 'Did not complete';
+  }
+  if (r.status === 'starting') return 'Starting';
+  if (r.status === 'pausing') return 'Pausing';
+  return 'Running';
+}
+
+function railTileEl(r) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'rail-tile';
+  // Same distinct dataset key the expanded row uses — NOT data-run-id, which is
+  // the run-card's identifier and is queried unscoped across the suite.
+  tile.dataset.childRunId = r.runId;
+  tile.classList.toggle('active', r.runId === state.selectedRunId);
+  if (isLingering(r)) tile.classList.add('lingering');
+  const label = `${railName(r)} · ${tabStatusWord(r)}`;
+  tile.title = label;
+  // The initials are meaningless to a screen reader, so the tile needs a real
+  // name; `aria-label` also beats name-from-contents, which would read "FA".
+  tile.setAttribute('aria-label', label);
+  tile.appendChild(document.createTextNode(railInitials(r.title)));
+
+  const dot = document.createElement('span');
+  dot.className = `child-dot ${runDotClass(r)}`;
+  tile.appendChild(dot);
+
+  // Only the pending-input marker is carried over. The expanded row also shows a
+  // green/red finished-unseen "●", but the tile's corner dot ALREADY carries
+  // green/red from runDotClass — a second marker on a 36px square is unreadable.
+  if (r.pendingQuestion != null) {
+    const q = document.createElement('span');
+    q.className = 'child-q';
+    q.textContent = '?';
+    tile.appendChild(q);
+  }
+
+  tile.addEventListener('click', () => { location.hash = `running/${r.runId}`; });
+  return tile;
+}
+
 function renderPipelineTabs() {
   const rows = pipelineTabRuns();
 
@@ -13518,7 +13691,10 @@ function renderPipelineTabs() {
   // collapsed — changes the signature and repaints as before. JSON.stringify
   // is the encoding: titles/labels are free text, so a hand-joined concat
   // could alias two different states; JSON escaping is unambiguous.
-  const sig = JSON.stringify([runningCollapsed, rows.map((r) => [
+  // sidebarCollapsed is FIRST and load-bearing: this function early-returns on an
+  // unchanged signature, so without it a collapse/expand leaves the previous
+  // mode's markup on screen until the next server event happens to arrive.
+  const sig = JSON.stringify([sidebarCollapsed, runningCollapsed, rows.map((r) => [
     r.runId,
     runDotClass(r),
     r.title,
@@ -13530,6 +13706,12 @@ function renderPipelineTabs() {
       : '',
     r.runId === state.selectedRunId,
     isLingering(r),
+    // The tile renders a status WORD the expanded row never shows, and
+    // starting/pausing are indistinguishable in every field above. Without this
+    // a run paused while still starting keeps a stale "· Starting" tooltip and
+    // aria-label. Costs the expanded state one extra (identical) repaint on that
+    // one transition and nothing else.
+    tabStatusWord(r),
   ])]);
   if (host.dataset.tabsSig === sig) return;
   host.dataset.tabsSig = sig;
@@ -13538,6 +13720,7 @@ function renderPipelineTabs() {
   host.classList.toggle('collapsed', runningCollapsed);  // auto-expanded: default false
   host.innerHTML = '';
   for (const r of rows) {
+    if (sidebarCollapsed) { host.appendChild(railTileEl(r)); continue; }
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'nav-child';
@@ -13617,6 +13800,22 @@ function updateNavCounts() {
   if (pc) pc.textContent = String(paused);
   const pb = $('#nav-paused-badge');
   if (pb) pb.hidden = paused === 0;
+  // The rail hides #nav-paused-badge (it would collide with the live count in
+  // the same corner) and shows no label, so the button's own name has to carry
+  // both numbers. aria-label as well as title: a title is a DESCRIPTION, and
+  // name-from-contents would otherwise announce this button as bare "4".
+  // Written in BOTH states so the two can never drift apart — but at zero it
+  // degrades to the plain label, because "Running — 0 live" is noise on a
+  // resting sidebar, and zero is where most users are most of the time. The
+  // accessible name still CONTAINS the visible label, so WCAG 2.5.3 holds.
+  const rb = $('.nav button[data-nav="running"]');
+  if (rb) {
+    const t = paused ? `Running — ${live} live, ${paused} paused`
+      : live ? `Running — ${live} live`
+      : 'Running';
+    rb.title = t;
+    rb.setAttribute('aria-label', t);
+  }
 }
 
 // Single authoritative refresh for all four sidebar counts. Running is derived from

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { renderBudgetRing } from '../ui/public/stats-view.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -201,6 +202,76 @@ test('a run finishing refetches the budget so the final delta lands without a re
 
   assert.ok(ctx.counts.budget > before, 'the client refetches /api/budget when a run ends');
   assert.equal(doc.querySelector('#start-btn').disabled, true, 'and the creation gate flips closed');
+});
+
+// ---- collapsed-rail budget ring ----
+// Pure renderer: its own bare document, no app.js boot.
+const pureDoc = () => new JSDOM('<!doctype html><body></body>').window.document;
+const ringBudget = (over) => ({
+  totalLimitUsd: 50, resetPeriod: 'monthly', windowEndMs: Date.now() + 4 * DAY,
+  blocked: false, ...over,
+});
+
+test('the ring meters spend against the total limit', () => {
+  const el = renderBudgetRing(ringBudget({ windowSpendUsd: 20 }), { doc: pureDoc() });
+  assert.equal(el.style.getPropertyValue('--ring-pct'), '40');
+  assert.equal(el.querySelector('.spend-ring-val').textContent, '40%');
+  assert.equal(el.classList.contains('warn'), false);
+  assert.equal(el.classList.contains('over'), false);
+});
+
+test('the ring keeps .spend-ind and data-nav so the click still routes to #stats', () => {
+  const el = renderBudgetRing(ringBudget({ windowSpendUsd: 20 }), { doc: pureDoc() });
+  assert.ok(el.classList.contains('spend-ind'),
+    'app.js:517 routes the sidebar spend click via closest(".spend-ind")');
+  assert.ok(el.classList.contains('spend-ring'));
+  assert.equal(el.dataset.nav, 'stats');
+  assert.equal(el.tagName, 'BUTTON');
+});
+
+test('the ring turns amber at the warn threshold and red when blocked', () => {
+  const warn = renderBudgetRing(ringBudget({ windowSpendUsd: 41.23 }), { doc: pureDoc() });
+  assert.ok(warn.classList.contains('warn'), '82% of the cap is the warn band');
+  const over = renderBudgetRing(ringBudget({ windowSpendUsd: 61, blocked: true }), { doc: pureDoc() });
+  assert.ok(over.classList.contains('over'));
+  assert.equal(over.style.getPropertyValue('--ring-pct'), '100');
+  assert.equal(over.querySelector('.spend-ring-val').textContent, '100%');
+});
+
+test('the ring clamps its arc to 0-100 whatever the raw ratio is', () => {
+  // Both clamps were proven vacuous in v1 — deleting either kept every test green.
+  const hot = renderBudgetRing(ringBudget({ windowSpendUsd: 75 }), { doc: pureDoc() });
+  assert.equal(hot.style.getPropertyValue('--ring-pct'), '100',
+    '150% of the cap must not sweep the arc past a full circle');
+  assert.equal(hot.querySelector('.spend-ring-val').textContent, '100%');
+  const credit = renderBudgetRing(ringBudget({ windowSpendUsd: -5 }), { doc: pureDoc() });
+  assert.equal(credit.style.getPropertyValue('--ring-pct'), '0',
+    'a refund/credit must not sweep a negative arc');
+  assert.equal(credit.querySelector('.spend-ring-val').textContent, '0%');
+});
+
+test('no total limit renders a neutral ring showing the amount, not a fake percentage', () => {
+  const el = renderBudgetRing(
+    { totalLimitUsd: null, windowSpendUsd: 3168.85, resetPeriod: 'monthly',
+      windowEndMs: Date.now() + 4 * DAY, blocked: false }, { doc: pureDoc() });
+  assert.ok(el.classList.contains('no-limit'));
+  assert.equal(el.style.getPropertyValue('--ring-pct'), '0');
+  assert.equal(el.querySelector('.spend-ring-val').textContent, '$3.2k');
+  assert.match(el.title, /no total limit/);
+});
+
+test('compact amounts stay within four glyphs', () => {
+  const val = (n) => renderBudgetRing(
+    { totalLimitUsd: null, windowSpendUsd: n, resetPeriod: 'monthly',
+      windowEndMs: Date.now(), blocked: false }, { doc: pureDoc() })
+    .querySelector('.spend-ring-val').textContent;
+  assert.equal(val(4.21), '$4');
+  assert.equal(val(317.4), '$317');
+  // 999.5 rounds to 1000 — five glyphs unless the branch tests the ROUNDED value.
+  assert.equal(val(999.5), '$1.0k');
+  assert.equal(val(3168.85), '$3.2k');
+  assert.equal(val(9949), '$9.9k');
+  assert.equal(val(12400), '$12k');
 });
 
 // The two tick suites run last: their fast interval outlives the test, and a
