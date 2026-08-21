@@ -1,5 +1,58 @@
 // Deterministic, project-scoped model and renderer for changed-file navigation.
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgNode(doc, tag, attrs = {}) {
+  const node = doc.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  return node;
+}
+
+function treeIcon(doc, kind) {
+  const svg = svgNode(doc, 'svg', {
+    viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor',
+    'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    'aria-hidden': 'true', focusable: 'false',
+  });
+
+  if (kind === 'folder') {
+    svg.classList.add('hd-tree-folder-icon');
+    svg.appendChild(svgNode(doc, 'path', {
+      d: 'M2.5 5.25h5l1.7 2h8.3v7.5a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z',
+    }));
+    return svg;
+  }
+
+  svg.classList.add('hd-tree-file-icon');
+  svg.setAttribute('stroke-width', '1.45');
+  svg.append(
+    svgNode(doc, 'path', { d: 'M5 2.5h6.5l3.5 3.5v11.5H5z' }),
+    svgNode(doc, 'path', { d: 'M11.5 2.5V6H15' }),
+  );
+  if (kind === 'add') {
+    svg.appendChild(svgNode(doc, 'path', { d: 'M7.5 12h5M10 9.5v5' }));
+  } else if (kind === 'del') {
+    svg.appendChild(svgNode(doc, 'path', { d: 'M7.5 12h5' }));
+  } else {
+    svg.append(
+      svgNode(doc, 'path', { d: 'M7.5 10h5' }),
+      svgNode(doc, 'path', { d: 'M7.5 13h5' }),
+    );
+  }
+  return svg;
+}
+
+function chevronIcon(doc) {
+  const svg = svgNode(doc, 'svg', {
+    viewBox: '0 0 18 20', fill: 'none', stroke: 'currentColor',
+    'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    'aria-hidden': 'true', focusable: 'false',
+  });
+  svg.classList.add('hd-tree-chevron');
+  svg.appendChild(svgNode(doc, 'path', { d: 'M6.5 5.5 11 10l-4.5 4.5' }));
+  return svg;
+}
+
 const nodeKey = (project, type, fullPath) =>
   JSON.stringify([project ?? null, type, fullPath]);
 
@@ -169,7 +222,7 @@ export function renderFileTree(nodes, options = {}) {
     const marker = doc.createElement('span');
     marker.className = 'hd-tree-status';
     marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = state === 'add' ? '+' : state === 'del' ? '-' : '•';
+    marker.appendChild(treeIcon(doc, state));
     const path = doc.createElement('span');
     path.className = 'hd-diff-path mono';
     path.textContent = node.name;
@@ -198,20 +251,17 @@ export function renderFileTree(nodes, options = {}) {
     group.id = `${idPrefix}-group-${nextGroup++}`;
     group.hidden = false;
     button.setAttribute('aria-controls', group.id);
-    const chevron = doc.createElement('span');
-    chevron.className = 'hd-tree-chevron';
-    chevron.setAttribute('aria-hidden', 'true');
-    chevron.textContent = '▾';
+    const chevron = chevronIcon(doc);
+    const folder = treeIcon(doc, 'folder');
     const label = doc.createElement('span');
     label.className = 'hd-tree-dir-label mono';
     label.textContent = node.name;
-    button.append(chevron, label);
+    button.append(chevron, folder, label);
     renderNodes(node.children, group, depth + 1);
     button.addEventListener('click', () => {
       const expanded = button.getAttribute('aria-expanded') === 'true';
       button.setAttribute('aria-expanded', String(!expanded));
       group.hidden = expanded;
-      chevron.textContent = expanded ? '›' : '▾';
       button.setAttribute('aria-label',
         `${expanded ? 'Expand' : 'Collapse'} directory ${fullLabel}`);
     });

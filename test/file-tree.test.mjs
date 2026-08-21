@@ -149,16 +149,33 @@ test('renderer uses native accessible controls, safe IDs, and visual-only initia
   assert.match(rename.getAttribute('aria-label'), /2 lines added, 3 lines removed/);
   assert.match(rename.title, /old\/y\.ts/);
   assert.ok([...rename.querySelectorAll('.hd-tree-status')].every((node) => node.getAttribute('aria-hidden') === 'true'));
+  const changedIcon = rename.querySelector('.hd-tree-file-icon');
+  assert.equal(changedIcon.tagName, 'svg');
+  assert.equal(changedIcon.getAttribute('stroke-width'), '1.45');
+  assert.equal(changedIcon.querySelectorAll('path').length, 4, 'changed paper has fold and text lines');
+
+  assert.equal(dir.children[0].classList.contains('hd-tree-chevron'), true);
+  assert.equal(dir.children[1].classList.contains('hd-tree-folder-icon'), true);
+  assert.equal(dir.children[2].classList.contains('hd-tree-dir-label'), true);
 });
 
-test('deleted-file marker uses an ASCII hyphen outside the count chip', () => {
-  const deleted = entry('gone.js', {
-    f: { path: 'gone.js', status: 'D', added: 0, removed: 3 },
-  });
-  const { nav } = render(buildFileTree([deleted]));
-  const button = nav.querySelector('.hd-tree-file.deleted');
-  assert.equal(button.querySelector('.hd-tree-status').textContent, '-');
-  assert.equal(button.querySelector('.counts').textContent, '+0 −3');
+test('file states use distinct paper icons outside the count chip', () => {
+  const rows = [
+    entry('changed.js'),
+    entry('new.js', { isNew: true, f: { path: 'new.js', status: 'A', added: 3, removed: 0 } }),
+    entry('gone.js', { f: { path: 'gone.js', status: 'D', added: 0, removed: 3 } }),
+  ];
+  const { nav } = render(buildFileTree(rows));
+  const changed = nav.querySelector('.hd-tree-file.mod');
+  const added = nav.querySelector('.hd-tree-file.add');
+  const deleted = nav.querySelector('.hd-tree-file.del');
+  assert.equal(changed.querySelector('.hd-tree-file-icon').querySelectorAll('path').length, 4);
+  assert.equal(added.querySelector('.hd-tree-file-icon').querySelectorAll('path').length, 3);
+  assert.equal(deleted.querySelector('.hd-tree-file-icon').querySelectorAll('path').length, 3);
+  assert.notEqual(added.querySelector('.hd-tree-file-icon path:last-child').getAttribute('d'),
+    deleted.querySelector('.hd-tree-file-icon path:last-child').getAttribute('d'));
+  assert.equal(deleted.querySelector('.hd-tree-status').textContent, '');
+  assert.equal(deleted.querySelector('.counts').textContent, '+0 −3');
 });
 
 test('directory toggles preserve children and selection without invoking onPick', () => {

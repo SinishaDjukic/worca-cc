@@ -1884,14 +1884,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 }
 .hd-diff-list-head,.hd-diff-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:15px 18px;border-bottom:1px solid var(--line);font-size:12.5px;}
-.hd-diff-rows{padding:6px;max-height:520px;overflow-y:auto;}
-.hd-diff-file.new .hd-diff-path{color:var(--green-ink);}
+.hd-diff-rows{padding:6px;max-height:860px;overflow-y:auto;}
 .hd-diff-counts{font-size:11.5px;white-space:nowrap;}
 /* Binary count chips carry `.hint`, and `.hint` (style.css:283) is
    `display:block;margin-top:7px` — inside these flex rows it would sit visibly
    low. Same reset for the pane head. */
 .hd-diff-counts .hint,.hd-diff-pane-head .hint{display:inline;margin-top:0;}
-.hd-diff-pane-head .hd-diff-path{margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hd-diff-pane-head .hd-diff-path{
+  margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;
+}
 /* The patch is the tall thing on this screen, so it scrolls INSIDE its pane
    rather than pushing the whole detail screen down — same cap and mechanism as
    `.hd-diff-rows` opposite it, which keeps the two panes the same height.
@@ -1901,7 +1903,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   padding:12px 0;
   display:grid;
   grid-template-columns:var(--hd-gutter-width) var(--hd-gutter-width) minmax(max-content,1fr);
-  max-height:520px;
+  max-height:860px;
   overflow:auto;
   font:400 12px/1.85 var(--mono);
   color:var(--ink-2);
@@ -1957,7 +1959,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   flex:1;
   min-width:0;
   font-size:12px;
-  color:var(--ink-2);
+  color:var(--ink);
   direction:ltr;
   text-align:left;
   white-space:nowrap;
@@ -1965,9 +1967,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   text-overflow:ellipsis;
 }
 .hd-tree-file .hd-diff-path::before{content:none;}
-.hd-tree-file.deleted .hd-diff-path{opacity:1;color:var(--ink-2);text-decoration:line-through;}
-.hd-tree-status,.hd-tree-chevron{flex:0 0 auto;color:var(--ink-2);}
-.hd-tree-dir-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hd-tree-file.deleted .hd-diff-path{opacity:1;color:var(--ink);text-decoration:none;}
+.hd-tree-status,.hd-tree-chevron,.hd-tree-folder-icon{flex:0 0 auto;}
+.hd-tree-status{width:18px;height:18px;display:grid;place-items:center;color:var(--ink);}
+.hd-tree-file.add .hd-tree-status{color:var(--green-ink);}
+.hd-tree-file.del .hd-tree-status{color:var(--red-ink);}
+.hd-tree-file-icon,.hd-tree-folder-icon{width:18px;height:18px;display:block;}
+.hd-tree-chevron{width:12px;height:14px;color:var(--ink-2);transition:transform .15s;}
+.hd-tree-dir[aria-expanded="true"] .hd-tree-chevron{transform:rotate(90deg);}
+.hd-tree-folder-icon{color:var(--ink);}
+.hd-tree-dir-label{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--ink);
+}
 .hd-diff-pane :is(.hljs-comment,.hljs-quote,.hljs-punctuation){color:var(--hd-syntax-comment);}
 .hd-diff-pane :is(.hljs-keyword,.hljs-operator,.hljs-meta,.hljs-deletion){color:var(--hd-syntax-keyword);}
 .hd-diff-pane :is(.hljs-type,.hljs-built_in,.hljs-attr,.hljs-attribute,

@@ -19,7 +19,8 @@ test('diff source grid has two sticky gutters and one widest-code track', () => 
   const body = bodyAfter('.hd-diff-body{');
   assert.match(body, /grid-template-columns:var\(--hd-gutter-width\) var\(--hd-gutter-width\) minmax\(max-content,1fr\)/);
   assert.match(body, /overflow:auto/);
-  assert.match(body, /max-height:520px/);
+  assert.match(body, /max-height:860px/);
+  assert.match(bodyAfter('.hd-diff-rows{'), /max-height:860px/);
   assert.match(bodyAfter('.hd-dl-row{'), /display:contents/);
   assert.doesNotMatch(bodyAfter('.hd-dl-code{'), /display:contents/);
   assert.match(bodyAfter('.hd-dl-code{'), /min-width:100%/);
@@ -54,11 +55,23 @@ test('tree native controls hide groups explicitly and preserve visible focus', (
   const leaf = bodyAfter('.hd-tree-file .hd-diff-path{');
   assert.match(leaf, /direction:ltr/);
   assert.match(leaf, /text-overflow:ellipsis/);
+  assert.match(leaf, /font-size:12px/);
+  assert.match(leaf, /color:var\(--ink\)/);
   assert.match(bodyAfter('.hd-tree-file .hd-diff-path::before{'), /content:none/);
   const deleted = bodyAfter('.hd-tree-file.deleted .hd-diff-path{');
   assert.match(deleted, /opacity:1/);
   assert.doesNotMatch(deleted, /opacity:\.(?:[0-9]+)/);
-  assert.match(bodyAfter('.hd-diff-pane-head .hd-diff-path{'), /margin:0/);
+  assert.match(deleted, /text-decoration:none/);
+  assert.doesNotMatch(deleted, /line-through/);
+  const dirLabel = bodyAfter('.hd-tree-dir-label{');
+  assert.match(dirLabel, /font-size:12px/);
+  assert.match(dirLabel, /color:var\(--ink\)/);
+  assert.match(bodyAfter('.hd-tree-file.add .hd-tree-status{'), /color:var\(--green-ink\)/);
+  assert.match(bodyAfter('.hd-tree-file.del .hd-tree-status{'), /color:var\(--red-ink\)/);
+  assert.match(bodyAfter('.hd-tree-dir[aria-expanded="true"] .hd-tree-chevron{'), /rotate\(90deg\)/);
+  const panePath = bodyAfter('.hd-diff-pane-head .hd-diff-path{');
+  assert.match(panePath, /margin:0/);
+  assert.match(panePath, /font-size:12px/);
 });
 
 function hex(value) {
