@@ -200,12 +200,21 @@ test('the expanded wordmark keeps its own sizing rule', () => {
   assert.match(logo, /height:\s*36px/);
 });
 
-test('one chevron glyph, mirrored by CSS when collapsed', () => {
+test('one panel glyph whose box never moves — only the chevron turns round', () => {
   const brand = html.match(/<div class="brand">[\s\S]*?<\/button>\s*<\/div>/);
   assert.ok(brand, '.brand must close after the toggle button');
   assert.equal((brand[0].match(/<svg/g) || []).length, 1,
-    'exactly one chevron SVG — the collapsed glyph is the same path, mirrored');
-  assert.match(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:\s*scaleX\(-1\)/);
+    'exactly one SVG — both states are the same glyph with a rewritten chevron');
+  // Panel outline + a divider fixed at x=9, drawn in hairlines (the mock is a
+  // thin-stroke icon, not the 2px chevron this replaced).
+  assert.match(brand[0], /<rect x="3" y="3" width="18" height="18"/);
+  assert.match(brand[0], /<path d="M9 3v18">/);
+  assert.match(brand[0], /stroke-width="1\.2"/);
+  // The chevron is the ONLY part app.js may rewrite, so it needs its own hook.
+  assert.match(brand[0], /<path class="chev" d="M16 15l-3-3 3-3">/);
+  // Mirroring the whole glyph would swing the divider to the right edge and
+  // claim the sidebar had moved sides; the CSS must only resize it.
+  assert.doesNotMatch(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:/);
 });
 
 test('the toggle stays OUT of <nav>, which keeps exactly 12 buttons', () => {
@@ -347,6 +356,18 @@ test('clicking again expands and persists the expanded state', async () => {
   assert.equal(window.document.querySelector('.sidebar').classList.contains('collapsed'), false);
   assert.equal(window.document.querySelector('#side-toggle').getAttribute('aria-expanded'), 'true');
   assert.equal(window.localStorage.getItem(KEY), '0');
+});
+
+test('the chevron points into the panel collapsed, out of it expanded', async () => {
+  // Markup ships the expanded chevron, so a state that never re-set it would
+  // still read correctly at boot — collapse first, then expand, to catch that.
+  const { window, click } = await boot();
+  const chev = () => window.document.querySelector('#side-toggle .chev').getAttribute('d');
+  assert.equal(chev(), 'M16 15l-3-3 3-3');
+  click('#side-toggle');
+  assert.equal(chev(), 'M14 9l3 3-3 3', 'collapsed chevron must point right, out of the rail');
+  click('#side-toggle');
+  assert.equal(chev(), 'M16 15l-3-3 3-3');
 });
 
 test('a stored "1" restores the rail at boot', async () => {
@@ -818,6 +839,9 @@ test('every remaining new rule carries the declarations it exists for', () => {
     /background:\s*transparent/);
   mark('.sidebar.collapsed .side-toggle', /width:\s*40px/, /height:\s*40px/,
     /border-radius:\s*12px/);
+  // Both glyph sizes; the rail one stays the larger of the two.
+  mark('.side-toggle svg', /width:\s*23px/, /height:\s*23px/);
+  mark('.sidebar.collapsed .side-toggle svg', /width:\s*26px/, /height:\s*26px/);
   // Both flex columns centre their fixed-width children; without this the 40px
   // squares and 36px tiles sit left-aligned in a 39px content box.
   mark('.sidebar.collapsed .nav', /align-items:\s*center/);

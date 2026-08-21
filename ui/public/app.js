@@ -362,6 +362,11 @@ function applySidebarCollapsed() {
     const label = sidebarCollapsed ? 'Expand menu' : 'Collapse menu';
     btn.title = label;
     btn.setAttribute('aria-label', label);
+    // The panel box and its divider never move; only the chevron turns round.
+    // Mirroring the whole glyph in CSS would swing the divider to the right
+    // edge, which reads as "the panel lives on the right" — the wrong claim.
+    const chev = btn.querySelector('svg .chev');
+    if (chev) chev.setAttribute('d', sidebarCollapsed ? 'M14 9l3 3-3 3' : 'M16 15l-3-3 3-3');
   }
   // The rail has no visible labels, so mirror each button's label into a native
   // tooltip while collapsed (the mock does this on all twelve). Written by JS,

@@ -2528,8 +2528,8 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .brand .logo-mark{display:none;width:32px;height:32px;border-radius:50%;}
 .side-toggle{display:flex;align-items:center;justify-content:center;
   width:30px;height:30px;flex:0 0 auto;padding:0;border:0;border-radius:9px;
-  background:transparent;color:var(--ink-3);cursor:pointer;}
-.side-toggle svg{width:17px;height:17px;}
+  background:transparent;color:var(--ink);cursor:pointer;}
+.side-toggle svg{width:23px;height:23px;}
 .side-toggle:hover{background:var(--field);color:var(--ink);}
 .side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -2546,11 +2546,15 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
 .sidebar.collapsed .side-toggle{width:40px;height:40px;margin:10px 0 8px;border-radius:12px;}
-/* The mock's two chevrons are exact mirror images of one path (verified:
-   reflecting M15 6l-5 6 5 6M7 5v14 about x=12 gives M9 6l5 6-5 6M17 5v14, which
-   is byte-for-byte the mock's collapsed glyph at Worca Running.dc.html:136), so
-   one glyph plus a flip keeps the states from ever drifting apart. */
-.sidebar.collapsed .side-toggle svg{width:18px;height:18px;transform:scaleX(-1);}
+/* The glyph is a panel outline with a fixed left divider, so it must NOT be
+   mirrored: scaleX(-1) would throw the divider to the right edge and claim the
+   sidebar had moved. Only the inner chevron turns round, and applySidebarCollapsed
+   (app.js:365) rewrites its `d` instead — the box stays put in both states.
+   Both glyph sizes are the originals +30% (18 -> 23 beside the wordmark,
+   20 -> 26 on the rail). stroke-width lives in the markup, not here: at 1.2 in a
+   24-unit viewBox both sizes land on a ~1.2px hairline, so neither state needs
+   walking back. */
+.sidebar.collapsed .side-toggle svg{width:26px;height:26px;}
 
 /* `:not(.rail-tile)` is LOAD-BEARING on both rules below. Run tiles are
    <button>s inside .nav, so without the guard the first rule would force them
