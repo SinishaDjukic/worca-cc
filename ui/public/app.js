@@ -60,7 +60,16 @@ import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
 import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
-import { splitPatchSections, parseFileSection, patchIndex, sectionKey } from './diff-view.mjs';
+import {
+  splitPatchSections, parseFileSection, patchIndex, sectionKey,
+} from './diff-view.mjs';
+import {
+  langForPath, canHighlightParsed, highlightParsed,
+} from './syntax-highlight.mjs';
+import { createHljsLoader } from './hljs-loader.mjs';
+import {
+  buildFileTree, renderFileTree, firstFile,
+} from './file-tree.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
@@ -77,6 +86,8 @@ import {
 } from './models-view.mjs';
 import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
+
+const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -11092,10 +11103,227 @@ function hdDiffFileRows(results) {
 
 // Per-file count chip. A file entry carries EITHER {added,removed} OR
 // {binary:true} — never both (results.mjs:22-53).
-function hdFileCountsHtml(f) {
-  if (f.binary) return '<span class="hint">binary</span>';
-  if (f.added == null) return '';
-  return `<span class="diff-add">+${f.added}</span> <span class="diff-del">−${f.removed}</span>`; // U+2212
+function hdFileCountsNode(doc, f) {
+  const out = doc.createElement('span');
+  out.className = 'mono hd-diff-counts';
+  if (f.binary) {
+    const binary = doc.createElement('span');
+    binary.className = 'hint';
+    binary.textContent = 'binary';
+    out.appendChild(binary);
+    return out;
+  }
+  if (f.added == null) return out;
+  const add = doc.createElement('span');
+  add.className = 'diff-add';
+  add.textContent = `+${f.added}`;
+  const del = doc.createElement('span');
+  del.className = 'diff-del';
+  del.textContent = `−${f.removed}`;
+  out.append(add, doc.createTextNode(' '), del);
+  return out;
+}
+
+function diffSectionMeta(entry, fileKey, section) {
+  const path = String(section?.path ?? entry?.f?.path ?? '');
+  return {
+    fileKey: String(fileKey ?? ''),
+    project: String(entry?.project ?? ''),
+    path,
+    oldPath: String(section?.oldPath ?? entry?.f?.from ?? path),
+    newPath: path,
+  };
+}
+
+function setSectionData(el, meta) {
+  el.dataset.fileKey = String(meta.fileKey ?? '');
+  el.dataset.project = String(meta.project ?? '');
+  el.dataset.path = String(meta.path ?? '');
+  el.dataset.oldPath = String(meta.oldPath ?? '');
+  el.dataset.newPath = String(meta.newPath ?? '');
+}
+
+function hdDiffRow(doc, line, meta) {
+  const row = doc.createElement('div');
+  row.className = `hd-dl hd-dl-row hd-dl-${line.kind}`;
+  setSectionData(row, meta);
+  row.dataset.old = line.oldNo == null ? '' : String(line.oldNo);
+  row.dataset.new = line.newNo == null ? '' : String(line.newNo);
+
+  const gutter = (side, no) => {
+    const cell = doc.createElement('span');
+    cell.className = `hd-dl-n hd-dl-n-${side}`;
+    if (no == null) {
+      cell.setAttribute('aria-hidden', 'true');
+    } else {
+      const visible = doc.createElement('span');
+      visible.className = 'hd-dl-n-v';
+      visible.setAttribute('aria-hidden', 'true');
+      visible.textContent = String(no);
+      const spoken = doc.createElement('span');
+      spoken.className = 'sr-only';
+      spoken.textContent = `${side === 'old' ? 'Old' : 'New'} line ${no}`;
+      cell.append(visible, spoken);
+    }
+    return cell;
+  };
+
+  const code = doc.createElement('span');
+  code.className = 'hd-dl-code';
+  const sign = doc.createElement('span');
+  sign.className = 'hd-dl-sign';
+  sign.textContent = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+  const source = doc.createElement('span');
+  source.className = 'hd-dl-src';
+  source.textContent = line.text;
+  code.append(sign, source);
+  row.append(gutter('old', line.oldNo), gutter('new', line.newNo), code);
+  return { row, source };
+}
+
+function afterDiffPaint(win = window) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      win.clearTimeout(timer);
+      resolve();
+    };
+    timer = win.setTimeout(finish, 50);
+    if (typeof win.requestAnimationFrame === 'function') {
+      win.requestAnimationFrame(() => win.setTimeout(finish, 0));
+    } else {
+      win.setTimeout(finish, 0);
+    }
+  });
+}
+
+// Source rows connected per step. The parser keeps every row under its
+// 500,000-code-unit section cap (diff-view.mjs); this bounds what one paint
+// CONNECTS, so a 250k-row generated diff cannot mint a million gutter/source
+// nodes at once while every hidden row stays one click away.
+const HD_DIFF_WINDOW_LINES = 5_000;
+
+// One selected file's render state, shared by the window appender and the
+// highlighter so rows connected by a later "Show more" still get enhanced.
+function hdDiffView(parsed, ownsBody) {
+  let totalLines = 0;
+  let digits = 3;
+  for (const hunk of parsed.hunks) {
+    totalLines += hunk.lines.length;
+    for (const line of hunk.lines) {
+      for (const no of [line.oldNo, line.newNo]) {
+        if (Number.isSafeInteger(no)) digits = Math.max(digits, String(no).length);
+      }
+    }
+  }
+  return {
+    parsed, ownsBody, digits, totalLines,
+    refs: new Map(),      // parsed line -> live .hd-dl-src
+    applied: new Set(),   // hunks whose highlight decision is final
+    highlighted: false,   // highlightParsed() has run and set line.html
+    hunkIndex: 0, lineIndex: 0, renderedLines: 0,
+  };
+}
+
+// Commit highlighted markup for every hunk whose rows are ALL connected. Stages
+// each hunk in detached DOM and verifies the exact source text before touching
+// the live rows; a hunk is decided once (valid or not) and never re-checked. A
+// hunk cut by a window boundary waits, plain, until its remaining rows connect.
+function hdApplyHighlights(view) {
+  const { parsed, refs, applied, ownsBody } = view;
+  for (const hunk of parsed.hunks) {
+    if (applied.has(hunk) || !hunk.lines.length) continue;
+    if (!hunk.lines.every((line) => Object.hasOwn(line, 'html') && refs.has(line))) continue;
+    if (!ownsBody()) return;
+    applied.add(hunk);
+    const staged = [];
+    let valid = true;
+    for (const line of hunk.lines) {
+      const liveSource = refs.get(line);
+      const holder = document.createElement('span');
+      holder.innerHTML = line.html;
+      const elements = [...holder.querySelectorAll('*')];
+      if (holder.textContent !== line.text
+        || elements.some((el) => el.tagName !== 'SPAN'
+          || [...el.attributes].some((attribute) => attribute.name !== 'class'))) {
+        valid = false;
+        break;
+      }
+      staged.push({ liveSource, nodes: [...holder.childNodes] });
+    }
+    if (!valid) continue;
+    for (const { liveSource, nodes } of staged) liveSource.replaceChildren(...nodes);
+  }
+}
+
+async function enhanceDiffBody(view, lang) {
+  const loading = diffHljsLoader.forLanguage(lang);
+  await afterDiffPaint();
+  const loaded = await loading;
+  if (!loaded || !view.ownsBody()) return;
+  if (!highlightParsed(view.parsed, lang, loaded.highlight) || !view.ownsBody()) return;
+  view.highlighted = true;
+  hdApplyHighlights(view);
+}
+
+// Connect the next window of rows before `tail` (the size-cap note, or null).
+// A hunk header is free — it never ends a window, so a boundary always falls
+// after a source row — and a hunk cut by the boundary continues without a
+// second header. When rows remain, a real grid row reports the running total
+// and offers exactly the next window.
+function hdDiffAppendWindow(doc, body, view, meta, tail) {
+  const { parsed, refs } = view;
+  const frag = doc.createDocumentFragment();
+  let added = 0;
+  while (view.hunkIndex < parsed.hunks.length) {
+    if (added >= HD_DIFF_WINDOW_LINES && view.renderedLines < view.totalLines) break;
+    const hunk = parsed.hunks[view.hunkIndex];
+    if (view.lineIndex === 0) {
+      const hh = doc.createElement('div');
+      hh.className = 'hd-dl hd-dl-hunk';
+      setSectionData(hh, meta);
+      hh.textContent = hunk.header;
+      frag.appendChild(hh);
+    }
+    while (view.lineIndex < hunk.lines.length && added < HD_DIFF_WINDOW_LINES) {
+      const line = hunk.lines[view.lineIndex];
+      const rendered = hdDiffRow(doc, line, meta);
+      refs.set(line, rendered.source);
+      frag.appendChild(rendered.row);
+      view.lineIndex += 1;
+      view.renderedLines += 1;
+      added += 1;
+    }
+    if (view.lineIndex < hunk.lines.length) break;
+    view.hunkIndex += 1;
+    view.lineIndex = 0;
+  }
+  if (view.hunkIndex < parsed.hunks.length) {
+    const remaining = view.totalLines - view.renderedLines;
+    const next = Math.min(remaining, HD_DIFF_WINDOW_LINES);
+    const more = doc.createElement('div');
+    more.className = 'hd-dl hd-dl-more';
+    setSectionData(more, meta);
+    const hint = doc.createElement('span');
+    hint.className = 'hd-dl-more-hint';
+    hint.textContent = `${view.renderedLines} of ${view.totalLines} lines shown`;
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'hd-dl-more-btn';
+    button.textContent = `Show ${next} more line${next === 1 ? '' : 's'}`;
+    button.addEventListener('click', () => {
+      if (!view.ownsBody()) return;
+      more.remove();
+      hdDiffAppendWindow(doc, body, view, meta, tail);
+      if (view.highlighted) hdApplyHighlights(view);
+    });
+    more.append(hint, button);
+    frag.appendChild(more);
+  }
+  body.insertBefore(frag, tail);
 }
 
 function buildHdDiff(sec, record, data) {
@@ -11124,16 +11352,23 @@ function buildHdDiff(sec, record, data) {
   const pane = document.createElement('div');
   pane.className = 'hd-diff-pane';
   grid.append(listCard, pane);
-  sec.appendChild(grid);
+  const sectionHeading = document.createElement('h2');
+  sectionHeading.className = 'sr-only';
+  sectionHeading.textContent = 'Changed files and diff';
+  sec.append(sectionHeading, grid);
 
   const sums = results.summary || {};
   const head = document.createElement('div');
   head.className = 'hd-diff-list-head';
   // NOT + filesDeleted: 'D' rows already count in filesChanged (see HD_TABS).
   const nFiles = (sums.filesNew || 0) + (sums.filesChanged || 0);
-  head.innerHTML = `<b>${nFiles} file${nFiles === 1 ? '' : 's'} changed</b>` +
-    `<span class="mono"><span class="diff-add">+${sums.linesAdded || 0}</span> ` +
-    `<span class="diff-del">−${sums.linesRemoved || 0}</span></span>`; // U+2212
+  const total = document.createElement('b');
+  total.textContent = `${nFiles} file${nFiles === 1 ? '' : 's'} changed`;
+  const totals = hdFileCountsNode(document, {
+    added: sums.linesAdded || 0,
+    removed: sums.linesRemoved || 0,
+  });
+  head.append(total, totals);
   listCard.appendChild(head);
 
   const rowsHost = document.createElement('div');
@@ -11169,95 +11404,90 @@ function buildHdDiff(sec, record, data) {
     return pstate.patchPromise;
   }
 
-  async function select(rowEl, entry) {
+  async function select(entry, fileKey) {
     const epoch = ++pstate.selEpoch;
-    for (const r of rowsHost.querySelectorAll('.hd-diff-file')) r.classList.toggle('active', r === rowEl);
     pane.innerHTML = '';
     const ph = document.createElement('div');
     ph.className = 'hd-diff-pane-head mono';
-    ph.innerHTML = `<span class="hd-diff-path">${escapeHtml(entry.f.path)}</span>`
-      + `<span>${hdFileCountsHtml(entry.f)}</span>`;
+    const selectedPath = document.createElement('h3');
+    selectedPath.className = 'hd-diff-path';
+    selectedPath.textContent = entry.f.path;
+    selectedPath.title = entry.f.from ? `${entry.f.from} → ${entry.f.path}` : entry.f.path;
+    if (entry.f.from) {
+      selectedPath.setAttribute('aria-label', `Renamed from ${entry.f.from} to ${entry.f.path}`);
+    }
+    ph.append(selectedPath, hdFileCountsNode(document, entry.f));
     pane.appendChild(ph);
 
     await ensurePatch();
-    if (epoch !== pstate.selEpoch) return; // a newer selection took the pane
+    if (epoch !== pstate.selEpoch
+      || !pane.isConnected
+      || !histDetailState?.screen?.contains(pane)) return;
 
     const body = document.createElement('div');
     body.className = 'hd-diff-body mono';
     const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
+    const meta = diffSectionMeta(entry, fileKey, section);
     if (!section) {
       body.classList.add('hint');
-      body.textContent = pstate.error
+      const note = document.createElement('div');
+      note.className = 'hd-diff-note';
+      setSectionData(note, meta);
+      note.textContent = pstate.error
         ? `Could not load the patch: ${pstate.error}`
         : '(no textual diff for this file)';
+      body.appendChild(note);
       pane.appendChild(body);
       return;
     }
     const parsed = parseFileSection(section.raw);
     if (parsed.binary || !parsed.hunks.length) {
       body.classList.add('hint');
-      body.textContent = '(no textual diff for this file)';
+      const note = document.createElement('div');
+      note.className = 'hd-diff-note';
+      setSectionData(note, meta);
+      note.textContent = '(no textual diff for this file)';
+      body.appendChild(note);
       pane.appendChild(body);
       return;
     }
-    for (const hunk of parsed.hunks) {
-      const hh = document.createElement('div');
-      hh.className = 'hd-dl hd-dl-hunk';
-      hh.textContent = hunk.header;
-      body.appendChild(hh);
-      for (const line of hunk.lines) {
-        const dl = document.createElement('div');
-        dl.className = `hd-dl hd-dl-${line.kind}`;
-        // ASCII prefixes on purpose: this is a verbatim patch a user may copy —
-        // a U+2212 here yields something `git apply` rejects. U+2212 stays in the
-        // COUNT chips above.
-        dl.textContent = (line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ') + line.text;
-        body.appendChild(dl);
-      }
-    }
+    const ownsBody = () => epoch === pstate.selEpoch
+      && body.isConnected
+      && pane.isConnected
+      && pane.contains(body)
+      && histDetailState?.screen?.contains(pane);
+    const view = hdDiffView(parsed, ownsBody);
+    // The size-cap note is about rows the PARSER dropped, so it stays the last
+    // row; every window (and the show-more control) is inserted above it.
+    let tail = null;
     if (parsed.truncated) {
-      const t = document.createElement('div');
-      t.className = 'hint hd-diff-trunc';
-      t.textContent = '(large file — diff truncated at 500 KB)';
-      body.appendChild(t);
+      tail = document.createElement('div');
+      tail.className = 'hint hd-diff-note hd-diff-trunc';
+      setSectionData(tail, meta);
+      tail.textContent = '(large file — diff truncated)';
+      body.appendChild(tail);
     }
+    hdDiffAppendWindow(document, body, view, meta, tail);
+    body.style.setProperty('--hd-gutter-width', `calc(${view.digits}ch + 16px)`);
     pane.appendChild(body);
+
+    const syntaxPath = section.path || entry.f.path || section.oldPath;
+    const lang = langForPath(syntaxPath);
+    if (lang && canHighlightParsed(parsed)) {
+      void enhanceDiffBody(view, lang).catch(() => {});
+    }
   }
 
-  let lastProject = null;
-  let first = null;
-  for (const entry of rows) {
-    if (entry.project && entry.project !== lastProject) {
-      lastProject = entry.project;
-      const gh = document.createElement('div');
-      gh.className = 'hd-diff-proj mono';
-      gh.textContent = entry.project;
-      rowsHost.appendChild(gh);
-    }
-    const rowEl = document.createElement('div');
-    rowEl.className = 'hd-diff-file' + (entry.f.status === 'D' ? ' deleted' : '') + (entry.isNew ? ' new' : '');
-    rowEl.setAttribute('role', 'button');
-    rowEl.tabIndex = 0;
-    const path = document.createElement('span');
-    path.className = 'hd-diff-path mono';
-    path.textContent = entry.f.path;
-    path.title = entry.f.from ? `${entry.f.from} → ${entry.f.path}` : entry.f.path;
-    const counts = document.createElement('span');
-    counts.className = 'mono hd-diff-counts';
-    counts.innerHTML = hdFileCountsHtml(entry.f);
-    rowEl.append(path, counts);
-    // `select` is async and fire-and-forget from all three call sites, so it needs
-    // an explicit sink: node --test fails the WHOLE file on an unhandled rejection
-    // and pins it on whichever test happens to be in flight.
-    const pick = () => { select(rowEl, entry).catch(() => {}); };
-    rowEl.addEventListener('click', pick);
-    rowEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
-    });
-    rowsHost.appendChild(rowEl);
-    if (!first) first = { rowEl, entry };
-  }
-  if (first) select(first.rowEl, first.entry).catch(() => {});
+  const nodes = buildFileTree(rows);
+  const first = firstFile(nodes);
+  const tree = renderFileTree(nodes, {
+    doc: document,
+    initialKey: first?.key ?? null,
+    counts: (entry) => hdFileCountsNode(document, entry.f),
+    onPick: (entry, key) => { select(entry, key).catch(() => {}); },
+  });
+  rowsHost.appendChild(tree);
+  if (first) select(first.entry, first.key).catch(() => {});
   else {
     const none = document.createElement('div');
     none.className = 'hint hd-diff-none';

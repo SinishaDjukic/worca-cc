@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  splitPatchSections, parseFileSection, patchIndex, sectionKey, MAX_FILE_SECTION_BYTES,
+  splitPatchSections, parseFileSection, patchIndex, sectionKey, hunkRange,
+  MAX_FILE_SECTION_CODE_UNITS,
 } from '../ui/public/diff-view.mjs';
 
 const SIMPLE = `diff --git a/src/a.js b/src/a.js
@@ -138,7 +139,7 @@ test('empty member patch (bare "# key" line) is tolerated', () => {
 
 test('oversized section is truncated at a line boundary and flagged', () => {
   const big = 'diff --git a/big.txt b/big.txt\n--- a/big.txt\n+++ b/big.txt\n@@ -1,1 +1,1 @@\n'
-    + '+x\n'.repeat(Math.ceil(MAX_FILE_SECTION_BYTES / 3));
+    + '+x\n'.repeat(Math.ceil(MAX_FILE_SECTION_CODE_UNITS / 3));
   const f = parseFileSection(splitPatchSections(big)[0].raw);
   assert.equal(f.truncated, true);
   assert.ok(f.hunks.length >= 1);
@@ -151,7 +152,7 @@ test('one line longer than the cap -> truncated hunk with ZERO lines (no crash)'
   // ever assumes `truncated === true` implies at least one line (Task 6 iterates
   // hunk.lines, so it renders the header + the truncation note and nothing else).
   const big = 'diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n'
-    + '+' + 'x'.repeat(MAX_FILE_SECTION_BYTES + 10) + '\n';
+    + '+' + 'x'.repeat(MAX_FILE_SECTION_CODE_UNITS + 10) + '\n';
   const f = parseFileSection(splitPatchSections(big)[0].raw);
   assert.equal(f.truncated, true);
   assert.equal(f.hunks.length, 1);
@@ -161,4 +162,106 @@ test('one line longer than the cap -> truncated hunk with ZERO lines (no crash)'
 test('empty / junk input -> empty sections', () => {
   assert.deepEqual(splitPatchSections(''), []);
   assert.deepEqual(splitPatchSections('not a diff at all\njust text\n'), []);
+});
+
+test('hunkRange accepts unified headers and rejects unsafe or combined ranges', () => {
+  assert.deepEqual(hunkRange('@@ -4,2 +9,3 @@ label'), {
+    oldStart: 4, oldCount: 2, newStart: 9, newCount: 3,
+  });
+  assert.deepEqual(hunkRange('@@ -7 +8 @@\r'), {
+    oldStart: 7, oldCount: 1, newStart: 8, newCount: 1,
+  });
+  assert.deepEqual(hunkRange('@@ -0,0 +0,0 @@'), {
+    oldStart: 0, oldCount: 0, newStart: 0, newCount: 0,
+  });
+  assert.equal(hunkRange('@@ -0 +1 @@'), null);
+  assert.equal(hunkRange('@@@ -1,1 -1,1 +1,1 @@@'), null);
+  assert.equal(hunkRange(`@@ -${Number.MAX_SAFE_INTEGER},2 +1 @@`), null);
+  assert.equal(hunkRange('@@ -9007199254740992 +1 @@'), null);
+});
+
+test('hunkRange keeps the range when git\'s function context carries U+2028/U+2029 or a CR', () => {
+  // git copies the funcname line verbatim (default xfuncname = any letter-initial
+  // line), so these reach the header unescaped; `.` would reject all three.
+  const want = { oldStart: 5, oldCount: 7, newStart: 5, newCount: 7 };
+  assert.deepEqual(hunkRange('@@ -5,7 +5,7 @@ function f(sep = "\u2028") {'), want);
+  assert.deepEqual(hunkRange('@@ -5,7 +5,7 @@ const x = "\u2029"'), want);
+  assert.deepEqual(hunkRange('@@ -5,7 +5,7 @@ a\rb'), want);
+  assert.equal(hunkRange('@@ -5,7 +5,7 @@ a\n+b'), null, 'a second line is never part of a header');
+  const parsed = parseFileSection('@@ -5,2 +5,2 @@ function f(sep = "\u2028") {\n x\n-y\n+z\n');
+  assert.deepEqual(parsed.hunks[0].lines.map((l) => [l.oldNo, l.newNo]), [[5, 5], [6, null], [null, 6]]);
+});
+
+test('parser numbers both sides locally, resets hunks, and preserves CR source', () => {
+  const parsed = parseFileSection([
+    '@@ -2,3 +8,3 @@',
+    ' context',
+    '-old',
+    '+new',
+    ' tail',
+    '\\ No newline at end of file',
+    '@@ -20 +30 @@',
+    '-gone\r',
+    '+fresh\r',
+  ].join('\n'));
+  assert.deepEqual(parsed.hunks[0].lines, [
+    { kind: 'ctx', text: 'context', oldNo: 2, newNo: 8 },
+    { kind: 'del', text: 'old', oldNo: 3, newNo: null },
+    { kind: 'add', text: 'new', oldNo: null, newNo: 9 },
+    { kind: 'ctx', text: 'tail', oldNo: 4, newNo: 10 },
+  ]);
+  assert.deepEqual(parsed.hunks[1].lines, [
+    { kind: 'del', text: 'gone\r', oldNo: 20, newNo: null },
+    { kind: 'add', text: 'fresh\r', oldNo: null, newNo: 30 },
+  ]);
+});
+
+test('malformed ranges have a stable null shape and never invent line numbers', () => {
+  const parsed = parseFileSection('@@@ -1,1 -1,1 +1,1 @@@\n line\n-extra\n+extra');
+  const hunk = parsed.hunks[0];
+  assert.deepEqual(
+    { oldStart: hunk.oldStart, oldCount: hunk.oldCount, newStart: hunk.newStart, newCount: hunk.newCount },
+    { oldStart: null, oldCount: null, newStart: null, newCount: null },
+  );
+  assert.ok(hunk.lines.every((line) => line.oldNo === null && line.newNo === null));
+});
+
+test('declared side counts prevent overlong bodies from receiving extra numbers', () => {
+  const parsed = parseFileSection('@@ -1 +1 @@\n one\n unexpected');
+  assert.deepEqual(parsed.hunks[0].lines.map(({ oldNo, newNo }) => [oldNo, newNo]), [
+    [1, 1], [null, null],
+  ]);
+});
+
+test('every row under the section cap is parsed — the DOM window is the renderer\'s job', () => {
+  // A 6,000-line lockfile hunk is ~60 KB, far below MAX_FILE_SECTION_CODE_UNITS;
+  // the parser must hand back all of it with exact numbering and no truncation
+  // flag. app.js windows what it CONNECTS, never what it parses.
+  const lines = ['@@ -0,0 +1,6000 @@'];
+  for (let i = 1; i <= 6000; i += 1) lines.push(`+${i}`);
+  const parsed = parseFileSection(lines.join('\n'));
+  assert.equal(parsed.truncated, false);
+  assert.equal(parsed.hunks.length, 1);
+  assert.equal(parsed.hunks[0].lines.length, 6000);
+  assert.equal(parsed.hunks[0].lines.at(-1).newNo, 6000);
+});
+
+test('section cap is deliberately measured in UTF-16 code units', () => {
+  const source = '😀'.repeat(Math.ceil(MAX_FILE_SECTION_CODE_UNITS / 2) + 10);
+  const parsed = parseFileSection(`@@ -0,0 +1 @@\n+${source}`);
+  assert.equal(parsed.truncated, true);
+  // The only newline sits right after the header, so the cut snaps there and
+  // the hunk keeps no rows — the mid-line path is pinned by the next test.
+  assert.deepEqual(parsed.hunks[0].lines, []);
+});
+
+test('a mid-line cut (no newline within the cap) never leaves a lone high surrogate', () => {
+  // No newline anywhere, so lastIndexOf('\\n') is -1 and the cut lands on a code
+  // unit boundary: 3 + 499,997 units ends INSIDE a surrogate pair.
+  const parsed = parseFileSection('@@@' + '😀'.repeat(MAX_FILE_SECTION_CODE_UNITS));
+  assert.equal(parsed.truncated, true);
+  assert.equal(parsed.hunks.length, 1);
+  const { header } = parsed.hunks[0];
+  assert.ok(header.isWellFormed(), 'lone high surrogate dropped at the cut');
+  assert.equal(header.length, MAX_FILE_SECTION_CODE_UNITS - 1);
 });

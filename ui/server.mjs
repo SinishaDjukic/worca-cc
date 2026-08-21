@@ -13,6 +13,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import process from 'node:process';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
@@ -94,6 +95,7 @@ import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs'
 import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -117,6 +119,25 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
+const require = createRequire(import.meta.url);
+const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
+// Primaries plus the sub-language grammars their instances register
+// (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
+const HLJS_LANGUAGE_FILES = new Set(
+  HLJS_GRAMMAR_IDS.map((id) => `${id}.min.js`),
+);
+
+function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.warn(msg)) {
+  try {
+    const core = resolve('@highlightjs/cdn-assets/es/core.min.js');
+    return { core, languages: path.join(path.dirname(core), 'languages') };
+  } catch (err) {
+    warn(`[worca-ui] syntax-highlighter assets unavailable: ${err?.message || err}`);
+    return null;
+  }
+}
+
+const HLJS_ASSETS = resolveHljsAssets();
 const PORT = Number(process.env.PORT) || 4317;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
@@ -589,6 +610,41 @@ app.use((req, res, next) => {
     return res.status(403).json({ error: 'forbidden: worca-cc is a localhost-only tool' });
   }
   next();
+});
+
+if (HLJS_ASSETS) {
+  const sendHljsModule = (file) => (_req, res, next) => {
+    res.type('text/javascript');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.sendFile(file, (err) => {
+      if (!err) return;
+      if (res.headersSent) return next(err);
+      next();
+    });
+  };
+  app.get('/vendor/hljs/core.min.js', sendHljsModule(HLJS_ASSETS.core));
+  app.get('/vendor/hljs/languages/:file', (req, res, next) => {
+    const file = String(req.params.file || '');
+    if (!HLJS_LANGUAGE_FILE_RE.test(file) || !HLJS_LANGUAGE_FILES.has(file)) return next();
+    const candidate = path.join(HLJS_ASSETS.languages, file);
+    try {
+      if (!fs.statSync(candidate).isFile()) return next();
+    } catch {
+      return next();
+    }
+    return sendHljsModule(candidate)(req, res, next);
+  });
+}
+
+app.use('/vendor', (err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  res.set('Cache-Control', 'no-store');
+  const status = err?.status === 400 ? 400 : 404;
+  res.status(status).type('text/plain').send(status === 400 ? 'Bad request' : 'Not found');
+});
+app.use('/vendor', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(404).type('text/plain').send('Not found');
 });
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
@@ -3475,6 +3531,7 @@ app.post('/api/chat/test', async (req, res) => {
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+  if (req.path === '/vendor' || req.path.startsWith('/vendor/')) return next();
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => {
     if (err) next();
   });
@@ -3606,4 +3663,8 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export const _testing = { wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, chatNotifier, resumeRun };
+export const _testing = {
+  wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
+  chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
+  chatNotifier, resumeRun, resolveHljsAssets,
+};

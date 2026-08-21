@@ -1729,7 +1729,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd .mono,.hist-card .mono,#shipit-modal .mono{font-family:var(--mono);}
 
 /* Card, not a full-bleed band: same border/radius/shadow language as `.card`, and
-   its own 20px/32px margin box supplies the inset the screen itself cannot — 
+   its own 20px/32px margin box supplies the inset the screen itself cannot —
    `.hist-screen-detail` keeps `padding:0` so the sticky `.hd-tabs` can still pin
    flush to the scrollport top. Inner padding drops 32 -> 24 so the title lands a
    card-like distance from the border instead of 56px from the viewport edge. */
@@ -1866,58 +1866,140 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---------- History detail: Diff tab ---------- */
 .hd-diff{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:18px;align-items:start;}
+.hd-diff{
+  --hd-count-add:#176B4D;
+  --hd-count-del:#B31D28;
+}
+.hd-diff .diff-add{color:var(--hd-count-add);}
+.hd-diff .diff-del{color:var(--hd-count-del);}
 @media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
 .hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.hd-diff-pane{
+  --hd-syntax-comment:#5B6167;
+  --hd-syntax-keyword:#B31D28;
+  --hd-syntax-type:#9A3E00;
+  --hd-syntax-string:#176B4D;
+  --hd-syntax-literal:#713BB8;
+  --hd-syntax-title:#075C82;
+}
 .hd-diff-list-head,.hd-diff-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:15px 18px;border-bottom:1px solid var(--line);font-size:12.5px;}
-.hd-diff-rows{padding:6px;max-height:520px;overflow-y:auto;}
-.hd-diff-proj{padding:8px 12px 2px;color:var(--ink-3);font-size:11px;}
-.hd-diff-file{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;cursor:pointer;}
-.hd-diff-file:hover,.hd-diff-file.active{background:var(--field);}
-.hd-diff-file:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.hd-diff-file.deleted .hd-diff-path{opacity:.55;text-decoration:line-through;}
-.hd-diff-file.new .hd-diff-path{color:var(--green-ink);}
-/* direction:rtl ellipsizes at the START (the file name matters more than the
-   directory). It also reorders a LEADING NEUTRAL character to the end, so
-   `.github/workflows/ci.yml` would render as `github/workflows/ci.yml.` — the
-   ::before LRM (U+200E) is a strong LTR anchor that pins the dot in place while
-   keeping the start-ellipsis. It lives in CSS, not in textContent, so the
-   `/src\/a\.js/` assertions stay clean. */
-.hd-diff-file .hd-diff-path{flex:1;min-width:0;font-size:12px;color:var(--ink-2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;}
-.hd-diff-file .hd-diff-path::before{content:"\200E";}
+.hd-diff-rows{padding:6px;max-height:860px;overflow-y:auto;}
 .hd-diff-counts{font-size:11.5px;white-space:nowrap;}
-/* hdFileCountsHtml's binary chip is a `.hint`, and `.hint` (style.css:283) is
+/* Binary count chips carry `.hint`, and `.hint` (style.css:283) is
    `display:block;margin-top:7px` — inside these flex rows it would sit visibly
    low. Same reset for the pane head. */
 .hd-diff-counts .hint,.hd-diff-pane-head .hint{display:inline;margin-top:0;}
-/* The `.hd-diff-path` ellipsis rule is scoped to `.hd-diff-file`, so the SAME class
-   in the pane head is unstyled and WRAPS: measured 49.8px -> 69px on a 78-char
-   path, while the identical path ellipsizes one column to the left. */
-.hd-diff-pane-head .hd-diff-path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hd-diff-pane-head .hd-diff-path{
+  margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;font-weight:400;
+}
 /* The patch is the tall thing on this screen, so it scrolls INSIDE its pane
    rather than pushing the whole detail screen down — same cap and mechanism as
    `.hd-diff-rows` opposite it, which keeps the two panes the same height.
-   Uncapped, a real patch measured 7479px and owned the screen's whole scroll.
-
-   The grid is what makes the row TINT correct. `.hd-dl` used to size itself with
-   `width:max-content;min-width:100%`, but max-content is EACH ROW'S OWN content:
-   in a 336-row patch that produced 11 different row widths (708…1015px), so every
-   line shorter than the longest had its --green-bg/--red-bg band stop mid-pane
-   and the padding land against the text instead of the edge. A single column of
-   `minmax(max-content,1fr)` is sized by the WIDEST row (1fr keeps it filling the
-   pane when the patch is narrow) and stretch makes every row match it — measured
-   uniform at 1015px with 0 of 217 tinted rows stopping short. D4 forbids syntax
-   highlighting, so this tint is the pane's only visual signal — it has to hold. */
-.hd-diff-body{padding:12px 0;font:400 12px/1.85 var(--mono);color:var(--ink-2);
-  display:grid;grid-template-columns:minmax(max-content,1fr);
-  max-height:520px;overflow-x:auto;overflow-y:auto;}
-.hd-diff-body.hint,.hd-diff-none{padding:18px;}
-.hd-dl{padding:0 18px;white-space:pre;}
-.hd-dl-hunk{color:var(--ink-3);background:var(--field);}
-.hd-dl-add{background:var(--green-bg);}
-.hd-dl-del{background:var(--red-bg);}
-.hd-diff-trunc{padding:10px 18px 0;}
+   Uncapped, a real patch measured 7479px and owned the screen's whole scroll. */
+.hd-diff-body{
+  --hd-gutter-width:calc(3ch + 16px);
+  padding:12px 0;
+  display:grid;
+  grid-template-columns:var(--hd-gutter-width) var(--hd-gutter-width) minmax(max-content,1fr);
+  max-height:860px;
+  overflow:auto;
+  font:400 12px/1.85 var(--mono);
+  color:var(--ink-2);
+}
+.hd-diff-body.hint{display:block;margin-top:0;padding:18px;color:var(--ink-2);}
+.hd-diff-none{padding:18px;color:var(--ink-2);}
+.hd-dl-row{display:contents;}
+.hd-dl-n{
+  position:sticky;
+  z-index:2;
+  padding:0 8px;
+  text-align:right;
+  color:var(--ink-2);
+  background:var(--panel);
+  user-select:none;
+}
+.hd-dl-n-old{left:0;}
+.hd-dl-n-new{left:var(--hd-gutter-width);}
+.hd-dl-code{min-width:100%;padding:0 18px 0 10px;white-space:pre;}
+.hd-dl-hunk,.hd-diff-note{grid-column:1/-1;padding-inline:18px;}
+/* Placeholder states are display:block bodies that pad 18px themselves. */
+.hd-diff-body.hint .hd-diff-note{padding-inline:0;}
+.hd-dl-hunk{white-space:pre;color:var(--ink-2);background:var(--field);}
+.hd-diff-trunc{padding-top:10px;color:var(--ink-2);}
+/* "N of M lines shown · Show K more lines": a real grid row spanning all three
+   tracks (like the hunk header), never display:contents. */
+.hd-dl-more{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:8px 18px;user-select:none;
+  border-top:1px solid var(--line);color:var(--ink-2);font:400 12px var(--sans);}
+.hd-dl-more-btn{border:none;background:none;color:var(--blue-ink);font:500 12.5px var(--sans);
+  cursor:pointer;padding:0;}
+.hd-dl-more-btn:hover{text-decoration:underline;}
+.hd-dl-more-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
+.hd-dl-row.hd-dl-add > *{background:var(--green-bg);}
+.hd-dl-row.hd-dl-del > *{background:var(--red-bg);}
+.hd-tree{display:block;}
+.hd-tree-group{display:block;}
+.hd-tree-group[hidden]{display:none;}
+.hd-tree-project{padding:9px 12px 4px;color:var(--ink-2);font:600 11px var(--mono);}
+.hd-tree-dir,.hd-tree-file{
+  width:100%;
+  border:0;
+  margin:0;
+  padding-block:9px;
+  padding-inline-end:12px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  text-align:left;
+  appearance:none;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  border-radius:9px;
+}
+.hd-tree-dir,.hd-tree-file{padding-inline-start:var(--tree-indent,10px);}
+.hd-tree-dir:hover,.hd-tree-file:hover,.hd-tree-file.active{background:var(--field);}
+.hd-tree-dir:focus-visible,.hd-tree-file:focus-visible{
+  outline:2px solid var(--ink);
+  outline-offset:-2px;
+}
+.hd-tree-file .hd-diff-path{
+  flex:1;
+  min-width:0;
+  font-size:12px;
+  color:var(--ink);
+  direction:ltr;
+  text-align:left;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.hd-tree-file .hd-diff-path::before{content:none;}
+.hd-tree-file.deleted .hd-diff-path{opacity:1;color:var(--ink);text-decoration:none;}
+.hd-tree-status,.hd-tree-chevron,.hd-tree-folder-icon{flex:0 0 auto;}
+.hd-tree-status{width:18px;height:18px;display:grid;place-items:center;color:var(--ink);}
+.hd-tree-file.add .hd-tree-status{color:var(--green-ink);}
+.hd-tree-file.del .hd-tree-status{color:var(--red-ink);}
+.hd-tree-file-icon,.hd-tree-folder-icon{width:18px;height:18px;display:block;}
+.hd-tree-chevron{width:12px;height:14px;color:var(--ink-2);transition:transform .15s;}
+.hd-tree-dir[aria-expanded="true"] .hd-tree-chevron{transform:rotate(90deg);}
+.hd-tree-folder-icon{color:var(--ink);}
+.hd-tree-dir-label{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--ink);
+}
+.hd-diff-pane :is(.hljs-comment,.hljs-quote,.hljs-punctuation){color:var(--hd-syntax-comment);}
+.hd-diff-pane :is(.hljs-keyword,.hljs-operator,.hljs-meta,.hljs-deletion){color:var(--hd-syntax-keyword);}
+.hd-diff-pane :is(.hljs-type,.hljs-built_in,.hljs-attr,.hljs-attribute,
+  .hljs-selector-class,.hljs-selector-id,.hljs-selector-tag){color:var(--hd-syntax-type);}
+.hd-diff-pane :is(.hljs-string,.hljs-regexp,.hljs-addition){color:var(--hd-syntax-string);}
+.hd-diff-pane :is(.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet,
+  .hljs-variable,.hljs-template-variable){color:var(--hd-syntax-literal);}
+.hd-diff-pane :is(.hljs-title,.hljs-section,.hljs-name){color:var(--hd-syntax-title);}
+.hd-diff-pane :is(.hljs-comment,.hljs-quote){font-style:italic;}
+.hd-diff-pane .hint,.hd-diff-list .hint,.hd-tree .hint,.hd-diff-note{color:var(--ink-2);}
 .hd-diff-empty{margin-top:24px;padding:40px;text-align:center;color:var(--ink-2);
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 

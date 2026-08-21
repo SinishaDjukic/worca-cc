@@ -4,7 +4,32 @@
 // workspace runs concatenate per-member patches, each prefixed with a
 // "# <projectKey>" comment line (orchestrator.mjs:3443).
 
-export const MAX_FILE_SECTION_BYTES = 500_000;
+// The ONLY cap here: it bounds parsing work and is the only point where rows
+// are lost (and said so via `truncated`). Bounding the DOM is the renderer's
+// job — app.js connects rows in windows — so a 6,000-line lockfile hunk parses
+// in full and stays one click away instead of silently disappearing.
+export const MAX_FILE_SECTION_CODE_UNITS = 500_000;
+
+// `[^\n]` rather than `.`: git copies the function-context line verbatim, and
+// `.` excludes CR, U+2028 and U+2029 — a header such as
+// `@@ -5,7 +5,7 @@ function f(sep = "\u2028") {` would otherwise lose its range,
+// blanking both gutters and disabling highlighting for the hunk.
+const HUNK_RANGE_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: [^\n]*)?$/;
+
+export function hunkRange(header) {
+  const raw = String(header || '');
+  const m = HUNK_RANGE_RE.exec(raw.endsWith('\r') ? raw.slice(0, -1) : raw);
+  if (!m) return null;
+  const values = [m[1], m[2] ?? '1', m[3], m[4] ?? '1'].map(Number);
+  if (!values.every((n) => Number.isSafeInteger(n) && n >= 0)) return null;
+  const [oldStart, oldCount, newStart, newCount] = values;
+  const safeRange = (start, count) => {
+    if (count === 0) return start >= 0;
+    return start >= 1 && start <= Number.MAX_SAFE_INTEGER - (count - 1);
+  };
+  if (!safeRange(oldStart, oldCount) || !safeRange(newStart, newCount)) return null;
+  return { oldStart, oldCount, newStart, newCount };
+}
 
 // One cheap pass: split the patch into per-file sections. Lines outside any
 // "diff --git" section are ignored, EXCEPT "# <key>" markers, which set the
@@ -88,15 +113,15 @@ function stripSide(s) {
 export function parseFileSection(raw) {
   let text = String(raw || '');
   let truncated = false;
-  if (text.length > MAX_FILE_SECTION_BYTES) {
-    const cut = text.lastIndexOf('\n', MAX_FILE_SECTION_BYTES);
+  if (text.length > MAX_FILE_SECTION_CODE_UNITS) {
+    const cut = text.lastIndexOf('\n', MAX_FILE_SECTION_CODE_UNITS);
     if (cut > 0) {
       text = text.slice(0, cut);                    // snapped to a line boundary
     } else {
       // One line longer than the whole cap: there is no newline to snap to, so
       // cut mid-line and drop a trailing LONE HIGH SURROGATE (a '\n' can never
       // sit inside a pair, which is why the snapped path needs no such guard).
-      text = text.slice(0, MAX_FILE_SECTION_BYTES);
+      text = text.slice(0, MAX_FILE_SECTION_CODE_UNITS);
       const last = text.charCodeAt(text.length - 1);
       if (last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
     }
@@ -104,6 +129,10 @@ export function parseFileSection(raw) {
   }
   const res = { binary: false, truncated, hunks: [] };
   let hunk = null;
+  let oldNo = null;
+  let newNo = null;
+  let oldRemaining = 0;
+  let newRemaining = 0;
   const rows = text.split('\n');
   // A \n-terminated section yields a trailing '' from split (and the workspace
   // '\n\n' member join leaves extras at each seam); without the pop each becomes
@@ -111,20 +140,46 @@ export function parseFileSection(raw) {
   // (one space), never '', so popping every trailing '' is safe.
   while (rows.length && rows[rows.length - 1] === '') rows.pop();
   for (const line of rows) {
-    if (line.startsWith('Binary files ') || line === 'GIT binary patch') {
+    const structuralLine = line.endsWith('\r') ? line.slice(0, -1) : line;
+    if (structuralLine.startsWith('Binary files ')
+      || structuralLine === 'GIT binary patch') {
       res.binary = true;
       continue;
     }
-    if (line.startsWith('@@')) {
-      hunk = { header: line, lines: [] };
+    if (structuralLine.startsWith('@@')) {
+      const range = hunkRange(structuralLine);
+      hunk = {
+        header: structuralLine,
+        oldStart: range?.oldStart ?? null,
+        oldCount: range?.oldCount ?? null,
+        newStart: range?.newStart ?? null,
+        newCount: range?.newCount ?? null,
+        lines: [],
+      };
+      oldNo = range?.oldStart ?? null;
+      newNo = range?.newStart ?? null;
+      oldRemaining = range?.oldCount ?? 0;
+      newRemaining = range?.newCount ?? 0;
       res.hunks.push(hunk);
       continue;
     }
     if (!hunk) continue; // still in the header block
-    if (line.startsWith('+')) hunk.lines.push({ kind: 'add', text: line.slice(1) });
-    else if (line.startsWith('-')) hunk.lines.push({ kind: 'del', text: line.slice(1) });
-    else if (line.startsWith('\\')) continue; // "\ No newline at end of file"
-    else hunk.lines.push({ kind: 'ctx', text: line.startsWith(' ') ? line.slice(1) : line });
+    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
+
+    const kind = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx';
+    const source = kind === 'ctx'
+      ? (line.startsWith(' ') ? line.slice(1) : line)
+      : line.slice(1);
+    const numbered = { kind, text: source, oldNo: null, newNo: null };
+    if (kind !== 'add' && oldNo != null && oldRemaining > 0) {
+      numbered.oldNo = oldNo++;
+      oldRemaining -= 1;
+    }
+    if (kind !== 'del' && newNo != null && newRemaining > 0) {
+      numbered.newNo = newNo++;
+      newRemaining -= 1;
+    }
+    hunk.lines.push(numbered);
   }
   return res;
 }
