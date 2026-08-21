@@ -37,6 +37,15 @@ const MANIFEST = {
       { key: 'repo', type: 'remote-select', label: 'Repo', optionsFrom: 'listRepos' },
       { key: 'task', type: 'task-browser', label: 'Task' },
     ],
+  }, {
+    // A second, multiProfile source: the profile-required guards on /api/run,
+    // /api/sources/call and the config echo all branch on this flag.
+    id: 'prof',
+    displayName: 'Profiled Source',
+    module: './connector/index.mjs',
+    multiProfile: true,
+    configSchema: [{ key: 'token', type: 'text', label: 'Token', secret: true, required: true }],
+    inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
   }],
 };
 const CONNECTOR = `export default function createTaskSource(ctx) {
@@ -102,7 +111,9 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   delete process.env.WORCA_MOCK;
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
-  await rm(homeDir, { recursive: true, force: true });
+  // A fire-and-forget mock run may still be writing into the store when this
+  // hook runs — same ENOTEMPTY race rmWithRetry exists for.
+  await rmWithRetry(homeDir);
   await rm(pluginDir, { recursive: true, force: true });
 });
 
@@ -164,6 +175,30 @@ test('POST /api/run source-shape guards -> 400 with pointed messages', async () 
   });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /not both/);
+});
+
+test('multiProfile source without a profile is rejected at submit, not mid-run', async () => {
+  const projectDir = join(tmpdir(), 'worca-cc-never-created'); // guard fires before any mkdir
+  // /api/run: a run against the (empty) default bucket would die mid-pipeline
+  // with a confusing connector error — the submit is where the client can fix it.
+  let r = await post('/api/run', {
+    projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'prof', taskId: 't1' },
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /source\.profile is required/);
+  // The single-profile sibling is untouched by the guard (shape-checked only).
+  r = await post('/api/run', { projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'main', taskId: 't1', profile: 'NOT-valid!' } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /not a valid profile id/);
+  // /api/sources/call has the same requirement.
+  r = await post('/api/sources/call', { plugin: 'local-src', sourceId: 'prof', op: 'listTasks', args: { inputs: {} } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /profile is required/);
+  // Config echo: a profile that is not in the roster is a caller error — an
+  // empty form for it would let Save quietly create the typo as a profile.
+  r = await get('/api/plugins/local-src/config?profile=no-such');
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /has no profile/);
 });
 
 test('POST /api/run with a plugin source stamps pipelines.source_type/source_ref', async () => {
