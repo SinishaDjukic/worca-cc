@@ -59,6 +59,25 @@ test('directory chains compact but never absorb a file basename', () => {
   assert.deepEqual(branching[0].children.map((node) => node.name), ['public', 'test']);
 });
 
+test('compacted labels determine nested project order, first file, and rendered order', () => {
+  const rows = [
+    entry('p/a/z/f.js', { project: 'alpha' }),
+    entry('p/a-b/f.js', { project: 'alpha' }),
+  ];
+  const nodes = buildFileTree(rows);
+  const project = nodes[0];
+  const parent = project.children[0];
+  assert.equal(parent.name, 'p');
+  assert.deepEqual(parent.children.map((node) => node.name), ['a-b', 'a/z']);
+  assert.equal(firstFile(nodes).path, 'p/a-b/f.js');
+
+  const { nav } = render(nodes);
+  assert.deepEqual([...nav.querySelectorAll('.hd-tree-file')].map((button) => button.dataset.path), [
+    'p/a-b/f.js',
+    'p/a/z/f.js',
+  ]);
+});
+
 test('file and directory with the same segment both survive directory-first', () => {
   const deleted = entry('a', { f: { path: 'a', status: 'D', added: 0, removed: 1 } });
   const added = entry('a/b', { isNew: true, f: { path: 'a/b', status: 'A', added: 1, removed: 0 } });
@@ -130,6 +149,16 @@ test('renderer uses native accessible controls, safe IDs, and visual-only initia
   assert.match(rename.getAttribute('aria-label'), /2 lines added, 3 lines removed/);
   assert.match(rename.title, /old\/y\.ts/);
   assert.ok([...rename.querySelectorAll('.hd-tree-status')].every((node) => node.getAttribute('aria-hidden') === 'true'));
+});
+
+test('deleted-file marker uses an ASCII hyphen outside the count chip', () => {
+  const deleted = entry('gone.js', {
+    f: { path: 'gone.js', status: 'D', added: 0, removed: 3 },
+  });
+  const { nav } = render(buildFileTree([deleted]));
+  const button = nav.querySelector('.hd-tree-file.deleted');
+  assert.equal(button.querySelector('.hd-tree-status').textContent, '-');
+  assert.equal(button.querySelector('.counts').textContent, '+0 −3');
 });
 
 test('directory toggles preserve children and selection without invoking onPick', () => {

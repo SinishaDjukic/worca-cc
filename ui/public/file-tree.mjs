@@ -68,8 +68,8 @@ function makeChildren(rows, project) {
   const materialize = (children) => sortNodes([...children.values()].map((node) => {
     if (node.type === 'file') return node;
     const { childMap, ...dir } = node;
-    return { ...dir, children: materialize(childMap) };
-  })).map((node) => (node.type === 'dir' ? compactDir(node) : node));
+    return compactDir({ ...dir, children: materialize(childMap) });
+  }));
   return materialize(root);
 }
 
@@ -169,7 +169,7 @@ export function renderFileTree(nodes, options = {}) {
     const marker = doc.createElement('span');
     marker.className = 'hd-tree-status';
     marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = state === 'add' ? '+' : state === 'del' ? '−' : '•';
+    marker.textContent = state === 'add' ? '+' : state === 'del' ? '-' : '•';
     const path = doc.createElement('span');
     path.className = 'hd-diff-path mono';
     path.textContent = node.name;
