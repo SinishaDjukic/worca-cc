@@ -101,7 +101,6 @@ Then open the printed URL (default `http://localhost:4317`). The UI lets you:
   issues shown);
 - follow a **live streaming log**;
 - **Pause** or **Stop** a run;
-- **collapse the sidebar** to a 76px icon rail (chevron at the top; the choice is remembered);
 - browse **history** of past pipelines and read their saved markdown.
 
 There's also an **"Install agents into this folder"** button that copies the agents +
