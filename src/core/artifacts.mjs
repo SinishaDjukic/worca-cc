@@ -1338,7 +1338,8 @@ function toPipelineRow(o) {
 }
 
 /**
- * The pipeline's {cost, active} totals for the history list, read from the DB row.
+ * The pipeline's {cost, active} totals for the history list (and the Ask Worca
+ * `get_run` tool, ask-worca-design.md §6.4), read from the DB row.
  * Normal runs carry NOT-NULL 0-defaulted totals, so when a total is > 0 it is used
  * verbatim and NO extra query runs. Only when a total is 0 do we fall back to the
  * per-step SUM/COUNT (the DB-native equivalent of the old pipelineTotalCost/
@@ -1349,7 +1350,7 @@ function toPipelineRow(o) {
  * @param {object} row a pipelines DB row (total_cost_usd / total_active_ms)
  * @returns {{cost:number|null, active:number|null}}
  */
-function totalsFor(row) {
+export function totalsFor(row) {
   const agg = getDb().prepare(`
     SELECT COUNT(cost_usd) cc, SUM(cost_usd) sc, COUNT(active_ms) ca, SUM(active_ms) sa
     FROM pipeline_steps WHERE pipeline_id = ?
@@ -1749,6 +1750,24 @@ export function lookupPipelineRow(key, id) {
   if (row) return row;
   const m = DIR_ID_RE.exec(String(id));
   if (m) row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, m[1].toLowerCase());
+  return row || null;
+}
+
+/**
+ * Ask Worca (ask-worca-design.md §6.4 get_run): one pipelines row by short id
+ * across EVERY store key, archived included. `pipelines.id` is the PRIMARY KEY, so
+ * there is at most one row; the dir-name form (`…-<8hex>`) is accepted like
+ * lookupPipelineRow does.
+ * @param {string} id
+ * @returns {object|null}
+ */
+export function findPipelineRowById(id) {
+  const raw = String(id ?? '').trim();
+  if (!raw) return null;
+  let row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(raw.toLowerCase());
+  if (row) return row;
+  const m = DIR_ID_RE.exec(raw);
+  if (m) row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(m[1].toLowerCase());
   return row || null;
 }
 

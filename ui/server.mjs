@@ -32,6 +32,7 @@ import {
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
 } from '../src/core/settings.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
@@ -2162,6 +2163,8 @@ const settingsState = () => ({
   pipelineCostLimitUsd: pipelineCostLimitUsd(),
   totalCostLimitUsd: totalCostLimitUsd(),
   costLimitResetPeriod: costLimitResetPeriod(),
+  askMaxTurns: askMaxTurns(),
+  askMaxBudgetUsd: askMaxBudgetUsd(),
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2176,6 +2179,7 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2187,8 +2191,15 @@ app.post('/api/settings', async (req, res) => {
   if (has('costLimitResetPeriod')) {
     budget.costLimitResetPeriod = typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '';
   }
+  // Ask Worca per-turn guards (ask-worca-design.md §6.9): same set-validation
+  // discipline. `null` is a VALUE for askMaxBudgetUsd (no cap) and must survive
+  // normalisation; only undefined becomes a clear.
+  const ask = {};
+  if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
+  if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     assertCostLimitInputs(budget);
+    assertAskLimitInputs(ask);
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
@@ -2196,9 +2207,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
     if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
-    // Legacy contract: a POST that names no known key clears root. Budget keys
-    // must not trip it — a budget-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || has('chat'))) {
+    if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
+    if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
+    // Legacy contract: a POST that names no known key clears root. Budget and ask
+    // keys must not trip it — a budget-only or ask-only save would otherwise wipe the root.
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat'))) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (hasBudgetKey) emitChanged('budget-changed');

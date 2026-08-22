@@ -47,6 +47,14 @@ const REPO_ROOT = resolve(__dirname, '..', '..');
 // ── arg parsing ────────────────────────────────────────────────────────────────
 
 /**
+ * The permission modes a pipeline run may be launched with. Deliberately NOT the
+ * full set claude accepts: `dontAsk` belongs to the Ask Worca runner alone
+ * (core/ask/spawn.mjs), which owns its own spawn options and never comes through
+ * here.
+ */
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+
+/**
  * Parse argv into a flags object. Supports "--flag value" and "--flag=value", plus the
  * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help.
  */
@@ -134,6 +142,12 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
+        // A pipeline run's mode reaches claude-runner as-is, and `dontAsk` is the
+        // Ask Worca runner's own mode: every dontAsk spawn takes the ask arm, whose
+        // markers live in the system prompt, so a pipeline role spawned that way
+        // writes no artifact and the run dies at its first artifact read.
+        fail(`--permission-mode must be one of ${PERMISSION_MODES.join(', ')}, got: ${value}`);
       } else {
         out[key] = value;
       }
@@ -194,7 +208,8 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --permission-mode <m>    Claude permission mode (default acceptEdits)
+  --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
+                           bypassPermissions (default acceptEdits)
   --workflow <id>          Saved workflow id to run (default: wf_default)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)

@@ -28,7 +28,7 @@ export function sanitizeTitle(raw) {
  * Produce a concise LLM title for a prompt. Never throws — returns '' on any
  * failure/abort/empty input so the caller keeps the provisional title.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[]}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
@@ -54,6 +54,14 @@ export async function generateTitle(prompt, opts = {}) {
       bin: opts.bin,
       envScrub: opts.envScrub,
       envAllowlist: opts.envAllowlist,
+      // Ask Worca (ask-worca-design.md §6.8): sandbox hardening pass-through for the
+      // chat's background title call. All undefined for every existing caller, and
+      // runClaude emits nothing for undefined — pipeline title argv is unchanged.
+      tools: opts.tools,
+      strictMcpConfig: opts.strictMcpConfig,
+      settingSources: opts.settingSources,
+      disableSlashCommands: opts.disableSlashCommands,
+      mcpConfigPath: opts.mcpConfigPath,
       onEvent: () => {},
     });
     return sanitizeTitle(out);

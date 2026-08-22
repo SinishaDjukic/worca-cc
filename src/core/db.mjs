@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -549,6 +549,61 @@ CREATE TABLE IF NOT EXISTS model_cost_flags (
 );
 `;
 
+/** v18: Ask Worca — assistant chat threads, messages, attachments and run links
+ *  (ask-worca-design.md §7.1). ALL `IF NOT EXISTS`, because this DDL runs from TWO
+ *  places: the `< 18` ladder step AND the schemaGaps() self-heal — a live DB stamped
+ *  18 by a divergent ladder (another branch) would otherwise never get the tables.
+ *  Nothing here is ALTERed later; a future ask_* column goes into INCREMENTAL_COLUMNS. */
+const ASK_DDL = `
+CREATE TABLE IF NOT EXISTS ask_threads (
+  id          TEXT PRIMARY KEY,            -- 'ask_' + 8 hex
+  title       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  model       TEXT,                        -- last model / effort used
+  effort      TEXT,
+  session_id  TEXT,                        -- claude session for --resume; NULL = fresh
+  context     TEXT,                        -- JSON: last page context
+  totals      TEXT NOT NULL DEFAULT '{}'   -- JSON {costUsd,input,output,cacheRead,cacheCreation,turns,agents}
+);
+CREATE TABLE IF NOT EXISTS ask_messages (
+  id          TEXT PRIMARY KEY,
+  thread_id   TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  seq         INTEGER NOT NULL,            -- MAX(seq)+1 allocated inside tx()
+  role        TEXT NOT NULL,               -- user | assistant | system
+  text        TEXT NOT NULL DEFAULT '',
+  blocks      TEXT,                        -- JSON array (ask-worca-design.md §7.1 block schema)
+  status      TEXT,                        -- assistant: streaming | done | stopped | error
+  reason      TEXT,                        -- stopped: user | max_turns | max_budget
+  model       TEXT,
+  effort      TEXT,
+  usage       TEXT,                        -- JSON {input,output,cacheRead,cacheCreation}
+  cost_usd    REAL,                        -- NULL when the turn ended before a \`result\`
+  duration_ms INTEGER,
+  created_at  TEXT NOT NULL,
+  UNIQUE (thread_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_ask_messages_thread ON ask_messages (thread_id, seq);
+CREATE TABLE IF NOT EXISTS ask_attachments (
+  id          TEXT PRIMARY KEY,
+  thread_id   TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  message_id  TEXT,
+  name        TEXT NOT NULL,               -- sanitized basename (display only)
+  bytes       INTEGER NOT NULL,
+  created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ask_run_links (
+  thread_id   TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  run_id      TEXT NOT NULL,               -- runs-Map UUID from POST /api/run
+  pipeline_id TEXT,                        -- short id, from the first \`state\` event
+  card_id     TEXT,
+  status      TEXT,                        -- last seen status
+  phase       TEXT,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (thread_id, run_id)
+);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -604,12 +659,16 @@ function schemaGaps(db) {
   const hasModelCostFlags = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='model_cost_flags'"
   ).get().n > 0;
+  const hasAskThreads = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_threads'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
     guardrailSetsTable: !hasGuardrailSets,
     costLedgerTable: !hasCostLedger,
     modelCostFlagsTable: !hasModelCostFlags,
+    askTables: !hasAskThreads,
   };
 }
 
@@ -623,6 +682,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
   if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
   if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
+  if (gaps.askTables) db.exec(ASK_DDL);
 }
 
 /**
@@ -639,7 +699,7 @@ function repairSchemaGaps(db, gaps) {
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable) return; // clean — no lock
+      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -791,6 +851,7 @@ export function migrate(db) {
     if (current < 15) applySchemaV15(db);
     if (current < 16) applySchemaV16(db);
     if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
+    if (current < 18) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
@@ -818,6 +879,17 @@ export function closeDb() {
  * Not re-entrant: SQLite has no nested BEGIN, so a tx() inside a tx() throws
  * rather than silently joining (or corrupting) the outer transaction. Compose by
  * passing data between calls, not by nesting.
+ *
+ * BEGIN IMMEDIATE, not a deferred BEGIN — every tx() here is a WRITE transaction,
+ * and most of them read first (MAX(seq)+1, a read-modify-write of a JSON column, a
+ * uniqueness scan). A deferred BEGIN takes only a WAL read snapshot on that first
+ * SELECT and then has to UPGRADE at the first write; if another process committed
+ * in between, SQLite answers SQLITE_BUSY_SNAPSHOT, which the busy handler does NOT
+ * retry (busy_timeout cannot help: the snapshot is already stale). The whole tx()
+ * threw "database is locked" and the write was silently lost. Taking the write
+ * lock up front makes busy_timeout apply instead, so a second writer QUEUES.
+ * migrate()/reconcileSchema() take the same lock for the same reason. Keep every
+ * tx() body short and synchronous: the lock is held for its whole duration.
  * @template T
  * @param {() => T} fn
  * @returns {T}
@@ -825,7 +897,7 @@ export function closeDb() {
 export function tx(fn) {
   if (_txDepth > 0) throw new Error('tx(): a transaction is already active (nested tx is not supported)');
   const db = getDb();
-  db.exec('BEGIN');
+  db.exec('BEGIN IMMEDIATE');
   _txDepth = 1;
   try {
     const result = fn();

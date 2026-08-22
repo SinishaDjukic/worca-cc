@@ -87,12 +87,14 @@ function readRows() {
 
 /**
  * List saved projects, each annotated with a runtime `exists` flag (true when the
- * path is an existing directory). The flag is computed, never persisted. Reads
- * from the projects table; never throws.
- * @returns {Promise<Array<{name:string, path:string, exists:boolean}>>}
+ * path is an existing directory). The flag is computed, never persisted. `key` is
+ * the registry key (store.mjs#projectKey at registration) — the id the Ask Worca
+ * catalog and propose_run use, so callers never re-derive it from the path.
+ * Reads from the projects table; never throws.
+ * @returns {Promise<Array<{key:string, name:string, path:string, exists:boolean}>>}
  */
 export async function listProjects() {
-  return readRows().map((e) => ({ name: e.name, path: e.path, exists: isDir(e.path) }));
+  return readRows().map((e) => ({ key: e.key, name: e.name, path: e.path, exists: isDir(e.path) }));
 }
 
 /**
@@ -144,7 +146,7 @@ export async function addProject(input) {
 /**
  * Remove a project by name (case-insensitive). Absent name is a no-op.
  * @param {string} name
- * @returns {Promise<Array<{name:string, path:string, exists:boolean}>>}
+ * @returns {Promise<Array<{key:string, name:string, path:string, exists:boolean}>>}
  */
 export async function removeProject(name) {
   const key = (typeof name === 'string' ? name : '').trim();

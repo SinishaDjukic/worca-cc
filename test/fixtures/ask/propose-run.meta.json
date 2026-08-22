@@ -1,0 +1,31 @@
+{
+  "scenario": "propose-run",
+  "prompt": "Call propose_run with projectKey \"worca-ask-capture-proj-hjftlr-92d8cef7\", workflowId \"wf_default\", brief \"Add a README badge for the test status\" and guardrailsId \"normal\"; then answer with only the word proposed.",
+  "model": "claude-haiku-4-5",
+  "exitCode": 0,
+  "error": null,
+  "stderr": [],
+  "flags": {
+    "maxTurns": 6,
+    "maxBudgetUsd": 1,
+    "resume": null
+  },
+  "captured": "2026-08-22T13:24:52.971Z",
+  "claudeVersion": "2.1.239",
+  "initTools": [
+    "Task",
+    "mcp__worca__get_run",
+    "mcp__worca__get_run_diff",
+    "mcp__worca__list_projects",
+    "mcp__worca__list_runs",
+    "mcp__worca__list_workflows",
+    "mcp__worca__propose_run",
+    "mcp__worca__read_attachment"
+  ],
+  "initMcpServers": [
+    {
+      "name": "worca",
+      "status": "connected"
+    }
+  ]
+}

@@ -19,6 +19,11 @@ project's working tree, so nothing is ever committed to your repo.
     pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
       prompt.md          the prompt text (or copied markdown brief)
       extras/            any optional extra files you attached
+  ask/<threadId>/att/<attachmentId>.txt  Ask Worca attachment bodies (threads, messages and
+                                        run links live in the DB: ask_threads, ask_messages,
+                                        ask_attachments, ask_run_links); removed with the thread
+  tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
+                                        mcp-<messageId>.json (never a project folder)
 ```
 
 Everything that used to be a per-run `.json`/`.md` control file —

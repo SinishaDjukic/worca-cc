@@ -115,3 +115,33 @@ enforces the set's latest definition.
   (overview generation, agent generation), the `graphify` graph-build
   subprocess, **workspace scans**, and the `claude --help`/`--version`
   capability probe. In-run title generation IS scrubbed.
+- **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
+  `claude` spawned by Worca itself, never inside a project folder: its cwd is
+  `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools
+  Task` — no Bash/Read/Write/Edit exist in the process), only Worca's own MCP
+  server is loaded (`--strict-mcp-config`, `--allowedTools Task,mcp__worca`
+  under `--permission-mode dontAsk`), user hooks/plugins/skills are dropped
+  (`--setting-sources project`, `--disable-slash-commands`), the env is
+  scrubbed like a Strict run, and Task sub-agents run in the foreground of the
+  same process with the same pool (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`).
+  Belt-and-braces deny rules cover `Bash`/`Edit`/`Write`/`WebFetch`/… and the
+  worca home (`Read(//**/.worca-cc/**)`, `Read(//**/secrets.json)`,
+  `Read(//**/.env*)`, `~/.ssh`, `~/.aws`). **Anchoring matters:** a permission
+  path that starts with `//` is absolute from the filesystem root; a bare
+  `**/x` pattern is relative to the *current directory* and, from
+  `<worcaHome>/tmp/ask`, protects nothing — verified both ways on claude
+  2.1.239 (an absolute rule denied `<worcaHome>/settings.json`; the relative
+  form read it). The MCP tools themselves are read-only by contract (a test
+  scans the module for write statements) and the assistant can only *propose*
+  a run — the user starts it from the card.
+  **What `get_run_diff` can and cannot filter.** It drops a diff section when
+  EITHER side names a protected path, and `diffPatch` pins every git setting
+  that decides the shape it reads — `-M -l0`, `--no-ext-diff`,
+  `--submodule=short`, `--no-color`, the `a/`…`b/` prefixes and
+  `core.quotePath=false` — so the header shape is Worca's, not the user's
+  `~/.gitconfig`'s. The filter is still path-based: a file git cannot PAIR with
+  its source has no protected side to check, so a rename below git's 50%
+  similarity threshold, a plain copy, or credential lines an agent pasted into
+  a harmless file arrive as an ordinary add under a name no pattern matches.
+  Redaction (`src/core/ask/redact.mjs`) is the second line for those. Per-turn `--max-turns` and
+  `--max-budget-usd` caps are configurable in Settings → Ask Worca.
