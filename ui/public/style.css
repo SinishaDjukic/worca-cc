@@ -43,6 +43,7 @@
   --r-ctrl:14px;
   --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
   --shadow-soft:0 2px 12px rgba(25,25,27,.04);
+  --ask-dock-clearance:96px;
 
   --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -3025,6 +3026,18 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-runinfo-name{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-runinfo-sub{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .ask-runinfo-elapsed{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);}
+
+/* ---------- Ask Worca dock clearance ---------- */
+/* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
+   ~47px pill occludes a ~73px strip at the bottom of every scrollport, while the page
+   gutters reserve only 40px. One late override lifts the BOTTOM padding of all five
+   scroll gutters to --ask-dock-clearance: 96px = 73px strip + breathing room. Source
+   order is load-bearing -- this must follow the base rules at :234, :1718, :1742,
+   :2312, :2335 and precede the reduced-motion block below. The -list screen classes
+   are targeted, NOT .run-screen/.hist-screen, so the -detail scrollports keep
+   padding:0 for their sticky tab bars and take clearance via .rd-body/.hd-body
+   instead; body.view-history/.view-running .main keep padding:0 by specificity. */
+.main,.run-screen-list,.hist-screen-list,.rd-body,.hd-body{padding-bottom:var(--ask-dock-clearance);}
 
 /* ---------- reduced motion for the Running redesign ---------- */
 /* MUST be the LAST block in the file: @media contributes no specificity, so a
