@@ -217,7 +217,9 @@ function mockEnabled(opts) {
  * @param {string[]} [o.envAllowlist]    guardrail: extra env var names to keep under scrub
  * @param {Record<string,string>} [o.modelEnv] per-model routing env (design §4.4), merged
  *   LAST over the spawn env (it survives scrub and wins collisions — explicit operator
- *   config outranks ambient-env hygiene); reserved keys are re-dropped here defensively
+ *   config outranks ambient-env hygiene); reserved keys are re-dropped here defensively.
+ *   An ANTHROPIC_MODEL key is the WIRE id (#374): it replaces `model` in the spawned
+ *   `--model` flag, while `model` (the catalog id) stays worca's handle everywhere else
  * @param {string[]} [o.workspaceWriteTargets] §8.10 MOCK-ONLY member checkouts the mock
  *   implementer writes into instead of `cwd` (empty/absent => today's cwd behavior).
  *   Never reaches argv: `runReal` ignores it by construction.
@@ -337,8 +339,30 @@ export function buildClaudeArgs({
 
 function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv }) {
   return new Promise((resolveP, rejectP) => {
+    // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
+    // are re-dropped here defensively — the write path already rejects them, so
+    // a drop means a hand-edited settings file — and the surviving map is also
+    // where the wire id (below) is read from.
+    let safeModelEnv = null;
+    if (modelEnv && Object.keys(modelEnv).length) {
+      const { env: safe, dropped } = prepareModelEnv(modelEnv);
+      for (const k of dropped) {
+        console.warn(`[worca] modelEnv: dropping reserved/invalid key ${JSON.stringify(k)}`);
+      }
+      if (Object.keys(safe).length) safeModelEnv = safe;
+    }
+
+    // Wire id (#374): ANTHROPIC_MODEL in the resolved model env names the id the
+    // ENDPOINT should see; the catalog id stays worca's handle (config refs, cost
+    // flags). Passed as an explicit --model — self-documenting in logs and immune
+    // to CLI flag/env precedence — so the env var alone would otherwise be dead.
+    const wireModel = safeModelEnv?.ANTHROPIC_MODEL || model;
+    if (wireModel !== model) {
+      console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
+    }
+
     const args = buildClaudeArgs({
-      prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
+      prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
       mcpConfigPath, mcpServerGrants, permissionRules,
     });
 
@@ -346,21 +370,12 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // spawn inherits process.env exactly as it did before guardrails existed.
     const guardrailEnv = buildSpawnEnv(envScrub, envAllowlist);
 
-    // Per-model routing env (design §4.4) merges LAST: it survives scrub and
-    // wins collisions (explicit operator config outranks ambient-env hygiene),
-    // except reserved keys, which are re-dropped here defensively — the write
-    // path already rejects them, so a drop means a hand-edited settings file.
-    // With no modelEnv (or nothing surviving the filter) the spawn env is
-    // byte-identical to the pre-feature behavior, including the undefined
-    // -> inherit-process.env case.
+    // Model env merges LAST: it survives scrub and wins collisions (explicit
+    // operator config outranks ambient-env hygiene). With no modelEnv (or
+    // nothing surviving the filter) the spawn env is byte-identical to the
+    // pre-feature behavior, including the undefined -> inherit-process.env case.
     let spawnEnv = guardrailEnv;
-    if (modelEnv && Object.keys(modelEnv).length) {
-      const { env: safe, dropped } = prepareModelEnv(modelEnv);
-      for (const k of dropped) {
-        console.warn(`[worca] modelEnv: dropping reserved/invalid key ${JSON.stringify(k)}`);
-      }
-      if (Object.keys(safe).length) spawnEnv = { ...(guardrailEnv ?? process.env), ...safe };
-    }
+    if (safeModelEnv) spawnEnv = { ...(guardrailEnv ?? process.env), ...safeModelEnv };
 
     let child;
     try {
