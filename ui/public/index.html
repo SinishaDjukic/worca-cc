@@ -1204,6 +1204,44 @@
             <small class="hint" id="budgetMsg"></small>
           </section>
 
+          <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
+               assistant chat. Read fresh on every turn (D12); a stored null
+               budget means "no cap". Posted ALONE — never with root/budget keys. -->
+          <section class="card settings-card">
+            <div class="card-head">
+              <div class="label-row">
+                <h2>Ask Worca</h2>
+                <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
+                  Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
+                </span></button>
+              </div>
+            </div>
+            <div class="field">
+              <div class="label-row">
+                <label for="askMaxTurns">Turn limit</label>
+                <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
+                  Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 40.
+                </span></button>
+              </div>
+              <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="40" autocomplete="off" />
+            </div>
+            <div class="field">
+              <div class="label-row">
+                <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
+                <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
+                  Stop a chat turn when its estimated cost reaches this amount (0.1&ndash;100). Leave empty to restore the default of $2, or tick No cap to disable the guard.
+                </span></button>
+              </div>
+              <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
+              <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
+            </div>
+            <div class="add-project-actions" style="margin-top:14px">
+              <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+              <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
+            </div>
+            <small class="hint" id="askLimitsMsg"></small>
+          </section>
+
           <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
                events ping which chat channels. Body rendered by
                chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->

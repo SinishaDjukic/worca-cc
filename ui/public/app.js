@@ -60,6 +60,7 @@ import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
 import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
+import { createAskPanel } from './ask-panel.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
 } from './diff-view.mjs';
@@ -88,6 +89,9 @@ import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
+
+let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -367,6 +371,7 @@ let sidebarCollapsed = readSidebarCollapsed();
 function applySidebarCollapsed() {
   const aside = $('.sidebar');
   if (aside) aside.classList.toggle('collapsed', sidebarCollapsed);
+  document.body.classList.toggle('rail-collapsed', sidebarCollapsed);
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!sidebarCollapsed));
@@ -565,6 +570,14 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Ask Worca frames are tagged by threadId (job frames also carry messageId +
+  // seq) and ride the same broadcast socket. Handle them BEFORE the
+  // !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    askPanel?.pushServerFrame(msg);
+    return;
+  }
+
   // History PR-enrichment batches are token-tagged (not runId-tagged) and ride the
   // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'history-pr') {
@@ -751,6 +764,8 @@ function onHello(msg) {
     }
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
+
+  askPanel?.onHello(msg.ask);
 
   refreshAllCounts();
   refreshBudget();
@@ -5390,13 +5405,15 @@ function onProjectChanged() {
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
-    loadConfig(path);        // (per-project history load removed — History is independent now)
-    refreshBranches(path);
+    const cfgLoad = loadConfig(path); // its tail repaints the workflow/guardrail pickers (:1821-1822)
+    refreshBranches(path);            // — a prefill caller MUST await it or be clobbered
+    return cfgLoad;
   } else {
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
-    loadConfig('');
+    const cfgLoad = loadConfig('');
     refreshBranches('');
+    return cfgLoad;
   }
 }
 
@@ -7234,6 +7251,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
     paintBudgetSettings(data);
+    paintAskSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -7512,6 +7530,59 @@ if (el.budgetReset) {
     saveBudgetSettings({ pipelineCostLimitUsd: null, totalCostLimitUsd: null });
   });
 }
+
+// ---- Ask Worca limits card (budget-card pattern above) ---------------------
+function setAskLimitsMsg(text, kind) {
+  const n = document.getElementById('askLimitsMsg');
+  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
+}
+function paintAskSettings(data) {
+  const turns = document.getElementById('askMaxTurns');
+  const budget = document.getElementById('askMaxBudgetUsd');
+  const noCap = document.getElementById('askNoCap');
+  if (!turns || !budget || !noCap) return;
+  turns.value = data.askMaxTurns == null ? '' : String(data.askMaxTurns);
+  noCap.checked = data.askMaxBudgetUsd === null;
+  budget.disabled = noCap.checked;
+  budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
+}
+async function postAskLimits(body) {
+  setAskLimitsMsg('');
+  let res = null;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch { setAskLimitsMsg('network error', 'err'); return; }
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) { setAskLimitsMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
+  paintAskSettings(data || {});
+  setAskLimitsMsg('Saved.');
+}
+function saveAskLimits() {
+  const turnsRaw = document.getElementById('askMaxTurns').value.trim();
+  const noCap = document.getElementById('askNoCap').checked;
+  const budgetRaw = document.getElementById('askMaxBudgetUsd').value.trim();
+  let askMaxTurns = '';
+  if (turnsRaw !== '') {
+    const n = Number(turnsRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 500) { setAskLimitsMsg('the turn limit must be an integer between 1 and 500', 'err'); return; }
+    askMaxTurns = n;
+  }
+  let askMaxBudgetUsd = '';
+  if (noCap) askMaxBudgetUsd = null;
+  else if (budgetRaw !== '') {
+    const b = Number(budgetRaw);
+    if (!Number.isFinite(b) || b < 0.1 || b > 100) { setAskLimitsMsg('the per-turn cap must be between 0.1 and 100', 'err'); return; }
+    askMaxBudgetUsd = b;
+  }
+  postAskLimits({ askMaxTurns, askMaxBudgetUsd });
+}
+document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
+document.getElementById('askLimitsReset')?.addEventListener('click', () => postAskLimits({ askMaxTurns: '', askMaxBudgetUsd: '' }));
+document.getElementById('askNoCap')?.addEventListener('change', () => {
+  const budget = document.getElementById('askMaxBudgetUsd');
+  if (budget) budget.disabled = document.getElementById('askNoCap').checked;
+});
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -12462,6 +12533,7 @@ function paintRdTerminal(screen, r) {
 // per-invocation handler run in bubble phase after.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
@@ -12482,6 +12554,7 @@ document.addEventListener('keydown', (e) => {
 // reason the History arm above is: the guard must read each modal's PRE-close state.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
@@ -14180,7 +14253,7 @@ function showView(name, param = '') {
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
-  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights(); }
+  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights(); applyAskPrefill(); }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
@@ -14252,6 +14325,116 @@ const _timerTick = setInterval(() => {
 // exit cleanly with zero effect on browser behaviour.
 if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
+// ---- Ask Worca seams (§10.2) ----------------------------------------------
+// Server-resolvable page context only (§6.5 keys); the server re-validates and
+// resolves every id against its own rows — never send titles or names.
+function getPageContext() {
+  const [view, param] = parseHash();
+  const ctx = { view: VIEW_NAMES.includes(view) ? view : 'new' };
+  if (ctx.view === 'running' && param) {
+    const r = runs.get(param);
+    if (r) {
+      ctx.runId = param;
+      if (r.pipelineId) ctx.pipelineId = r.pipelineId;
+      if (r.kind === 'workspace-run' && r.workspaceId) ctx.workspaceId = r.workspaceId;
+      else if (r.projectDir) ctx.projectDir = r.projectDir;
+      return ctx;
+    }
+  }
+  if (ctx.view === 'history' && param) {
+    const p = parseHistDetailParam(param);
+    if (p) {
+      ctx.view = 'history-detail';
+      ctx.pipelineId = p.id;
+      if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
+      else ctx.projectKey = p.projectKey;
+      return ctx;
+    }
+  }
+  if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
+    ctx.workspaceId = state.selectedWorkspaceId;
+    return ctx;
+  }
+  const dir = selectedProjectPath();
+  if (dir) ctx.projectDir = dir;
+  return ctx;
+}
+
+function openNewPipeline(prefill) {
+  newPipelinePrefill = prefill || null;
+  askPanel?.close();
+  // hash already #new fires no hashchange — call showView directly (the
+  // nav-click guard at the navLinks handler models this exact case).
+  if (location.hash.slice(1) === 'new') showView('new');
+  else location.hash = 'new';
+}
+
+// Apply a card handoff to the New Pipeline form (§10.2 seam 7). One-shot; runs
+// at the end of showView('new'). Async — the pickers and branch lists load
+// through their normal async loaders; every await keeps the user-visible form
+// consistent if they start typing meanwhile.
+async function applyAskPrefill() {
+  const p = newPipelinePrefill;
+  if (!p) return;
+  newPipelinePrefill = null;
+  setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
+  // force the prompt source — the three-step reset of the segment handler
+  state.activePluginSource = null;
+  el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
+  document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.src === 'prompt');
+    b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
+  });
+  document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
+    b.classList.remove('on');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  syncSourceToggle();
+  if (p.target === 'workspace') {
+    await ensureWorkspaceOptions();
+    if (p.workspaceId && el.workspaceSelect) {
+      el.workspaceSelect.value = p.workspaceId;
+      // bare `Event` is Node's under the test globals and jsdom rejects it
+      el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    }
+  } else if (p.projectDir) {
+    const idx = state.projects.findIndex((x) => x && x.path === p.projectDir);
+    if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+    // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
+    await onProjectChanged();
+  }
+  el.prompt.value = p.prompt || '';
+  refreshMentionHighlights();
+  const titleInput = document.getElementById('title');
+  if (titleInput) titleInput.value = p.title || '';
+  await loadWorkflowsInto(p.workflowId);
+  await loadGuardrailsInto(p.guardrailsId);
+  if (el.advancedConfig) el.advancedConfig.open = true;
+  if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
+  if (p.target === 'workspace') {
+    // the per-member selects are rebuilt asynchronously on the change above
+    // populateBranchSelect rebuilds each member select's options when its fetch
+    // resolves (app.js:5419-5442) — a value written before that rebuild is
+    // silently reverted. Bounded settle per select, then write.
+    const byKey = p.sourceBranchByKey || {};
+    for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
+      const want = byKey[sel.dataset.projectKey];
+      if (!want) continue;
+      for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
+      if (![...sel.options].some((o) => o.value === want)) sel.appendChild(option(want, want));
+      sel.value = want;
+    }
+  } else {
+    await refreshBranches(selectedProjectPath());
+    if (p.sourceBranch && el.sourceBranch) {
+      if (![...el.sourceBranch.options].some((o) => o.value === p.sourceBranch)) {
+        el.sourceBranch.appendChild(option(p.sourceBranch, p.sourceBranch));
+      }
+      el.sourceBranch.value = p.sourceBranch;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
@@ -14269,3 +14452,29 @@ showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(b
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
+
+// Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
+// untouched so ui-shell's data-view census stays at 14. No network happens here;
+// the panel fetches only on first open / hello.
+askPanel = createAskPanel({
+  doc: document,
+  win: window,
+  fetch: (...args) => fetch(...args),
+  sendWs: (obj) => {
+    const ws = state.ws;
+    if (ws && state.wsReady) {
+      try { ws.send(JSON.stringify(obj)); } catch { /* ignore */ }
+    }
+  },
+  confirm: confirmModal,
+  getPageContext,
+  openNewPipeline,
+  loadMarkdown: window.__worcaTestHooks?.askMarkdown
+    ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+      .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  hljsLoader: diffHljsLoader,
+  storage: window.localStorage,
+  raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),
+  now: () => Date.now(),
+});
+document.body.appendChild(askPanel.root);
