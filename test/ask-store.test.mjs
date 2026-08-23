@@ -192,6 +192,21 @@ test('addThreadTotals sums every turn; null cost adds 0 but counts the turn', ()
   assert.equal(addThreadTotals('ask_ffffffff', {}), null);
 });
 
+test('addThreadTotals: usage.ctx OVERWRITES the thread ctx (context fill, never summed); a turn without ctx leaves it', () => {
+  const t = createThread();
+  let tot = addThreadTotals(t.id, { costUsd: 0.1, usage: { input: 10, output: 20, cacheRead: 0, cacheCreation: 0, ctx: 55000 } });
+  assert.equal(tot.ctx, 55000);
+  assert.equal(tot.input, 10, 'the cumulative buckets ignore ctx');
+  tot = addThreadTotals(t.id, { costUsd: 0.1, usage: { input: 1, output: 2, cacheRead: 0, cacheCreation: 0, ctx: 68400 } });
+  assert.equal(tot.ctx, 68400, 'the later turn replaces');
+  tot = addThreadTotals(t.id, { costUsd: null, usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, ctx: null } });
+  assert.equal(tot.ctx, 68400, 'a ctx-less turn (killed before any call) keeps the last figure');
+  assert.equal(getThread(t.id).totals.ctx, 68400);
+  const legacy = createThread();
+  const legacyTot = addThreadTotals(legacy.id, { costUsd: 0.1, usage: { input: 5, output: 5 } });
+  assert.ok(!('ctx' in legacyTot), 'no ctx ever supplied → the key stays absent (legacy threads render no fill)');
+});
+
 test('sweepStreamingMessages marks streaming rows error with a notice; others untouched', () => {
   sweepStreamingMessages();               // the sweep is GLOBAL: drain rows earlier tests in this file left streaming
   const t = createThread();

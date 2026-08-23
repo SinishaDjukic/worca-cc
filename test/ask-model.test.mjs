@@ -257,6 +257,39 @@ test('ask-model: unknown ask-* job frame types consume their seq silently', () =
   assert.equal(m.live().text, 'still fine');
 });
 
+function userRow(id, seq, text) {
+  return { id, threadId: TID, seq, role: 'user', text, blocks: [], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't2' };
+}
+
+test('ask-model: a canonical user ask-message lands after seq-less live rows, not at the top', () => {
+  const m = createThreadModel({ threadId: TID });
+  // Turn 1 in a never-reloaded thread: the echo and the streamed answer carry no seq.
+  m.noteLocalUserMessage({ id: 'askm_u0000001', text: 'first question', attachments: [] });
+  const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID });
+  for (const f of frames) m.apply(f);
+  // Turn 2: the POST-side broadcast delivers the persisted user row BEFORE the local echo runs.
+  m.apply({ type: 'ask-message', threadId: TID, message: userRow('askm_u0000002', 3, 'second question') });
+  assert.deepEqual(m.messages().map((r) => r.id), ['askm_u0000001', MID, 'askm_u0000002']);
+});
+
+test('ask-model: the local echo keeps the seq of an already-received canonical row', () => {
+  const m = createThreadModel({ threadId: TID });
+  m.apply({ type: 'ask-message', threadId: TID, message: userRow('askm_u0000001', 1, 'hello') });
+  m.noteLocalUserMessage({ id: 'askm_u0000001', text: 'hello', attachments: [] });
+  assert.equal(m.messages().length, 1);
+  assert.equal(m.messages()[0].seq, 1);
+});
+
+test('ask-model: a newer canonical user row never slots above the previous seq-less answer', () => {
+  const m = createThreadModel({ threadId: TID });
+  m.noteLocalUserMessage({ id: 'askm_u0000001', text: 'first question', attachments: [] });
+  m.apply({ type: 'ask-message', threadId: TID, message: userRow('askm_u0000001', 1, 'first question') });
+  const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID });
+  for (const f of frames) m.apply(f); // assistant row stays seq-less until a reload
+  m.apply({ type: 'ask-message', threadId: TID, message: userRow('askm_u0000002', 3, 'second question') });
+  assert.deepEqual(m.messages().map((r) => r.id), ['askm_u0000001', MID, 'askm_u0000002']);
+});
+
 test('ask-model: a frame re-delivered at the SAME seq is dropped, not applied twice', () => {
   const m = createThreadModel({ threadId: TID });
   const stamped = stampFrames([

@@ -34,10 +34,18 @@ export function createThreadModel({ threadId }) {
   function upsertRow(message) {
     const i = rows.findIndex((r) => r && r.id === message.id);
     if (i >= 0) {
+      // The POST-side ask-message broadcast can beat the local echo (same id):
+      // an in-place replace must not wipe the store seq it delivered.
+      if (typeof message.seq !== 'number' && typeof rows[i].seq === 'number') {
+        message = { ...message, seq: rows[i].seq };
+      }
       rows[i] = message;
     } else {
+      // Sorted insert orders KNOWN seqs only. Seq-less rows are live-created
+      // (echo / streaming assistant) and therefore newest — a numeric row must
+      // never slot above them; a new row otherwise appends.
       const seq = typeof message.seq === 'number' ? message.seq : Infinity;
-      const at = rows.findIndex((r) => (typeof r.seq === 'number' ? r.seq : Infinity) > seq);
+      const at = rows.findIndex((r) => typeof r.seq === 'number' && r.seq > seq);
       if (at === -1) rows.push(message);
       else rows.splice(at, 0, message);
     }

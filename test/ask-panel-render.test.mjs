@@ -42,7 +42,7 @@ async function openThread(ctx) {
 }
 
 const userRow = (id, seq, text, blocks = []) => ({ id, threadId: TID, seq, role: 'user', text, blocks, status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });
-const asstRow = (id, seq, over = {}) => ({ id, threadId: TID, seq, role: 'assistant', text: 'the answer', blocks: [], status: 'done', reason: null, model: 'claude-opus-5', effort: 'high', usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0 }, costUsd: 0.14, durationMs: 6400, createdAt: 't', ...over });
+const asstRow = (id, seq, over = {}) => ({ id, threadId: TID, seq, role: 'assistant', text: 'the answer', blocks: [], status: 'done', reason: null, model: 'claude-opus-5', effort: 'high', usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0, ctx: 2000 }, costUsd: 0.14, durationMs: 6400, createdAt: 't', ...over });
 
 test('ask-panel-render: user bubble + attachment pills, assistant answer plain fallback', async () => {
   const snap = snapBody([
@@ -74,7 +74,8 @@ test('ask-panel-render: activity head — done label, elapsed, meter; stopped la
   const heads = [...ctx.doc.querySelectorAll('.ask-activity-head')];
   assert.match(heads[0].textContent, /Worked for/);
   assert.match(heads[0].textContent, /6\.4s/);
-  assert.match(heads[0].textContent, /2\.0k tok/);
+  assert.match(heads[0].textContent, /2\.0k ctx/, 'the turn meter shows the turn-end context fill');
+  assert.ok(!/tok/.test(heads[0].textContent), 'no cumulative token figure');
   assert.match(heads[0].textContent, /\$0\.14/);
   assert.ok(heads[0].querySelector('.ask-dot-done'));
   assert.match(heads[1].textContent, /Stopped after/);
@@ -211,4 +212,16 @@ test('ask-panel-render: a 404 thread clears the stored id and renders nothing', 
   await openThread(ctx);
   assert.equal(ctx.doc.querySelector('.ask-msg-user'), null);
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored id dropped on 404');
+});
+
+test('ask-panel-render: an agent block with ctx shows the fill; without ctx it falls back to the cumulative tokens', async () => {
+  const withCtx = { kind: 'agent', id: 'toolu_1', label: 'count runs', type: 'general-purpose', model: 'claude-haiku-4-5', tokens: 25321, ctx: 11645, usage: null, costUsd: 0.0017, estimated: true, status: 'done', durationMs: 2861, log: [] };
+  const noCtx = { kind: 'agent', id: 'toolu_2', label: 'old agent', type: 'general-purpose', model: 'claude-haiku-4-5', tokens: 5321, usage: null, costUsd: 0.001, estimated: true, status: 'done', durationMs: 100, log: [] };
+  const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [withCtx, noCtx] })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const rows = [...ctx.doc.querySelectorAll('.ask-agent-row')];
+  assert.match(rows[0].textContent, /11\.6k ctx/, 'ctx wins over the cumulative figure');
+  assert.ok(!/25\.3k tok/.test(rows[0].textContent));
+  assert.match(rows[1].textContent, /5\.3k tok/, 'a legacy block keeps the cumulative fallback');
 });

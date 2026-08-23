@@ -124,6 +124,7 @@ export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 }
     const t = { ...emptyTotals(), ...(parse(row.totals, {}) || {}) };
     t.costUsd = round6(t.costUsd + (typeof costUsd === 'number' && Number.isFinite(costUsd) ? costUsd : 0));
     for (const k of ['input', 'output', 'cacheRead', 'cacheCreation']) t[k] += Number(usage?.[k]) || 0;
+    if (Number.isFinite(usage?.ctx)) t.ctx = usage.ctx;                   // context fill: the turn's last per-call figure REPLACES (never sums)
     t.turns += 1;
     t.agents += Number.isInteger(agents) && agents > 0 ? agents : 0;
     prepare('UPDATE ask_threads SET totals = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(t), now(), id);

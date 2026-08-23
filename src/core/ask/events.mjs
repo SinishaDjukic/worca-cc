@@ -138,6 +138,7 @@ export function createTurnReducer({
   const streams = new Map();       // stream key ('main' | parent tool id) → { messageId }
   let currentMainMsg = null;
   const usageByMsg = new Map();    // message id → { usage, final }
+  let lastMainUsageMsg = null;     // the LAST main message with usage — its per-call total is the context fill
   let pending = '';
   let timer = null;
   const blocks = [];               // persisted blocks in insertion order
@@ -169,13 +170,18 @@ export function createTurnReducer({
   const mainText = () => [...messages.values()].map(messageText).filter(Boolean).join('\n\n');
   const usageSum = () => [...usageByMsg.values()].reduce((acc, { usage }) => add(acc, usage), ZERO());
   // A message that never receives a message_delta (killed mid-call) is counted at its message-START usage — an under-count, accepted.
-  const noteUsage = (messageId, raw, final) => {
+  const noteUsage = (messageId, raw, final, main = false) => {
     if (!messageId || !raw || typeof raw !== 'object') return;
     const cur = usageByMsg.get(messageId);
     if (cur && cur.final && !final) return;
     usageByMsg.set(messageId, { usage: normalizeUsage(raw), final: !!final });
+    if (main) lastMainUsageMsg = messageId;
   };
-  const currentUsage = () => (lastResult && lastResult.usage ? normalizeUsage(lastResult.usage) : usageSum());
+  const ctxOf = (u) => u.input + u.output + u.cacheRead + u.cacheCreation;
+  // Context fill = the last MAIN call's per-call total. The cumulative result
+  // usage never feeds it — a result would report the whole turn, not one call.
+  const ctxNow = () => { const e = lastMainUsageMsg ? usageByMsg.get(lastMainUsageMsg) : null; return e ? ctxOf(e.usage) : null; };
+  const currentUsage = () => ({ ...(lastResult && lastResult.usage ? normalizeUsage(lastResult.usage) : usageSum()), ctx: ctxNow() });
   const currentCost = () => (lastResult && typeof lastResult.total_cost_usd === 'number' && Number.isFinite(lastResult.total_cost_usd) ? lastResult.total_cost_usd : null);
   const emitUsage = () => emit('ask-usage', { usage: currentUsage(), costUsd: currentCost() });
   const flushDeltas = () => {
@@ -215,10 +221,19 @@ export function createTurnReducer({
     if (e.type === 'message_start') {
       const id = e.message && typeof e.message.id === 'string' ? e.message.id : null;
       streams.set(key, { messageId: id });
-      if (isMain) { sawAssistant = true; currentMainMsg = id; if (id) msgEntry(id); noteUsage(id, e.message?.usage, false); }
+      if (isMain) { sawAssistant = true; currentMainMsg = id; if (id) msgEntry(id); noteUsage(id, e.message?.usage, false, true); }
       return;
     }
-    if (e.type === 'message_delta') { noteUsage(streams.get(key)?.messageId, e.usage, true); if (isMain) emitUsage(); return; }
+    if (e.type === 'message_delta') {
+      noteUsage(streams.get(key)?.messageId, e.usage, true, isMain);
+      if (isMain) { emitUsage(); return; }
+      const agent = byId.get(ptu);
+      if (agent && agent.kind === 'agent' && e.usage && typeof e.usage === 'object') {
+        agent.ctx = ctxOf(normalizeUsage(e.usage));                       // the child's per-call total; last call wins
+        upsertBlock(agent);
+      }
+      return;
+    }
     if (!isMain) return;                                                  // child deltas never become the answer
     if (e.type === 'content_block_delta' && e.delta && e.delta.type === 'text_delta' && typeof e.delta.text === 'string') {
       const id = currentMainMsg ?? '__main__';
@@ -244,7 +259,7 @@ export function createTurnReducer({
           currentMainMsg = id;
         }
         const entry = msgEntry(id);
-        noteUsage(id, msg.usage, false);
+        noteUsage(id, msg.usage, false, true);
         for (const c of content) if (c && c.type === 'text' && typeof c.text === 'string') entry.blocks.push(c.text);
       }
     }
@@ -258,7 +273,7 @@ export function createTurnReducer({
           runningAgents += 1;
           label(agentsLabel());                                           // label first, then the block (the client shows both)
           upsertBlock({ kind: 'agent', id: c.id, label: clipStr(input.description || input.subagent_type || c.name, 80), type: typeof input.subagent_type === 'string' ? input.subagent_type : null,
-            model: typeof input.model === 'string' ? input.model : null, tokens: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
+            model: typeof input.model === 'string' ? input.model : null, tokens: null, ctx: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
         } else {
           fullInputs.set(c.id, input);
           label(labelForTool(c.name, input, attachmentNames));

@@ -7,7 +7,7 @@ import { makePanel, key, pointerdown } from './helpers/ask-panel-harness.mjs';
 
 const THREADS = {
   threads: [
-    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, turns: 3, agents: 3 }, runLinks: 0, inFlight: true },
+    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 3, agents: 3 }, runLinks: 0, inFlight: true },
     { id: 'ask_00000002', title: 'Explain run 4e1f', updatedAt: 't1', createdAt: 't0', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false },
   ],
 };
@@ -137,7 +137,7 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   const items = [...pop.querySelectorAll('[role="menuitem"]')];
   assert.equal(items.length, 2);
   assert.match(items[0].textContent, /Fix the login bug/);
-  assert.match(items[0].textContent, /18\.4k tok · \$0\.21 · 3 agents/);
+  assert.match(items[0].textContent, /68\.4k ctx · \$0\.21 · 3 agents/, 'the row shows context fill, not cumulative tokens');
   assert.ok(items[0].querySelector('.ask-dot-live'), 'in-flight thread shows the live dot');
   assert.equal(items[1].querySelector('.ask-dot-live'), null);
   // empty state

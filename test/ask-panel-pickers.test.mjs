@@ -200,3 +200,17 @@ test('ask-panel-pickers: New chat clears the thread; the next send creates a fre
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.ok(ctx.fetchCalls.some((c) => c.url === '/api/ask/threads' && c.opts.method === 'POST'), 'thread created on send');
 });
+
+test('ask-panel-pickers: run-info popover shows per-agent ctx and a cost-only header (no token sum)', async () => {
+  const agent = { kind: 'agent', id: 'toolu_1', label: 'count runs', type: 'general-purpose', model: 'claude-haiku-4-5', tokens: 25321, ctx: 11645, usage: null, costUsd: 0.62, estimated: true, status: 'done', durationMs: 2861, log: [] };
+  const messages = [{ id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: 'ok', blocks: [agent], status: 'done', reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' }];
+  const ctx = makePanel({ fetchHandler: handler({ messages }) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-agents-btn]').click();
+  await ctx.tick();
+  const pop = ctx.doc.querySelector('.ask-pop-runinfo');
+  assert.match(pop.textContent, /11\.6k ctx/, 'the row shows the agent context fill');
+  assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '≈$0.62', 'header: cost only — summing ctx across agents means nothing');
+});

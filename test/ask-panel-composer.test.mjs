@@ -180,21 +180,44 @@ test('ask-panel-composer: the user echo replaces the optimistic row (no duplicat
   assert.equal(ctx.doc.querySelectorAll('.ask-msg-user').length, 1, 'upsert by id, not append');
 });
 
-test('ask-panel-composer: the meter shows thread totals after done', async () => {
+test('ask-panel-composer: the meter shows context fill — 0 ctx on a fresh panel, the live ctx while streaming, the thread ctx after done', async () => {
   const ctx = makePanel({ fetchHandler: apiHandler() });
   ctx.panel.open();
+  assert.equal(ctx.doc.querySelector('.ask-meter-tokens').textContent, '0 ctx', 'fresh panel: no session, no fill');
   ctx.doc.querySelector('textarea.ask-input').value = 'meter me';
   ctx.doc.querySelector('[data-ask-send]').click();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.equal(ctx.doc.querySelector('.ask-meter-cost').textContent, '', 'no cost rendered before a result');
   const frames = stampFrames([
     { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-usage', usage: { input: 12, output: 300, cacheRead: 60900, cacheCreation: 0, ctx: 61212 }, costUsd: null },
+    { type: 'ask-done', text: 'ok', blocks: [], usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0, ctx: 68400 }, costUsd: 0.14, durationMs: 5, model: 'm', status: 'done', threadTotals: { costUsd: 0.25, input: 9000, output: 10600, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 2, agents: 6 } },
+  ], { threadId: TID, messageId: MID });
+  ctx.panel.pushServerFrame(frames[0]);
+  ctx.panel.pushServerFrame(frames[1]);
+  ctx.flush();
+  assert.match(ctx.doc.querySelector('.ask-meter-tokens').textContent, /61\.2k ctx/, 'live: the streaming call\'s fill');
+  ctx.panel.pushServerFrame(frames[2]);
+  ctx.flush();
+  const meter = ctx.doc.querySelector('[data-ask-meter]');
+  assert.match(meter.textContent, /68\.4k ctx/);
+  assert.ok(!/tok/.test(meter.textContent), 'cumulative token count is gone');
+  assert.match(meter.textContent, /\$0\.25/);
+  assert.match(ctx.doc.querySelector('[data-ask-agents-btn]').textContent, /6 agents/);
+});
+
+test('ask-panel-composer: a legacy thread (totals without ctx) hides the fill but keeps the cost', async () => {
+  const ctx = makePanel({ fetchHandler: apiHandler() });
+  ctx.panel.open();
+  ctx.doc.querySelector('textarea.ask-input').value = 'meter me';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  const frames = stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
     { type: 'ask-done', text: 'ok', blocks: [], usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0 }, costUsd: 0.14, durationMs: 5, model: 'm', status: 'done', threadTotals: { costUsd: 0.25, input: 9000, output: 10600, cacheRead: 0, cacheCreation: 0, turns: 2, agents: 6 } },
   ], { threadId: TID, messageId: MID });
   for (const f of frames) ctx.panel.pushServerFrame(f);
   ctx.flush();
-  const meter = ctx.doc.querySelector('[data-ask-meter]');
-  assert.match(meter.textContent, /19\.6k tok/);
-  assert.match(meter.textContent, /\$0\.25/);
-  assert.match(ctx.doc.querySelector('[data-ask-agents-btn]').textContent, /6 agents/);
+  assert.equal(ctx.doc.querySelector('.ask-meter-tokens').textContent, '', 'no fabricated 0 ctx on a thread that has turns');
+  assert.match(ctx.doc.querySelector('[data-ask-meter]').textContent, /\$0\.25/);
 });

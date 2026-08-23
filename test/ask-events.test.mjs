@@ -48,12 +48,12 @@ test('plain text turn: label, batched deltas, usage frames, the assistant block 
   h.push(atext('msg_1', 'Hello!'), mdelta({ output_tokens: 301, input_tokens: 12 }), result());
   const usageFrames = h.frames.filter((f) => f.type === 'ask-usage');
   assert.equal(usageFrames.length, 2);
-  assert.deepEqual(usageFrames[0], { type: 'ask-usage', usage: { input: 12, output: 301, cacheRead: 0, cacheCreation: 0 }, costUsd: null }, 'message_delta wins over the message-start usage');
-  assert.deepEqual(usageFrames[1], { type: 'ask-usage', usage: normalizeUsage(RESULT_USAGE), costUsd: 0.0234 }, 'result usage + cost');
+  assert.deepEqual(usageFrames[0], { type: 'ask-usage', usage: { input: 12, output: 301, cacheRead: 0, cacheCreation: 0, ctx: 313 }, costUsd: null }, 'message_delta wins over the message-start usage');
+  assert.deepEqual(usageFrames[1], { type: 'ask-usage', usage: { ...normalizeUsage(RESULT_USAGE), ctx: 313 }, costUsd: 0.0234 }, 'result usage + cost; ctx stays the last per-call figure');
   const s = h.r.finish();
   assert.equal(s.text, 'Hello!', 'the assistant text block replaces the deltas');
   assert.deepEqual(s.blocks, []);
-  assert.deepEqual(s.usage, { input: 12, output: 301, cacheRead: 9542, cacheCreation: 6542 });
+  assert.deepEqual(s.usage, { input: 12, output: 301, cacheRead: 9542, cacheCreation: 6542, ctx: 313 });
   assert.equal(s.costUsd, 0.0234);
   assert.equal(s.sessionId, SID);
   assert.equal(s.status, 'done');
@@ -105,13 +105,13 @@ test('text comes from the main stream only; result.result is a fallback when no 
 test('usage dedupe: repeated per-block assistant usage is never summed; message ids are summed; result wins', () => {
   const h = harness();
   h.push(atext('msg_1', 'a', { input_tokens: 100, output_tokens: 5 }), atext('msg_1', 'b', { input_tokens: 100, output_tokens: 5 }));
-  assert.deepEqual(h.r.snapshot().usage, { input: 100, output: 5, cacheRead: 0, cacheCreation: 0 });
+  assert.deepEqual(h.r.snapshot().usage, { input: 100, output: 5, cacheRead: 0, cacheCreation: 0, ctx: 105 });
   h.push(mstart('msg_2'), mdelta({ input_tokens: 7, output_tokens: 70, cache_read_input_tokens: 3 }));
-  assert.deepEqual(h.r.snapshot().usage, { input: 107, output: 75, cacheRead: 3, cacheCreation: 0 });
+  assert.deepEqual(h.r.snapshot().usage, { input: 107, output: 75, cacheRead: 3, cacheCreation: 0, ctx: 80 });
   h.push(atext('msg_2', 'c', { input_tokens: 7, output_tokens: 1 }));
-  assert.deepEqual(h.r.snapshot().usage, { input: 107, output: 75, cacheRead: 3, cacheCreation: 0 }, 'a final message_delta is not downgraded by a later per-block usage');
+  assert.deepEqual(h.r.snapshot().usage, { input: 107, output: 75, cacheRead: 3, cacheCreation: 0, ctx: 80 }, 'a final message_delta is not downgraded by a later per-block usage');
   h.push(result({ usage: { input_tokens: 1, output_tokens: 2 } }));
-  assert.deepEqual(h.r.finish().usage, { input: 1, output: 2, cacheRead: 0, cacheCreation: 0 });
+  assert.deepEqual(h.r.finish().usage, { input: 1, output: 2, cacheRead: 0, cacheCreation: 0, ctx: 80 });
 });
 
 test('tool lifecycle: labels, running → done/error blocks, durations, input clipping, label dedupe', () => {
@@ -175,7 +175,7 @@ test('foreground sub-agent (F3): Agent block, child log lines, finishing tool_us
   h.push(init(), atool('msg_1', 'toolu_agent', 'Agent', { subagent_type: 'general-purpose', description: 'count runs', prompt: 'SECRET PROMPT TEXT' }));
   assert.equal(h.frames.at(-2).label, 'Running 1 sub-agent');
   const spawned = h.frames.at(-1).block;
-  assert.deepEqual(spawned, { kind: 'agent', id: 'toolu_agent', label: 'count runs', type: 'general-purpose', model: null, tokens: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
+  assert.deepEqual(spawned, { kind: 'agent', id: 'toolu_agent', label: 'count runs', type: 'general-purpose', model: null, tokens: null, ctx: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
   h.push(ev({ type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'toolu_agent', description: 'count runs', subagent_type: 'general-purpose', is_backgrounded: false, prompt: 'SECRET PROMPT TEXT' }));
   h.push(ev({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'SECRET PROMPT TEXT' }] }, parent_tool_use_id: 'toolu_agent', subagent_type: 'general-purpose', task_description: 'count runs' }));
   h.tick(100);
@@ -352,4 +352,32 @@ test('normalizeUsage, matchModelKey, estimateAgentCosts', () => {
   assert.equal(est[4].costUsd, 0.025, 'a dated model id bigger than the ai-title side call switches to the canonical twin');
   assert.ok(est.every((a) => a.estimated === true));
   assert.deepEqual(estimateAgentCosts(agents, {}).map((a) => a.costUsd), [null, null, null, null, null]);
+});
+
+test('context fill: usage.ctx is the LAST main call total; result swaps buckets but never ctx; no main call → null', () => {
+  const h = harness();
+  h.push(mstart('msg_1'), mdelta({ input_tokens: 5, output_tokens: 10 }));
+  let u = h.frames.filter((f) => f.type === 'ask-usage').at(-1);
+  assert.equal(u.usage.ctx, 15, 'first call: input+output');
+  h.push(mstart('msg_2'), mdelta({ input_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 50, output_tokens: 20 }));
+  u = h.frames.filter((f) => f.type === 'ask-usage').at(-1);
+  assert.equal(u.usage.ctx, 1170, 'a later call REPLACES ctx — never sums');
+  assert.equal(h.r.snapshot().usage.ctx, 1170);
+  h.push(result());
+  const s = h.r.finish();
+  assert.deepEqual(s.usage, { ...normalizeUsage(RESULT_USAGE), ctx: 1170 }, 'cumulative buckets come from the result; ctx stays per-call');
+  const h2 = harness();
+  h2.push(result());
+  assert.equal(h2.r.finish().usage.ctx, null, 'a turn with no main call has no context figure');
+});
+
+test('context fill: a child message_delta sets the agent block ctx (last call wins) and re-emits the block', () => {
+  const h = harness();
+  h.push(atool('msg_1', 'toolu_agent', 'Agent', { description: 'count runs', subagent_type: 'general-purpose' }));
+  h.push(mstart('msg_c1', 'toolu_agent'), mdelta({ input_tokens: 10, cache_read_input_tokens: 11343, output_tokens: 292 }, 'toolu_agent'));
+  const agentFrames = () => h.frames.filter((f) => f.type === 'ask-block' && f.block && f.block.kind === 'agent');
+  assert.equal(agentFrames().at(-1).block.ctx, 11645, 'child per-call total: input+cacheRead+output');
+  h.push(mstart('msg_c2', 'toolu_agent'), mdelta({ input_tokens: 10, cache_read_input_tokens: 11343, cache_creation_input_tokens: 465, output_tokens: 51 }, 'toolu_agent'));
+  assert.equal(agentFrames().at(-1).block.ctx, 11869, 'the last child call replaces');
+  assert.equal(h.r.snapshot().usage.ctx, 11, 'main ctx comes from the main call (the spawn message), never the child');
 });

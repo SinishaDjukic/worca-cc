@@ -20,15 +20,16 @@ export function fmtTokens(n) {
   if (!Number.isFinite(n) || n <= 0) return null;
   return n < 1000 ? `${n} tok` : `${(n / 1000).toFixed(1)}k tok`;
 }
+/** Context fill (usage.ctx / totals.ctx) — a snapshot, never a cumulative sum. */
+export function fmtCtx(n) {
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n < 1000 ? `${n} ctx` : `${(n / 1000).toFixed(1)}k ctx`;
+}
 export function fmtUsd(x) {
   return Number.isFinite(x) ? `$${x.toFixed(2)}` : null;
 }
 export function fmtAgents(n) {
   return Number.isFinite(n) && n > 0 ? `${n} agent${n === 1 ? '' : 's'}` : null;
-}
-export function totalsTokens(t) {
-  if (!t) return 0;
-  return (t.input || 0) + (t.output || 0) + (t.cacheRead || 0) + (t.cacheCreation || 0);
 }
 
 export function fmtElapsed(ms) {
@@ -261,8 +262,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function updateMeters() {
     if (!el.meterTokens) return;
     const totals = st.model ? st.model.totals() : { live: null };
-    const liveTok = totals.live ? totalsTokens(totals.live.usage) : 0;
-    el.meterTokens.textContent = fmtTokens(totalsTokens(totals) + liveTok) || '0 tok';
+    // Context fill: the streaming call's figure while live, else the last turn's.
+    // A thread with turns but no ctx predates the metric — show nothing, never a fake 0.
+    const liveCtx = totals.live && totals.live.usage ? totals.live.usage.ctx : null;
+    const ctx = Number.isFinite(liveCtx) ? liveCtx : totals.ctx;
+    el.meterTokens.textContent = fmtCtx(ctx) || ((totals.turns || 0) > 0 ? '' : '0 ctx');
     // cost comes from thread totals only — never from a live null (P3-F5)
     // No cost yet → empty cell, never a fabricated $0.00 (P3-F5).
     el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
@@ -378,7 +382,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const meter = make('span', 'ask-meter');
     meter.setAttribute('data-ask-meter', '');
-    el.meterTokens = make('span', 'ask-meter-tokens', '0 tok');
+    el.meterTokens = make('span', 'ask-meter-tokens', '0 ctx');
     meter.appendChild(el.meterTokens);
     meter.appendChild(make('span', 'ask-meter-sep', '|'));
     el.meterCost = make('span', 'ask-meter-cost', '');
@@ -560,7 +564,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- threads popover (list; switching/delete land in Task 7) -------------
   function threadMeter(t) {
-    const parts = [fmtTokens(totalsTokens(t.totals)), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)];
+    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)];
     return parts.filter(Boolean).join(' · ');
   }
 
@@ -745,9 +749,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       const head = make('div', 'ask-pop-caption-row');
       head.appendChild(make('span', 'ask-pop-caption', 'Agents this chat'));
-      const tok = agents.reduce((n, a) => n + (Number.isFinite(a.tokens) ? a.tokens : 0), 0);
       const cost = agents.reduce((n, a) => n + (Number.isFinite(a.costUsd) ? a.costUsd : 0), 0);
-      head.appendChild(make('span', 'ask-pop-caption-meter', agents.length ? [fmtTokens(tok), `≈${fmtUsd(cost)}`].filter(Boolean).join(' · ') : ''));
+      // Cost only: costs sum across agents; context fills do not.
+      head.appendChild(make('span', 'ask-pop-caption-meter', agents.length ? `≈${fmtUsd(cost)}` : ''));
       p.appendChild(head);
       if (!agents.length) { p.appendChild(make('div', 'ask-pop-empty', 'No agents spawned yet.')); return; }
       for (const a of agents) {
@@ -755,7 +759,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         row.appendChild(make('span', `ask-dot${a.status === 'running' ? ' ask-dot-run' : a.status === 'done' ? ' ask-dot-done' : ''}`));
         const col = make('span', 'ask-runinfo-col');
         col.appendChild(make('span', 'ask-runinfo-name', a.label || a.type || 'agent'));
-        col.appendChild(make('span', 'ask-runinfo-sub', [a.model, fmtTokens(a.tokens), Number.isFinite(a.costUsd) ? `≈${fmtUsd(a.costUsd)}` : null, a.status || null].filter(Boolean).join(' · ')));
+        col.appendChild(make('span', 'ask-runinfo-sub', [a.model, fmtCtx(a.ctx) || fmtTokens(a.tokens), Number.isFinite(a.costUsd) ? `≈${fmtUsd(a.costUsd)}` : null, a.status || null].filter(Boolean).join(' · ')));
         row.appendChild(col);
         row.appendChild(make('span', 'ask-runinfo-elapsed', fmtElapsed(a.durationMs) || '—'));
         p.appendChild(row);
@@ -1172,7 +1176,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rowEl.appendChild(make('span', `ask-dot${block.status === 'running' ? ' ask-dot-run' : block.status === 'done' ? ' ask-dot-done' : ''}`));
     rowEl.appendChild(make('span', 'ask-agent-name', block.label || block.type || 'agent'));
     rowEl.appendChild(make('span', 'ask-agent-model', block.model || ''));
-    rowEl.appendChild(make('span', 'ask-agent-tokens', fmtTokens(block.tokens) || ''));
+    rowEl.appendChild(make('span', 'ask-agent-tokens', fmtCtx(block.ctx) || fmtTokens(block.tokens) || ''));
     rowEl.appendChild(make('span', 'ask-agent-cost', Number.isFinite(block.costUsd) ? `≈${fmtUsd(block.costUsd)}` : ''));
     rowEl.appendChild(make('span', `ask-agent-status${block.status === 'done' ? ' is-done' : ''}`, block.status || ''));
     rowEl.addEventListener('click', () => {
@@ -1185,7 +1189,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.expandedAgents.has(block.id)) {
       const log = make('div', 'ask-agent-log');
       const head = make('div', 'ask-agent-log-head');
-      head.appendChild(make('span', null, [block.model, fmtTokens(block.tokens), Number.isFinite(block.costUsd) ? `≈${fmtUsd(block.costUsd)}` : null].filter(Boolean).join(' · ')));
+      head.appendChild(make('span', null, [block.model, fmtCtx(block.ctx) || fmtTokens(block.tokens), Number.isFinite(block.costUsd) ? `≈${fmtUsd(block.costUsd)}` : null].filter(Boolean).join(' · ')));
       head.appendChild(make('span', 'ask-agent-log-type', block.type || ''));
       log.appendChild(head);
       const body = make('div', 'ask-agent-log-body');
@@ -1229,7 +1233,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(make('span', 'ask-activity-spacer'));
     const usage = isLive ? live.usage : row.usage;
     const cost = isLive ? live.costUsd : row.costUsd;
-    const meter = [fmtTokens(totalsTokens(usage)), fmtUsd(cost)].filter(Boolean).join(' · ');
+    const meter = [fmtCtx(usage && usage.ctx), fmtUsd(cost)].filter(Boolean).join(' · ');
     head.appendChild(make('span', 'ask-activity-meter', meter));
     activity.appendChild(head);
     const tools = (row.blocks || []).filter((b) => b && b.kind === 'tool');
