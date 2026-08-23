@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
@@ -33,6 +34,8 @@ const waitAbort = (signal) => new Promise((r) => {
   if (signal.aborted) return r();
   signal.addEventListener('abort', r, { once: true });
 });
+
+const clearAskLedger = () => getDb().exec('DELETE FROM ask_cost_ledger');
 
 function seed() {
   const thread = createThread();
@@ -462,4 +465,127 @@ test('deleted thread mid-turn: terminal write is harmless, run() still resolves'
   });
   const out = await turn.run();
   assert.equal(out.status, 'done');                   // finishMessage/addThreadTotals hit no rows, swallowed
+});
+
+test('done turn appends one ask_cost_ledger row that survives thread deletion', async () => {
+  clearAskLedger();
+  const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    runClaudeImpl: async ({ onEvent }) => {
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT({ usage: { input_tokens: 10, output_tokens: 20,
+        cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } }));
+      return { text: '', exitCode: 0 };
+    },
+  });
+  // D12 ordering: the row must be committed BEFORE the ask-done broadcast, so
+  // a stats refetch triggered by the frame reads fresh data.
+  const baseOnFrame = turn.deps.onFrame;
+  let ledgerAtDoneFrame = null;
+  turn.deps.onFrame = (f) => { baseOnFrame(f);
+    if (f.type === 'ask-done') ledgerAtDoneFrame = getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n; };
+  await turn.run();
+  const rows = getDb().prepare('SELECT * FROM ask_cost_ledger ORDER BY id').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].thread_id, s.thread.id);
+  assert.equal(rows[0].message_id, s.asst.id);
+  assert.equal(rows[0].amount_usd, 0.05);
+  assert.equal(rows[0].tokens, 37, '10 + 20 + 3 + 4 — cache fields count (D11)');
+  assert.equal(rows[0].model, 'claude-opus-5');
+  assert.equal(typeof rows[0].ts, 'number');
+  assert.equal(ledgerAtDoneFrame, 1, 'row committed before the ask-done broadcast (D12 reads fresh data)');
+  deleteThread(s.thread.id);
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 1,
+    'FK-free: the row survives the thread delete (D1)');
+});
+
+test('a turn that ends before a result leaves no ledger row', async () => {
+  clearAskLedger();
+  const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    runClaudeImpl: async ({ signal, onEvent }) => {
+      say(onEvent, 'm1', 'partial');
+      await waitAbort(signal);
+      const err = new Error('aborted'); err.name = 'AbortError'; throw err;
+    },
+  });
+  const p = turn.run();
+  setImmediate(() => { turn.stop(); });
+  await p;
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 0,
+    'costUsd null (no result frame) writes nothing (D2)');
+});
+
+test('thread deleted mid-turn: the ledger row is still written', async () => {
+  clearAskLedger();
+  const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    runClaudeImpl: async ({ onEvent }) => {
+      deleteThread(s.thread.id);               // user deletes the chat while the turn runs
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const rows = getDb().prepare('SELECT thread_id, amount_usd FROM ask_cost_ledger').all();
+  assert.equal(rows.length, 1, 'spend is a financial fact even without the thread (D10)');
+  assert.equal(rows[0].thread_id, s.thread.id);
+  assert.equal(rows[0].amount_usd, 0.05);
+});
+
+test('recordAskCost dep: injected, called once with the D10/D11 payload', async () => {
+  clearAskLedger();
+  const calls = []; const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    recordAskCost: (a) => calls.push(a),
+    runClaudeImpl: async ({ onEvent }) => {
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT({ usage: { input_tokens: 10, output_tokens: 20,
+        cache_read_input_tokens: 5, cache_creation_input_tokens: 7 } }));
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].threadId, s.thread.id);
+  assert.equal(calls[0].messageId, s.asst.id);
+  assert.equal(calls[0].amountUsd, 0.05);
+  assert.equal(calls[0].tokens, 42, 'input+output+cacheRead+cacheCreation (D11)');
+  assert.equal(calls[0].model, 'claude-opus-5');
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 0,
+    'the injected dep fully replaces the real writer');
+});
+
+test('error turn that saw a result still records the spend (money was spent)', async () => {
+  clearAskLedger();
+  const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    runClaudeImpl: async ({ onEvent }) => {
+      say(onEvent, 'm1', 'partial');
+      push(onEvent, RESULT());                 // cost landed…
+      throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' });
+    },
+  });
+  const out = await turn.run();
+  assert.equal(out.status, 'error');
+  const rows = getDb().prepare('SELECT amount_usd FROM ask_cost_ledger').all();
+  assert.equal(rows.length, 1, 'an error turn with a result frame is still spend (D2/D3)');
+  assert.equal(rows[0].amount_usd, 0.05);
+});
+
+test('a throwing store.addThreadTotals does not swallow the ledger append (D10 placement)', async () => {
+  clearAskLedger();
+  const s = seed();
+  const { turn } = makeTurn(s, {}, {
+    store: { addThreadTotals: () => { throw new Error('db hiccup'); } },
+    runClaudeImpl: async ({ onEvent }) => {
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 1,
+    'the ledger call sits OUTSIDE the store try/catches');
 });

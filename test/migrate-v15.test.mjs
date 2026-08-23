@@ -24,9 +24,9 @@ useTempHome(after);
 const cols = (db, table) =>
   db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-test('fresh DB lands on user_version 18 with cost_ledger and the six new pipelines columns', () => {
+test('fresh DB lands on user_version 19 with cost_ledger and the six new pipelines columns', () => {
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
   const ledger = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='cost_ledger'").get();
   assert.ok(ledger, 'cost_ledger exists');
@@ -55,9 +55,9 @@ test('self-heal: a dropped new column is re-added on reopen (divergent-stamp rep
   assert.ok(cols(db, 'pipelines').includes('pr_checked_at'));
 });
 
-test('idempotent double-open: no error, version stays 18', () => {
+test('idempotent double-open: no error, version stays 19', () => {
   getDb();
   _resetForTests();
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
 });

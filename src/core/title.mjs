@@ -11,6 +11,8 @@ const SYSTEM = [
   'You write a SHORT, human-readable title for a software task.',
   'Rules: 3–8 words, Title Case-ish, no trailing period, no quotes, no markdown,',
   'no preamble. Output ONLY the title on a single line.',
+  'Never ask questions, never ask for more context, never apologize or explain.',
+  'If the task is vague or conversational, still output your best-guess topic title.',
 ].join(' ');
 
 /** Normalize raw model output into a safe single-line title (pure, exported for tests). */
@@ -21,7 +23,31 @@ export function sanitizeTitle(raw) {
   t = t.replace(/^(?:title|task)\s*[:\-]\s*/i, '');                      // strip "Title:"/"Task:" label
   t = t.replace(/^["'“”`]+|["'“”`]+$/g, '').trim();                      // strip wrapping quotes/backticks
   t = t.replace(/\s+/g, ' ').replace(/\.+$/, '').trim();                 // collapse ws, drop trailing dots
-  return t.slice(0, MAX_LEN).trim();
+  if (t.length > MAX_LEN) {
+    // Cut at a word boundary instead of mid-word ("…you'd li"). The window is
+    // MAX_LEN+1 so a word ending exactly at the cap survives; a boundary too
+    // close to the start (or none at all — one unbroken run) hard-slices.
+    const cut = t.slice(0, MAX_LEN + 1);
+    const sp = cut.lastIndexOf(' ');
+    t = (sp >= 30 ? cut.slice(0, sp) : t.slice(0, MAX_LEN)).replace(/[\s,;:–—-]+$/, '');
+  }
+  return t.trim();
+}
+
+// A title that is really a clarifying question / refusal ("I need more context
+// to write a title…"). First-person or plea openers, a trailing question mark,
+// or prose far beyond the 3–8-word instruction all mean the model did not
+// title the task — the caller should keep its provisional title instead.
+const REFUSAL_OPENER_RE =
+  /^(?:i(?:['’](?:m|d|ll|ve))?\s|sorry\b|apolog|unfortunately\b|unable\b|please\s|could you\b|can you\b|tell me\b|what(?:['’]s)?\s|which\s|help me\b)/i;
+const MAX_WORDS = 12;
+
+/** True when sanitized model output looks like a refusal/question, not a title (pure, exported for tests). */
+export function isRefusalTitle(t) {
+  if (!t || typeof t !== 'string') return false;
+  if (/\?$/.test(t)) return true;
+  if (REFUSAL_OPENER_RE.test(t)) return true;
+  return t.split(' ').length > MAX_WORDS;
 }
 
 /**
@@ -66,7 +92,8 @@ export async function generateTitle(prompt, opts = {}) {
       mcpConfigPath: opts.mcpConfigPath,
       onEvent: () => {},
     });
-    return sanitizeTitle(out);
+    const title = sanitizeTitle(out);
+    return isRefusalTitle(title) ? '' : title;
   } catch (err) {
     if (err && err.name === 'AbortError') return ''; // run was stopped — caller keeps provisional
     return '';

@@ -305,3 +305,14 @@ test('tick past windowEndMs refetches (rolled-over window must not stay blocked)
   assert.ok(ctx.counts.budget > before,
     'once the boundary passes the client must re-derive spend/blocked server-side');
 });
+
+test('an ask-done frame refetches the budget (D12 sidebar half)', async () => {
+  const ctx = await boot();
+  const before = ctx.counts.budget;
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'ask-done',
+    threadId: 'ask_00000000', messageId: 'askm_00000000', status: 'done',
+    usage: {}, costUsd: 0.1, threadTotals: null }) });
+  await ctx.tick();
+  await ctx.tick();
+  assert.ok(ctx.counts.budget > before, 'the sidebar indicator repaints on chat spend');
+});

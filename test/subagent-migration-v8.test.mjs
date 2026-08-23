@@ -41,7 +41,7 @@ test('opening a user_version=7 DB forward-migrates to v8 (adds graphify_count to
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18, 'forward-migrated to v18');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19, 'forward-migrated to v19');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('graphify_count'));
   assert.ok(db.prepare('PRAGMA table_info(pipeline_steps)').all().map((c) => c.name).includes('graphify_count'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');

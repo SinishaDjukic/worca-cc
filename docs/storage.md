@@ -21,7 +21,10 @@ project's working tree, so nothing is ever committed to your repo.
       extras/            any optional extra files you attached
   ask/<threadId>/att/<attachmentId>.txt  Ask Worca attachment bodies (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
-                                        ask_attachments, ask_run_links); removed with the thread
+                                        ask_attachments, ask_run_links); removed with the thread.
+                                        Chat spend is copied per turn into ask_cost_ledger
+                                        (append-only, FK-free), so Statistics keeps session
+                                        count and cost after deletion
   tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json (never a project folder)
 ```

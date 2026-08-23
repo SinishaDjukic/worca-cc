@@ -357,4 +357,13 @@ test('sweepEmptyThreads removes only message-less threads older than the cutoff'
   assert.equal(getThread(oldEmpty.id), null);
   assert.ok(getThread(oldUsed.id));
   assert.ok(getThread(newEmpty.id));
+  // D1: ledger rows neither save an empty thread from the sweep nor die with it.
+  const stray = createThread();
+  getDb().prepare('UPDATE ask_threads SET created_at = ? WHERE id = ?').run(old, stray.id);
+  getDb().prepare('INSERT INTO ask_cost_ledger (thread_id, amount_usd, ts) VALUES (?, ?, ?)')
+    .run(stray.id, 0.5, Date.now());
+  assert.equal(sweepEmptyThreads({ olderThanMs: 24 * 60 * 60 * 1000 }), 1,
+    'a ledger row does not save an empty thread');
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger WHERE thread_id = ?').get(stray.id).n, 1,
+    'nor does the sweep touch the ledger (D1)');
 });

@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -604,6 +604,23 @@ CREATE TABLE IF NOT EXISTS ask_run_links (
 );
 `;
 
+/** v19: append-only Ask Worca spend ledger (ask-cost-statistics-design.md §6).
+ *  NO foreign key on thread_id: spend is a permanent financial fact and must
+ *  survive thread deletion (cost_ledger precedent). One row per completed turn
+ *  with a finite cost > 0; tokens = input+output+cacheRead+cacheCreation. */
+const ASK_COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS ask_cost_ledger (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id  TEXT NOT NULL,
+  message_id TEXT,
+  amount_usd REAL NOT NULL,
+  tokens     INTEGER,
+  model      TEXT,
+  ts         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ask_cost_ledger_ts ON ask_cost_ledger (ts);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -662,6 +679,9 @@ function schemaGaps(db) {
   const hasAskThreads = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_threads'"
   ).get().n > 0;
+  const hasAskCostLedger = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_cost_ledger'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
@@ -669,6 +689,7 @@ function schemaGaps(db) {
     costLedgerTable: !hasCostLedger,
     modelCostFlagsTable: !hasModelCostFlags,
     askTables: !hasAskThreads,
+    askCostLedgerTable: !hasAskCostLedger,
   };
 }
 
@@ -683,6 +704,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
   if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
   if (gaps.askTables) db.exec(ASK_DDL);
+  if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
 }
 
 /**
@@ -699,7 +721,8 @@ function repairSchemaGaps(db, gaps) {
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables) return; // clean — no lock
+      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables
+      && !gaps.askCostLedgerTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -803,6 +826,47 @@ function applySchemaV16(db) {
 }
 
 /**
+ * v18 -> v19 (ask-cost-statistics-design.md §6): ask_cost_ledger — the
+ * append-only, FK-free Ask Worca spend ledger (survives thread deletion) —
+ * plus a backfill of one row per already-persisted costed assistant message,
+ * so pre-upgrade chat spend lands in Statistics. Gap-repair first, v12-v16
+ * style; the NOT EXISTS guard keeps re-runs (divergent stamps) idempotent.
+ * Threads deleted before the upgrade left no messages (CASCADE) — accepted.
+ * The backfill runs only on a ladder pass through <19; a binary downgrade
+ * after v19 leaves its chat spend un-ledgered forever (the stamp stays 19) —
+ * same accepted posture as cost_ledger.
+ */
+function applySchemaV19(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  // A hand-built or divergent DB (minimal test seeds) can lack ask_messages
+  // columns entirely — such a DB never stored a chat cost, nothing to backfill.
+  const has = (table, col) =>
+    db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('ask_messages', 'cost_usd')) return;
+  const rows = db.prepare(`
+    SELECT id, thread_id, cost_usd, usage, model, created_at
+    FROM ask_messages
+    WHERE cost_usd > 0
+      AND NOT EXISTS (SELECT 1 FROM ask_cost_ledger l WHERE l.message_id = ask_messages.id)
+  `).all();
+  const ins = db.prepare(
+    'INSERT INTO ask_cost_ledger (thread_id, message_id, amount_usd, tokens, model, ts) VALUES (?, ?, ?, ?, ?, ?)');
+  for (const r of rows) {
+    const ts = Date.parse(r.created_at ?? '');
+    if (!Number.isFinite(ts)) continue;
+    let tokens = null;
+    try {
+      const u = JSON.parse(r.usage ?? 'null');
+      if (u && typeof u === 'object') {
+        tokens = ['input', 'output', 'cacheRead', 'cacheCreation']
+          .reduce((a, k) => a + (Number(u[k]) || 0), 0);
+      }
+    } catch { /* unreadable usage — tokens stay NULL */ }
+    ins.run(r.thread_id, r.id, r.cost_usd, tokens, r.model, ts);
+  }
+}
+
+/**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
  * (BEGIN IMMEDIATE) BEFORE re-reading user_version, so two first-launch migrators cannot
@@ -852,6 +916,7 @@ export function migrate(db) {
     if (current < 16) applySchemaV16(db);
     if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
     if (current < 18) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
+    if (current < 19) applySchemaV19(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

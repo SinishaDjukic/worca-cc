@@ -54,6 +54,33 @@ export function windowedSpendUsd(windowStartMs) {
   return roundUsd(row?.s || 0);
 }
 
+/** Append one Ask Worca cost event (ask-cost-statistics-design.md §7.1). Same
+ *  no-op gate as recordCostDelta: turns that ended before a `result` frame
+ *  (amountUsd null, §6.2.8 of the ask spec) and $0 mock turns leave no row.
+ *  messageId is the v19 backfill's idempotency key (db.mjs NOT EXISTS on
+ *  l.message_id) — every live caller must pass it. */
+export function recordAskCostDelta({ threadId, messageId = null, amountUsd,
+                                     tokens = null, model = null, tsMs = Date.now() }) {
+  if (!threadId || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare(`INSERT INTO ask_cost_ledger (thread_id, message_id, amount_usd, tokens, model, ts)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(threadId, messageId, amountUsd, tokens, model, tsMs);
+}
+
+/** Windowed Ask Worca spend; toMs null = open-ended (budget windows), else ts < toMs. */
+export function askWindowedSpendUsd(fromMs, toMs = null) {
+  const row = toMs == null
+    ? prepare('SELECT SUM(amount_usd) AS s FROM ask_cost_ledger WHERE ts >= ?').get(fromMs)
+    : prepare('SELECT SUM(amount_usd) AS s FROM ask_cost_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+  return roundUsd(row?.s || 0);
+}
+
+/** Pipeline + Ask Worca spend since windowStartMs — THE enforcement figure
+ *  (count-everywhere, ask-cost-statistics-design.md D3). windowedSpendUsd /
+ *  allTimeTotals stay pipeline-only for the Statistics split. */
+export function totalWindowSpendUsd(windowStartMs) {
+  return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs));
+}
+
 /** All-time spend + active time over ALL pipelines (archived included),
  *  falling back to per-step sums when the row total is 0. */
 export function allTimeTotals() {
@@ -86,7 +113,7 @@ export function budgetStatus(now = new Date()) {
   const totalLimitUsd = totalCostLimitUsd();
   const windowStartMs = costWindowStart(now, resetPeriod).getTime();
   const windowEndMs = costWindowEnd(now, resetPeriod).getTime();
-  const windowSpendUsd = windowedSpendUsd(windowStartMs);
+  const windowSpendUsd = totalWindowSpendUsd(windowStartMs);
   const blocked = totalLimitUsd != null && windowSpendUsd >= totalLimitUsd;
   return {
     pipelineLimitUsd,
@@ -96,7 +123,7 @@ export function budgetStatus(now = new Date()) {
     windowEndMs,
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
-    allTimeSpendUsd: allTimeTotals().spendUsd,
+    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };

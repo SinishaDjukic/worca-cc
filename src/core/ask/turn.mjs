@@ -26,6 +26,7 @@ import { askLimits, ASK_LIMITS } from './limits.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
 } from './store.mjs';
+import { recordAskCostDelta } from '../cost-budget.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
@@ -70,6 +71,7 @@ class AskTurn extends EventEmitter {
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
+      recordAskCost: deps.recordAskCost ?? recordAskCostDelta,
       now: deps.now ?? Date.now,
       // Default timers unref so a 15-minute clock never holds the process open
       // (orchestrator.mjs:2627 _backoff precedent). Tests inject both.
@@ -190,6 +192,21 @@ class AskTurn extends EventEmitter {
         costUsd, usage: summary.usage, agents: summary.agents,
       });
     } catch { /* deleted thread */ }
+    // D10: the spend is a financial fact even when the thread was deleted
+    // mid-turn — sits OUTSIDE the store try/catches above so it is never
+    // skipped; best-effort so a DB hiccup still settles the frames. Written
+    // after finishMessage: a process death between the two loses only this
+    // row (accepted — the v19 backfill never re-runs). Runs on done, stopped
+    // AND error turns alike: a result frame means money was spent.
+    try {
+      d.recordAskCost({
+        threadId: this.threadId, messageId: this.assistantMessageId,
+        amountUsd: costUsd,                    // null → the writer no-ops (D2)
+        tokens: ['input', 'output', 'cacheRead', 'cacheCreation']
+          .reduce((a, k) => a + (Number(summary.usage?.[k]) || 0), 0),
+        model: this.model, tsMs: d.now(),
+      });
+    } catch { /* ledger append is best-effort */ }
     this.status = finalStatus;
     if (summary.reducerErrors) {
       console.warn(`[worca-ask] turn ${this.assistantMessageId}: ${summary.reducerErrors} reducer error(s) absorbed`);

@@ -3,9 +3,9 @@
 // archive exists so these numbers survive history cleanup (spec §6.9). Pure
 // synchronous DB reads; no gh, no git, offline-correct.
 //
-// Attribution: money = cost_ledger by event timestamp (exact); runs, time,
-// and PRs = cohort by started_at (a run belongs to the bucket its start falls
-// in, with its CURRENT status). 'today' differs: its totals count runs whose
+// Attribution: money = cost_ledger + ask_cost_ledger by event timestamp
+// (exact); runs, time, and PRs = cohort by started_at (a run belongs to the
+// bucket its start falls in, with its CURRENT status). 'today' differs: its totals count runs whose
 // lifespan [started_at, updated_at] overlaps the day ("active today"), and its
 // hourly bars attribute terminal outcomes to the hour of the terminal write
 // (updated_at). 'all' money/time use the fallback-aware pipelines sums so
@@ -14,6 +14,7 @@
 import { prepare } from './db.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
+  askWindowedSpendUsd,
 } from './cost-budget.mjs';
 
 const RANGES = ['today', 'week', 'month', 'all'];
@@ -84,6 +85,18 @@ function ledgerSpend(fromMs, toMs) {
   return roundUsd(row?.s || 0);
 }
 
+/** Ask Worca window aggregate (ask-cost-statistics-design.md D5/D6): spend,
+ *  DISTINCT sessions, turns. A thread is a session in every window it has a
+ *  costed turn in. */
+function askTotals(fromMs, toMs) {
+  const row = prepare(`
+    SELECT COALESCE(SUM(amount_usd), 0) AS s,
+           COUNT(DISTINCT thread_id)    AS sessions,
+           COUNT(*)                     AS turns
+    FROM ask_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
+  return { spendUsd: roundUsd(row?.s || 0), sessions: row?.sessions || 0, turns: row?.turns || 0 };
+}
+
 /** Build zero-filled buckets [{startMs, endMs}] from windowStart through `now`. */
 function buildBuckets(windowStart, now, bucket) {
   const out = [];
@@ -137,8 +150,11 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
   const windowTotalsFn = range === 'today' ? activeTotals : cohortTotals;
   const shapeTotals = (fromMs, toMs) => {
     const c = windowTotalsFn(fromMs, toMs);
+    const pipelineSpendUsd = ledgerSpend(fromMs, toMs);
+    const ask = askTotals(fromMs, toMs);
     return {
-      spentUsd: ledgerSpend(fromMs, toMs),
+      spentUsd: roundUsd(pipelineSpendUsd + ask.spendUsd),
+      pipelineSpendUsd, ask,
       workedMs: c.workedMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
@@ -150,8 +166,11 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
   if (range === 'all') {
     const at = allTimeTotals();
     const c = cohortTotals(0, windowEnd.getTime());
+    const ask = askTotals(0, windowEnd.getTime());
     totals = {
-      spentUsd: at.spendUsd, workedMs: at.activeMs,
+      spentUsd: roundUsd(at.spendUsd + ask.spendUsd),
+      pipelineSpendUsd: at.spendUsd, ask,
+      workedMs: at.activeMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
       prsOpened: c.prsOpened, prsMerged: c.prsMerged,
@@ -169,7 +188,7 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     const c = bucketTotalsFn(startMs, endMs);
     return {
       bucketStartMs: startMs,
-      spentUsd: ledgerSpend(startMs, endMs),
+      spentUsd: roundUsd(ledgerSpend(startMs, endMs) + askWindowedSpendUsd(startMs, endMs)),
       finished: c.finished, stopped: c.stopped, failed: c.failed,
     };
   });

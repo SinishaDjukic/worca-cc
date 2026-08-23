@@ -60,7 +60,7 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
 } from './settings.mjs';
 import {
-  recordCostDelta, readCostCapOverride, windowedSpendUsd, costWindowStart,
+  recordCostDelta, readCostCapOverride, totalWindowSpendUsd, costWindowStart,
 } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -2540,7 +2540,7 @@ class Orchestrator extends EventEmitter {
     const totalLimit = totalCostLimitUsd();
     if (totalLimit != null) {
       const period = costLimitResetPeriod();
-      const spent = windowedSpendUsd(costWindowStart(new Date(), period).getTime());
+      const spent = totalWindowSpendUsd(costWindowStart(new Date(), period).getTime());
       if (spent >= totalLimit) {
         this._pauseForCost('cost_total',
           `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);

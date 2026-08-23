@@ -1,5 +1,5 @@
 // P1/T4: the ask_* tables arrive through BOTH the v18 ladder step and the
-// schemaGaps() self-heal (a DB stamped 18 by a divergent ladder must still get
+// schemaGaps() self-heal (a DB stamped 19 by a divergent ladder must still get
 // them). Structure mirrors test/migrate-v14.test.mjs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,9 +20,9 @@ const MINIMAL_SEED = `
   CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT);
 `;
 
-test('fresh DB: user_version 18, the four ask tables, the index and the §7.1 columns', () => {
+test('fresh DB: user_version 19, the four ask tables, the index and the §7.1 columns', () => {
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} exists`);
   assert.ok(indexNames(db).includes('idx_ask_messages_thread'));
   assert.deepEqual(cols(db, 'ask_threads'),
@@ -33,21 +33,21 @@ test('fresh DB: user_version 18, the four ask tables, the index and the §7.1 co
   assert.deepEqual(cols(db, 'ask_run_links'), ['thread_id', 'run_id', 'pipeline_id', 'card_id', 'status', 'phase', 'created_at']);
 });
 
-test('ladder: a v17 DB gets the ask tables and is stamped 18', () => {
+test('ladder: a v17 DB gets the ask tables and is stamped 19', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
   db.exec('PRAGMA user_version = 17');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} created by the ladder`);
 });
 
-test('self-heal: a DB already stamped 18 WITHOUT the ask tables gets them from reconcileSchema, stamp untouched', () => {
+test('self-heal: a DB already stamped 19 WITHOUT the ask tables gets them from reconcileSchema, stamp untouched', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 18'); // divergent ladder: version says done, schema says otherwise
+  db.exec('PRAGMA user_version = 19'); // divergent ladder: version says done, schema says otherwise
   migrate(db);                          // fast path → reconcileSchema
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 18, 'stamp not rewritten');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19, 'stamp not rewritten');
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} healed`);
   assert.ok(indexNames(db).includes('idx_ask_messages_thread'), 'index healed');
 });
@@ -59,7 +59,7 @@ test('self-heal on the real home: dropping the ask tables and reopening recreate
   for (const t of ASK_TABLES) assert.ok(!tableNames(db).includes(t));
   _resetForTests();
   const db2 = getDb();
-  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 18);
+  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 19);
   for (const t of ASK_TABLES) assert.ok(tableNames(db2).includes(t), `${t} back after reopen`);
 });
 

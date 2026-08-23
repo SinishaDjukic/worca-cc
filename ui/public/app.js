@@ -575,6 +575,15 @@ function handleServerMessage(msg) {
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
     askPanel?.pushServerFrame(msg);
+    // D12: a settled chat turn moves the combined spend — repaint the sidebar
+    // indicator and, when open, the Statistics view. ask-error included: an
+    // error turn that saw a result frame carries recorded spend. refreshBudget
+    // here is REQUIRED, not a nicety — the budget tick only refetches while
+    // pipelines are live, so chat-only spend would otherwise stay stale.
+    if (msg.type === 'ask-done' || msg.type === 'ask-error') {
+      refreshBudget();
+      if (currentView() === 'stats') loadStatsView();
+    }
     return;
   }
 
