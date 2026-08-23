@@ -3,7 +3,7 @@
 // and forwards NOTHING new when they are absent (pipeline title calls unchanged).
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, chmod } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateTitle } from '../src/core/title.mjs';
@@ -65,4 +65,45 @@ test('mcpConfigPath is forwarded when given', async () => {
   await generateTitle('fix login bug', { cwd: dir, bin, mcpConfigPath: join(dir, 'mcp-empty.json') });
   const argv = splitArgv(await readFile(out, 'utf8'));
   assert.equal(argv[argv.indexOf('--mcp-config') + 1], join(dir, 'mcp-empty.json'));
+});
+
+// --- Task 2 (P2): permissionMode pass-through -------------------------------
+// A fake `claude` that dumps its argv NUL-separated (the spawn-args.test.mjs:82-93
+// technique) and answers one result line (that part is this file's own fakeBin
+// recipe, :21-29 — spawn-args' fake exits without a result line) — generateTitle
+// never throws either way.
+async function pmArgvBin(dir) {
+  const out = join(dir, 'pm-argv.txt');
+  const bin = join(dir, 'claude-pm');
+  await writeFile(bin, [
+    '#!/bin/sh',
+    `for a in "$@"; do printf '%s\\0' "$a" >> "${out}"; done`,
+    `printf '%s\\n' '{"type":"result","result":"A Title"}'`,
+    'exit 0',
+    '',
+  ].join('\n'));
+  await chmod(bin, 0o755);
+  return { bin, out };
+}
+
+test('generateTitle forwards permissionMode when given (the ask call passes dontAsk)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-title-pm-'));
+  const { bin, out } = await pmArgvBin(dir);
+  const t = await generateTitle('fix the login flow', { cwd: dir, bin, permissionMode: 'dontAsk' });
+  assert.equal(t, 'A Title');
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--permission-mode');
+  assert.notEqual(i, -1);
+  assert.equal(argv[i + 1], 'dontAsk');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('generateTitle without permissionMode keeps the legacy acceptEdits argv', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-title-pm-legacy-'));
+  const { bin, out } = await pmArgvBin(dir);
+  await generateTitle('fix the login flow', { cwd: dir, bin });
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--permission-mode');
+  assert.equal(argv[i + 1], 'acceptEdits');
+  await rm(dir, { recursive: true, force: true });
 });

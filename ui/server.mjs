@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts,
+  listArtifacts, lookupPipelineRow, findPipelineRowById,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
@@ -35,6 +35,30 @@ import {
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
 } from '../src/core/settings.mjs';
+import {
+  ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
+  listThreads as askListThreads, updateThread as askUpdateThread,
+  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  appendMessage as askAppendMessage, getMessage as askGetMessage,
+  listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
+  findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
+  addAttachment as askAddAttachment, listAttachments as askListAttachments,
+  readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
+  linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
+  setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
+} from '../src/core/ask/store.mjs';
+import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
+import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
+import { askCatalog, validateModelEffort } from '../src/core/ask/models.mjs';
+import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
+import {
+  buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
+  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
+} from '../src/core/ask/prompt.mjs';
+import { createAskTurn } from '../src/core/ask/turn.mjs';
+import { attachRunFollower } from '../src/core/ask/follow.mjs';
+import { mockEnabled } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
@@ -139,6 +163,26 @@ function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.wa
 }
 
 const HLJS_ASSETS = resolveHljsAssets();
+
+// Ask Worca §10.7: the chat's markdown pipeline is served from node_modules the
+// same way the hljs assets are, but resolved with import.meta.resolve — the CJS
+// require.resolve lands on marked's CJS build, and dompurify/package.json is not
+// exported. Each package degrades independently: a missing one just leaves its
+// route unregistered and the existing /vendor no-store 404 answers.
+function resolveEsmAsset(spec, resolve = (s) => import.meta.resolve(s), warn = (msg) => console.warn(msg)) {
+  try {
+    return fileURLToPath(resolve(spec));
+  } catch (err) {
+    warn(`[worca-ui] ask markdown asset unavailable (${spec}): ${err?.message || err}`);
+    return null;
+  }
+}
+
+const ASK_VENDOR_ASSETS = {
+  marked: resolveEsmAsset('marked'),
+  dompurify: resolveEsmAsset('dompurify'),
+};
+
 const PORT = Number(process.env.PORT) || 4317;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
@@ -219,22 +263,29 @@ wss.on('connection', (ws, req) => {
   let requestedRunId = null;
   let requestedScanId = null;
   let requestedGenId = null;
+  let requestedThreadId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
     requestedScanId = u.searchParams.get('scanId');
     requestedGenId = u.searchParams.get('genId');
+    requestedThreadId = u.searchParams.get('threadId');
   } catch {
     requestedRunId = null;
     requestedScanId = null;
     requestedGenId = null;
+    requestedThreadId = null;
   }
   const id = requestedRunId || requestedScanId || requestedGenId;
 
-  send(ws, { type: 'hello', runs: summarizeRuns() });
+  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello() });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
+  }
+
+  if (requestedThreadId && askJobs.has(requestedThreadId)) {
+    replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
   ws.on('close', () => sockets.delete(ws));
@@ -252,6 +303,10 @@ wss.on('connection', (ws, req) => {
     const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId) : null;
     if (subId && runs.has(subId)) {
       replayEntry(ws, runs.get(subId));
+    }
+    const askThreadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
+    if (askThreadId && askJobs.has(askThreadId)) {
+      replayAskJob(ws, askJobs.get(askThreadId));
     }
   });
 });
@@ -637,6 +692,24 @@ if (HLJS_ASSETS) {
   });
 }
 
+// Ask Worca §10.7 vendor routes. sendHljsModule's shape, reused verbatim: the
+// sendFile error path falls through to the /vendor no-store handlers below.
+const sendEsmModule = (file) => (_req, res, next) => {
+  res.type('text/javascript');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.sendFile(file, (err) => {
+    if (!err) return;
+    if (res.headersSent) return next(err);
+    next();
+  });
+};
+if (ASK_VENDOR_ASSETS.marked) {
+  app.get('/vendor/marked/marked.esm.js', sendEsmModule(ASK_VENDOR_ASSETS.marked));
+}
+if (ASK_VENDOR_ASSETS.dompurify) {
+  app.get('/vendor/dompurify/purify.es.mjs', sendEsmModule(ASK_VENDOR_ASSETS.dompurify));
+}
+
 app.use('/vendor', (err, _req, res, next) => {
   if (res.headersSent) return next(err);
   res.set('Cache-Control', 'no-store');
@@ -794,6 +867,28 @@ app.post('/api/run', async (req, res) => {
     }
     if (!hasWorkspace && !hasProjectDir) {
       return badRequest(res, 'workspaceId or projectDir is required');
+    }
+
+    // Ask Worca card link (§8.1): both or neither; the thread must exist and
+    // the card must still be `proposed` BEFORE any run state is created.
+    const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
+    const hasAskCard = body.askCardId !== undefined && body.askCardId !== null;
+    let askLink = null;
+    if (hasAskThread || hasAskCard) {
+      if (!hasAskThread || !hasAskCard) {
+        return badRequest(res, 'askThreadId and askCardId must be provided together');
+      }
+      if (typeof body.askThreadId !== 'string' || !ASK_ID_RE.test(body.askThreadId)
+        || typeof body.askCardId !== 'string' || !ASK_ID_RE.test(body.askCardId)) {
+        return badRequest(res, 'invalid askThreadId or askCardId');
+      }
+      if (!askGetThread(body.askThreadId)) return badRequest(res, 'unknown askThreadId');
+      const found = askFindCard(body.askThreadId, body.askCardId);
+      if (!found) return badRequest(res, 'unknown askCardId');
+      if (found.block.state !== 'proposed') {
+        return res.status(409).json({ error: `card is ${found.block.state}` });
+      }
+      askLink = { threadId: body.askThreadId, cardId: body.askCardId };
     }
 
     // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
@@ -996,6 +1091,72 @@ app.post('/api/run', async (req, res) => {
 
     runs.set(runId, entry);
     wireRun(entry);
+    if (askLink) {
+      try {
+        // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
+        // B's `proposed` check and here — a concurrent Start may have flipped
+        // the card already. Re-check and skip the link/flip/notice quietly (the
+        // run itself proceeds and {runId} is still returned).
+        const still = askFindCard(askLink.threadId, askLink.cardId);
+        if (!still || still.block.state !== 'proposed') throw new Error('card no longer proposed');
+        askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
+        flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        const startedMsg = askAppendMessage(askLink.threadId, {
+          role: 'system',
+          text: `Run started — "${title}"`,
+          blocks: [{ kind: 'notice', text: `Run started — "${title}"`, href: `#running/${runId}` }],
+        });
+        broadcast({ type: 'ask-message', threadId: askLink.threadId, message: startedMsg });
+        const follower = attachRunFollower(orch, {
+          threadId: askLink.threadId,
+          runId,
+          cardId: askLink.cardId,
+          post: ({ text, href }) => {
+            try {
+              const m = askAppendMessage(askLink.threadId, {
+                role: 'system', text, blocks: [{ kind: 'notice', text, href }],
+              });
+              broadcast({ type: 'ask-message', threadId: askLink.threadId, message: m });
+            } catch { /* thread deleted mid-run */ }
+          },
+          updateStatus: (patch) => {
+            try {
+              const linkPatch = {};
+              if (patch.pipelineId) linkPatch.pipelineId = patch.pipelineId;
+              if (patch.status) linkPatch.status = patch.status;
+              if (patch.phase !== undefined) linkPatch.phase = patch.phase;
+              const row = Object.keys(linkPatch).length
+                ? askUpdateRunLink(askLink.threadId, runId, linkPatch) : null;
+              if (patch.cardFailed) {
+                flipCard(askLink.threadId, askLink.cardId, { state: 'failed', error: patch.cardFailed });
+              }
+              broadcast({
+                type: 'ask-run-status', threadId: askLink.threadId, runId,
+                pipelineId: (row && row.pipelineId) || patch.pipelineId || null,
+                cardId: askLink.cardId,
+                status: patch.status || (row && row.status) || null,
+                phase: patch.phase !== undefined ? patch.phase : ((row && row.phase) || null),
+              });
+            } catch { /* thread deleted mid-run */ }
+          },
+          onDetached: () => {
+            const set = askFollowers.get(askLink.threadId);
+            if (set) {
+              set.delete(follower);
+              if (!set.size) askFollowers.delete(askLink.threadId);
+            }
+          },
+        });
+        let set = askFollowers.get(askLink.threadId);
+        if (!set) {
+          set = new Set();
+          askFollowers.set(askLink.threadId, set);
+        }
+        set.add(follower);
+      } catch (err) {
+        console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
+      }
+    }
     announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events.
@@ -2820,6 +2981,519 @@ app.delete('/api/guardrails/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Ask Worca (ask-worca-design.md §8). askJobs is SEPARATE from the runs Map —
+// the client's Running badge counts runs entries, and a thread id is the
+// subscription key (§8.3). No store/home access at import time (the chatCtx
+// rule): the Maps are bare and every store call lives inside a handler or
+// bootMaintenance.
+// ---------------------------------------------------------------------------
+const askJobs = new Map();      // threadId -> {turn, messageId, userMessageId, events, seq, status, startedAt, graceTimer}
+const askFollowers = new Map(); // threadId -> Set<{detach}>
+const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
+
+function askInFlight(threadId) {
+  const job = askJobs.get(threadId);
+  return job && job.status === 'running' ? job : null;
+}
+
+function askRunningCount() {
+  let n = 0;
+  for (const job of askJobs.values()) if (job.status === 'running') n += 1;
+  return n;
+}
+
+/** hello payload: running turns only (§8.2). A job whose slot was just
+ *  reserved (messageId still null — the message route's atomic reservation,
+ *  Task 6) is skipped: it becomes visible once its assistant row exists. */
+function askHello() {
+  const out = [];
+  for (const [threadId, job] of askJobs.entries()) {
+    if (job.status === 'running' && job.messageId) out.push({ threadId, messageId: job.messageId });
+  }
+  return out;
+}
+
+/** Replay a job's stamped ring buffer to one socket. No state snapshot — the
+ *  REST thread GET is the snapshot; the client dedupes by seq (§6.6). */
+function replayAskJob(ws, job) {
+  for (const ev of job.events) send(ws, ev);
+}
+
+/** The stamping closure (§17: reducer frames are BARE; the server stamps).
+ *  Shared by the turn's own ask-start/ask-done/ask-error and every reducer
+ *  frame, so ALL job frames are buffered, replayed and seq-ordered alike. */
+function stampAskFrames(threadId, job) {
+  return (bare) => {
+    const frame = { ...bare, threadId, messageId: job.messageId, seq: ++job.seq };
+    job.events.push(frame);
+    if (job.events.length > ASK_JOB_MAX_BUFFER) job.events.splice(0, job.events.length - ASK_JOB_MAX_BUFFER);
+    broadcast(frame);
+  };
+}
+
+/** 400 on shape (spec §8.1 — a DELIBERATE divergence from the house 404-on-
+ *  malformed-param style), null-return contract like badRequest. */
+function askIdParam(res, value, kind) {
+  if (typeof value !== 'string' || !ASK_ID_RE.test(value)) {
+    res.status(400).json({ error: `invalid ${kind} id` });
+    return null;
+  }
+  return value;
+}
+
+app.get('/api/ask/threads', (req, res) => {
+  try {
+    const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
+    const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
+    res.json({ threads });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/ask/threads', (req, res) => {
+  try {
+    const body = req.body || {};
+    let title = null;
+    if (body.title !== undefined && body.title !== null && body.title !== '') {
+      if (typeof body.title !== 'string' || body.title.length > 120) {
+        return badRequest(res, 'title must be a string of at most 120 characters');
+      }
+      title = body.title.trim() || null;
+    }
+    const thread = askCreateThread();
+    if (title) askUpdateThread(thread.id, { title });
+    res.status(201).json({ thread: askGetThread(thread.id) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/ask/threads/:id', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    const job = askInFlight(id);
+    res.json({
+      thread,
+      messages: askListMessages(id),
+      attachments: askListAttachments(id),
+      runLinks: askListRunLinks(id),
+      inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/ask/threads/:id', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const raw = (req.body || {}).title;
+    if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
+      return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+    }
+    const thread = askUpdateThread(id, { title: raw.trim() });
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    res.json({ thread });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// §7.5 order: abort the in-flight turn -> detach followers -> delete the row
+// (tx + cascades) + rm -rf inside deleteThread -> drop the job entry.
+app.delete('/api/ask/threads/:id', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const job = askJobs.get(id);
+    if (job && job.turn && typeof job.turn.stop === 'function') {
+      try { job.turn.stop(); } catch { /* best-effort */ }
+    }
+    const followers = askFollowers.get(id);
+    if (followers) {
+      for (const f of [...followers]) {
+        try { f.detach(); } catch { /* best-effort */ }
+      }
+      askFollowers.delete(id);
+    }
+    askDeleteThread(id);
+    if (job) {
+      if (job.graceTimer) clearTimeout(job.graceTimer);
+      askJobs.delete(id);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const attId = askIdParam(res, req.params.attId, 'attachment');
+  if (!attId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const att = askReadAttachmentText(id, attId);
+    if (!att) return res.status(404).json({ error: 'attachment not found' });
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', 'inline');
+    res.type('text/plain; charset=utf-8').send(att.text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// D8/§8.1: the chat model catalog. Fresh per request (the /api/config
+// precedent) — a cache would go stale against global-model edits.
+app.get('/api/ask/models', async (_req, res) => {
+  try {
+    res.json(await askCatalog());
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+/** lookupPipelineRow/findPipelineRowById return the RAW `SELECT * FROM pipelines`
+ *  row: snake_case columns, and `branch` is a JSON DOCUMENT
+ *  ({source, feature, worktreeDir, …}), not a branch name. Reading
+ *  row.startedAt/row.branch directly loses the date and pastes a JSON blob into
+ *  the [worca context] line (dry-run-verified). */
+function askRunFromPipelineRow(row) {
+  let branchObj = null;
+  if (typeof row.branch === 'string') {
+    try { branchObj = JSON.parse(row.branch); } catch { branchObj = null; }
+  } else if (row.branch && typeof row.branch === 'object') {
+    branchObj = row.branch;
+  }
+  const branch = branchObj && typeof branchObj.feature === 'string'
+    ? branchObj.feature
+    : (typeof branchObj === 'string' ? branchObj : null);
+  return {
+    id: row.id,
+    title: row.title || '',
+    status: row.status || '',
+    startedAt: row.started_at || row.updated_at || '',
+    branch,
+  };
+}
+
+/** Resolve the VALIDATED client context into the server-side shape
+ *  buildContextHeader consumes (§6.5: server-resolved rows only — never
+ *  client-supplied titles or paths). Every lookup is individually guarded:
+ *  a vanished row degrades to an absent header line, never a 500. */
+async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
+  const out = { now: new Date().toISOString() };
+  if (ctx.view) out.view = ctx.view;
+  try {
+    if (ctx.projectKey || ctx.projectDir) {
+      const projects = await listProjects();
+      const p = projects.find((x) =>
+        (ctx.projectKey && x.key === ctx.projectKey) || (ctx.projectDir && x.path === ctx.projectDir));
+      if (p) out.project = { name: p.name, key: p.key };
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.workspaceId) {
+      const ws = await readWorkspace(ctx.workspaceId);
+      if (ws) {
+        // readWorkspace returns {id, name, projectPaths, projectKeys, …} — there
+        // is NO per-member name object (the {projectName} shape is a local
+        // /api/run construction, ui/server.mjs:894). Member display names are
+        // the path basenames, same as that precedent.
+        out.workspace = {
+          name: ws.name, id: ws.id,
+          members: (ws.projectPaths || []).map((p) => path.basename(p)).filter(Boolean),
+        };
+      }
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.pipelineId) {
+      const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
+      const row = (key ? lookupPipelineRow(key, ctx.pipelineId) : null) || findPipelineRowById(ctx.pipelineId);
+      if (row) out.run = askRunFromPipelineRow(row);
+    } else if (ctx.runId && runs.has(ctx.runId)) {
+      const entry = runs.get(ctx.runId);
+      out.run = {
+        id: entry.pipelineId || ctx.runId.slice(0, 8), title: entry.title || '',
+        status: entry.status || '', startedAt: entry.startedAt || '', branch: null,
+      };
+    }
+  } catch { /* absent line */ }
+  // (the ctx.runId branch reads the LIVE runs-Map entry, which really is
+  // camelCase — only the DB pipeline row needs askRunFromPipelineRow)
+  try {
+    const links = askListRunLinks(threadId).slice(0, ASK_LIMITS.headerRuns).map((l) => {
+      const live = runs.get(l.runId);
+      return {
+        id: l.pipelineId || l.runId.slice(0, 8),
+        title: (live && live.title) || '', status: l.status || (live && live.status) || '',
+        phase: l.phase || '',
+      };
+    });
+    if (links.length) out.linkedRuns = links;
+    const cards = [];
+    for (const m of askListMessages(threadId)) {
+      if (!Array.isArray(m.blocks)) continue;
+      for (const b of m.blocks) {
+        if (b && b.kind === 'card') {
+          cards.push({
+            id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
+            targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
+          });
+        }
+      }
+    }
+    if (cards.length) out.cards = cards.slice(-ASK_LIMITS.headerCards);
+    // §6.5: the CURRENT message's non-inlined files, then EARLIER attachments
+    // newest first — inlined current files must not be double-listed, so the
+    // earlier set excludes the whole current message, not just `listed` ids.
+    const earlier = askListAttachments(threadId)
+      .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
+      .slice(-ASK_LIMITS.headerAttachments)
+      .reverse()
+      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes }));
+    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes })), ...earlier];
+    if (atts.length) out.attachments = atts.slice(0, ASK_LIMITS.headerAttachments);
+  } catch { /* absent lines */ }
+  return out;
+}
+
+/** R-F: whenever mock mode is on, EVERY ask spawn carries markers. The card is
+ *  the mock propose_run INPUT, derived from page context so a seeded project/
+ *  workspace validates and an empty context exercises the rejection notice. */
+function mockAskCard(ctx = {}, text = '') {
+  const target = ctx.workspaceId
+    ? { workspaceId: ctx.workspaceId }
+    : { projectKey: ctx.projectKey || 'mock-project-00000000' };
+  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run' };
+}
+
+app.post('/api/ask/threads/:id/messages', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+    if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
+      return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
+    }
+    const body = req.body || {};
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (!text.trim()) return badRequest(res, 'text is required');
+    const mv = await validateModelEffort(body.model, body.effort);
+    if (!mv.ok) return badRequest(res, mv.error);
+    const cv = validateClientContext(body.context);
+    if (!cv.ok) return badRequest(res, cv.error);
+
+    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
+    const files = [];
+    if (body.attachments !== undefined) {
+      if (!Array.isArray(body.attachments)) return badRequest(res, 'attachments must be an array');
+      if (body.attachments.length > ASK_LIMITS.attachment.maxFiles) {
+        return badRequest(res, `at most ${ASK_LIMITS.attachment.maxFiles} attachments per message`);
+      }
+      const dec = new TextDecoder('utf-8', { fatal: true });
+      for (const a of body.attachments) {
+        const name = a && typeof a.name === 'string' ? a.name : '';
+        const dot = name.lastIndexOf('.');
+        const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
+        if (!ASK_LIMITS.attachment.extensions.includes(ext)) {
+          return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
+        }
+        const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
+        const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
+        if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
+        if (buf.length > ASK_LIMITS.attachment.maxBytesPerFile) {
+          return res.status(413).json({ error: `attachment over ${ASK_LIMITS.attachment.maxBytesPerFile} bytes: ${name}` });
+        }
+        let bodyText;
+        try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
+        if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
+        files.push({ name, text: bodyText, bytes: buf.length });
+      }
+      const total = askThreadAttachmentBytes(id) + files.reduce((s, f) => s + f.bytes, 0);
+      if (total > ASK_LIMITS.attachment.maxBytesPerThread) {
+        return res.status(413).json({ error: 'attachment budget for this thread exceeded' });
+      }
+    }
+
+    // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
+    // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
+    // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
+    // reads), so the route is macrotask-atomic and two POSTs cannot interleave
+    // (empirically instrumented). The reservation is what keeps that true if
+    // any of those readers ever becomes genuinely async: it is synchronous —
+    // check-and-set cannot interleave — and runs BEFORE the first write, so a
+    // loser leaves no rows.
+    if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+    if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
+      return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
+    }
+    const prev = askJobs.get(id);
+    if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
+    const job = {
+      turn: null, messageId: null, userMessageId: null, // ids filled once the rows exist;
+      events: [], seq: 0, status: 'running',            // askHello()/GET inFlight skip a null messageId
+      startedAt: new Date().toISOString(), graceTimer: null,
+    };
+    askJobs.set(id, job);
+
+    let asstMsg = null;
+    let turn;
+    try {
+      // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
+      askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
+      let deterministicTitle = thread.title;
+      let titleWasAuto = false;
+      if (thread.title == null) {
+        // §7.4 — no frame for the deterministic title. titleWasAuto gates the
+        // D13 background replacement: a title given at THREAD CREATION is the
+        // user's, and the haiku call must never fire for it (§17 Q&A 1).
+        deterministicTitle = askSanitizeTitle(text.slice(0, 80)) || 'New chat';
+        askSetThreadTitle(id, deterministicTitle);
+        titleWasAuto = true;
+      }
+      const userMsg = askAppendMessage(id, { role: 'user', text });
+      job.userMessageId = userMsg.id;
+      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, text: f.text }));
+      if (attRows.length) {
+        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes })));
+      }
+      broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
+      asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
+      job.messageId = asstMsg.id;
+
+      // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
+      const catalog = await askBuildCatalog();
+      const systemPrompt = askBuildSystemPrompt(catalog);
+      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, text: files[i].text }));
+      const { inline, listed } = askSelectInlineAttachments(withText);
+      const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
+      const header = askBuildContextHeader(headerCtx);
+      const prompt = askBuildTurnPrompt(header, text, inline);
+      const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
+      const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
+      const attachmentNames = {};
+      for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
+
+      turn = createAskTurn({
+        threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
+        prompt, systemPrompt, restoredPrompt,
+        model: mv.model, effort: mv.effort,
+        resumeSessionId: thread.sessionId || null,
+        firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
+        firstText: text,
+        deterministicTitle,
+        mock: mockEnabled({}) ? { card: mockAskCard(cv.context, text) } : null, // R-F
+        attachmentNames,
+        deps: {
+          onFrame: stampAskFrames(id, job),
+          onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
+        },
+      });
+      job.turn = turn;
+    } catch (err) {
+      // A write/assembly failure must release the reserved slot and never leave
+      // a `streaming` row for the boot sweep to find.
+      if (askJobs.get(id) === job) askJobs.delete(id);
+      if (asstMsg) {
+        try {
+          askFinishMessage(asstMsg.id, {
+            text: '', blocks: [{ kind: 'notice', text: 'failed to start the turn' }],
+            status: 'error', reason: null, usage: null, costUsd: null, durationMs: null,
+          });
+        } catch { /* thread gone */ }
+      }
+      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    }
+    const settleJob = (status) => {
+      if (askJobs.get(id) !== job) return;
+      job.status = status;
+      job.graceTimer = setTimeout(() => {
+        if (askJobs.get(id) === job) askJobs.delete(id);
+      }, ASK_LIMITS.jobGraceMs);
+      job.graceTimer.unref?.();
+    };
+    turn.on('done', () => settleJob('done'));
+    turn.on('error', () => settleJob('error'));
+    // Fire-and-forget with a backstop (startAgentGen shape) — run() never throws.
+    Promise.resolve()
+      .then(() => turn.run())
+      .catch((err) => {
+        console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
+        settleJob('error');
+      });
+    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId });
+  } catch (err) {
+    // Only pre-reservation throws land here (`job` is block-scoped to the outer
+    // try and every post-reservation failure returned from the inner catch), so
+    // there is no slot to release.
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Idempotent stop (the /api/agents/generate/stop family): always {ok:true}
+// after the shape check; the costUsd:null rule lives in the turn (R-C).
+app.post('/api/ask/threads/:id/stop', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const job = askInFlight(id);
+  if (job && job.turn && typeof job.turn.stop === 'function') {
+    try { job.turn.stop(); } catch { /* best-effort */ }
+  }
+  res.json({ ok: true });
+});
+
+/** R-B dual update. Flip in the STORE and, when the owning thread's turn is
+ *  still streaming, in the LIVE reducer (updateBlock re-emits the stamped
+ *  ask-card job frame) — otherwise finishMessage at turn end reverts the flip
+ *  with the reducer's stale copy. When no live reducer held the card (turn
+ *  over, or the card sits on an earlier message), re-broadcast the whole
+ *  message so tabs upsert the flipped block by message.id (§6.6 out-of-turn). */
+function flipCard(threadId, cardId, patch) {
+  const block = askUpdateCardBlock(threadId, cardId, patch);
+  if (!block) return null;
+  const job = askInFlight(threadId);
+  const live = job && job.turn && job.turn.reducer ? job.turn.reducer.updateBlock(cardId, patch) : null;
+  if (!live) {
+    const found = askFindCard(threadId, cardId);
+    if (found) broadcast({ type: 'ask-message', threadId, message: found.message });
+  }
+  return block;
+}
+
+// D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed').
+app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const cardId = askIdParam(res, req.params.cardId, 'card');
+  if (!cardId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if ((req.body || {}).state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
+    const found = askFindCard(id, cardId);
+    if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.state !== 'proposed') {
+      return res.status(409).json({ error: `card is ${found.block.state}` });
+    }
+    const block = flipCard(id, cardId, { state: 'dismissed' });
+    res.json({ block });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // /api/agents* -> agent registry + user-agent CRUD, delegated to
 // src/core/agent-store.mjs (layered builtin + ~/.worca-cc/agents user pairs).
 // GET returns palette render order (.order ascending) with origin stamped; the
@@ -3578,7 +4252,7 @@ app.use((req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null };
+  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -3632,6 +4306,19 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] legacy worktree sweep failed: ${err && err.message ? err.message : err} — nothing was removed`);
   }
+
+  // Ask Worca (§6.2): mark turns orphaned by a restart, sweep stale empty threads.
+  try {
+    const interrupted = sweepStreamingMessages();
+    const emptyThreads = sweepEmptyThreads();
+    summary.ask = { interrupted, emptyThreads };
+    if (interrupted || emptyThreads) {
+      console.log(`[worca-ui] ask sweep: ${interrupted} interrupted turn(s), ${emptyThreads} empty thread(s)`);
+    }
+  } catch (err) {
+    summary.ask = { interrupted: 0, emptyThreads: 0 };
+    console.error(`[worca-ui] ask sweep failed: ${err && err.message ? err.message : err}`);
+  }
   return summary;
 }
 
@@ -3679,5 +4366,5 @@ export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
-  chatNotifier, resumeRun, resolveHljsAssets,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
 };

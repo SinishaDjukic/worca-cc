@@ -27,8 +27,10 @@ export function sanitizeTitle(raw) {
 /**
  * Produce a concise LLM title for a prompt. Never throws — returns '' on any
  * failure/abort/empty input so the caller keeps the provisional title.
+ * `permissionMode` (default 'acceptEdits') exists for Ask Worca: its title call
+ * passes 'dontAsk' so the mock dispatcher can never reach a file-writing role.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
@@ -45,7 +47,7 @@ export async function generateTitle(prompt, opts = {}) {
       // env everywhere the id is used.
       modelEnv: resolveModelEnv(opts.model || DEFAULT_TITLE_MODEL),
       effort: 'low',
-      permissionMode: 'acceptEdits',
+      permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
       // Title generation runs DURING a pipeline run, so it must honor the same
