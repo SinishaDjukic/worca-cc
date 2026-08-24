@@ -628,12 +628,14 @@ function handleServerMessage(msg) {
   // carrying ids only: the open Diff tab refetches its comments and re-renders the
   // CARDS in place, never the diff. Tabs showing another run ignore it.
   if (msg.type === 'diff-comments-changed') {
-    // The open tab's repaint comes FIRST, so the poke survives even if the counts
-    // refresh ever throws.
+    // Both jobs are COALESCED (:9816): an Ask turn writing a dozen comments
+    // broadcasts a dozen frames, and each one otherwise costs a counts round trip
+    // plus a whole paintHistory(). The open tab's repaint is queued FIRST, so the
+    // poke survives even if the counts refresh ever throws.
     if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
-      void hdCommentState.reload();
+      pokeOpenDiffTab();
     }
-    void refreshCommentCounts();
+    pokeCommentCounts();
     return;
   }
 
@@ -790,6 +792,16 @@ function onHello(msg) {
   }
 
   askPanel?.onHello(msg.ask);
+
+  // diff-comments-changed is a plain global broadcast with no per-socket buffer
+  // (ui/server.mjs:389-398), so any comment written while the socket was down is
+  // simply lost. `hello` is the fresh-socket hook — the same one the backfill
+  // subscribes ride — so replay both halves of the poke here. Coalesced, so a
+  // reconnect that lands mid-burst still costs one pass. pokeCommentCounts() is
+  // redundant ONLY on the history view (loadHistoryView() at :801 refreshes counts
+  // itself) — it is load-bearing on every other view, so it is not a duplicate.
+  if (hdCommentState) pokeOpenDiffTab();
+  pokeCommentCounts();
 
   refreshAllCounts();
   refreshBudget();
@@ -9812,6 +9824,41 @@ async function refreshCommentCounts() {
   } catch { return; }
   if (currentView() === 'history') paintHistory();
 }
+
+// A single Ask turn can write a dozen comments and EVERY write broadcasts, so the
+// raw poke is a repaint storm: one /api/diff-comments/counts round trip plus a
+// whole paintHistory() per frame, and a comments refetch + card repaint for the
+// run on screen. coalesce() runs the FIRST frame of a burst immediately — a poke
+// caused by the user's own click must feel instant — and collapses every further
+// frame inside the window into ONE trailing run. Trailing-edge only (debounce()
+// in source-pane.mjs) would delay that first frame by the whole window, which is
+// latency the local mutation path does not have.
+//
+// TWO independent coalescers, not one: the counts refresh fires for EVERY run's
+// poke while the tab reload fires only for the run on screen, so sharing a window
+// would let another run's frame delay this run's repaint.
+const COMMENT_POKE_MS = 250;
+function coalesce(fn, ms) {
+  let timer = null;
+  let queued = false;
+  const run = () => {
+    fn();
+    timer = setTimeout(() => {
+      timer = null;
+      if (!queued) return;
+      queued = false;
+      run();
+    }, ms);
+    // A real browser's setTimeout returns a number (no .unref) -> a no-op there.
+    // Under node:test, boot() copies only window/document/location/localStorage/
+    // WebSocket/fetch/navigator onto globalThis, so this is NODE's setTimeout and
+    // .unref stops a 250 ms tail from holding the event loop open (:9705).
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  };
+  return () => { if (timer == null) run(); else queued = true; };
+}
+const pokeCommentCounts = coalesce(() => { void refreshCommentCounts(); }, COMMENT_POKE_MS);
+const pokeOpenDiffTab = coalesce(() => { if (hdCommentState) void hdCommentState.reload(); }, COMMENT_POKE_MS);
 
 function renderHistCommentPill(pill, p) {
   if (!pill) return;

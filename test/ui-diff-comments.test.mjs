@@ -695,3 +695,35 @@ test('re-arming is idempotent: one + button, one composer', async () => {
   click(window, doc.querySelector('.hd-cmt-add'));
   assert.equal(doc.querySelectorAll('.hd-cmt-input').length, 1, 'and one composer per click');
 });
+
+// The ONE case in this suite that has to outwait real time (COMMENT_POKE_MS).
+test('a burst of pokes collapses into two passes, not one per frame', async () => {
+  const ctx = await bootComments();
+  const countCalls = () => ctx.calls.filter((c) => c.url.endsWith('/api/diff-comments/counts')).length;
+  const cmtCalls = () => ctx.calls.filter((c) => c.url.endsWith('/comments')).length;
+  const c0 = countCalls();
+  const m0 = cmtCalls();
+  const frame = JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id });
+  for (let i = 0; i < 20; i++) ctx.wsBox.ws.dispatch('message', { data: frame });
+  await settle(ctx.window, 8);
+  assert.equal(countCalls() - c0, 1, 'the leading frame runs immediately; the other 19 are queued');
+  assert.equal(cmtCalls() - m0, 1, 'same for the open tab');
+  await new Promise((r) => setTimeout(r, 400));    // past COMMENT_POKE_MS
+  assert.equal(countCalls() - c0, 2, 'the whole tail collapsed into ONE trailing pass');
+  assert.equal(cmtCalls() - m0, 2);
+});
+
+test('a hello after a socket drop replays the poke the open Diff tab missed', async () => {
+  const ctx = await bootComments();
+  const { window } = ctx;
+  const before = ctx.calls.filter((c) => c.url.endsWith('/comments')).length;
+  // The mutation happens while the socket is down, so no frame is ever delivered.
+  ctx.cbox.comments = [cmt({ author: 'ask', body: 'written during the drop' })];
+  await new Promise((r) => setTimeout(r, 400));    // let any open coalesce window close
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await settle(window, 8);
+  assert.ok(ctx.calls.filter((c) => c.url.endsWith('/comments')).length > before,
+    'hello is the fresh-socket hook — it re-reads the comments');
+  assert.ok(window.document.querySelector('[data-comment-id="dc_00000001"]'),
+    'and the missed card is on screen without a re-select');
+});

@@ -89,12 +89,18 @@ export function listDiffComments(storeKey, pipelineId, { status = 'all', path = 
                   ORDER BY path, line_no, rowid`).all(...vals).map(rowToComment);
 }
 
-/** { "<storeKey>/<pipelineId>": <unresolved count> } for every run that has any. */
+/** Unresolved counts keyed "<storeKey>/<pipelineId>", newest-commented first and
+ *  hard-capped: the endpoint fans out to every open tab on every poke, and an
+ *  unbounded row-per-commented-run response is the one part of it that grows with
+ *  history. 5000 is a backstop, not a paging story — /api/history is itself
+ *  unbounded, so anything the cap drops belongs to a card far below the fold. */
 export function unresolvedCounts() {
   getDb();
   const out = {};
-  for (const r of prepare(`SELECT store_key, pipeline_id, count(*) AS n FROM diff_comments
-                           WHERE resolved = 0 GROUP BY store_key, pipeline_id`).all()) {
+  for (const r of prepare(`SELECT store_key, pipeline_id, count(*) AS n, max(rowid) AS last
+                           FROM diff_comments WHERE resolved = 0
+                           GROUP BY store_key, pipeline_id
+                           ORDER BY last DESC LIMIT 5000`).all()) {
     out[`${r.store_key}/${r.pipeline_id}`] = r.n;
   }
   return out;
