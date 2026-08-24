@@ -301,6 +301,29 @@ test('dismiss: {block} on success, 400 on other states, 404 unknown, 409 when no
   w.ws.close();
 });
 
+// m3: dismiss is terminal — the card's parked comment ids can never reach a run,
+// so the route drops them exactly where the launch path does (ui/server.mjs:1155).
+// Nothing reads ask_card_comments back through the API, so assert via the store.
+test("dismiss clears the card's pending comment ids (the launch path's only other consumer)", async () => {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const { addDiffComment, setPendingCardComments, peekPendingCardComments } =
+    await import('../src/core/diff-comments.mjs');
+  const { writeFile } = await import('node:fs/promises');
+  const PATCH = 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-a\n+b\n';
+  const seeded = await seedPipeline(projectDir, { title: 'Prior run', status: 'done' });
+  await writeFile(join(seeded.dir, 'diff-patch.patch'), PATCH, 'utf8');
+  const comment = addDiffComment({ storeKey: seeded.key, pipelineId: seeded.id, patchText: PATCH,
+    path: 'a.js', side: 'new', line: 1, body: 'fix me', author: 'user' });
+
+  const { thread, card } = await proposeCard({ projectKey }, 'propose one to dismiss');
+  assert.ok(card);
+  assert.equal(setPendingCardComments(card.id, [comment.id]), 1);
+  const res = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'dismissed' });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).block.state, 'dismissed');
+  assert.deepEqual(peekPendingCardComments(card.id), [], 'dismiss reclaimed the parked rows');
+});
+
 test('R-B: dismissing WHILE the turn still streams survives finishMessage (live reducer re-emits)', async () => {
   const t = await newThread();
   const w = openWs(`?threadId=${t.id}`);

@@ -3739,6 +3739,11 @@ app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
       return res.status(409).json({ error: `card is ${found.block.state}` });
     }
     const block = flipCard(id, cardId, { state: 'dismissed' });
+    // Dismiss is terminal: the card's parked comment ids can never reach a run,
+    // so drop them here exactly as the launch path does at its own success point
+    // (:1155). Own try/catch — comment bookkeeping must never fail the dismiss.
+    try { clearPendingCardComments(cardId); }
+    catch (e) { console.error('[diff-comments] dismiss cleanup failed:', e && e.message ? e.message : e); }
     res.json({ block });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
