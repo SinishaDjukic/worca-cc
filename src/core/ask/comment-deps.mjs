@@ -32,13 +32,20 @@ export const COMMENT_CONTEXT_RADIUS = 3;
 export function defaultCommentDeps() {
   return {
     comments: {
-      /** Comments of a run, each with `context` when the patch is readable. */
-      list: (storeKey, pipelineId, { status = 'all', path = null, patchText = null } = {}) =>
-        listDiffComments(storeKey, pipelineId, { status, path }).map((c) => (patchText == null ? c : {
+      /** Comments of a run, each with `context` when the patch is readable.
+       *  `keep` is the CALLER's protected-path filter (tools.mjs owns the guard
+       *  rules); applied BEFORE the context parse so a row that will be dropped
+       *  never costs a whole-patch parse, and so the order is fail-closed-first
+       *  like everywhere else. */
+      list: (storeKey, pipelineId, { status = 'all', path = null, patchText = null, keep = null } = {}) => {
+        const rows = listDiffComments(storeKey, pipelineId, { status, path });
+        const kept = typeof keep === 'function' ? rows.filter(keep) : rows;
+        return kept.map((c) => (patchText == null ? c : {
           ...c,
           context: hunkContext(patchText, { project: c.projectKey, path: c.path, side: c.side, line: c.line },
             COMMENT_CONTEXT_RADIUS),
-        })),
+        }));
+      },
       add: (input) => addDiffComment({ ...input, author: 'ask' }),
       get: (id) => getDiffComment(id),
       setResolved: (id, resolved) => setDiffCommentResolved(id, resolved),

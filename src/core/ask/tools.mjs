@@ -584,12 +584,16 @@ export function createAskTools(deps) {
       // list, they simply lose their surrounding context. line_text is always there,
       // which is exactly what it exists for.
       const patchText = row.archived_at ? null : await deps.readDiffPatch(row);
-      const raw = deps.comments.list(storeKeyOf(row), row.id, { status, path: str(input.path) || null, patchText });
+      const raw = deps.comments.list(storeKeyOf(row), row.id,
+        { status, path: str(input.path) || null, patchText, keep: (c) => !commentBlocked(c) });
       // The READ is the authority, exactly as in get_run_diff: creation already
       // refuses protected anchors, but a preset can GROW afterwards, so re-evaluate
       // now and omit the whole comment rather than trim it. BOTH sides, because a
       // rename+edit is one section under its new name (old_path is persisted for
       // exactly this check, which must also work once the patch is gone).
+      // Re-applied here even though `keep` was handed to the bundle above: the
+      // filter is this module's guarantee, not the bundle's, and it costs nothing
+      // on rows that are already gone.
       const comments = raw.filter((c) => !commentBlocked(c)).map((c) => ({
         ...shapeComment(c),
         // Every string the model sees is redacted: line_text and the context come

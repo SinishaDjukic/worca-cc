@@ -236,3 +236,29 @@ test('delete_diff_comment applies the SAME protected-path guard as resolve, and 
     { ok: true, commentId: ok.id, comment: { runId: run.id, storeKey: run.key } });
   assert.equal(getDiffComment(ok.id), null);
 });
+
+test('list_diff_comments hands the protected filter DOWN, so a guarded row never costs a parse', async () => {
+  const { run } = await realTools();
+  const real = defaultCommentDeps();
+  const base = defaultToolDeps({ threadId: 'ask_00000001' });
+  await createAskTools({ ...base, ...real }).call('add_diff_comment', { id: run.id, path: 'src/a.js', side: 'new', line: 2, body: 'keep' });
+  addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
+    path: 'ok.txt', side: 'new', line: 1, body: 'later-protected', author: 'user' });
+  let opts = null;
+  const narrowed = createAskTools({
+    ...base,
+    comments: { ...real.comments, list: (k, id, o) => { opts = o; return real.comments.list(k, id, o); } },
+    protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths, 'ok.txt'],
+  });
+  const out = await narrowed.call('list_diff_comments', { id: run.id });
+  assert.deepEqual(out.comments.map((c) => c.body), ['keep'], 'the guarded row is still omitted');
+  // The BEHAVIOUR m6 is about: the bundle never even builds a context for the row
+  // it is going to drop. Asserted at the bundle's own seam, not by spying on the
+  // call, because the wasted parse is invisible from the tool's output.
+  assert.equal(opts.keep({ path: 'ok.txt', oldPath: null }), false, 'the caller\'s guard reached the bundle');
+  // The bundle itself drops before it maps, so no context object is ever built
+  // for the row it drops.
+  const rows = real.comments.list(run.key, run.id, { patchText: PATCH, keep: (c) => c.path !== 'ok.txt' });
+  assert.deepEqual(rows.map((r) => r.path), ['src/a.js']);
+  assert.ok(Array.isArray(rows[0].context) && rows[0].context.length, 'the kept row still gets its context');
+});
