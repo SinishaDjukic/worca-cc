@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -621,6 +621,27 @@ CREATE TABLE IF NOT EXISTS ask_cost_ledger (
 CREATE INDEX IF NOT EXISTS idx_ask_cost_ledger_ts ON ask_cost_ledger (ts);
 `;
 
+/** v20: Ask Worca worktrees — per-thread detached git checkouts
+ *  (ask-worca-worktrees-design.md §4). IF NOT EXISTS + a schemaGaps flag (the
+ *  ask_cost_ledger precedent): reconcile-safe on divergent-stamp DBs. The git
+ *  state lives on disk under <worcaHome>/ask/<threadId>/wt/<id>; these rows are
+ *  the registry the cascade, the sweep and the UI read. */
+const ASK_WORKTREES_DDL = `
+CREATE TABLE IF NOT EXISTS ask_worktrees (
+  id              TEXT PRIMARY KEY,          -- 'wt_' + 8 hex
+  thread_id       TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  project_key     TEXT NOT NULL,
+  project_dir     TEXT NOT NULL,             -- source repo at creation time
+  ref             TEXT NOT NULL,             -- last ref the model checked out (label)
+  resolved_commit TEXT NOT NULL,             -- HEAD sha after the last navigation
+  run_id          TEXT,                      -- set when created via run-id sugar
+  worktree_dir    TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ask_worktrees_thread ON ask_worktrees (thread_id);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -682,6 +703,9 @@ function schemaGaps(db) {
   const hasAskCostLedger = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_cost_ledger'"
   ).get().n > 0;
+  const hasAskWorktrees = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_worktrees'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
@@ -690,6 +714,7 @@ function schemaGaps(db) {
     modelCostFlagsTable: !hasModelCostFlags,
     askTables: !hasAskThreads,
     askCostLedgerTable: !hasAskCostLedger,
+    askWorktreesTable: !hasAskWorktrees,
   };
 }
 
@@ -705,6 +730,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
   if (gaps.askTables) db.exec(ASK_DDL);
   if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
+  if (gaps.askWorktreesTable) db.exec(ASK_WORKTREES_DDL);
 }
 
 /**
@@ -722,7 +748,7 @@ function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
       && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables
-      && !gaps.askCostLedgerTable) return; // clean — no lock
+      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -917,6 +943,7 @@ export function migrate(db) {
     if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
     if (current < 18) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
     if (current < 19) applySchemaV19(db);
+    if (current < 20) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -14,7 +14,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, realpath } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -153,4 +153,33 @@ test('boot: reconcile runs BEFORE the sweeps, so a stale `running` row is KEPT a
   assert.ok(res.legacy.keep.includes(crashed.worktreeDir), 'and its checkout lands in KEEP');
   assert.ok(existsSync(crashed.worktreeDir),
     'the boot that made the run resumable must not delete the work it would resume');
+});
+
+// P4/T8: the third janitor — ask worktrees. Reconciles ask_worktrees rows against
+// the on-disk checkouts BOTH ways, and reports through the same `log(scope,…)`
+// sink the other two use (so a bare production boot keeps each sweep's own
+// console default).
+test('boot: ask-worktree sweep removes an orphan dir, drops a stale row, and reports both', async () => {
+  const repo = await freshRepo('worca-cc-boot-askwt-');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { createThread } = await import('../src/core/ask/store.mjs');
+  const { openAskWorktree } = await import('../src/core/ask/worktrees.mjs');
+  const p = (await addProject({ name: 'bswt', path: repo })).find((x) => x.name === 'bswt');
+  const t = createThread();
+  const a = await openAskWorktree({ threadId: t.id, projectKey: p.key, ref: 'main' });
+  const b = await openAskWorktree({ threadId: t.id, projectKey: p.key, ref: 'main' });
+  rmSync(a.path, { recursive: true, force: true });                              // stale row (dir gone)
+  getDb().prepare('DELETE FROM ask_worktrees WHERE id = ?').run(b.worktreeId);   // orphan dir (row gone)
+
+  const events = [];
+  const res = await bootMaintenance({ log: (scope, level, msg) => events.push({ scope, level, msg }) });
+
+  assert.equal(res.askWorktrees.prunedRows, 1);
+  assert.equal(res.askWorktrees.removedDirs, 1);
+  assert.equal(res.askWorktrees.failed, 0);
+  assert.ok(!existsSync(b.path), 'the orphan checkout is gone');
+  assert.ok(events.some((e) => e.scope === 'ask-worktrees'),
+    `the sweep logs through sink('ask-worktrees'): ${JSON.stringify(events)}`);
+  assert.ok(!String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('/wt/'),
+    'both registrations were git-pruned in the source repo');
 });

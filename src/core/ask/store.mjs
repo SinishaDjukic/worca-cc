@@ -83,10 +83,11 @@ export function listThreads({ limit = 50 } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
   const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links
+    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees
     FROM ask_threads t ORDER BY t.updated_at DESC, t.id LIMIT ?
   `).all(n);
-  return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links }));
+  return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links, worktrees: r.worktrees }));
 }
 
 const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context' };

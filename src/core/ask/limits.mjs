@@ -26,6 +26,9 @@ export const ASK_LIMITS = Object.freeze({
   runsScanLimit: 200,                      // listAllPipelines({limit}) before JS filtering
   diffDefaultBytes: 60_000,
   diffMaxBytes: 200_000,
+  gitOutputMaxBytes: 200_000,              // per `git` tool call (P4 §8), sliceBytes window
+  worktreesPerThread: 5,                   // P4 D9
+  worktreesGlobal: 15,                     // P4 D9
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
   briefMaxChars: 8000,

@@ -60,6 +60,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     catalog: null,
     popover: null,            // {panel, trigger, onClose}
     expandedAgents: new Set(),
+    worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
     prevFocus: null,
     pendingFiles: [],
@@ -389,6 +390,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     meter.appendChild(el.meterCost);
     meter.appendChild(make('span', 'ask-meter-sep', '|'));
     row.appendChild(meter);
+
+    const wtBtn = make('button', 'ask-agents-btn ask-wt-btn');
+    wtBtn.type = 'button';
+    wtBtn.setAttribute('data-ask-wt-btn', '');
+    wtBtn.hidden = true;
+    el.wtBtn = wtBtn;
+    el.wtBtnLabel = make('span', null, '0 worktrees');
+    wtBtn.appendChild(el.wtBtnLabel);
+    wtBtn.appendChild(svgIcon('M6 15l6-6 6 6', 11, 2));
+    wtBtn.addEventListener('click', () => openWorktreesPopover(wtBtn));
+    row.appendChild(wtBtn);
 
     const agentsBtn = make('button', 'ask-agents-btn');
     agentsBtn.type = 'button';
@@ -739,6 +751,74 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- run-info popover ("Agents this chat") --------------------------------
+  // ---- worktrees (P4 §10) ---------------------------------------------------
+  function setWorktrees(list) {
+    st.worktrees = Array.isArray(list) ? list : [];
+    if (!el.wtBtn) return;
+    el.wtBtn.hidden = st.worktrees.length === 0;
+    el.wtBtnLabel.textContent = `${st.worktrees.length} worktree${st.worktrees.length === 1 ? '' : 's'}`;
+  }
+
+  function refreshWorktrees() {
+    if (!st.threadId) { setWorktrees([]); return Promise.resolve([]); }
+    const tid = st.threadId;
+    return Promise.resolve()
+      .then(() => fetch(`/api/ask/threads/${tid}`))
+      .then((r) => (r && r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((snap) => {
+        if (st.threadId !== tid) return st.worktrees;
+        setWorktrees(snap && Array.isArray(snap.worktrees) ? snap.worktrees : []);
+        return st.worktrees;
+      });
+  }
+
+  const wtShortSha = (c) => (typeof c === 'string' ? c.slice(0, 7) : '');
+
+  async function deleteWorktree(w) {
+    const ok = await confirm({
+      title: 'Remove this worktree?',
+      message: `${w.projectKey} @ ${w.ref} is checked out at ${w.path}. The checkout is deleted; branches are untouched.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    try { await fetch(`/api/ask/threads/${st.threadId}/worktrees/${w.worktreeId}`, { method: 'DELETE' }); } catch { /* refetch shows the truth */ }
+    await refreshWorktrees();
+  }
+
+  function openWorktreesPopover(trigger) {
+    const panel = openPopover({ panelClass: 'ask-pop-runinfo ask-pop-worktrees', trigger, build: (p) => {
+      p.appendChild(make('div', 'ask-pop-caption', 'Worktrees this chat'));
+    } });
+    if (!panel) return;
+    refreshWorktrees().then((list) => {
+      if (!st.popover || st.popover.panel !== panel) return;
+      if (!list.length) { panel.appendChild(make('div', 'ask-pop-empty', 'No worktrees open.')); return; }
+      for (const w of list) {
+        const row = make('div', 'ask-runinfo-row ask-wt-row');
+        const col = make('span', 'ask-runinfo-col');
+        col.appendChild(make('span', 'ask-runinfo-name', `${w.projectKey} · ${w.ref}@${wtShortSha(w.commit)}`));
+        const path = make('span', 'ask-runinfo-sub ask-wt-path', w.path);
+        path.title = 'Click to copy';
+        path.addEventListener('click', () => { try { win.navigator.clipboard.writeText(w.path); } catch { /* unsupported */ } });
+        col.appendChild(path);
+        row.appendChild(col);
+        // AGE (spec §10 row: project · ref@sha7 · AGE · path · trash). Reuses the
+        // run-info popover's `.ask-runinfo-elapsed` cell — its `margin-left:auto`
+        // also right-aligns the trash that follows.
+        row.appendChild(make('span', 'ask-runinfo-elapsed', w.createdAt ? fmtElapsed(now() - Date.parse(w.createdAt)) : '—'));
+        const trash = make('button', 'ask-thread-trash');
+        trash.type = 'button';
+        trash.setAttribute('aria-label', `Remove worktree ${w.worktreeId}`);
+        trash.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
+        trash.addEventListener('click', (e) => { e.stopPropagation(); closePopover({ focusTrigger: false }); deleteWorktree(w); });
+        row.appendChild(trash);
+        panel.appendChild(row);
+      }
+    });
+  }
+
   function openRunInfoPopover(trigger) {
     openPopover({ panelClass: 'ask-pop-runinfo', trigger, build: (p) => {
       const agents = [];
@@ -777,6 +857,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title.textContent = 'Ask Worca';
     renderTranscript();
     updateMeters();
+    setWorktrees([]);
     updateSendStop();
     setComposerMsg(null);
     focusComposer();
@@ -786,7 +867,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     closePopover({ focusTrigger: false });
     const ok = await confirm({
       title: 'Delete this chat?',
-      message: `“${t.title || '(untitled)'}” and its transcript are removed. This cannot be undone.`,
+      message: `“${t.title || '(untitled)'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -1353,6 +1434,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title.textContent = (snap.thread && snap.thread.title) || 'Ask Worca';
     renderTranscript();
     updateMeters();
+    // P4: the count rides the snapshot loadThread ALREADY fetched — no extra GET.
+    // It belongs here, not in switchThread: resync()/onHello() come through
+    // loadThread too, and a hook on switchThread would miss both.
+    setWorktrees(snap.worktrees);
     st.pinned = true;
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
@@ -1423,7 +1508,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function afterFrame(frame) {
     if (frame.type === 'ask-start') { startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
-    else if (frame.type === 'ask-done' || frame.type === 'ask-error') { stopElapsed(); updateSendStop(); announce('answer finished'); }
+    else if (frame.type === 'ask-done' || frame.type === 'ask-error') {
+      stopElapsed(); updateSendStop(); announce('answer finished');
+      // P4: a finished turn may have created/removed/navigated worktrees. This must
+      // NOT live in updateSendStop() — that also runs from loadThread, so a
+      // running→idle latch there fires a SECOND snapshot GET on every resync.
+      refreshWorktrees();
+    }
     else if (frame.type === 'ask-message' && frame.message && typeof frame.message.text === 'string'
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
   }

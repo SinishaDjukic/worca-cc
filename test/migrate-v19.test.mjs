@@ -78,7 +78,7 @@ test('v18 -> v19 creates ask_cost_ledger and backfills costed messages', async (
   _resetForTests();
   const db2 = getDb();
 
-  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 19);
+  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 20);
   assert.ok(tableNames(db2).includes('ask_cost_ledger'));
   assert.ok(indexNames(db2).includes('idx_ask_cost_ledger_ts'));
   assert.deepEqual(cols(db2, 'ask_cost_ledger'),
@@ -111,7 +111,7 @@ test('re-running the v19 step is a no-op: no duplicate rows', () => {
   getDb().exec('PRAGMA user_version = 18');
   _resetForTests();
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 2,
     'the NOT EXISTS guard suppresses re-inserts');
 });
@@ -128,21 +128,21 @@ test('self-heal on the real home: dropping ONLY ask_cost_ledger recreates it', (
     'reconcileSchema must not early-return on a DB whose only gap is this table');
 });
 
-test('ladder: a v18 DB gets ask_cost_ledger and is stamped 19', () => {
+test('ladder: a v18 DB gets ask_cost_ledger and is stamped 20', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
   db.exec('PRAGMA user_version = 18');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
   assert.ok(tableNames(db).includes('ask_cost_ledger'), 'created by the ladder');
 });
 
-test('self-heal: a DB stamped 19 WITHOUT the table gets it from reconcileSchema, empty', () => {
+test('self-heal: a DB stamped 20 WITHOUT the table gets it from reconcileSchema, empty', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 19'); // divergent ladder: version says done, schema says otherwise
+  db.exec('PRAGMA user_version = 20'); // divergent ladder: version says done, schema says otherwise
   migrate(db);                          // fast path → reconcileSchema
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19, 'stamp not rewritten');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20, 'stamp not rewritten');
   assert.ok(tableNames(db).includes('ask_cost_ledger'), 'healed');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 0,
     'no backfill on the heal path (accepted, same as cost_ledger)');

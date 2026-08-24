@@ -30,9 +30,41 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.aws/**)',
 ]);
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+
+/**
+ * The per-thread Read allow rules of the chat's worktrees (P4 §6) — EMPTY under
+ * the measured permission semantics, and deliberately kept as the seam.
+ *
+ * GATE E1, probed on claude 2.1.241, measured two disqualifying behaviours:
+ *   (1) `unmatched ⇒ ALLOW` — a path in neither the allow nor the deny list is
+ *       read (verified with a file OUTSIDE the probe's cwd, so it is not the
+ *       default cwd-workspace grant). Granting `Read` scoped to
+ *       `.worca-cc/ask/<thread>/wt/**` would therefore ALSO expose the rest of
+ *       the filesystem, and the blanket `Read(//**\/.worca-cc/**)` deny below
+ *       cannot be dissolved into enumerated denies without a net regression.
+ *   (2) `Grep` returned the CONTENTS of a file under a denied path, ignoring
+ *       both the `Read(<path>)` deny and a `Grep(<path>)` deny (the CLI reports
+ *       that only `Read(path)` rules are matched by file permission checks —
+ *       and Grep escaped even those).
+ * So the built-ins stay `['Task']` and a worktree is reachable ONLY through the
+ * hardened `git` MCP tool, which is cwd-confined and enforces the protected-path
+ * + redaction floor itself. If the engine ever gains `unmatched ⇒ deny`, this
+ * function is the single place that flips (return the `Read(...)` rule for the
+ * shape-checked id below); the thread id is validated here already so it can
+ * never reach a permission rule un-checked.
+ */
+export function askWorktreeAllowRules(threadId) {
+  if (typeof threadId !== 'string' || !/^ask_[0-9a-f]{8}$/.test(threadId)) return [];
+  // Both branches are empty ON PURPOSE. Under `unmatched ⇒ allow` there is no safe
+  // Read grant to make, so a minted id yields no rule either; the rule this WOULD
+  // emit is `Read(//**/.worca-cc/ask/${threadId}/wt/**)`.
+  return [];
+}
+
 export const SANDBOX_NOTE =
   "You are a sub-agent of Worca's assistant and run in the same sandbox: the only tools available are Task and " +
   'the worca MCP tools (mcp__worca__*). You cannot read files, run commands or use the network — do not try. ' +
+  "The only view into a repository is the worca `git` tool over this chat's read-only detached worktrees. " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */
@@ -64,9 +96,12 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
     allowedTools: [...ASK_BUILTIN_TOOLS],
     mcpServerGrants: [...ASK_MCP_GRANTS],
     mcpConfigPath,
-    permissionRules: { deny: [...ASK_DENY_RULES] },
+    permissionRules: { allow: askWorktreeAllowRules(thread.id), deny: [...ASK_DENY_RULES] },
     envScrub: true,
-    envAllowlist: [],
+    // P4 §12 E3 (locked D12): ssh-remote `git fetch` needs the agent socket. The
+    // spec said "the MCP child only"; granting it on the whole claude process is
+    // acceptable because there is no Bash/sub-shell to leak it to.
+    envAllowlist: ['SSH_AUTH_SOCK'],
     resumeSessionId: thread.sessionId || undefined,
     tools: [...ASK_BUILTIN_TOOLS],
     strictMcpConfig: true,

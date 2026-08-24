@@ -129,6 +129,7 @@ function fromPath(line) {
 }
 
 /**
+ * `header` is true when a `diff --git ` line opened the section.
  * Split a unified diff into per-file sections (pure), lossless: concatenating the
  * sections' text reproduces the input. Text before the first header, and a header
  * whose path cannot be read, are `path: null` sections — get_run_diff drops those
@@ -154,7 +155,7 @@ export function splitUnifiedDiff(text) {
   const flush = () => {
     if (cur && (cur.lines.length || cur.path)) {
       sections.push({ path: cur.path, oldPath: cur.renameFrom ?? cur.minusPath ?? cur.headerOld ?? headerOldFromNew(cur.headerRest, cur.path),
-        projectKey: cur.projectKey, member: false, added: cur.added, removed: cur.removed, text: cur.lines.length ? `${cur.lines.join('\n')}\n` : '' });
+        projectKey: cur.projectKey, member: false, header: cur.hasHeader, added: cur.added, removed: cur.removed, text: cur.lines.length ? `${cur.lines.join('\n')}\n` : '' });
     }
     cur = null;
   };
@@ -168,7 +169,7 @@ export function splitUnifiedDiff(text) {
       // of a workspace patch that is kept without a path.
       flush();
       projectKey = member[1];
-      sections.push({ path: null, oldPath: null, projectKey, member: true, added: 0, removed: 0, text: `${line}\n` });
+      sections.push({ path: null, oldPath: null, projectKey, member: true, header: false, added: 0, removed: 0, text: `${line}\n` });
       continue;
     }
     // Split on the literal marker, never on a path shape: `diff.noprefix`,
@@ -324,6 +325,23 @@ export function createAskTools(deps) {
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id, paged by byte offset (default 32000 bytes per page).',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
+    { name: 'open_worktree',
+      description: 'Create a read-only DETACHED git worktree of a registered project at any branch/tag/commit (projectKey + ref), or of a run\'s feature branch (runId; workspace runs also need projectKey). Returns {worktreeId, path, ref, commit}. Capped per chat — reuse via list_worktrees, remove via remove_worktree when done.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'),
+        ref: SCHEMA.s('branch, tag or commit to check out'),
+        runId: SCHEMA.s('run id — checks out that run\'s feature branch') }) },
+    { name: 'list_worktrees',
+      description: 'List this chat\'s worktrees: worktreeId, project, current ref and commit, path on disk.',
+      inputSchema: SCHEMA.obj({}) },
+    { name: 'remove_worktree',
+      description: 'Remove one of this chat\'s worktrees by id. Branches are never touched.',
+      inputSchema: SCHEMA.obj({ worktreeId: SCHEMA.s('worktree id') }, ['worktreeId']) },
+    { name: 'git',
+      description: 'Run a read-only git command inside one of this chat\'s worktrees; args is an argv array, e.g. ["diff","origin/master...HEAD"]. Allowed: diff, log, show, status, blame, branch/tag (list forms), rev-parse, merge-base, grep, shortlog, describe, ls-files, ls-tree, checkout/switch (always detached), fetch (configured remotes only). To read a file, check out the ref and use blame/log -p on it — the git tool serves diffs/logs/history. push/pull/commit/config/cat-file are impossible. Output paged by offset like get_run_diff.',
+      inputSchema: SCHEMA.obj({ worktreeId: SCHEMA.s('worktree id'),
+        args: { type: 'array', items: { type: 'string' }, description: 'git argv, without the leading "git"' },
+        offset: SCHEMA.i('byte offset to page from', 0, Number.MAX_SAFE_INTEGER),
+        maxBytes: SCHEMA.i('bytes per page (default 60000, max 200000)', 1, L.gitOutputMaxBytes) }, ['worktreeId', 'args']) },
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -367,6 +385,41 @@ export function createAskTools(deps) {
       archived: !!row.archived_at,
     };
   }
+
+  // Worktree failures are model-actionable → AskToolError text, never a crash.
+  const asToolError = (err) => (err && err.name === 'AskWorktreeError' ? new AskToolError(err.message) : err);
+
+  // Output shapes differ by subcommand, so the filter is chosen by what git ACTUALLY
+  // emitted, not by the subcommand name — running a path-list (grep/ls-*) or a
+  // commit-list (log --oneline) through the unified-diff section filter would drop
+  // ALL of it. Two sets:
+  //   PATCH_CAPABLE — accept --no-ext-diff/--no-color and can emit a `diff --git`
+  //     patch (diff, show <commit>, log -p). Output is section-filtered ONLY when a
+  //     real diff header is present.
+  //   LIST_SUBS — emit PATH LISTS (grep, ls-files, ls-tree). Output is line-filtered.
+  // blame is neither: a protected FILE is rejected at input (protectedInArgs); a
+  // non-protected file's annotated content is fine. cat-file is not in the allowlist.
+  const PATCH_CAPABLE = new Set(['diff', 'show', 'log']);
+  const LIST_SUBS = new Set(['grep', 'ls-files', 'ls-tree']);
+  // Trusted -c prepended by US (never the model — validateGitArgs already blocks the
+  // model's -c): neutralises a hostile repo's `.git/config` (or ~/.gitconfig, whose
+  // HOME survives the scrub) `diff.external`/pager, and forces predictable path/colour
+  // output the section parser depends on. --no-ext-diff/--no-color are the belt-braces.
+  const GIT_HARDEN = ['-c', 'core.quotePath=false', '-c', 'diff.external=', '-c', 'color.ui=never', '-c', 'diff.submodule=short'];
+  // Reject a command that NAMES a protected file BEFORE spawning: every non-flag
+  // positional — a bare token (blame .env), the <path> half of <rev>:<path>
+  // (show HEAD:.env), and anything after `--` (log -p -- .env). A ref like
+  // `main...leak` has a non-protected basename, so it passes.
+  const protectedInArgs = (args) => {
+    let afterSep = false;
+    for (const a of args.slice(1)) {
+      if (a === '--') { afterSep = true; continue; }
+      if (a.startsWith('-')) continue;
+      const cand = (!afterSep && a.includes(':')) ? a.slice(a.indexOf(':') + 1) : a;
+      if (cand && isProtectedBasename(cand, deps.protectedPaths)) return cand;
+    }
+    return null;
+  };
 
   const handlers = {
     async list_projects() {
@@ -446,6 +499,103 @@ export function createAskTools(deps) {
       const maxBytes = clampInt(input.maxBytes, 1, L.attachmentReadMaxBytes, L.attachmentReadDefaultBytes);
       const { text, truncated, totalBytes, nextOffset } = sliceBytes(deps.redact(a.text), offset, maxBytes);
       return { name: a.name, text, truncated, totalBytes, nextOffset };
+    },
+    async open_worktree(input) {
+      try {
+        const wt = await deps.worktrees.open({
+          projectKey: str(input.projectKey) || undefined,
+          ref: str(input.ref) || undefined,
+          runId: str(input.runId) || undefined,
+        });
+        return { worktreeId: wt.worktreeId, path: wt.path, projectKey: wt.projectKey, ref: wt.ref, commit: wt.commit };
+      } catch (err) { throw asToolError(err); }
+    },
+    async list_worktrees() {
+      return { worktrees: deps.worktrees.list().map((w) => ({
+        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref, commit: w.commit,
+        path: w.path, createdAt: w.createdAt })) };
+    },
+    async remove_worktree(input) {
+      const id = str(input.worktreeId);
+      if (!id) throw new AskToolError('remove_worktree: worktreeId is required');
+      try { await deps.worktrees.remove(id); return { ok: true }; } catch (err) { throw asToolError(err); }
+    },
+    async git(input) {
+      const id = str(input.worktreeId);
+      const wt = id ? deps.worktrees.get(id) : null;
+      if (!wt) throw new AskToolError('git: worktree not found — open_worktree first');
+      const v = deps.worktrees.validateGitArgs(input.args);
+      if (!v.ok) throw new AskToolError(`git: ${v.error}`);
+      const bad = protectedInArgs(v.args);
+      if (bad) throw new AskToolError(`git: ${JSON.stringify(bad)} is a protected path — check out the ref and inspect it another way`);
+      if (v.fetch) {
+        const remotes = await deps.worktrees.runGit(wt.path, ['remote']);
+        const names = remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
+        const target = v.args.slice(1).find((a) => !a.startsWith('-'));
+        if (target && !names.includes(target)) throw new AskToolError(`git: unknown remote ${JSON.stringify(target)} (configured: ${names.join(', ') || 'none'})`);
+        if (!target && !v.args.includes('--all') && !names.length) throw new AskToolError('git: no remotes configured in this repository');
+      }
+      // Prepend the trusted hardening -c; add --no-ext-diff/--no-color ONLY to the
+      // patch-capable subs (ls-files/ls-tree/grep reject --no-ext-diff). `grep` also
+      // gets a forced `-H` so every match line carries its path for the LINE filter
+      // below — belt-and-braces, since git-allowlist.mjs already refuses the forms
+      // that would beat it (`-h`/`--heading`/`-z`, which win as the later flag).
+      const argv = [...GIT_HARDEN, v.args[0], ...(v.args[0] === 'grep' ? ['-H'] : []), ...v.args.slice(1),
+        ...(PATCH_CAPABLE.has(v.args[0]) ? ['--no-ext-diff', '--no-color'] : [])];
+      const r = await deps.worktrees.runGit(wt.path, argv);
+      // Row follows checkout/switch AND fetch (§5): fetch re-reads HEAD + stamps updated_at.
+      if (r.ok && (v.nav || v.fetch)) {
+        const positional = v.nav ? (v.args.filter((a) => !a.startsWith('-'))[1] ?? wt.ref) : wt.ref;
+        await deps.worktrees.noteNav(id, { ref: positional });
+      }
+      // `grep` (no match) and `diff --exit-code` use exit 1 as DATA, not an error.
+      const emptyOk = r.code === 1 && !((r.stderr || '').trim()) && (v.args[0] === 'grep' || v.args[0] === 'diff');
+      if (!r.ok && !emptyOk) throw new AskToolError(`git: ${deps.redact((r.stderr || '').trim() || `exited ${r.code}`)}`);
+      let body = r.stdout;
+      // A merge's COMBINED diff (`diff --cc` / `diff --combined`, from `log -p --cc`,
+      // `--diff-merges=combined|cc|dense-combined`, or a hostile repo's
+      // `log.diffMerges` config) is NOT unified-diff shaped: splitUnifiedDiff cannot
+      // section it, so `hasPatch` misses it and the protected-path filter would ship
+      // a merged .env verbatim. Detected on the OUTPUT, so a config-driven combined
+      // diff is caught too. Refuse rather than filter — the model inspects a parent.
+      if (/(^|\n)diff --(cc|combined) /.test(body)) {
+        throw new AskToolError('git: combined merge diffs cannot be filtered here — inspect a single parent (e.g. `diff <merge>^1 <merge>`)');
+      }
+      const hasPatch = /(^|\n)diff --git /.test(body);
+      // `show` that produced no patch resolved to a BLOB/tree, not a commit — that is
+      // the raw-file read this tool does not serve (and it closes the
+      // ls-tree -> blob-sha -> `show <sha>` leg, which protectedInArgs cannot see).
+      if (v.args[0] === 'show' && !hasPatch) {
+        throw new AskToolError('git show displays commits — a raw blob or tree is not readable through this tool');
+      }
+      if (hasPatch) {
+        // Protected-path section filter over ANY patch output (diff, show <commit>,
+        // log -p). A header-LESS section (a commit-message preamble) is kept because
+        // a real header is present; a section whose header opened but whose path is
+        // protected on either side is dropped. A colour-escaped or external-diff dump
+        // has no parseable header, so `hasPatch` is false and it never reaches here.
+        const protectedSide = (p) => !!p && isProtectedBasename(p, deps.protectedPaths);
+        body = splitUnifiedDiff(body)
+          .filter((s) => s.member || !s.header || (!!s.path && !protectedSide(s.path) && !protectedSide(s.oldPath)))
+          .map((s) => s.text).join('');
+      } else if (LIST_SUBS.has(v.args[0]) || PATCH_CAPABLE.has(v.args[0])) {
+        // grep/ls-files/ls-tree emit PATH LISTS, not diffs — the section filter would
+        // drop ALL output. So do the patch-LESS forms of diff/log (`--stat`,
+        // `--name-only`), whose diffstat names protected files with no `diff --git`
+        // header; get_run_diff omits those files entirely, so this matches it.
+        // Drop any LINE that names a protected path, splitting on EVERY delimiter git
+        // puts between a path and its payload: `:` (match lines), `-` (context lines,
+        // `id_rsa-3-<content>`), `=` (`grep -p` function headers, `id_rsa=<line>`),
+        // NUL, tab and whitespace. Splitting on `[\s:]` alone left `id_rsa-3-KEY` as
+        // ONE token matching no pattern, so an EXACT-name protected file's
+        // neighbouring lines leaked (`.env*` only escaped that by its prefix glob).
+        body = body.split('\n')
+          .filter((line) => !line || !line.split(/[-\s:=\u0000]+/).some((tok) => isProtectedBasename(tok, deps.protectedPaths)))
+          .join('\n');
+      }
+      const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
+      const maxBytes = clampInt(input.maxBytes, 1, L.gitOutputMaxBytes, L.diffDefaultBytes);
+      return { command: ['git', ...v.args].join(' '), ...sliceBytes(deps.redact(body), offset, maxBytes) };
     },
   };
 

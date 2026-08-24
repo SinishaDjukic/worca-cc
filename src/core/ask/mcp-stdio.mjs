@@ -23,6 +23,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createAskTools, AskToolError } from './tools.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
+import { defaultWorktreeDeps } from './worktree-deps.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -110,7 +111,10 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
   const { home, thread } = parseArgv(argv);
   if (home) env.WORCA_HOME = home;                               // argv wins; worcaHome() reads the env at call time
   const threadId = thread || env.WORCA_ASK_THREAD_ID || null;
-  const server = createRpcServer({ tools: createAskTools(defaultToolDeps({ threadId })), write: (s) => stdout.write(s) });
+  const server = createRpcServer({
+    tools: createAskTools({ ...defaultToolDeps({ threadId }), ...defaultWorktreeDeps({ threadId }) }),
+    write: (s) => stdout.write(s),
+  });
   const rl = createInterface({ input: stdin });
   rl.on('line', (line) => { server.feed(line); });
   await new Promise((resolve) => rl.on('close', resolve));

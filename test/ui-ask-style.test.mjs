@@ -48,7 +48,8 @@ test('ui-ask-style: the sheet uses wr-rise and the card radius token', () => {
 });
 
 test('ui-ask-style: hidden twins exist for the hideable ask elements', () => {
-  for (const sel of ['.ask-sheet[hidden]', '.ask-pill[hidden]', '.ask-jump[hidden]', '.ask-composer-msg[hidden]', '.ask-chips[hidden]']) {
+  for (const sel of ['.ask-sheet[hidden]', '.ask-pill[hidden]', '.ask-jump[hidden]', '.ask-composer-msg[hidden]', '.ask-chips[hidden]',
+    '.ask-wt-btn[hidden]']) {   // shares display:flex from .ask-agents-btn, so without the twin it never hides (jsdom cannot catch it)
     const body = ruleBody(sel);
     assert.ok(body, `${sel} twin exists`);
     assert.match(body, /display:none/);

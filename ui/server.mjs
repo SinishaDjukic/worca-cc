@@ -56,6 +56,12 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import {
+  listAskWorktrees as askListWorktrees,
+  removeAskWorktree as askRemoveWorktree,
+  removeThreadWorktrees as askRemoveThreadWorktrees,
+  sweepAskWorktrees,
+} from '../src/core/ask/worktrees.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled } from '../src/core/claude-runner.mjs';
@@ -3082,6 +3088,12 @@ app.get('/api/ask/threads/:id', (req, res) => {
       messages: askListMessages(id),
       attachments: askListAttachments(id),
       runLinks: askListRunLinks(id),
+      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool returns —
+      // never the full row (threadId/projectDir/updatedAt stay server-side).
+      worktrees: askListWorktrees(id).map((w) => ({
+        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
+        commit: w.commit, path: w.path, createdAt: w.createdAt,
+      })),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
   } catch (err) {
@@ -3105,9 +3117,10 @@ app.patch('/api/ask/threads/:id', (req, res) => {
   }
 });
 
-// §7.5 order: abort the in-flight turn -> detach followers -> delete the row
-// (tx + cascades) + rm -rf inside deleteThread -> drop the job entry.
-app.delete('/api/ask/threads/:id', (req, res) => {
+// §7.5 order: abort the in-flight turn -> detach followers -> remove the chat's
+// worktrees git-properly -> delete the row (tx + cascades) + rm -rf inside
+// deleteThread -> drop the job entry.
+app.delete('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
@@ -3123,6 +3136,10 @@ app.delete('/api/ask/threads/:id', (req, res) => {
       }
       askFollowers.delete(id);
     }
+    // P4 §5: git-proper removal of every worktree BEFORE the row cascade — the
+    // rmSync inside askDeleteThread alone would leave stale `git worktree`
+    // registrations in the source repos. Never throws (best-effort per row).
+    await askRemoveThreadWorktrees(id);
     askDeleteThread(id);
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
@@ -3130,6 +3147,23 @@ app.delete('/api/ask/threads/:id', (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// P4 §10: manual worktree delete from the panel. Allowed while a turn is in
+// flight — the model's next operation on it gets a clean tool error.
+app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const wtId = askIdParam(res, req.params.wtId, 'worktree');
+  if (!wtId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const out = await askRemoveWorktree({ threadId: id, wtId });
+    res.json(out);
+  } catch (err) {
+    if (err && err.name === 'AskWorktreeError') return res.status(404).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -4247,12 +4281,12 @@ app.use((req, res, next) => {
  * everything up to the first `await` — including the reconcile — still runs before
  * `server.listen`, exactly as it did when this was an inline block.
  *
- * @param {{log?: (scope:'run-root'|'legacy', level:string, msg:string) => void}} [args]
+ * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees', level:string, msg:string) => void}} [args]
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null };
+  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -4318,6 +4352,21 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     summary.ask = { interrupted: 0, emptyThreads: 0 };
     console.error(`[worca-ui] ask sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Ask worktrees (P4 §5): reconcile ask_worktrees rows vs on-disk checkouts
+  // both ways. Three-state inside the sweep: a DB failure aborts with nothing
+  // removed. `sink('ask-worktrees')` is undefined on a log-less boot, which is
+  // exactly the sweep's own default — never call sink(...) directly.
+  try {
+    const r = await sweepAskWorktrees({ log: sink('ask-worktrees') });
+    summary.askWorktrees = r;
+    if (r.removedDirs || r.prunedRows) {
+      console.log(`[worca-ui] ask-worktree sweep: removed ${r.removedDirs} orphan dir(s), dropped ${r.prunedRows} stale row(s)`);
+    }
+    if (r.failed) console.error(`[worca-ui] ask-worktree sweep: ${r.failed} candidate(s) skipped`);
+  } catch (err) {
+    console.error(`[worca-ui] ask-worktree sweep failed: ${err && err.message ? err.message : err}`);
   }
   return summary;
 }

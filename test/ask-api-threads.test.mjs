@@ -75,7 +75,7 @@ test('GET one: 400 on shape, 404 on unknown, snapshot envelope on hit', async ()
   assert.equal((await fetch(`${base}/api/ask/threads/ask_ffffffff`)).status, 404);
   const { thread } = await (await post('/api/ask/threads', {})).json();
   const snap = await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json();
-  assert.deepEqual(Object.keys(snap).sort(), ['attachments', 'inFlight', 'messages', 'runLinks', 'thread']);
+  assert.deepEqual(Object.keys(snap).sort(), ['attachments', 'inFlight', 'messages', 'runLinks', 'thread', 'worktrees']);
   assert.deepEqual(snap.messages, []);
   assert.equal(snap.inFlight, null);
 });

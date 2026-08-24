@@ -41,7 +41,7 @@ test('opening a user_version=6 DB forward-migrates to v7 (adds subagent_type to 
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 19, 'forward-migrated to v19');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20, 'forward-migrated to v20');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('subagent_type'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');
 });

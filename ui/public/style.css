@@ -2989,7 +2989,11 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-stop{border:1.5px solid var(--line);background:var(--panel);color:var(--ink);}
 .ask-stop:hover{border-color:var(--ink);}
 .ask-stop[hidden]{display:none;}
-.ask-composer :is(.ask-agents-btn,.ask-model-btn,.ask-send,.ask-stop,.ask-chip-x):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-composer :is(.ask-agents-btn,.ask-wt-btn,.ask-model-btn,.ask-send,.ask-stop,.ask-chip-x):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The button shares .ask-agents-btn, which is display:flex — that AUTHOR rule
+   outranks the UA [hidden]{display:none}, so without this twin the button never
+   hides and shows a permanent "0 worktrees". */
+.ask-wt-btn[hidden]{display:none;}
 
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:0 12px 34px rgba(25,25,27,.12);border-radius:16px;}
@@ -3026,6 +3030,11 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-runinfo-name{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-runinfo-sub{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .ask-runinfo-elapsed{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);}
+/* .ask-pop-worktrees inherits .ask-pop-runinfo's right/bottom offset, which is
+   calibrated for the AGENTS button; the worktrees button sits to its left. */
+.ask-pop-worktrees{min-width:340px;right:187px;}
+.ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
+.ask-wt-row .ask-thread-trash{flex:none;}
 
 /* ---------- Ask Worca dock clearance ---------- */
 /* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the

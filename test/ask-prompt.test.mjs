@@ -7,6 +7,7 @@ import {
   ASK_SYSTEM_RULES, buildSystemPrompt, validateClientContext, buildContextHeader,
   selectInlineAttachments, buildTurnPrompt, buildRestoredPrompt,
 } from '../src/core/ask/prompt.mjs';
+import { SANDBOX_NOTE } from '../src/core/ask/spawn.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 // Everything that can start a new line in a rendered prompt: C0 + DEL, the C1
@@ -312,4 +313,21 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
   const huge = buildRestoredPrompt([{ role: 'user', text: 'x'.repeat(50_000) }], 'N', { maxChars: 30_000 });
   assert.ok(huge.length < 30_200, 'a single oversized entry is clipped');
   assert.ok(buildRestoredPrompt([], 'N').endsWith('\n\nN'));
+});
+
+// P4/T6: nothing else pins the rule TEXT (`:37` is a startsWith, `:94` counts the
+// delimiters), so rules 7-8, the rule-1 tool list and the reworded SANDBOX_NOTE all
+// survived deletion in the dry-run. Substring pins so a future edit cannot drop them.
+test('P4: the prompt advertises the worktree tools and the sandbox note names the git-only file access', () => {
+  for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run']) {
+    assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
+  }
+  assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw file read" guidance survives');
+  assert.ok(ASK_SYSTEM_RULES.includes('DETACHED'), 'rule 7 states the checkout is detached');
+  // GATE E1 = READ-ONLY-STRICT: the prompt must NOT promise native file tools.
+  for (const t of ['Read/Grep/Glob', 'use Read', 'Grep']) {
+    assert.ok(!ASK_SYSTEM_RULES.includes(t), `the rules never advertise ${t} (gate E1)`);
+  }
+  assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the git tool points');
+  assert.ok(SANDBOX_NOTE.includes('cannot read files'), 'and that there is no file tool');
 });

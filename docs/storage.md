@@ -25,8 +25,18 @@ project's working tree, so nothing is ever committed to your repo.
                                         Chat spend is copied per turn into ask_cost_ledger
                                         (append-only, FK-free), so Statistics keeps session
                                         count and cost after deletion
+  ask/<threadId>/wt/<worktreeId>/       Ask Worca chat worktrees: read-only DETACHED git
+                                        checkouts the assistant opens (registry: ask_worktrees;
+                                        removed with the thread, reconciled at boot)
   tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json (never a project folder)
+  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  plugins/                              installed plugin checkouts
+  agents/                               installed agent registry checkouts
+  workflows/                            saved workflow templates
+  projects.json                         registered project index
+  workspaces.json                       workspace index
+  chat-context.json                     chat context cache
 ```
 
 Everything that used to be a per-run `.json`/`.md` control file —

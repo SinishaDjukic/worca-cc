@@ -604,6 +604,16 @@ async function cmdDoctor() {
   } catch (err) {
     process.stderr.write(`worca doctor: run-root sweep failed: ${err?.message || err}\n`);
   }
+  // P4: BEFORE the legacy return 0 — that block short-circuits the whole function
+  // whenever the effective mode is not `detached` (the default), so an ask-worktree
+  // sweep appended after it would never run for most users.
+  try {
+    const { sweepAskWorktrees } = await import('../core/ask/worktrees.mjs');
+    const res = await sweepAskWorktrees({ log: (level, msg) => out(level === 'warn' ? c('yellow', msg) : msg) });
+    out(`ask worktrees: removed ${res.removedDirs} orphan dir(s), dropped ${res.prunedRows} stale row(s), skipped ${res.failed}`);
+  } catch (err) {
+    process.stderr.write(`worca doctor: ask-worktree sweep failed: ${err?.message || err}\n`);
+  }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
     // and every paused run, so sweeping them would make the documented §10 rollback

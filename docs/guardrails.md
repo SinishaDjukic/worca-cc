@@ -145,3 +145,46 @@ enforces the set's latest definition.
   a harmless file arrive as an ordinary add under a name no pattern matches.
   Redaction (`src/core/ask/redact.mjs`) is the second line for those. Per-turn `--max-turns` and
   `--max-budget-usd` caps are configurable in Settings → Ask Worca.
+  **Chat worktrees.** The assistant can open read-only **detached** git checkouts of
+  any registered project ref (or a run's feature branch) under
+  `<worcaHome>/ask/<threadId>/wt/<worktreeId>` — `open_worktree` /
+  `list_worktrees` / `remove_worktree`, capped at 5 per chat and 15 machine-wide,
+  registered in `ask_worktrees`, removed with the thread and reconciled by the boot
+  and `worca doctor` sweeps. No branch is ever created, locked or deleted, so a
+  chat checkout can never block a pipeline run. They are the assistant's only view
+  into a repository, and it reaches them through exactly one tool: `git`.
+  **Why the `git` tool is the whole file surface.** The built-ins stay `--tools
+  Task` and the blanket `Read(//**/.worca-cc/**)` deny stays, because granting
+  native `Read`/`Grep`/`Glob` scoped to the worktree subtree was probed and
+  rejected (gate E1, claude 2.1.241): a path matched by NO rule is *read* —
+  `unmatched ⇒ allow`, verified outside the process cwd — so a scoped grant would
+  also expose the rest of the disk; and `Grep` returned the CONTENTS of a file
+  under a denied path, ignoring both a `Read(<path>)` and a `Grep(<path>)` deny
+  (the CLI reports that only `Read(path)` rules are matched by file permission
+  checks; Grep escaped even those). Symlink and `..` escapes out of the allowed
+  subtree WERE blocked correctly — the two findings above are what disqualified
+  the grant. `askWorktreeAllowRules()` therefore returns `[]` and is the single
+  seam that flips if the engine ever gains `unmatched ⇒ deny`.
+  **How the `git` tool defends itself** (it is the one file-access surface that
+  permission rules do not govern): (1) `src/core/ask/git-allowlist.mjs` allows a
+  fixed read set (`diff`, `log`, `show`, `status`, `blame`, `rev-parse`,
+  `merge-base`, `grep`, `shortlog`, `describe`, `ls-files`, `ls-tree`), list-only
+  `branch`/`tag`, always-`--detach` `checkout`/`switch`, and `fetch` against a
+  configured remote NAME only — `push`/`pull`/`commit`/`config`/`cat-file` and
+  every unknown subcommand are refused, as are the arbitrary-read/exec options
+  (`-c`, `--git-dir`, `--work-tree`, `-C`, `--exec-path`, `--ext-diff`,
+  `--textconv`, `--output`/`-o`, `--upload-pack`/`--receive-pack`, `--no-index`,
+  `--contents`, `-f`/`--file`, `--filters`, `--color`, and any `-O…`). (2) git is
+  spawned with `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0` and empty
+  `GIT_ASKPASS`/`SSH_ASKPASS` so an uncredentialed fetch fails fast instead of
+  hanging the turn, and the handler PREPENDS trusted `-c diff.external= -c
+  color.ui=never …` (plus `--no-ext-diff --no-color` on patch-producing
+  subcommands) so a hostile repo's `.git/config` cannot run an external-diff
+  program. (3) Output is filtered by what git actually emitted: patch output
+  passes the same protected-path SECTION filter as `get_run_diff`, path lists
+  (`grep`/`ls-files`/`ls-tree`) pass a LINE filter, a command that NAMES a
+  protected file (`blame .env`, `show HEAD:.env`, `log -p -- .env`) is refused at
+  input, and a `show` that produced no patch (a raw blob or tree) is refused —
+  which also closes `ls-tree → blob-sha → show <sha>`. Everything that survives is
+  redacted. `SSH_AUTH_SOCK` is the one env var allowlisted into the child, for
+  ssh-remote `fetch`.

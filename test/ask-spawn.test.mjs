@@ -8,6 +8,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import {
   buildAskSpawnOptions, buildMcpConfig, buildMockMarkers,
   ASK_DENY_RULES, ASK_SPAWN_ENV, SANDBOX_NOTE, ASK_PERMISSION_MODE, ASK_MCP_SERVER_PATH,
+  ASK_BUILTIN_TOOLS, askWorktreeAllowRules,
 } from '../src/core/ask/spawn.mjs';
 import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
@@ -42,7 +43,7 @@ test('the recipe: cwd, dontAsk, Task-only built-ins, worca grant, scrub, foregro
   assert.deepEqual(o.mcpServerGrants, ['mcp__worca']);
   assert.equal(o.mcpConfigPath, join(FAKE_HOME, 'tmp', 'ask', 'mcp-askm_00000001.json'));
   assert.equal(o.envScrub, true);
-  assert.deepEqual(o.envAllowlist, []);
+  assert.deepEqual(o.envAllowlist, ['SSH_AUTH_SOCK'], 'P4 §12 E3: ssh-remote fetch credentials (there is no Bash/sub-shell to leak the socket to)');
   assert.deepEqual(o.modelEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }, 'probe F1: foreground Task sub-agents');
   assert.deepEqual(ASK_SPAWN_ENV, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
   assert.equal(o.strictMcpConfig, true);
@@ -61,7 +62,7 @@ test('the recipe: cwd, dontAsk, Task-only built-ins, worca grant, scrub, foregro
 
 test('deny rules: spec list, every path rule // or ~/ anchored, the resolved home never interpolated', () => {
   const o = buildAskSpawnOptions(base());
-  assert.deepEqual(o.permissionRules, { deny: [...ASK_DENY_RULES] });
+  assert.deepEqual(o.permissionRules, { allow: askWorktreeAllowRules('ask_00000001'), deny: [...ASK_DENY_RULES] });
   assert.deepEqual(ASK_DENY_RULES, [
     'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
     'Read(//**/.worca-cc/**)', 'Read(//**/worca-cc.db*)', 'Read(//**/secrets.json)', 'Read(//**/.env*)',
@@ -75,6 +76,53 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
   }
   assert.ok(Object.isFrozen(ASK_DENY_RULES));
   assert.notEqual(o.permissionRules.deny, ASK_DENY_RULES, 'a copy, never the frozen constant');
+});
+
+// ── P4: worktrees under GATE E1 = READ-ONLY-STRICT ───────────────────────────
+// The Task-0 probe (claude 2.1.241) measured TWO disqualifying behaviours:
+//   (a) a path in NEITHER the allow nor the deny list is READ — `unmatched ⇒ allow`
+//       (proven with a neutral file OUTSIDE the probe's cwd, so it is not the
+//       default cwd-workspace grant). Granting Read would expose the whole disk
+//       minus the enumerated denies, and no deny list can enumerate a disk.
+//   (b) `Grep` returned the CONTENTS of a file under a denied path, ignoring both
+//       `Read(<path>)` and `Grep(<path>)` denies (the CLI itself reports that only
+//       Read(path) rules are matched by file permission checks, and Grep escapes
+//       even those).
+// So the built-ins stay Task-only, the blanket home deny STAYS, and the worktrees
+// are reachable ONLY through the hardened `git` MCP tool (which is cwd-confined and
+// applies the protected-path + redaction floor itself). askWorktreeAllowRules is the
+// seam that flips if the permission engine ever gains `unmatched ⇒ deny`.
+test('P4/E1: no native file tools are granted and the blanket home deny is intact', () => {
+  const o = buildAskSpawnOptions(base());
+  assert.deepEqual(ASK_BUILTIN_TOOLS, ['Task'], 'E1 READ-ONLY-STRICT: no Read/Grep/Glob');
+  assert.deepEqual(o.tools, ['Task']);
+  assert.deepEqual(o.allowedTools, ['Task']);
+  for (const t of ['Read', 'Grep', 'Glob']) {
+    assert.ok(!o.tools.includes(t) && !o.allowedTools.includes(t), `${t} is not granted (gate E1)`);
+  }
+  assert.ok(ASK_DENY_RULES.includes('Read(//**/.worca-cc/**)'),
+    'the blanket home deny is NOT dissolved — dissolving it is only safe under unmatched ⇒ deny');
+});
+
+test('P4: askWorktreeAllowRules is empty under E1, shape-checks the thread id, never interpolates the home', () => {
+  const o = buildAskSpawnOptions(base());
+  assert.deepEqual(o.permissionRules.allow, askWorktreeAllowRules('ask_00000001'));
+  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [], 'E1 READ-ONLY-STRICT: no Read grant to scope');
+  assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
+  assert.deepEqual(askWorktreeAllowRules(undefined), []);
+  for (const rule of o.permissionRules.allow) {
+    assert.ok(/^\w+\(\/\//.test(rule), `${rule} is //-anchored`);
+    assert.ok(!rule.includes(FAKE_HOME), 'never interpolates the resolved home');
+  }
+});
+
+test('P4: the settings payload carries the deny list (and the empty allow) through buildClaudeArgs', () => {
+  const args = buildClaudeArgs(buildAskSpawnOptions(base()));
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+  assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
+  assert.deepEqual(settings.permissions.allow, []);
+  assert.equal(args[args.indexOf('--tools') + 1], 'Task');
+  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Task,mcp__worca');
 });
 
 test('model env: caller routing env merges under the sandbox var, which always wins', () => {

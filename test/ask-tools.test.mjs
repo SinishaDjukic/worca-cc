@@ -55,7 +55,7 @@ test('splitUnifiedDiff: per-file sections, counts, workspace member headers carr
     [null, 'zeta-00000002'], ['z.txt', 'zeta-00000002'],
   ]);
   assert.deepEqual(splitUnifiedDiff('').length, 0);
-  assert.deepEqual(splitUnifiedDiff('just text\n'), [{ path: null, oldPath: null, projectKey: null, member: false, added: 0, removed: 0, text: 'just text\n' }]);
+  assert.deepEqual(splitUnifiedDiff('just text\n'), [{ path: null, oldPath: null, projectKey: null, member: false, header: false, added: 0, removed: 0, text: 'just text\n' }]);
 });
 
 // core.quotePath=true (git's default) C-quotes non-ASCII paths, and quotes each
@@ -360,9 +360,10 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): seven tools with JSON-Schema inputs', () => {
+test('list(): eleven tools with JSON-Schema inputs', () => {
   const defs = tools.list();
-  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment']);
+  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment',
+    'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);
     assert.equal(d.inputSchema.type, 'object');
