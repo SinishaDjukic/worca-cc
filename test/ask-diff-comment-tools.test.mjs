@@ -200,3 +200,39 @@ test('the read filter unquotes, so a legacy C-quoted path is still refused', asy
     { message: 'resolve_diff_comment: comment not found' },
     'and it is not echoable by id either');
 });
+
+test('delete_diff_comment applies the SAME protected-path guard as resolve, and never touches a user comment', async () => {
+  const { tools, run } = await realTools();
+  // m1: innocent under today's preset, so the write succeeds; a NARROWED bundle
+  // then proves delete re-checks at read time exactly as list and resolve do.
+  const doomed = addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
+    path: 'ok.txt', side: 'new', line: 1, body: 'later-protected', author: 'ask' });
+  const narrowed = createAskTools({
+    ...defaultToolDeps({ threadId: 'ask_00000001' }), ...defaultCommentDeps(),
+    protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths, 'ok.txt'],
+  });
+  await assert.rejects(() => narrowed.call('delete_diff_comment', { commentId: doomed.id }),
+    { message: 'delete_diff_comment: comment not found' },
+    'a comment the guard hides is not destroyable by id either');
+  assert.ok(getDiffComment(doomed.id), 'and the row is still there');
+  // Same text as resolve's refusal: the guard must not become an existence oracle.
+  await assert.rejects(() => narrowed.call('delete_diff_comment', { commentId: 'dc_00000000' }),
+    { message: 'delete_diff_comment: comment not found' });
+
+  // M4: the user's own notes are not the model's to destroy — injected text in a
+  // diff or a run prompt reaches the model, and this is the only capability that
+  // was irreversible. The user still deletes them from the Diff tab.
+  const mine = addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
+    path: 'src/a.js', side: 'new', line: 2, body: 'my note', author: 'user' });
+  await assert.rejects(() => tools.call('delete_diff_comment', { commentId: mine.id }),
+    /only comments Ask wrote can be deleted/);
+  assert.ok(getDiffComment(mine.id), 'still there');
+  assert.equal((await tools.call('resolve_diff_comment', { commentId: mine.id })).comment.resolved, true,
+    'resolve is still allowed on a user comment — that is the 90% case');
+
+  // Ask's own comment still deletes, with the response shape unchanged.
+  const ok = (await tools.call('add_diff_comment', { id: run.id, path: 'src/a.js', side: 'new', line: 3, body: 'x' })).comment;
+  assert.deepEqual(await tools.call('delete_diff_comment', { commentId: ok.id }),
+    { ok: true, commentId: ok.id, comment: { runId: run.id, storeKey: run.key } });
+  assert.equal(getDiffComment(ok.id), null);
+});

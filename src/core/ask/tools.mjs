@@ -344,7 +344,7 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments'),
         resolved: SCHEMA.b('true to resolve (default), false to reopen') }, ['commentId']) },
     { name: 'delete_diff_comment',
-      description: 'Permanently delete one diff comment. There is no undo and no history — confirm with the user before deleting anything, and always before deleting several.',
+      description: 'Permanently delete one diff comment YOU wrote (author "ask"). The user\'s own comments cannot be deleted here — they delete those from the Diff tab. There is no undo and no history — confirm with the user before deleting anything, and always before deleting several.',
       inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments') }, ['commentId']) },
     { name: 'open_worktree',
       description: 'Create a read-only DETACHED git worktree of a registered project at any branch/tag/commit (projectKey + ref), or of a run\'s feature branch (runId; workspace runs also need projectKey). Returns {worktreeId, path, ref, commit}. Capped per chat — reuse via list_worktrees, remove via remove_worktree when done.',
@@ -623,8 +623,20 @@ export function createAskTools(deps) {
       if (!id) throw new AskToolError('delete_diff_comment: commentId is required');
       // Read BEFORE removing: the parent process needs the run this touched to emit
       // the poke, and after the row is gone there is nothing to read.
+      // Same read filter as resolve (D5): a comment the guard hides is not
+      // destroyable by id either, and the refusal is word-for-word the not-found
+      // one so the guard cannot become an existence oracle.
       const before = deps.comments.get(id);
-      if (!before || !deps.comments.remove(id)) throw new AskToolError('delete_diff_comment: comment not found');
+      if (!before || commentBlocked(before)) throw new AskToolError('delete_diff_comment: comment not found');
+      // This is the ONLY irreversible capability in the Ask surface — everything
+      // else is propose-only or read-only — and the model reads untrusted text
+      // (diffs, run prompts, attachments) whose ids are enumerable from
+      // list_diff_comments. So it may retract its OWN notes and nothing else; the
+      // user deletes theirs from the Diff tab, behind a confirm (app.js:11323).
+      if (before.author !== 'ask') {
+        throw new AskToolError('delete_diff_comment: only comments Ask wrote can be deleted — the user deletes their own from the Diff tab');
+      }
+      if (!deps.comments.remove(id)) throw new AskToolError('delete_diff_comment: comment not found');
       return { ok: true, commentId: id, comment: { runId: before.pipelineId, storeKey: before.storeKey } };
     },
     async read_attachment(input) {
