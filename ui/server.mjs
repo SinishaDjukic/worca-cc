@@ -1974,8 +1974,11 @@ app.get('/api/diff-comments/counts', (_req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/history/:key/:id/diff -> the run's persisted diff-patch.patch, inline
-// (text/x-diff). Exists only for runs that reached done (results are built on
-// the done path only); everything else 404s and the UI shows its empty state.
+// (text/x-diff). The route is status-agnostic and always has been: the artifact
+// exists for every run whose orchestrator got as far as a checkpoint — the done
+// path AND the stopped/error paths, which build results too (orchestrator run()
+// and resume()). A run stopped before its checkpoint has none, and neither does
+// an archived one; those 404 and the UI shows its empty state.
 // Key validation mirrors the /log route (:1529); the artifact read follows the
 // recovery-patch route's readRunArtifactText pattern (:1408) — the log routes
 // themselves use the specialized readRunLogText. The relPath is the CONSTANT

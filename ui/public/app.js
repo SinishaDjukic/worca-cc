@@ -11630,6 +11630,21 @@ function hdDiffAppendWindow(doc, body, view, meta, tail) {
   if (typeof view.onWindow === 'function') view.onWindow(body, meta);
 }
 
+/** True only for a run that reached `done`; everything else may hold partial work. */
+function hdRunFinished(data) {
+  return String(data?.state?.status || '').toLowerCase() === 'done';
+}
+
+/** The banner above a non-done run's diff: what the artifact actually is. */
+function hdPartialDiffNotice(doc) {
+  const note = doc.createElement('div');
+  note.className = 'hd-diff-partial';
+  note.textContent = 'This run did not finish. The diff is a snapshot of the worktree at the moment it '
+    + 'stopped, so it may contain partially written files, and any review findings come from the '
+    + 'cycles that completed.';
+  return note;
+}
+
 function buildHdDiff(sec, record, data) {
   sec.innerHTML = '';
   hdCommentState = null;   // a new Diff tab supersedes the old one's poke target
@@ -11640,10 +11655,14 @@ function buildHdDiff(sec, record, data) {
     const line = document.createElement('div');
     line.textContent = 'No diff captured for this run.';
     empty.appendChild(line);
-    if (String(data.state.status || '').toLowerCase() !== 'done') {
+    if (!hdRunFinished(data)) {
       const sub = document.createElement('div');
       sub.className = 'hint';
-      sub.textContent = 'Diffs are captured when a run completes.';
+      // NOT "diffs are captured when a run completes" any more: the orchestrator
+      // builds the artifact on the stopped and error paths too. What is left here
+      // is a run that committed nothing (stopped before its first commit, or still
+      // going) and an archived run whose artifacts are gone.
+      sub.textContent = 'Nothing was captured yet — the run has committed no work, or its artifacts have been archived.';
       empty.appendChild(sub);
     }
     sec.appendChild(empty);
@@ -11661,6 +11680,9 @@ function buildHdDiff(sec, record, data) {
   sectionHeading.className = 'sr-only';
   sectionHeading.textContent = 'Changed files and diff';
   sec.append(sectionHeading, grid);
+  // results.json carries NO partial flag — its determinism invariant (results.mjs
+  // header) forbids one — so partial-ness is derived from the run status instead.
+  if (!hdRunFinished(data)) sec.insertBefore(hdPartialDiffNotice(document), grid);
 
   const sums = results.summary || {};
   const head = document.createElement('div');

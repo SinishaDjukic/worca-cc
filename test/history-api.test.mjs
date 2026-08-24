@@ -152,6 +152,25 @@ test('GET /api/history/:key/:id/diff serves the persisted patch inline', async (
   assert.equal(await empty.text(), '');
 });
 
+// The route is status-agnostic and always was; this pins that, because the
+// orchestrator now persists the artifact on the stopped/error paths too and the
+// Diff tab for those runs depends on the route serving it.
+test('GET /api/history/:key/:id/diff serves the patch for a STOPPED run', async () => {
+  const stoppedProj = await mkdtemp(join(tmpdir(), 'worca-cc-histapi-stopped-'));
+  const seeded = await seedPipeline(stoppedProj, { title: 'Halted', status: 'stopped',
+    startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z' });
+
+  // Absent artifact first: a stopped run with no patch must still 404, not 200-empty.
+  assert.equal((await fetch(`${base}/api/history/${seeded.key}/${seeded.id}/diff`)).status, 404);
+
+  const patch = 'diff --git a/p.js b/p.js\n--- a/p.js\n+++ b/p.js\n@@ -1 +1 @@\n-a\n+partial\n';
+  await writeFile(join(seeded.dir, 'diff-patch.patch'), patch);
+  const r = await fetch(`${base}/api/history/${seeded.key}/${seeded.id}/diff`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /text\/x-diff/);
+  assert.equal(await r.text(), patch);
+});
+
 test('GET /api/history/:key/:id/diff -> 404 when absent / malformed key', async () => {
   assert.equal((await fetch(`${base}/api/history/${alphaKey}/no-such-id/diff`)).status, 404);
   assert.equal((await fetch(`${base}/api/history/..%2fevil/x/diff`)).status, 404);

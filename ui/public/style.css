@@ -2057,6 +2057,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-diff-pane .hint,.hd-diff-list .hint,.hd-tree .hint,.hd-diff-note{color:var(--ink-2);}
 .hd-diff-empty{margin-top:24px;padding:40px;text-align:center;color:var(--ink-2);
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-diff-partial{margin-bottom:14px;padding:10px 14px;background:var(--amber-bg);color:var(--amber-ink);
+  border:1px solid var(--line);border-radius:var(--r-card);font:400 12.5px/1.5 var(--sans);}
 
 /* ---------- History detail: Overview tab ---------- */
 .hd-ov{display:flex;flex-direction:column;gap:18px;}

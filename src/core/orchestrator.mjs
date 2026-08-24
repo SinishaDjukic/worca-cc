@@ -742,6 +742,15 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          // The diff artifact must survive a non-done terminal path too: the work done
+          // up to this point IS committed onto the kept feature branch by the teardown
+          // in the finally below, so History has to be able to show it. Safe HERE and
+          // only here — the checkpoint refs and the worktree are still live until that
+          // teardown runs. Best-effort by construction (its own try/catch logs a warn
+          // and never rethrows), and a no-op when the run stopped before any checkpoint
+          // existed. The terminal `done` event is emitted AFTER it so the History row never
+          // paints as "no diff captured" for the tick before the artifact lands.
+          await this._buildResults();
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', {
@@ -756,6 +765,15 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        // The diff artifact must survive a non-done terminal path too: the work done
+        // up to this point IS committed onto the kept feature branch by the teardown
+        // in the finally below, so History has to be able to show it. Safe HERE and
+        // only here — the checkpoint refs and the worktree are still live until that
+        // teardown runs. Best-effort by construction (its own try/catch logs a warn
+        // and never rethrows), and a no-op when the run stopped before any checkpoint
+        // existed. The terminal `done` event is emitted AFTER it so the History row never
+        // paints as "no diff captured" for the tick before the artifact lands.
+        await this._buildResults();
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', {
@@ -993,6 +1011,15 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          // The diff artifact must survive a non-done terminal path too: the work done
+          // up to this point IS committed onto the kept feature branch by the teardown
+          // in the finally below, so History has to be able to show it. Safe HERE and
+          // only here — the checkpoint refs and the worktree are still live until that
+          // teardown runs. Best-effort by construction (its own try/catch logs a warn
+          // and never rethrows), and a no-op when the run stopped before any checkpoint
+          // existed. The terminal `done` event is emitted AFTER it so the History row never
+          // paints as "no diff captured" for the tick before the artifact lands.
+          await this._buildResults();
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
@@ -1004,6 +1031,15 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        // The diff artifact must survive a non-done terminal path too: the work done
+        // up to this point IS committed onto the kept feature branch by the teardown
+        // in the finally below, so History has to be able to show it. Safe HERE and
+        // only here — the checkpoint refs and the worktree are still live until that
+        // teardown runs. Best-effort by construction (its own try/catch logs a warn
+        // and never rethrows), and a no-op when the run stopped before any checkpoint
+        // existed. The terminal `done` event is emitted AFTER it so the History row never
+        // paints as "no diff captured" for the tick before the artifact lands.
+        await this._buildResults();
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
@@ -1815,11 +1851,14 @@ class Orchestrator extends EventEmitter {
     if (!commit.ok && excludePathspecs.length) {
       // §8.8 (detached runs — the same scope as the exclusion set): a failing hook
       // must never silently delete an agent's work. Teardown removeWorktree(force:true)s
-      // the checkout right after this returns, and on the error path _buildResults is
-      // skipped, so not even a diff artifact survives. Detached worktrees make hook
-      // failure MORE likely (§8.1: husky/lint-staged resolve through an ancestor
-      // node_modules today and do not detached). Retry ONCE with hooks disabled for
-      // that invocation only, logging both facts.
+      // the checkout right after a successful commit, so this commit is the ONLY thing
+      // that carries the work onto the kept branch. A diff artifact does now survive
+      // every terminal path (run()/resume() build results on stopped and error too),
+      // but that is a read-only snapshot in the store — not a branch to check out,
+      // rebase or push. Detached worktrees make hook failure MORE likely (§8.1:
+      // husky/lint-staged resolve through an ancestor node_modules today and do not
+      // detached). Retry ONCE with hooks disabled for that invocation only, logging
+      // both facts.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
       this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
