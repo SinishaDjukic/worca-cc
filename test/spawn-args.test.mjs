@@ -449,3 +449,142 @@ test('runClaude mock path is unaffected by modelEnv (no spawn, no error)', async
   });
   assert.equal(r.exitCode, 0);
 });
+
+// ── wire model: ANTHROPIC_MODEL in modelEnv names the id the endpoint sees (#374)
+// Without this the key was legal-but-dead: the spawned `--model <catalog-id>`
+// always outranked the env var inside the CLI. The rule: the resolved model
+// env's ANTHROPIC_MODEL replaces the catalog id in argv (with one warning);
+// the catalog id remains worca's handle everywhere else.
+
+/** Run against the argv-dumping fake bin with WORCA_MOCK cleared; returns argv[]. */
+async function runWithArgvDump(extraOpts) {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', ...extraOpts });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  return (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+}
+
+test('modelEnv.ANTHROPIC_MODEL replaces the catalog id in --model (wire id), with one warning', async () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_MODEL: 'claude-opus-4-8' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'wire id reached argv');
+  assert.ok(!argv.includes('opus-4-8-vertex'), 'catalog id is not in argv');
+  assert.equal(
+    warnings.filter((w) => w.includes('wire model')).length, 1,
+    `one wire-model warning: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('modelEnv without ANTHROPIC_MODEL keeps --model = catalog id (regression guard)', async () => {
+  const argv = await runWithArgvDump({
+    model: 'claude-opus-4-8',
+    modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' },
+  });
+  assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8');
+});
+
+test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to catalog id', async () => {
+  const prev = process.env.WORCA_TEST_WIRE_MODEL;
+  process.env.WORCA_TEST_WIRE_MODEL = 'claude-opus-4-8';
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '${WORCA_TEST_WIRE_MODEL}' },
+    });
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_TEST_WIRE_MODEL;
+    else process.env.WORCA_TEST_WIRE_MODEL = prev;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'expanded ${VAR} is the wire id');
+
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  delete process.env.WORCA_TEST_WIRE_MODEL_UNSET; // defensively: this var must be unset
+  let argv2;
+  try {
+    argv2 = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '${WORCA_TEST_WIRE_MODEL_UNSET}' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv2[argv2.indexOf('--model') + 1], 'opus-4-8-vertex', 'unresolvable ref -> catalog id');
+  assert.equal(
+    warnings.filter((w) => w.includes('configured wire model was dropped')).length, 1,
+    `dropped-wire-model warning fires: ${JSON.stringify(warnings)}`,
+  );
+  assert.equal(
+    warnings.filter((w) => w.includes('wire model "')).length, 0,
+    'the plain wire-model line does NOT fire on fallback',
+  );
+});
+
+test('whitespace-only ANTHROPIC_MODEL is dropped -> catalog id, with the dropped-wire-model warning', async () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '   ' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'opus-4-8-vertex', 'whitespace-only -> catalog id');
+  assert.equal(
+    warnings.filter((w) => w.includes('configured wire model was dropped')).length, 1,
+    `dropped-wire-model warning fires: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('a pasted-with-spaces ANTHROPIC_MODEL is trimmed before reaching --model', async () => {
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '  claude-opus-4-8  ' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'trimmed wire id in argv');
+});
+
+test('wire id also lands in the spawn env (harmless: the explicit flag wins in the CLI)', async () => {
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let dump;
+  try {
+    dump = await runWithEnvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: 'claude-opus-4-8' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.ok(dump.includes('ANTHROPIC_MODEL=claude-opus-4-8'));
+});
