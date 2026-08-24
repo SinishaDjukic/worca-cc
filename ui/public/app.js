@@ -15013,8 +15013,18 @@ function getPageContext() {
       // data — the "never a title, never a name" rule above holds.
       // Scoped to the LIVE screen, not a global selector: getPageContext reads the
       // hash, which can already name a detail that is mid-teardown.
-      const selected = histDetailState?.screen?.querySelector('.hd-diff-file.active');
-      if (selected && selected.dataset.path) ctx.diffPath = selected.dataset.path;
+      // The VISIBLE Diff section only: initDetailTabs hides sections with
+      // `sec.hidden`, it never tears them down, so an unscoped query would report
+      // a file the user last looked at three tabs ago.
+      const diffSec = histDetailState?.screen?.querySelector('.hd-sec[data-sec="diff"]:not([hidden])');
+      const selected = diffSec?.querySelector('.hd-diff-file.active');
+      if (selected && selected.dataset.path) {
+        // The member key rides along on a workspace run: add_diff_comment needs
+        // memberProjectKey and never guesses it, so a bare path is unusable.
+        ctx.diffPath = selected.dataset.project
+          ? `${selected.dataset.path} (member ${selected.dataset.project})`
+          : selected.dataset.path;
+      }
       return ctx;
     }
   }

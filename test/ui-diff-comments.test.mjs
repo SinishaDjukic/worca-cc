@@ -252,6 +252,36 @@ const wsResults = () => ({
   perProject: { 'team-00000001': { newFiles: [], changedFiles: [{ path: 'src/a.js', status: 'M', added: 2, removed: 1 }] } },
 });
 
+// The Ask arms, duplicated from test/ui-ask-integration.test.mjs:15-39 as the
+// house convention prescribes (a shared harness is never introduced). The
+// workspace case needs them because it drives the panel end to end and reads the
+// posted `context` straight off the wire (that suite's :231 is the precedent).
+const TID = 'ask_00000001';
+const MID = 'askm_00000001';
+
+function askArms(url, opts) {
+  const method = ((opts && opts.method) || 'GET').toUpperCase();
+  if (url.includes('/api/ask/models')) {
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+  }
+  if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
+    return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
+  }
+  if (url.includes(`/api/ask/threads/${TID}`) && method === 'DELETE') {
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  }
+  if (url.includes(`/api/ask/threads/${TID}`)) {
+    return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} }, messages: [], attachments: [], runLinks: [], inFlight: null }) };
+  }
+  if (url.includes('/api/ask/threads') && method === 'POST') {
+    return { ok: true, status: 201, json: async () => ({ thread: { id: TID, title: null, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} } }) };
+  }
+  if (url.includes('/api/ask/threads')) {
+    return { ok: true, status: 200, json: async () => ({ threads: [{ id: TID, title: 'T', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false }] }) };
+  }
+  return null;
+}
+
 async function bootWsComments() {
   const box = { comments: [], calls: [] };
   const ctx = await bootDetail({
@@ -262,6 +292,8 @@ async function bootWsComments() {
       if (url.endsWith(`${WS_URL}/comments`) && method === 'POST') { box.calls.push(['POST', url, opts.body]); return ok({ comment: {} }); }
       if (url.endsWith(`${WS_URL}/comments`)) return ok({ comments: box.comments, patchAvailable: true });
       if (url.endsWith('/api/diff-comments/counts')) return ok({ counts: {} });
+      const a = askArms(url, opts);
+      if (a) return Promise.resolve(a);
       if (url.endsWith(`${WS_URL}/diff`)) return Promise.resolve({ ok: true, status: 200, text: async () => WS_PATCH });
       if (url.endsWith(WS_URL)) return ok(b.detail);   // AFTER the two suffixes above
       return null;
@@ -774,4 +806,21 @@ test('a folder the user collapsed stays collapsed when a poke adds a synthetic r
   assert.ok(after && after !== dir, 'precondition: the tree really was re-rendered');
   assert.equal(after.getAttribute('aria-expanded'), 'false', 'and the collapse survived it');
   assert.match(after.getAttribute('aria-label'), /^Expand directory/);
+});
+
+test('the page context names the member project of the open workspace diff file', async () => {
+  const ctx = await bootWsComments();
+  const { window } = ctx;
+  const doc = window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-diff-file').dataset.project, 'team-00000001');
+  click(window, doc.querySelector('.ask-pill'));
+  await settle(window, 8);
+  const input = doc.querySelector('textarea.ask-input');
+  input.value = 'what do you make of this file?';
+  doc.querySelector('[data-ask-send]').click();
+  await settle(window, 8);
+  const post = ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).pop();
+  assert.ok(post, 'the panel POSTed');
+  assert.equal(JSON.parse(post.opts.body).context.diffPath, 'src/a.js (member team-00000001)',
+    'add_diff_comment needs memberProjectKey and never guesses it');
 });
