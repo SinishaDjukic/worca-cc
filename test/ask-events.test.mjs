@@ -196,6 +196,28 @@ const AGENT_TUR = { status: 'completed', prompt: 'SECRET PROMPT TEXT', agentId: 
   content: [{ type: 'text', text: 'count: 1' }], resolvedModel: 'claude-haiku-4-5', totalDurationMs: 3557, totalTokens: 4139, totalToolUseCount: 1,
   usage: { input_tokens: 4016, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 123 } };
 
+test('a sub-agent comment write pokes too, exactly once', () => {
+  const seen = [];
+  const h = harness({ onCommentMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'review the diff', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__add_diff_comment', { id: '4e1f2a9b', path: 'a.js', side: 'new', line: 1, body: 'x' }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ comment: { id: 'dc_00000001', runId: '4e1f2a9b' } }), { ptu: 'toolu_agent' }));
+  assert.deepEqual(seen, [{ runId: '4e1f2a9b' }], 'the child result reaches the same hook the main path uses');
+  // The Task's AGGREGATE result carries the child's text back on the main
+  // transcript — it must not poke a second time (its name is not a comment tool).
+  h.push(uresult('toolu_agent', [{ type: 'text', text: JSON.stringify({ comment: { runId: '4e1f2a9b' } }) }], { tur: AGENT_TUR }));
+  assert.equal(seen.length, 1, 'no double broadcast');
+  // A re-delivered child result is a no-op (childTools was consumed).
+  h.push(uresult('toolu_c1', JSON.stringify({ comment: { runId: '4e1f2a9b' } }), { ptu: 'toolu_agent' }));
+  assert.equal(seen.length, 1, 'idempotent');
+  // Errors and reads still poke nothing, on the child path too.
+  h.push(atool('msg_c1', 'toolu_c2', 'mcp__worca__delete_diff_comment', { commentId: 'dc_00000002' }, 'toolu_agent'));
+  h.push(uresult('toolu_c2', 'error: delete_diff_comment: comment not found', { isError: true, ptu: 'toolu_agent' }));
+  h.push(atool('msg_c1', 'toolu_c3', 'mcp__worca__list_diff_comments', { id: '4e1f2a9b' }, 'toolu_agent'));
+  h.push(uresult('toolu_c3', JSON.stringify({ runId: '4e1f2a9b', comments: [] }), { ptu: 'toolu_agent' }));
+  assert.equal(seen.length, 1, 'writes only, successes only — same rule as the main path');
+});
+
 test('foreground sub-agent (F3): Agent block, child log lines, finishing tool_use_result, cost estimate, prompt never stored', () => {
   const h = harness();
   h.push(init(), atool('msg_1', 'toolu_agent', 'Agent', { subagent_type: 'general-purpose', description: 'count runs', prompt: 'SECRET PROMPT TEXT' }));

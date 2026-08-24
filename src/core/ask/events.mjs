@@ -294,10 +294,29 @@ export function createTurnReducer({
       } else {
         const agent = byId.get(ptu);
         if (!agent || agent.kind !== 'agent') continue;
-        childTools.set(c.id, { agentId: ptu, t0: now() });
+        childTools.set(c.id, { agentId: ptu, t0: now(), name: c.name });
         appendLog(agent, isAgentTool(c.name) ? `→ Task ${clipStr(input.description || '', 60)}` : `→ ${short(c.name)} ${clipStr(safeJson(input), 120)}`);
       }
     }
+  }
+
+  // A comment write happened in the MCP CHILD process, so nothing in this
+  // process saw the row change. The tool result names the run it touched
+  // (shapeComment.runId / delete's comment.runId), so the parent can turn a
+  // successful call into the same diff-comments-changed poke the REST routes
+  // broadcast. Error results are skipped: nothing changed.
+  // SUB-AGENTS write too — they hold the same mcp__worca grant (spawn.mjs
+  // ASK_MCP_GRANTS) — so their results poke as well. No double-fire: the main
+  // transcript only ever sees the Task's AGGREGATE result, whose name is never a
+  // comment tool, and childTools.delete() makes a re-delivered child result a
+  // no-op.
+  function pokeCommentWrite(name, text, isError) {
+    if (isError || !COMMENT_WRITE_TOOLS.has(name) || typeof onCommentMutation !== 'function') return;
+    try {
+      const parsed = JSON.parse(text);
+      const runId = typeof parsed?.comment?.runId === 'string' ? parsed.comment.runId : null;
+      if (runId) onCommentMutation({ runId });
+    } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
 
   function onUser(raw, ptu, isMain) {
@@ -311,6 +330,7 @@ export function createTurnReducer({
         childTools.delete(c.tool_use_id);
         const agent = byId.get(ct.agentId);
         if (agent) appendLog(agent, c.is_error ? `← error: ${clipStr(text, 120)}` : `← ok ${((now() - ct.t0) / 1000).toFixed(1)}s`);
+        pokeCommentWrite(ct.name, text, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -346,18 +366,7 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
-      // A comment write happened in the MCP CHILD process, so nothing in this
-      // process saw the row change. The tool result names the run it touched
-      // (shapeComment.runId / delete's comment.runId), so the parent can turn a
-      // successful call into the same diff-comments-changed poke the REST routes
-      // broadcast. Error results are skipped: nothing changed.
-      if (COMMENT_WRITE_TOOLS.has(b.name) && typeof onCommentMutation === 'function' && !c.is_error) {
-        try {
-          const parsed = JSON.parse(text);
-          const runId = typeof parsed?.comment?.runId === 'string' ? parsed.comment.runId : null;
-          if (runId) onCommentMutation({ runId });
-        } catch { /* unparseable result — no poke; the next open refetches anyway */ }
-      }
+      pokeCommentWrite(b.name, text, c.is_error);
     }
   }
 
