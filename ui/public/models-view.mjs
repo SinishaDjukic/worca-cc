@@ -205,7 +205,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   idInput.placeholder = 'claude-opus-4-8, glm-4.7, a fine-tune id…';
   idInput.value = editing ? model.id : '';
   idInput.disabled = editing; // the id IS the reference — delete + re-add to rename
-  grid.appendChild(field('Model id (passed to claude --model)', idInput,
+  grid.appendChild(field('Model id (worca’s handle; sent to claude --model unless ANTHROPIC_MODEL overrides)', idInput,
     editing ? '' : 'Use a built-in id to override that built-in.'));
 
   const labelInput = h(doc, 'input', 'input mv-label');
@@ -232,7 +232,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   const add = h(doc, 'button', 'btn-ghost mv-env-add', '+ env var');
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
-    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved.'));
+    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved.'));
   const envBtns = h(doc, 'div', 'mv-env-btns');
   envBtns.appendChild(add);
   if (rows.length) {

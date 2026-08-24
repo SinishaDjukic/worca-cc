@@ -516,7 +516,9 @@ test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to
   assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'expanded ${VAR} is the wire id');
 
   const realWarn = console.warn;
-  console.warn = () => {}; // dropped-key warning is asserted elsewhere
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  delete process.env.WORCA_TEST_WIRE_MODEL_UNSET; // defensively: this var must be unset
   let argv2;
   try {
     argv2 = await runWithArgvDump({
@@ -527,6 +529,49 @@ test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to
     console.warn = realWarn;
   }
   assert.equal(argv2[argv2.indexOf('--model') + 1], 'opus-4-8-vertex', 'unresolvable ref -> catalog id');
+  assert.equal(
+    warnings.filter((w) => w.includes('configured wire model was dropped')).length, 1,
+    `dropped-wire-model warning fires: ${JSON.stringify(warnings)}`,
+  );
+  assert.equal(
+    warnings.filter((w) => w.includes('wire model "')).length, 0,
+    'the plain wire-model line does NOT fire on fallback',
+  );
+});
+
+test('whitespace-only ANTHROPIC_MODEL is dropped -> catalog id, with the dropped-wire-model warning', async () => {
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '   ' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'opus-4-8-vertex', 'whitespace-only -> catalog id');
+  assert.equal(
+    warnings.filter((w) => w.includes('configured wire model was dropped')).length, 1,
+    `dropped-wire-model warning fires: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('a pasted-with-spaces ANTHROPIC_MODEL is trimmed before reaching --model', async () => {
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'opus-4-8-vertex',
+      modelEnv: { ANTHROPIC_MODEL: '  claude-opus-4-8  ' },
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'trimmed wire id in argv');
 });
 
 test('wire id also lands in the spawn env (harmless: the explicit flag wins in the CLI)', async () => {

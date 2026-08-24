@@ -344,11 +344,17 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // a drop means a hand-edited settings file — and the surviving map is also
     // where the wire id (below) is read from.
     let safeModelEnv = null;
+    let wireModelDropped = false;
     if (modelEnv && Object.keys(modelEnv).length) {
       const { env: safe, dropped } = prepareModelEnv(modelEnv);
       for (const k of dropped) {
         console.warn(`[worca] modelEnv: dropping reserved/invalid key ${JSON.stringify(k)}`);
       }
+      // A configured wire id that didn't survive (unresolvable ${VAR}, empty, or
+      // whitespace-only) fell into `dropped`: we silently fall back to the catalog
+      // id below, so warn specifically — the generic drop line above doesn't say
+      // the argv model changed, and the wire-model line never fires (ids match).
+      wireModelDropped = 'ANTHROPIC_MODEL' in modelEnv && dropped.includes('ANTHROPIC_MODEL');
       if (Object.keys(safe).length) safeModelEnv = safe;
     }
 
@@ -357,7 +363,9 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // flags). Passed as an explicit --model — self-documenting in logs and immune
     // to CLI flag/env precedence — so the env var alone would otherwise be dead.
     const wireModel = safeModelEnv?.ANTHROPIC_MODEL || model;
-    if (wireModel !== model) {
+    if (wireModelDropped && wireModel === model) {
+      console.warn(`[worca] model ${JSON.stringify(model ?? '')}: configured wire model was dropped (unresolved/empty) — using the catalog id`);
+    } else if (wireModel !== model) {
       console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
     }
 
