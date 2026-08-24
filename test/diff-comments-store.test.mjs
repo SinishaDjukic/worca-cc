@@ -128,14 +128,19 @@ test('setDiffCommentResolved: toggles resolved_at both ways; delete is hard', as
   assert.equal(deleteDiffComment(c.id), false, 'idempotent');
 });
 
-test('stampSentRunId: sets the 8-hex pipeline id and NEVER resolves', async () => {
+test('stampSentRunId: sets the pipeline id, scopes to the run\'s store, and NEVER resolves', async () => {
   const run = await seedRun();
   const c = mk(run, 'src/a.js', 'new', 1, 'fix', 'ask');
-  assert.equal(stampSentRunId([c.id, 'dc_00000000', 'garbage'], 'abcd1234'), 1,
+  const target = await seedPipeline(run.projectDir, { title: 'Fix run', status: 'running' });
+  assert.equal(stampSentRunId([c.id, 'dc_00000000', 'garbage'], target.id), 1,
     'unknown and malformed ids are ignored');
   const stamped = getDiffComment(c.id);
-  assert.equal(stamped.sentRunId, 'abcd1234');
+  assert.equal(stamped.sentRunId, target.id);
   assert.equal(stamped.resolved, false, 'stamping never auto-resolves');
+  // A run that does not exist stamps nothing: nothing ever un-stamps sent_run_id,
+  // so a marker written from an unknown id would be permanent.
+  assert.equal(stampSentRunId([c.id], 'abcd1234'), 0, 'no pipelines row -> no stamp');
+  assert.equal(getDiffComment(c.id).sentRunId, target.id, 'and the good stamp survives');
 });
 
 test('unresolvedCounts: keyed "<storeKey>/<pipelineId>", resolved rows excluded', async () => {

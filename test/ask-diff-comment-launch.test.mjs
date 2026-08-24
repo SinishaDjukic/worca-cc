@@ -13,6 +13,7 @@ import { createThread, linkRun, updateRunLink, listRunLinks } from '../src/core/
 import {
   addDiffComment, getDiffComment, deleteDiffComment,
   setPendingCardComments, peekPendingCardComments, clearPendingCardComments, stampSentRunId,
+  onDiffCommentsChanged,
 } from '../src/core/diff-comments.mjs';
 
 useTempHome(after);
@@ -27,7 +28,7 @@ async function seedComment() {
   await writeFile(join(run.dir, 'diff-patch.patch'), PATCH, 'utf8');
   const c = addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
     path: 'a.js', side: 'new', line: 1, body: 'fix me', author: 'user' });
-  return { run, c };
+  return { run, c, projectDir: dir };
 }
 
 test('pending card comments are recorded, consumed once, and unknown ids dropped', async () => {
@@ -62,12 +63,35 @@ test('ask_run_links carries commentIds as JSON and round-trips through the row m
   assert.equal(listRunLinks(thread.id)[0].status, 'running', 'the other scalar patches still work');
 });
 
-test('stampSentRunId writes the 8-hex pipeline id and never resolves', async () => {
-  const { c } = await seedComment();
-  stampSentRunId([c.id], 'abcd1234');
+test('stampSentRunId writes the pipeline id of a real run and never resolves', async () => {
+  const { c, projectDir } = await seedComment();
+  const target = await seedPipeline(projectDir, { title: 'Fix run', status: 'running' });
+  stampSentRunId([c.id], target.id);
   const stamped = getDiffComment(c.id);
-  assert.equal(stamped.sentRunId, 'abcd1234');
+  assert.equal(stamped.sentRunId, target.id);
   assert.equal(stamped.resolved, false);
+});
+
+test('stampSentRunId is scoped to the launched run\'s store and pokes the comment\'s own run', async () => {
+  const { run, c, projectDir } = await seedComment();
+  const otherDir = mkdtempSync(join(tmpdir(), 'worca-dcl-other-'));
+  const other = await seedPipeline(otherDir, { title: 'Elsewhere', status: 'done' });
+  const seen = [];
+  const off = onDiffCommentsChanged((e) => seen.push(e));
+  // m4: nothing ever un-stamps sent_run_id, so a wrong marker is permanent.
+  assert.equal(stampSentRunId([c.id], other.id), 0, 'cross-project stamp writes nothing');
+  assert.equal(getDiffComment(c.id).sentRunId, null);
+  assert.deepEqual(seen, [], 'nothing to repaint either');
+
+  const fix = await seedPipeline(projectDir, { title: 'Fix run', status: 'running' }); // same project => same store key
+  assert.equal(stampSentRunId([c.id], fix.id), 1);
+  assert.equal(getDiffComment(c.id).sentRunId, fix.id);
+  // m5: the Diff tab's cards repaint only from diff-comments-changed, and no run
+  // event touches them — so the marker needed a reopen to appear.
+  assert.deepEqual(seen, [{ storeKey: run.key, pipelineId: run.id }],
+    'the poke names the run whose Diff tab shows the pill, not the run it was sent to');
+  off();
+  assert.equal(stampSentRunId([c.id], 'nosuchid'), 0, 'an unknown run stamps nothing');
 });
 
 test('no state event -> sent_run_id stays NULL and the pending link remains', async () => {

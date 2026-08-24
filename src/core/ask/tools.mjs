@@ -554,7 +554,25 @@ export function createAskTools(deps) {
       return { available: true, files, ...sliceBytes(body, offset, maxBytes) };
     },
     async propose_run(input) {
-      return deps.validateProposal(input);
+      const r = await deps.validateProposal(input);
+      // commentIds are a ONE-WAY hand-off: a comment cited here is stamped
+      // "sent to #<runId>" the moment the user starts the run, and nothing ever
+      // un-stamps it. Refuse ids from a different project/workspace than this
+      // proposal targets. Unknown ids stay tolerated (the user may have deleted
+      // one since); only a WRONG-target id is an error — and propose_run already
+      // reports {ok:false, errors}, so the model can fix it itself.
+      const cited = Array.isArray(input.commentIds) ? input.commentIds : [];
+      if (r && r.ok && cited.length && deps.comments && typeof deps.comments.get === 'function') {
+        const want = r.card.workspaceId ? `workspaces/${r.card.workspaceId}` : r.card.projectKey;
+        const bad = want ? cited.filter((id) => {
+          const c = typeof id === 'string' ? deps.comments.get(id) : null;
+          return !!c && c.storeKey !== want;
+        }) : [];
+        if (bad.length) {
+          return { ok: false, errors: [`these diff comments are not from ${want}: ${bad.join(', ')} — cite comments from a run of the project this proposal targets`] };
+        }
+      }
+      return r;
     },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');

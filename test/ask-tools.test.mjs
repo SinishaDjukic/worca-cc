@@ -611,6 +611,24 @@ test('propose_run accepts commentIds and passes them through untouched', async (
     { ok: true, card: { echoed: { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] } } });
 });
 
+test('propose_run refuses commentIds from another project and says so', async () => {
+  const t = createAskTools({
+    ...fake,
+    validateProposal: async (input) => ({ ok: true, card: { projectKey: input.projectKey || null, workspaceId: input.workspaceId || null } }),
+    comments: { get: (id) => (id === 'dc_1a2b3c4d' ? { id, storeKey: 'other-00000003' } : null) },
+  });
+  assert.deepEqual(await t.call('propose_run', { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_1a2b3c4d'] }),
+    { ok: false, errors: ['these diff comments are not from demo-00000001: dc_1a2b3c4d — cite comments from a run of the project this proposal targets'] });
+  // Same store, and an id the user already deleted: both pass through.
+  const t2 = createAskTools({
+    ...fake,
+    validateProposal: async (input) => ({ ok: true, card: { projectKey: input.projectKey || null, workspaceId: null } }),
+    comments: { get: (id) => (id === 'dc_00000001' ? { id, storeKey: 'demo-00000001' } : null) },
+  });
+  assert.equal((await t2.call('propose_run', { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001', 'dc_deadbeef'] })).ok, true,
+    'unknown ids stay tolerated — only a WRONG-target id is an error');
+});
+
 // ── real readers on a temp home ──────────────────────────────────────────────
 test('temp home: a seeded project run and a seeded workspace run round-trip through the real deps', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-proj-'));

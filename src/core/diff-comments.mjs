@@ -165,9 +165,15 @@ export function deleteDiffComment(id) {
 }
 
 /**
- * Stamp `sent_run_id` on every id given. NEVER resolves anything (the brief) and
- * never notifies: the stamp lands during a run launch, where the History view is
- * already being repainted by the run's own events.
+ * Stamp `sent_run_id` on every id given. NEVER resolves anything (the brief).
+ * SCOPED to the launched run's store: a comment on project A's run can never be
+ * marked "sent to" a run in project B (nothing ever un-stamps it, so a wrong
+ * marker is permanent). The card's target is NOT authoritative here — the Start
+ * form lets the user re-pick the project/workspace — so the scope comes from the
+ * pipelines row that actually exists by now.
+ * Notifies per DISTINCT comment run, and OUTSIDE the tx: the poke names the run
+ * whose Diff tab shows the marker (its own), not the run it was sent to, and a
+ * listener must never run while the write lock is held (tx() is not re-entrant).
  * @returns {number} rows stamped
  */
 export function stampSentRunId(commentIds, pipelineId) {
@@ -175,12 +181,26 @@ export function stampSentRunId(commentIds, pipelineId) {
   const pid = typeof pipelineId === 'string' ? pipelineId : '';
   if (!ids.length || !pid) return 0;
   getDb();
-  return tx(() => {
-    const stmt = getDb().prepare('UPDATE diff_comments SET sent_run_id = ? WHERE id = ?');
-    let n = 0;
-    for (const id of ids) n += stmt.run(pid, id).changes;
-    return n;
+  const { n, storeKey: sk, targets } = tx(() => {
+    const run = getDb().prepare('SELECT project_key, workspace_key, target FROM pipelines WHERE id = ?').get(pid);
+    if (!run) return { n: 0, storeKey: null, targets: [] };
+    const storeKey = (run.target === 'workspace' || run.workspace_key) ? `workspaces/${run.workspace_key}` : run.project_key;
+    const stmt = getDb().prepare('UPDATE diff_comments SET sent_run_id = ? WHERE id = ? AND store_key = ?');
+    const read = getDb().prepare('SELECT pipeline_id FROM diff_comments WHERE id = ?');
+    // A stamped row matched `store_key = storeKey`, so its store is already known;
+    // only its own run id varies, and that is what the poke has to name.
+    const runs = new Set();
+    let hits = 0;
+    for (const id of ids) {
+      if (!stmt.run(pid, id, storeKey).changes) continue;
+      hits += 1;
+      const r = read.get(id);
+      if (r) runs.add(r.pipeline_id);
+    }
+    return { n: hits, storeKey, targets: [...runs] };
   });
+  for (const runId of targets) notify(sk, runId);
+  return n;
 }
 
 /**
