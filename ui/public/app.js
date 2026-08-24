@@ -11921,16 +11921,27 @@ function buildHdDiff(sec, record, data) {
       if (!row) { orphans.push(comment); continue; }
       body.querySelector(`.hd-cmt-detached [data-comment-id="${cssEscape(comment.id)}"]`)?.remove();
       if (body.querySelector(`.hd-cmt-block [data-comment-id="${cssEscape(comment.id)}"]`)) continue;
-      let block = row.nextElementSibling;
-      // An open composer is a block too; never append a saved card into it (and
-      // never treat it as this line's card block).
-      if (!block || !block.classList.contains(HD_CMT_BLOCK)
-        || block.dataset.composer === '1' || block.dataset.line !== String(comment.line)) {
+      // A context row carries BOTH numbers, so one row can host an old-side and a
+      // new-side block: match on line AND side, and scan the whole run of blocks
+      // already following the row rather than only its immediate sibling. A new
+      // block goes after the LAST of that run — row.after() would put the later
+      // comment above the earlier one. An open composer is a block too; it is
+      // skipped, never appended into.
+      let block = null;
+      let tail = row;
+      for (let n = row.nextElementSibling;
+        n && n.classList.contains(HD_CMT_BLOCK); n = n.nextElementSibling) {
+        tail = n;
+        if (n.dataset.composer !== '1'
+          && n.dataset.line === String(comment.line)
+          && n.dataset.side === comment.side) { block = n; break; }
+      }
+      if (!block) {
         block = document.createElement('div');
         block.className = HD_CMT_BLOCK;
         block.dataset.line = String(comment.line);
         block.dataset.side = comment.side;
-        row.after(block);
+        tail.after(block);
       }
       block.appendChild(hdCommentCard(document, comment, ctx));
     }

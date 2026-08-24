@@ -727,3 +727,34 @@ test('a hello after a socket drop replays the poke the open Diff tab missed', as
   assert.ok(window.document.querySelector('[data-comment-id="dc_00000001"]'),
     'and the missed card is on screen without a re-select');
 });
+
+test('two comments on ONE context row (old N + new M) keep list order and their own blocks', async () => {
+  // The "line3" row is old 3 / new 4 — one DOM row carrying BOTH numbers, which is
+  // the only shape that can produce two blocks under a single row.
+  const ctx = await bootComments({ comments: [
+    cmt({ id: 'dc_00000001', side: 'old', line: 3, lineText: 'line3', body: 'old side' }),
+    cmt({ id: 'dc_00000002', side: 'new', line: 4, lineText: 'line3', body: 'new side' }),
+  ] });
+  const doc = ctx.window.document;
+  const row = doc.querySelector('.hd-dl-row[data-old="3"]');
+  assert.equal(row.dataset.new, '4', 'precondition: one row, both numbers');
+  const blocks = [];
+  for (let n = row.nextElementSibling; n && n.classList.contains('hd-cmt-block'); n = n.nextElementSibling) blocks.push(n);
+  assert.deepEqual(blocks.map((b) => [b.dataset.line, b.dataset.side]), [['3', 'old'], ['4', 'new']],
+    'a block per SIDE, and the later one is appended after the earlier — never row.after()');
+  assert.deepEqual(blocks.map((b) => b.querySelector('.hd-cmt-body').textContent), ['old side', 'new side'],
+    'server order (path, line, rowid) survives into the DOM');
+});
+
+test('an old-side and a new-side comment on the same NUMBER still get their own block', async () => {
+  const ctx = await bootComments({ comments: [
+    cmt({ id: 'dc_00000001', side: 'old', line: 1, lineText: 'keep', body: 'removed-side note' }),
+    cmt({ id: 'dc_00000002', side: 'new', line: 1, lineText: 'keep', body: 'added-side note' }),
+  ] });
+  const doc = ctx.window.document;
+  const row = doc.querySelector('.hd-dl-row[data-old="1"]');
+  const blocks = [];
+  for (let n = row.nextElementSibling; n && n.classList.contains('hd-cmt-block'); n = n.nextElementSibling) blocks.push(n);
+  assert.deepEqual(blocks.map((b) => b.dataset.side), ['old', 'new'],
+    'the side is part of the block identity — matching on data-line alone merged them');
+});
