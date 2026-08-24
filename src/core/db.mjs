@@ -716,14 +716,15 @@ const INCREMENTAL_COLUMNS = {
 };
 
 /**
- * Return [{table, col, type}] for every INCREMENTAL_COLUMNS entry absent from the
- * live schema, plus `stepQuestionsTable`/`guardrailSetsTable: true` flags when
- * those IF-NOT-EXISTS tables are missing (safe to reassert on any stamped DB).
- * Cheap and read-only: one PRAGMA table_info per known table + one sqlite_master
- * probe each, no writes. A table absent from INCREMENTAL_COLUMNS' map (table_info
- * returns []) is skipped — creating base tables is the version ladder's job.
+ * The INCREMENTAL_COLUMNS entries absent from the live schema, as
+ * [{table, col, type}]. A table absent entirely (table_info returns []) is
+ * skipped — creating base tables is the version ladder's / the gap DDLs' job.
+ * Split out of schemaGaps() so repairSchemaGaps can RE-probe after its CREATEs:
+ * a table one repair pass creates (ask_run_links via ASK_DDL) has an empty
+ * table_info when that pass's gaps were computed, so its incremental columns are
+ * invisible until the tables exist.
  */
-function schemaGaps(db) {
+function missingColumns(db) {
   const missing = [];
   for (const [table, cols] of Object.entries(INCREMENTAL_COLUMNS)) {
     const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
@@ -732,6 +733,17 @@ function schemaGaps(db) {
       if (!have.has(col)) missing.push({ table, col, type });
     }
   }
+  return missing;
+}
+
+/**
+ * Return missingColumns() plus `stepQuestionsTable`/`guardrailSetsTable: true`
+ * flags when those IF-NOT-EXISTS tables are missing (safe to reassert on any
+ * stamped DB). Cheap and read-only: one PRAGMA table_info per known table + one
+ * sqlite_master probe each, no writes.
+ */
+function schemaGaps(db) {
+  const missing = missingColumns(db);
   const hasStepQuestions = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'"
   ).get().n > 0;
@@ -776,11 +788,15 @@ function schemaGaps(db) {
 }
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
- *  the transaction (the ladder tx in migrate(), or reconcileSchema's own lock). */
+ *  the transaction (the ladder tx in migrate(), or reconcileSchema's own lock).
+ *  ORDER IS LOAD-BEARING: tables FIRST, then the columns RE-probed against the
+ *  post-CREATE schema. `gaps.columns` was computed BEFORE this pass ran, so it
+ *  cannot see an incremental column on a table this pass is about to create
+ *  (ask_run_links.comment_ids on a >=19-stamped DB missing the ask tables) — the
+ *  ALTER would be skipped and the DB stamped current with the column absent, and
+ *  only a LATER migrate() would heal it. No gap DDL references an
+ *  INCREMENTAL_COLUMNS column, so nothing here needs an ALTER to run first. */
 function repairSchemaGaps(db, gaps) {
-  for (const { table, col, type } of gaps.columns) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
-  }
   if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
   if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
   if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
@@ -789,6 +805,9 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
   if (gaps.askWorktreesTable) db.exec(ASK_WORKTREES_DDL);
   if (gaps.diffCommentTables) db.exec(DIFF_COMMENTS_DDL);
+  for (const { table, col, type } of missingColumns(db)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  }
 }
 
 /**
@@ -953,13 +972,13 @@ function applySchemaV19(db) {
 /** v21: both new tables are IF NOT EXISTS and the one new ask_run_links column
  *  lives in INCREMENTAL_COLUMNS, so the whole step IS the reconcile — the
  *  applySchemaV12/13/14/15 shape, with nothing to backfill.
- *  Order note: repairSchemaGaps ALTERs columns BEFORE creating tables, and
- *  schemaGaps skips a table whose table_info is empty.
- *  On a FRESH DB this step is a no-op by the time it runs: the ladder reaches
- *  applySchemaV19 — itself repairSchemaGaps(schemaGaps(db)) — after ASK_DDL
- *  has created ask_run_links, so both the comment_ids ALTER and
- *  DIFF_COMMENTS_DDL already fired there. This step is what serves an EXISTING
- *  v20 DB, and re-running it is idempotent by construction.
+ *  On a FRESH DB (indeed any ladder pass from <12) this step is already a no-op
+ *  by the time it runs: applySchemaV12 is the ladder's FIRST repairSchemaGaps, so
+ *  it fires ASK_DDL and DIFF_COMMENTS_DDL, and — because repairSchemaGaps ALTERs
+ *  its columns AFTER its CREATEs, against a re-probe — adds
+ *  ask_run_links.comment_ids in that same pass. This step is what serves an
+ *  EXISTING v19/v20 DB (and any stamp that first materialises ask_run_links right
+ *  here), and re-running it is idempotent by construction.
  */
 function applySchemaV21(db) {
   repairSchemaGaps(db, schemaGaps(db));

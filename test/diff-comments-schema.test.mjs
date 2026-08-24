@@ -115,3 +115,26 @@ test('self-heal: a stamped-21 DB missing only ask_run_links.comment_ids is ALTER
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'stamp not rewritten');
   assert.ok(cols(db, 'ask_run_links').includes('comment_ids'), 'healed by the incremental-column repair');
 });
+
+// M3: comment_ids is the first INCREMENTAL_COLUMNS entry whose host table is
+// itself created by a gap-repair DDL. Every stamp where ask_run_links is created
+// by the SAME repairSchemaGaps pass (19 and 20 via applySchemaV21, 21 via
+// reconcileSchema) used to end up stamped current with the column missing, and
+// updateRunLink({commentIds}) threw into the log-only catch at ui/server.mjs:1157.
+test('M3: a stamp that creates ask_run_links in the SAME repair pass still gets comment_ids in ONE migrate()', () => {
+  for (const stamp of [19, 20, 21]) {
+    const db = new DatabaseSync(':memory:');
+    db.exec(MINIMAL_SEED);
+    db.exec(`PRAGMA user_version = ${stamp}`);
+    migrate(db);                                  // ONE pass, as a real process does at boot
+    assert.ok(tableNames(db).includes('ask_run_links'), `stamp ${stamp}: ask_run_links created`);
+    assert.ok(cols(db, 'ask_run_links').includes('comment_ids'),
+      `stamp ${stamp}: comment_ids present after ONE migrate()`);
+    db.exec("INSERT INTO ask_threads (id, created_at, updated_at) VALUES ('ask_00000001','t','t')");
+    db.exec("INSERT INTO ask_run_links (thread_id, run_id, created_at) VALUES ('ask_00000001','run-1','t')");
+    assert.doesNotThrow(() => db.prepare(
+      'UPDATE ask_run_links SET comment_ids = ? WHERE thread_id = ? AND run_id = ?'
+    ).run('["dc_11111111"]', 'ask_00000001', 'run-1'), `stamp ${stamp}: updateRunLink({commentIds}) works`);
+    db.close();
+  }
+});

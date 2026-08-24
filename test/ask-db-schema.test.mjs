@@ -52,6 +52,11 @@ test('self-heal: a DB already stamped 21 WITHOUT the ask tables gets them from r
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'stamp not rewritten');
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} healed`);
   assert.ok(indexNames(db).includes('idx_ask_messages_thread'), 'index healed');
+  // M3: ONE migrate() must also close the INCREMENTAL_COLUMNS gap on a table the
+  // SAME repair pass created — the ALTER is skipped while table_info is empty.
+  assert.deepEqual(cols(db, 'ask_run_links'),
+    ['thread_id', 'run_id', 'pipeline_id', 'card_id', 'status', 'phase', 'created_at', 'comment_ids'],
+    'comment_ids ALTERed after ASK_DDL created the table, in the SAME migrate()');
 });
 
 // P4/T1: the two migration seams the fresh-path test in ask-worktrees-schema
