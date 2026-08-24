@@ -465,6 +465,28 @@ export function createAskTools(deps) {
     return null;
   };
 
+  // Does this path hit the protected floor? UNQUOTE FIRST: git C-quotes any name
+  // holding '"', '\\', a tab or a control byte (and, in patches persisted before
+  // core.quotePath=false was pinned, any non-ASCII name), and a stored path can
+  // carry that literal — `"a/old\tsecret.pem"` does not match `*.pem`. Both the
+  // prefixed and the stripped form are tested: a `--- `-derived path keeps its a/
+  // or b/ prefix while a `rename from`-derived one does not, and stripping blindly
+  // would weaken the slash-anchored `**/secrets/**` pattern.
+  const guardedPath = (p) => {
+    if (!p) return false;
+    const s = String(p);
+    const inner = unquoteToken(s);
+    const real = inner === null ? s : unquoteDiffPath(inner);
+    return isProtectedBasename(real, deps.protectedPaths)
+      || isProtectedBasename(real.replace(/^[ab]\//, ''), deps.protectedPaths);
+  };
+
+  // The read filter shared by EVERY tool that echoes or mutates a comment by id
+  // (D5: "the read is the authority"). BOTH rename sides: -M makes a rename+edit
+  // one section under its NEW name, and old_path is persisted for exactly this
+  // check — which must keep working once the patch itself is gone.
+  const commentBlocked = (c) => !!c && (guardedPath(c.path) || guardedPath(c.oldPath));
+
   const handlers = {
     async list_projects() {
       const cat = await deps.buildCatalog();
@@ -550,8 +572,7 @@ export function createAskTools(deps) {
       // now and omit the whole comment rather than trim it. BOTH sides, because a
       // rename+edit is one section under its new name (old_path is persisted for
       // exactly this check, which must also work once the patch is gone).
-      const guarded = (p) => !!p && isProtectedBasename(p, deps.protectedPaths);
-      const comments = raw.filter((c) => !guarded(c.path) && !guarded(c.oldPath)).map((c) => ({
+      const comments = raw.filter((c) => !commentBlocked(c)).map((c) => ({
         ...shapeComment(c),
         // Every string the model sees is redacted: line_text and the context come
         // from the patch, and the BODY is user-authored text that can hold a pasted
@@ -585,9 +606,7 @@ export function createAskTools(deps) {
       // one line. Checked BEFORE the write, so a protected comment is not silently
       // mutated either. Both rename sides, same as list.
       const before = deps.comments.get(id);
-      const blocked = (c) => !!c && (isProtectedBasename(c.path, deps.protectedPaths)
-        || (!!c.oldPath && isProtectedBasename(c.oldPath, deps.protectedPaths)));
-      if (!before || blocked(before)) throw new AskToolError('resolve_diff_comment: comment not found');
+      if (!before || commentBlocked(before)) throw new AskToolError('resolve_diff_comment: comment not found');
       // Explicit tri-state, not `input.resolved !== false`: mcp-stdio.mjs checks only
       // that `arguments` is an object — inputSchema is never enforced — so a model
       // sending "false", 0 or null would otherwise RESOLVE the comment. Every other

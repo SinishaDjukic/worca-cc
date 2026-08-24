@@ -50,6 +50,25 @@ function findSection(text, member, path) {
 }
 
 /**
+ * A section whose path this parser could NOT read. git C-quotes any name holding
+ * '"', '\\', a tab or a control byte — and, in patches persisted before
+ * core.quotePath=false was pinned (git-info.mjs:127), any non-ASCII name — as
+ * `"a/old\tsecret.pem"`. splitPatchSections keeps that literal, quotes and all
+ * (its DESCOPED note, diff-view.mjs:187-191: graceful for RENDERING), so
+ * isProtectedBasename tests the string `"a/old\tsecret.pem"` against `*.pem` and
+ * answers FALSE. get_run_diff has no such hole — splitUnifiedDiff un-C-quotes
+ * (ask/tools.mjs:23-41) — so this is the ONE place the two disagree, and it
+ * disagrees in the unsafe direction.
+ * It is reachable under an ordinary name: `rename from "old\tsecret.pem"` +
+ * `rename to plain.txt` yields a section keyed on the plain, enumerable
+ * `plain.txt` whose -/context rows are the .pem's content.
+ * A leading '"' can never begin a real path — git quotes precisely because '"'
+ * cannot appear raw — so this refuses nothing legitimate. It mirrors
+ * get_run_diff's `!s.path` drop: unreadable ⇒ dropped, never emitted.
+ */
+const unreadablePath = (p) => typeof p === 'string' && p.startsWith('"');
+
+/**
  * Resolve one anchor against the persisted patch.
  *
  * The member project is an EXPLICIT input and is never inferred — not even when
@@ -99,6 +118,9 @@ export function resolveAnchor(patchText, {
   // one side onto the other, so both fields are always populated for a section that
   // reached patchIndex.
   const guarded = (p) => !!p && isProtectedBasename(p, protectedPaths);
+  if (unreadablePath(section.path) || unreadablePath(section.oldPath)) {
+    throw new AnchorError(`"${wantPath}" has a git-quoted name this run's patch cannot resolve — it cannot be checked against the protected-path rules, so no comment is stored for it`);
+  }
   if (guarded(section.path) || guarded(section.oldPath)) {
     throw new AnchorError(`"${wantPath}" is a protected path — comments are not stored for credential files`);
   }

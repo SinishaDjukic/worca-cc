@@ -13,6 +13,7 @@ import { createAskTools } from '../src/core/ask/tools.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { defaultCommentDeps } from '../src/core/ask/comment-deps.mjs';
 import { addDiffComment, getDiffComment, listDiffComments } from '../src/core/diff-comments.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
 
 useTempHome(after);
@@ -179,4 +180,23 @@ test('source scan: tools.mjs is still write-free and db-free; comment-deps holds
   const stdio = readFileSync(new URL('../src/core/ask/mcp-stdio.mjs', import.meta.url), 'utf8');
   // Match the WIRING, not the import line (the ask-worktree-tools precedent).
   assert.match(stdio, /createAskTools\(\{[\s\S]*?defaultCommentDeps/, 'the MCP child spreads the comment bundle');
+});
+
+// A row persisted BEFORE Task 2's anchor fix keeps its quoted old_path, and the
+// read filter re-tests that literal — so `"a/old\tsecret.pem"` sails past `*.pem`
+// and the model gets line_text + context for a file get_run_diff refuses to show.
+// Simulated with a raw UPDATE because add_diff_comment can no longer create one.
+test('the read filter unquotes, so a legacy C-quoted path is still refused', async () => {
+  const { tools, run } = await realTools();
+  const c = (await tools.call('add_diff_comment',
+    { id: run.id, path: 'src/a.js', side: 'new', line: 3, body: 'legacy' })).comment;
+  getDb().prepare('UPDATE diff_comments SET old_path = ? WHERE id = ?')
+    .run('"a/old\\tsecret.pem"', c.id);
+
+  const listed = await tools.call('list_diff_comments', { id: run.id });
+  assert.deepEqual(listed.comments.map((x) => x.id), [],
+    'the quoted old path is unquoted before the glob test, so the row is dropped');
+  await assert.rejects(() => tools.call('resolve_diff_comment', { commentId: c.id }),
+    { message: 'resolve_diff_comment: comment not found' },
+    'and it is not echoable by id either');
 });

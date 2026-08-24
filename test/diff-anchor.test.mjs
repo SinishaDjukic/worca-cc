@@ -140,6 +140,60 @@ test('resolveAnchor: a row past the 500k parse cap fails exactly as it fails to 
   assert.throws(() => resolveAnchor(big, { path: 'big.txt', side: 'new', line: 59_999 }), /no new-side line/);
 });
 
+// Real `git -c core.quotePath=false diff -M -l0 --no-color --no-ext-diff
+// --submodule=short --src-prefix=a/ --dst-prefix=b/` output for a file named
+// `old<TAB>secret.pem` renamed to `plain.txt`. quotePath=false does NOT stop this:
+// git C-quotes any name holding '"', '\', a tab or a control byte regardless, and
+// patches persisted before the pin (git-info.mjs:127) quote every non-ASCII name.
+const QUOTED_RENAME = `diff --git "a/old\\tsecret.pem" b/plain.txt
+similarity index 63%
+rename from "old\\tsecret.pem"
+rename to plain.txt
+index 1781c2d..e9005ee 100644
+--- "a/old\\tsecret.pem"
++++ b/plain.txt
+@@ -1,3 +1,3 @@
+ AAA
+ SECRET=hunter2
+-CCC
++CCC-edited
+`;
+
+// Both sides quoted: the section is keyed on the quoted literal, so only a caller
+// that already holds that string can name it.
+const QUOTED_BOTH = `diff --git "a/tab\\tname.pem" "b/tab\\tname.pem"
+index 04ec35a..d455f7f 100644
+--- "a/tab\\tname.pem"
++++ "b/tab\\tname.pem"
+@@ -1,3 +1,3 @@
+ x
+-y
++yy
+ z
+`;
+
+test('resolveAnchor: a C-quoted path is refused — the floor cannot read it, so it fails CLOSED', () => {
+  // splitPatchSections keeps `"old\tsecret.pem"` verbatim (diff-view.mjs:72-73,
+  // 105-109), so isProtectedBasename tests the QUOTED string against `*.pem` and
+  // says no. get_run_diff has no such hole (splitUnifiedDiff un-C-quotes), and the
+  // new name is the plain, browser-listed `plain.txt` — so without this refusal a
+  // comment on old-side 2 persists `SECRET=hunter2` as its line_text.
+  assert.throws(() => resolveAnchor(QUOTED_RENAME, { path: 'plain.txt', side: 'old', line: 2 }),
+    (e) => {
+      assert.equal(e.name, 'AnchorError');
+      assert.match(e.message, /git-quoted name/);
+      assert.doesNotMatch(e.message, /hunter2/, 'the refusal never echoes the row it refused');
+      return true;
+    });
+  // …and on the new side of the same section, which renders under an innocent name.
+  assert.throws(() => resolveAnchor(QUOTED_RENAME, { path: 'plain.txt', side: 'new', line: 3 }), /git-quoted name/);
+  // Both sides quoted: refused under the quoted literal too, never resolved.
+  assert.throws(() => resolveAnchor(QUOTED_BOTH, { path: '"b/tab\\tname.pem"', side: 'new', line: 2 }), /git-quoted name/);
+  // The REAL name is simply absent — the pre-existing behaviour, unchanged.
+  assert.throws(() => resolveAnchor(QUOTED_BOTH, { path: 'tab\tname.pem', side: 'new', line: 2 }),
+    /is not a file of this run's diff/);
+});
+
 test('hunkContext: `radius` rows either side, clipped at the hunk edges, with side markers', () => {
   assert.deepEqual(hunkContext(SIMPLE, { path: 'src/a.js', side: 'new', line: 2 }, 1),
     ['-old', '+new', '+added']);
