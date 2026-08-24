@@ -15,7 +15,7 @@
 // isProtectedBasename comes from ask/tools.mjs, where it is defined and exported.
 // That direction is safe: tools.mjs has ZERO imports, so this can never close a
 // cycle.
-import { splitPatchSections, patchIndex, sectionKey, parseFileSection } from '../../ui/public/diff-view.mjs';
+import { splitPatchSections, patchIndex, sectionKey, parseFileSection, MAX_FILE_SECTION_CODE_UNITS } from '../../ui/public/diff-view.mjs';
 import { isProtectedBasename } from './ask/tools.mjs';
 import { GUARDRAIL_PRESETS } from './guardrails.mjs';
 
@@ -44,9 +44,14 @@ export function patchMembers(text) {
   return out;
 }
 
-/** The section a (member, path) pair names, or null. */
+/** The section a (member, path) pair names in an ALREADY-PARSED index, or null. */
+function pick(index, member, path) {
+  return index.get(sectionKey(member || null, path)) || null;
+}
+
+/** The section a (member, path) pair names, or null. One parse per call. */
 function findSection(text, member, path) {
-  return patchIndex(splitPatchSections(text)).get(sectionKey(member || null, path)) || null;
+  return pick(patchIndex(splitPatchSections(text)), member, path);
 }
 
 /**
@@ -89,7 +94,10 @@ export function resolveAnchor(patchText, {
   const wantPath = typeof path === 'string' ? path.trim() : '';
   if (!wantPath) throw new AnchorError('path is required');
   if (side !== 'old' && side !== 'new') throw new AnchorError('side must be "old" (a removed line) or "new" (an added or context line)');
-  const lineNo = Math.trunc(Number(line));
+  // NOT Math.trunc(Number(line)): that accepted 3.9 as line 3 while the message
+  // below promised an integer, silently anchoring a comment one row off. Number()
+  // still coerces the '2' a JSON-RPC client may send; isSafeInteger keeps 1e21 out.
+  const lineNo = Number(line);
   if (!Number.isSafeInteger(lineNo) || lineNo < 1) throw new AnchorError('line must be a positive integer');
 
   const members = patchMembers(text);
@@ -102,11 +110,25 @@ export function resolveAnchor(patchText, {
   }
   const scope = members.length ? member : null;
 
-  const section = findSection(text, scope, wantPath);
+  // ONE parse for the whole call: the not-found branch below probes every member,
+  // and findSection used to re-run splitPatchSections + patchIndex over the WHOLE
+  // patch for each of them (M+1 full parses per miss).
+  const index = patchIndex(splitPatchSections(text));
+  const guarded = (p) => !!p && isProtectedBasename(p, protectedPaths);
+  const blocked = (s) => unreadablePath(s.path) || unreadablePath(s.oldPath)
+    || guarded(s.path) || guarded(s.oldPath);
+
+  const section = pick(index, scope, wantPath);
   if (!section) {
     // Name the members that DO hold the path so the caller can retry without a
-    // second round trip.
-    const holders = members.filter((m) => m !== member && findSection(text, m, wantPath));
+    // second round trip — but only members whose section this caller could
+    // actually READ. An unfiltered hint is an existence oracle: it answered
+    // "it is in: alpha-…" for a .env that get_run_diff never lists at all.
+    const holders = members.filter((m) => {
+      if (m === member) return false;
+      const s = pick(index, m, wantPath);
+      return !!s && !blocked(s);
+    });
     throw new AnchorError(holders.length
       ? `"${wantPath}" is not in ${member}'s diff (it is in: ${holders.join(', ')})`
       : `"${wantPath}" is not a file of this run's diff`);
@@ -117,7 +139,6 @@ export function resolveAnchor(patchText, {
   // be smuggled into diff_comments as line_text either. splitPatchSections mirrors
   // one side onto the other, so both fields are always populated for a section that
   // reached patchIndex.
-  const guarded = (p) => !!p && isProtectedBasename(p, protectedPaths);
   if (unreadablePath(section.path) || unreadablePath(section.oldPath)) {
     throw new AnchorError(`"${wantPath}" has a git-quoted name this run's patch cannot resolve — it cannot be checked against the protected-path rules, so no comment is stored for it`);
   }
@@ -126,13 +147,23 @@ export function resolveAnchor(patchText, {
   }
   const parsed = parseFileSection(section.raw);
   if (parsed.binary || !parsed.hunks.length) throw new AnchorError(`"${wantPath}" has no textual diff to anchor to`);
+  // `lastNo` rides along in the same pass so the refusal can tell "this file has
+  // no such line" apart from "this resolver never read that far". get_run_diff
+  // applies NO cap (ask/tools.mjs pages the whole body), so a model that just read
+  // row 14,195 through it would otherwise be told the row does not exist.
+  let lastNo = 0;
   for (const hunk of parsed.hunks) {
     for (const row of hunk.lines) {
-      if ((side === 'old' ? row.oldNo : row.newNo) !== lineNo) continue;
-      return { project: scope, path: wantPath, oldPath: section.oldPath ?? null, side, line: lineNo, lineText: row.text };
+      const no = side === 'old' ? row.oldNo : row.newNo;
+      if (no === lineNo) {
+        return { project: scope, path: wantPath, oldPath: section.oldPath ?? null, side, line: lineNo, lineText: row.text };
+      }
+      if (no != null && no > lastNo) lastNo = no;
     }
   }
-  throw new AnchorError(`"${wantPath}" has no ${side}-side line ${lineNo} in this run's diff`);
+  throw new AnchorError(parsed.truncated && lineNo > lastNo
+    ? `"${wantPath}" has no ${side}-side line ${lineNo} in the first ${MAX_FILE_SECTION_CODE_UNITS} characters of its diff — that is as far as this file's section is read here (it stops at ${side}-side line ${lastNo}), so a line beyond the cap cannot be anchored even though get_run_diff can page to it`
+    : `"${wantPath}" has no ${side}-side line ${lineNo} in this run's diff`);
 }
 
 /**

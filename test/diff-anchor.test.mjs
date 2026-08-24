@@ -204,3 +204,55 @@ test('hunkContext: `radius` rows either side, clipped at the hunk edges, with si
   assert.deepEqual(hunkContext(SIMPLE, { path: 'src/a.js', side: 'new', line: 99 }, 3), [],
     'an unresolvable anchor yields no context, never a guess');
 });
+
+test('resolveAnchor: past the parse cap the refusal says CAP, not "no such line"', () => {
+  const filler = Array.from({ length: 60_000 }, (_, i) => ` line ${i} ${'x'.repeat(10)}`).join('\n');
+  const big = `diff --git a/big.txt b/big.txt\n--- a/big.txt\n+++ b/big.txt\n@@ -1,60000 +1,60000 @@\n${filler}\n`;
+  assert.ok(big.length > 500_000, 'fixture really is over the cap');
+  assert.throws(() => resolveAnchor(big, { path: 'big.txt', side: 'new', line: 59_999 }), (e) => {
+    assert.match(e.message, /first 500000 characters/, 'names the cap that actually stopped the read');
+    assert.match(e.message, /get_run_diff can page to it/, 'and says the row may still be readable there');
+    return true;
+  });
+  // A line inside the parsed range that genuinely does not exist keeps the plain
+  // message — the cap is only mentioned when the cap is the reason.
+  const short = `diff --git a/s.txt b/s.txt\n--- a/s.txt\n+++ b/s.txt\n@@ -1,1 +1,1 @@\n-a\n+b\n`;
+  assert.throws(() => resolveAnchor(short, { path: 's.txt', side: 'new', line: 9 }),
+    (e) => { assert.match(e.message, /has no new-side line 9 in this run's diff$/); return true; });
+});
+
+test('resolveAnchor: the "holders" hint never names a member whose section is guarded', () => {
+  const ws = `# alpha-00000001
+diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1 +1 @@
+-TOKEN=old
++TOKEN=new
+
+# beta-00000002
+diff --git a/b.js b/b.js
+--- a/b.js
++++ b/b.js
+@@ -0,0 +1 @@
++beta
+`;
+  assert.throws(() => resolveAnchor(ws, { project: 'beta-00000002', path: '.env', side: 'new', line: 1 }), (e) => {
+    assert.match(e.message, /is not a file of this run's diff/, 'no existence oracle for a file get_run_diff never lists');
+    assert.doesNotMatch(e.message, /alpha-00000001/, 'and the owning member is not named either');
+    return true;
+  });
+  // The hint still fires for a member holding an ordinary file.
+  assert.throws(() => resolveAnchor(ws, { project: 'alpha-00000001', path: 'b.js', side: 'new', line: 1 }),
+    /is in: beta-00000002/);
+});
+
+test('resolveAnchor: a fractional line is refused, not silently truncated', () => {
+  for (const line of [3.9, '3.9', 2.5, 1.0000001]) {
+    assert.throws(() => resolveAnchor(SIMPLE, { path: 'src/a.js', side: 'new', line }),
+      /line must be a positive integer/, JSON.stringify(line));
+  }
+  // Integer-valued strings and floats still resolve — only the fraction is new.
+  assert.equal(resolveAnchor(SIMPLE, { path: 'src/a.js', side: 'new', line: '2' }).lineText, 'new');
+  assert.equal(resolveAnchor(SIMPLE, { path: 'src/a.js', side: 'new', line: 2.0 }).lineText, 'new');
+});
