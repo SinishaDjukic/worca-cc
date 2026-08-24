@@ -118,14 +118,15 @@ test('validateClientContext: schema, unknown keys dropped, invalid keys rejected
   assert.deepEqual(validateClientContext({}), { ok: true, context: {} });
   assert.deepEqual(validateClientContext(undefined), { ok: true, context: {} });
   const full = { view: 'history-detail', projectDir: '/p/x', projectKey: 'worca-cc-551183d0', pipelineId: '4e1f2a9b',
-    runId: '3f2a9c01-1111-4222-8333-444455556666', workspaceId: 'wks-team-0000abcd', evil: 'x' };
+    runId: '3f2a9c01-1111-4222-8333-444455556666', workspaceId: 'wks-team-0000abcd', diffPath: 'src/a.js', evil: 'x' };
   const r = validateClientContext(full);
   assert.equal(r.ok, true);
-  assert.deepEqual(Object.keys(r.context).sort(), ['pipelineId', 'projectDir', 'projectKey', 'runId', 'view', 'workspaceId']);
+  assert.deepEqual(Object.keys(r.context).sort(), ['diffPath', 'pipelineId', 'projectDir', 'projectKey', 'runId', 'view', 'workspaceId']);
   for (const [bad, key] of [
     [{ view: 'x'.repeat(33) }, 'view'], [{ view: 5 }, 'view'], [{ projectDir: 'x'.repeat(1025) }, 'projectDir'],
     [{ projectKey: 'Bad Key' }, 'projectKey'], [{ projectKey: 'nohash' }, 'projectKey'], [{ pipelineId: '4E1F2A9B' }, 'pipelineId'],
     [{ pipelineId: '../x' }, 'pipelineId'], [{ runId: 'not-a-uuid' }, 'runId'], [{ workspaceId: 'wks-' }, 'workspaceId'],
+    [{ diffPath: 'x'.repeat(513) }, 'diffPath'], [{ diffPath: '' }, 'diffPath'],
   ]) {
     assert.deepEqual(validateClientContext(bad), { ok: false, error: `context.${key} is invalid` }, JSON.stringify(bad));
   }
@@ -319,7 +320,8 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
 // delimiters), so rules 7-8, the rule-1 tool list and the reworded SANDBOX_NOTE all
 // survived deletion in the dry-run. Substring pins so a future edit cannot drop them.
 test('P4: the prompt advertises the worktree tools and the sandbox note names the git-only file access', () => {
-  for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run']) {
+  for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run',
+    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
   }
   assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw file read" guidance survives');

@@ -51,7 +51,7 @@ const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
 /** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -642,6 +642,52 @@ CREATE TABLE IF NOT EXISTS ask_worktrees (
 CREATE INDEX IF NOT EXISTS idx_ask_worktrees_thread ON ask_worktrees (thread_id);
 `;
 
+/** v21: internal, line-anchored comments on a run's persisted diff. IF NOT EXISTS
+ *  + schemaGaps flags (the ask_worktrees precedent): reconcile-safe on divergent-
+ *  stamp DBs. The anchor is (project_key, path, side, line_no) against
+ *  diff-patch.patch; `line_text` is the server-captured snapshot of that row, which
+ *  is what keeps a comment readable after the patch is gone. `source` and
+ *  `external_url` are RESERVED for a future GitHub review-comment sync and are
+ *  written by nothing today.
+ *  NOTE the pipelines cascade is declarative only: pipeline-delete.mjs states
+ *  the pipelines row is never DELETEd, so nothing may DEPEND on it firing — the
+ *  archive path deletes these rows explicitly. The ask_card_comments cascade DOES
+ *  fire (foreign_keys=ON in _configure) and is relied on.
+ *  ask_card_comments carries a proposal's commentIds from propose_run (which never
+ *  touches the card block) to POST /api/run, where they move onto
+ *  ask_run_links.comment_ids and are stamped onto sent_run_id by the first `state`
+ *  event.
+ *  This table is deliberately NOT `WITHOUT ROWID`: its implicit rowid is the
+ *  monotonic insertion counter listDiffComments orders by (D17). */
+const DIFF_COMMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS diff_comments (
+  id           TEXT PRIMARY KEY,            -- 'dc_' + 8 hex
+  store_key    TEXT NOT NULL,               -- '<projectKey>' | 'workspaces/<workspaceId>'
+  pipeline_id  TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+  project_key  TEXT,                        -- member project of a workspace patch; NULL otherwise
+  path         TEXT NOT NULL,               -- NEW-side path of the anchored section
+  old_path     TEXT,                        -- the section's source path (rename): the read-time both-sides guard
+  side         TEXT NOT NULL,               -- 'old' | 'new'
+  line_no      INTEGER NOT NULL,
+  line_text    TEXT,                        -- snapshot of the anchored row, captured server-side
+  body         TEXT NOT NULL,
+  author       TEXT NOT NULL,               -- 'user' | 'ask'
+  resolved     INTEGER NOT NULL DEFAULT 0,
+  resolved_at  TEXT,
+  sent_run_id  TEXT,                        -- 8-hex pipeline id; NEVER auto-resolves
+  source       TEXT,                        -- RESERVED (GitHub sync) — unused
+  external_url TEXT,                        -- RESERVED (GitHub sync) — unused
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diff_comments_run ON diff_comments (store_key, pipeline_id);
+CREATE TABLE IF NOT EXISTS ask_card_comments (
+  card_id    TEXT NOT NULL,                 -- proposal card id; the block itself is JSON in ask_messages
+  comment_id TEXT NOT NULL REFERENCES diff_comments(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (card_id, comment_id)
+);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -666,6 +712,7 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
   workflows:              { domain: 'TEXT', origin: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER' },
+  ask_run_links:          { comment_ids: 'TEXT' },        // v21: JSON array of dc_ ids pending at launch
 };
 
 /**
@@ -706,6 +753,12 @@ function schemaGaps(db) {
   const hasAskWorktrees = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_worktrees'"
   ).get().n > 0;
+  const hasDiffComments = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='diff_comments'"
+  ).get().n > 0;
+  const hasAskCardComments = db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_card_comments'"
+  ).get().n > 0;
   return {
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
@@ -715,6 +768,10 @@ function schemaGaps(db) {
     askTables: !hasAskThreads,
     askCostLedgerTable: !hasAskCostLedger,
     askWorktreesTable: !hasAskWorktrees,
+    // ONE flag for both tables: they are created by one IF NOT EXISTS DDL block, so
+    // re-asserting it when either is missing is idempotent and heals the other (and
+    // recreates the index, which schemaGaps never probes directly).
+    diffCommentTables: !(hasDiffComments && hasAskCardComments),
   };
 }
 
@@ -731,6 +788,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.askTables) db.exec(ASK_DDL);
   if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
   if (gaps.askWorktreesTable) db.exec(ASK_WORKTREES_DDL);
+  if (gaps.diffCommentTables) db.exec(DIFF_COMMENTS_DDL);
 }
 
 /**
@@ -748,7 +806,7 @@ function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
       && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables
-      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable) return; // clean — no lock
+      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable && !gaps.diffCommentTables) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -892,6 +950,21 @@ function applySchemaV19(db) {
   }
 }
 
+/** v21: both new tables are IF NOT EXISTS and the one new ask_run_links column
+ *  lives in INCREMENTAL_COLUMNS, so the whole step IS the reconcile — the
+ *  applySchemaV12/13/14/15 shape, with nothing to backfill.
+ *  Order note: repairSchemaGaps ALTERs columns BEFORE creating tables, and
+ *  schemaGaps skips a table whose table_info is empty.
+ *  On a FRESH DB this step is a no-op by the time it runs: the ladder reaches
+ *  applySchemaV19 — itself repairSchemaGaps(schemaGaps(db)) — after ASK_DDL
+ *  has created ask_run_links, so both the comment_ids ALTER and
+ *  DIFF_COMMENTS_DDL already fired there. This step is what serves an EXISTING
+ *  v20 DB, and re-running it is idempotent by construction.
+ */
+function applySchemaV21(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
@@ -944,6 +1017,7 @@ export function migrate(db) {
     if (current < 18) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
     if (current < 19) applySchemaV19(db);
     if (current < 20) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
+    if (current < 21) applySchemaV21(db);            // tables + the ask_run_links column
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

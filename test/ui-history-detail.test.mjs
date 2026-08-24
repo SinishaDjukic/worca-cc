@@ -941,7 +941,9 @@ test('non-done run (results null) shows the empty state and never fetches /diff'
   assert.match(empty.textContent, /No diff captured for this run\./);
   assert.match(empty.textContent, /Diffs are captured when a run completes\./);
   assert.equal(doc.querySelector('#hist-detail .hd-diff-file'), null);
-  assert.ok(ctx.calls.every((c) => !c.url.includes('/diff')), 'the patch is never requested');
+  // endsWith, not includes: /api/diff-comments/counts (the History pill's own
+  // endpoint) contains "/diff" as a substring and is unrelated to the patch.
+  assert.ok(ctx.calls.every((c) => !c.url.endsWith('/diff')), 'the patch is never requested');
 });
 
 test('diff fetch failing (404) degrades to the file list + a per-file note', async () => {

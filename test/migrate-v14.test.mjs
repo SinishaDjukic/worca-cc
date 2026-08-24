@@ -26,7 +26,7 @@ const V13_MINIMAL_SEED = `
 
 test('fresh DB migrates to v14 with the guardrail_sets table + pipelines.guardrails_id', () => {
   const db = getDb(); // opens + migrates to SCHEMA_VERSION
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   assert.ok(pipCols.includes('guardrails_id'), 'pipelines.guardrails_id exists');
   assert.equal(
@@ -48,7 +48,7 @@ test('a v13-stamped DB upgrades: column + table added, pre-existing rows read NU
 
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
   assert.equal(db.prepare("SELECT guardrails_id FROM pipelines WHERE id = 'pre'").get().guardrails_id, null,
     'legacy row reads NULL (selection unknown)');
   assert.equal(
@@ -59,11 +59,11 @@ test('a v13-stamped DB upgrades: column + table added, pre-existing rows read NU
 test('a current-stamped DB missing the additions is healed by the fast-path reconcile, stamp untouched', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(V13_MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 20'); // divergent-ladder stamp: version says done, schema says otherwise
+  db.exec('PRAGMA user_version = 21'); // divergent-ladder stamp: version says done, schema says otherwise
 
   migrate(db); // fast path -> reconcileSchema self-heal
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20, 'stamp not rewritten');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'stamp not rewritten');
   const pipCols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   assert.ok(pipCols.includes('guardrails_id'), 'column healed');
   assert.equal(
@@ -81,7 +81,7 @@ test('ladder from below 13 does not double-add the v14 additions (conditional-re
   // tables BEFORE the v14 step runs. If someone "simplifies" applySchemaV14 to a
   // plain ALTER/CREATE string, this throws "duplicate column" / "table already exists".
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
 });
 
 test('migrate() is idempotent (second call is a clean no-op)', () => {
@@ -90,5 +90,5 @@ test('migrate() is idempotent (second call is a clean no-op)', () => {
   db.exec('PRAGMA user_version = 13');
   migrate(db);
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
 });

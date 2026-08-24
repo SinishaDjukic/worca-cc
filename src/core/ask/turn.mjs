@@ -27,6 +27,7 @@ import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
 } from './store.mjs';
 import { recordAskCostDelta } from '../cost-budget.mjs';
+import { setPendingCardComments } from '../diff-comments.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
@@ -71,6 +72,7 @@ class AskTurn extends EventEmitter {
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
+      setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
       recordAskCost: deps.recordAskCost ?? recordAskCostDelta,
       now: deps.now ?? Date.now,
       // Default timers unref so a 15-minute clock never holds the process open
@@ -80,6 +82,7 @@ class AskTurn extends EventEmitter {
       fs: deps.fs ?? { mkdir, writeFile, unlink },
       onFrame: deps.onFrame ?? (() => {}),
       onOutOfTurn: deps.onOutOfTurn ?? (() => {}),
+      onCommentMutation: deps.onCommentMutation ?? (() => {}),
     };
     this.abort = new AbortController();
     this.status = 'created';
@@ -125,6 +128,13 @@ class AskTurn extends EventEmitter {
       const r = await d.validateProposal(input && typeof input === 'object' ? input : {}, { cardId });
       if (r && r.ok) {
         this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card });
+        // commentIds are propose_run INPUT only: they never enter the card block (its
+        // key set is pinned in test/ask-proposal.test.mjs) nor CARD_PATCH_KEYS. Parked
+        // against the card id until the user starts the run; unknown ids are dropped,
+        // because the model may cite a comment the user has since deleted and that
+        // must not sink an otherwise valid proposal.
+        try { d.setPendingCardComments(cardId, input?.commentIds); }
+        catch { /* comment metadata is never worth failing a proposal for */ }
       } else {
         const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
         this.reducer.addBlock({ kind: 'notice', text: `Proposal rejected: ${errors.join('; ')}` });
@@ -145,6 +155,9 @@ class AskTurn extends EventEmitter {
       attachmentNames: this.attachmentNames,
       limits: d.limits,
       onProposal: ({ input }) => this._onProposal(input),
+      // The MCP child cannot broadcast; the parent turns its comment writes into
+      // the same poke the REST routes emit.
+      onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },
     });
     return this.reducer;
   }

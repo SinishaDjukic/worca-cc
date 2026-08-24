@@ -35,7 +35,7 @@ const V10_NODES_SEED = `
 
 test('fresh DB migrates to v12 with ask_questions + step_questions present', () => {
   const db = getDb(); // opens + migrates to SCHEMA_VERSION
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
   const cols = db.prepare('PRAGMA table_info(config_workflow_nodes)').all().map((c) => c.name);
   assert.ok(cols.includes('ask_questions'), 'ask_questions column exists');
   const tbl = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'").get();
@@ -50,7 +50,7 @@ test('repairs a stale-stamped v11 DB (version says 11, v11 DDL never ran)', () =
 
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
   const cols = db.prepare('PRAGMA table_info(config_workflow_nodes)').all().map((c) => c.name);
   assert.ok(cols.includes('ask_questions'), 'repair added ask_questions');
   const tbl = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'").get();
@@ -75,7 +75,7 @@ test('getDb() repairs a stale-stamped on-disk DB at WORCA_HOME', () => {
   _resetForTests();
   try {
     const db = getDb();
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
     const cols = db.prepare('PRAGMA table_info(config_workflow_nodes)').all().map((c) => c.name);
     assert.ok(cols.includes('ask_questions'));
     assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='step_questions'").get().n, 1);
@@ -91,9 +91,9 @@ test('fast-path reconcile heals missing column/table on a DB already stamped to 
   const db = new DatabaseSync(':memory:');
   db.exec(V10_NODES_SEED);
   db.exec('CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT)'); // pre-`domain` shape
-  db.exec('PRAGMA user_version = 20'); // stamped current: the ladder must no-op...
+  db.exec('PRAGMA user_version = 21'); // stamped current: the ladder must no-op...
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20, 'stamp untouched');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'stamp untouched');
   // ...yet the incremental gaps are healed anyway.
   const nodeCols = db.prepare('PRAGMA table_info(config_workflow_nodes)').all().map((c) => c.name);
   assert.ok(nodeCols.includes('ask_questions'), 'ask_questions healed');
@@ -126,7 +126,7 @@ test('no-op on a correctly-migrated v11 DB (no duplicate-column / existing-table
 
   migrate(db); // must not throw (duplicate column / table exists)
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
   // Existing data in both v11 structures is untouched.
   assert.equal(db.prepare('SELECT ask_questions FROM config_workflow_nodes WHERE node_id = ?').get('n1').ask_questions, 1);
   assert.equal(db.prepare('SELECT count(*) AS n FROM step_questions').get().n, 1);

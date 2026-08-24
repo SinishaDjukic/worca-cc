@@ -472,6 +472,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scheduleFlush();
   }
 
+  /**
+   * Append a plain-text reference to the composer WITHOUT sending, so several can
+   * stack and the user presses send once. Opens the sheet if it is closed and
+   * focuses the composer either way. Returns false when there is nothing to add.
+   */
+  function appendToComposer(text) {
+    const add = String(text ?? '').trim();
+    if (!add || st.destroyed) return false;
+    openSheet();                                   // no-op when already open…
+    const cur = el.input.value;
+    el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
+    // …so the autosize listener and the focus have to be driven here.
+    el.input.dispatchEvent(new win.Event('input'));
+    focusComposer();
+    try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
+    return true;
+  }
+
   function closeSheet() {
     if (!st.open) return;
     closePopover({ focusTrigger: false });
@@ -521,7 +539,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       return;
     }
-    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup')) return;
+    // `.hd-cmt-card` joins the allowlist: its "Ask Worca" button appends to the
+    // composer, and pointerdown lands BEFORE the click that would open the sheet.
+    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card')) return;
     closeSheet();
   }
 
@@ -1650,6 +1670,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     close: closeSheet,
     toggle: toggleSheet,
     isOpen: () => st.open,
+    appendToComposer,
     pushServerFrame,
     onHello,
     ownsKey,

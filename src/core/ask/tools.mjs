@@ -288,6 +288,7 @@ const SCHEMA = {
   obj: (properties, required = []) => ({ type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false }),
   s: (description) => ({ type: 'string', description }),
   i: (description, minimum, maximum) => ({ type: 'integer', description, minimum, maximum }),
+  b: (description) => ({ type: 'boolean', description }),
 };
 
 /**
@@ -321,10 +322,30 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars)'), title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
-        sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } } }, ['brief']) },
+        sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
+        commentIds: { type: 'array', items: { type: 'string' },
+          description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id, paged by byte offset (default 32000 bytes per page).',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
+    { name: 'list_diff_comments',
+      description: 'List the internal review comments anchored to a run\'s diff lines, ordered by file then line then when they were written. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each comment. Comments on credential files are never listed.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
+        status: SCHEMA.s('all | unresolved | resolved (default all)'), path: SCHEMA.s('only this file path') }, ['id']) },
+    { name: 'add_diff_comment',
+      description: 'Add an internal comment (authored by you) on one line of a run\'s diff. side is "old" for a removed line — give its OLD line number — and "new" for an added or context line. A workspace run also needs memberProjectKey, naming which member project the file belongs to; it is never guessed. The anchor is checked against the stored patch, so an unknown file, side or line is refused rather than saved wrong.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
+        memberProjectKey: SCHEMA.s('workspace runs: which member project owns this file (from get_run_diff files[].projectKey)'),
+        path: SCHEMA.s('file path as it appears in the diff'), side: SCHEMA.s('"old" or "new"'),
+        line: SCHEMA.i('line number on that side', 1, Number.MAX_SAFE_INTEGER),
+        body: SCHEMA.s(`the comment text (max ${L.commentBodyMaxChars} chars)`) }, ['id', 'path', 'side', 'line', 'body']) },
+    { name: 'resolve_diff_comment',
+      description: 'Mark one diff comment resolved, or reopen it with resolved:false. Nothing is deleted, and resolving is never automatic — do it only when the user asks.',
+      inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments'),
+        resolved: SCHEMA.b('true to resolve (default), false to reopen') }, ['commentId']) },
+    { name: 'delete_diff_comment',
+      description: 'Permanently delete one diff comment. There is no undo and no history — confirm with the user before deleting anything, and always before deleting several.',
+      inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments') }, ['commentId']) },
     { name: 'open_worktree',
       description: 'Create a read-only DETACHED git worktree of a registered project at any branch/tag/commit (projectKey + ref), or of a run\'s feature branch (runId; workspace runs also need projectKey). Returns {worktreeId, path, ref, commit}. Capped per chat — reuse via list_worktrees, remove via remove_worktree when done.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'),
@@ -360,6 +381,29 @@ export function createAskTools(deps) {
     if (!row) throw new AskToolError(`${tool}: run not found`);
     return row;
   }
+
+  // The History store key of a pipelines row — the same mapping lookupPipelineRow
+  // reverses. Comments are keyed the way History is.
+  const storeKeyOf = (row) => ((row.target === 'workspace' || row.workspace_key)
+    ? `workspaces/${row.workspace_key}` : row.project_key);
+
+  /**
+   * Return exactly what changed — never the whole run, never the patch. runId and
+   * storeKey are here because the parent process turns a successful write into the
+   * diff-comments-changed poke by reading them back out of the tool result
+   * (events.mjs); they are useful to the model too, since they say which run a
+   * comment belongs to.
+   */
+  const shapeComment = (c) => ({
+    id: c.id, runId: c.pipelineId, storeKey: c.storeKey, path: c.path, projectKey: c.projectKey,
+    side: c.side, line: c.line,
+    lineText: deps.redact(c.lineText), body: deps.redact(c.body), author: c.author,
+    resolved: c.resolved, resolvedAt: c.resolvedAt, sentRunId: c.sentRunId, createdAt: c.createdAt,
+  });
+
+  // Comment failures are model-actionable -> AskToolError text, never a crash.
+  const asCommentError = (tool, err) => (err && err.name === 'DiffCommentError'
+    ? new AskToolError(`${tool}: ${err.message}`) : err);
 
   function shapeRun(row) {
     const isWs = row.target === 'workspace' || !!row.workspace_key;
@@ -489,6 +533,80 @@ export function createAskTools(deps) {
     },
     async propose_run(input) {
       return deps.validateProposal(input);
+    },
+    async list_diff_comments(input) {
+      const row = await resolveRow(input, 'list_diff_comments');
+      const status = str(input.status) || 'all';
+      if (!['all', 'unresolved', 'resolved'].includes(status)) {
+        throw new AskToolError('list_diff_comments: status must be all, unresolved or resolved');
+      }
+      // Archived runs return null here (get_run_diff's posture); the comments still
+      // list, they simply lose their surrounding context. line_text is always there,
+      // which is exactly what it exists for.
+      const patchText = row.archived_at ? null : await deps.readDiffPatch(row);
+      const raw = deps.comments.list(storeKeyOf(row), row.id, { status, path: str(input.path) || null, patchText });
+      // The READ is the authority, exactly as in get_run_diff: creation already
+      // refuses protected anchors, but a preset can GROW afterwards, so re-evaluate
+      // now and omit the whole comment rather than trim it. BOTH sides, because a
+      // rename+edit is one section under its new name (old_path is persisted for
+      // exactly this check, which must also work once the patch is gone).
+      const guarded = (p) => !!p && isProtectedBasename(p, deps.protectedPaths);
+      const comments = raw.filter((c) => !guarded(c.path) && !guarded(c.oldPath)).map((c) => ({
+        ...shapeComment(c),
+        // Every string the model sees is redacted: line_text and the context come
+        // from the patch, and the BODY is user-authored text that can hold a pasted
+        // secret just as easily. shapeComment already redacts the first two.
+        ...(Array.isArray(c.context) && c.context.length ? { context: c.context.map((l) => deps.redact(l)) } : {}),
+      }));
+      return { runId: row.id, patchAvailable: patchText != null, comments };
+    },
+    async add_diff_comment(input) {
+      const row = await resolveRow(input, 'add_diff_comment');
+      if (row.archived_at) throw new AskToolError('add_diff_comment: this run is archived — its diff is gone');
+      const patchText = await deps.readDiffPatch(row);
+      if (!patchText) throw new AskToolError('add_diff_comment: this run has no stored diff — comments cannot be created on it');
+      try {
+        const comment = deps.comments.add({
+          storeKey: storeKeyOf(row), pipelineId: row.id, patchText,
+          project: str(input.memberProjectKey) || null,
+          path: str(input.path), side: str(input.side), line: input.line, body: input.body,
+        });
+        return { comment: shapeComment(comment) };
+      } catch (err) { throw asCommentError('add_diff_comment', err); }
+    },
+    async resolve_diff_comment(input) {
+      const id = str(input.commentId);
+      if (!id) throw new AskToolError('resolve_diff_comment: commentId is required');
+      // The read filter applies to EVERY tool that echoes a comment, not just to
+      // list_diff_comments (D5: "the read is the authority"). Without this check a
+      // comment created before the preset grew is still echoable by id — with its
+      // path and its line_text — which is exactly the leak list_diff_comments closes.
+      // The id is not obtainable from list, so this is defence in depth, and it is
+      // one line. Checked BEFORE the write, so a protected comment is not silently
+      // mutated either. Both rename sides, same as list.
+      const before = deps.comments.get(id);
+      const blocked = (c) => !!c && (isProtectedBasename(c.path, deps.protectedPaths)
+        || (!!c.oldPath && isProtectedBasename(c.oldPath, deps.protectedPaths)));
+      if (!before || blocked(before)) throw new AskToolError('resolve_diff_comment: comment not found');
+      // Explicit tri-state, not `input.resolved !== false`: mcp-stdio.mjs checks only
+      // that `arguments` is an object — inputSchema is never enforced — so a model
+      // sending "false", 0 or null would otherwise RESOLVE the comment. Every other
+      // tool validates its own inputs the same way (git, open_worktree).
+      if (input.resolved !== undefined && typeof input.resolved !== 'boolean') {
+        throw new AskToolError('resolve_diff_comment: resolved must be true or false');
+      }
+      const comment = deps.comments.setResolved(id, input.resolved !== false);
+      if (!comment) throw new AskToolError('resolve_diff_comment: comment not found');
+      return { comment: shapeComment(comment) };
+    },
+    async delete_diff_comment(input) {
+      const id = str(input.commentId);
+      if (!id) throw new AskToolError('delete_diff_comment: commentId is required');
+      // Read BEFORE removing: the parent process needs the run this touched to emit
+      // the poke, and after the row is gone there is nothing to read.
+      const before = deps.comments.get(id);
+      if (!before || !deps.comments.remove(id)) throw new AskToolError('delete_diff_comment: comment not found');
+      return { ok: true, commentId: id, comment: { runId: before.pipelineId, storeKey: before.storeKey } };
     },
     async read_attachment(input) {
       const id = str(input.id);

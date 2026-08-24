@@ -161,9 +161,35 @@ test('labelForTool table', () => {
   assert.equal(labelForTool('mcp__worca__list_projects', {}), 'Looking at projects');
   assert.equal(labelForTool('mcp__worca__propose_run', {}), 'Preparing a run');
   assert.equal(labelForTool('mcp__worca__read_attachment', { id: 'a' }, { a: 'x.md' }), 'Reading x.md');
+  assert.equal(labelForTool('mcp__worca__list_diff_comments', { id: 'abcdefghijklmnop' }), 'Reading comments on abcdefghijkl');
+  assert.equal(labelForTool('mcp__worca__list_diff_comments', {}), 'Reading diff comments');
+  assert.equal(labelForTool('mcp__worca__add_diff_comment', {}), 'Writing a diff comment');
+  assert.equal(labelForTool('mcp__worca__resolve_diff_comment', {}), 'Updating a diff comment');
+  assert.equal(labelForTool('mcp__worca__delete_diff_comment', {}), 'Deleting a diff comment');
+
   assert.equal(labelForTool('Task', {}), null);
   assert.equal(labelForTool('Agent', {}), null);
   assert.equal(labelForTool('Read', {}), 'Using Read');
+});
+
+test('a successful comment write calls onCommentMutation; an error result does not', () => {
+  const seen = [];
+  const h = harness({ onCommentMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__add_diff_comment', { id: '4e1f2a9b', path: 'a.js', side: 'new', line: 1, body: 'x' }));
+  h.push(uresult('toolu_1', JSON.stringify({ comment: { id: 'dc_00000001', runId: '4e1f2a9b' } })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__delete_diff_comment', { commentId: 'dc_00000002' }));
+  h.push(uresult('toolu_2', 'error: delete_diff_comment: comment not found', { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_diff_comments', { id: '4e1f2a9b' }));
+  h.push(uresult('toolu_3', JSON.stringify({ runId: '4e1f2a9b', comments: [] })));
+  assert.deepEqual(seen, [{ runId: '4e1f2a9b' }], 'writes only, successes only');
+});
+
+test('an unparseable comment-write result pokes nothing and does not throw', () => {
+  const seen = [];
+  const h = harness({ onCommentMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__resolve_diff_comment', { commentId: 'dc_00000001' }));
+  h.push(uresult('toolu_1', 'not json at all'));
+  assert.deepEqual(seen, []);
 });
 
 const AGENT_TUR = { status: 'completed', prompt: 'SECRET PROMPT TEXT', agentId: 'a61fb0ef9162947fb', agentType: 'general-purpose',

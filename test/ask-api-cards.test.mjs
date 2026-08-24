@@ -194,6 +194,54 @@ test('project card: propose → Start via /api/run → started flip, notice, fol
   w.ws.close();
 });
 
+// v21: the propose→launch→state chain also carries diff-comment ids. The mock
+// propose scenario cannot pass commentIds through the model, so the card→ids
+// mapping is written directly — that IS the seam turn._onProposal writes and the
+// only part of the chain this test is not about. What it DOES cover is the two
+// ui/server.mjs edits, both of which live in catch-and-log blocks and would
+// otherwise fail silently: peek/clearPendingCardComments -> ask_run_links.comment_ids at
+// launch, and stampSentRunId on the FIRST state event.
+test('a card with pending comment ids: launch moves them onto the link row, the first state event stamps sent_run_id', async () => {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const { addDiffComment, getDiffComment, setPendingCardComments } = await import('../src/core/diff-comments.mjs');
+  const { writeFile } = await import('node:fs/promises');
+  const PATCH = 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-a\n+b\n';
+  const seeded = await seedPipeline(projectDir, { title: 'Prior run', status: 'done' });
+  await writeFile(join(seeded.dir, 'diff-patch.patch'), PATCH, 'utf8');
+  const comment = addDiffComment({ storeKey: seeded.key, pipelineId: seeded.id, patchText: PATCH,
+    path: 'a.js', side: 'new', line: 1, body: 'fix me', author: 'user' });
+
+  const { thread, card } = await proposeCard({ projectKey }, 'propose a run for this project');
+  assert.ok(card);
+  assert.equal(setPendingCardComments(card.id, [comment.id]), 1);
+
+  const w = openWs();
+  await w.opened;
+  const start = await post('/api/run', {
+    projectDir, prompt: card.card.brief, workflowId: card.card.workflowId,
+    guardrailsId: card.card.guardrailsId, title: card.card.title,
+    askThreadId: thread.id, askCardId: card.id,
+  });
+  assert.equal(start.status, 200);
+  const { runId } = await start.json();
+  const stopPump = autoAnswerRun(runId);
+
+  const snap1 = await snapshot(thread.id);
+  assert.deepEqual(snap1.runLinks[0].commentIds, [comment.id], 'moved onto the link row at launch');
+  assert.equal(getDiffComment(comment.id).sentRunId, null, 'NOT stamped at launch — only on a state event');
+
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-run-status').some((s) => typeof s.pipelineId === 'string' && s.pipelineId));
+  const snap2 = await snapshot(thread.id);
+  assert.ok(snap2.runLinks[0].pipelineId);
+  await waitFor(() => getDiffComment(comment.id).sentRunId === snap2.runLinks[0].pipelineId);
+  const stamped = getDiffComment(comment.id);
+  assert.equal(stamped.sentRunId, snap2.runLinks[0].pipelineId, 'the 8-hex History id, never the runs-Map UUID');
+  assert.notEqual(stamped.sentRunId, runId);
+  assert.equal(stamped.resolved, false, 'stamping never auto-resolves');
+  stopPump();
+  w.ws.close();
+});
+
 test('workspace card: Start posts the workspace body; entry kind is workspace-run', async () => {
   const { thread, card } = await proposeCard({ workspaceId }, 'propose a run here');
   assert.ok(card);

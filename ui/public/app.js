@@ -25,6 +25,7 @@ const state = {
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
   channelIds: [], // known channel ids from /api/agents (drives the agent editor)
   historyAll: [],    // full /api/history dataset; client-side filter cache
+  commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
 
@@ -619,6 +620,20 @@ function handleServerMessage(msg) {
   if (msg.type === 'workspaces-changed') {
     refreshAllCounts();
     if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
+  // A diff comment changed — from this tab, another tab, or the Ask assistant's MCP
+  // tools (which run in a child process and reach us through the turn). A poke
+  // carrying ids only: the open Diff tab refetches its comments and re-renders the
+  // CARDS in place, never the diff. Tabs showing another run ignore it.
+  if (msg.type === 'diff-comments-changed') {
+    // The open tab's repaint comes FIRST, so the poke survives even if the counts
+    // refresh ever throws.
+    if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
+      void hdCommentState.reload();
+    }
+    void refreshCommentCounts();
     return;
   }
 
@@ -9085,6 +9100,7 @@ async function loadHistoryView({ force = false } = {}) {
   }
   const pipelines = Array.isArray(data.pipelines) ? data.pipelines : [];
   state.historyAll = pipelines;
+  void refreshCommentCounts();   // non-blocking: the pill lands on the next tick
   state.ghAvailable = !!data.ghAvailable;
   restoreHistoryFilter();
   paintHistory();                                        // fresh skeleton repaint
@@ -9726,6 +9742,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
 
   renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
+  renderHistCommentPill(node.querySelector('.hist-cmt-pill'), p);
 
   // Branch line: "source → destination" plus a copy button for the destination.
   // Legacy rows may lack sourceBranch — then the source half (and arrow) stays
@@ -9780,6 +9797,29 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   });
   node.querySelector('.hist-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
   return node;
+}
+
+// Unresolved diff-comment counts, keyed "<storeKey>/<pipelineId>" — the same key
+// the server groups by. Its own fetch rather than a field on /api/history: that
+// response has a localStorage skeleton cache (test/ui-history-cache.test.mjs), so a
+// cached paint would render a stale pill.
+async function refreshCommentCounts() {
+  try {
+    const res = await fetch('/api/diff-comments/counts');
+    if (!res.ok) return;
+    const out = await res.json();
+    state.commentCounts = (out && out.counts) || {};
+  } catch { return; }
+  if (currentView() === 'history') paintHistory();
+}
+
+function renderHistCommentPill(pill, p) {
+  if (!pill) return;
+  const n = (state.commentCounts || {})[`${p && p.projectKey}/${p && p.id}`] || 0;
+  if (!n) { pill.hidden = true; return; }
+  pill.hidden = false;
+  pill.querySelector('.hist-cmt-count').textContent = String(n);
+  pill.title = `${n} unresolved diff comment${n === 1 ? '' : 's'}`;
 }
 
 // Diff pill: merged PR -> hidden ("the diff is no longer the story"); survived
@@ -9845,6 +9885,23 @@ function historyDiffUrl(id, record) {
   const key = record && record.projectKey ? record.projectKey : '';
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/diff`;
 }
+
+// Twin of historyDiffUrl for the comments family. The /api/history/:key/:id key
+// regex forbids a slash, so a workspace run MUST use the /api/workspaces arm — the
+// same split logs and diffs already carry.
+function historyCommentsUrl(id, record, suffix = '') {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/comments${suffix}`;
+  }
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/comments${suffix}`;
+}
+
+// The History store key of a record — byte-identical to the `storeKey` the server
+// puts in a diff-comments-changed frame. Workspace records already carry the
+// "workspaces/" prefix (historyDiffUrl strips it to build its URL).
+const hdStoreKey = (record) => (record && record.projectKey) || '';
 
 // Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
 function issueList(rows) {
@@ -10072,6 +10129,11 @@ function parseHistDetailParam(param) {
 }
 
 let histDetailState = null; // { key, id, record, data, screen } while open
+// The open Diff tab's comment layer, published so the WS router can poke it.
+// Assigned by buildHdDiff, cleared by closeHistDetail and by the next buildHdDiff.
+// `reload` refetches the comments and repaints CARDS ONLY — never the diff, never
+// the patch (D18).
+let hdCommentState = null; // { key, id, reload }
 // One-shot "the user pressed Create PR on the list card" intent, consumed by
 // openHistDetail unconditionally so it can never strand across visits.
 let pendingShipIt = null;   // { id, projectKey } | null
@@ -10164,8 +10226,9 @@ function closeHistDetail({ instant = false } = {}) {
   const shell = el.histShell;
   const host = el.histDetail;
   if (!shell || !host) return;
-  if (!shell.classList.contains('detail-open')) { histDetailState = null; return; }
+  if (!shell.classList.contains('detail-open')) { histDetailState = null; hdCommentState = null; return; }
   histDetailState = null;
+  hdCommentState = null;
   host.setAttribute('aria-hidden', 'true');
   // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
   const list = shell.querySelector('.hist-screen-list');
@@ -11163,6 +11226,162 @@ function refreshHdOverviewTab() {
 
 // --- Diff tab: file list + patch viewer -------------------------------------
 
+const HD_CMT_BLOCK = 'hd-cmt-block';
+
+// Comments indexed by the SAME key the patch index uses, so a card and its section
+// can never disagree about which file they belong to. The server already orders by
+// path, line and creation (D17); that order is preserved inside each bucket.
+function hdCommentIndex(list) {
+  const byFile = new Map();
+  for (const c of Array.isArray(list) ? list : []) {
+    const key = sectionKey(c.projectKey || null, c.path);
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key).push(c);
+  }
+  return byFile;
+}
+
+const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved).length;
+
+function hdCmtStamp(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const s = d.toISOString();
+  return `${s.slice(0, 10)} ${s.slice(11, 16)}`;
+}
+
+// The live row for one anchor inside the CURRENT window, or null. hdDiffRow stamps
+// data-old AND data-new on every row, using '' where that side has no number, so
+// an exact-value match is unambiguous: a ctx row carries both, a del row only the
+// old, an add row only the new.
+function hdRowFor(body, comment) {
+  const attr = comment.side === 'old' ? 'data-old' : 'data-new';
+  return body.querySelector(`.hd-dl-row[${attr}="${cssEscape(String(comment.line))}"]`);
+}
+
+// One comment card. Actions are wired to `ctx` (the per-tab controller) rather than
+// to captured DOM, so a repaint after a WS poke rebuilds them cleanly.
+function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
+  const card = doc.createElement('div');
+  card.className = `hd-cmt-card${comment.resolved ? ' resolved' : ''}${detached ? ' detached' : ''}`;
+  card.dataset.commentId = comment.id;
+
+  const head = doc.createElement('div');
+  head.className = 'hd-cmt-head';
+  const who = doc.createElement('span');
+  who.className = `hd-cmt-author ${comment.author === 'ask' ? 'ask' : 'user'}`;
+  who.textContent = comment.author === 'ask' ? 'Ask' : 'User';
+  const when = doc.createElement('span');
+  when.className = 'hd-cmt-time';
+  when.textContent = hdCmtStamp(comment.createdAt);
+  head.append(who, when);
+  if (comment.resolved) {
+    const tag = doc.createElement('span');
+    tag.className = 'hd-cmt-tag';
+    tag.textContent = 'Resolved';
+    head.appendChild(tag);
+  }
+  if (comment.sentRunId) {
+    const sent = doc.createElement('span');
+    sent.className = 'hd-cmt-sent';
+    sent.textContent = `sent to #${comment.sentRunId}`;
+    head.appendChild(sent);
+  }
+  card.appendChild(head);
+
+  if (detached) {
+    // The anchor could not be rendered (cut by the parse cap, a binary section, or
+    // a path that is not in the patch at all). The comment is NEVER dropped — the
+    // line_text snapshot is exactly what this case exists for. Anchoring is
+    // exact-match only; nothing is ever re-attached to a "nearby" line.
+    const where = doc.createElement('div');
+    where.className = 'hd-cmt-where mono';
+    where.textContent = `${comment.path}:${comment.line} (${comment.side})`;
+    const quoted = doc.createElement('div');
+    quoted.className = 'hd-cmt-quote mono';
+    quoted.textContent = comment.lineText || '';
+    card.append(where, quoted);
+  }
+
+  const bodyEl = doc.createElement('div');
+  bodyEl.className = 'hd-cmt-body';
+  bodyEl.textContent = comment.body;        // textContent: comment bodies are never markup
+  card.appendChild(bodyEl);
+
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  const act = (cls, text, fn) => {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = `hd-cmt-btn ${cls}`;
+    b.textContent = text;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    return b;
+  };
+  actions.append(
+    act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved); }),
+    act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
+    act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+  );
+  card.appendChild(actions);
+  return card;
+}
+
+/** The inline composer, opened from a row's + button. */
+function hdCommentComposer(doc, anchor, ctx, onClose) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'hd-cmt-composer';
+  const ta = doc.createElement('textarea');
+  ta.className = 'hd-cmt-input';
+  ta.rows = 3;
+  ta.placeholder = 'Leave a note on this line…';
+  ta.setAttribute('aria-label', `Comment on ${anchor.path} line ${anchor.line}`);
+  const msg = doc.createElement('div');
+  msg.className = 'hd-cmt-err';
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  const save = doc.createElement('button');
+  save.type = 'button';
+  save.className = 'hd-cmt-btn hd-cmt-save';
+  save.textContent = 'Comment';
+  const cancel = doc.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'hd-cmt-btn hd-cmt-cancel';
+  cancel.textContent = 'Cancel';
+  actions.append(save, cancel);
+  wrap.append(ta, msg, actions);
+
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    save.disabled = true;
+    const err = await ctx.create(anchor, text);
+    save.disabled = false;
+    if (err) { msg.textContent = err; return; }
+    onClose();
+  };
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); onClose(); });
+  save.addEventListener('click', (e) => { e.stopPropagation(); void submit(); });
+  // Bound to `wrap`, NOT to `ta`. The Escape guard opts the whole `.hd-cmt-composer`
+  // subtree out of the global Escape handler, so if this listener only covered the
+  // textarea, Escape while the Comment/Cancel button had focus would be swallowed by
+  // the guard and handled by nobody — the draft would neither close nor navigate.
+  // keydown bubbles, so one listener on `wrap` covers the textarea and both buttons.
+  wrap.addEventListener('keydown', (e) => {
+    // Cmd/Ctrl+Enter saves, Esc cancels.
+    //
+    // stopPropagation() here is NOT what makes Esc safe — see D20. The handler that
+    // would throw the draft away (`location.hash = 'history'`) is registered on
+    // `document` in the CAPTURE phase, so it has already run by the time this
+    // bubble-phase listener sees the event. That handler gets an explicit guard
+    // instead. stopPropagation stays only to shield the draft from BUBBLE-phase
+    // document listeners.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); void submit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+  });
+  return { wrap, focus: () => { try { ta.focus(); } catch { /* detached */ } } };
+}
+
 // File rows for the Diff tab. Single-project: results.newFiles + changedFiles.
 // Workspace: one group per results.perProject[<key>] (a workspace results object
 // has NO top-level file arrays), with the project key carried so patch sections
@@ -11305,6 +11524,7 @@ function hdDiffView(parsed, ownsBody) {
     applied: new Set(),   // hunks whose highlight decision is final
     highlighted: false,   // highlightParsed() has run and set line.html
     hunkIndex: 0, lineIndex: 0, renderedLines: 0,
+    onWindow: null,       // (body, meta) after each window connects — the comment layer
   };
 }
 
@@ -11404,10 +11624,15 @@ function hdDiffAppendWindow(doc, body, view, meta, tail) {
     frag.appendChild(more);
   }
   body.insertBefore(frag, tail);
+  // Rendering is windowed, so a comment whose row is still hidden has nothing to
+  // hang on. Every window that connects gets its cards here — the "Show more"
+  // button re-enters through this same function, so it is covered too.
+  if (typeof view.onWindow === 'function') view.onWindow(body, meta);
 }
 
 function buildHdDiff(sec, record, data) {
   sec.innerHTML = '';
+  hdCommentState = null;   // a new Diff tab supersedes the old one's poke target
   const results = data.results;
   if (!results) {
     const empty = document.createElement('div');
@@ -11455,13 +11680,289 @@ function buildHdDiff(sec, record, data) {
   rowsHost.className = 'hd-diff-rows';
   listCard.appendChild(rowsHost);
 
-  const rows = hdDiffFileRows(results);
+  const baseRows = hdDiffFileRows(results);
   // patchPromise memoizes the ONE fetch (concurrent selects await the same
   // promise — a bare boolean flag would let a second click read a null index
   // mid-flight); selEpoch drops the stale continuation when the user picks
   // another file while the patch is still downloading (without it both selects
   // resume after the await and append two bodies to the same pane).
   const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
+
+  // ---- the comment layer ---------------------------------------------------
+  const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null };
+  let commentsPromise = null;
+  let lastPick = null;   // { entry, key } — the file currently selected
+  let lastMeta = null;   // diffSectionMeta of the body currently in the pane
+
+  const hdPaneLive = () => pane.isConnected && !!histDetailState?.screen?.contains(pane);
+
+  async function fetchComments() {
+    try {
+      const res = await fetch(historyCommentsUrl(record.id, record));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const out = await res.json();
+      cstate.comments = Array.isArray(out.comments) ? out.comments : [];
+      cstate.patchAvailable = !!out.patchAvailable;
+    } catch {
+      // A failed comment load never breaks the diff: keep whatever we had and leave
+      // creation disabled. NOTE the recovery is re-picking a file or reopening the
+      // screen — NOT the next poke: armCommentGutter runs only from select() (it is
+      // what owns the body's listeners), and reload() deliberately touches cards and
+      // badges only. A poke restores the cards; the '+' comes back on the next select.
+      cstate.patchAvailable = false;
+    }
+    cstate.byFile = hdCommentIndex(cstate.comments);
+  }
+  // NOTE paintFileList() already calls paintCommentBadges() on BOTH of its arms, so
+  // reload() must not call it a second time (harmless, but it doubles the DOM walk
+  // on every poke).
+  function ensureComments() {
+    if (!commentsPromise) commentsPromise = fetchComments();
+    return commentsPromise;
+  }
+
+  const ctx = {
+    canCreate: () => cstate.patchAvailable,
+    for: (project, path) => cstate.byFile.get(sectionKey(project || null, path)) || [],
+    /** @returns {Promise<string|null>} an error message to show inline, or null */
+    async create(anchor, body) {
+      try {
+        const res = await fetch(historyCommentsUrl(record.id, record), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...(anchor.project ? { project: anchor.project } : {}),
+            path: anchor.path, side: anchor.side, line: anchor.line, body,
+          }),
+        });
+        if (!res.ok) {
+          let m = `could not save (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          return m;
+        }
+      } catch { return 'network error — the comment was not saved'; }
+      await reload();
+      return null;
+    },
+    async setResolved(comment, resolved) {
+      try {
+        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolved }),
+        });
+      } catch { /* the WS poke or the next open corrects it */ }
+      await reload();
+    },
+    async remove(comment) {
+      const ok = await confirmModal({
+        title: 'Delete this comment?',
+        message: 'Comments cannot be recovered. This does not change the diff or the run.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), { method: 'DELETE' });
+      } catch { /* as above */ }
+      await reload();
+    },
+    toAsk(comment) { askAboutDiffComment(comment); },
+  };
+
+  // A comment can name a path the patch does not contain (or the patch may be gone
+  // entirely). Such a path gets a SYNTHETIC file row so it is reachable and counts
+  // in the badges; selecting it lands in the no-section branch, which renders its
+  // detached cards.
+  function syntheticCommentRows() {
+    const have = new Set(baseRows.map((r) => sectionKey(r.project ?? null, r.f.path)));
+    const extra = [];
+    for (const [key, list] of cstate.byFile) {
+      if (have.has(key)) continue;
+      const c = list[0];
+      // `f` carries the path and NOTHING else on purpose: hdFileCountsNode returns an
+      // EMPTY chip when `f.added == null`, so a synthetic row shows no counts at all
+      // rather than a bogus "+0 −0" for a file that has no diff here. fileStatus()
+      // with no `status` and isNew:false lands on 'mod', and renderFile's aria-label
+      // degrades to "0 lines added, 0 lines removed".
+      extra.push({ project: c.projectKey || null, f: { path: c.path }, isNew: false, synthetic: true });
+      have.add(key);
+    }
+    return extra;
+  }
+
+  // renderFileTree's `counts` slot is one-shot and has no update hook, so badges are
+  // painted onto the buttons afterwards. `btn.dataset.project` is '' (never null) for
+  // a single-project run, and sectionKey('', p) === sectionKey(null, p) === p, so
+  // `|| null` below is belt-and-braces, not a fix.
+  function paintCommentBadges() {
+    for (const btn of rowsHost.querySelectorAll('.hd-diff-file')) {
+      const n = hdUnresolved(cstate.byFile.get(sectionKey(btn.dataset.project || null, btn.dataset.path)));
+      let badge = btn.querySelector('.hd-cmt-badge');
+      if (!n) { badge?.remove(); continue; }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'hd-cmt-badge';
+        btn.appendChild(badge);
+      }
+      badge.textContent = String(n);
+      badge.title = `${n} unresolved comment${n === 1 ? '' : 's'}`;
+    }
+  }
+
+  // D19: the tree is re-rendered ONLY when the synthetic-row set moves, and only
+  // into rowsHost — never the pane, so the open diff and its window cursor are
+  // untouched. `initialKey` re-activates the selected button without firing onPick.
+  // @returns the first file node, or null when there is nothing to select.
+  function paintFileList({ force = false } = {}) {
+    const extra = syntheticCommentRows();
+    // Join on a SEPARATOR, never ''. With an empty joiner ['ab','c'] and ['a','bc']
+    // hash the same, so a real change to the synthetic-row set would be skipped and
+    // the new file row would never appear.
+    const sig = extra.map((r) => sectionKey(r.project, r.f.path)).join('\u0001');
+    if (!force && sig === cstate.treeSig) { paintCommentBadges(); return null; }
+    cstate.treeSig = sig;
+    const nodes = buildFileTree([...baseRows, ...extra]);
+    const firstNode = firstFile(nodes);
+    const tree = renderFileTree(nodes, {
+      doc: document,
+      initialKey: (lastPick && lastPick.key) || firstNode?.key || null,
+      counts: (entry) => hdFileCountsNode(document, entry.f),
+      onPick: (entry, key) => { lastPick = { entry, key }; select(entry, key).catch(() => {}); },
+    });
+    rowsHost.replaceChildren(tree);
+    paintCommentBadges();
+    return firstNode;
+  }
+
+  // Cards for every comment of this file: under its row when that row is in the
+  // CURRENT window, in the detached block otherwise. Idempotent — a later window
+  // never doubles a card, and a comment whose window has just materialised loses
+  // its detached copy in the same pass.
+  function attachComments(body, meta) {
+    const list = ctx.for(meta.project, meta.path);
+    const orphans = [];
+    for (const comment of list) {
+      const row = hdRowFor(body, comment);
+      if (!row) { orphans.push(comment); continue; }
+      body.querySelector(`.hd-cmt-detached [data-comment-id="${cssEscape(comment.id)}"]`)?.remove();
+      if (body.querySelector(`.hd-cmt-block [data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+      let block = row.nextElementSibling;
+      // An open composer is a block too; never append a saved card into it (and
+      // never treat it as this line's card block).
+      if (!block || !block.classList.contains(HD_CMT_BLOCK)
+        || block.dataset.composer === '1' || block.dataset.line !== String(comment.line)) {
+        block = document.createElement('div');
+        block.className = HD_CMT_BLOCK;
+        block.dataset.line = String(comment.line);
+        block.dataset.side = comment.side;
+        row.after(block);
+      }
+      block.appendChild(hdCommentCard(document, comment, ctx));
+    }
+    paintDetached(body, orphans);
+  }
+
+  // A comment whose anchor is not renderable still shows — as a detached card at
+  // the BOTTOM of the pane, below the truncation / no-textual-diff note.
+  //
+  // The block is re-appended on EVERY call, not only when it is created: `tail` is
+  // null for any file that is not truncated, and hdDiffAppendWindow's
+  // `body.insertBefore(frag, tail)` degrades to a plain append when tail is null.
+  // So on a long-but-not-truncated file the next "Show more" window would land
+  // AFTER this block and strand it mid-diff, where it would stay for every further
+  // window. appendChild MOVES an already-connected node, so calling it
+  // unconditionally is both the fix and a no-op when the block is already last.
+  function paintDetached(body, orphans) {
+    let block = body.querySelector(':scope > .hd-cmt-detached');
+    if (!orphans.length) { block?.remove(); return; }
+    if (!block) {
+      block = document.createElement('div');
+      block.className = 'hd-cmt-detached';
+      const head = document.createElement('div');
+      head.className = 'hd-cmt-detached-head';
+      head.textContent = 'Comments on lines not shown here';
+      block.appendChild(head);
+    }
+    body.appendChild(block);   // create OR re-home: always the last child
+    const keep = new Set(orphans.map((c) => c.id));
+    for (const card of block.querySelectorAll('[data-comment-id]')) {
+      if (!keep.has(card.dataset.commentId)) card.remove();
+    }
+    for (const comment of orphans) {
+      if (block.querySelector(`[data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+      block.appendChild(hdCommentCard(document, comment, ctx, { detached: true }));
+    }
+  }
+
+  // D18: patch the CARDS of the body already on screen. NEVER re-run select() — it
+  // starts with pane.innerHTML = '', which would discard the window cursor and the
+  // scroll position of anyone who had clicked "Show more".
+  function repaintCards() {
+    const body = pane.querySelector('.hd-diff-body');
+    if (!body || !lastMeta) return;
+    for (const el of body.querySelectorAll(':scope > .hd-cmt-block, :scope > .hd-cmt-detached')) {
+      if (el.dataset.composer === '1') continue;   // never destroy an open draft
+      el.remove();
+    }
+    attachComments(body, lastMeta);
+  }
+
+  // What a diff-comments-changed poke calls, and what every local mutation calls
+  // after its request settles. Refetch, repaint badges + cards. The patch is never
+  // refetched (pstate memoizes it) and the diff is never rebuilt.
+  async function reload() {
+    commentsPromise = null;
+    await ensureComments();
+    if (!hdPaneLive()) return;
+    const late = paintFileList();     // paints the badges on both of its arms
+    repaintCards();
+    // Nothing was selectable before (no results files) but comments now name one.
+    if (!lastPick && late) { lastPick = { entry: late.entry, key: late.key }; await select(late.entry, late.key); }
+  }
+
+  // ONE button per body, moved into the hovered row's code cell. A button per row
+  // would double the node count HD_DIFF_WINDOW_LINES exists to bound, and
+  // `.hd-dl-row{display:contents}` gives the row no box for a CSS :hover to match
+  // anyway — so hover is delegated. It rides in `.hd-dl-code`, NEVER in
+  // `.hd-dl-src`: hdApplyHighlights calls replaceChildren on that span.
+  function armCommentGutter(body, meta) {
+    if (!ctx.canCreate()) return;              // no patch: read-only, no creation
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hd-cmt-add';
+    btn.title = 'Comment on this line';
+    btn.setAttribute('aria-label', 'Comment on this line');
+    btn.textContent = '+';
+    let armed = null;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!armed || !body.contains(armed)) return;
+      // A ctx row carries BOTH numbers; the brief anchors it on the new side.
+      const side = armed.dataset.new ? 'new' : 'old';
+      const line = Number(armed.dataset.new || armed.dataset.old);
+      if (!Number.isSafeInteger(line) || line < 1) return;   // an unnumbered row is not anchorable
+      body.querySelector(':scope > .hd-cmt-block[data-composer="1"]')?.remove();  // one draft at a time
+      const host = document.createElement('div');
+      host.className = HD_CMT_BLOCK;
+      host.dataset.composer = '1';
+      host.dataset.line = String(line);
+      armed.after(host);
+      const { wrap, focus } = hdCommentComposer(
+        document, { project: meta.project || null, path: meta.path, side, line }, ctx,
+        () => host.remove());
+      host.appendChild(wrap);
+      focus();
+    });
+    body.addEventListener('mouseover', (e) => {
+      const row = e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null;
+      if (!row || !body.contains(row)) return;
+      if (!row.dataset.new && !row.dataset.old) return;      // no line number -> not anchorable
+      armed = row;
+      const code = row.querySelector('.hd-dl-code');
+      if (code && btn.parentElement !== code) code.prepend(btn);
+    });
+    body.addEventListener('mouseleave', () => { btn.remove(); armed = null; });
+  }
 
   function ensurePatch() {
     if (!pstate.patchPromise) {
@@ -11499,7 +12000,9 @@ function buildHdDiff(sec, record, data) {
     ph.append(selectedPath, hdFileCountsNode(document, entry.f));
     pane.appendChild(ph);
 
-    await ensurePatch();
+    // Both loads, not just the patch — so the first window already has cards and
+    // canCreate() is decided before the gutter is armed.
+    await Promise.all([ensurePatch(), ensureComments()]);
     if (epoch !== pstate.selEpoch
       || !pane.isConnected
       || !histDetailState?.screen?.contains(pane)) return;
@@ -11508,6 +12011,7 @@ function buildHdDiff(sec, record, data) {
     body.className = 'hd-diff-body mono';
     const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
     const meta = diffSectionMeta(entry, fileKey, section);
+    lastMeta = meta;                                   // what repaintCards re-attaches against
     if (!section) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -11517,6 +12021,7 @@ function buildHdDiff(sec, record, data) {
         ? `Could not load the patch: ${pstate.error}`
         : '(no textual diff for this file)';
       body.appendChild(note);
+      attachComments(body, meta);                      // detached cards below the note
       pane.appendChild(body);
       return;
     }
@@ -11528,6 +12033,7 @@ function buildHdDiff(sec, record, data) {
       setSectionData(note, meta);
       note.textContent = '(no textual diff for this file)';
       body.appendChild(note);
+      attachComments(body, meta);                      // same for binary / hunk-less
       pane.appendChild(body);
       return;
     }
@@ -11537,6 +12043,7 @@ function buildHdDiff(sec, record, data) {
       && pane.contains(body)
       && histDetailState?.screen?.contains(pane);
     const view = hdDiffView(parsed, ownsBody);
+    view.onWindow = (b, m) => attachComments(b, m);    // every window, incl. "Show more"
     // The size-cap note is about rows the PARSER dropped, so it stays the last
     // row; every window (and the show-more control) is inserted above it.
     let tail = null;
@@ -11548,6 +12055,7 @@ function buildHdDiff(sec, record, data) {
       body.appendChild(tail);
     }
     hdDiffAppendWindow(document, body, view, meta, tail);
+    armCommentGutter(body, meta);                      // once per rendered body
     body.style.setProperty('--hd-gutter-width', `calc(${view.digits}ch + 16px)`);
     pane.appendChild(body);
 
@@ -11558,22 +12066,36 @@ function buildHdDiff(sec, record, data) {
     }
   }
 
-  const nodes = buildFileTree(rows);
-  const first = firstFile(nodes);
-  const tree = renderFileTree(nodes, {
-    doc: document,
-    initialKey: first?.key ?? null,
-    counts: (entry) => hdFileCountsNode(document, entry.f),
-    onPick: (entry, key) => { select(entry, key).catch(() => {}); },
-  });
-  rowsHost.appendChild(tree);
-  if (first) select(first.entry, first.key).catch(() => {});
-  else {
+  // The file list paints immediately from `results`; the comment load runs in
+  // parallel and repaints when it lands, so the first paint is never blocked on a
+  // second round trip — while select() still awaits both, so cards attach in the
+  // first window rather than a tick later.
+  const firstNode = paintFileList({ force: true });
+  if (firstNode) {
+    lastPick = { entry: firstNode.entry, key: firstNode.key };
+    select(firstNode.entry, firstNode.key).catch(() => {});
+  } else {
     const none = document.createElement('div');
     none.className = 'hint hd-diff-none';
     none.textContent = '(no files changed)';
     pane.appendChild(none);
   }
+  // Publish the poke target BEFORE the first fetch settles: a mutation from another
+  // tab can land while this one is still loading.
+  hdCommentState = { key: hdStoreKey(record), id: record.id, reload };
+  void ensureComments().then(() => {
+    if (!hdPaneLive()) return;
+    // Synthetic rows may appear now (a comment on a path the patch never had, or a
+    // run whose patch is gone entirely — D7 rule 4: the list comes from comments).
+    const late = paintFileList();
+    if (!lastPick && late) {
+      lastPick = { entry: late.entry, key: late.key };
+      select(late.entry, late.key).catch(() => {});
+    } else if (lastPick) {
+      paintCommentBadges();
+      repaintCards();
+    }
+  });
 }
 
 // --- Overview tab: verdict, stat cards, task card ---------------------------
@@ -12548,6 +13070,11 @@ document.addEventListener('keydown', (e) => {
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  // An open diff-comment composer owns Escape: it cancels the draft (the textarea's
+  // own keydown does that) instead of sending the whole detail screen back to the
+  // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
+  // a guard here is the only way to opt a subtree out.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
   const ship = document.getElementById('shipit-modal');
   if (ship && !ship.classList.contains('hidden')) return;
   // Symmetry with the Running arm below. #stop-modal also opens from a LIST card,
@@ -14335,6 +14862,15 @@ const _timerTick = setInterval(() => {
 if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
 // ---- Ask Worca seams (§10.2) ----------------------------------------------
+
+// Append a reference to the chat composer WITHOUT sending, so several comments can
+// stack and the user presses send once. Plain text: the [worca context] block is
+// server-built and any attempt to forge one here is flattened server-side.
+function askAboutDiffComment(comment) {
+  const where = `${comment.path}:${comment.line} (${comment.side})`;
+  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}] "${comment.body}"`);
+}
+
 // Server-resolvable page context only (§6.5 keys); the server re-validates and
 // resolves every id against its own rows — never send titles or names.
 function getPageContext() {
@@ -14357,6 +14893,13 @@ function getPageContext() {
       ctx.pipelineId = p.id;
       if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
       else ctx.projectKey = p.projectKey;
+      // The file open in the Diff tab, so "this file" / "the comments here" resolve
+      // without the user naming a path. A repo-relative path is server-resolvable
+      // data — the "never a title, never a name" rule above holds.
+      // Scoped to the LIVE screen, not a global selector: getPageContext reads the
+      // hash, which can already name a detail that is mid-teardown.
+      const selected = histDetailState?.screen?.querySelector('.hd-diff-file.active');
+      if (selected && selected.dataset.path) ctx.diffPath = selected.dataset.path;
       return ctx;
     }
   }

@@ -26,6 +26,11 @@ import {
   listArtifacts, lookupPipelineRow, findPipelineRowById,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import {
+  addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved,
+  deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
+  peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
+} from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -383,6 +388,32 @@ function broadcast(obj) {
 // on its next view switch / reload (the agreed product behavior).
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
+}
+
+// Every comment mutation in THIS process (the REST routes below) pokes the open
+// Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
+// ordering concerns; the client refetches and repaints its CARDS, never the diff.
+// MCP-side mutations happen in the stdio CHILD process and cannot reach this
+// listener; they arrive through the turn's comment hook instead.
+onDiffCommentsChanged(({ storeKey, pipelineId }) => {
+  broadcast({ type: 'diff-comments-changed', storeKey, pipelineId });
+});
+
+/** Resolve an 8-hex pipeline id to its History store key and poke the open Diff
+ *  tabs. Used for MCP-side writes, which happen in the stdio CHILD process and
+ *  cannot reach the listener above. The frame is byte-identical to the REST one,
+ *  so the client has ONE code path. findPipelineRowById is key-agnostic and
+ *  includes archived rows. Exported through `_testing` — the wiring at the ask
+ *  turn is a one-liner precisely so this function is the whole testable surface. */
+function emitDiffCommentsChanged(runId) {
+  try {
+    const row = findPipelineRowById(runId);
+    if (!row) return false;
+    const storeKey = (row.target === 'workspace' || row.workspace_key)
+      ? `workspaces/${row.workspace_key}` : row.project_key;
+    broadcast({ type: 'diff-comments-changed', storeKey, pipelineId: row.id });
+    return true;
+  } catch { return false; }   // a poke is best effort
 }
 
 // Append a tagged event to an entry's ring buffer (runId LAST so the runs-Map key
@@ -1107,6 +1138,23 @@ app.post('/api/run', async (req, res) => {
         if (!still || still.block.state !== 'proposed') throw new Error('card no longer proposed');
         askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
         flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        // The card's pending comment ids move onto the link row, keyed by the minted
+        // UUID exactly as pipeline_id is before it exists. Consumed one-shot: a card
+        // launches at most once. Own try/catch — comment bookkeeping must never
+        // abort the card flip or the run.
+        try {
+          // Read, WRITE, then consume — not consume-then-write. A combined take()
+          // deletes the rows it returns, so if askUpdateRunLink throws in between (its
+          // catch here only logs) the ids are gone and the sent_run_id stamp is lost
+          // with no way to recover them. peek/commit keeps the delete on the success
+          // path only; a second launch of the same card cannot happen anyway (the
+          // card must be in state 'proposed' above).
+          const pendingComments = peekPendingCardComments(askLink.cardId);
+          if (pendingComments.length) {
+            askUpdateRunLink(askLink.threadId, runId, { commentIds: pendingComments });
+            clearPendingCardComments(askLink.cardId);
+          }
+        } catch (e) { console.error('[diff-comments] pending-card handoff failed:', e && e.message ? e.message : e); }
         const startedMsg = askAppendMessage(askLink.threadId, {
           role: 'system',
           text: `Run started — "${title}"`,
@@ -1133,6 +1181,13 @@ app.post('/api/run', async (req, res) => {
               if (patch.phase !== undefined) linkPatch.phase = patch.phase;
               const row = Object.keys(linkPatch).length
                 ? askUpdateRunLink(askLink.threadId, runId, linkPatch) : null;
+              // The 8-hex History id lands on the FIRST state event (follow.mjs guards
+              // "first truthy sight only"), which is the first moment a
+              // "sent to #<runId>" marker could point anywhere real. Never the
+              // runs-Map UUID, never at launch, and never a resolve.
+              if (linkPatch.pipelineId && row && row.commentIds.length) {
+                try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
+              }
               if (patch.cardFailed) {
                 flipCard(askLink.threadId, askLink.cardId, { state: 'failed', error: patch.cardFailed });
               }
@@ -1763,6 +1818,161 @@ app.get('/api/history/:key/:id/log', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Internal, line-anchored diff comments. Bound to BOTH route families below: the
+// /api/history/:key/:id key regex forbids a slash, so a workspace run (store key
+// "workspaces/<id>") can only be reached through /api/workspaces/:id/runs/:runId —
+// the same split the /diff and /log routes already carry. One handler set, two
+// registrations: the two can never diverge.
+//
+// Traversal posture matches the /diff route below: the run dir comes from a DB row
+// via readRunArtifactText, and the relPath is the CONSTANT DIFF_PATCH_FILE. No
+// route here ever passes user input as a path.
+// ---------------------------------------------------------------------------
+
+// The history key regex is an inline literal on every route in this family; this
+// block keeps that convention rather than introducing a shared constant the rest
+// of the file does not use.
+const commentsHistoryKey = (res, key) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(key)) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  return key;
+};
+const commentsWorkspaceKey = (res, id) => {
+  if (!WORKSPACE_KEY_RE.test(id)) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return `workspaces/${id}`;
+};
+const commentIdParam = (res, value) => {
+  if (typeof value !== 'string' || !DC_ID_RE.test(value)) {
+    res.status(400).json({ error: 'invalid comment id' });
+    return null;
+  }
+  return value;
+};
+const commentsFail = (res, err) => res.status(500).json({ error: err && err.message ? err.message : String(err) });
+
+/** The run row for a store key + id, or null after answering 404. */
+function commentRun(res, storeKey, id) {
+  const row = lookupPipelineRow(storeKey, id);
+  if (!row) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return row;
+}
+
+async function commentsList(res, storeKey, id) {
+  try {
+    const row = commentRun(res, storeKey, id);
+    if (!row) return;
+    // The UI needs to know whether the '+' affordance may appear at all; a run
+    // whose patch is gone (archived, or never captured) can only read and delete.
+    const patchText = await readRunArtifactText(storeKey, row.id, DIFF_PATCH_FILE);
+    res.json({ comments: listDiffComments(storeKey, row.id), patchAvailable: !!patchText });
+  } catch (err) { commentsFail(res, err); }
+}
+
+async function commentsCreate(req, res, storeKey, id) {
+  try {
+    const row = commentRun(res, storeKey, id);
+    if (!row) return;
+    const body = req.body || {};
+    const patchText = await readRunArtifactText(storeKey, row.id, DIFF_PATCH_FILE);
+    // `!patchText` covers BOTH null (absent/unreadable) and '' (present but empty):
+    // addDiffComment refuses the empty string too, and it must surface as 409, not
+    // as the 400 an anchor failure would get.
+    if (!patchText) {
+      // 409, not 400: the request is well-formed, the RUN is no longer commentable.
+      return res.status(409).json({ error: 'this run has no stored diff — comments cannot be created on it' });
+    }
+    const comment = addDiffComment({
+      storeKey, pipelineId: row.id, patchText,
+      project: body.project ?? null, path: body.path, side: body.side, line: body.line,
+      body: body.body, author: 'user',
+    });
+    res.status(201).json({ comment });
+  } catch (err) {
+    if (err instanceof DiffCommentError) return badRequest(res, err.message);
+    commentsFail(res, err);
+  }
+}
+
+/** A comment reached through a run URL must BELONG to that run — never id alone. */
+function commentOfRun(res, storeKey, id, cid) {
+  const row = commentRun(res, storeKey, id);
+  if (!row) return null;
+  const comment = getDiffComment(cid);
+  if (!comment || comment.storeKey !== storeKey || comment.pipelineId !== row.id) {
+    res.status(404).json({ error: 'comment not found' });
+    return null;
+  }
+  return comment;
+}
+
+function commentsPatch(req, res, storeKey, id, cid) {
+  try {
+    // Existence BEFORE shape: an unknown run must 404 on every verb, including a
+    // PATCH whose body happens to be malformed.
+    if (!commentOfRun(res, storeKey, id, cid)) return;
+    const raw = (req.body || {}).resolved;
+    if (typeof raw !== 'boolean') return badRequest(res, 'resolved must be a boolean');
+    res.json({ comment: setDiffCommentResolved(cid, raw) });
+  } catch (err) { commentsFail(res, err); }
+}
+
+function commentsDelete(res, storeKey, id, cid) {
+  try {
+    if (!commentOfRun(res, storeKey, id, cid)) return;
+    deleteDiffComment(cid);
+    res.json({ ok: true });
+  } catch (err) { commentsFail(res, err); }
+}
+
+app.get('/api/history/:key/:id/comments', async (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  await commentsList(res, key, req.params.id);
+});
+app.post('/api/history/:key/:id/comments', async (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  await commentsCreate(req, res, key, req.params.id);
+});
+app.patch('/api/history/:key/:id/comments/:cid', (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsPatch(req, res, key, req.params.id, cid);
+});
+app.delete('/api/history/:key/:id/comments/:cid', (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsDelete(res, key, req.params.id, cid);
+});
+
+app.get('/api/workspaces/:id/runs/:runId/comments', async (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  await commentsList(res, key, req.params.runId);
+});
+app.post('/api/workspaces/:id/runs/:runId/comments', async (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  await commentsCreate(req, res, key, req.params.runId);
+});
+app.patch('/api/workspaces/:id/runs/:runId/comments/:cid', (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsPatch(req, res, key, req.params.runId, cid);
+});
+app.delete('/api/workspaces/:id/runs/:runId/comments/:cid', (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsDelete(res, key, req.params.runId, cid);
+});
+
+// Unresolved counts for every run, for the History list pill. Its own endpoint
+// rather than a field on /api/history: that response has a localStorage skeleton
+// cache, so a cached paint would show a stale pill; and diff-comments-changed can
+// repaint pills from here without forcing a whole History reload.
+app.get('/api/diff-comments/counts', (_req, res) => {
+  try { res.json({ counts: unresolvedCounts() }); } catch (err) { commentsFail(res, err); }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/history/:key/:id/diff -> the run's persisted diff-patch.patch, inline
 // (text/x-diff). Exists only for runs that reached done (results are built on
 // the done path only); everything else 404s and the UI shows its empty state.
@@ -2286,6 +2496,8 @@ app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
   }
 });
 
+// NOTE: the /comments twins for workspace runs are registered with their project
+// siblings up at the diff-comments block — the pair must be read together.
 app.get('/api/workspaces/:id/runs/:runId/diff', async (req, res) => {
   if (!WORKSPACE_KEY_RE.test(req.params.id)) {
     return res.status(404).json({ error: 'pipeline not found' });
@@ -3226,6 +3438,7 @@ function askRunFromPipelineRow(row) {
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
   if (ctx.view) out.view = ctx.view;
+  if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
     if (ctx.projectKey || ctx.projectDir) {
       const projects = await listProjects();
@@ -3433,6 +3646,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         deps: {
           onFrame: stampAskFrames(id, job),
           onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
+          onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         },
       });
       job.turn = turn;
@@ -4416,4 +4630,5 @@ export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
+  emitDiffCommentsChanged,
 };

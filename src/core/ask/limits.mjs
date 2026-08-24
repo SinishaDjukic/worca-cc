@@ -32,6 +32,7 @@ export const ASK_LIMITS = Object.freeze({
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
   briefMaxChars: 8000,
+  commentBodyMaxChars: 4000,               // diff_comments.body cap (pinned equal to COMMENT_BODY_MAX)
   titleMaxChars: 120,
   headerRuns: 5,
   headerCards: 5,

@@ -360,9 +360,10 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): eleven tools with JSON-Schema inputs', () => {
+test('list(): fifteen tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment',
+    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);
@@ -603,6 +604,11 @@ test('propose_run passes through validateProposal; unknown tools and bad input a
   await assert.rejects(() => tools.call('nope', {}), { name: 'AskToolError', message: 'unknown tool: nope' });
   await assert.rejects(() => tools.call('get_run', 'not-an-object'), AskToolError);
   await assert.rejects(() => tools.call('get_run', { id: 'x', projectKey: 'a', workspaceId: 'b' }), { message: 'get_run: give projectKey OR workspaceId, not both' });
+});
+
+test('propose_run accepts commentIds and passes them through untouched', async () => {
+  assert.deepEqual(await tools.call('propose_run', { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] }),
+    { ok: true, card: { echoed: { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] } } });
 });
 
 // ── real readers on a temp home ──────────────────────────────────────────────

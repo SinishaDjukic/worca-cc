@@ -264,7 +264,8 @@ test('attachments: file under askRoot/<thread>/att/<id>.txt, thread-scoped reads
 test('run links: insert, update, list', () => {
   const t = createThread();
   const l = linkRun(t.id, { runId: 'run-a', cardId: 'card_00000001' });
-  assert.deepEqual(Object.keys(l).sort(), ['cardId', 'createdAt', 'phase', 'pipelineId', 'runId', 'status', 'threadId']);
+  assert.deepEqual(Object.keys(l).sort(),
+    ['cardId', 'commentIds', 'createdAt', 'phase', 'pipelineId', 'runId', 'status', 'threadId']);
   assert.equal(l.pipelineId, null);
   const u = updateRunLink(t.id, 'run-a', { pipelineId: '4e1f2a9b', status: 'running', phase: 'implement' });
   assert.equal(u.pipelineId, '4e1f2a9b');

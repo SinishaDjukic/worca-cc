@@ -58,7 +58,9 @@ function rowToAttachment(r) {
 function rowToRunLink(r) {
   return {
     threadId: r.thread_id, runId: r.run_id, pipelineId: r.pipeline_id ?? null, cardId: r.card_id ?? null,
-    status: r.status ?? null, phase: r.phase ?? null, createdAt: r.created_at,
+    status: r.status ?? null, phase: r.phase ?? null,
+    commentIds: parse(r.comment_ids, null) || [],     // v21: diff comments this run addresses
+    createdAt: r.created_at,
   };
 }
 
@@ -315,7 +317,7 @@ function getRunLink(threadId, runId) {
   return r ? rowToRunLink(r) : null;
 }
 
-const LINK_PATCH_COLS = { pipelineId: 'pipeline_id', status: 'status', phase: 'phase' };
+const LINK_PATCH_COLS = { pipelineId: 'pipeline_id', status: 'status', phase: 'phase', commentIds: 'comment_ids' };
 
 export function updateRunLink(threadId, runId, patch = {}) {
   const db = getDb();
@@ -324,7 +326,9 @@ export function updateRunLink(threadId, runId, patch = {}) {
   for (const [k, col] of Object.entries(LINK_PATCH_COLS)) {
     if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
     sets.push(`${col} = ?`);
-    vals.push(patch[k] ?? null);
+    // comment_ids is the one JSON column here; every other patch key is a scalar.
+    // An empty array stores NULL so "no pending comments" has exactly one encoding.
+    vals.push(k === 'commentIds' ? (Array.isArray(patch[k]) && patch[k].length ? str(patch[k]) : null) : (patch[k] ?? null));
   }
   if (!sets.length) return getRunLink(threadId, runId);
   vals.push(threadId, runId);
