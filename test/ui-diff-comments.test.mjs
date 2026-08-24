@@ -758,3 +758,20 @@ test('an old-side and a new-side comment on the same NUMBER still get their own 
   assert.deepEqual(blocks.map((b) => b.dataset.side), ['old', 'new'],
     'the side is part of the block identity — matching on data-line alone merged them');
 });
+
+test('a folder the user collapsed stays collapsed when a poke adds a synthetic row', async () => {
+  const ctx = await bootComments();
+  const { window } = ctx;
+  const doc = window.document;
+  const dir = doc.querySelector('#hist-detail .hd-tree-dir');
+  assert.ok(dir, 'precondition: src/ is a directory node');
+  click(window, dir);
+  assert.equal(dir.getAttribute('aria-expanded'), 'false', 'collapsed by the user');
+  ctx.cbox.comments = [cmt({ id: 'dc_00000002', path: 'ghost/gone.js', line: 7, lineText: 'gone', body: 'orphan' })];
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id }) });
+  await settle(window, 8);
+  const after = [...doc.querySelectorAll('#hist-detail .hd-tree-dir')].find((b) => b.dataset.dirKey === dir.dataset.dirKey);
+  assert.ok(after && after !== dir, 'precondition: the tree really was re-rendered');
+  assert.equal(after.getAttribute('aria-expanded'), 'false', 'and the collapse survived it');
+  assert.match(after.getAttribute('aria-label'), /^Expand directory/);
+});

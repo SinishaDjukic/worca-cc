@@ -11759,7 +11759,8 @@ function buildHdDiff(sec, record, data) {
 
   // ---- the comment layer ---------------------------------------------------
   const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
-    guarded: new Set() };  // section keys the protected-path floor always refuses (m16)
+    guarded: new Set(),      // section keys the protected-path floor always refuses (m16)
+    collapsed: new Set() };  // dir keys the user collapsed; survives a tree re-render (m11)
   let commentsPromise = null;
   let lastPick = null;   // { entry, key } — the file currently selected
   let lastMeta = null;   // diffSectionMeta of the body currently in the pane
@@ -11903,8 +11904,15 @@ function buildHdDiff(sec, record, data) {
       initialKey: (lastPick && lastPick.key) || firstNode?.key || null,
       counts: (entry) => hdFileCountsNode(document, entry.f),
       onPick: (entry, key) => { lastPick = { entry, key }; select(entry, key).catch(() => {}); },
+      // The SAME Set across re-renders, mutated by renderFileTree's own toggles:
+      // a poke that adds a synthetic row must not silently re-open every folder
+      // the user collapsed (D19 keeps the diff pane; this keeps the file list).
+      collapsed: cstate.collapsed,
     });
+    // replaceChildren resets scrollTop, and .hd-diff-rows is a 860px scroller.
+    const scrolled = rowsHost.scrollTop;
     rowsHost.replaceChildren(tree);
+    rowsHost.scrollTop = scrolled;
     paintCommentBadges();
     return firstNode;
   }
