@@ -750,7 +750,7 @@ class Orchestrator extends EventEmitter {
           // and never rethrows), and a no-op when the run stopped before any checkpoint
           // existed. The terminal `done` event is emitted AFTER it so the History row never
           // paints as "no diff captured" for the tick before the artifact lands.
-          await this._buildResults();
+          await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', {
@@ -773,7 +773,7 @@ class Orchestrator extends EventEmitter {
         // and never rethrows), and a no-op when the run stopped before any checkpoint
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
-        await this._buildResults();
+        await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', {
@@ -1019,7 +1019,7 @@ class Orchestrator extends EventEmitter {
           // and never rethrows), and a no-op when the run stopped before any checkpoint
           // existed. The terminal `done` event is emitted AFTER it so the History row never
           // paints as "no diff captured" for the tick before the artifact lands.
-          await this._buildResults();
+          await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
@@ -1039,7 +1039,7 @@ class Orchestrator extends EventEmitter {
         // and never rethrows), and a no-op when the run stopped before any checkpoint
         // existed. The terminal `done` event is emitted AFTER it so the History row never
         // paints as "no diff captured" for the tick before the artifact lands.
-        await this._buildResults();
+        await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
@@ -3446,9 +3446,18 @@ class Orchestrator extends EventEmitter {
    * Layer 1: build + persist the deterministic results view while the worktree(s)
    * and checkpoint refs are still live. Best-effort: never throws into run().
    */
-  async _buildResults() {
+  async _buildResults({ stage = false } = {}) {
     if (!this.pipeline) return;
     try {
+      // stage: the non-done terminal paths never reached the review loop's staging
+      // (:2204, :2311), so `git add -A -N` has not run and the `git diff <checkpoint>`
+      // below cannot see a file the agent CREATED — the kept branch would carry it
+      // while the persisted patch showed nothing. ignoreAbort for the same reason
+      // _commitWork pins it (:1804): stop() has already tripped this.abort, and a
+      // bound signal kills the staging before git can touch the index.
+      // INSIDE the try: the stopped path calls _buildResults from run()'s catch, so
+      // anything that escaped here would reject run() itself.
+      if (stage) await this._stageWorkingTree({ ignoreAbort: true });
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
       // BOTH modes (the _ensureGitCheckpoint mirror), so a single-project run reads
@@ -3472,6 +3481,16 @@ class Orchestrator extends EventEmitter {
         patches.push({ key, patch });
       }
       if (!members.length) return;
+      // Nothing changed under the checkpoint. Persisting here would index a 0-byte
+      // diff-patch.patch plus an all-zero results.json, and every downstream
+      // "does this run have a diff?" test is an EXISTENCE test, not an emptiness
+      // one: /diff answers 200-empty instead of 404 (ui/server.mjs:1994 tests
+      // `text == null`), /recovery-patch serves an empty attachment (:1690), the
+      // comments routes report patchAvailable:false and then 409 every create (:1882),
+      // and History detail opens on the Diff tab to render "(no files changed)"
+      // (app.js:11110 tests `d.results`). Write nothing — absent IS the truth, and
+      // it is the state the UI's empty state already describes.
+      if (patches.every((p) => !p.patch)) return;
       if (members.length === 1 && !this.isWorkspace) {
         await persistResults(this.pipeline.dir, members[0].results);
         await persistDiffPatch(this.pipeline.dir, patches[0].patch);
@@ -3488,12 +3507,14 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
-   * source that produced it. Runs on EVERY terminal path — after
-   * _buildResults() on the done paths (results.json exists for the summary;
-   * statusToResult -> 'completed') and after persist on the stopped/error
-   * branches (statusToResult -> 'failed'; the summary is thinner because
-   * results.json may not exist — chat-connectivity design PR12 closed the old
-   * success-only gap). NEVER throws and
+   * source that produced it. Runs on EVERY terminal path and ALWAYS after
+   * _buildResults() — done (statusToResult -> 'completed') and stopped/error alike
+   * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap).
+   * So the payload is the same SHAPE on all three: retryWriteback reads
+   * results.json (sources.mjs:215), and a stopped/error run that persisted one now
+   * carries the diffstat and "Key things to check" lines too. Only a run with
+   * nothing to persist — no checkpoint, or an empty diff under it — falls back to
+   * the thin status-only summary. NEVER throws and
    * never fails the run: a failure emits a warn `log` event and the results view
    * offers a manual retry via the same retryWriteback (Task 15 endpoint, Task 21
    * button). Prompt/markdown
@@ -3570,8 +3591,11 @@ class Orchestrator extends EventEmitter {
    * Uses `git add -A -N`: it records intent-to-add for new paths (making their
    * content visible to `git diff`) without actually creating a commit, so the
    * checkpoint commit remains the single diff base. Best-effort; never throws.
+   * `ignoreAbort` is for the terminal-path callers only (_buildResults on stop /
+   * error): every in-run caller must stay killable by stop().
+   * @param {{ignoreAbort?:boolean}} [opts]
    */
-  async _stageWorkingTree() {
+  async _stageWorkingTree({ ignoreAbort = false } = {}) {
     // Stage EVERY member worktree (keyed — the pathspec lookup needs the projectKey)
     // so each per-project reviewer's `git diff` sees that project's agent edits.
     // Single-project runs have exactly one entry (populated in both modes). The
@@ -3583,7 +3607,7 @@ class Orchestrator extends EventEmitter {
       // byte-identically — `--` with no trailing pathspec is a no-op for git add.
       const ex = this._excludePathspecs(key);
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
-      const res = await this._git(args, { cwd: dir });
+      const res = await this._git(args, { cwd: dir, ignoreAbort });
       if (!res.ok && res.stderr && res.stderr.trim()) {
         this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }

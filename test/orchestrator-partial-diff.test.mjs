@@ -36,17 +36,19 @@ async function freshRepo() {
 
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
-// Edit a TRACKED file the moment the worktree exists: `git diff <checkpoint>` (what
-// _buildResults runs) sees a tracked edit with no intent-to-add staging, so the
-// assertions do not depend on which dispatch step the run was stopped in.
-function editOnWorktree(orch, text) {
+// Write a file the moment the worktree exists. The default `seed.txt` is TRACKED:
+// `git diff <checkpoint>` (what _buildResults runs) sees a tracked edit with no
+// intent-to-add staging, so those assertions do not depend on which dispatch step
+// the run was stopped in. Pass a fresh `name` for the UNTRACKED case, which git
+// diff is blind to until the terminal path stages it.
+function editOnWorktree(orch, text, name = 'seed.txt') {
   const box = { done: false, dir: null };
   orch.on('state', (s) => {
     const wt = s.branch && s.branch.worktreeDir;
     if (box.done || !wt || !existsSync(wt)) return;
     box.done = true;
     box.dir = wt;
-    writeFileSync(join(wt, 'seed.txt'), text);
+    writeFileSync(join(wt, name), text);
   });
   return box;
 }
@@ -118,6 +120,77 @@ test('the persisted patch matches what the kept feature branch commit carries', 
   const persisted = readFileSync(patch(res.pipelineDir), 'utf8');
   const bodyOf = (s) => s.split('\n').filter((l) => /^[+-@]/.test(l) && !/^(\+\+\+|---)/.test(l)).join('\n');
   assert.equal(bodyOf(persisted), bodyOf(fromBranch));
+});
+
+// A file the agent CREATED is the whole point of the feature, and it is exactly
+// what a plain `git diff <checkpoint>` cannot see: only the review loop's
+// intent-to-add staging (`git add -A -N`, :2204/:2311) makes it visible, and a
+// stopped run never reaches it. The terminal paths stage themselves.
+test('a stopped run keeps the files the agent CREATED (untracked) in the patch', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const made = editOnWorktree(orch, 'agent created this\n', 'brand-new.txt');
+  orch.on('state', (s) => { if (s.branch && s.branch.feature) orch.stop(); });
+
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped', JSON.stringify(res));
+  assert.ok(made.done, 'precondition: an untracked file was created inside the worktree');
+
+  const text = readFileSync(patch(res.pipelineDir), 'utf8');
+  assert.match(text, /^diff --git a\/brand-new\.txt b\/brand-new\.txt$/m);
+  assert.match(text, /^new file mode /m, 'staged as an addition, not as a context-free blob');
+  assert.match(text, /\+agent created this/);
+
+  // results.json is built from the same diff base, so it must agree.
+  const view = JSON.parse(readFileSync(results(res.pipelineDir), 'utf8'));
+  assert.deepEqual(view.newFiles.map((f) => f.path), ['brand-new.txt']);
+  assert.equal(view.summary.filesNew, 1);
+
+  // The kept branch carried it all along — that gap is what this pins.
+  const feature = orch.getState().branch.feature;
+  const fromBranch = spawnSync('git', ['-C', repo, 'diff', 'main', feature]).stdout.toString();
+  assert.match(fromBranch, /\+agent created this/, 'precondition: the kept branch carries the file');
+});
+
+test('an errored run keeps the files the agent CREATED too', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    runners: { producer: async () => { throw new Error('boom'); }, verifier: okVerifier },
+  });
+  const made = editOnWorktree(orch, 'errored new file\n', 'brand-new.txt');
+
+  const res = await orch.run();
+  assert.equal(res.status, 'error', JSON.stringify(res));
+  assert.ok(made.done, 'precondition: an untracked file was created inside the worktree');
+  assert.match(readFileSync(patch(res.pipelineDir), 'utf8'), /\+errored new file/);
+});
+
+// A checkpoint existing is NOT the same as the run having a diff. Every downstream
+// "does this run have a diff?" test is an EXISTENCE test: a 0-byte patch makes
+// /diff answer 200-empty instead of 404, /recovery-patch serve an empty
+// attachment, the comments routes report patchAvailable:false and 409 every
+// create, and the detail page open on the Diff tab to render "(no files changed)".
+test('a stopped run whose worktree was never touched persists nothing', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  // No editOnWorktree: the checkpoint IS established (step 3 precedes the worktree
+  // setup that names the feature branch), so `if (!members.length) return` does
+  // NOT catch this — the diff under that checkpoint is simply empty.
+  orch.on('state', (s) => { if (s.branch && s.branch.feature) orch.stop(); });
+
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped', JSON.stringify(res));
+  assert.ok(!existsSync(patch(res.pipelineDir)), 'no 0-byte diff-patch.patch');
+  assert.ok(!existsSync(results(res.pipelineDir)), 'and no all-zero results.json');
+
+  const arts = await listArtifacts(orch.getState().id);
+  assert.ok(!arts.some((a) => a.kind === 'diff-patch' || a.kind === 'results'),
+    'nothing is indexed either, so both artifact routes keep 404-ing');
 });
 
 test('a run stopped before the checkpoint exists writes no results and does not throw', async () => {

@@ -142,10 +142,9 @@ test('GET /api/history/:key/:id/diff serves the persisted patch inline', async (
   assert.equal(r.headers.get('content-disposition'), null);    // inline, not attachment
   assert.equal(await r.text(), patch);
 
-  // A zero-length patch is a real (rare) outcome — diffPatch() returns '' when git
-  // fails and persistDiffPatch writes it verbatim. readRunArtifactText answers ''
-  // (which is != null), so this must be 200 + empty body, NOT 404: an empty patch
-  // is not a missing artifact.
+  // The orchestrator no longer persists an empty patch (orchestrator.mjs:3474).
+  // This pins the ROUTE's `text == null` semantics for a hand-written or legacy
+  // 0-byte artifact, which is still readable and must still answer 200-empty.
   await writeFile(join(alphaDir, 'diff-patch.patch'), '');
   const empty = await fetch(`${base}/api/history/${alphaKey}/${alphaId}/diff`);
   assert.equal(empty.status, 200);
