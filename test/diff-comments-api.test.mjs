@@ -172,7 +172,17 @@ test('a run with no patch: creation refused with 409, list still answers', async
   assert.match(r.body.error, /no stored diff/);
   const listed = await j(goneUrl);
   assert.equal(listed.status, 200);
-  assert.deepEqual(listed.body, { comments: [], patchAvailable: false });
+  assert.deepEqual(listed.body, { comments: [], patchAvailable: false, protectedPaths: [] });
+});
+
+test('GET reports the sections the protected-path floor will refuse', async () => {
+  const listed = await j(url());
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.protectedPaths, ['.env'],
+    'SECTION KEYS, not globs — the secure preset never crosses the wire');
+  // …and the floor really does refuse it, so the browser and the server agree.
+  assert.match((await post(url(), { path: '.env', side: 'new', line: 1, body: 'x' })).body.error,
+    /protected path/);
 });
 
 test('an unknown run 404s on every verb', async () => {

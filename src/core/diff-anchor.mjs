@@ -167,6 +167,25 @@ export function resolveAnchor(patchText, {
 }
 
 /**
+ * The section keys of `patchText` the floor will always refuse, in the same
+ * `sectionKey(project, path)` form the browser indexes file rows by. Same parser,
+ * same preset, BOTH sides (a rename+edit is ONE section under its new name while
+ * its −/context lines are the old file's content) — so the UI can drop the '+'
+ * without ever seeing the glob list. `[]` for an absent or empty patch.
+ */
+export function protectedSectionKeys(patchText, protectedPaths = SECURE_PROTECTED_PATHS) {
+  const guarded = (p) => !!p && isProtectedBasename(p, protectedPaths);
+  const out = [];
+  for (const s of splitPatchSections(String(patchText ?? ''))) {
+    if (!s.path) continue;
+    if (unreadablePath(s.path) || unreadablePath(s.oldPath) || guarded(s.path) || guarded(s.oldPath)) {
+      out.push(sectionKey(s.project || null, s.path));
+    }
+  }
+  return out;
+}
+
+/**
  * The `radius` rows either side of an anchor, rendered with their diff sign so the
  * model reads them the way get_run_diff serves them (parseFileSection strips the
  * sign into `kind`, so it is re-added here). Produced by the SAME parser as

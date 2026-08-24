@@ -605,3 +605,93 @@ test("the card's Ask Worca button appends the exact reference and sends nothing"
   assert.equal(ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).length, 0,
     'append never sends');
 });
+
+const SECRET_FILES = [{ path: 'src/a.js', status: 'M', added: 2, removed: 1 },
+  { path: 'config/.env', status: 'M', added: 1, removed: 1 }];
+const SECRET_PATCH = `${CMT_PATCH}diff --git a/config/.env b/config/.env
+--- a/config/.env
++++ b/config/.env
+@@ -1 +1 @@
+-A=1
++A=2
+`;
+// `protectedPaths` is what the server computes with protectedSectionKeys(); a
+// single-project run keys sections by the bare path.
+const guardedArms = (box) => (url, opts) => {
+  if (url.endsWith('/comments') && (opts.method || 'GET') === 'GET') {
+    return ok({ comments: box.comments, patchAvailable: true, protectedPaths: box.protectedPaths });
+  }
+  return armsFor(box)(url, opts);
+};
+const guardedBox = () => ({ patch: SECRET_PATCH, comments: [], patchAvailable: true, counts: {},
+  calls: [], protectedPaths: ['config/.env'] });
+
+test('a protected file renders, says so, and never arms the + (the floor would refuse it)', async () => {
+  const box = guardedBox();
+  const ctx = await bootDetail({ detail: diffDetail(cmtResults(SECRET_FILES)), arms: guardedArms(box) });
+  await openDetail(ctx);
+  await settle(ctx.window, 8);
+  const { window } = ctx;
+  const doc = window.document;
+  const secret = [...doc.querySelectorAll('#hist-detail .hd-diff-file')].find((b) => b.dataset.path === 'config/.env');
+  assert.ok(secret, 'the file is NEVER hidden — the run really did change it');
+  click(window, secret);
+  await settle(window, 8);
+  assert.ok(doc.querySelector('.hd-dl-row'), 'and its diff still renders');
+  const chip = doc.querySelector('.hd-diff-pane-head .hd-diff-guarded');
+  assert.ok(chip, 'the pane head says why the gutter is missing');
+  assert.match(chip.title, /\*\.key/, 'and the tooltip admits the rule is a basename match');
+  hover(window, doc.querySelector('.hd-dl-row[data-new="1"]'));
+  assert.equal(doc.querySelector('.hd-cmt-add'), null, 'no + on a file the floor always rejects');
+});
+
+test('an ordinary file in the same run is unaffected', async () => {
+  const box = guardedBox();
+  const ctx = await bootDetail({ detail: diffDetail(cmtResults(SECRET_FILES)), arms: guardedArms(box) });
+  await openDetail(ctx);
+  await settle(ctx.window, 8);
+  const { window } = ctx;
+  const doc = window.document;
+  click(window, [...doc.querySelectorAll('#hist-detail .hd-diff-file')].find((b) => b.dataset.path === 'src/a.js'));
+  await settle(window, 8);
+  assert.equal(doc.querySelector('.hd-diff-pane-head .hd-diff-guarded'), null, 'no chip on src/a.js');
+  hover(window, doc.querySelector('.hd-dl-row[data-new="2"]'));
+  assert.ok(doc.querySelector('.hd-cmt-add'), 'the + is still there');
+});
+
+test('a failed comment load disarms the +, and the next poke brings it back', async () => {
+  const box = { patch: CMT_PATCH, comments: [], patchAvailable: true, counts: {}, calls: [], fail: true };
+  const arms = (url, opts) => {
+    if (url.endsWith('/comments') && (opts.method || 'GET') === 'GET' && box.fail) {
+      box.fail = false;                     // one blip, then the endpoint recovers
+      return fail(500, { error: 'boom' });
+    }
+    return armsFor(box)(url, opts);
+  };
+  const ctx = await bootDetail({ detail: diffDetail(cmtResults(A_JS)), arms });
+  await openDetail(ctx);
+  await settle(ctx.window, 8);
+  const { window } = ctx;
+  const doc = window.document;
+  hover(window, doc.querySelector('.hd-dl-row[data-new="2"]'));
+  assert.equal(doc.querySelector('.hd-cmt-add'), null, 'the failed fetch left creation off');
+  box.comments = [cmt({ author: 'ask', body: 'landed anyway' })];
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id }) });
+  await settle(window, 8);
+  hover(window, doc.querySelector('.hd-dl-row[data-new="2"]'));
+  assert.ok(doc.querySelector('.hd-cmt-add'), 'the retried fetch re-armed the gutter WITHOUT a re-select');
+  assert.ok(doc.querySelector('[data-comment-id="dc_00000001"]'), 'and the card arrived too');
+});
+
+test('re-arming is idempotent: one + button, one composer', async () => {
+  const ctx = await bootComments({ comments: [cmt()] });
+  const { window } = ctx;
+  const doc = window.document;
+  ctx.cbox.comments = [cmt(), cmt({ id: 'dc_00000002', line: 3, lineText: 'added', body: 'second' })];
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id }) });
+  await settle(window, 8);
+  hover(window, doc.querySelector('.hd-dl-row[data-new="2"]'));
+  assert.equal(doc.querySelectorAll('.hd-cmt-add').length, 1, 'one gutter button, not one per repaint');
+  click(window, doc.querySelector('.hd-cmt-add'));
+  assert.equal(doc.querySelectorAll('.hd-cmt-input').length, 1, 'and one composer per click');
+});

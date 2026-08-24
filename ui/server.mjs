@@ -26,6 +26,7 @@ import {
   listArtifacts, lookupPipelineRow, findPipelineRowById,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
 import {
   addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved,
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
@@ -1866,7 +1867,14 @@ async function commentsList(res, storeKey, id) {
     // The UI needs to know whether the '+' affordance may appear at all; a run
     // whose patch is gone (archived, or never captured) can only read and delete.
     const patchText = await readRunArtifactText(storeKey, row.id, DIFF_PATCH_FILE);
-    res.json({ comments: listDiffComments(storeKey, row.id), patchAvailable: !!patchText });
+    res.json({
+      comments: listDiffComments(storeKey, row.id),
+      patchAvailable: !!patchText,
+      // Section keys the protected-path floor will refuse whatever the line, so the
+      // browser can drop the '+' up front instead of surfacing a 400 on submit. The
+      // preset itself never leaves the server.
+      protectedPaths: protectedSectionKeys(patchText),
+    });
   } catch (err) { commentsFail(res, err); }
 }
 

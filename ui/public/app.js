@@ -11711,7 +11711,8 @@ function buildHdDiff(sec, record, data) {
   const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
 
   // ---- the comment layer ---------------------------------------------------
-  const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null };
+  const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
+    guarded: new Set() };  // section keys the protected-path floor always refuses (m16)
   let commentsPromise = null;
   let lastPick = null;   // { entry, key } — the file currently selected
   let lastMeta = null;   // diffSectionMeta of the body currently in the pane
@@ -11725,12 +11726,15 @@ function buildHdDiff(sec, record, data) {
       const out = await res.json();
       cstate.comments = Array.isArray(out.comments) ? out.comments : [];
       cstate.patchAvailable = !!out.patchAvailable;
+      // Section keys (sectionKey(project, path)) the server's protected-path floor
+      // will always refuse. The glob preset stays server-side; the browser only
+      // ever compares keys it already indexes its file rows by.
+      cstate.guarded = new Set(Array.isArray(out.protectedPaths) ? out.protectedPaths : []);
     } catch {
-      // A failed comment load never breaks the diff: keep whatever we had and leave
-      // creation disabled. NOTE the recovery is re-picking a file or reopening the
-      // screen — NOT the next poke: armCommentGutter runs only from select() (it is
-      // what owns the body's listeners), and reload() deliberately touches cards and
-      // badges only. A poke restores the cards; the '+' comes back on the next select.
+      // A failed fetch leaves patchAvailable false, so this render has no gutter —
+      // but repaintCards() re-arms on every poke and on every successful reload, so
+      // creation comes back on its own; no re-select is needed. Cards are restored
+      // by the same path.
       cstate.patchAvailable = false;
     }
     cstate.byFile = hdCommentIndex(cstate.comments);
@@ -11745,6 +11749,8 @@ function buildHdDiff(sec, record, data) {
 
   const ctx = {
     canCreate: () => cstate.patchAvailable,
+    /** true when POST /comments would be refused for this file whatever the line. */
+    guarded: (project, path) => cstate.guarded.has(sectionKey(project || null, path)),
     for: (project, path) => cstate.byFile.get(sectionKey(project || null, path)) || [],
     /** @returns {Promise<string|null>} an error message to show inline, or null */
     async create(anchor, body) {
@@ -11927,6 +11933,13 @@ function buildHdDiff(sec, record, data) {
       el.remove();
     }
     attachComments(body, lastMeta);
+    // The FIRST comment fetch may have failed, in which case select() rendered
+    // this body with canCreate() false and no gutter. Re-arm here so a poke (or a
+    // retried fetch) brings the '+' back without forcing a re-select;
+    // armCommentGutter is idempotent per body. Unlike select(), this also reaches
+    // the two early-return bodies (the "(no textual diff for this file)" notes) —
+    // inert, since they carry no .hd-dl-row for the delegated mouseover to match.
+    armCommentGutter(body, lastMeta);
   }
 
   // What a diff-comments-changed poke calls, and what every local mutation calls
@@ -11948,7 +11961,10 @@ function buildHdDiff(sec, record, data) {
   // anyway — so hover is delegated. It rides in `.hd-dl-code`, NEVER in
   // `.hd-dl-src`: hdApplyHighlights calls replaceChildren on that span.
   function armCommentGutter(body, meta) {
-    if (!ctx.canCreate()) return;              // no patch: read-only, no creation
+    if (!ctx.canCreate()) return;                       // no patch: read-only, no creation
+    if (ctx.guarded(meta.project, meta.path)) return;   // the floor refuses every line here  [m16]
+    if (body.dataset.gutterArmed === '1') return;       // idempotent: repaintCards re-arms
+    body.dataset.gutterArmed = '1';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'hd-cmt-add';
@@ -12028,6 +12044,17 @@ function buildHdDiff(sec, record, data) {
     if (epoch !== pstate.selEpoch
       || !pane.isConnected
       || !histDetailState?.screen?.contains(pane)) return;
+
+    // The floor is a BASENAME match, so it also catches ordinary files (`*.key`,
+    // `**/secrets/**` — src/secrets/README.md is refused). Say so once, here,
+    // instead of arming a '+' that only fails on submit.
+    if (cstate.patchAvailable && ctx.guarded(entry.project, entry.f.path)) {
+      const lock = document.createElement('span');
+      lock.className = 'hd-diff-guarded';
+      lock.textContent = 'protected path';
+      lock.title = 'New comments are not stored for credential-shaped paths (.env*, *.pem, *.key, **/secrets/**, …). Existing comments still show.';
+      ph.appendChild(lock);
+    }
 
     const body = document.createElement('div');
     body.className = 'hd-diff-body mono';
