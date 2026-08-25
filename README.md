@@ -12,7 +12,8 @@ quality gates, pausing to ask *you* the questions that matter, and keeping
 every run isolated in its own git worktree and branch.
 
 It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
-Claude Code — all running the same engine.
+Claude Code — all running the same engine. See the
+**[architecture in one picture](docs/ARCHITECTURE.md)**.
 
 ![Running pipeline with live flow graph and streaming log](docs/screenshots/running.png)
 
@@ -209,6 +210,7 @@ The skill starts the same deterministic orchestrator.
 
 ## Documentation
 
+- [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
