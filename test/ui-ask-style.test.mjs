@@ -99,6 +99,28 @@ test('ui-ask-style: the threads list scrolls under a capped height, caption pinn
   assert.match(list, /border-radius:/, 'rows are clipped, not bled over the panel radius');
 });
 
+test('ui-ask-style: the threads popover is the widened one and its titles clamp to 2 lines', () => {
+  const pop = ruleBody('.ask-pop-threads');
+  assert.ok(pop, '.ask-pop-threads rule exists');
+  assert.match(pop, /width:326px/, 'the recent-chats panel is ~15% wider than the old 284px');
+  assert.match(pop, /right:76px/, 'still right-anchored, so it grows leftward');
+  const title = ruleBody('.ask-thread-title');
+  assert.ok(title, '.ask-thread-title rule exists');
+  assert.match(title, /-webkit-line-clamp:2/, 'long chat names wrap onto a second line');
+  assert.match(title, /line-clamp:2/, 'the unprefixed property ships alongside the -webkit- one');
+  assert.match(title, /-webkit-box-orient:vertical/);
+  assert.match(title, /display:-webkit-box/);
+  assert.match(title, /overflow:hidden/, 'the third line is still cut off');
+  assert.ok(!/white-space:nowrap/.test(title), 'nowrap is gone or the title can never wrap');
+  assert.match(title, /font-size:12\.5px/, 'the existing font styling is kept');
+});
+
+test('ui-ask-style: only the threads popover was widened', () => {
+  assert.match(ruleBody('.ask-pop-model') || '', /width:292px/);
+  assert.match(ruleBody('.ask-pop-runinfo') || '', /width:326px/);
+  assert.match(ruleBody('.ask-pop-worktrees') || '', /min-width:340px/);
+});
+
 test('ui-ask-style: composer textarea overrides the global textarea rules', () => {
   const input = ruleBody('.ask-composer textarea.ask-input');
   assert.ok(input, 'the higher-specificity selector exists (spec §10.3)');
