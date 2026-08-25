@@ -7,9 +7,9 @@
 // multiProfile simply never uses more than the DEFAULT_PROFILE bucket, which is
 // created implicitly, so single-profile plugins need no special handling here.
 //
-//   config.json  { "profiles": { "<id>": { key: value } } }
-//   secrets.json { "profiles": { "<id>": { key: value } } }   mode 0600
-//   state.json   { "profiles": { "<id>": { key: value } } }
+//   config.json  { "$format": "profiles/1", "profiles": { "<id>": { key: value } } }
+//   secrets.json { "$format": "profiles/1", "profiles": { "<id>": { … } } }   mode 0600
+//   state.json   { "$format": "profiles/1", "profiles": { "<id>": { … } } }
 //
 // Secrets: mode 0600, atomic temp+rename (settings.mjs:89-92 idiom),
 // {"$env":"VAR"} indirection resolved at READ time only — stored verbatim so the
@@ -48,24 +48,26 @@ function readJson(file) {
   }
 }
 
-/** The { profiles: {...} } envelope, tolerant of a missing/garbage file.
- *  Pre-profiles files were one flat bag ({ key: value } at the top level); read
- *  those as the implicit DEFAULT_PROFILE bucket so an upgrade never orphans
- *  stored config/secrets/state — the next writeBucket persists the envelope.
- *  The envelope is recognised STRICTLY — exactly one top-level key ("profiles")
- *  whose entries are all <valid id> -> plain object — because a legacy flat file
- *  may legally carry a schema field KEYED "profiles" (KEY_RE allows the name,
- *  and a {"$env":…} ref stores an object): misreading that as the envelope
- *  would silently drop every other stored key, permanently after the next
- *  write. Only writeBucket/deleteProfile ever produce the envelope, and they
- *  produce exactly this shape. */
+/** In-band format marker for the profile envelope. No shape heuristic can be
+ *  exact here: config keys come from configSchema, but STATE keys are whatever
+ *  a connector passed to ctx.state.set(), so a legacy flat file may legally be
+ *  { "profiles": { <id>: {...} } } byte-for-byte — data, not envelope. Only the
+ *  marker distinguishes the two, and only writeBucket/deleteProfile emit it. */
+const ENVELOPE_FORMAT = 'profiles/1';
+
+const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The marked { $format, profiles: {...} } envelope, tolerant of a
+ *  missing/garbage file. A file WITHOUT the marker is a pre-profiles flat bag
+ *  ({ key: value } at the top level) — read it, whole and unjudged, as the
+ *  implicit DEFAULT_PROFILE bucket so an upgrade never orphans stored
+ *  config/secrets/state; the next writeBucket persists the marked envelope. */
 function readBuckets(file) {
   const raw = readJson(file);
-  const p = raw.profiles;
-  const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-  if (isBag(p) && Object.keys(raw).length === 1
-      && Object.entries(p).every(([id, bag]) => isValidProfileId(id) && isBag(bag))) {
-    return p;
+  if (raw.$format === ENVELOPE_FORMAT && isBag(raw.profiles)) {
+    return Object.fromEntries(
+      Object.entries(raw.profiles).filter(([id, bag]) => isValidProfileId(id) && isBag(bag)),
+    );
   }
   return Object.keys(raw).length ? { [DEFAULT_PROFILE]: raw } : {};
 }
@@ -88,7 +90,7 @@ function writeJsonAtomic(file, obj, { mode } = {}) {
 function writeBucket(file, profile, bucket, opts) {
   const all = readBuckets(file);
   all[profile] = bucket;
-  writeJsonAtomic(file, { profiles: all }, opts);
+  writeJsonAtomic(file, { $format: ENVELOPE_FORMAT, profiles: all }, opts);
 }
 
 const isEnvRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && typeof v.$env === 'string';
@@ -166,7 +168,7 @@ export function deleteProfile(name, id) {
     const all = readBuckets(file);
     if (!(pid in all)) continue;
     delete all[pid];
-    writeJsonAtomic(file, { profiles: all }, opts);
+    writeJsonAtomic(file, { $format: ENVELOPE_FORMAT, profiles: all }, opts);
   }
   return { ok: true };
 }

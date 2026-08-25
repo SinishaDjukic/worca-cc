@@ -154,7 +154,10 @@ backend, keep a single subprocess seam with error-kind mapping, detach anything 
 env var so nothing depends on the server's cwd. For **per-run write-back**, add a
 `writeBack` select to `inputs` (default `no`); the host pins the run's inputs on the row and
 passes them to `capabilities({inputs})` / `reportResult`, so only runs that opted in are
-reported.
+reported. The key name `writeBack` is the host's reserved opt-out channel: when the
+`capabilities` probe errors, the host fails CLOSED (no report until retry) only for runs
+that pinned a `writeBack` input — every other run keeps the fail-open default rather than
+silently dropping the tracker comment on a transient blip.
 
 ## Where the host logic lives
 

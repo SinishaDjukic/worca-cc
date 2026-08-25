@@ -25,9 +25,11 @@ test('writePluginConfig routes secret fields to secrets.json with mode 0600', ()
   const dir = pluginDataDir(NAME);
   const secrets = JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8'));
   const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
-  // Every file is profile-keyed; an unnamed write lands in DEFAULT_PROFILE.
-  assert.deepEqual(secrets, { profiles: { default: { token: 'ghp_abc123' } } });
-  assert.deepEqual(config, { profiles: { default: { repo: 'acme/api' } } });
+  // Every file is a MARKED profile envelope; an unnamed write lands in
+  // DEFAULT_PROFILE. The $format marker is what tells an envelope apart from a
+  // legacy flat file — no shape heuristic can (state keys are arbitrary).
+  assert.deepEqual(secrets, { $format: 'profiles/1', profiles: { default: { token: 'ghp_abc123' } } });
+  assert.deepEqual(config, { $format: 'profiles/1', profiles: { default: { repo: 'acme/api' } } });
   assert.equal(statSync(join(dir, 'secrets.json')).mode & 0o777, 0o600);
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], 'atomic: no temp litter');
 });
@@ -151,6 +153,33 @@ test('a legacy flat file with a field KEYED "profiles" reads as data, not as the
   process.env.WORCA_TEST_PROFILES = 'kept';
   assert.equal(readPluginConfig(Q, LEGACY_SCHEMA).profiles, 'kept');
   delete process.env.WORCA_TEST_PROFILES;
+});
+
+test('legacy state whose lone "profiles" key even LOOKS like the envelope reads as data (the $format marker decides)', () => {
+  // ctx.state accepts ARBITRARY keys, so a pre-profiles connector may have
+  // legally stored state.set('profiles', { work: {…}, client: {…} }) — a file
+  // byte-identical to a shape-recognised envelope. Only the marker written by
+  // writeBucket says "envelope"; without it the whole file is the legacy
+  // default-profile bag, cursors intact.
+  const P = 'legacy-profiles-state';
+  mkdirSync(pluginDataDir(P), { recursive: true });
+  writeFileSync(join(pluginDataDir(P), 'state.json'),
+    JSON.stringify({ profiles: { work: { cursor: 'w9' }, client: { cursor: 'c4' } } }));
+
+  assert.deepEqual(readPluginState(P),
+    { profiles: { work: { cursor: 'w9' }, client: { cursor: 'c4' } } },
+    'the connector reads back exactly what it stored');
+  assert.deepEqual(readPluginState(P, 'work'), {}, 'no phantom "work" bucket is minted');
+
+  // The first write migrates to the MARKED envelope without losing the key…
+  writePluginState(P, { etag: 'abc' });
+  const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'state.json'), 'utf8'));
+  assert.equal(onDisk.$format, 'profiles/1');
+  assert.deepEqual(onDisk.profiles.default,
+    { profiles: { work: { cursor: 'w9' }, client: { cursor: 'c4' } } , etag: 'abc' });
+  // …and the marked envelope round-trips.
+  assert.deepEqual(readPluginState(P).etag, 'abc');
+  assert.deepEqual(readPluginState(P).profiles.work.cursor, 'w9');
 });
 
 test('profile ids are path-safe: traversal and junk are rejected', () => {

@@ -41,9 +41,11 @@ async function main() {
   const source = mod.default(ctx);
   const fn = source?.[msg.op];
   if (typeof fn !== 'function') {
-    // Optional ops (e.g. capabilities) land here; the host treats this kind +
-    // message as "op not implemented" (Task 13 defaults writeBack:true on it).
-    throw Object.assign(new Error(`connector does not implement op "${msg.op}"`), { kind: 'plugin' });
+    // Optional ops (e.g. capabilities) land here. The kind is 'unimplemented',
+    // NOT 'plugin': an op the connector lacks and an implemented op that
+    // CRASHED must stay distinguishable — the capabilities probe defaults
+    // writeBack:true only for the former (Task 13 / sources.mjs).
+    throw Object.assign(new Error(`connector does not implement op "${msg.op}"`), { kind: 'unimplemented' });
   }
 
   // §7.1 signatures: getTask(id) and reportResult(id, r) are positional; every

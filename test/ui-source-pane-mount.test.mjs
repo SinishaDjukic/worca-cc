@@ -119,3 +119,91 @@ test('a failed profile resolve on project switch clears the stale pane and offer
   await waitFor(() => pane.querySelector('.sp-task-browser'), 'remounted task browser');
   assert.equal(pane.querySelector('.sp-profile-bar').dataset.profile, 'acme');
 });
+
+test('the old pane is torn down SYNCHRONOUSLY on remount — nothing submittable while the binding fetch is in flight', async () => {
+  // The window between "project switched" and "binding resolved" must not keep
+  // the previous project's task list, picked task and profile live: a Start
+  // clicked in that window would run the new project against the old project's
+  // tracker. The fetch here never resolves, so anything still visible IS the
+  // stale-window content.
+  let bindingsMode = 'ok';
+  const { window } = await boot({
+    '/api/source-bindings': () => {
+      if (bindingsMode === 'hang') return new Promise(() => {});
+      return json({ scopeType: 'project', scopeKey: 'k', profile: 'acme', via: 'binding' });
+    },
+    '/api/sources/call': (u, opts) => {
+      const body = JSON.parse(opts.body || '{}');
+      if (body.op === 'validateConfig') return json({ ok: true, result: { ok: true } });
+      if (body.op === 'listTasks') {
+        return json({ ok: true, result: { tasks: [
+          { id: 'A-1', title: 'Alpha task', state: 'open', labels: [], updatedAt: '' },
+        ] } });
+      }
+      return json({ ok: true, result: null });
+    },
+  });
+  const doc = window.document;
+
+  const projectSelect = doc.querySelector('#projectSelect');
+  projectSelect.value = '/tmp/alpha';
+  projectSelect.dispatchEvent(new window.Event('change'));
+  const srcBtn = await waitFor(() => doc.querySelector('#source-seg button[data-plugin-src="jira/jira"]'), 'plugin source button');
+  srcBtn.click();
+  const pane = doc.querySelector('#plugin-source-pane');
+  await waitFor(() => pane.querySelector('.sp-row'), 'the initial task listing');
+
+  // Switch projects with the binding fetch hung: the pane must empty NOW.
+  bindingsMode = 'hang';
+  projectSelect.value = '/tmp/beta';
+  projectSelect.dispatchEvent(new window.Event('change'));
+  await waitFor(() => /Checking/.test(pane.textContent) && !pane.querySelector('.sp-row'),
+    'the placeholder replacing the stale pane');
+  assert.equal(pane.querySelector('.sp-row'), null, 'no stale task row to submit');
+  assert.equal(pane.querySelector('.sp-profile-bar'), null, 'no stale profile bar');
+  // …and it STAYS empty while the fetch hangs (nothing repaints the old pane).
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(pane.querySelector('.sp-row'), null);
+});
+
+test('an HTTP failure on the binding GET offers a retry — never the first-time gate', async () => {
+  // ok:false (a transient 500) is not "no binding": rendering the gate would
+  // invite the user to overwrite a correct standing binding. Only a real
+  // "unbound" answer may gate.
+  let bindingsMode = 'ok';
+  const { window } = await boot({
+    '/api/source-bindings': () => {
+      if (bindingsMode === '500') {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'db locked' }) });
+      }
+      return json({ scopeType: 'project', scopeKey: 'k', profile: 'acme', via: 'binding' });
+    },
+    '/api/sources/call': (u, opts) => {
+      const body = JSON.parse(opts.body || '{}');
+      if (body.op === 'validateConfig') return json({ ok: true, result: { ok: true } });
+      if (body.op === 'listTasks') return json({ ok: true, result: { tasks: [] } });
+      return json({ ok: true, result: null });
+    },
+  });
+  const doc = window.document;
+
+  const projectSelect = doc.querySelector('#projectSelect');
+  projectSelect.value = '/tmp/alpha';
+  projectSelect.dispatchEvent(new window.Event('change'));
+  const srcBtn = await waitFor(() => doc.querySelector('#source-seg button[data-plugin-src="jira/jira"]'), 'plugin source button');
+  bindingsMode = '500';
+  srcBtn.click();
+  const pane = doc.querySelector('#plugin-source-pane');
+  await waitFor(() => /Could not resolve the source profile/.test(pane.textContent), 'the resolve-failure notice');
+  assert.match(pane.textContent, /db locked/, 'the server error is surfaced');
+  assert.equal(pane.querySelector('.sp-profile-gate'), null, 'no gate on an HTTP failure');
+  assert.equal(pane.querySelector('.sp-profile-use'), null);
+
+  // The server recovers: Retry lands on the STANDING binding, no gate involved.
+  bindingsMode = 'ok';
+  const retry = pane.querySelector('button');
+  assert.match(retry.textContent, /Retry/);
+  retry.click();
+  await waitFor(() => pane.querySelector('.sp-profile-bar'), 'the pane on the standing binding');
+  assert.equal(pane.querySelector('.sp-profile-bar').dataset.profile, 'acme');
+});

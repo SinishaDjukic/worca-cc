@@ -12,10 +12,20 @@
 // pulls from two different sources binds each independently.
 //
 // Deliberately tolerant on read: an unbound scope, an uninstalled plugin and a
-// profile that was since deleted all collapse to the same answer (null / the
-// fallback), because every caller's next move is identical — ask the user.
+// profile that was since deleted all collapse to the same answer (null), because
+// every caller's next move is identical — ask the user. But "never bound" and
+// "was bound, then the profile went away" are NOT the same for the single-
+// profile convenience fallback: a scope that once chose a tracker must be ASKED
+// again, never silently re-pointed at whichever profile happens to survive. So
+// deleting a profile TOMBSTONES its bindings (profile = '') instead of dropping
+// the rows; a tombstone reads as unbound everywhere except resolveProfile's
+// 'only' fallback, which it suppresses.
 
 import { getDb, prepare } from './db.mjs';
+
+/** Deleted-profile marker. Reads as "unbound" (getBinding -> null) but records
+ *  that this scope HAD chosen — resolveProfile must ask, not guess. */
+const TOMBSTONE = '';
 
 /** The two scopes a binding can hang off. */
 const SCOPES = new Set(['project', 'workspace']);
@@ -32,12 +42,9 @@ const key = (o = {}) => ({
   sourceId: String(o.sourceId || ''),
 });
 
-/**
- * The profile explicitly bound to this scope, or null. No fallback logic — use
- * resolveProfile() for that.
- * @returns {string|null}
- */
-export function getBinding(ref) {
+/** Raw row value: null (no row) | '' (tombstone) | profile id. Internal —
+ *  resolveProfile needs the three-way answer; everyone else wants getBinding. */
+function rawBinding(ref) {
   const k = key(ref);
   if (!k.scopeKey || !k.plugin || !k.sourceId) return null;
   getDb();
@@ -45,6 +52,16 @@ export function getBinding(ref) {
     'SELECT profile FROM source_bindings WHERE scope_type = ? AND scope_key = ? AND plugin = ? AND source_id = ?'
   ).get(k.scopeType, k.scopeKey, k.plugin, k.sourceId);
   return row ? String(row.profile) : null;
+}
+
+/**
+ * The profile explicitly bound to this scope, or null (a tombstoned binding
+ * reads as unbound). No fallback logic — use resolveProfile() for that.
+ * @returns {string|null}
+ */
+export function getBinding(ref) {
+  const p = rawBinding(ref);
+  return p === TOMBSTONE ? null : p;
 }
 
 /** Bind (or re-bind) a scope to a profile. Returns the stored profile. */
@@ -73,25 +90,30 @@ export function clearBinding(ref) {
   return { ok: true };
 }
 
-/** Every binding for one scope: [{ plugin, sourceId, profile }]. */
+/** Every LIVE binding for one scope: [{ plugin, sourceId, profile }].
+ *  Tombstones are bookkeeping for resolveProfile, not bindings — excluded. */
 export function listBindingsForScope(scopeType, scopeKey) {
   getDb();
   return prepare(
-    'SELECT plugin, source_id, profile FROM source_bindings WHERE scope_type = ? AND scope_key = ? ORDER BY plugin, source_id'
+    "SELECT plugin, source_id, profile FROM source_bindings WHERE scope_type = ? AND scope_key = ? AND profile != '' ORDER BY plugin, source_id"
   ).all(checkScope(scopeType), String(scopeKey || ''))
     .map((r) => ({ plugin: r.plugin, sourceId: r.source_id, profile: r.profile }));
 }
 
-/** Drop every binding naming a profile — called when that profile is deleted, so
- *  a project never points at a profile that is gone. Plugin-wide (no sourceId):
- *  profiles and their buckets are per-PLUGIN, so deleting one dangles every
- *  source's binding to it, not just the source the delete came in through.
- *  Returns the row count. */
+/** Tombstone every binding naming a profile — called when that profile is
+ *  deleted, so a project never points at a profile that is gone, and never
+ *  silently re-points at a survivor either (the tombstone suppresses the
+ *  single-profile fallback until the user chooses again). Plugin-wide (no
+ *  sourceId): profiles and their buckets are per-PLUGIN, so deleting one
+ *  dangles every source's binding to it, not just the source the delete came
+ *  in through. Returns the row count. */
 export function clearBindingsForProfile(plugin, profile) {
   getDb();
+  const p = String(profile || '');
+  if (!p) return 0; // '' is the tombstone itself, never a deletable profile
   const r = prepare(
-    'DELETE FROM source_bindings WHERE plugin = ? AND profile = ?'
-  ).run(String(plugin || ''), String(profile || ''));
+    'UPDATE source_bindings SET profile = ?, updated_at = ? WHERE plugin = ? AND profile = ?'
+  ).run(TOMBSTONE, new Date().toISOString(), String(plugin || ''), p);
   return Number(r?.changes ?? 0);
 }
 
@@ -111,7 +133,10 @@ export function clearBindingsForPlugin(plugin) {
  *      decide — but only if they AGREE. Members split across two trackers is a
  *      real ambiguity, and guessing one would be the silent-wrong-tracker bug
  *      this module exists to prevent, so it stays unresolved;
- *   3. a source with exactly one profile needs no ceremony — use it;
+ *   3. a source with exactly one profile needs no ceremony — use it, UNLESS
+ *      this scope once chose a profile that has since gone away (a tombstoned
+ *      or stale binding): its next run against a tracker it never picked is
+ *      the exact silent-wrong-tracker bug again, so it degrades to "ask";
  *   4. otherwise null: the caller must ask.
  *
  * `available` is the source's profile id list (plugin-config#listProfiles). A
@@ -127,19 +152,24 @@ export function resolveProfile(ref = {}) {
   const available = Array.isArray(ref.available) ? ref.available.map(String) : null;
   const known = (p) => !!p && (!available || available.includes(p));
 
-  const own = getBinding(ref);
+  const own = rawBinding(ref);
   if (known(own)) return { profile: own, via: 'binding' };
+  // A row that no longer names a live profile — tombstoned by a delete, or
+  // stale (its profile left the roster while we weren't looking) — means this
+  // scope HAD chosen. It must choose again; no fallback may choose for it.
+  let hadBinding = own !== null;
 
   if (ref.scopeType === 'workspace' && Array.isArray(ref.memberKeys) && ref.memberKeys.length) {
     const found = new Set();
     for (const k of ref.memberKeys) {
-      const p = getBinding({ scopeType: 'project', scopeKey: k, plugin: ref.plugin, sourceId: ref.sourceId });
+      const p = rawBinding({ scopeType: 'project', scopeKey: k, plugin: ref.plugin, sourceId: ref.sourceId });
       if (known(p)) found.add(p);
+      else if (p !== null) hadBinding = true; // a member's lapsed choice suppresses the fallback too
     }
     if (found.size === 1) return { profile: [...found][0], via: 'members' };
     if (found.size > 1) return { profile: null, via: 'conflict', candidates: [...found] };
   }
 
-  if (available && available.length === 1) return { profile: available[0], via: 'only' };
+  if (!hadBinding && available && available.length === 1) return { profile: available[0], via: 'only' };
   return { profile: null, via: 'none' };
 }

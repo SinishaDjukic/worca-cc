@@ -4769,14 +4769,18 @@ async function resolveSourceProfile(src) {
   const ref = bindingScopeRef();
   if (!ref) return null;
   const qs = new URLSearchParams({ ...ref, plugin: src.plugin, sourceId: src.sourceId });
-  const { ok, data } = await pluginApi('GET', `/api/source-bindings?${qs.toString()}`);
-  if (ok && data.profile) return { profile: data.profile, via: data.via };
+  const { ok, status, data } = await pluginApi('GET', `/api/source-bindings?${qs.toString()}`);
+  // An HTTP failure is NOT "no binding": rendering the first-time gate on a
+  // transient 500 invites the user to overwrite a correct standing binding.
+  // Throw so the caller's retry branch handles it like a network error.
+  if (!ok) throw new Error((data && data.error) || `HTTP ${status}`);
+  if (data.profile) return { profile: data.profile, via: data.via };
   return {
     gate: {
       source: src,
       profiles: src.profiles || [],
-      via: (ok && data.via) || 'none',
-      candidates: (ok && data.candidates) || [],
+      via: data.via || 'none',
+      candidates: data.candidates || [],
       scopeLabel: bindingScopeLabel(),
     },
     ref,
@@ -4800,12 +4804,18 @@ async function mountPluginSourcePane(src) {
   host.dataset.gateRun = String(run);
   const owns = () => host.isConnected && host.dataset.gateRun === String(run)
     && state.activePluginSource === src;
+  // Tear the previous pane down BEFORE the first await, not after it resolves:
+  // while the binding fetch is in flight the old scope's task list, picked
+  // task and resolved profile would otherwise stay live and SUBMITTABLE — a
+  // Start in that window runs the new project against the old project's
+  // tracker, the exact silent-wrong-tracker mistake bindings exist to prevent.
+  state.activePluginProfile = null;
+  host.replaceChildren(Object.assign(document.createElement('small'),
+    { className: 'hint', textContent: `Checking ${src.displayName}…` }));
   // A multi-profile source cannot be asked anything until it is known WHICH
   // instance to ask, so the binding is resolved before the connection check.
   // A FAILED resolve (server briefly unreachable mid project switch) must not
-  // leave the previous scope's pane — and its resolved profile — live: a
-  // submit would then run the new project against the old project's tracker,
-  // the exact silent-wrong-tracker mistake bindings exist to prevent.
+  // resurrect the previous scope's pane either — error box with retry.
   let resolved;
   try {
     resolved = await resolveSourceProfile(src);
@@ -7970,16 +7980,38 @@ async function openPluginSettings(name, profile) {
   const connectable = sources.filter((s) => !s.multiProfile || s.profile);
   pluginModal(`Settings: ${name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Connect', 'btn btn-ghost btn-mini', async () => {
+    // Connect only exists for task sources (validateConfig is a task-source
+    // op): a channels-only chat plugin would get a button whose every outcome
+    // misleads — "Add a profile first." for a plugin that CANNOT have
+    // profiles — so it gets no button at all.
+    ...(sources.length ? [['Connect', 'btn btn-ghost btn-mini', async () => {
       if (!connectable.length) {
         return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: 'Add a profile first.' }] }));
       }
       const failed = await savePluginConfigForms(name, body);
       if (failed) return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: failed }] }));
-      slot.replaceChildren(renderConnectResult({ ok: false, pending: true, message: 'Connecting…' }));
+      // One result block PER SOURCE, kept side by side: a later source's
+      // success must never paint over an earlier source's failure.
+      slot.replaceChildren();
+      const subs = connectable.map((s) => {
+        const sub = document.createElement('div');
+        sub.className = 'pl-connect-sub';
+        if (connectable.length > 1) {
+          sub.appendChild(Object.assign(document.createElement('div'),
+            { className: 'pl-config-h', textContent: s.id }));
+        }
+        const out = document.createElement('div');
+        sub.appendChild(out);
+        out.replaceChildren(renderConnectResult({ ok: false, pending: true, message: 'Connecting…' }));
+        slot.appendChild(sub);
+        return out;
+      });
       // Sequential so two sources never race the same browser launch.
-      for (const s of connectable) await connectPluginSource(name, s.id, slot, s.profile || undefined);
-    }],
+      for (let i = 0; i < connectable.length; i++) {
+        const s = connectable[i];
+        await connectPluginSource(name, s.id, subs[i], s.profile || undefined);
+      }
+    }]] : []),
     ['Save', 'btn btn-primary btn-mini', async () => {
       const failed = await savePluginConfigForms(name, body);
       closePluginModal();

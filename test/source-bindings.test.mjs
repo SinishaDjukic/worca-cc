@@ -54,9 +54,18 @@ test('a binding naming a deleted profile degrades to "ask", never to a wrong run
   setBinding(proj('r-3'), 'retired');
   assert.deepEqual(resolveProfile({ ...proj('r-3'), available: ['work', 'client'] }),
     { profile: null, via: 'none' }, 'stale binding is ignored');
-  // ...and with a single surviving profile it lands on that one instead.
+  // EVEN with a single surviving profile: this scope once chose a tracker, and
+  // silently re-pointing it at whichever profile happens to survive is the
+  // silent-wrong-tracker bug this module exists to prevent. It must be asked.
   assert.deepEqual(resolveProfile({ ...proj('r-3'), available: ['work'] }),
+    { profile: null, via: 'none' });
+  // A scope that NEVER chose keeps the no-ceremony fallback.
+  assert.deepEqual(resolveProfile({ ...proj('r-3-never-bound'), available: ['work'] }),
     { profile: 'work', via: 'only' });
+  // Re-choosing (or explicitly clearing) lifts the suppression.
+  setBinding(proj('r-3'), 'work');
+  assert.deepEqual(resolveProfile({ ...proj('r-3'), available: ['work'] }),
+    { profile: 'work', via: 'binding' });
 });
 
 test('a workspace inherits from its members only when they agree', () => {
@@ -84,18 +93,33 @@ test('a workspace inherits from its members only when they agree', () => {
   );
 });
 
-test('deleting a profile or a plugin clears the bindings that named it', () => {
+test('deleting a profile TOMBSTONES the bindings that named it; uninstall drops them', () => {
   setBinding(proj('d-1'), 'doomed');
   setBinding(proj('d-2'), 'survivor');
-  // Every scope bound to the deleted profile is cleared, across all projects —
-  // and across the plugin's sources: the profile's buckets are per-plugin, so a
-  // sibling source's binding to it would dangle just the same.
+  // Every scope bound to the deleted profile is tombstoned, across all projects
+  // — and across the plugin's sources: the profile's buckets are per-plugin, so
+  // a sibling source's binding to it would dangle just the same.
   setBinding(proj('d-3'), 'doomed');
   setBinding({ scopeType: 'project', scopeKey: 'd-4', plugin: 'jira-source', sourceId: 'other' }, 'doomed');
   assert.equal(clearBindingsForProfile('jira-source', 'doomed'), 3);
-  assert.equal(getBinding(proj('d-1')), null);
+  assert.equal(getBinding(proj('d-1')), null, 'a tombstone reads as unbound');
   assert.equal(getBinding(proj('d-3')), null);
   assert.equal(getBinding(proj('d-2')), 'survivor', 'other profiles untouched');
+  assert.deepEqual(listBindingsForScope('project', 'd-1'), [], 'tombstones are not listed as bindings');
+
+  // The tombstone is what makes "deleting a profile degrades to ask" REACHABLE
+  // when exactly one profile remains: without it the 'only' fallback would
+  // silently re-point d-1 at a tracker it never chose.
+  assert.deepEqual(resolveProfile({ ...proj('d-1'), available: ['survivor'] }),
+    { profile: null, via: 'none' });
+  // Re-binding over a tombstone works like any bind…
+  setBinding(proj('d-1'), 'survivor');
+  assert.equal(getBinding(proj('d-1')), 'survivor');
+  // …and an EXPLICIT clear (PUT profile:null) removes the row outright, so the
+  // deliberate-removal path returns to the no-ceremony fallback.
+  clearBinding(proj('d-3'));
+  assert.deepEqual(resolveProfile({ ...proj('d-3'), available: ['survivor'] }),
+    { profile: 'survivor', via: 'only' });
 
   clearBindingsForPlugin('jira-source');
   assert.equal(getBinding(proj('d-2')), null);
