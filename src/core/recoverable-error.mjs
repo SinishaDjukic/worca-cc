@@ -33,7 +33,7 @@ export function classifyError(err) {
   if (/\bsession limit\b|hit your[^.]*\blimit\b|reached your[^.]*\blimit\b|\blimit\b[^.]*\bresets?\b/i.test(msg)) return 'usage_limit';
   if (/\b429\b|\b529\b|rate.?limit|overloaded/i.test(msg)) return 'rate_limit';
   if (/credit balance|usage limit|quota|insufficient_quota|billing/i.test(msg)) return 'quota';
-  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|connection (refused|reset|closed|error)|closed mid-response|response above may be incomplete/i.test(msg)) return 'network';
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|connection (refused|reset|closed|error)|closed mid-response|response above may be incomplete|\btimed?[ -]?out\b|\btimeout\b/i.test(msg)) return 'network';
   return null;
 }
 
