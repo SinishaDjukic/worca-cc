@@ -6,6 +6,7 @@
 // only sanitized-HTML path).
 import { createThreadModel } from './ask-model.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 
 const ICONS = {
@@ -1320,22 +1321,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function buildActivity(row) {
     const isLive = !!(st.model && st.model.live() && st.model.live().messageId === row.id);
-    const live = isLive ? st.model.live() : null;
     const activity = make('div', 'ask-activity');
     const head = make('div', 'ask-activity-head');
     head.appendChild(make('span', `ask-dot${isLive ? ' ask-dot-run' : row.status === 'error' ? '' : ' ask-dot-done'}`));
-    const label = isLive
-      ? (live.label || 'Thinking')
-      : row.status === 'stopped' || row.status === 'error' ? 'Stopped after' : 'Worked for';
-    head.appendChild(make('span', 'ask-activity-label', label));
-    const elapsed = make('span', 'ask-activity-elapsed', isLive ? '' : (fmtElapsed(row.durationMs) || ''));
-    if (isLive) el.elapsed = elapsed; // the ONE live elapsed node; tickElapsed (Task 5) writes it
-    head.appendChild(elapsed);
-    head.appendChild(make('span', 'ask-activity-spacer'));
-    const usage = isLive ? live.usage : row.usage;
-    const cost = isLive ? live.costUsd : row.costUsd;
-    const meter = [fmtCtx(usage && usage.ctx), fmtUsd(cost)].filter(Boolean).join(' · ');
-    head.appendChild(make('span', 'ask-activity-meter', meter));
+    // While the turn is live the head is a bare dot: the orb row at the bottom
+    // of the message owns the label, the elapsed and the meter, and printing
+    // either set twice is the noise this replaced. Only a turn that ended badly
+    // still needs a word up here — nothing else marks a stop.
+    if (!isLive) {
+      if (row.status === 'stopped' || row.status === 'error') head.appendChild(make('span', 'ask-activity-label', 'Stopped after'));
+      head.appendChild(make('span', 'ask-activity-elapsed', fmtElapsed(row.durationMs) || ''));
+      head.appendChild(make('span', 'ask-activity-spacer'));
+      const meter = [fmtCtx(row.usage && row.usage.ctx), fmtUsd(row.costUsd)].filter(Boolean).join(' · ');
+      head.appendChild(make('span', 'ask-activity-meter', meter));
+    }
     activity.appendChild(head);
     const tools = (row.blocks || []).filter((b) => b && b.kind === 'tool');
     for (const b of tools) activity.appendChild(toolRow(b));
@@ -1350,6 +1349,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       activity.appendChild(sect);
     }
     return { el: activity };
+  }
+
+  // The ONE orb: created on first live turn and re-parented into each rebuilt
+  // live row. Rebuilding it per row would restart the canvas — and since a tool
+  // block rebuilds the row, the sphere would visibly snap back mid-turn.
+  function ensureThinking() {
+    if (el.thinking) return el.thinking;
+    el.orb = createThinkingOrb({ doc, win, size: 30 });
+    const wrap = make('div', 'ask-thinking');
+    wrap.appendChild(el.orb.el);
+    el.thinkingLabel = make('span', 'ask-thinking-label');
+    wrap.appendChild(el.thinkingLabel);
+    const meter = make('span', 'ask-thinking-meter');
+    el.thinkingElapsed = make('span', 'ask-thinking-elapsed');
+    el.thinkingUsage = make('span', 'ask-thinking-usage');
+    meter.appendChild(el.thinkingElapsed);
+    meter.appendChild(el.thinkingUsage);
+    wrap.appendChild(meter);
+    el.thinking = wrap;
+    return wrap;
+  }
+
+  function updateThinking() {
+    const live = st.model && st.model.live();
+    if (!live || !el.thinking) return;
+    el.thinkingLabel.textContent = `${live.label || 'Thinking'}…`;
+    // ask-usage marks only `meters` dirty, so the row is NOT rebuilt when the
+    // numbers move — this runs every flush instead (updateLiveElapsed).
+    const rest = [fmtCtx(live.usage && live.usage.ctx), fmtUsd(live.costUsd)].filter(Boolean).join(' · ');
+    el.thinkingUsage.textContent = rest ? ` · ${rest}` : '';
   }
 
   function renderAnswerInto(div, row) {
@@ -1414,6 +1443,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const explained = (row.blocks || []).some((b) => b && b.kind === 'notice');
         if (row.errorMessage) wrap.appendChild(make('div', 'ask-error-line', row.errorMessage));
         else if (!explained) wrap.appendChild(make('div', 'ask-error-line', 'This turn ended with an error.'));
+      }
+      if (st.model && st.model.live() && st.model.live().messageId === row.id) {
+        wrap.appendChild(ensureThinking());   // last child: the bottom of the message
+        el.elapsed = el.thinkingElapsed;      // the ONE live elapsed node
+        // Idempotent, and the only re-arm on the adoption path: a thread whose
+        // ask-start the ring buffer already evicted goes live without ever
+        // passing through startElapsed(), and would otherwise show a dead orb.
+        el.orb.start();
+        updateThinking();
       }
     }
     const entry = {
@@ -1515,15 +1553,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the event loop open for every turn a test leaves streaming.
     st.elapsedTimer = setInterval(() => scheduleFlush(), 1000);
     if (st.elapsedTimer && typeof st.elapsedTimer.unref === 'function') st.elapsedTimer.unref();
+    if (el.orb) el.orb.start();
   }
   function stopElapsed() {
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     st.elapsedStart = null;
+    // The orb row is simply not rebuilt into a finished message, so the node is
+    // left detached — with no custom-element lifecycle to notice, the rAF loop
+    // has to be cut here or it paints an orphan for the rest of the session.
+    if (el.orb) el.orb.stop();
   }
   function updateLiveElapsed() {
     if (st.elapsedStart != null && el.elapsed && st.model && st.model.live()) {
       el.elapsed.textContent = fmtElapsed(now() - st.elapsedStart);
     }
+    updateThinking();
   }
 
   function afterFrame(frame) {
@@ -1659,6 +1703,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.destroyed = true;
     closePopover({ focusTrigger: false });
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
+    if (el.orb) el.orb.stop();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     root.remove();

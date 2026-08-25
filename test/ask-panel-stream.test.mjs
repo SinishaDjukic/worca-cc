@@ -47,20 +47,26 @@ test('ask-panel-stream: frames for another thread are ignored', async () => {
   assert.ok(!ctx.doc.querySelector('.ask-transcript').textContent.includes('not mine'));
 });
 
-test('ask-panel-stream: plain-text stream — dot, label, growing answer, done state', async () => {
+test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done state', async () => {
   const ref = { body: snapBody() };
   const ctx = await openWith(ref);
   const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID, threadTotals: { costUsd: 0.02, input: 10, output: 44, cacheRead: 0, cacheCreation: 11290, turns: 1, agents: 0 } });
   const done = frames[frames.length - 1];
   for (const f of frames.slice(0, -1)) ctx.panel.pushServerFrame(f);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-run'), 'violet running dot while streaming');
-  assert.match(ctx.doc.querySelector('.ask-activity-label').textContent, /Thinking|Writing/);
+  assert.ok(ctx.doc.querySelector('.ask-dot-run'), 'green running dot while streaming');
+  assert.equal(ctx.doc.querySelector('.ask-activity-label'), null, 'the head carries no status word while live');
+  const thinking = ctx.doc.querySelector('.ask-thinking');
+  assert.ok(thinking, 'the orb row marks the live turn');
+  assert.match(thinking.querySelector('.ask-thinking-label').textContent, /^(Thinking|Writing).*…$/);
+  assert.equal(thinking.parentElement.lastElementChild, thinking, 'it sits at the bottom of the live message');
+  assert.equal(thinking.parentElement.className, 'ask-msg ask-msg-assistant');
   assert.match(ctx.doc.querySelector('.ask-answer').textContent, /pong/);
   ctx.panel.pushServerFrame(done);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-done'), 'green dot after done');
-  assert.match(ctx.doc.querySelector('.ask-activity-label').textContent, /Worked for/);
+  assert.ok(ctx.doc.querySelector('.ask-dot-done'), 'grey dot after done');
+  assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the orb row leaves with the turn');
+  assert.equal(ctx.doc.querySelector('.ask-activity-label'), null, 'no "Worked for" on a clean turn');
   assert.equal(ctx.doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'answer finished');
 });
 
@@ -73,7 +79,7 @@ test('ask-panel-stream: tool rows stream in with server labels', async () => {
   for (const f of frames) {
     ctx.panel.pushServerFrame(f);
     ctx.flush();
-    const label = ctx.doc.querySelector('.ask-activity-label');
+    const label = ctx.doc.querySelector('.ask-thinking-label');
     if (label && /Finding runs/.test(label.textContent)) sawFindingRuns = true;
     const note = ctx.doc.querySelector('.ask-tool-note');
     if (note && note.textContent === '…') sawRunningTool = true;
@@ -183,7 +189,7 @@ test('ask-panel-stream: elapsed renders from injected now and ticks via flush', 
   ctx.flush();
   t += 6400;
   ctx.flush();
-  assert.match(ctx.doc.querySelector('.ask-activity-elapsed').textContent, /6\.4s/);
+  assert.match(ctx.doc.querySelector('.ask-thinking-elapsed').textContent, /6\.4s/);
 });
 
 test('ask-panel-stream: big answers re-render at most every 250 ms', async () => {
@@ -252,7 +258,7 @@ test('ask-panel-stream: a replayed ask-start seeds elapsed from its startedAt st
   const ctx = await openWith(ref, { now: () => T });
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: new Date(T - 60_000).toISOString(), threadId: TID, messageId: MID, seq: 1 });
   ctx.flush();
-  assert.equal(ctx.doc.querySelector('.ask-activity-elapsed').textContent, '1m 00s', 'seeded from startedAt, not reset to zero');
+  assert.equal(ctx.doc.querySelector('.ask-thinking-elapsed').textContent, '1m 00s', 'seeded from startedAt, not reset to zero');
 });
 
 test('ask-panel-stream: switching off a streaming thread resets the stop button', async () => {
@@ -284,4 +290,61 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   await pick(1);
   assert.equal(ctx.doc.querySelector('[data-ask-stop]').hidden, true, 'stop hidden on the idle thread');
   assert.equal(ctx.doc.querySelector('[data-ask-send]').hidden, false, 'send back');
+});
+
+test('ask-panel-stream: the orb node survives live-row rebuilds so the spin never rewinds', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref);
+  ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
+  ctx.flush();
+  const first = ctx.doc.querySelector('.ask-orb');
+  assert.ok(first, 'the orb mounted with the live turn');
+  // A tool block rebuilds the whole row (buildMessage → replaceWith); the ONE
+  // orb must be re-parented, not rebuilt, or every tool call restarts the spin.
+  ctx.panel.pushServerFrame({ type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'running' }, threadId: TID, messageId: MID, seq: 2 });
+  ctx.flush();
+  assert.ok(ctx.doc.querySelector('.ask-tool-row'), 'the row really was rebuilt');
+  assert.equal(ctx.doc.querySelector('.ask-orb'), first, 'same node, moved');
+  assert.equal(ctx.doc.querySelectorAll('.ask-orb').length, 1, 'never two orbs');
+});
+
+test('ask-panel-stream: the orb row owns the live meter; the head shows only the dot', async () => {
+  let t = 1_000_000;
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref, { now: () => t });
+  ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 'x', threadId: TID, messageId: MID, seq: 1 });
+  ctx.panel.pushServerFrame({ type: 'ask-usage', usage: { ctx: 2000 }, costUsd: 0.14, threadId: TID, messageId: MID, seq: 2 });
+  t += 6400;
+  ctx.flush();
+  const head = ctx.doc.querySelector('.ask-activity-head');
+  assert.equal(head.querySelector('.ask-activity-elapsed'), null, 'no duplicate elapsed above');
+  assert.equal(head.querySelector('.ask-activity-meter'), null, 'no duplicate meter above');
+  assert.equal(head.textContent, '', 'the live head is a bare dot');
+  const meter = ctx.doc.querySelector('.ask-thinking-meter');
+  assert.match(meter.textContent, /^6\.4s · 2\.0k ctx · \$0\.14$/);
+});
+
+test('ask-panel-stream: a stopped turn keeps its status word, a clean one does not', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref);
+  const { frames } = replayFixture('max-turns', { threadId: TID, messageId: MID });
+  for (const f of frames) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-thinking'), null);
+  assert.match(ctx.doc.querySelector('.ask-activity-label').textContent, /Stopped after/);
+});
+
+test('ask-panel-stream: an adopted turn with no ask-start still gets the orb row', async () => {
+  // The ring buffer can evict the prefix; the model adopts the in-flight message
+  // at whatever seq arrives, so afterFrame never sees ask-start and never calls
+  // startElapsed(). buildMessage's own el.orb.start() covers the loop — jsdom has
+  // no rAF, so only the row is observable here; the re-arm itself is pinned by
+  // thinking-orb's "start is idempotent and stop cancels the pending frame".
+  const ref = { body: snapBody({ inFlight: { messageId: MID } }) };
+  const ctx = await openWith(ref);
+  ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'adopted', threadId: TID, messageId: MID, seq: 77 });
+  ctx.flush();
+  assert.match(ctx.doc.querySelector('.ask-answer').textContent, /adopted/);
+  assert.ok(ctx.doc.querySelector('.ask-orb'), 'the orb mounted on the adopted turn');
+  assert.ok(ctx.doc.querySelector('.ask-thinking'), 'and the row with it');
 });

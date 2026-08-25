@@ -2923,6 +2923,31 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-activity-label{font-weight:500;font-size:12px;color:var(--ink-2);white-space:nowrap;}
 .ask-activity-elapsed{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
 .ask-activity-meter{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;}
+/* The live turn is marked by the orb at the bottom of the message, so the head
+   dot only has to say running-or-not: green while the turn is live, grey once
+   it has landed. Scoped to the head — the sub-agent rows keep their own
+   violet/green vocabulary. */
+.ask-activity-head .ask-dot-run{background:var(--green);}
+.ask-activity-head .ask-dot-done{background:var(--seq);}
+
+/* ---------- Ask Worca: the live thinking row (bottom of the last message) --- */
+.ask-thinking{display:flex;align-items:center;gap:12px;min-width:0;padding:2px 0 0;}
+.ask-orb{flex:0 0 auto;}
+/* The label is painted THROUGH the text: a 220%-wide gradient clipped to the
+   glyphs and swept across them, so the highlight travels word to word. Needs
+   `color:transparent` — which is why the reduced-motion block below has to put
+   a real colour back rather than only stopping the animation. */
+.ask-thinking-label{font-weight:500;font-size:12.5px;white-space:nowrap;
+  background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:ask-shimmer 2.4s linear infinite;}
+.ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
+@keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
+/* The `.ask-dock *` blanket at the end of this file already kills the sweep;
+   this only restores a legible fill under the clipped background. */
+@media (prefers-reduced-motion: reduce){
+  .ask-thinking-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
+}
 .ask-tool-row{display:flex;align-items:center;gap:9px;min-width:0;}
 .ask-tool-op{width:38px;flex:0 0 38px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-3);}

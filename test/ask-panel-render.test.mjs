@@ -64,7 +64,7 @@ test('ask-panel-render: user bubble + attachment pills, assistant answer plain f
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'My thread', 'header shows the thread title');
 });
 
-test('ask-panel-render: activity head — done label, elapsed, meter; stopped label', async () => {
+test('ask-panel-render: activity head — dot, elapsed, meter; stopped keeps its label', async () => {
   const snap = snapBody([
     asstRow('askm_00000001', 1),
     asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
@@ -72,7 +72,7 @@ test('ask-panel-render: activity head — done label, elapsed, meter; stopped la
   const ctx = makePanel({ fetchHandler: handlerFor(snap) });
   await openThread(ctx);
   const heads = [...ctx.doc.querySelectorAll('.ask-activity-head')];
-  assert.match(heads[0].textContent, /Worked for/);
+  assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is just a grey dot and its numbers');
   assert.match(heads[0].textContent, /6\.4s/);
   assert.match(heads[0].textContent, /2\.0k ctx/, 'the turn meter shows the turn-end context fill');
   assert.ok(!/tok/.test(heads[0].textContent), 'no cumulative token figure');
