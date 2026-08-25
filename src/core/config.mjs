@@ -59,7 +59,8 @@ export { EFFORTS };
  * is intentionally omitted — the CLI rejects it ("long context beta is not yet
  * available for this subscription"). Fable 5 needs no `[1m]` suffix: its context
  * window is 1M by default (verified to resolve via `claude --model`). Opus 5
- * (`claude-opus-5`) is likewise 1M-only and carries no `[1m]` twin.
+ * (`claude-opus-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
+ * carry no `[1m]` twin.
  */
 export const PREDEFINED_MODELS = [
   { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -70,6 +71,7 @@ export const PREDEFINED_MODELS = [
   { id: 'claude-opus-4-7[1m]',    label: 'Opus 4.7 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-6',        label: 'Opus 4.6',        efforts: ['medium', 'high', 'max'] },
   { id: 'claude-opus-4-6[1m]',    label: 'Opus 4.6 (1M)',   efforts: ['medium', 'high', 'max'] },
+  { id: 'claude-sonnet-5',        label: 'Sonnet 5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-sonnet-4-6',      label: 'Sonnet 4.6',      efforts: ['medium', 'high', 'max'] },
   { id: 'claude-sonnet-4-6[1m]',  label: 'Sonnet 4.6 (1M)', efforts: ['medium', 'high', 'max'] },
   { id: 'claude-haiku-4-5',       label: 'Haiku 4.5',       efforts: ['medium', 'high'] },

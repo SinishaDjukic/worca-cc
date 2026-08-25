@@ -348,3 +348,19 @@ test('rule 4 sizes the work, matches the kind first, and names no agent', () => 
     assert.ok(!ASK_SYSTEM_RULES.includes(key), `the rules hardcode no agent key (${key})`);
   }
 });
+
+// The chat often explores before it proposes (a worktree, a run diff, comments), but
+// the run it proposes starts a FRESH agent with none of this conversation: the brief
+// is the ONLY channel. Rule 10 makes the model hand that agent a DISTILLED head start
+// — not a transcript, not a paste — anchored by path + symbol + quote, because a
+// proposed run branches from a source branch that may have moved since the read (the
+// same reason rule 9 quotes line_text).
+test('rule 10 distils exploration findings into the brief, anchored and marked', () => {
+  for (const t of ['distil what you found into the brief', 'do not transcribe the conversation',
+    'FRESH agent that sees none of this chat', 'no pasted files or diffs', 'never by line number alone',
+    'a lead to check', 'never describe code you have not read', 'add nothing']) {
+    assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 10 states "${t}"`);
+  }
+  assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
+  assert.ok(!/\n\s*11\./.test(ASK_SYSTEM_RULES), 'the rules stop at 10 (renumbering would break these pins)');
+});
