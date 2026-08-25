@@ -688,3 +688,23 @@ test('source scan: tools.mjs issues no writes and never touches db.mjs; tool-dep
   assert.match(deps, /import \{ readFile, access \} from 'node:fs\/promises';/, 'fs surface = readFile + access only');
   assert.doesNotMatch(deps, /from 'node:fs'(?!\/promises)/);
 });
+
+// Review of PR #376: every page re-read the whole diff-patch.patch, re-split it
+// into sections and re-redacted every kept section before slicing one window —
+// a 5 MB patch at the default page was ~85 full passes. The filtered body is now
+// memoised per run for the life of the tools closure (one MCP child = one turn).
+test('get_run_diff: paging reuses the parsed/redacted patch — one read per run; a changed row stamp re-reads', async () => {
+  let reads = 0;
+  const t = createAskTools({ ...fake, readDiffPatch: async (row) => { reads += 1; return diffs.get(row.id) ?? null; } });
+  const a = await t.call('get_run_diff', { id: '4e1f2a9b', maxBytes: 40 });
+  const b = await t.call('get_run_diff', { id: '4e1f2a9b', offset: a.nextOffset, maxBytes: 40 });
+  const c = await t.call('get_run_diff', { id: '4e1f2a9b', path: 'docs/notes.md' });
+  assert.equal(reads, 1, 'three pages, one read + parse');
+  assert.deepEqual(b.files, a.files);
+  assert.ok(c.text.includes('docs/notes.md'));
+  assert.ok(!c.text.includes('src/app.js'), 'the path filter still applies from the cache');
+  // the whole-body result is byte-identical to an uncached call
+  const fresh = createAskTools(fake);
+  assert.deepEqual(await t.call('get_run_diff', { id: '4e1f2a9b' }), await fresh.call('get_run_diff', { id: '4e1f2a9b' }));
+  assert.equal(reads, 1);
+});

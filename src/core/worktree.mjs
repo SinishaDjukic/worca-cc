@@ -52,7 +52,7 @@ const SLOW_GIT_TIMEOUT_MS = 120_000;
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
-function git(cwd, args, { signal, timeout = 30_000, env } = {}) {
+function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
   return new Promise((res) => {
     let child;
     try {
@@ -78,7 +78,24 @@ function git(cwd, args, { signal, timeout = 30_000, env } = {}) {
           done({ ok: false, stdout, stderr: stderr ? `git timed out: ${stderr}` : 'git timed out', code: -1 });
         }, timeout)
       : null;
-    child.stdout?.on('data', (b) => (stdout += b.toString()));
+    // `maxBytes` caps the CAPTURE (review of PR #376): the Ask `git` tool re-runs a
+    // command per `offset` page, so `log -p --all` on a big repo accumulated the
+    // whole history in memory every page. Past the cap the child is killed and
+    // the result is `ok` with `truncated: true` — the caller says so and pages
+    // within what it got.
+    let captured = 0;
+    let truncated = false;
+    child.stdout?.on('data', (b) => {
+      if (truncated) return;
+      captured += b.length;
+      stdout += b.toString();
+      if (maxBytes > 0 && captured > maxBytes) {
+        truncated = true;
+        stdout = Buffer.from(stdout, 'utf8').subarray(0, maxBytes).toString('utf8');
+        try { child.kill('SIGKILL'); } catch { /* gone */ }
+        done({ ok: true, stdout, stderr, code: 0, truncated: true });
+      }
+    });
     child.stderr?.on('data', (b) => (stderr += b.toString()));
     child.on('error', (err) => done({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
     child.on('close', (code) => done({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
@@ -378,8 +395,8 @@ export const ASK_GIT_ENV = Object.freeze({
  * helper here ({ok, stdout, stderr, code}, never throws), plus the ASK_GIT_ENV
  * hardening and the caller's abort signal.
  */
-export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_MS } = {}) {
-  return git(cwd, args, { signal, timeout: timeoutMs, env: ASK_GIT_ENV });
+export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_MS, maxBytes = 0 } = {}) {
+  return git(cwd, args, { signal, timeout: timeoutMs, env: ASK_GIT_ENV, maxBytes });
 }
 
 /**

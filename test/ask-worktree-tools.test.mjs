@@ -129,7 +129,7 @@ test('git diff/show/log: protected sections dropped, redaction fires on KEPT sec
 
   // a `show` that resolves to a raw blob/tree is refused (closes ls-tree -> sha -> show)
   const sha = String(spawnSync('git', ['rev-parse', 'main:README.md'], { cwd: repo }).stdout).trim();
-  await assert.rejects(() => tools.call('git', { worktreeId: wt.worktreeId, args: ['show', sha] }), /displays commits/);
+  await assert.rejects(() => tools.call('git', { worktreeId: wt.worktreeId, args: ['show', sha] }), /raw blob|displays commits/);
 
   // grep/ls-files LINE filter: a protected path never appears in a path list
   const lsf = await tools.call('git', { worktreeId: wt.worktreeId, args: ['ls-files'] });
@@ -218,4 +218,89 @@ test('splitUnifiedDiff: sections carry header:true/false, incl. member headers',
   // member-header sections carry header:false too (they have no diff --git line):
   const ws = splitUnifiedDiff('# alpha-00000001\ndiff --git a/y.md b/y.md\n+++ b/y.md\n+y\n');
   assert.deepEqual(ws.map((x) => [x.path, x.member, x.header]), [[null, true, false], ['y.md', false, true]]);
+});
+
+test('git tool: output-shape flags, blob shas and colon forms cannot beat the protected-path filter; patch-less show works', async () => {
+  const repo = await freshRepo();
+  const g = (args) => spawnSync('git', args, { cwd: repo });
+  g(['checkout', '-qb', 'leak']);
+  await writeFile(join(repo, '.env'), 'DB_PASSWORD=hunter2-plaintext\n');
+  await writeFile(join(repo, 'ok.md'), 'fine\n');
+  g(['add', '-A']); g(['commit', '-qm', 'leak the env']);
+  g(['checkout', '-q', 'main']);
+  const p = (await addProject({ name: 'wtt-five', path: repo })).find((x) => x.name === 'wtt-five');
+  const t = createThread();
+  const tools = realTools(t.id);
+  const wt = await tools.call('open_worktree', { projectKey: p.key, ref: 'main' });
+  const git = (args) => tools.call('git', { worktreeId: wt.worktreeId, args });
+  const leaks = (r) => JSON.stringify(r).includes('hunter2');
+
+  // (1) flags that move the header/path off its line — refused at the allowlist,
+  // never spawned. Verified pre-fix: `log -p --graph` returned `| +DB_PASSWORD=…`
+  // and `--src-prefix=x` returned the whole .env hunk.
+  for (const args of [['log', '-p', '--graph', 'leak'], ['diff', '--src-prefix=x', '--dst-prefix=y', 'main', 'leak'],
+    ['diff', '--line-prefix=| ', 'main', 'leak'], ['show', '--no-prefix', 'leak']]) {
+    await assert.rejects(() => git(args), /not allowed/);
+  }
+
+  // (2) colon forms: `:0:.env` was checked as basename `0:.env` (unprotected) and
+  // yielded the blob sha via rev-parse. Every colon suffix is now a candidate.
+  for (const args of [['rev-parse', ':0:.env'], ['rev-parse', 'leak:.env'], ['show', ':/.env'],
+    ['rev-parse', ':(top).env'], ['log', '-L1,1:.env']]) {
+    await assert.rejects(() => git(args), /protected path/);
+  }
+
+  // (3) a blob sha carries no path: `diff <blob> <blob>` printed the .env body under
+  // sha labels, `grep <pat> <blob>` printed it as `<sha>:line`. Both refused.
+  const envSha = String(g(['rev-parse', 'leak:.env']).stdout).trim();
+  const readmeSha = String(g(['rev-parse', 'main:README.md']).stdout).trim();
+  await assert.rejects(() => git(['diff', readmeSha, envSha]), /blob/);
+  await assert.rejects(() => git(['diff', `${readmeSha}..${envSha}`]), /blob|unknown revision|bad revision/);
+  await assert.rejects(() => git(['grep', '-n', 'PASSWORD', envSha]), /blob/);
+  await assert.rejects(() => git(['show', envSha]), /blob|displays commits/);
+  await assert.rejects(() => git(['show', 'leak^{tree}']), /tree|displays commits/);
+  await assert.rejects(() => git(['ls-tree', '-r', '--format=%(objectname)%(path)', 'leak']), /format/);
+
+  // (4) patch-LESS show forms are legitimate commit views and must work (they were
+  // refused as "raw blob"); their diffstat / name list still hides protected files.
+  const s = await git(['show', '-s', '--format=%s', 'leak']);
+  assert.match(s.text, /leak the env/);
+  const stat = await git(['show', '--stat', 'leak']);
+  assert.match(stat.text, /ok\.md/);
+  assert.ok(!stat.text.includes('.env') && !leaks(stat), 'diffstat hides the protected file');
+  const names = await git(['show', '--name-only', '--format=', 'leak']);
+  assert.match(names.text, /ok\.md/);
+  assert.ok(!names.text.includes('.env'));
+  // `log -p --stat` puts the diffstat in the header-LESS preamble of each commit —
+  // that preamble is line-filtered too, not kept verbatim.
+  const ps = await git(['log', '-p', '--stat', '-1', 'leak']);
+  assert.match(ps.text, /ok\.md/);
+  assert.ok(!ps.text.includes('.env') && !leaks(ps), 'preamble diffstat filtered');
+  // and the ordinary diff still hides the .env section outright
+  assert.ok(!leaks(await git(['diff', 'main', 'leak'])));
+});
+
+// Review of PR #376: runGitCapture accumulated stdout without bound and the tool
+// re-runs the command per offset page — `log -p --all` on a big repo was an OOM
+// (or a 120 s kill) on every page. The capture is capped; the tool says so.
+test('git capture is capped: past maxBytes the child is killed and the output is marked capped', async () => {
+  const repo = await freshRepo();
+  const { runGitCapture } = await import('../src/core/worktree.mjs');
+  const r = await runGitCapture(repo, ['log', '-p', '--all'], { maxBytes: 16 });
+  assert.equal(r.ok, true);
+  assert.equal(r.truncated, true);
+  assert.ok(Buffer.byteLength(r.stdout) <= 16, `capped capture (${Buffer.byteLength(r.stdout)} bytes)`);
+  const full = await runGitCapture(repo, ['log', '--oneline']);
+  assert.equal(full.truncated, undefined, 'uncapped calls are unchanged');
+  const { ASK_LIMITS } = await import('../src/core/ask/limits.mjs');
+  assert.ok(ASK_LIMITS.gitCaptureMaxBytes >= ASK_LIMITS.gitOutputMaxBytes, 'the capture cap is never below one page');
+  // through the tool: a capped run carries the notice and the flag
+  const p = (await addProject({ name: 'wtt-cap', path: repo })).find((x) => x.name === 'wtt-cap');
+  const t = createThread();
+  const tools = createAskTools({ ...defaultToolDeps({ threadId: t.id }), ...defaultWorktreeDeps({ threadId: t.id }),
+    limits: { ...ASK_LIMITS, gitCaptureMaxBytes: 16 } });
+  const wt = await tools.call('open_worktree', { projectKey: p.key, ref: 'main' });
+  const out = await tools.call('git', { worktreeId: wt.worktreeId, args: ['log', '-p'] });
+  assert.equal(out.capped, true);
+  assert.match(out.text, /output capped at 16 bytes/);
 });

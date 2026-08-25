@@ -27,6 +27,7 @@ export const ASK_LIMITS = Object.freeze({
   diffDefaultBytes: 60_000,
   diffMaxBytes: 200_000,
   gitOutputMaxBytes: 200_000,              // per `git` tool call (P4 §8), sliceBytes window
+  gitCaptureMaxBytes: 8_000_000,           // stdout CAPTURE cap per spawn — past it the child is killed and the output marked capped
   worktreesPerThread: 5,                   // P4 D9
   worktreesGlobal: 15,                     // P4 D9
   attachmentReadDefaultBytes: 32_000,

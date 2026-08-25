@@ -138,3 +138,35 @@ test('caps live in ASK_LIMITS', () => {
   assert.equal(ASK_LIMITS.worktreesGlobal, 15);
   assert.equal(ASK_LIMITS.gitOutputMaxBytes, 200_000);
 });
+
+test('output-shape flags that move the path or the header off its line are refused (review: --graph/--line-prefix/--src-prefix leaks)', () => {
+  // Each of these was verified to defeat the protected-path filter against a real
+  // repo: `--graph`/`--line-prefix` push `diff --git ` off column 0 so the SECTION
+  // filter never engages; `--src-prefix=x` relabels `.env` as `x.env`; `--relative`
+  // strips the directory a slash-anchored pattern needs; `--submodule=diff` inlines a
+  // nested repo's patch under its own header shape; `--color-words`/`--color-moved`
+  // are the colour switches `--color` does not spell.
+  for (const args of [
+    ['log', '-p', '--graph'], ['log', '--graph', '--oneline'], ['diff', '--line-prefix=| ', 'HEAD~1'],
+    ['diff', '--src-prefix=x', 'HEAD~1'], ['diff', '--dst-prefix=y', 'HEAD~1'], ['show', '--no-prefix', 'HEAD'],
+    ['diff', '--default-prefix'], ['diff', '--relative', 'HEAD~1'], ['diff', '--relative=config', 'HEAD~1'],
+    ['diff', '--submodule=diff'], ['diff', '--submodule'], ['log', '-p', '--color-words'],
+    ['diff', '--color-moved', 'HEAD~1'], ['diff', '--color-moved-ws=ignore-all-space', 'HEAD~1'],
+  ]) no(args, /not allowed/);
+});
+
+test('ls-tree/ls-files --format can glue sha and path into one token — refused', () => {
+  no(['ls-tree', '-r', '--format=%(objectname)%(path)', 'HEAD'], /format/);
+  no(['ls-tree', '--format', '%(path)', 'HEAD'], /format/);
+  no(['ls-files', '--format=%(path)'], /format/);
+  ok(['log', '--format=%H %s', '-5']);                         // log's --format is commit metadata, fine
+  ok(['ls-tree', '-r', '--name-only', 'HEAD']);
+});
+
+test('pickaxe and range values are option VALUES, not a hidden -f/-o/-O flag (review: -Sfoo / -Gconfig rejected)', () => {
+  for (const args of [['log', '-Sfoo'], ['log', '-Gconfig', '--oneline'], ['log', '-Sof'], ['log', '-L1,5:src/app.js'], ['log', '-Lfoo:bar']]) ok(args);
+  no(['log', '-pf'], /not allowed/);                            // -p is boolean; f is then --file
+  no(['log', '-nf'], /not allowed/);
+  no(['grep', '-nf/etc/passwd'], /not allowed/);
+  ok(['grep', '-ef', '-n']);                                    // -e's attached value is the pattern "f"
+});

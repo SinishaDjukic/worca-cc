@@ -174,7 +174,14 @@ enforces the set's latest definition.
   every unknown subcommand are refused, as are the arbitrary-read/exec options
   (`-c`, `--git-dir`, `--work-tree`, `-C`, `--exec-path`, `--ext-diff`,
   `--textconv`, `--output`/`-o`, `--upload-pack`/`--receive-pack`, `--no-index`,
-  `--contents`, `-f`/`--file`, `--filters`, `--color`, and any `-O…`). (2) git is
+  `--contents`, `-f`/`--file`, `--filters`, `--color`, `--color-words`/`--color-moved`, and any
+  `-O…`), the output-SHAPE flags that move a header or a path off its line
+  (`--graph`, `--line-prefix`, `--src-prefix`/`--dst-prefix`/`--no-prefix`/
+  `--default-prefix`, `--relative`, `--submodule`), and `--format`/`--pretty` on
+  the path-list subcommands (`ls-tree`/`ls-files`). A positional that resolves to
+  a bare BLOB is refused everywhere (`diff <blob> <blob>`, `grep <pat> <blob>`) and
+  a tree for `show`; every colon suffix of a positional is checked against the
+  protected paths (`:0:.env`, `leak:.env`, `:/.env`, `-L1,5:.env`). (2) git is
   spawned with `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0` and empty
   `GIT_ASKPASS`/`SSH_ASKPASS` so an uncredentialed fetch fails fast instead of
   hanging the turn, and the handler PREPENDS trusted `-c diff.external= -c

@@ -44,6 +44,44 @@ const BLOCKED_ANYWHERE = new Set([
   '--no-index', '--contents', '-f', '--file', '--filters', '--color',
 ]);
 
+// Output-SHAPE flags. Each one was verified (code review of PR #376) to defeat
+// the protected-path filter in tools.mjs against a real repo with a committed
+// `.env`: the SECTION filter engages only on a `diff --git ` header at column 0,
+// and the LINE filter only sees a path when git prints it as its own token.
+//   --graph / --line-prefix   prefix EVERY line → no header at column 0 → the
+//                             fallback line filter kept `| +DB_PASSWORD=…` verbatim
+//   --src-prefix/--dst-prefix relabel `a/.env` as `x.env` → no pattern matches
+//   --no-prefix/--default-prefix  change the header shape the parser is pinned to
+//   --relative[=<dir>]        strips the directory a slash-anchored pattern needs
+//   --submodule[=diff]        inlines a nested repo's patch under its own headers
+//   --color-words/--color-moved(-ws)  colour switches `--color` does not spell
+// Keyed by `key()` form (exact token or `=`-prefix), like the rest of the set;
+// the value is the hint the model gets back.
+const SHAPE_BLOCKED = {
+  '--graph': 'it prefixes every output line, which defeats the protected-path filter — use --oneline without --graph',
+  '--line-prefix': 'it prefixes every output line, which defeats the protected-path filter',
+  '--src-prefix': 'it relabels file paths, which defeats the protected-path filter',
+  '--dst-prefix': 'it relabels file paths, which defeats the protected-path filter',
+  '--no-prefix': 'it changes the diff header shape the protected-path filter reads',
+  '--default-prefix': 'it changes the diff header shape the protected-path filter reads',
+  '--relative': 'it strips directories from paths, which defeats slash-anchored protected-path patterns',
+  '--submodule': 'submodule patches are not filtered here — open the submodule as its own worktree',
+  '--color-words': 'colour output defeats the protected-path filter',
+  '--color-moved': 'colour output defeats the protected-path filter',
+  '--color-moved-ws': 'colour output defeats the protected-path filter',
+};
+// `--format`/`--pretty` on the PATH-LIST subcommands can glue the object name to
+// the path (`%(objectname)%(path)`) so the line filter's token split never sees a
+// protected basename. `log --format` is commit metadata and stays allowed.
+const LIST_FORMAT_FLAGS = new Set(['--format', '--pretty']);
+const LIST_FORMAT_SUBS = new Set(['ls-tree', 'ls-files']);
+// Short options whose value may be ATTACHED on the patch/log subcommands
+// (`-Sfoo`, `-Gconfig`, `-L1,5:file`): everything after them in a cluster is data,
+// so the `-f`/`-o`/`-O` letter scan stops there. Only letters that take a value on
+// EVERY allowed subcommand belong here — a letter that is boolean somewhere would
+// let `-<letter>f` smuggle `--file` past the scan on that subcommand.
+const PATCH_VALUE_SHORTS = new Set(['S', 'G', 'L']);
+
 const BRANCH_TAG_MUTATING = new Set([
   '-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-f', '--force',
   '--edit-description', '--set-upstream-to', '-u', '--unset-upstream', '--create-reflog',
@@ -144,21 +182,39 @@ export function validateGitArgs(rawArgs) {
   }
   const args = rawArgs.map((a) => a.trim()).filter((a) => a.length);
   if (!args.length) return { ok: false, error: 'args must be a non-empty array of strings' };
+  const sub = args[0];
+  // Which short letters swallow the rest of a cluster as their VALUE depends on the
+  // subcommand: grep's `-e<pat>`/`-C<n>`…, the patch/log family's `-S<str>`/`-G<re>`/
+  // `-L<range>`. Anywhere else no letter is trusted to take a value.
+  const valueShorts = sub === 'grep' ? GREP_VALUE_SHORTS : (READ_SUBCOMMANDS.has(sub) ? PATCH_VALUE_SHORTS : new Set());
   for (const a of args) {
-    // Prefix guard for ATTACHED short-option values, which key() cannot normalise
+    // Cluster guard for ATTACHED short-option values, which key() cannot normalise
     // (it strips `=value`, never `-f<value>` — git's standard attached short form):
     // `-O<cmd>` (open-files-in-pager = arbitrary exec, `diff -O<orderfile>` = read),
     // `-f<path>` (grep's pattern FILE = arbitrary absolute-path read OUTSIDE the
     // worktree, breaking the D3 confinement invariant) and `-o<path>` (--output =
     // file write). All three also hide inside a bundle — `git grep -nf/etc/passwd`
-    // is `-n -f /etc/passwd`, verified against real git — so the scan accepts any
-    // run of short flags before the offending letter. The bare `-f`/`-o`/`-O` tokens
-    // were already refused by BLOCKED_ANYWHERE, so this only widens to the forms
-    // that carry a value.
-    if (/^-[A-Za-z]*[Ofo]/.test(a)) return { ok: false, error: `argument ${JSON.stringify(a)} is not allowed` };
-    if (BLOCKED_ANYWHERE.has(key(a))) return { ok: false, error: `argument ${JSON.stringify(a)} is not allowed` };
+    // is `-n -f /etc/passwd`, verified against real git — so the scan walks the
+    // cluster letter by letter and stops only at a letter known to take a value
+    // (`-Sfoo` is the pickaxe string "foo", not `-S -f oo`). The bare `-f`/`-o`/`-O`
+    // tokens were already refused by BLOCKED_ANYWHERE, so this only widens to the
+    // forms that carry a value.
+    if (/^-[A-Za-z]/.test(a)) {
+      for (const ch of a.slice(1)) {
+        if (ch === 'O' || ch === 'f' || ch === 'o') return { ok: false, error: `argument ${JSON.stringify(a)} is not allowed` };
+        if (valueShorts.has(ch)) break;                  // the rest of the token is this option's value
+        if (!/[A-Za-z]/.test(ch)) break;                 // a digit/punctuation ends the flag cluster
+      }
+    }
+    const k = key(a);
+    if (BLOCKED_ANYWHERE.has(k)) return { ok: false, error: `argument ${JSON.stringify(a)} is not allowed` };
+    if (Object.prototype.hasOwnProperty.call(SHAPE_BLOCKED, k)) {
+      return { ok: false, error: `argument ${JSON.stringify(a)} is not allowed: ${SHAPE_BLOCKED[k]}` };
+    }
+    if (LIST_FORMAT_SUBS.has(sub) && LIST_FORMAT_FLAGS.has(k)) {
+      return { ok: false, error: `git ${sub} ${k} is not allowed — a custom format can hide the path from the protected-path filter; use the default listing` };
+    }
   }
-  const sub = args[0];
   if (sub === 'pull') return { ok: false, error: 'pull is not available (detached worktrees have nothing to merge into) — fetch, then diff/checkout origin/<branch>' };
   if (sub === 'push' || sub === 'remote') return { ok: false, error: `${sub} is not available: the chat cannot publish anything — propose a pipeline instead` };
   if (sub === 'grep') return validateGrep(args);   // read tier, but the path must stay on every line

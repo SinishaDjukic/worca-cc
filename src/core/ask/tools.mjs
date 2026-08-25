@@ -454,16 +454,60 @@ export function createAskTools(deps) {
   // positional — a bare token (blame .env), the <path> half of <rev>:<path>
   // (show HEAD:.env), and anything after `--` (log -p -- .env). A ref like
   // `main...leak` has a non-protected basename, so it passes.
+  //
+  // EVERY colon suffix is a candidate, not just the first: the index form
+  // `:0:.env` (stage 0 of .env) was checked as basename `0:.env`, matched nothing,
+  // and `rev-parse :0:.env` handed the model the blob sha (review of PR #376).
+  // Pathspec magic is stripped the same way (`:(top).env`, `:/.env`, `:!x`), and
+  // `-L<start>,<end>:<file>` carries its file after the last colon of an OPTION
+  // token, so attached `-L` values are scanned too.
   const protectedInArgs = (args) => {
     let afterSep = false;
+    const candidates = (tok) => {
+      const out = [tok];
+      const magic = /^:(\([^)]*\)|[/!^]*)/.exec(tok);
+      if (magic) out.push(tok.slice(magic[0].length));
+      for (let i = tok.indexOf(':'); i !== -1; i = tok.indexOf(':', i + 1)) out.push(tok.slice(i + 1));
+      return out.filter(Boolean);
+    };
     for (const a of args.slice(1)) {
       if (a === '--') { afterSep = true; continue; }
-      if (a.startsWith('-')) continue;
-      const cand = (!afterSep && a.includes(':')) ? a.slice(a.indexOf(':') + 1) : a;
-      if (cand && isProtectedBasename(cand, deps.protectedPaths)) return cand;
+      if (a.startsWith('-')) {
+        if (/^-L./.test(a)) { for (const cand of candidates(a.slice(2))) if (isProtectedBasename(cand, deps.protectedPaths)) return cand; }
+        continue;
+      }
+      for (const cand of (afterSep ? [a] : candidates(a))) if (isProtectedBasename(cand, deps.protectedPaths)) return cand;
     }
     return null;
   };
+  // A bare object name carries no path, so no pattern can protect what it points
+  // at: `diff <blob> <blob>` printed a protected file's body under sha labels and
+  // `grep <pat> <blob>` printed it as `<sha>:line` (review of PR #376). Every
+  // positional that git will resolve as an object is typed via `cat-file -t` (a
+  // TRUSTED spawn — the model cannot call cat-file); a blob is refused everywhere,
+  // a tree is refused for `show` (its listing is the raw read this tool does not
+  // serve). Unknown names (patterns, paths, refs git will reject itself) pass.
+  const OBJECT_TYPED_SUBS = new Set(['diff', 'show', 'log', 'grep', 'blame']);
+  const refuseBlobPositionals = async (wtPath, args) => {
+    if (!OBJECT_TYPED_SUBS.has(args[0])) return;
+    const positionals = [];
+    for (const a of args.slice(1)) {
+      if (a === '--') break;
+      if (a.startsWith('-')) continue;
+      // `<rev>:<path>` forms are name-checked above; `a..b`/`a...b` ranges are split
+      // so a blob smuggled into a range end is typed too.
+      for (const part of a.split(/\.\.\.?/)) if (part && !part.includes(':')) positionals.push(part);
+    }
+    for (const p of positionals) {
+      const r = await deps.worktrees.runGit(wtPath, ['cat-file', '-t', `${p}^{}`]);   // ^{} peels an annotated tag
+      const type = r.ok ? r.stdout.trim() : '';
+      if (type === 'blob') throw new AskToolError(`git: ${JSON.stringify(p)} is a raw blob — this tool serves diffs and history, not file contents; inspect the file through a commit`);
+      if (type === 'tree' && args[0] === 'show') throw new AskToolError(`git: ${JSON.stringify(p)} is a tree — git show displays commits; use ls-tree for a listing`);
+    }
+  };
+  const protectedLineFilter = (text) => text.split('\n')
+    .filter((line) => !line || !line.split(/[-\s:=\u0000]+/).some((tok) => isProtectedBasename(tok, deps.protectedPaths)))
+    .join('\n');
 
   // Does this path hit the protected floor? UNQUOTE FIRST: git C-quotes any name
   // holding '"', '\\', a tab or a control byte (and, in patches persisted before
@@ -486,6 +530,8 @@ export function createAskTools(deps) {
   // one section under its NEW name, and old_path is persisted for exactly this
   // check — which must keep working once the patch itself is gone.
   const commentBlocked = (c) => !!c && (guardedPath(c.path) || guardedPath(c.oldPath));
+
+  const diffPageCache = new Map();   // run id -> { stamp, files, byPath, filtered } (get_run_diff paging)
 
   const handlers = {
     async list_projects() {
@@ -535,10 +581,21 @@ export function createAskTools(deps) {
     async get_run_diff(input) {
       const row = await resolveRow(input, 'get_run_diff');
       if (row.archived_at) return EMPTY_DIFF();
-      const text = await deps.readDiffPatch(row);
-      if (text == null) return EMPTY_DIFF();
       const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const maxBytes = clampInt(input.maxBytes, 1, L.diffMaxBytes, L.diffDefaultBytes);
+      // Paging re-entered here per page with a full read + section split + redact of
+      // the WHOLE patch (a 5 MB diff at the default page = ~85 passes — review of
+      // PR #376). The filtered body is memoised per run for the life of this
+      // closure (one MCP child = one turn); the row's stamp guards a run that
+      // finishes and writes its patch mid-turn.
+      const stamp = `${row.id}|${row.updated_at ?? row.updatedAt ?? ''}|${row.mtime ?? ''}|${row.status ?? ''}`;
+      const hit = diffPageCache.get(row.id);
+      if (hit && hit.stamp === stamp) {
+        const body = hit.byPath.get(str(input.path) || '') ?? hit.filtered(str(input.path));
+        return { available: true, files: hit.files, ...sliceBytes(body, offset, maxBytes) };
+      }
+      const text = await deps.readDiffPatch(row);
+      if (text == null) return EMPTY_DIFF();
       // Fail closed: a section whose path could not be read cannot be checked
       // against the guardrail patterns, so it is dropped rather than emitted
       // verbatim. Member headers carry no path by design and are what scopes the
@@ -547,11 +604,17 @@ export function createAskTools(deps) {
       // section under its NEW name, so `config/.env` → `config/env.sample` would
       // otherwise ship the old file's credentials as `-`/context lines.
       const protectedSide = (p) => !!p && isProtectedBasename(p, deps.protectedPaths);
-      const kept = splitUnifiedDiff(text).filter((s) => s.member || (!!s.path && !protectedSide(s.path) && !protectedSide(s.oldPath)));
+      const kept = splitUnifiedDiff(text).filter((s) => s.member || (!!s.path && !protectedSide(s.path) && !protectedSide(s.oldPath)))
+        .map((s) => ({ ...s, text: deps.redact(s.text) }));
       const files = kept.filter((s) => s.path).map((s) => ({ path: s.path, added: s.added, removed: s.removed, ...(s.projectKey ? { projectKey: s.projectKey } : {}) }));
-      const wantPath = str(input.path);
-      const body = kept.filter((s) => (wantPath ? s.path === wantPath : true)).map((s) => deps.redact(s.text)).join('');
-      return { available: true, files, ...sliceBytes(body, offset, maxBytes) };
+      const byPath = new Map();
+      const filtered = (wantPath) => {
+        const key = wantPath || '';
+        if (!byPath.has(key)) byPath.set(key, kept.filter((s) => (wantPath ? s.path === wantPath : true)).map((s) => s.text).join(''));
+        return byPath.get(key);
+      };
+      diffPageCache.set(row.id, { stamp, files, byPath, filtered });
+      return { available: true, files, ...sliceBytes(filtered(str(input.path)), offset, maxBytes) };
     },
     async propose_run(input) {
       const r = await deps.validateProposal(input);
@@ -699,6 +762,12 @@ export function createAskTools(deps) {
       if (!v.ok) throw new AskToolError(`git: ${v.error}`);
       const bad = protectedInArgs(v.args);
       if (bad) throw new AskToolError(`git: ${JSON.stringify(bad)} is a protected path — check out the ref and inspect it another way`);
+      // `show <rev>:<path>` is a raw file dump — the read this tool does not serve
+      // (blame/log -p/diff show a file's content WITH its path on every line).
+      if (v.args[0] === 'show' && v.args.slice(1).some((a) => !a.startsWith('-') && a.includes(':'))) {
+        throw new AskToolError('git show displays commits — a raw blob or tree is not readable through this tool');
+      }
+      await refuseBlobPositionals(wt.path, v.args);
       if (v.fetch) {
         const remotes = await deps.worktrees.runGit(wt.path, ['remote']);
         const names = remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [];
@@ -713,7 +782,7 @@ export function createAskTools(deps) {
       // that would beat it (`-h`/`--heading`/`-z`, which win as the later flag).
       const argv = [...GIT_HARDEN, v.args[0], ...(v.args[0] === 'grep' ? ['-H'] : []), ...v.args.slice(1),
         ...(PATCH_CAPABLE.has(v.args[0]) ? ['--no-ext-diff', '--no-color'] : [])];
-      const r = await deps.worktrees.runGit(wt.path, argv);
+      const r = await deps.worktrees.runGit(wt.path, argv, { maxBytes: L.gitCaptureMaxBytes });
       // Row follows checkout/switch AND fetch (§5): fetch re-reads HEAD + stamps updated_at.
       if (r.ok && (v.nav || v.fetch)) {
         const positional = v.nav ? (v.args.filter((a) => !a.startsWith('-'))[1] ?? wt.ref) : wt.ref;
@@ -733,40 +802,35 @@ export function createAskTools(deps) {
         throw new AskToolError('git: combined merge diffs cannot be filtered here — inspect a single parent (e.g. `diff <merge>^1 <merge>`)');
       }
       const hasPatch = /(^|\n)diff --git /.test(body);
-      // `show` that produced no patch resolved to a BLOB/tree, not a commit — that is
-      // the raw-file read this tool does not serve (and it closes the
-      // ls-tree -> blob-sha -> `show <sha>` leg, which protectedInArgs cannot see).
-      if (v.args[0] === 'show' && !hasPatch) {
-        throw new AskToolError('git show displays commits — a raw blob or tree is not readable through this tool');
-      }
+      // (A `show` that names a blob/tree, or a `<rev>:<path>`, was refused BEFORE
+      // the spawn — see refuseBlobPositionals — so a patch-less `show` here is a
+      // legitimate commit view: `-s`, `--stat`, `--name-only`, `--format=`.)
       if (hasPatch) {
         // Protected-path section filter over ANY patch output (diff, show <commit>,
-        // log -p). A header-LESS section (a commit-message preamble) is kept because
-        // a real header is present; a section whose header opened but whose path is
-        // protected on either side is dropped. A colour-escaped or external-diff dump
-        // has no parseable header, so `hasPatch` is false and it never reaches here.
+        // log -p). A section whose header opened but whose path is protected on
+        // either side is dropped. A header-LESS section (a commit-message preamble,
+        // which with `--stat` also carries the diffstat) is kept but LINE-filtered,
+        // so a protected filename never surfaces there either. A colour-escaped or
+        // external-diff dump has no parseable header, so `hasPatch` is false and it
+        // never reaches here.
         const protectedSide = (p) => !!p && isProtectedBasename(p, deps.protectedPaths);
         body = splitUnifiedDiff(body)
           .filter((s) => s.member || !s.header || (!!s.path && !protectedSide(s.path) && !protectedSide(s.oldPath)))
-          .map((s) => s.text).join('');
+          .map((s) => (s.member || s.header ? s.text : protectedLineFilter(s.text))).join('');
       } else if (LIST_SUBS.has(v.args[0]) || PATCH_CAPABLE.has(v.args[0])) {
         // grep/ls-files/ls-tree emit PATH LISTS, not diffs — the section filter would
-        // drop ALL output. So do the patch-LESS forms of diff/log (`--stat`,
+        // drop ALL output. So do the patch-LESS forms of diff/log/show (`--stat`,
         // `--name-only`), whose diffstat names protected files with no `diff --git`
         // header; get_run_diff omits those files entirely, so this matches it.
-        // Drop any LINE that names a protected path, splitting on EVERY delimiter git
-        // puts between a path and its payload: `:` (match lines), `-` (context lines,
-        // `id_rsa-3-<content>`), `=` (`grep -p` function headers, `id_rsa=<line>`),
-        // NUL, tab and whitespace. Splitting on `[\s:]` alone left `id_rsa-3-KEY` as
-        // ONE token matching no pattern, so an EXACT-name protected file's
-        // neighbouring lines leaked (`.env*` only escaped that by its prefix glob).
-        body = body.split('\n')
-          .filter((line) => !line || !line.split(/[-\s:=\u0000]+/).some((tok) => isProtectedBasename(tok, deps.protectedPaths)))
-          .join('\n');
+        // Splitting on `[\s:]` alone left `id_rsa-3-KEY` as ONE token matching no
+        // pattern, so an EXACT-name protected file's neighbouring lines leaked
+        // (`.env*` only escaped that by its prefix glob) — hence every delimiter.
+        body = protectedLineFilter(body);
       }
       const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const maxBytes = clampInt(input.maxBytes, 1, L.gitOutputMaxBytes, L.diffDefaultBytes);
-      return { command: ['git', ...v.args].join(' '), ...sliceBytes(deps.redact(body), offset, maxBytes) };
+      if (r.truncated) body += `\n[output capped at ${L.gitCaptureMaxBytes} bytes — narrow the command (a path, a range, -n <count>)]\n`;
+      return { command: ['git', ...v.args].join(' '), ...(r.truncated ? { capped: true } : {}), ...sliceBytes(deps.redact(body), offset, maxBytes) };
     },
   };
 
