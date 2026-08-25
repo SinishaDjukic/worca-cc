@@ -141,11 +141,11 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   assert.match(items[0].textContent, /68\.4k ctx · \$0\.21 · 3 agents/, 'the row shows context fill, not cumulative tokens');
   assert.ok(items[0].querySelector('.ask-dot-live'), 'in-flight thread shows the live dot');
   assert.equal(items[1].querySelector('.ask-dot-live'), null);
-  // The idle row keeps the slot but nothing visible in it: the CSS hides
-  // .ask-thread-dot unless the live arm joins it, so the dates stay aligned.
+  // The idle row still emits the span, but the CSS collapses .ask-thread-dot
+  // (display:none) unless the live arm joins it, so no empty gutter is left.
   const idleDot = items[1].querySelector('.ask-dot');
-  assert.ok(idleDot, 'the idle row still reserves the dot slot');
-  assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the slot carries the threads-only class that hides it');
+  assert.ok(idleDot, 'the idle row still emits the dot span');
+  assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the span carries the threads-only class that collapses it');
   assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
   // empty state
   const empty = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [] }) }) });

@@ -115,7 +115,7 @@ test('ui-ask-style: the threads popover is the widened one and its titles clamp 
   assert.match(title, /font-size:12\.5px/, 'the existing font styling is kept');
 });
 
-test('ui-ask-style: the thread date leads the meter in bold; an idle dot keeps its slot', () => {
+test('ui-ask-style: the thread date leads the meter in bold; an idle dot collapses its slot', () => {
   const when = ruleBody('.ask-thread-when');
   assert.ok(when, '.ask-thread-when rule exists');
   assert.match(when, /font-weight:700/, 'the date reads bold');
@@ -131,13 +131,13 @@ test('ui-ask-style: the thread date leads the meter in bold; an idle dot keeps i
   assert.match(meter, /color:var\(--ink-3\)/, 'everything but the date stays on the secondary colour');
   const dot = ruleBody('.ask-thread-dot');
   assert.ok(dot, '.ask-thread-dot rule exists');
-  assert.match(dot, /visibility:hidden/, 'an idle chat shows no dot at all');
-  assert.ok(!/display:none/.test(dot), 'invisible, not collapsed — the dates stay aligned across rows');
+  assert.match(dot, /display:none/, 'an idle chat shows no dot and gives up its slot');
+  assert.ok(!/visibility:hidden/.test(dot), 'collapsed, not merely invisible — no empty gutter on idle rows');
   const live = ruleBody('.ask-thread-dot.ask-dot-live');
   assert.ok(live, 'the live arm exists');
-  assert.match(live, /visibility:visible/, 'an in-flight chat gets its green dot back');
+  assert.match(live, /display:block/, 'an in-flight chat gets its green dot back');
   assert.match(ruleBody('.ask-dot') || '', /var\(--seq\)/, 'the shared dot rule is untouched');
-  assert.ok(!/visibility/.test(ruleBody('.ask-dot') || ''), 'hiding is scoped to the threads rows');
+  assert.ok(!/display:none/.test(ruleBody('.ask-dot') || ''), 'hiding is scoped to the threads rows');
 });
 
 test('ui-ask-style: only the threads popover was widened', () => {

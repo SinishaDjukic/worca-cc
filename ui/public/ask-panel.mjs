@@ -652,9 +652,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
       // The dot leads the row, sitting against the title where it reads as "this
-      // chat is live" -- .ask-thread-dot hides it unless the live arm joins it,
-      // keeping the 6px slot so the titles line up whether a chat is running or
-      // not. The date rides the meter line under the title, not a column here.
+      // chat is live" -- .ask-thread-dot collapses it (display:none) unless the
+      // live arm joins it, so an idle row leaves no empty gutter and its title
+      // starts at the left edge. The date rides the meter line under the title.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
       const col = make('span', 'ask-thread-col');
       col.appendChild(make('span', 'ask-thread-title', t.title || '(untitled)'));
