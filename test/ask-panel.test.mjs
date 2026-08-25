@@ -148,6 +148,30 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   assert.match(empty.doc.querySelector('.ask-pop').textContent, /No saved chats\./);
 });
 
+test('ask-panel: threads rows live in a scroller; the caption stays pinned; empty state has none', async () => {
+  const { panel, doc, tick } = makePanel({ fetchHandler: threadsHandler });
+  panel.open();
+  doc.querySelector('[data-ask-threads-btn]').click();
+  await tick();
+  const pop = doc.querySelector('.ask-pop-threads');
+  assert.ok(pop);
+  const list = pop.querySelector('.ask-threads-list');
+  assert.ok(list, 'the rows are wrapped in a scroller');
+  assert.equal(list.parentNode, pop, 'the scroller is the popover own child (menuItems/panel guard)');
+  assert.equal(pop.querySelector('.ask-pop-caption').parentNode, pop, 'the caption sits outside the scroller');
+  assert.equal(pop.querySelectorAll(':scope > .ask-thread-row').length, 0, 'no row hangs off the panel itself');
+  assert.equal(list.querySelectorAll('.ask-thread-row').length, 2, 'every row went into the scroller');
+  assert.equal(pop.querySelectorAll('[role="menuitem"]').length, 2, 'arrow-key navigation still sees them');
+
+  const empty = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [] }) }) });
+  empty.panel.open();
+  empty.doc.querySelector('[data-ask-threads-btn]').click();
+  await empty.tick();
+  const emptyPop = empty.doc.querySelector('.ask-pop-threads');
+  assert.equal(emptyPop.querySelector('.ask-threads-list'), null, 'nothing to scroll, no scroller');
+  assert.match(emptyPop.querySelector('.ask-pop-empty').textContent, /No saved chats\./);
+});
+
 test('ask-panel: popover menu keyboard — roving focus, wrap, Home/End, Enter, Escape to trigger', async () => {
   const { panel, window, doc, tick } = makePanel({ fetchHandler: threadsHandler });
   panel.open();

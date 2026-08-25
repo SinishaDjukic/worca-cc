@@ -89,6 +89,16 @@ test('ui-ask-style: dots reuse wr-pulse; the pill and popovers are tokened', () 
   assert.match(ruleBody('.ask-error-line') || '', /var\(--red-ink\)/);
 });
 
+test('ui-ask-style: the threads list scrolls under a capped height, caption pinned', () => {
+  const list = ruleBody('.ask-threads-list');
+  assert.ok(list, '.ask-threads-list rule exists');
+  assert.match(list, /overflow-y:auto/, 'the rows scroll instead of overflowing the sheet');
+  assert.match(list, /max-height:min\(/, 'a fixed px cap AND a viewport-relative one, whichever is smaller');
+  assert.match(list, /100vh/, 'short viewports shrink the cap');
+  assert.match(list, /overscroll-behavior:contain/, 'same containment as .ask-transcript');
+  assert.match(list, /border-radius:/, 'rows are clipped, not bled over the panel radius');
+});
+
 test('ui-ask-style: composer textarea overrides the global textarea rules', () => {
   const input = ruleBody('.ask-composer textarea.ask-input');
   assert.ok(input, 'the higher-specificity selector exists (spec §10.3)');

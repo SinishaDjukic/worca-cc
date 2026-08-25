@@ -619,6 +619,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       panel.appendChild(make('div', 'ask-pop-empty', 'No saved chats.'));
       return;
     }
+    // The rows scroll inside a capped list so 50 threads cannot run past the
+    // sheet; the caption stays a direct child of the panel, hence pinned. The
+    // list itself stays inside the panel: menuItems() reads the whole panel.
+    const list = make('div', 'ask-threads-list');
     for (const t of threads) {
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
@@ -629,8 +633,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       pick.appendChild(col);
       row.appendChild(pick);
       row.appendChild(buildThreadTrash(t));
-      panel.appendChild(row);
+      list.appendChild(row);
     }
+    panel.appendChild(list);
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
   }

@@ -3104,6 +3104,13 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-model-check{margin-left:auto;color:var(--blue-ink);font-weight:600;}
 .ask-pop-row-value{margin-left:auto;font-weight:400;font-size:12.5px;color:var(--ink-3);}
 .ask-pop-row-chev{color:var(--ink-3);}
+/* The threads list is the only scrollport in a popover: /api/ask/threads returns up
+   to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
+   unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
+   on a short one -- the popover starts 46px down and the sheet is 100vh - 46px at most.
+   The radius clips the rows so they do not bleed over the panel's own corners. */
+.ask-threads-list{max-height:min(360px,calc(100vh - 200px));overflow-y:auto;overscroll-behavior:contain;
+  border-radius:10px;}
 .ask-thread-row{display:flex;align-items:center;border-radius:10px;}
 .ask-thread-row:hover{background:var(--field);}
 .ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:10px;}
