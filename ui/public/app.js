@@ -4802,7 +4802,29 @@ async function mountPluginSourcePane(src) {
     && state.activePluginSource === src;
   // A multi-profile source cannot be asked anything until it is known WHICH
   // instance to ask, so the binding is resolved before the connection check.
-  const resolved = await resolveSourceProfile(src);
+  // A FAILED resolve (server briefly unreachable mid project switch) must not
+  // leave the previous scope's pane — and its resolved profile — live: a
+  // submit would then run the new project against the old project's tracker,
+  // the exact silent-wrong-tracker mistake bindings exist to prevent.
+  let resolved;
+  try {
+    resolved = await resolveSourceProfile(src);
+  } catch (err) {
+    if (!owns()) return;
+    state.activePluginProfile = null;
+    const box = document.createElement('div');
+    box.className = 'sp-config-missing';
+    box.appendChild(Object.assign(document.createElement('p'),
+      { className: 'hint err', textContent: `Could not resolve the source profile: ${err.message}` }));
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-ghost btn-mini';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => mountPluginSourcePane(src));
+    box.appendChild(retry);
+    host.replaceChildren(box);
+    return;
+  }
   if (!owns()) return;
   if (!resolved) {
     host.replaceChildren(Object.assign(document.createElement('small'),

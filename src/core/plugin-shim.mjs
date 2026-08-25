@@ -144,6 +144,19 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
   }
 
   const { dir, source, apiVersion } = loadSource(plugin, sourceId);
+  // The profile invariant is enforced HERE, not only at the HTTP routes, so
+  // every caller — the CLI's `worca plugin exec`, future workers — is safe by
+  // construction. A multi-profile source silently defaulting to the (empty)
+  // default bucket yields false "not configured" verdicts and persists state
+  // into a bucket no real run reads; a profile on a single-profile source
+  // would read (and write) a phantom bucket instead of the real config.
+  if (source.multiProfile === true && !profile) {
+    throw new PluginOpError('plugin',
+      `task source "${plugin}/${sourceId}" has per-profile configuration — pass a profile (e.g. --profile <id>)`);
+  }
+  if (source.multiProfile !== true && profile && profile !== DEFAULT_PROFILE) {
+    throw new PluginOpError('plugin', `task source "${plugin}/${sourceId}" does not use profiles`);
+  }
   const payload = JSON.stringify({
     apiVersion,
     module: resolve(dir, source.module), // './'-relative, '..'-free (normalizeManifest)

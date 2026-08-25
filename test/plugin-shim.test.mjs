@@ -52,6 +52,15 @@ function installFixture() {
       module: './connector/index.mjs',
       configSchema: SCHEMA,
       inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
+    }, {
+      // multiProfile sibling: callSource must refuse to run it profile-less
+      // (the guard lives in the shim so the CLI is covered, not just the routes).
+      id: 'prof',
+      displayName: 'Mock Echo (profiled)',
+      module: './connector/index.mjs',
+      multiProfile: true,
+      configSchema: SCHEMA,
+      inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
     }],
   }));
   writeFileSync(join(cur, 'connector', 'index.mjs'), CONNECTOR);
@@ -95,6 +104,28 @@ test("unimplemented op yields kind 'plugin' + a 'does not implement' message", a
     callSource({ plugin: NAME, sourceId: 'main', op: 'capabilities' }),
     'plugin', /does not implement op "capabilities"/,
   );
+});
+
+test('profile invariant is enforced in callSource itself (CLI-safe, not just the routes)', async () => {
+  // A multi-profile source silently defaulting to the empty default bucket
+  // would report false "not configured" verdicts and persist state into a
+  // bucket no real run reads — refuse before any spawn.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp' }),
+    'plugin', /per-profile configuration/,
+  );
+  // A profile on a single-profile source would read a phantom bucket.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'echoOp', profile: 'work' }),
+    'plugin', /does not use profiles/,
+  );
+  // Naming the implicit bucket explicitly is fine — it is the one that runs.
+  const viaDefault = await callSource({ plugin: NAME, sourceId: 'main', op: 'echoOp', profile: 'default' });
+  assert.equal(viaDefault.token, 'sekret');
+  // And a named profile reaches ITS bucket, not the default one.
+  writePluginConfig(NAME, SCHEMA, { token: 'work-tok' }, 'work');
+  const viaWork = await callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'work' });
+  assert.equal(viaWork.token, 'work-tok');
 });
 
 test('timeout kills the child and rejects with kind timeout', async () => {

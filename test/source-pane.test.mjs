@@ -149,6 +149,62 @@ test('empty results: "Type to search." with nothing asked for, "No tasks matched
   assert.match(pane.querySelector('.sp-results').textContent, /No tasks matched\./);
 });
 
+test('a slow stale listTasks response never paints over a newer search (latest wins)', async () => {
+  // The debounce collapses pending timers, not in-flight fetches: the
+  // mount-time empty search can resolve AFTER a fast typed search. Without a
+  // sequence guard it would repaint the unfiltered list over the filtered one
+  // — and the user could then pick a task that does not match their filter.
+  const clock = manualTimers();
+  const doc2 = new JSDOM('<!doctype html><body></body>').window.document;
+  const bare = { ...SOURCE, inputs: [
+    { key: 'filter', type: 'text', label: 'Filter', default: null, options: [], optionsFrom: null },
+    { key: 'task', type: 'task-browser', label: 'Issue', options: [], optionsFrom: null, default: null },
+  ] };
+  let resolveSlow;
+  const slow = new Promise((r) => { resolveSlow = r; });
+  const call = async (op, args) => {
+    if (op !== 'listTasks') return null;
+    if (args.search === '') return slow; // the mount-time search hangs…
+    return { tasks: [{ id: 'F-1', title: 'Filtered hit', labels: [], updatedAt: '', state: 'open' }] };
+  };
+  const pane = renderSourcePane(bare, { call, doc: doc2, timers: clock });
+  await pane._search('flaky'); // …while the typed one answers immediately
+  assert.match(pane.querySelector('.sp-results').textContent, /Filtered hit/);
+
+  resolveSlow({ tasks: [{ id: 'S-1', title: 'Stale unfiltered', labels: [], updatedAt: '', state: 'open' }] });
+  await pane._initial;
+  assert.match(pane.querySelector('.sp-results').textContent, /Filtered hit/, 'newer results survive');
+  assert.doesNotMatch(pane.querySelector('.sp-results').textContent, /Stale unfiltered/);
+});
+
+test('a connector that throws on empty inputs shows "Type to search.", not an error, on open', async () => {
+  // The contract lets listTasks throw when it has nothing to go on; pre-pane
+  // nothing was fetched at render, so opening the pane must not paint a
+  // failure the user did nothing to cause. A real (asked-for) search still
+  // surfaces its error.
+  const clock = manualTimers();
+  const doc2 = new JSDOM('<!doctype html><body></body>').window.document;
+  const bare = { ...SOURCE, inputs: [
+    { key: 'filter', type: 'text', label: 'Filter', default: null, options: [], optionsFrom: null },
+    { key: 'task', type: 'task-browser', label: 'Issue', options: [], optionsFrom: null, default: null },
+  ] };
+  const call = async (op, args) => {
+    if (op === 'listTasks' && !args.search) throw new Error('a repo is required');
+    return { tasks: [] };
+  };
+  const pane = renderSourcePane(bare, { call, doc: doc2, timers: clock });
+  await pane._initial;
+  assert.match(pane.querySelector('.sp-results').textContent, /Type to search\./);
+  assert.doesNotMatch(pane.querySelector('.sp-results').textContent, /search failed/);
+
+  const failing = renderSourcePane(bare, {
+    call: async () => { throw new Error('boom'); }, doc: doc2, timers: clock,
+  });
+  await failing._initial;
+  await failing._search('flaky');
+  assert.match(failing.querySelector('.sp-results').textContent, /search failed: boom/);
+});
+
 test('formatUpdated: relative while recent, absolute past a week, hover keeps full precision', () => {
   const now = Date.parse('2026-07-31T12:00:00Z');
   const at = (ms) => formatUpdated(new Date(now - ms).toISOString(), now).text;

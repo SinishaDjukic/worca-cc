@@ -162,22 +162,33 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
       preview.hidden = true;
       const hidden = h(doc, 'input', 'sp-task-id');
       hidden.type = 'hidden';
+      // Latest-wins: responses paint only if no newer search started meanwhile.
+      // The debounce collapses pending TIMERS, not in-flight fetches — without
+      // this, the slow mount-time empty search can resolve after a fast typed
+      // one and repaint the unfiltered list over the filtered results.
+      let searchSeq = 0;
       const runSearch = async (text) => {
+        const seq = ++searchSeq;
         results.replaceChildren(h(doc, 'div', 'hint', 'Searching…'));
+        const inputs = collectInputs(pane);
+        // Nothing asked for is not the same as nothing found — a source may
+        // legitimately list nothing (or even refuse to list: the contract lets
+        // listTasks throw) until it is given something to go on.
+        const asked = text || Object.values(inputs).some((v) => String(v || '').trim());
         try {
-          const inputs = collectInputs(pane);
           const r = await call('listTasks', { inputs, search: text });
+          if (seq !== searchSeq) return;
           results.replaceChildren();
           const tasks = (r && r.tasks) || [];
           for (const t of tasks) results.appendChild(taskRow(doc, t, clock()));
           if (!tasks.length) {
-            // Nothing asked for is not the same as nothing found — a source may
-            // legitimately list nothing until it is given something to go on.
-            const asked = text || Object.values(inputs).some((v) => String(v || '').trim());
             results.appendChild(h(doc, 'div', 'hint', asked ? 'No tasks matched.' : 'Type to search.'));
           }
         } catch (e) {
-          results.replaceChildren(h(doc, 'div', 'hint err', `search failed: ${e.message}`));
+          if (seq !== searchSeq) return;
+          results.replaceChildren(asked
+            ? h(doc, 'div', 'hint err', `search failed: ${e.message}`)
+            : h(doc, 'div', 'hint', 'Type to search.'));
         }
       };
       const debounced = debounce(runSearch, 300, timers);

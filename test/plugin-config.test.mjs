@@ -3,7 +3,7 @@
 // markers, shallow-merge state, atomic writes.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { statSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { statSync, readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { pluginDataDir } from '../src/core/plugins-lock.mjs';
@@ -104,6 +104,53 @@ test('profile roster: create is idempotent, delete removes the data too', () => 
   const secrets = JSON.parse(readFileSync(join(pluginDataDir(P), 'secrets.json'), 'utf8'));
   assert.equal('client' in secrets.profiles, false, 'bucket removed, not just emptied');
   assert.equal(statSync(join(pluginDataDir(P), 'secrets.json')).mode & 0o777, 0o600, 'delete keeps 0600');
+});
+
+test('the roster reserves "default": the shared bucket is never creatable or deletable', () => {
+  const P = 'reserved-plugin';
+  // "default" backs every profile-less read (chat channels, model secrets,
+  // migrated legacy config) — enrolled in the roster it would be one Remove
+  // click away from wiping them all.
+  assert.throws(() => createProfile(P, DEFAULT_PROFILE), /reserved/);
+  assert.throws(() => deleteProfile(P, DEFAULT_PROFILE), /reserved/);
+  writePluginConfig(P, SCHEMA, { token: 'shared' }); // profile-less -> default bucket
+  assert.equal(readPluginConfig(P, SCHEMA).token, 'shared', 'the shared bucket is intact');
+  assert.deepEqual(listProfiles(P), [], 'nothing was enrolled');
+});
+
+test('a legacy flat file with a field KEYED "profiles" reads as data, not as the envelope', () => {
+  // A pre-profiles connector may legally declare a configSchema field named
+  // "profiles" and store an object (a {"$env":…} ref) under it. Mistaking that
+  // for the { profiles: { <id>: {...} } } envelope would silently drop every
+  // other stored key — and the next write would persist the loss.
+  const P = 'legacy-profiles-key';
+  const LEGACY_SCHEMA = [
+    { key: 'baseUrl', type: 'text', label: 'Base URL', secret: false },
+    { key: 'profiles', type: 'text', label: 'Profiles var', secret: false },
+  ];
+  mkdirSync(pluginDataDir(P), { recursive: true });
+  writeFileSync(join(pluginDataDir(P), 'config.json'),
+    JSON.stringify({ baseUrl: 'https://x.test', profiles: { $env: 'WORCA_TEST_PROFILES' } }));
+
+  process.env.WORCA_TEST_PROFILES = 'a,b';
+  assert.deepEqual(readPluginConfig(P, LEGACY_SCHEMA), { baseUrl: 'https://x.test', profiles: 'a,b' });
+  // A write migrates to the envelope WITHOUT losing either key.
+  writePluginConfig(P, LEGACY_SCHEMA, { baseUrl: 'https://y.test' });
+  const onDisk = JSON.parse(readFileSync(join(pluginDataDir(P), 'config.json'), 'utf8'));
+  assert.deepEqual(onDisk.profiles.default,
+    { baseUrl: 'https://y.test', profiles: { $env: 'WORCA_TEST_PROFILES' } });
+  assert.deepEqual(readPluginConfig(P, LEGACY_SCHEMA), { baseUrl: 'https://y.test', profiles: 'a,b' });
+  delete process.env.WORCA_TEST_PROFILES;
+
+  // Same when "profiles" is the ONLY key: an env-ref value is no envelope
+  // (its key "$env" is not a profile id, its value not a bucket).
+  const Q = 'legacy-profiles-only';
+  mkdirSync(pluginDataDir(Q), { recursive: true });
+  writeFileSync(join(pluginDataDir(Q), 'config.json'),
+    JSON.stringify({ profiles: { $env: 'WORCA_TEST_PROFILES' } }));
+  process.env.WORCA_TEST_PROFILES = 'kept';
+  assert.equal(readPluginConfig(Q, LEGACY_SCHEMA).profiles, 'kept');
+  delete process.env.WORCA_TEST_PROFILES;
 });
 
 test('profile ids are path-safe: traversal and junk are rejected', () => {

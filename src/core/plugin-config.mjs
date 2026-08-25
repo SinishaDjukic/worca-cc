@@ -51,13 +51,23 @@ function readJson(file) {
 /** The { profiles: {...} } envelope, tolerant of a missing/garbage file.
  *  Pre-profiles files were one flat bag ({ key: value } at the top level); read
  *  those as the implicit DEFAULT_PROFILE bucket so an upgrade never orphans
- *  stored config/secrets/state — the next writeBucket persists the envelope. */
+ *  stored config/secrets/state — the next writeBucket persists the envelope.
+ *  The envelope is recognised STRICTLY — exactly one top-level key ("profiles")
+ *  whose entries are all <valid id> -> plain object — because a legacy flat file
+ *  may legally carry a schema field KEYED "profiles" (KEY_RE allows the name,
+ *  and a {"$env":…} ref stores an object): misreading that as the envelope
+ *  would silently drop every other stored key, permanently after the next
+ *  write. Only writeBucket/deleteProfile ever produce the envelope, and they
+ *  produce exactly this shape. */
 function readBuckets(file) {
   const raw = readJson(file);
   const p = raw.profiles;
-  if (p && typeof p === 'object' && !Array.isArray(p)) return p;
-  const { profiles: _garbage, ...flat } = raw;
-  return Object.keys(flat).length ? { [DEFAULT_PROFILE]: flat } : {};
+  const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (isBag(p) && Object.keys(raw).length === 1
+      && Object.entries(p).every(([id, bag]) => isValidProfileId(id) && isBag(bag))) {
+    return p;
+  }
+  return Object.keys(raw).length ? { [DEFAULT_PROFILE]: raw } : {};
 }
 
 /** One profile's bag from a file. */
@@ -124,6 +134,11 @@ export function listProfileIds(name) {
  */
 export function createProfile(name, id, label) {
   const pid = profileId(id);
+  // The default bucket is shared plumbing, not a profile: chat channels, model
+  // secrets and migrated pre-profiles config all live in it via profile-less
+  // reads. Enrolling "default" in the roster would make that shared bucket
+  // deletable like any member — one Remove click away from wiping them all.
+  if (pid === DEFAULT_PROFILE) throw new Error(`profile id "${DEFAULT_PROFILE}" is reserved`);
   const list = listProfiles(name);
   const at = list.findIndex((p) => p.id === pid);
   const entry = { id: pid, label: String(label || (at >= 0 ? list[at].label : pid)) };
@@ -140,6 +155,11 @@ export function createProfile(name, id, label) {
  */
 export function deleteProfile(name, id) {
   const pid = profileId(id);
+  // Same reservation as createProfile — and a backstop for a roster that
+  // enrolled "default" before the reservation existed: deleting it would strip
+  // the shared bucket (chat-channel config, model secrets, migrated legacy
+  // data) out of all three files.
+  if (pid === DEFAULT_PROFILE) throw new Error(`profile id "${DEFAULT_PROFILE}" is reserved — its bucket backs every profile-less read`);
   const f = files(name);
   writeJsonAtomic(f.profiles, { profiles: listProfiles(name).filter((p) => p.id !== pid) });
   for (const [file, opts] of [[f.config, undefined], [f.secrets, { mode: 0o600 }], [f.state, undefined]]) {

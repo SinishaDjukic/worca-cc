@@ -192,14 +192,19 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     // (§7.1: "defaults: writeBack true"): a connector without the op makes the
     // child answer { ok:false, error:{ kind:'plugin', message: 'connector does
     // not implement op "capabilities"' } } -> callSource throws
-    // PluginOpError('plugin') -> we default to writeBack:true. Transport errors
-    // (auth/network/timeout/protocol/rate-limit) FAIL CLOSED instead: the
-    // connector may have opted this run out via its inputs and we could not
-    // hear the answer, so writing would violate the opt-out — the caller
-    // surfaces the error and the results-view retry re-probes.
+    // PluginOpError('plugin') -> we default to writeBack:true.
     // The run's pinned source-panel inputs travel to BOTH ops so a connector
     // can make write-back a per-run choice (jira-source's writeBack input):
     // capabilities({inputs}) answers for THIS run.
+    // Transport errors (auth/network/timeout/protocol/rate-limit) mean the
+    // connector could not answer, and what happens next depends on whether an
+    // answer could have mattered: a per-run opt-out can only ride the pinned
+    // inputs, so a run that pinned NONE fails OPEN (default writeBack:true —
+    // a transient rate-limit on the probe must not silently drop the ticket
+    // comment when the report itself would have succeeded), while a run WITH
+    // pinned inputs fails CLOSED (the opt-out may be in them and we could not
+    // hear it; writing would violate it) — the caller surfaces the error and
+    // the results-view retry re-probes.
     const inputs = ref.inputs && typeof ref.inputs === 'object' ? ref.inputs : {};
     let writeBack = true;
     try {
@@ -208,7 +213,7 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
       });
       if (caps && caps.writeBack === false) writeBack = false;
     } catch (err) {
-      if ((err?.kind || 'plugin') !== 'plugin') {
+      if ((err?.kind || 'plugin') !== 'plugin' && Object.keys(inputs).length) {
         return { ok: false, error: `write-back capability probe failed: ${err?.message || String(err)}` };
       }
       writeBack = true;

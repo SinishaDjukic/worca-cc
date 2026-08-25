@@ -106,6 +106,33 @@ test('the run\'s pinned source inputs reach capabilities AND reportResult (per-r
   assert.deepEqual(caps.at(-1), { inputs: {} });
 });
 
+test('probe transport error with NO pinned inputs fails OPEN: the report still runs', async () => {
+  // No pinned inputs means no per-run opt-out was possible, so a transient
+  // rate-limit/timeout on the probe must not silently drop the ticket comment
+  // — the pre-profiles behavior, which reportResult itself then confirms.
+  const calls = [];
+  setMockSourceResponses({
+    capabilities: () => { throw Object.assign(new Error('capabilities timed out'), { kind: 'timeout' }); },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const p = await seedDonePluginPipeline(); // META has no inputs
+  assert.deepEqual(await retryWriteback(p.id), { ok: true });
+  assert.equal(calls.length, 1, 'write-back proceeded despite the failed probe');
+});
+
+test('probe transport error WITH pinned inputs fails CLOSED: the opt-out may be in them', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    capabilities: () => { throw Object.assign(new Error('rate limited'), { kind: 'rate-limit' }); },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const p = await seedDonePluginPipeline({ ...META, inputs: { writeBack: 'no', jql: 'project = X' } });
+  const out = await retryWriteback(p.id);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /capability probe failed: rate limited/);
+  assert.equal(calls.length, 0, 'never write when the run may have opted out and we could not hear');
+});
+
 test('reportResult failure returns {ok:false,error} and NEVER throws', async () => {
   setMockSourceResponses({ reportResult: () => { throw new Error('rate limited'); } });
   const p = await seedDonePluginPipeline();
