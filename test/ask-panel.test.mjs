@@ -297,3 +297,72 @@ test('ask-panel: destroy removes the root and unbinds the document listeners', (
   const e = key(window, null, 'k', { metaKey: true });
   assert.equal(e.defaultPrevented, false, 'no listener left behind');
 });
+
+// Review of PR #376: loadThread() had no request-generation guard, so whichever
+// GET resolved LAST overwrote st.threadId/st.model — a slow old thread load
+// flipped the panel back after the user had switched.
+test('ask-panel: a slower, older thread load cannot overwrite a newer switch', async () => {
+  const snap = (id, title) => ({ thread: { id, title, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} }, messages: [], attachments: [], runLinks: [], inFlight: null, worktrees: [] });
+  let releaseA = null;
+  const fetchHandler = (url) => {
+    if (url.startsWith('/api/ask/threads/ask_00000001')) return new Promise((r) => { releaseA = () => r({ ok: true, status: 200, json: async () => snap('ask_00000001', 'Slow A') }); });
+    if (url.startsWith('/api/ask/threads/ask_00000002')) return { ok: true, status: 200, json: async () => snap('ask_00000002', 'Fast B') };
+    return threadsHandler(url);
+  };
+  const ctx = makePanel({ fetchHandler });
+  ctx.panel.open();
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  await ctx.tick();
+  ctx.doc.querySelectorAll('.ask-pop [role="menuitem"]')[0].click();   // A: its GET hangs
+  await ctx.tick();
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  await ctx.tick();
+  ctx.doc.querySelectorAll('.ask-pop [role="menuitem"]')[1].click();   // B: resolves at once
+  await ctx.tick(); await ctx.tick();
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fast B');
+  releaseA();                                                          // A's late response
+  await ctx.tick(); await ctx.tick();
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fast B', 'the stale load lost');
+  assert.equal(ctx.storage.getItem('worca:ask:thread') ?? [...ctx.storage._map.values()].find((v) => /^ask_/.test(v)), 'ask_00000002');
+});
+
+// Review of PR #376: sendMessage read st.model after its awaits with no re-check
+// while "New chat" was never disabled — clicking it mid-POST set st.model = null
+// and the send threw a TypeError as an unhandled rejection.
+test('ask-panel: New chat clicked while a send is in flight neither throws nor touches the new composer', async () => {
+  let releasePost = null;
+  const fetchHandler = (url, opts) => {
+    if (url === '/api/ask/threads' && opts.method === 'POST') {
+      return { ok: true, status: 201, json: async () => ({ thread: { id: 'ask_00000009', title: null, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} } }) };
+    }
+    if (url.startsWith('/api/ask/threads/ask_00000009/messages')) {
+      return new Promise((r) => { releasePost = () => r({ ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000009' }) }); });
+    }
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => ({ threads: [] }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const ctx = makePanel({ fetchHandler });
+  const unhandled = [];
+  const onRej = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onRej);
+  try {
+    ctx.panel.open();
+    ctx.doc.querySelector('textarea.ask-input').value = 'hello';
+    ctx.doc.querySelector('[data-ask-send]').click();
+    for (let i = 0; i < 4; i++) await ctx.tick();                     // thread created, POST in flight
+    assert.ok(releasePost, 'the message POST is in flight');
+    [...ctx.panel.root.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'New chat').click();
+    ctx.doc.querySelector('textarea.ask-input').value = 'draft for the new chat';
+    releasePost();
+    for (let i = 0; i < 4; i++) await ctx.tick();
+    ctx.flush();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(unhandled.length, 0, `no unhandled rejection: ${unhandled.map((e) => e && e.message).join(', ')}`);
+    assert.equal(ctx.doc.querySelector('textarea.ask-input').value, 'draft for the new chat', 'the finished send did not clear the NEW composer');
+    assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca', 'still on the new chat');
+  } finally {
+    process.off('unhandledRejection', onRej);
+  }
+});

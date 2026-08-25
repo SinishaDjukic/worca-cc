@@ -51,6 +51,7 @@ import {
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
   readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
+  findRunLinksByPipeline as askFindRunLinksByPipeline,
   setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
@@ -887,6 +888,67 @@ function fallbackRunTitle(effectivePrompt, source) {
   return String(text).slice(0, 80);
 }
 
+// Wire an Ask Worca follower for a card-linked run: the orchestrator's
+// state/question/error/done events become thread notices, ask_run_links patches
+// and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
+// (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
+// detached on done{paused}, so the link must be re-followed — review of PR #376).
+function attachAskFollower(orch, { threadId, runId, cardId }) {
+  const follower = attachRunFollower(orch, {
+    threadId,
+    runId,
+    cardId,
+    post: ({ text, href }) => {
+      try {
+        const m = askAppendMessage(threadId, {
+          role: 'system', text, blocks: [{ kind: 'notice', text, href }],
+        });
+        broadcast({ type: 'ask-message', threadId, message: m });
+      } catch { /* thread deleted mid-run */ }
+    },
+    updateStatus: (patch) => {
+      try {
+        const linkPatch = {};
+        if (patch.pipelineId) linkPatch.pipelineId = patch.pipelineId;
+        if (patch.status) linkPatch.status = patch.status;
+        if (patch.phase !== undefined) linkPatch.phase = patch.phase;
+        const row = Object.keys(linkPatch).length
+          ? askUpdateRunLink(threadId, runId, linkPatch) : null;
+        // The 8-hex History id lands on the FIRST state event (follow.mjs guards
+        // "first truthy sight only"), which is the first moment a
+        // "sent to #<runId>" marker could point anywhere real. Never the
+        // runs-Map UUID, never at launch, and never a resolve.
+        if (linkPatch.pipelineId && row && row.commentIds.length) {
+          try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
+        }
+        if (patch.cardFailed) {
+          flipCard(threadId, cardId, { state: 'failed', error: patch.cardFailed });
+        }
+        broadcast({
+          type: 'ask-run-status', threadId, runId,
+          pipelineId: (row && row.pipelineId) || patch.pipelineId || null,
+          cardId,
+          status: patch.status || (row && row.status) || null,
+          phase: patch.phase !== undefined ? patch.phase : ((row && row.phase) || null),
+        });
+      } catch { /* thread deleted mid-run */ }
+    },
+    onDetached: () => {
+      const set = askFollowers.get(threadId);
+      if (set) {
+        set.delete(follower);
+        if (!set.size) askFollowers.delete(threadId);
+      }
+    },
+  });
+  let set = askFollowers.get(threadId);
+  if (!set) {
+    set = new Set();
+    askFollowers.set(threadId, set);
+  }
+  set.add(follower);
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
@@ -1130,13 +1192,17 @@ app.post('/api/run', async (req, res) => {
     runs.set(runId, entry);
     wireRun(entry);
     if (askLink) {
+      // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
+      // B's `proposed` check and here — a concurrent Start may have flipped
+      // the card already. That is a LOST RACE, not a detail to log: the loser
+      // must not launch a second pipeline for the same card (review of PR #376).
+      // Withdraw the run entry (nothing has run or been announced yet) and 409.
+      const still = askFindCard(askLink.threadId, askLink.cardId);
+      if (!still || still.block.state !== 'proposed') {
+        runs.delete(runId);
+        return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
+      }
       try {
-        // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
-        // B's `proposed` check and here — a concurrent Start may have flipped
-        // the card already. Re-check and skip the link/flip/notice quietly (the
-        // run itself proceeds and {runId} is still returned).
-        const still = askFindCard(askLink.threadId, askLink.cardId);
-        if (!still || still.block.state !== 'proposed') throw new Error('card no longer proposed');
         askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
         flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
         // The card's pending comment ids move onto the link row, keyed by the minted
@@ -1162,59 +1228,7 @@ app.post('/api/run', async (req, res) => {
           blocks: [{ kind: 'notice', text: `Run started — "${title}"`, href: `#running/${runId}` }],
         });
         broadcast({ type: 'ask-message', threadId: askLink.threadId, message: startedMsg });
-        const follower = attachRunFollower(orch, {
-          threadId: askLink.threadId,
-          runId,
-          cardId: askLink.cardId,
-          post: ({ text, href }) => {
-            try {
-              const m = askAppendMessage(askLink.threadId, {
-                role: 'system', text, blocks: [{ kind: 'notice', text, href }],
-              });
-              broadcast({ type: 'ask-message', threadId: askLink.threadId, message: m });
-            } catch { /* thread deleted mid-run */ }
-          },
-          updateStatus: (patch) => {
-            try {
-              const linkPatch = {};
-              if (patch.pipelineId) linkPatch.pipelineId = patch.pipelineId;
-              if (patch.status) linkPatch.status = patch.status;
-              if (patch.phase !== undefined) linkPatch.phase = patch.phase;
-              const row = Object.keys(linkPatch).length
-                ? askUpdateRunLink(askLink.threadId, runId, linkPatch) : null;
-              // The 8-hex History id lands on the FIRST state event (follow.mjs guards
-              // "first truthy sight only"), which is the first moment a
-              // "sent to #<runId>" marker could point anywhere real. Never the
-              // runs-Map UUID, never at launch, and never a resolve.
-              if (linkPatch.pipelineId && row && row.commentIds.length) {
-                try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
-              }
-              if (patch.cardFailed) {
-                flipCard(askLink.threadId, askLink.cardId, { state: 'failed', error: patch.cardFailed });
-              }
-              broadcast({
-                type: 'ask-run-status', threadId: askLink.threadId, runId,
-                pipelineId: (row && row.pipelineId) || patch.pipelineId || null,
-                cardId: askLink.cardId,
-                status: patch.status || (row && row.status) || null,
-                phase: patch.phase !== undefined ? patch.phase : ((row && row.phase) || null),
-              });
-            } catch { /* thread deleted mid-run */ }
-          },
-          onDetached: () => {
-            const set = askFollowers.get(askLink.threadId);
-            if (set) {
-              set.delete(follower);
-              if (!set.size) askFollowers.delete(askLink.threadId);
-            }
-          },
-        });
-        let set = askFollowers.get(askLink.threadId);
-        if (!set) {
-          set = new Set();
-          askFollowers.set(askLink.threadId, set);
-        }
-        set.add(follower);
+        attachAskFollower(orch, { threadId: askLink.threadId, runId, cardId: askLink.cardId });
       } catch (err) {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
@@ -1534,6 +1548,22 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
   runs.set(runId, entry);
   wireRun(entry);
   announceRun(entry);
+
+  // A card-linked run keeps reporting to its chat across the resume: the link
+  // row moves to the new runId and a fresh follower takes over (the old one
+  // detached on done{paused}). Best-effort per row — chat bookkeeping must never
+  // block a resume.
+  for (const link of askFindRunLinksByPipeline(pipelineId)) {
+    try {
+      if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
+      const text = `Run resumed — "${saved.row.title || 'run'}"`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+    } catch (err) {
+      console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
+    }
+  }
 
   // Evict the superseded paused/interrupted lineage for this pipeline. The old
   // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
@@ -3218,6 +3248,11 @@ app.delete('/api/guardrails/:id', async (req, res) => {
 // bootMaintenance.
 // ---------------------------------------------------------------------------
 const askJobs = new Map();      // threadId -> {turn, messageId, userMessageId, events, seq, status, startedAt, graceTimer}
+// Threads whose DELETE is past its first await (worktree removal spawns git):
+// POST /messages refuses them so no turn can start against rows that are
+// about to cascade (review of PR #376 — a turn started in that window outlived
+// the delete as a live job holding a global slot).
+const askDeleting = new Set();
 const askFollowers = new Map(); // threadId -> Set<{detach}>
 const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
 
@@ -3349,10 +3384,15 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
   if (!id) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    const job = askJobs.get(id);
-    if (job && job.turn && typeof job.turn.stop === 'function') {
-      try { job.turn.stop(); } catch { /* best-effort */ }
-    }
+    askDeleting.add(id);
+    const stopJob = () => {
+      const job = askJobs.get(id);
+      if (job && job.turn && typeof job.turn.stop === 'function') {
+        try { job.turn.stop(); } catch { /* best-effort */ }
+      }
+      return job;
+    };
+    stopJob();
     const followers = askFollowers.get(id);
     if (followers) {
       for (const f of [...followers]) {
@@ -3364,6 +3404,9 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
     // rmSync inside askDeleteThread alone would leave stale `git worktree`
     // registrations in the source repos. Never throws (best-effort per row).
     await askRemoveThreadWorktrees(id);
+    // Re-read the job AFTER the await: askDeleting blocks new turns, but a turn
+    // that was already mid-start is stopped here rather than left running.
+    const job = stopJob();
     askDeleteThread(id);
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
@@ -3372,6 +3415,8 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  } finally {
+    askDeleting.delete(id);
   }
 });
 
@@ -3542,7 +3587,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
     if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+    // Budget gate (F6), same figure /api/run enforces: Ask spend is folded into the
+    // total window (cost-budget.mjs totalWindowSpendUsd), so chat must stop at
+    // the cap it helps fill instead of spending past it while pipelines are 403'd
+    // (review of PR #376).
+    const budget = budgetStatus();
+    if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
     if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
       return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
     }
@@ -3594,6 +3646,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // any of those readers ever becomes genuinely async: it is synchronous —
     // check-and-set cannot interleave — and runs BEFORE the first write, so a
     // loser leaves no rows.
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
     if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
     if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
       return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });

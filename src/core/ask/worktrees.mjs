@@ -150,9 +150,19 @@ export async function openAskWorktree({ threadId, projectKey, ref, runId, signal
   if (!dir.startsWith(baseReal + sep)) throw new AskWorktreeError('worktree path escapes base'); // belt-and-braces
   const { commit } = await createDetachedWorktree({ projectDir: t.projectDir, worktreeDir: dir, ref: t.ref, signal });
   const ts = now();
-  prepare(`INSERT INTO ask_worktrees (id, thread_id, project_key, project_dir, ref, resolved_commit, run_id, worktree_dir, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(wtId, threadId, t.projectKey, t.projectDir, t.ref, commit ?? '', t.runId, dir, ts, ts);
+  // The thread may have been DELETED while `git worktree add` ran (the DELETE
+  // route stops the turn, but an in-flight open_worktree in the MCP child still
+  // completes): registering the row would fail or orphan, and the checkout
+  // would sit in the user's repo until the next sweep. Roll it back instead.
+  try {
+    if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) throw new AskWorktreeError('unknown thread');
+    prepare(`INSERT INTO ask_worktrees (id, thread_id, project_key, project_dir, ref, resolved_commit, run_id, worktree_dir, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(wtId, threadId, t.projectKey, t.projectDir, t.ref, commit ?? '', t.runId, dir, ts, ts);
+  } catch (err) {
+    try { await removeWorktree({ projectDir: t.projectDir, worktreeDir: dir, branch: null, force: true }); } catch { /* best-effort */ }
+    throw err instanceof AskWorktreeError ? err : new AskWorktreeError(`worktree could not be registered: ${err && err.message ? err.message : err}`);
+  }
   return getAskWorktree(threadId, wtId);
 }
 

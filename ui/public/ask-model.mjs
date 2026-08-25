@@ -100,9 +100,22 @@ export function createThreadModel({ threadId }) {
     const existing = rowById(frame.messageId);
     if (existing && TERMINAL.has(existing.status)) return { dropped: 'terminal-message' };
     if (live && frame.messageId === live.messageId) {
-      if (frame.seq <= live.lastSeq) return { dropped: 'stale-seq' };
-      if (frame.seq > live.lastSeq + 1) return { gap: true };
-      live.lastSeq = frame.seq;
+      if (frame.type === 'ask-start' && live.adopted && frame.seq < live.lastSeq) {
+        // The subscribe replay (seq 1..N) landing AFTER a stray broadcast frame was
+        // adopted at a high seq: rewind to the replayed start so the prefix is
+        // applied instead of dropped as stale (review of PR #376 — the answer
+        // rendered blank and Send never flipped to Stop). Text restarts from '';
+        // the replay re-delivers every delta, and blocks upsert by id.
+        live.lastSeq = frame.seq; live.text = ''; live.adopted = false;
+        live.userMessageId = frame.userMessageId ?? live.userMessageId;
+        live.startedAt = frame.startedAt ?? live.startedAt;
+        live.label = 'Thinking';
+        dirty.label = true;
+      } else {
+        if (frame.seq <= live.lastSeq) return { dropped: 'stale-seq' };
+        if (frame.seq > live.lastSeq + 1) return { gap: true };
+        live.lastSeq = frame.seq;
+      }
     } else if (frame.type === 'ask-start') {
       ensureStreamingRow(frame.messageId, frame);
       live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', usage: null, costUsd: null };
@@ -112,7 +125,7 @@ export function createThreadModel({ threadId }) {
       // Adoption: the ring buffer may have evicted the prefix — accept the first
       // frame at whatever seq it carries; ask-done.text heals the missing text.
       ensureStreamingRow(frame.messageId);
-      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', usage: null, costUsd: null };
+      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, adopted: true };
     } else {
       return { dropped: 'no-live' };
     }

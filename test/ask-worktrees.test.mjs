@@ -227,3 +227,19 @@ test('sweep: an unreadable registry skips everything — never guess-delete (thr
   _resetForTests();                                        // reopen heals the dropped table
   getDb();
 });
+
+// Review of PR #376: an open_worktree in flight when its thread is deleted used
+// to register nothing (or an orphan row) and leave the checkout in the user's
+// repo until the next sweep. The checkout is rolled back and the call throws.
+test('a thread deleted while `git worktree add` runs: open rolls the checkout back and throws', async () => {
+  const repo = await freshRepo();
+  const p = (await addProject({ name: 'awt-race', path: repo })).find((x) => x.name === 'awt-race');
+  const t = createThread();
+  const pending = openAskWorktree({ threadId: t.id, projectKey: p.key, ref: 'main' });
+  deleteThread(t.id);                                    // lands during the ref check / spawn
+  await assert.rejects(pending, AskWorktreeError);
+  assert.equal(prepare('SELECT count(*) AS n FROM ask_worktrees WHERE thread_id = ?').get(t.id).n, 0, 'no row');
+  const wtl = String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout);
+  assert.ok(!wtl.includes(t.id), 'no orphan checkout registered in the source repo');
+  assert.ok(!existsSync(join(repo, '..', t.id)), 'nothing on disk');
+});

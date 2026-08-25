@@ -300,3 +300,24 @@ test('ask-model: a frame re-delivered at the SAME seq is dropped, not applied tw
   assert.deepEqual(m.apply(stamped[1]), { dropped: 'stale-seq' }, 'seq === lastSeq is stale');
   assert.equal(m.live().text, 'once');
 });
+
+// Review of PR #376: adopting an out-of-turn delta seeded lastSeq to that frame's
+// (high) seq, so the forced-subscribe replay (seq 1..N, incl. ask-start) was
+// dropped as stale — blank/truncated answer, and no ask-start for the panel.
+test('ask-model: a stray delta adopted before the subscribe replay does not make the replayed prefix stale', () => {
+  const m = createThreadModel({ threadId: TID });
+  m.load(snapshot({ inFlight: { messageId: MID } }));
+  assert.deepEqual(m.apply({ type: 'ask-delta', text: 'E', threadId: TID, messageId: MID, seq: 5 }), { ok: true });
+  assert.equal(m.live().text, 'E');
+  // the forced-subscribe replay after resync(): seq 1..5 again
+  assert.deepEqual(m.apply({ type: 'ask-start', threadId: TID, messageId: MID, seq: 1, startedAt: 't', model: 'm', effort: 'high' }), { ok: true }, 'a replayed start REWINDS an adopted turn');
+  for (const [seq, text] of [[2, 'A'], [3, 'B'], [4, 'C'], [5, 'E']]) {
+    assert.deepEqual(m.apply({ type: 'ask-delta', text, threadId: TID, messageId: MID, seq }), { ok: true }, `seq ${seq}`);
+  }
+  assert.equal(m.live().text, 'ABCE', 'the prefix is applied once and the adopted tail is not doubled');
+  assert.deepEqual(m.apply({ type: 'ask-delta', text: 'F', threadId: TID, messageId: MID, seq: 6 }), { ok: true });
+  assert.equal(m.live().text, 'ABCEF');
+  // a SECOND replayed start (nothing adopted since) is stale exactly as before
+  assert.deepEqual(m.apply({ type: 'ask-start', threadId: TID, messageId: MID, seq: 1 }), { dropped: 'stale-seq' });
+  assert.equal(m.live().text, 'ABCEF');
+});

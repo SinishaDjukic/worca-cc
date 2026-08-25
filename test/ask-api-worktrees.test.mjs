@@ -89,3 +89,30 @@ test('thread DELETE removes remaining worktrees git-properly', async () => {
   const porcelain = String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoDir }).stdout);
   assert.ok(!porcelain.includes('/wt/'), 'no stale registration in the source repo');
 });
+
+// Review of PR #376: DELETE captured the job BEFORE `await askRemoveThreadWorktrees`
+// (real git spawns) and never re-checked, and POST /messages had no "deleting"
+// guard — a turn started in that window survived the delete as a live job.
+test('a message POST racing DELETE never starts a turn; nothing survives the delete', async () => {
+  const http = await import('node:http');
+  const JSONH = { 'Content-Type': 'application/json' };
+  const raw = (method, p, b) => new Promise((resolve, reject) => {
+    const data = b ? JSON.stringify(b) : '';
+    const req = http.request(`${base}${p}`, { method, agent: false, headers: { ...JSONH, 'Content-Length': Buffer.byteLength(data) } }, (r) => {
+      let s = ''; r.on('data', (c) => { s += c; }); r.on('end', () => resolve({ status: r.statusCode, text: s }));
+    });
+    req.on('error', reject); req.end(data);
+  });
+  const { thread } = await (await fetch(`${base}/api/ask/threads`, { method: 'POST', headers: JSONH, body: '{}' })).json();
+  const { openAskWorktree } = await import('../src/core/ask/worktrees.mjs');
+  await openAskWorktree({ threadId: thread.id, projectKey, ref: 'main' });   // gives DELETE a real await (git worktree remove)
+  const mod = await import('../ui/server.mjs');
+  const del = raw('DELETE', `/api/ask/threads/${thread.id}`);
+  await new Promise((r) => setTimeout(r, 5));                                 // DELETE is now inside its git await
+  const msg = await raw('POST', `/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: 'claude-opus-5', effort: 'high' });
+  assert.ok(msg.status === 409 || msg.status === 404, `POST during delete must be refused, got ${msg.status} ${msg.text}`);
+  assert.equal((await del).status, 200);
+  assert.equal(mod._testing.askJobs.has(thread.id), false, 'no live job survives the delete');
+  assert.equal((await fetch(`${base}/api/ask/threads/${thread.id}`)).status, 404);
+  assert.ok(!existsSync(join(homeDir, 'ask', thread.id)), 'thread dir gone');
+});

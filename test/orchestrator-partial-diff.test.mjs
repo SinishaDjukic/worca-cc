@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { listArtifacts, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeWorkflow } from '../src/core/workflows.mjs';
 
 useTempHome(after);
 
@@ -262,4 +263,28 @@ test('a resumed run that is then stopped persists results.json + diff-patch.patc
 
   assert.ok(existsSync(results(r2.pipelineDir)), 'results.json is persisted on resume()\'s stopped path');
   assert.match(readFileSync(patch(r2.pipelineDir), 'utf8'), /\+resumed work/);
+});
+
+// Review of PR #376: the empty-patch early return above also ran on the DONE
+// path, so a finished run with no file changes (review-only / plan-only / no-op
+// workflow) stopped writing results.json — which carries the review-derived
+// keyThingsToCheck/blockingIssues the task-source write-back reads
+// (sources.mjs). Absent diff stays absent; absent RESULTS is a regression.
+test('a done run with NO file changes still persists results.json (no 0-byte diff-patch)', async () => {
+  const repo = await freshRepo();
+  // A review-only workflow: the mock reviewer writes no project files, so the
+  // checkpoint diff is genuinely empty.
+  const wf = await writeWorkflow({ name: 'Review only', steps: [[{ id: 's0', key: 'reviewer' }]], feedbacks: [] });
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' }, workflowId: wf.id,
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  assert.ok(existsSync(results(res.pipelineDir)), 'results.json is written on the done path even with no diff');
+  const parsed = JSON.parse(readFileSync(results(res.pipelineDir), 'utf8'));
+  assert.equal(typeof parsed.summary, 'object');
+  assert.ok(!existsSync(patch(res.pipelineDir)), 'no 0-byte diff-patch.patch');
+  const arts = await listArtifacts(orch.getState().id);
+  assert.ok(arts.some((a) => a.kind === 'results'), 'results indexed');
+  assert.ok(!arts.some((a) => a.kind === 'diff-patch'), 'diff-patch not indexed');
 });

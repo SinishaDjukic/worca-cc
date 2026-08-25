@@ -29,12 +29,13 @@ export function attachRunFollower(orch, {
     try { fn(payload && typeof payload === 'object' ? payload : {}); } catch { /* never break the run */ }
   };
 
+  const snapshot = () => { try { return (typeof orch.getState === 'function' && orch.getState()) || {}; } catch { return {}; } };
+  const runName = () => title || snapshot().title || 'run';
   const finishLine = (status) => {
     // Duration/cost live on the orchestrator state, not the done payload
     // (chat/renderers.mjs:53-74 reads them from meta the same way).
-    let state = {};
-    try { state = (typeof orch.getState === 'function' && orch.getState()) || {}; } catch { /* keep {} */ }
-    const name = title || state.title || 'run';
+    const state = snapshot();
+    const name = runName();
     const parts = [`Run finished — "${name}" · ${status}`];
     const dur = fmtMs(state.totalActiveMs);
     if (dur) parts.push(dur);
@@ -78,7 +79,12 @@ export function attachRunFollower(orch, {
     done: guard((p) => {
       const status = p.status || 'done';
       updateStatus({ status });
-      if (status !== 'error') {
+      if (status === 'paused') {
+        // Terminal for THIS orchestrator, not for the run: a resume builds a new
+        // one (ui/server.mjs resumeRun), which re-attaches a fresh follower. So say
+        // "paused" — never "finished" — and let go (review of PR #376).
+        post({ kind: 'paused', text: `Run paused — "${runName()}" · resume it from Running`, href: `#running/${runId}` });
+      } else if (status !== 'error') {
         post({ kind: 'done', text: finishLine(status), href: `#running/${runId}` });
       }
       detach();

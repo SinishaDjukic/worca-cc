@@ -190,7 +190,10 @@ export function stampSentRunId(commentIds, pipelineId) {
   const { n, storeKey: sk, targets } = tx(() => {
     const run = getDb().prepare('SELECT project_key, workspace_key, target FROM pipelines WHERE id = ?').get(pid);
     if (!run) return { n: 0, storeKey: null, targets: [] };
-    const storeKey = (run.target === 'workspace' || run.workspace_key) ? `workspaces/${run.workspace_key}` : run.project_key;
+    // SAME formula as artifacts.mjs (`target === 'workspace' && workspace_key`): with
+    // `||` a project row that merely carries a workspace_key was stamped against a
+    // store it does not live in and the comment was never marked (review of PR #376).
+    const storeKey = (run.target === 'workspace' && run.workspace_key) ? `workspaces/${run.workspace_key}` : run.project_key;
     const stmt = getDb().prepare('UPDATE diff_comments SET sent_run_id = ? WHERE id = ? AND store_key = ?');
     const read = getDb().prepare('SELECT pipeline_id FROM diff_comments WHERE id = ?');
     // A stamped row matched `store_key = storeKey`, so its store is already known;

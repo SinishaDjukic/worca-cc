@@ -38,8 +38,13 @@ export function sanitizeTitle(raw) {
 // to write a title…"). First-person or plea openers, a trailing question mark,
 // or prose far beyond the 3–8-word instruction all mean the model did not
 // title the task — the caller should keep its provisional title instead.
+// Narrow on purpose (review of PR #376): bare `what`/`which`/`unable`/`please`
+// openers dropped legitimate titles ("What's New Page Redesign", "Which Tab Is
+// Active Indicator", "Unable To Login Error Fix", "Please Wait Spinner Timing").
+// A question is caught by its trailing `?` above; `unable`/`please` count only
+// with the verbs a refusal actually uses.
 const REFUSAL_OPENER_RE =
-  /^(?:i(?:['’](?:m|d|ll|ve))?\s|sorry\b|apolog|unfortunately\b|unable\b|please\s|could you\b|can you\b|tell me\b|what(?:['’]s)?\s|which\s|help me\b)/i;
+  /^(?:i(?:['’](?:m|d|ll|ve))?\s|sorry\b|apolog|unfortunately\b|unable to (?:determine|identify|generate|create|provide|write|title|summari[sz]e|infer|tell|help|assist)\b|please (?:provide|share|clarify|give|specify|tell|include|describe|let me know)\b|could you\b|can you\b|tell me\b|what(?:['’]s)? (?:is|are|was|were|do|does|did|would|should|task|work)\b|which (?:task|one|of)\b|help me\b)/i;
 const MAX_WORDS = 12;
 
 /** True when sanitized model output looks like a refusal/question, not a title (pure, exported for tests). */

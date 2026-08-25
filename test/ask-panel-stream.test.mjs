@@ -351,3 +351,20 @@ test('ask-panel-stream: an adopted turn with no ask-start still gets the orb row
   assert.ok(ctx.doc.querySelector('.ask-orb'), 'the orb mounted on the adopted turn');
   assert.ok(ctx.doc.querySelector('.ask-thinking'), 'and the row with it');
 });
+
+// Review of PR #376: a delta that landed between the REST snapshot and the
+// subscribe was adopted, the replay was then dropped as stale, and because
+// afterFrame never saw ask-start the composer kept showing Send with no Stop.
+test('ask-panel-stream: adoption mid-turn shows Stop; the subscribe replay after it renders the whole answer', async () => {
+  const ref = { body: snapBody({ inFlight: { messageId: MID } }) };
+  const ctx = await openWith(ref);
+  ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'E', threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-stop').hidden, false, 'Stop shows as soon as a turn is adopted');
+  assert.equal(ctx.doc.querySelector('.ask-send').hidden, true);
+  ctx.panel.pushServerFrame({ type: 'ask-start', threadId: TID, messageId: MID, seq: 1, startedAt: '2026-08-25T00:00:00Z', model: 'm', effort: 'high' });
+  for (const [seq, text] of [[2, 'A'], [3, 'B'], [4, 'C'], [5, 'E']]) ctx.panel.pushServerFrame({ type: 'ask-delta', text, threadId: TID, messageId: MID, seq });
+  ctx.flush();
+  assert.ok(ctx.doc.querySelector('.ask-transcript').textContent.includes('ABCE'), 'the replayed prefix renders');
+  assert.equal(ctx.doc.querySelector('.ask-stop').hidden, false, 'still streaming');
+});

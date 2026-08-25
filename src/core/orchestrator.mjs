@@ -275,6 +275,14 @@ class Orchestrator extends EventEmitter {
       model: this.opts.claude?.model,
       mock: !!this.opts.claude?.mock,
     };
+    // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
+    // runMock, rule R-F), so a mock pipeline role under dontAsk writes no artifact and
+    // the run dies at its first artifact read with no hint why. Fail at construction
+    // instead (review of PR #376). WORCA_MOCK counts: the runner honours the env too.
+    if (this.claude.permissionMode === 'dontAsk'
+      && (this.claude.mock || /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? '')))) {
+      throw new Error('permissionMode "dontAsk" is reserved for the Ask Worca runner in mock mode — a mock pipeline role spawned with it would take the ask mock and write no artifact');
+    }
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
@@ -3478,7 +3486,7 @@ class Orchestrator extends EventEmitter {
         ]);
         const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
         members.push({ projectKey: key, results });
-        patches.push({ key, patch });
+        patches.push({ key, patch, listed: ns.length > 0 });
       }
       if (!members.length) return;
       // Nothing changed under the checkpoint. Persisting here would index a 0-byte
@@ -3490,15 +3498,27 @@ class Orchestrator extends EventEmitter {
       // and History detail opens on the Diff tab to render "(no files changed)"
       // (app.js:11110 tests `d.results`). Write nothing — absent IS the truth, and
       // it is the state the UI's empty state already describes.
-      if (patches.every((p) => !p.patch)) return;
+      const noPatch = patches.every((p) => !p.patch);
+      // An EMPTY patch while name-status lists changes is a failed `git diff`
+      // spawn (diffPatch returns '' on error), not a clean tree — say so, and
+      // still persist the results the other two diffs produced.
+      const listed = patches.some((p) => p.listed);
+      if (noPatch && listed) this._log('results', 'warn', 'diff patch is empty although name-status lists changes — git diff failed; results.json is persisted without a patch');
+      // Stopped/error paths (`stage`) with nothing changed write nothing — absent IS
+      // the truth (above). The DONE path always persists results.json: it carries
+      // the review-derived keyThingsToCheck/blockingIssues that the task-source
+      // write-back (sources.mjs) and History read, so a review-only / plan-only /
+      // no-op run must not lose them (review of PR #376). The 0-byte
+      // diff-patch.patch is still never written on any path.
+      if (noPatch && stage && !listed) return;
       if (members.length === 1 && !this.isWorkspace) {
         await persistResults(this.pipeline.dir, members[0].results);
-        await persistDiffPatch(this.pipeline.dir, patches[0].patch);
+        if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
       } else {
         const perProject = buildPerProject(members);
         const results = { summary: rollupSummary(perProject), perProject };
         await persistResults(this.pipeline.dir, results);
-        await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
+        if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
       }
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);

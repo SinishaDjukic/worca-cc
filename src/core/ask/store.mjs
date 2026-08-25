@@ -144,7 +144,15 @@ export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 }
  */
 export function deleteThread(id) {
   if (typeof id !== 'string' || !ASK_ID_RE.test(id)) return false;
-  const removed = tx(() => prepare('DELETE FROM ask_threads WHERE id = ?').run(id).changes > 0);
+  const removed = tx(() => {
+    // ask_card_comments is keyed by card id, and card ids live inside message
+    // blocks (JSON) — no FK can cascade them, so a deleted thread used to leave
+    // its proposals' pending comment ids behind for ever (review of PR #376).
+    prepare(`DELETE FROM ask_card_comments WHERE card_id IN (
+               SELECT json_extract(b.value, '$.id') FROM ask_messages m, json_each(m.blocks) b
+               WHERE m.thread_id = ? AND json_valid(m.blocks) AND json_extract(b.value, '$.kind') = 'card')`).run(id);
+    return prepare('DELETE FROM ask_threads WHERE id = ?').run(id).changes > 0;
+  });
   if (removed) rmSync(join(askRoot(), id), { recursive: true, force: true });
   return removed;
 }
@@ -317,7 +325,9 @@ function getRunLink(threadId, runId) {
   return r ? rowToRunLink(r) : null;
 }
 
-const LINK_PATCH_COLS = { pipelineId: 'pipeline_id', status: 'status', phase: 'phase', commentIds: 'comment_ids' };
+// `runId` is patchable so a RESUMED run (a new runs-Map id for the same pipeline)
+// can take over its link row instead of leaving it on the dead lineage.
+const LINK_PATCH_COLS = { runId: 'run_id', pipelineId: 'pipeline_id', status: 'status', phase: 'phase', commentIds: 'comment_ids' };
 
 export function updateRunLink(threadId, runId, patch = {}) {
   const db = getDb();
@@ -333,7 +343,15 @@ export function updateRunLink(threadId, runId, patch = {}) {
   if (!sets.length) return getRunLink(threadId, runId);
   vals.push(threadId, runId);
   const info = db.prepare(`UPDATE ask_run_links SET ${sets.join(', ')} WHERE thread_id = ? AND run_id = ?`).run(...vals);
-  return info.changes ? getRunLink(threadId, runId) : null;
+  return info.changes ? getRunLink(threadId, Object.prototype.hasOwnProperty.call(patch, 'runId') ? patch.runId : runId) : null;
+}
+
+/** Every link row (any thread) pointing at a History pipeline id — what resumeRun
+ *  re-attaches followers for. */
+export function findRunLinksByPipeline(pipelineId) {
+  getDb();
+  if (typeof pipelineId !== 'string' || !pipelineId) return [];
+  return prepare('SELECT * FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at DESC, run_id').all(pipelineId).map(rowToRunLink);
 }
 
 export function listRunLinks(threadId) {

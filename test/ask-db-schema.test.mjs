@@ -120,3 +120,18 @@ test('UNIQUE (thread_id, seq) is enforced', () => {
     "INSERT INTO ask_messages (id, thread_id, seq, role, created_at) VALUES ('askm_00000003', 'ask_00000002', 1, 'user', 't')"),
   /UNIQUE/);
 });
+
+// Review of PR #376: every per-thread attachment read (threadAttachmentBytes, the
+// snapshot, the delete cascade) scanned ask_attachments. The index is IF NOT
+// EXISTS and probed by schemaGaps, so an existing stamped-21 DB heals without a
+// version bump.
+test('ask_attachments has a thread_id index on a fresh DB; self-heal recreates it on a stamped-21 DB', () => {
+  const db = getDb();
+  assert.ok(indexNames(db).includes('idx_ask_attachments_thread'));
+  db.exec('DROP INDEX idx_ask_attachments_thread');
+  assert.ok(!indexNames(db).includes('idx_ask_attachments_thread'));
+  _resetForTests();
+  const db2 = getDb();
+  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 21, 'stamp untouched');
+  assert.ok(indexNames(db2).includes('idx_ask_attachments_thread'), 'healed by reconcileSchema');
+});

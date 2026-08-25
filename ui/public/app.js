@@ -5471,12 +5471,20 @@ function seedBranchPlaceholder(select, text) {
 // the repo's current branch (HEAD). Empty value still falls back to HEAD on submit.
 async function populateBranchSelect(select, projectDir) {
   if (!select) return;
+  // Per-select request generation (review of PR #376): three un-guarded callers
+  // (project change, target change, prefill) raced, and whichever fetch resolved
+  // LAST rebuilt the options — wiping a source branch the prefill had just set.
+  // A response for a superseded request is dropped.
+  const gen = (select._branchGen = (select._branchGen || 0) + 1);
+  const stale = () => select._branchGen !== gen;
   if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); return; }
   const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
+    if (stale()) return;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
+    if (stale()) return;
     const branches = Array.isArray(data.branches) ? data.branches : [];
     if (!branches.length) { placeholder.textContent = 'current branch (auto)'; return; }
     // Rebuild: explicit "auto" first, then every branch (current pre-selected).
@@ -5488,6 +5496,7 @@ async function populateBranchSelect(select, projectDir) {
       select.appendChild(opt);
     }
   } catch {
+    if (stale()) return;
     // m2: surface the failure instead of leaving a silently-empty select. The
     // empty value still makes the server fall back to HEAD on submit.
     placeholder.textContent = 'current branch (auto — branch list unavailable)';

@@ -148,3 +148,20 @@ test('the detach latch stops late events even when the emitter keeps its listene
   orch.emit('done', { status: 'done' });
   assert.equal(posts.length, 1, 'the detached latch no-ops every later handler');
 });
+
+// Review of PR #376: done{status:'paused'} was treated as terminal — "Run
+// finished … · paused" — and resumeRun never re-attached a follower, so a
+// paused-then-resumed card run never reported its real outcome.
+test('done{paused}: one "paused" notice (never "finished"), status paused, then detached for the resumed lineage', () => {
+  const { orch, posts, patches, follower, detached } = harness();
+  orch.state = { title: 'T' };
+  orch.emit('done', { status: 'paused' });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].kind, 'paused');
+  assert.match(posts[0].text, /Run paused — "T"/);
+  assert.doesNotMatch(posts[0].text, /finished/i);
+  assert.equal(posts[0].href, '#running/run-uuid-1');
+  assert.deepEqual(patches, [{ status: 'paused' }]);
+  assert.equal(follower.detached, true, 'this orchestrator is done; the resume creates a new one');
+  assert.equal(detached(), 1);
+});

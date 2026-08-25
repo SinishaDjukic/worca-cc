@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd } = {}) {
+function defaultRun(cmd, args, { cwd, timeout = 0 } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -18,12 +18,23 @@ function defaultRun(cmd, args, { cwd } = {}) {
       return;
     }
     let stdout = '', stderr = '';
+    let settled = false;
+    const done = (val) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); resolve(val); };
+    // `-M -l0` (unlimited rename detection) can run for minutes on a huge diff, and
+    // the diff helpers sit on the Stop/error terminal path (review of PR #376) —
+    // a bound keeps a stop from hanging on git. 0 = no bound (the default).
+    const timer = timeout > 0
+      ? setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } done({ ok: false, stdout, stderr: `${cmd} timed out after ${timeout} ms`, code: -1 }); }, timeout)
+      : null;
     child.stdout?.on('data', (b) => (stdout += b.toString()));
     child.stderr?.on('data', (b) => (stderr += b.toString()));
-    child.on('error', (err) => resolve({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
-    child.on('close', (code) => resolve({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
+    child.on('error', (err) => done({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
+    child.on('close', (code) => done({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
   });
 }
+
+/** Bound for the diff helpers below (persisted-diff generation on every terminal path). */
+export const DIFF_TIMEOUT_MS = 120_000;
 
 let _run = defaultRun;
 let _ghCache = null;
@@ -58,7 +69,7 @@ export async function diffShortstat(projectDir, source, feature) {
 export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
   if (!projectDir || !base) return [];
   const args = ['-c', 'core.quotePath=false', 'diff', '--name-status', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   if (!r.ok) return [];
   const out = [];
   for (const line of r.stdout.split('\n')) {
@@ -85,7 +96,7 @@ export async function diffNumstat(projectDir, base, head, pathspecs = []) {
   const m = new Map();
   if (!projectDir || !base) return m;
   const args = ['-c', 'core.quotePath=false', 'diff', '--numstat', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   if (!r.ok) return m;
   for (const line of r.stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -127,7 +138,7 @@ export async function diffPatch(projectDir, base, head, pathspecs = []) {
   const args = ['-c', 'core.quotePath=false', 'diff', '-M', '-l0', '--no-color', '--no-ext-diff', '--submodule=short',
     '--src-prefix=a/', '--dst-prefix=b/',
     base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   return r.ok ? r.stdout : '';
 }
 
@@ -222,6 +233,7 @@ export async function findPrForBranch({ projectDir, head } = {}) {
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
 export const _testing = {
+  defaultRun,
   setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
   reset() { _run = defaultRun; _ghCache = null; },
 };

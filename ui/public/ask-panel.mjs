@@ -315,6 +315,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (!r || (r.status !== 201 && !r.ok)) { setComposerMsg('could not create the thread'); return; }
         const body = await r.json();
         id = body.thread.id;
+        loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
@@ -328,10 +329,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         context: getPageContext() || {},
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
+      const model = st.model;
       let res = null;
       try {
         res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       } catch { setComposerMsg('network error — the message was not sent'); return; }
+      // The user may have clicked New chat or switched threads during the POST: the
+      // message is on the server and arrives with its thread; touching the composer
+      // or the (now different or null) model here would be wrong (review of PR #376).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return;
       if (!res || res.status !== 202) {
         let msg = `request failed (${res ? res.status : 'network'})`;
         try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep the fallback */ }
@@ -904,6 +910,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- thread actions -------------------------------------------------------
   function newThread() {
+    loadGen += 1;                       // a load still in flight must not resurrect the old thread
     st.threadId = null;
     st.model = null;
     st.subscribedFor = null;
@@ -1515,15 +1522,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
+  // Bumped by every loadThread()/newThread()/thread creation: whichever GET resolves
+  // LAST used to win unconditionally, so a slow old thread load overwrote a newer
+  // switch (review of PR #376). A load whose generation is stale returns null.
+  let loadGen = 0;
   async function loadThread(id) {
+    const gen = ++loadGen;
     let res = null;
     try { res = await fetch(`/api/ask/threads/${id}`); } catch { return null; }
+    if (gen !== loadGen || st.destroyed) return null;
     if (!res || !res.ok) {
       if (res && res.status === 404 && readStoredThread() === id) storeThread(null);
       return null;
     }
     let snap = null;
     try { snap = await res.json(); } catch { return null; }
+    if (gen !== loadGen || st.destroyed) return null;
     st.threadId = id;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
@@ -1610,7 +1624,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function afterFrame(frame) {
     if (frame.type === 'ask-start') { startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
-    else if (frame.type === 'ask-done' || frame.type === 'ask-error') {
+    else if (frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
+      // A frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted it, or
+      // a broadcast delta beat the subscribe replay): the turn is live now, so the
+      // composer must show Stop and the timer must run (review of PR #376).
+      startElapsed(); updateSendStop();
+    }
+    if (frame.type === 'ask-done' || frame.type === 'ask-error') {
       stopElapsed(); updateSendStop(); announce('answer finished');
       // P4: a finished turn may have created/removed/navigated worktrees. This must
       // NOT live in updateSendStop() — that also runs from loadThread, so a

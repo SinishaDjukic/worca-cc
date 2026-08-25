@@ -112,3 +112,17 @@ test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Review of PR #376: the refusal filter dropped legitimate pipeline titles that
+// merely START with What's/Which/Unable/Please — the caller then kept the
+// provisional "first 80 chars of the prompt" title for ever.
+test('isRefusalTitle: legitimate titles starting with What/Which/Unable/Please are NOT refusals; real refusals still are', () => {
+  for (const t of ['What\'s New Page Redesign', 'Which Tab Is Active Indicator', 'Unable To Login Error Fix',
+    'Please Wait Spinner Timing', 'What If Analysis Export', 'Unable Reason Column In Reports']) {
+    assert.equal(isRefusalTitle(t), false, t);
+  }
+  for (const t of ['What is the task you want titled', 'Which task should I title', 'Unable to determine the task',
+    'Please provide more details about the task', 'Please let me know what the task is', "What's the task or work you'd like to do?"]) {
+    assert.equal(isRefusalTitle(t), true, t);
+  }
+});

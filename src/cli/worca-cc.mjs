@@ -52,7 +52,7 @@ const REPO_ROOT = resolve(__dirname, '..', '..');
  * (core/ask/spawn.mjs), which owns its own spawn options and never comes through
  * here.
  */
-const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk'];
 
 /**
  * Parse argv into a flags object. Supports "--flag value" and "--flag=value", plus the
@@ -143,10 +143,10 @@ function parseArgs(argv) {
           if (p) out.extras.push(p);
         }
       } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
-        // A pipeline run's mode reaches claude-runner as-is, and `dontAsk` is the
-        // Ask Worca runner's own mode: every dontAsk spawn takes the ask arm, whose
-        // markers live in the system prompt, so a pipeline role spawned that way
-        // writes no artifact and the run dies at its first artifact read.
+        // A pipeline run's mode reaches claude-runner as-is. `dontAsk` is a legitimate
+        // headless mode for a REAL run (allowedTools decide what runs); only the
+        // MOCK runner treats it as the Ask Worca recipe — that pair is refused below,
+        // after --mock/WORCA_MOCK are known (review of PR #376).
         fail(`--permission-mode must be one of ${PERMISSION_MODES.join(', ')}, got: ${value}`);
       } else {
         out[key] = value;
@@ -1490,6 +1490,12 @@ async function main() {
 
   if (flags.mock) {
     process.env.WORCA_MOCK = '1';
+  }
+  // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
+  // runMock), which writes no pipeline artifact — a mock pipeline under dontAsk dies
+  // at its first artifact read with no hint why. Refuse the PAIR, not the mode.
+  if (flags.permissionMode === 'dontAsk' && /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? ''))) {
+    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
   }
 
   if (!flags.prompt && !flags.file) {

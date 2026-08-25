@@ -306,3 +306,26 @@ test('MOCK_FAIL surfaces as ask-error with the runner message; the thread stays 
   await waitFor(() => framesFor(msgs, t.id).filter((f) => f.type === 'ask-done').length >= 1);
   ws.close();
 });
+
+// Review of PR #376: Ask spend counts toward totalCostLimitUsd (pipelines get
+// 403'd / paused by it) but the message route never consulted budgetStatus(),
+// so chat kept spending past the cap it filled.
+test('POST /messages is 403 while the total cost window is spent — chat stops at the cap it helps fill', async () => {
+  const { setTotalCostLimitUsd } = await import('../src/core/settings.mjs');
+  const { recordAskCostDelta, budgetStatus } = await import('../src/core/cost-budget.mjs');
+  const t = await newThread();
+  await setTotalCostLimitUsd(1);
+  try {
+    recordAskCostDelta({ threadId: t.id, messageId: 'msg_budget01', amountUsd: 1.5 });
+    assert.equal(budgetStatus().blocked, true, 'fixture: the window is spent by chat alone');
+    const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'hi', ...MODEL });
+    assert.equal(r.status, 403);
+    const body = await r.json();
+    assert.match(body.error, /total cost limit/);
+    assert.equal(body.budget.blocked, true);
+    assert.equal((await snapshot(t.id)).messages.length, 0, 'nothing was written');
+    assert.equal(mod._testing.askJobs.has(t.id), false, 'no turn started');
+  } finally {
+    await setTotalCostLimitUsd(null);
+  }
+});

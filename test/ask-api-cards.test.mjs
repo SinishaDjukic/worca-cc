@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
+import http from 'node:http';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -403,4 +404,52 @@ test('DELETE while a followed run lives: run unaffected, followers detached, no 
   await waitFor(() => ['done', 'error', 'stopped'].includes(String(mod.runs.get(runId)?.status)));
   stopPump();
   assert.equal((await fetch(`${base}/api/ask/threads/${thread.id}`)).status, 404);
+});
+
+// Review of PR #376: the card-state TOCTOU re-check inside POST /api/run threw
+// AFTER runs.set/wireRun and the throw was only console.error'd, so a second
+// Start for the same card fell through to orch.run() — two full pipelines for
+// one card. The loser must get a 409 and leave no run behind.
+test('double Start for one card launches exactly one run: the loser is 409 with no run entry', async () => {
+  const { thread, card } = await proposeCard({ projectKey }, 'propose a run for this project');
+  assert.ok(card && card.state === 'proposed');
+  const body = {
+    projectDir, prompt: card.card.brief, workflowId: card.card.workflowId,
+    guardrailsId: card.card.guardrailsId, title: card.card.title,
+    askThreadId: thread.id, askCardId: card.id,
+    sourceBranch: 'main',                    // forces the isValidSourceRef git spawn — the real await window
+  };
+  const runsBefore = mod.runs.size;
+  const w = openWs();
+  await w.opened;
+  // Two DISTINCT sockets (fetch may queue same-origin requests behind one
+  // keep-alive connection, which would serialise them and hide the race). Both
+  // pass the early `proposed` check before either returns from the git spawn.
+  const raw = (p, b) => new Promise((resolve, reject) => {
+    const data = JSON.stringify(b);
+    const req = http.request(`${base}${p}`, { method: 'POST', agent: false, headers: { ...JSONH, 'Content-Length': Buffer.byteLength(data) } }, (r) => {
+      let s = ''; r.on('data', (c) => { s += c; }); r.on('end', () => resolve({ status: r.statusCode, body: JSON.parse(s) }));
+    });
+    req.on('error', reject); req.end(data);
+  });
+  const [a, b] = await Promise.all([raw('/api/run', body), raw('/api/run', body)]);
+  // Pump EVERY run that got started before asserting, or a regression parks two
+  // mock runs at their HITL gates and this test hangs instead of failing.
+  const started = [a, b].filter((r) => r.status === 200).map((r) => r.body.runId);
+  const pumps = started.map((id) => autoAnswerRun(id));
+  try {
+    const statuses = [a.status, b.status].sort();
+    assert.deepEqual(statuses, [200, 409], `one winner, one 409 — got ${statuses}`);
+    assert.equal(mod.runs.size, runsBefore + 1, 'exactly one run entry was created');
+    const loser = a.status === 200 ? b : a;
+    assert.match(loser.body.error, /no longer proposed|card is started/);
+    const snap = await snapshot(thread.id);
+    assert.equal(snap.runLinks.length, 1, 'one link row');
+    assert.equal(snap.runLinks[0].runId, started[0]);
+    await waitFor(() => frames(w.msgs, thread.id, 'ask-message').some((m) => /Run finished/.test(m.message.text)));
+  } finally {
+    await waitFor(() => started.every((id) => /^(done|error|stopped)$/.test(mod.runs.get(id)?.status || 'done')), 20000).catch(() => {});
+    pumps.forEach((stop) => stop());
+    w.ws.close();
+  }
 });

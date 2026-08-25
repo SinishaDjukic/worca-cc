@@ -188,3 +188,33 @@ test('archiving a run deletes its comments inside the archive transaction', asyn
   // Scoped to THIS run: useTempHome is per-file, so other runs' rows are still here.
   assert.equal(unresolvedCounts()[key], undefined);
 });
+
+// Review of PR #376: stampSentRunId derived the store key with `||`
+// (`target === 'workspace' || workspace_key`) while artifacts.mjs uses `&&` — a
+// PROJECT row that merely carries a workspace_key was stamped against a store it
+// does not live in, so the comment never got its "sent to #run" marker.
+test('stampSentRunId: a project run whose row carries a workspace_key is stamped against its PROJECT store', async () => {
+  const run = await seedRun();
+  const c = mk(run, 'src/a.js', 'new', 3, 'stamp me');
+  const { getDb } = await import('../src/core/db.mjs');
+  getDb().prepare('UPDATE pipelines SET workspace_key = ? WHERE id = ?').run('wks-stray-00000001', run.id);
+  assert.equal(stampSentRunId([c.id], run.id), 1);
+  assert.equal(getDiffComment(c.id).sentRunId, run.id);
+});
+
+// Review of PR #376: ask_card_comments is keyed by card id, and card ids live
+// inside message blocks (JSON) — no FK could cascade them, so deleting a thread
+// left its proposals' pending comment ids behind for ever.
+test('deleting a thread removes its proposal cards\' pending comment ids (no orphans)', async () => {
+  const run = await seedRun();
+  const c = mk(run, 'src/a.js', 'new', 3, 'pending');
+  const { setPendingCardComments, peekPendingCardComments } = await import('../src/core/diff-comments.mjs');
+  const { createThread, appendMessage, deleteThread } = await import('../src/core/ask/store.mjs');
+  const t = createThread();
+  appendMessage(t.id, { role: 'assistant', status: 'done', text: 'proposal', blocks: [{ kind: 'card', id: 'card_0000abcd', state: 'proposed', card: { title: 'x' } }] });
+  assert.equal(setPendingCardComments('card_0000abcd', [c.id]), 1);
+  assert.deepEqual(peekPendingCardComments('card_0000abcd'), [c.id]);
+  assert.equal(deleteThread(t.id), true);
+  assert.deepEqual(peekPendingCardComments('card_0000abcd'), [], 'no orphan rows');
+  assert.equal(getDiffComment(c.id).id, c.id, 'the comment itself is untouched');
+});

@@ -592,6 +592,7 @@ CREATE TABLE IF NOT EXISTS ask_attachments (
   bytes       INTEGER NOT NULL,
   created_at  TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_ask_attachments_thread ON ask_attachments (thread_id);
 CREATE TABLE IF NOT EXISTS ask_run_links (
   thread_id   TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
   run_id      TEXT NOT NULL,               -- runs-Map UUID from POST /api/run
@@ -771,7 +772,14 @@ function schemaGaps(db) {
   const hasAskCardComments = db.prepare(
     "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_card_comments'"
   ).get().n > 0;
+  // Added after v18 shipped (review of PR #376): every per-thread attachment read
+  // (`threadAttachmentBytes`, the snapshot, the delete cascade) scanned the table.
+  // IF NOT EXISTS, so it is probed here rather than by a version bump.
+  const hasAskAttachmentsIndex = hasAskThreads && db.prepare(
+    "SELECT count(*) AS n FROM sqlite_master WHERE type='index' AND name='idx_ask_attachments_thread'"
+  ).get().n > 0;
   return {
+    askAttachmentsIndex: hasAskThreads && !hasAskAttachmentsIndex,
     columns: missing,
     stepQuestionsTable: !hasStepQuestions,
     guardrailSetsTable: !hasGuardrailSets,
@@ -805,6 +813,7 @@ function repairSchemaGaps(db, gaps) {
   if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
   if (gaps.askWorktreesTable) db.exec(ASK_WORKTREES_DDL);
   if (gaps.diffCommentTables) db.exec(DIFF_COMMENTS_DDL);
+  if (gaps.askAttachmentsIndex) db.exec('CREATE INDEX IF NOT EXISTS idx_ask_attachments_thread ON ask_attachments (thread_id)');
   for (const { table, col, type } of missingColumns(db)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   }
@@ -825,7 +834,8 @@ function reconcileSchema(db) {
   const gaps = schemaGaps(db);
   if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
       && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables
-      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable && !gaps.diffCommentTables) return; // clean — no lock
+      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable && !gaps.diffCommentTables
+      && !gaps.askAttachmentsIndex) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe

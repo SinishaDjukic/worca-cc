@@ -254,3 +254,28 @@ test('an EMPTY pathspecs array is a no-op (legacy argv byte-identity)', async ()
   assert.deepEqual([...(await diffNumstat(repo, 'HEAD', undefined, [])).keys()],
     [...(await diffNumstat(repo, 'HEAD')).keys()]);
 });
+
+// Review of PR #376: `-M -l0` (unlimited rename detection) had no spawn bound and
+// the three diff helpers run on the Stop/error terminal path — a huge diff could
+// hang a stop on git. Every diff helper now passes DIFF_TIMEOUT_MS, and the
+// default runner honours it.
+test('diff helpers pass a timeout to the runner; the default runner kills a hung command', async () => {
+  const gi = await import('../src/core/git-info.mjs');
+  const seam = gi._testing || gi;
+  const seen = [];
+  seam.setRunner(async (cmd, args, opts) => { seen.push({ cmd, args, opts }); return { ok: true, stdout: '', stderr: '', code: 0 }; });
+  try {
+    await gi.diffNameStatus('/tmp/x', 'base');
+    await gi.diffNumstat('/tmp/x', 'base');
+    await gi.diffPatch('/tmp/x', 'base');
+    assert.equal(seen.length, 3);
+    for (const s of seen) assert.equal(s.opts.timeout, gi.DIFF_TIMEOUT_MS, `${s.args.join(' ')} is bounded`);
+  } finally {
+    seam.setRunner(null);
+  }
+  const t0 = Date.now();
+  const r = await seam.defaultRun(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { cwd: process.cwd(), timeout: 150 });
+  assert.equal(r.ok, false);
+  assert.match(r.stderr, /timed out/);
+  assert.ok(Date.now() - t0 < 5000, 'the hung child was killed, not awaited');
+});
