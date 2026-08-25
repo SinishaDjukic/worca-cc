@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makePanel, key, pointerdown } from './helpers/ask-panel-harness.mjs';
+import { fmtStarted } from '../ui/public/ask-panel.mjs';
 
 const THREADS = {
   threads: [
@@ -170,6 +171,55 @@ test('ask-panel: threads rows live in a scroller; the caption stays pinned; empt
   const emptyPop = empty.doc.querySelector('.ask-pop-threads');
   assert.equal(emptyPop.querySelector('.ask-threads-list'), null, 'nothing to scroll, no scroller');
   assert.match(emptyPop.querySelector('.ask-pop-empty').textContent, /No saved chats\./);
+});
+
+test('ask-panel: fmtStarted — relative while recent, short ISO once old, null when unusable', () => {
+  const NOW = Date.parse('2026-08-25T12:00:00.000Z');
+  assert.equal(fmtStarted('2026-08-25T11:59:30.000Z', NOW), 'just now');
+  assert.equal(fmtStarted('2026-08-25T11:30:00.000Z', NOW), '30m ago');
+  assert.equal(fmtStarted('2026-08-25T07:00:00.000Z', NOW), '5h ago');
+  assert.equal(fmtStarted('2026-08-18T12:00:00.000Z', NOW), '7d ago');
+  assert.equal(fmtStarted('2026-01-05T12:00:00.000Z', NOW), '2026-01-05', 'past 30d falls back to a short absolute date');
+  assert.equal(fmtStarted('2026-08-25T12:00:10.000Z', NOW), 'just now', 'clock skew never yields a negative age');
+  // Unlike plugins-view's relTime, an unusable stamp yields null rather than
+  // echoing the raw value: threadMeter drops it via filter(Boolean), so the row
+  // shows nothing instead of "t1" or "Invalid Date".
+  for (const bad of [undefined, null, '', 'not-a-date', 't1', NaN]) {
+    assert.equal(fmtStarted(bad, NOW), null, `no date for ${String(bad)}`);
+  }
+});
+
+test('ask-panel: thread rows report when the chat was started; unusable createdAt shows nothing', async () => {
+  const NOW = Date.parse('2026-08-25T12:00:00.000Z');
+  const started = {
+    threads: [
+      { id: 'ask_1', title: 'Minutes', createdAt: '2026-08-25T11:58:00.000Z', updatedAt: 'x', totals: { ctx: 1000, costUsd: 0.5, agents: 2 }, inFlight: false },
+      { id: 'ask_2', title: 'Hours', createdAt: '2026-08-25T09:00:00.000Z', updatedAt: 'x', totals: {}, inFlight: false },
+      { id: 'ask_3', title: 'Days', createdAt: '2026-08-21T12:00:00.000Z', updatedAt: 'x', totals: {}, inFlight: false },
+      { id: 'ask_4', title: 'Old', createdAt: '2026-01-05T12:00:00.000Z', updatedAt: 'x', totals: {}, inFlight: false },
+      { id: 'ask_5', title: 'Broken', createdAt: 'not-a-date', updatedAt: 'x', totals: {}, inFlight: false },
+      { id: 'ask_6', title: 'Missing', updatedAt: 'x', totals: {}, inFlight: false },
+    ],
+  };
+  const { panel, doc, tick } = makePanel({
+    now: () => NOW,
+    fetchHandler: () => ({ ok: true, status: 200, json: async () => started }),
+  });
+  panel.open();
+  doc.querySelector('[data-ask-threads-btn]').click();
+  await tick();
+  const meters = [...doc.querySelectorAll('.ask-thread-meter')].map((m) => m.textContent);
+  assert.equal(meters.length, 6);
+  assert.equal(meters[0], '1.0k ctx · $0.50 · 2 agents · 2m ago', 'the start date joins the existing meter parts');
+  assert.equal(meters[1], '3h ago', 'a thread with no totals still reports when it started');
+  assert.equal(meters[2], '4d ago');
+  assert.equal(meters[3], '2026-01-05');
+  assert.equal(meters[4], '', 'an unparsable createdAt renders no date at all');
+  assert.equal(meters[5], '', 'a missing createdAt renders no date at all');
+  for (const m of meters) assert.ok(!/Invalid Date|NaN/.test(m), `never surfaces a broken date: ${m}`);
+  // The date rides the existing meter line, so no new element competes with the
+  // title clamp for the popover's capped width.
+  assert.equal(doc.querySelectorAll('.ask-thread-row .ask-thread-col > span').length, 12, 'still just title + meter per row');
 });
 
 test('ask-panel: popover menu keyboard — roving focus, wrap, Home/End, Enter, Escape to trigger', async () => {

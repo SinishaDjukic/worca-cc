@@ -33,6 +33,22 @@ export function fmtAgents(n) {
   return Number.isFinite(n) && n > 0 ? `${n} agent${n === 1 ? '' : 's'}` : null;
 }
 
+/** When a chat was started: relative while it is recent, a short absolute date
+ *  once it is older than a month. Mirrors plugins-view.mjs relTime's thresholds,
+ *  but returns null — not the raw input — for a missing or unparsable stamp, so
+ *  threadMeter's filter(Boolean) drops it and the row shows nothing rather than
+ *  "Invalid Date". Pure; callers pass the injected now() to stay jsdom-safe. */
+export function fmtStarted(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24); if (d < 30) return `${d}d ago`;
+  return String(iso).slice(0, 10);
+}
+
 export function fmtElapsed(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '';
   const s = ms / 1000;
@@ -596,8 +612,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- threads popover (list; switching/delete land in Task 7) -------------
+  // The start date is the last part so the cost/agent figures keep their
+  // leading position, and it rides the existing meter line rather than a new
+  // element: nothing extra competes with the title clamp for the popover width.
   function threadMeter(t) {
-    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)];
+    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents), fmtStarted(t.createdAt, now())];
     return parts.filter(Boolean).join(' · ');
   }
 
