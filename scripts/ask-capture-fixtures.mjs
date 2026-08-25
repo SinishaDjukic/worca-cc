@@ -8,6 +8,11 @@
 //
 //   node --disable-warning=ExperimentalWarning scripts/ask-capture-fixtures.mjs [--only <name>] [--model <id>] [--out <dir>]
 //
+// HARD GATE: this is the only code in the repo that spawns the real claude CLI,
+// so it refuses to run unless WORCA_ALLOW_LIVE_CLAUDE=1 is set by hand. Nothing
+// in `npm test`, the smoke scripts, the hooks or CI sets it — a stray
+// `npm run ask:fixtures` fails before a single process is spawned.
+//
 // Capture-time assertions make this an automated slice of the manual gate: the
 // recipe (no plugins/skills/hooks, worca connected, Task + mcp__worca__* only),
 // the FOREGROUND sub-agent shape (probe F1/F3) and the exit-1 limit shapes (F5).
@@ -120,7 +125,22 @@ function parseArgs(argv) {
   return out;
 }
 
+/**
+ * The hard gate. Real claude processes cost money and are non-deterministic, so
+ * capturing is opt-in ONLY: exactly '1', nothing truthy-ish, and never inferred
+ * from an existing env var that something else might already set.
+ * Exported so the suite can pin it without ever reaching the capture itself.
+ * @param {Record<string,string|undefined>} [env]
+ */
+export function assertLiveClaudeAllowed(env = process.env) {
+  if (env.WORCA_ALLOW_LIVE_CLAUDE === '1') return;
+  throw new Error(
+    'refusing to spawn the real claude CLI: this capture makes live model calls and spends money. '
+    + 'Re-run with WORCA_ALLOW_LIVE_CLAUDE=1 if that is what you want.');
+}
+
 async function main() {
+  assertLiveClaudeAllowed();
   const args = parseArgs(process.argv.slice(2));
   const mock = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
   if (mock && mock !== '0' && mock.toLowerCase() !== 'false') throw new Error('refusing to capture under WORCA_MOCK — this script needs the real claude CLI');

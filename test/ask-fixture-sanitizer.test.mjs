@@ -3,7 +3,7 @@
 // the committed fixtures (ask-worca-design.md §12).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSanitizer } from '../scripts/ask-capture-fixtures.mjs';
+import { createSanitizer, assertLiveClaudeAllowed } from '../scripts/ask-capture-fixtures.mjs';
 
 const roots = { home: '/Users/zed', base: '/private/tmp/capture-base', repo: '/Users/zed/dev/worca-cc', tmp: '/private/tmp' };
 
@@ -44,4 +44,17 @@ test('secrets are redacted and a plugin marker aborts', () => {
   assert.equal(q['token=keep'], 1, 'keys are never touched');
   assert.throws(() => s(JSON.stringify({ plugins: ['plugin:evil'] })), /recipe violation/);
   assert.throws(() => s('{not json'), /not JSON/);
+});
+
+// This script is the ONE thing in the repo that spawns the real claude CLI and
+// spends money. It is not part of `npm test` and never runs in CI, but nothing
+// stopped a stray `npm run ask:fixtures` either — so the capture is gated behind
+// an explicit opt-in env var that no test, hook or CI job ever sets.
+test('the live-claude capture refuses to run without an explicit opt-in', () => {
+  assert.throws(() => assertLiveClaudeAllowed({}), /WORCA_ALLOW_LIVE_CLAUDE/);
+  for (const v of ['', '0', 'false', 'true', 'yes']) {
+    assert.throws(() => assertLiveClaudeAllowed({ WORCA_ALLOW_LIVE_CLAUDE: v }),
+      /WORCA_ALLOW_LIVE_CLAUDE/, `"${v}" is not an opt-in`);
+  }
+  assert.doesNotThrow(() => assertLiveClaudeAllowed({ WORCA_ALLOW_LIVE_CLAUDE: '1' }));
 });

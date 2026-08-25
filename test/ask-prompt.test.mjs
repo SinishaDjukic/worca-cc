@@ -333,3 +333,18 @@ test('P4: the prompt advertises the worktree tools and the sandbox note names th
   assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the git tool points');
   assert.ok(SANDBOX_NOTE.includes('cannot read files'), 'and that there is no file tool');
 });
+
+// The workflow pick is the assistant's one real decision before propose_run, and the
+// catalog is whatever the user and their plugins built — coding, documentation,
+// marketing, anything. So rule 4 must make the model JUDGE fit (kind first, then
+// weight) instead of naming steps: a pinned agent key here would silently stop
+// applying the moment someone's pipeline is made of their own agents.
+test('rule 4 sizes the work, matches the kind first, and names no agent', () => {
+  for (const t of ['what KIND of work it is', 'documentation, marketing, research',
+    'LIGHTEST', 'over- or under-powered']) {
+    assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 4 states "${t}"`);
+  }
+  for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) {
+    assert.ok(!ASK_SYSTEM_RULES.includes(key), `the rules hardcode no agent key (${key})`);
+  }
+});
