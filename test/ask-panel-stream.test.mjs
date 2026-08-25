@@ -55,7 +55,7 @@ test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done sta
   for (const f of frames.slice(0, -1)) ctx.panel.pushServerFrame(f);
   ctx.flush();
   assert.ok(ctx.doc.querySelector('.ask-dot-run'), 'green running dot while streaming');
-  assert.equal(ctx.doc.querySelector('.ask-activity-label'), null, 'the head carries no status word while live');
+  assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Thinking', 'the head names the live turn');
   const thinking = ctx.doc.querySelector('.ask-thinking');
   assert.ok(thinking, 'the orb row marks the live turn');
   assert.match(thinking.querySelector('.ask-thinking-label').textContent, /^(Thinking|Writing).*…$/);
@@ -66,7 +66,7 @@ test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done sta
   ctx.flush();
   assert.ok(ctx.doc.querySelector('.ask-dot-done'), 'grey dot after done');
   assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the orb row leaves with the turn');
-  assert.equal(ctx.doc.querySelector('.ask-activity-label'), null, 'no "Worked for" on a clean turn');
+  assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Done', 'a clean turn lands on Done');
   assert.equal(ctx.doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'answer finished');
 });
 
@@ -299,6 +299,7 @@ test('ask-panel-stream: the orb node survives live-row rebuilds so the spin neve
   ctx.flush();
   const first = ctx.doc.querySelector('.ask-orb');
   assert.ok(first, 'the orb mounted with the live turn');
+  assert.equal(first.style.width, '28.5px', 'the panel mounts the orb at 28.5 CSS px');
   // A tool block rebuilds the whole row (buildMessage → replaceWith); the ONE
   // orb must be re-parented, not rebuilt, or every tool call restarts the spin.
   ctx.panel.pushServerFrame({ type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'running' }, threadId: TID, messageId: MID, seq: 2 });
@@ -308,7 +309,7 @@ test('ask-panel-stream: the orb node survives live-row rebuilds so the spin neve
   assert.equal(ctx.doc.querySelectorAll('.ask-orb').length, 1, 'never two orbs');
 });
 
-test('ask-panel-stream: the orb row owns the live meter; the head shows only the dot', async () => {
+test('ask-panel-stream: the orb row owns the live meter; the head shows only the word and the dot', async () => {
   let t = 1_000_000;
   const ref = { body: snapBody() };
   const ctx = await openWith(ref, { now: () => t });
@@ -319,7 +320,8 @@ test('ask-panel-stream: the orb row owns the live meter; the head shows only the
   const head = ctx.doc.querySelector('.ask-activity-head');
   assert.equal(head.querySelector('.ask-activity-elapsed'), null, 'no duplicate elapsed above');
   assert.equal(head.querySelector('.ask-activity-meter'), null, 'no duplicate meter above');
-  assert.equal(head.textContent, '', 'the live head is a bare dot');
+  assert.equal(head.textContent, 'Thinking', 'the live head is the word and the dot, nothing else');
+  assert.equal(head.firstElementChild.className, 'ask-activity-label', 'the word leads, the dot follows');
   const meter = ctx.doc.querySelector('.ask-thinking-meter');
   assert.match(meter.textContent, /^6\.4s · 2\.0k ctx · \$0\.14$/);
 });
@@ -332,6 +334,7 @@ test('ask-panel-stream: a stopped turn keeps its status word, a clean one does n
   ctx.flush();
   assert.equal(ctx.doc.querySelector('.ask-thinking'), null);
   assert.match(ctx.doc.querySelector('.ask-activity-label').textContent, /Stopped after/);
+  assert.equal(ctx.doc.querySelectorAll('.ask-activity-label').length, 1, 'a stopped turn is not also Done');
 });
 
 test('ask-panel-stream: an adopted turn with no ask-start still gets the orb row', async () => {

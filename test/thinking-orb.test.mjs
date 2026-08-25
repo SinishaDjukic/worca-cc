@@ -86,6 +86,16 @@ test('thinking-orb: the element is sized in CSS px and its canvas in device px',
   orb.stop();
 });
 
+test('thinking-orb: the default size is 28.5 CSS px', () => {
+  const { doc } = makeDoc();
+  const { win } = makeWin();
+  const orb = createThinkingOrb({ doc, win });
+  assert.equal(orb.el.style.width, '28.5px');
+  assert.equal(orb.el.style.height, '28.5px');
+  assert.equal(orb.el.querySelector('canvas').width, 57, '28.5 css px at dpr 2, rounded');
+  orb.stop();
+});
+
 test('thinking-orb: dpr is clamped at 2 so a 3x display does not paint 90px', () => {
   const { doc } = makeDoc();
   const { win } = makeWin();

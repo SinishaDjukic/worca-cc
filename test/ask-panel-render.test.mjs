@@ -72,13 +72,16 @@ test('ask-panel-render: activity head — dot, elapsed, meter; stopped keeps its
   const ctx = makePanel({ fetchHandler: handlerFor(snap) });
   await openThread(ctx);
   const heads = [...ctx.doc.querySelectorAll('.ask-activity-head')];
-  assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is just a grey dot and its numbers');
+  assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is Done, a grey dot and its numbers');
+  assert.equal(heads[0].querySelector('.ask-activity-label').textContent, 'Done');
+  assert.equal(heads[0].firstElementChild.className, 'ask-activity-label', 'the word leads, the dot follows');
   assert.match(heads[0].textContent, /6\.4s/);
   assert.match(heads[0].textContent, /2\.0k ctx/, 'the turn meter shows the turn-end context fill');
   assert.ok(!/tok/.test(heads[0].textContent), 'no cumulative token figure');
   assert.match(heads[0].textContent, /\$0\.14/);
   assert.ok(heads[0].querySelector('.ask-dot-done'));
   assert.match(heads[1].textContent, /Stopped after/);
+  assert.ok(!/Done/.test(heads[1].textContent), 'a stopped turn keeps only its own word');
   assert.match(heads[1].textContent, /1m 12s/);
   assert.match(ctx.doc.querySelectorAll('.ask-notice')[0].textContent, /Stopped: reached the 40-turn limit/);
 });

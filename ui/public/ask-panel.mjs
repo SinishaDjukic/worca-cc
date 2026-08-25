@@ -1328,13 +1328,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isLive = !!(st.model && st.model.live() && st.model.live().messageId === row.id);
     const activity = make('div', 'ask-activity');
     const head = make('div', 'ask-activity-head');
+    const stopped = row.status === 'stopped' || row.status === 'error';
+    if (isLive) head.appendChild(make('span', 'ask-activity-label', 'Thinking'));
+    else if (!stopped) head.appendChild(make('span', 'ask-activity-label', 'Done'));
     head.appendChild(make('span', `ask-dot${isLive ? ' ask-dot-run' : row.status === 'error' ? '' : ' ask-dot-done'}`));
-    // While the turn is live the head is a bare dot: the orb row at the bottom
-    // of the message owns the label, the elapsed and the meter, and printing
-    // either set twice is the noise this replaced. Only a turn that ended badly
-    // still needs a word up here — nothing else marks a stop.
+    // The head names its state in one word ahead of the dot — Thinking, Done, or
+    // Stopped after — and nothing more while the turn is live: the orb row at the
+    // bottom of the message owns the elapsed and the meter, and printing either
+    // set twice is the noise this replaced. A turn that ended badly says so
+    // instead of Done; nothing else marks a stop.
     if (!isLive) {
-      if (row.status === 'stopped' || row.status === 'error') head.appendChild(make('span', 'ask-activity-label', 'Stopped after'));
+      if (stopped) head.appendChild(make('span', 'ask-activity-label', 'Stopped after'));
       head.appendChild(make('span', 'ask-activity-elapsed', fmtElapsed(row.durationMs) || ''));
       head.appendChild(make('span', 'ask-activity-spacer'));
       const meter = [fmtCtx(row.usage && row.usage.ctx), fmtUsd(row.costUsd)].filter(Boolean).join(' · ');
@@ -1361,7 +1365,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // block rebuilds the row, the sphere would visibly snap back mid-turn.
   function ensureThinking() {
     if (el.thinking) return el.thinking;
-    el.orb = createThinkingOrb({ doc, win, size: 30 });
+    el.orb = createThinkingOrb({ doc, win, size: 28.5 });
     const wrap = make('div', 'ask-thinking');
     wrap.appendChild(el.orb.el);
     el.thinkingLabel = make('span', 'ask-thinking-label');

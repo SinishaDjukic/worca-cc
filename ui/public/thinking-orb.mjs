@@ -44,7 +44,7 @@ export function orbFrame(pts, t, { speed = ORB_SPEED, tilt = ORB_TILT } = {}) {
  * one orb into each rebuilt live row) because the phase is `now - t0`, not a
  * frame counter, so a move never rewinds the spin.
  */
-export function createThinkingOrb({ doc, win, size = 30, ink = '25,25,27' }) {
+export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
   const el = doc.createElement('span');
   el.className = 'ask-orb';
   el.setAttribute('aria-hidden', 'true');
