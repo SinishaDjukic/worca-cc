@@ -36,7 +36,7 @@ export function fmtAgents(n) {
 /** When a chat was started: relative while it is recent, a short absolute date
  *  once it is older than a month. Mirrors plugins-view.mjs relTime's thresholds,
  *  but returns null — not the raw input — for a missing or unparsable stamp, so
- *  threadMeter's filter(Boolean) drops it and the row shows nothing rather than
+ *  renderThreadRows skips the date element and the row shows nothing rather than
  *  "Invalid Date". Pure; callers pass the injected now() to stay jsdom-safe. */
 export function fmtStarted(iso, now = Date.now()) {
   const t = Date.parse(iso);
@@ -612,11 +612,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- threads popover (list; switching/delete land in Task 7) -------------
-  // The start date is the last part so the cost/agent figures keep their
-  // leading position, and it rides the existing meter line rather than a new
-  // element: nothing extra competes with the title clamp for the popover width.
+  // The start date left the meter for the row's left edge, so the meter is the
+  // cost/agent figures again.
   function threadMeter(t) {
-    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents), fmtStarted(t.createdAt, now())];
+    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)];
     return parts.filter(Boolean).join(' · ');
   }
 
@@ -645,7 +644,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const t of threads) {
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
-      pick.appendChild(make('span', `ask-dot${t.inFlight ? ' ask-dot-live' : ''}`));
+      // The date leads the row, bold, as the spine the eye scans down; an
+      // unusable createdAt drops the element rather than leaving a blank blob.
+      // The dot then sits against the title, where it reads as "this chat is
+      // live" -- .ask-thread-dot hides it unless the live arm joins it, keeping
+      // the 6px slot so the dates line up whether a chat is running or not.
+      const when = fmtStarted(t.createdAt, now());
+      if (when) pick.appendChild(make('span', 'ask-thread-when', when));
+      pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
       const col = make('span', 'ask-thread-col');
       col.appendChild(make('span', 'ask-thread-title', t.title || '(untitled)'));
       col.appendChild(make('span', 'ask-thread-meter', threadMeter(t)));

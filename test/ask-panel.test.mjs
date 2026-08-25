@@ -141,6 +141,12 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   assert.match(items[0].textContent, /68\.4k ctx · \$0\.21 · 3 agents/, 'the row shows context fill, not cumulative tokens');
   assert.ok(items[0].querySelector('.ask-dot-live'), 'in-flight thread shows the live dot');
   assert.equal(items[1].querySelector('.ask-dot-live'), null);
+  // The idle row keeps the slot but nothing visible in it: the CSS hides
+  // .ask-thread-dot unless the live arm joins it, so the dates stay aligned.
+  const idleDot = items[1].querySelector('.ask-dot');
+  assert.ok(idleDot, 'the idle row still reserves the dot slot');
+  assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the slot carries the threads-only class that hides it');
+  assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
   // empty state
   const empty = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [] }) }) });
   empty.panel.open();
@@ -182,8 +188,8 @@ test('ask-panel: fmtStarted — relative while recent, short ISO once old, null 
   assert.equal(fmtStarted('2026-01-05T12:00:00.000Z', NOW), '2026-01-05', 'past 30d falls back to a short absolute date');
   assert.equal(fmtStarted('2026-08-25T12:00:10.000Z', NOW), 'just now', 'clock skew never yields a negative age');
   // Unlike plugins-view's relTime, an unusable stamp yields null rather than
-  // echoing the raw value: threadMeter drops it via filter(Boolean), so the row
-  // shows nothing instead of "t1" or "Invalid Date".
+  // echoing the raw value: renderThreadRows skips the date element entirely, so
+  // the row shows nothing instead of "t1" or "Invalid Date".
   for (const bad of [undefined, null, '', 'not-a-date', 't1', NaN]) {
     assert.equal(fmtStarted(bad, NOW), null, `no date for ${String(bad)}`);
   }
@@ -208,18 +214,28 @@ test('ask-panel: thread rows report when the chat was started; unusable createdA
   panel.open();
   doc.querySelector('[data-ask-threads-btn]').click();
   await tick();
+  const picks = [...doc.querySelectorAll('.ask-thread-pick')];
+  assert.equal(picks.length, 6);
+  const whens = picks.map((p) => {
+    const w = p.querySelector('.ask-thread-when');
+    return w ? w.textContent : null;
+  });
+  assert.deepEqual(whens, ['2m ago', '3h ago', '4d ago', '2026-01-05', null, null],
+    'the date is its own element at the head of the row; an unusable createdAt renders none');
+  for (const w of whens) assert.ok(!/Invalid Date|NaN/.test(String(w)), `never surfaces a broken date: ${w}`);
+  // The meter is back to the money figures only.
   const meters = [...doc.querySelectorAll('.ask-thread-meter')].map((m) => m.textContent);
   assert.equal(meters.length, 6);
-  assert.equal(meters[0], '1.0k ctx · $0.50 · 2 agents · 2m ago', 'the start date joins the existing meter parts');
-  assert.equal(meters[1], '3h ago', 'a thread with no totals still reports when it started');
-  assert.equal(meters[2], '4d ago');
-  assert.equal(meters[3], '2026-01-05');
-  assert.equal(meters[4], '', 'an unparsable createdAt renders no date at all');
-  assert.equal(meters[5], '', 'a missing createdAt renders no date at all');
-  for (const m of meters) assert.ok(!/Invalid Date|NaN/.test(m), `never surfaces a broken date: ${m}`);
-  // The date rides the existing meter line, so no new element competes with the
-  // title clamp for the popover's capped width.
-  assert.equal(doc.querySelectorAll('.ask-thread-row .ask-thread-col > span').length, 12, 'still just title + meter per row');
+  assert.equal(meters[0], '1.0k ctx · $0.50 · 2 agents', 'the date left the meter line');
+  assert.equal(meters[1], '', 'a thread with no totals has an empty meter, not a date');
+  for (const m of meters) assert.ok(!/ago|\d{4}-\d{2}-\d{2}/.test(m), `no date rides the meter: ${m}`);
+  // Row order: [date] [dot slot] [title + meter]. A dateless row drops only the
+  // date, never the dot slot, so the column stays put.
+  const cls = (n) => (n ? n.className : null);
+  assert.deepEqual([...picks[0].children].map(cls), ['ask-thread-when', 'ask-dot ask-thread-dot', 'ask-thread-col']);
+  assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col'],
+    'no date element, no stray separator, no empty bold blob');
+  assert.equal(doc.querySelectorAll('.ask-thread-row .ask-thread-col > span').length, 12, 'the column is still just title + meter');
 });
 
 test('ask-panel: popover menu keyboard — roving focus, wrap, Home/End, Enter, Escape to trigger', async () => {
