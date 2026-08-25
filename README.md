@@ -15,7 +15,7 @@ It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
 Claude Code — all running the same engine. See the
 **[architecture in one picture](docs/ARCHITECTURE.md)**.
 
-![Running pipeline with live flow graph and streaming log](docs/screenshots/running.png)
+[![The Worca stack — clients, the engine, the headless Claude Code harness, and model endpoints](docs/screenshots/architecture.png)](docs/ARCHITECTURE.md)
 
 ## How a run works
 
@@ -62,6 +62,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   pull request via `gh` from the History view.
 - **Mock mode** — the entire pipeline runs offline with a deterministic mock
   (no `claude`, no tokens) for demos, development, and CI.
+
+![Running pipeline with live flow graph and streaming log](docs/screenshots/running.png)
 
 ### Agents
 
