@@ -217,23 +217,33 @@ test('ask-panel: thread rows report when the chat was started; unusable createdA
   const picks = [...doc.querySelectorAll('.ask-thread-pick')];
   assert.equal(picks.length, 6);
   const whens = picks.map((p) => {
-    const w = p.querySelector('.ask-thread-when');
+    const w = p.querySelector('.ask-thread-meter .ask-thread-when');
     return w ? w.textContent : null;
   });
   assert.deepEqual(whens, ['2m ago', '3h ago', '4d ago', '2026-01-05', null, null],
-    'the date is its own element at the head of the row; an unusable createdAt renders none');
+    'the date is its own element inside the meter; an unusable createdAt renders none');
   for (const w of whens) assert.ok(!/Invalid Date|NaN/.test(String(w)), `never surfaces a broken date: ${w}`);
-  // The meter is back to the money figures only.
-  const meters = [...doc.querySelectorAll('.ask-thread-meter')].map((m) => m.textContent);
+  // The date leads the meter line, then the money figures follow it.
+  const meterEls = [...doc.querySelectorAll('.ask-thread-meter')];
+  const meters = meterEls.map((m) => m.textContent);
   assert.equal(meters.length, 6);
-  assert.equal(meters[0], '1.0k ctx · $0.50 · 2 agents', 'the date left the meter line');
-  assert.equal(meters[1], '', 'a thread with no totals has an empty meter, not a date');
-  for (const m of meters) assert.ok(!/ago|\d{4}-\d{2}-\d{2}/.test(m), `no date rides the meter: ${m}`);
-  // Row order: [date] [dot slot] [title + meter]. A dateless row drops only the
-  // date, never the dot slot, so the column stays put.
+  assert.equal(meters[0], '2m ago · 1.0k ctx · $0.50 · 2 agents', 'the date leads the meter line');
+  assert.equal(meters[1], '3h ago', 'a date with no totals brings no trailing separator');
+  assert.equal(meters[4], '', 'an unusable createdAt with no totals leaves the meter empty');
+  assert.equal(meters[5], '', 'so does a missing one');
+  meters.forEach((m, i) => {
+    if (whens[i]) assert.ok(m.startsWith(`${whens[i]}`), `the date is the meter's first part: ${m}`);
+    else assert.ok(!/ago|\d{4}-\d{2}-\d{2}/.test(m), `no date, so none rides the meter: ${m}`);
+  });
+  // Row order: [dot slot] [title + meter]. The date is no longer a column of its
+  // own, so a dateless row is shaped exactly like a dated one.
   const cls = (n) => (n ? n.className : null);
-  assert.deepEqual([...picks[0].children].map(cls), ['ask-thread-when', 'ask-dot ask-thread-dot', 'ask-thread-col']);
+  assert.deepEqual([...picks[0].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col']);
   assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col'],
+    'a dateless row keeps the dot slot and nothing else changes');
+  // Only the date is an element; the grey figures are plain text beside it.
+  assert.deepEqual([...meterEls[0].children].map(cls), ['ask-thread-when']);
+  assert.deepEqual([...meterEls[4].children].map(cls), [],
     'no date element, no stray separator, no empty bold blob');
   assert.equal(doc.querySelectorAll('.ask-thread-row .ask-thread-col > span').length, 12, 'the column is still just title + meter');
 });

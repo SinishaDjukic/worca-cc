@@ -3114,10 +3114,11 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-thread-row{display:flex;align-items:center;border-radius:10px;}
 .ask-thread-row:hover{background:var(--field);}
 .ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:10px;}
-/* The date is the row's left edge: bold so it anchors the scan, but 10px/--ink-3
-   so it never shouts over the title. flex:0 0 auto keeps it on one line and lets
-   the clamped title absorb what is left of the capped popover width. */
-.ask-thread-when{flex:0 0 auto;font-family:var(--mono);font-weight:700;font-size:10px;color:var(--ink-3);}
+/* The date leads the meter line: bold and on --ink so it anchors the scan while
+   the ctx/cost/agent figures beside it keep the meter's grey. An inline span, so
+   the mono and the 10px come from .ask-thread-meter; nowrap is what now keeps it
+   on one line, flex:0 0 auto having gone with the left-edge column. */
+.ask-thread-when{font-weight:700;color:var(--ink);white-space:nowrap;}
 /* Scoped to the threads rows -- .ask-dot elsewhere (agents popover, agent rows,
    the activity head) keeps showing its --seq dot. Here a dot means "this chat is
    live", so an idle row shows none; visibility, not display, so the 6px slot

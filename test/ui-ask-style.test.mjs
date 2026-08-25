@@ -115,14 +115,20 @@ test('ui-ask-style: the threads popover is the widened one and its titles clamp 
   assert.match(title, /font-size:12\.5px/, 'the existing font styling is kept');
 });
 
-test('ui-ask-style: the thread date leads the row in bold; an idle dot keeps its slot', () => {
+test('ui-ask-style: the thread date leads the meter in bold; an idle dot keeps its slot', () => {
   const when = ruleBody('.ask-thread-when');
   assert.ok(when, '.ask-thread-when rule exists');
-  assert.match(when, /flex:0 0 auto/, 'the date never wraps and never shrinks');
   assert.match(when, /font-weight:700/, 'the date reads bold');
-  assert.match(when, /font-size:10px/, 'still secondary to the 12.5px title');
-  assert.match(when, /color:var\(--ink-3\)/, 'secondary colour, tokened');
-  assert.match(when, /font-family:var\(--mono\)/, 'digits line up down the column');
+  assert.match(when, /color:var\(--ink\)/, 'the primary ink token, so it darkens against the grey figures');
+  assert.ok(!/color:var\(--ink-3\)/.test(when), 'only the date leaves the meter grey');
+  assert.match(when, /white-space:nowrap/, 'the date never breaks across the meter line');
+  assert.ok(!/flex:/.test(when), 'an inline span inside the meter, no longer a flex child of the row');
+  assert.ok(!/font-size|font-family/.test(when), 'size and mono are inherited from .ask-thread-meter');
+  const meter = ruleBody('.ask-thread-meter');
+  assert.ok(meter, '.ask-thread-meter rule exists');
+  assert.match(meter, /font-family:var\(--mono\)/, 'digits line up down the column');
+  assert.match(meter, /font-size:10px/, 'still secondary to the 12.5px title');
+  assert.match(meter, /color:var\(--ink-3\)/, 'everything but the date stays on the secondary colour');
   const dot = ruleBody('.ask-thread-dot');
   assert.ok(dot, '.ask-thread-dot rule exists');
   assert.match(dot, /visibility:hidden/, 'an idle chat shows no dot at all');

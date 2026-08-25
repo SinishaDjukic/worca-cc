@@ -612,11 +612,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- threads popover (list; switching/delete land in Task 7) -------------
-  // The start date left the meter for the row's left edge, so the meter is the
-  // cost/agent figures again.
+  // The start date leads the meter line, bold and on the primary ink, so the eye
+  // scans it down the list while the cost/agent figures keep the meter's grey.
+  // Hence an element rather than a string: only the date changes weight and
+  // colour. An unusable createdAt drops the span and its separator with it.
   function threadMeter(t) {
-    const parts = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)];
-    return parts.filter(Boolean).join(' · ');
+    const meter = make('span', 'ask-thread-meter');
+    const when = fmtStarted(t.createdAt, now());
+    const rest = [fmtCtx(t.totals && t.totals.ctx), fmtUsd(t.totals && t.totals.costUsd), fmtAgents(t.totals && t.totals.agents)]
+      .filter(Boolean).join(' · ');
+    if (when) meter.appendChild(make('span', 'ask-thread-when', when));
+    if (rest) meter.appendChild(doc.createTextNode(when ? ` · ${rest}` : rest));
+    return meter;
   }
 
   function toggleThreadsPopover(trigger) {
@@ -644,17 +651,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const t of threads) {
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
-      // The date leads the row, bold, as the spine the eye scans down; an
-      // unusable createdAt drops the element rather than leaving a blank blob.
-      // The dot then sits against the title, where it reads as "this chat is
-      // live" -- .ask-thread-dot hides it unless the live arm joins it, keeping
-      // the 6px slot so the dates line up whether a chat is running or not.
-      const when = fmtStarted(t.createdAt, now());
-      if (when) pick.appendChild(make('span', 'ask-thread-when', when));
+      // The dot leads the row, sitting against the title where it reads as "this
+      // chat is live" -- .ask-thread-dot hides it unless the live arm joins it,
+      // keeping the 6px slot so the titles line up whether a chat is running or
+      // not. The date rides the meter line under the title, not a column here.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
       const col = make('span', 'ask-thread-col');
       col.appendChild(make('span', 'ask-thread-title', t.title || '(untitled)'));
-      col.appendChild(make('span', 'ask-thread-meter', threadMeter(t)));
+      col.appendChild(threadMeter(t));
       pick.appendChild(col);
       row.appendChild(pick);
       row.appendChild(buildThreadTrash(t));
