@@ -939,9 +939,58 @@ test('non-done run (results null) shows the empty state and never fetches /diff'
   const empty = doc.querySelector('#hist-detail .hd-diff-empty');
   assert.ok(empty, 'the Diff tab shows the D1 empty state');
   assert.match(empty.textContent, /No diff captured for this run\./);
-  assert.match(empty.textContent, /Diffs are captured when a run completes\./);
+  assert.match(empty.textContent, /the run has committed no work, or its artifacts have been archived/);
+  // The old copy promised diffs only on completion — stopped/errored runs now
+  // persist one, so that sentence must be gone.
+  assert.doesNotMatch(empty.textContent, /captured when a run completes/);
   assert.equal(doc.querySelector('#hist-detail .hd-diff-file'), null);
-  assert.ok(ctx.calls.every((c) => !c.url.includes('/diff')), 'the patch is never requested');
+  // endsWith, not includes: /api/diff-comments/counts (the History pill's own
+  // endpoint) contains "/diff" as a substring and is unrelated to the patch.
+  assert.ok(ctx.calls.every((c) => !c.url.endsWith('/diff')), 'the patch is never requested');
+});
+
+const noticeOf = (doc) => doc.querySelector('#hist-detail .hd-diff-partial');
+
+test('a stopped run with results renders the diff plus the partial-run notice', async () => {
+  const ctx = await bootDetail({
+    detail: { ...diffDetail(diffResults()), state: { ...DETAIL.state, status: 'stopped' } },
+    arms: patchArm(PATCH),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+
+  const notice = noticeOf(doc);
+  assert.ok(notice, 'the partial-run notice paints');
+  assert.match(notice.textContent, /did not finish/);
+  assert.match(notice.textContent, /partially written/);
+  assert.match(notice.textContent, /cycles that completed/);
+
+  // The diff itself is unaffected — the artifact exists, so the tab is fully live.
+  assert.equal(filesOf(doc).length, 1, 'the file list still renders');
+  assert.match(paneOf(doc).textContent, /@@ -1,2 \+1,2 @@/);
+
+  // The notice sits ABOVE the diff grid, not after it.
+  const grid = doc.querySelector('#hist-detail .hd-diff');
+  const rel = notice.compareDocumentPosition(grid);
+  assert.ok(rel & ctx.window.Node.DOCUMENT_POSITION_FOLLOWING, 'the notice precedes the grid');
+});
+
+test('an errored run with results also renders the partial-run notice', async () => {
+  const ctx = await bootDetail({
+    detail: { ...diffDetail(diffResults()), state: { ...DETAIL.state, status: 'error' } },
+    arms: patchArm(PATCH),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  assert.ok(noticeOf(ctx.window.document), 'the notice is keyed off "not done", not off "stopped"');
+});
+
+test('a done run renders the diff with no partial-run notice', async () => {
+  const ctx = await bootDetail({ detail: diffDetail(diffResults()), arms: patchArm(PATCH) });
+  await openDetail(ctx);
+  await settle(ctx.window);
+  assert.equal(noticeOf(ctx.window.document), null, 'a finished run claims nothing about partial work');
 });
 
 test('diff fetch failing (404) degrades to the file list + a per-file note', async () => {

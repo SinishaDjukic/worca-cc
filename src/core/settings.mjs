@@ -384,6 +384,74 @@ export function assertCostLimitInputs(inputs = {}) {
   if (has('costLimitResetPeriod')) assertResetPeriodInput(inputs.costLimitResetPeriod);
 }
 
+// ── Ask Worca per-turn limits (ask-worca-design.md §6.9, D12) ────────────────
+// Two keys, both read fresh on every chat turn. `askMaxTurns` is an integer cap
+// on claude's agentic turns (--max-turns); `askMaxBudgetUsd` is the per-turn
+// dollar cap (--max-budget-usd). For the budget key the literal `null` is a
+// STORED value meaning "no cap" (the flag is omitted), while '' / undefined clear
+// the key back to the default — the two semantics the design assigns to that key.
+export const DEFAULT_ASK_MAX_TURNS = 40;
+export const DEFAULT_ASK_MAX_BUDGET_USD = 2;
+
+const isAskMaxTurns = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 500;
+const isAskMaxBudget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 100;
+
+/** --max-turns for one chat turn: integer 1..500; absent/invalid ⇒ the default (loudly). */
+export function askMaxTurns() {
+  const v = readSettings().askMaxTurns;
+  if (v === undefined) return DEFAULT_ASK_MAX_TURNS;
+  if (isAskMaxTurns(v)) return v;
+  console.warn(`[worca] invalid askMaxTurns ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_TURNS})`);
+  return DEFAULT_ASK_MAX_TURNS;
+}
+
+/** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default (loudly). */
+export function askMaxBudgetUsd() {
+  const v = readSettings().askMaxBudgetUsd;
+  if (v === undefined) return DEFAULT_ASK_MAX_BUDGET_USD;
+  if (v === null) return null;
+  if (isAskMaxBudget(v)) return v;
+  console.warn(`[worca] invalid askMaxBudgetUsd ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_BUDGET_USD})`);
+  return DEFAULT_ASK_MAX_BUDGET_USD;
+}
+
+function assertAskMaxTurnsInput(input) {
+  if (!isClearInput(input) && !isAskMaxTurns(input)) {
+    throw new Error('askMaxTurns must be an integer between 1 and 500');
+  }
+}
+function assertAskMaxBudgetInput(input) {
+  if (input === '' || input === undefined || input === null) return; // clear, or stored no-cap
+  if (!isAskMaxBudget(input)) {
+    throw new Error('askMaxBudgetUsd must be null (no cap) or a number between 0.1 and 100');
+  }
+}
+
+/** Validate the ask keys PRESENT in `inputs` as a set, before any write (assertCostLimitInputs pattern). */
+export function assertAskLimitInputs(inputs = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(inputs, k);
+  if (has('askMaxTurns')) assertAskMaxTurnsInput(inputs.askMaxTurns);
+  if (has('askMaxBudgetUsd')) assertAskMaxBudgetInput(inputs.askMaxBudgetUsd);
+}
+
+export async function setAskMaxTurns(input) {
+  assertAskMaxTurnsInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.askMaxTurns;
+  else settings.askMaxTurns = input;
+  await persistSettings(settings);
+  return { askMaxTurns: askMaxTurns() };
+}
+
+export async function setAskMaxBudgetUsd(input) {
+  assertAskMaxBudgetInput(input);
+  const settings = readSettings();
+  if (input === '' || input === undefined) delete settings.askMaxBudgetUsd;
+  else settings.askMaxBudgetUsd = input;          // a number, or the literal null (no cap)
+  await persistSettings(settings);
+  return { askMaxBudgetUsd: askMaxBudgetUsd() };
+}
+
 /** Write (or clear) a USD cap key. @throws {Error} unless positive finite number (or empty). */
 async function setUsdCap(key, input) {
   assertUsdCapInput(key, input);

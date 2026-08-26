@@ -115,3 +115,83 @@ enforces the set's latest definition.
   (overview generation, agent generation), the `graphify` graph-build
   subprocess, **workspace scans**, and the `claude --help`/`--version`
   capability probe. In-run title generation IS scrubbed.
+- **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
+  `claude` spawned by Worca itself, never inside a project folder: its cwd is
+  `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools
+  Task` — no Bash/Read/Write/Edit exist in the process), only Worca's own MCP
+  server is loaded (`--strict-mcp-config`, `--allowedTools Task,mcp__worca`
+  under `--permission-mode dontAsk`), user hooks/plugins/skills are dropped
+  (`--setting-sources project`, `--disable-slash-commands`), the env is
+  scrubbed like a Strict run, and Task sub-agents run in the foreground of the
+  same process with the same pool (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`).
+  Belt-and-braces deny rules cover `Bash`/`Edit`/`Write`/`WebFetch`/… and the
+  worca home (`Read(//**/.worca-cc/**)`, `Read(//**/secrets.json)`,
+  `Read(//**/.env*)`, `~/.ssh`, `~/.aws`). **Anchoring matters:** a permission
+  path that starts with `//` is absolute from the filesystem root; a bare
+  `**/x` pattern is relative to the *current directory* and, from
+  `<worcaHome>/tmp/ask`, protects nothing — verified both ways on claude
+  2.1.239 (an absolute rule denied `<worcaHome>/settings.json`; the relative
+  form read it). The MCP tools themselves are read-only by contract (a test
+  scans the module for write statements) and the assistant can only *propose*
+  a run — the user starts it from the card.
+  **What `get_run_diff` can and cannot filter.** It drops a diff section when
+  EITHER side names a protected path, and `diffPatch` pins every git setting
+  that decides the shape it reads — `-M -l0`, `--no-ext-diff`,
+  `--submodule=short`, `--no-color`, the `a/`…`b/` prefixes and
+  `core.quotePath=false` — so the header shape is Worca's, not the user's
+  `~/.gitconfig`'s. The filter is still path-based: a file git cannot PAIR with
+  its source has no protected side to check, so a rename below git's 50%
+  similarity threshold, a plain copy, or credential lines an agent pasted into
+  a harmless file arrive as an ordinary add under a name no pattern matches.
+  Redaction (`src/core/ask/redact.mjs`) is the second line for those. Per-turn `--max-turns` and
+  `--max-budget-usd` caps are configurable in Settings → Ask Worca.
+  **Chat worktrees.** The assistant can open read-only **detached** git checkouts of
+  any registered project ref (or a run's feature branch) under
+  `<worcaHome>/ask/<threadId>/wt/<worktreeId>` — `open_worktree` /
+  `list_worktrees` / `remove_worktree`, capped at 5 per chat and 15 machine-wide,
+  registered in `ask_worktrees`, removed with the thread and reconciled by the boot
+  and `worca doctor` sweeps. No branch is ever created, locked or deleted, so a
+  chat checkout can never block a pipeline run. They are the assistant's only view
+  into a repository, and it reaches them through exactly one tool: `git`.
+  **Why the `git` tool is the whole file surface.** The built-ins stay `--tools
+  Task` and the blanket `Read(//**/.worca-cc/**)` deny stays, because granting
+  native `Read`/`Grep`/`Glob` scoped to the worktree subtree was probed and
+  rejected (gate E1, claude 2.1.241): a path matched by NO rule is *read* —
+  `unmatched ⇒ allow`, verified outside the process cwd — so a scoped grant would
+  also expose the rest of the disk; and `Grep` returned the CONTENTS of a file
+  under a denied path, ignoring both a `Read(<path>)` and a `Grep(<path>)` deny
+  (the CLI reports that only `Read(path)` rules are matched by file permission
+  checks; Grep escaped even those). Symlink and `..` escapes out of the allowed
+  subtree WERE blocked correctly — the two findings above are what disqualified
+  the grant. `askWorktreeAllowRules()` therefore returns `[]` and is the single
+  seam that flips if the engine ever gains `unmatched ⇒ deny`.
+  **How the `git` tool defends itself** (it is the one file-access surface that
+  permission rules do not govern): (1) `src/core/ask/git-allowlist.mjs` allows a
+  fixed read set (`diff`, `log`, `show`, `status`, `blame`, `rev-parse`,
+  `merge-base`, `grep`, `shortlog`, `describe`, `ls-files`, `ls-tree`), list-only
+  `branch`/`tag`, always-`--detach` `checkout`/`switch`, and `fetch` against a
+  configured remote NAME only — `push`/`pull`/`commit`/`config`/`cat-file` and
+  every unknown subcommand are refused, as are the arbitrary-read/exec options
+  (`-c`, `--git-dir`, `--work-tree`, `-C`, `--exec-path`, `--ext-diff`,
+  `--textconv`, `--output`/`-o`, `--upload-pack`/`--receive-pack`, `--no-index`,
+  `--contents`, `-f`/`--file`, `--filters`, `--color`, `--color-words`/`--color-moved`, and any
+  `-O…`), the output-SHAPE flags that move a header or a path off its line
+  (`--graph`, `--line-prefix`, `--src-prefix`/`--dst-prefix`/`--no-prefix`/
+  `--default-prefix`, `--relative`, `--submodule`), and `--format`/`--pretty` on
+  the path-list subcommands (`ls-tree`/`ls-files`). A positional that resolves to
+  a bare BLOB is refused everywhere (`diff <blob> <blob>`, `grep <pat> <blob>`) and
+  a tree for `show`; every colon suffix of a positional is checked against the
+  protected paths (`:0:.env`, `leak:.env`, `:/.env`, `-L1,5:.env`). (2) git is
+  spawned with `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0` and empty
+  `GIT_ASKPASS`/`SSH_ASKPASS` so an uncredentialed fetch fails fast instead of
+  hanging the turn, and the handler PREPENDS trusted `-c diff.external= -c
+  color.ui=never …` (plus `--no-ext-diff --no-color` on patch-producing
+  subcommands) so a hostile repo's `.git/config` cannot run an external-diff
+  program. (3) Output is filtered by what git actually emitted: patch output
+  passes the same protected-path SECTION filter as `get_run_diff`, path lists
+  (`grep`/`ls-files`/`ls-tree`) pass a LINE filter, a command that NAMES a
+  protected file (`blame .env`, `show HEAD:.env`, `log -p -- .env`) is refused at
+  input, and a `show` that produced no patch (a raw blob or tree) is refused —
+  which also closes `ls-tree → blob-sha → show <sha>`. Everything that survives is
+  redacted. `SSH_AUTH_SOCK` is the one env var allowlisted into the child, for
+  ssh-remote `fetch`.

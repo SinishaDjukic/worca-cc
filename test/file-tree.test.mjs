@@ -226,3 +226,24 @@ test('separately rendered trees have disjoint control IDs and unknown initializa
     }
   }
 });
+
+test('a collapsed set is read on render and written on toggle', () => {
+  const nodes = buildFileTree([entry('src/a.js'), entry('src/b.js')]);
+  const collapsed = new Set();
+  const first = render(nodes, { collapsed });
+  const dir = first.nav.querySelector('.hd-tree-dir');
+  assert.equal(dir.getAttribute('aria-expanded'), 'true', 'open by default');
+  dir.dispatchEvent(new first.dom.window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual([...collapsed], [dir.dataset.dirKey], 'the toggle wrote the caller\'s Set');
+
+  const second = render(nodes, { collapsed });          // the SAME Set, a fresh render
+  const again = second.nav.querySelector('.hd-tree-dir');
+  assert.equal(again.getAttribute('aria-expanded'), 'false');
+  assert.equal(second.nav.querySelector(`#${again.getAttribute('aria-controls')}`).hidden, true);
+  assert.match(again.getAttribute('aria-label'), /^Expand directory/);
+});
+
+test('omitting `collapsed` keeps the always-expanded default', () => {
+  const { nav } = render(buildFileTree([entry('src/a.js')]));
+  assert.equal(nav.querySelector('.hd-tree-dir').getAttribute('aria-expanded'), 'true');
+});

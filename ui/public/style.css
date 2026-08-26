@@ -43,6 +43,7 @@
   --r-ctrl:14px;
   --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
   --shadow-soft:0 2px 12px rgba(25,25,27,.04);
+  --ask-dock-clearance:96px;
 
   --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -1589,7 +1590,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---------- Statistics view ---------- */
 .stats-filter{display:flex;margin-bottom:18px;}
-.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
@@ -1893,7 +1894,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-diff .diff-del{color:var(--hd-count-del);}
 @media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
 .hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
-.hd-diff-pane{
+.hd-diff-pane,.ask-md{
   --hd-syntax-comment:#5B6167;
   --hd-syntax-keyword:#B31D28;
   --hd-syntax-type:#9A3E00;
@@ -1957,6 +1958,66 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-dl-more-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 .hd-dl-row.hd-dl-add > *{background:var(--green-bg);}
 .hd-dl-row.hd-dl-del > *{background:var(--red-bg);}
+/* ---------- History detail: diff comments ---------- */
+/* A comment block is a REAL grid row spanning all three tracks — `.hd-dl-row` is
+   display:contents, so a card can never live inside a row (same rule as
+   `.hd-dl-hunk`/`.hd-diff-note` and `.hd-dl-more` above). */
+.hd-cmt-block,.hd-cmt-detached{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;
+  padding:10px 18px;background:var(--panel);border-top:1px solid var(--line);font:400 12px var(--sans);}
+.hd-cmt-detached{border-top:1px solid var(--line-2);}
+.hd-cmt-detached-head{color:var(--ink-2);font-weight:600;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;}
+.hd-cmt-card{display:flex;flex-direction:column;gap:6px;padding:11px 13px;border:1.5px solid var(--line);
+  border-radius:16px;background:var(--panel);}
+.hd-cmt-card.resolved{opacity:.55;}
+.hd-cmt-head{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-2);}
+.hd-cmt-author{padding:2px 8px;border-radius:999px;background:var(--blue-bg);color:var(--blue-ink);font-weight:600;}
+.hd-cmt-author.ask{background:var(--violet-bg);color:var(--violet-ink);}
+.hd-cmt-time{color:var(--ink-2);}
+.hd-cmt-tag{padding:2px 8px;border-radius:999px;background:var(--field);color:var(--ink-2);font-weight:600;}
+.hd-cmt-sent{color:var(--ink-2);}
+.hd-cmt-where{font-size:11px;color:var(--ink-2);}
+.hd-cmt-quote{padding:5px 9px;border-radius:8px;background:var(--field);color:var(--ink-2);
+  font:400 11.5px var(--mono);white-space:pre-wrap;word-break:break-word;}
+.hd-cmt-body{color:var(--ink);white-space:pre-wrap;word-break:break-word;}
+.hd-cmt-card.resolved .hd-cmt-body{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.hd-cmt-actions{display:flex;align-items:center;gap:12px;}
+.hd-cmt-btn{border:none;background:none;padding:0;color:var(--blue-ink);
+  font:500 11.5px var(--sans);cursor:pointer;}
+.hd-cmt-btn:hover{text-decoration:underline;}
+.hd-cmt-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
+.hd-cmt-delete{color:var(--red-ink);}
+.hd-cmt-composer{display:flex;flex-direction:column;gap:8px;}
+.hd-cmt-input{width:100%;padding:8px 11px;border:1px solid var(--line-2);border-radius:10px;
+  background:var(--panel);color:var(--ink);font:400 12px var(--sans);resize:vertical;}
+.hd-cmt-err{color:var(--red-ink);font-size:11.5px;}
+.hd-cmt-err:empty{display:none;}
+/* The `+` affordance rides inside the hovered row's code cell (one shared node), so
+   the cell needs a positioning context. `left:0`, never a negative offset: a negative
+   offset would overhang `.hd-dl-n-new`, which is `position:sticky; z-index:2` with an
+   opaque `background:var(--panel)` and therefore paints OVER a z-index:1 button — the
+   overhang would be invisible at rest, not just while scrolled.
+   Be accurate about what `left:0` does: `.hd-dl-code` is `padding:0 18px 0 10px`, and
+   an absolutely-positioned child resolves `left` against the PADDING box, so the 16px
+   button spans 0-16px while the text starts at 10px — it overlaps the first ~6px of
+   `.hd-dl-sign`. That is accepted, not accidental: the button is hover-only, it is
+   what GitHub does, and the alternative (`left:10px`, or padding the cell wider)
+   either hides it under the gutter or reflows every row. */
+.hd-dl-code{position:relative;}
+.hd-cmt-add{position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:16px;height:16px;display:grid;place-items:center;padding:0;
+  border:none;border-radius:5px;background:var(--blue);color:#fff;
+  font:600 12px var(--sans);line-height:1;cursor:pointer;z-index:1;}
+.hd-cmt-add:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.hd-cmt-badge{flex:0 0 auto;min-width:17px;padding:1px 6px;border-radius:999px;
+  background:var(--amber-bg);color:var(--amber-ink);font:600 10.5px var(--sans);text-align:center;}
+/* The pane head says a file is refused BEFORE the user writes anything. Not hidden
+   and not a disabled button: the floor is a basename match, so it also catches
+   ordinary files (src/secrets/README.md), and the run really did change this one.
+   margin-left:auto so this third child does not re-space the head's existing pair. */
+.hd-diff-guarded{flex:0 0 auto;margin-left:auto;padding:1px 7px;border-radius:999px;
+  background:var(--amber-bg);color:var(--amber-ink);font:600 10.5px var(--sans);white-space:nowrap;}
+/* Author `display` beats the UA [hidden] rule — every toggled class needs the twin. */
+.hd-cmt-block[hidden],.hd-cmt-detached[hidden],.hd-cmt-card[hidden],.hd-cmt-badge[hidden],.hd-cmt-add[hidden]{display:none;}
 .hd-tree{display:block;}
 .hd-tree-group{display:block;}
 .hd-tree-group[hidden]{display:none;}
@@ -2021,6 +2082,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-diff-pane .hint,.hd-diff-list .hint,.hd-tree .hint,.hd-diff-note{color:var(--ink-2);}
 .hd-diff-empty{margin-top:24px;padding:40px;text-align:center;color:var(--ink-2);
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-diff-partial{margin-bottom:14px;padding:10px 14px;background:var(--amber-bg);color:var(--amber-ink);
+  border:1px solid var(--line);border-radius:var(--r-card);font:400 12.5px/1.5 var(--sans);}
 
 /* ---------- History detail: Overview tab ---------- */
 .hd-ov{display:flex;flex-direction:column;gap:18px;}
@@ -2182,6 +2245,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-diff-pill .hist-diff{display:inline-flex;gap:6px;font-weight:700;}
 .hist-diff-pill .hist-diff[hidden],.hist-nodiff[hidden]{display:none;}
 .hist-nodiff{color:var(--ink-3);}
+.hist-cmt-pill{display:inline-flex;align-items:center;gap:8px;padding:4px 11px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:12px;color:var(--amber-ink);}
+.hist-cmt-pill[hidden]{display:none;}   /* author display:inline-flex beats the UA [hidden] rule */
+.hist-cmt-pill .hist-cmt-count{font-weight:700;}
 .hist-open{display:flex;align-items:center;justify-content:center;width:30px;height:30px;
   border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink-2);cursor:pointer;}
 .hist-open:hover{background:var(--ink);color:#fff;border-color:var(--ink);}
@@ -2815,6 +2882,301 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
   width:28px;height:28px;border-radius:50%;background:var(--panel);
   font-family:var(--mono);font-size:9.5px;color:var(--ink-2);}
 
+/* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
+/* Fixed full-height dock over the content column; children restore pointer
+   events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
+   and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
+   reusable. Left offsets track the rail: 298px expanded, 76px collapsed
+   (.sidebar / .sidebar.collapsed own those widths). */
+.ask-dock{position:fixed;top:0;bottom:0;right:0;left:298px;z-index:40;pointer-events:none;
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
+body.rail-collapsed .ask-dock{left:76px;}
+/* Below the rail breakpoint the sidebar is display:none while .collapsed may
+   still be present — restate the higher-specificity selector or left:76px wins. */
+@media (max-width:1080px){
+  .ask-dock,body.rail-collapsed .ask-dock{left:0;}
+}
+
+.ask-pill{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:11px 18px 11px 14px;
+  border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);
+  font-family:inherit;font-weight:600;font-size:13.5px;cursor:pointer;
+  box-shadow:0 6px 28px rgba(25,25,27,.10),0 1px 2px rgba(25,25,27,.06);transition:border-color .15s;}
+.ask-pill:hover{border-color:var(--ink);}
+.ask-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-pill[hidden]{display:none;}
+.ask-pill-logo{width:22px;height:22px;border-radius:50%;}
+.ask-kbd{padding:3px 7px;border-radius:7px;background:var(--field);color:var(--ink-3);
+  font-family:var(--mono);font-weight:400;font-size:10.5px;}
+
+.ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
+  width:min(782px,100%);height:min(669px,calc(100% - 20px));background:var(--panel);
+  border:1px solid var(--line-2);border-radius:var(--r-card);
+  box-shadow:0 18px 60px rgba(25,25,27,.14),0 2px 6px rgba(25,25,27,.06);
+  animation:wr-rise .26s cubic-bezier(.2,.7,.3,1) both;}
+.ask-sheet[hidden]{display:none;}
+
+.ask-header{display:flex;align-items:center;gap:10px;padding:13px 14px 13px 16px;border-bottom:1px solid var(--line);}
+.ask-header-logo{width:20px;height:20px;border-radius:50%;}
+.ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
+  border:0;border-radius:9px;background:transparent;color:var(--ink-2);cursor:pointer;transition:.15s;}
+.ask-icon-btn:hover{background:var(--field);color:var(--ink);}
+.ask-icon-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+.ask-transcript{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:18px 20px 8px;display:flex;flex-direction:column;gap:16px;}
+.ask-msg{display:flex;flex-direction:column;gap:6px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;
+  background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-user-pills{justify-content:flex-end;margin-top:0;}
+.ask-attachment-pill{padding-right:12px;}
+
+.ask-activity{border-left:1.5px solid var(--line);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:7px;}
+.ask-activity-head{display:flex;align-items:center;gap:9px;min-width:0;}
+.ask-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--seq);}
+.ask-dot-run{background:var(--violet);animation:wr-pulse 1.6s ease-in-out infinite;}
+.ask-dot-done{background:var(--green);animation:none;}
+.ask-dot-live{background:var(--green);}
+.ask-activity-label{font-weight:500;font-size:12px;color:var(--ink-2);white-space:nowrap;}
+.ask-activity-elapsed{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-activity-meter{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;}
+/* The live turn is marked by the orb at the bottom of the message, so the head
+   dot only has to say running-or-not: green while the turn is live, grey once
+   it has landed. Scoped to the head — the sub-agent rows keep their own
+   violet/green vocabulary. */
+.ask-activity-head .ask-dot-run{background:var(--green);}
+.ask-activity-head .ask-dot-done{background:var(--seq);}
+
+/* ---------- Ask Worca: the live thinking row (bottom of the last message) --- */
+.ask-thinking{display:flex;align-items:center;gap:12px;min-width:0;padding:2px 0 0;}
+.ask-orb{flex:0 0 auto;}
+/* The label is painted THROUGH the text: a 220%-wide gradient clipped to the
+   glyphs and swept across them, so the highlight travels word to word. Needs
+   `color:transparent` — which is why the reduced-motion block below has to put
+   a real colour back rather than only stopping the animation. */
+.ask-thinking-label{font-weight:500;font-size:12.5px;white-space:nowrap;
+  background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:ask-shimmer 2.4s linear infinite;}
+.ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
+@keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
+/* The `.ask-dock *` blanket at the end of this file already kills the sweep;
+   this only restores a legible fill under the clipped background. */
+@media (prefers-reduced-motion: reduce){
+  .ask-thinking-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
+}
+.ask-tool-row{display:flex;align-items:center;gap:9px;min-width:0;}
+.ask-tool-op{width:38px;flex:0 0 38px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);}
+.ask-tool-target{min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-tool-note{flex:0 0 auto;font-family:var(--mono);font-size:10.5px;color:var(--seq);}
+
+.ask-agents{margin-top:3px;display:flex;flex-direction:column;gap:2px;}
+.ask-agents-cap{display:flex;align-items:center;gap:8px;padding:2px 0 3px;font-weight:600;font-size:9.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--seq);}
+.ask-agents-count{padding:1px 6px;border-radius:999px;background:var(--field);color:var(--ink-3);
+  font-family:var(--mono);font-weight:400;font-size:9.5px;letter-spacing:0;text-transform:none;}
+.ask-agent-row{display:flex;align-items:center;gap:9px;width:100%;padding:5px 7px;border:0;border-radius:9px;
+  background:transparent;text-align:left;cursor:pointer;font-family:inherit;transition:.15s;}
+.ask-agent-row:hover{background:var(--field);}
+.ask-agent-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ask-agent-name{min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-agent-model,.ask-agent-tokens,.ask-agent-cost{flex:0 0 auto;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-agent-status{flex:0 0 auto;margin-left:auto;font-weight:500;font-size:10.5px;color:var(--ink-3);}
+.ask-agent-status.is-done{color:var(--green-ink);}
+.ask-agent-log{margin:1px 0 6px 22px;border:1px solid var(--line);border-radius:11px;overflow:hidden;}
+.ask-agent-log-head{display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line);
+  background:var(--panel);font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-agent-log-type{margin-left:auto;}
+.ask-agent-log-body{max-height:104px;overflow-y:auto;padding:7px 10px;background:var(--field);
+  font-family:var(--mono);font-size:10.5px;line-height:1.75;color:var(--ink-2);}
+.ask-agent-log-line{display:flex;gap:8px;min-width:0;}
+.ask-agent-log-t{flex:0 0 auto;color:var(--seq);}
+.ask-agent-log-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;}
+
+.ask-answer{max-width:92%;font-size:13.5px;line-height:1.72;color:var(--ink);}
+.ask-answer-plain{white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-md :is(h1,h2,h3,h4,h5,h6){margin:14px 0 6px;font-size:13.5px;font-weight:600;color:var(--ink);}
+.ask-md h1{font-size:15px;}
+.ask-md h2{font-size:14px;}
+.ask-md p{margin:6px 0;}
+.ask-md :is(ul,ol){margin:6px 0;padding-left:22px;}
+.ask-md li{margin:2px 0;}
+.ask-md blockquote{margin:8px 0;padding:2px 12px;border-left:2px solid var(--line-2);color:var(--ink-2);}
+.ask-md hr{border:0;border-top:1px solid var(--line);margin:12px 0;}
+.ask-md a{color:var(--blue-ink);}
+.ask-md code{font-family:var(--mono);font-size:11.5px;background:var(--field);border-radius:4px;padding:1px 4px;}
+.ask-md pre{margin:8px 0;padding:10px 12px;background:var(--field);border:1px solid var(--line);
+  border-radius:10px;overflow-x:auto;}
+.ask-md pre code{background:transparent;padding:0;font-size:11px;line-height:1.6;display:block;white-space:pre;}
+.ask-md table{border-collapse:collapse;margin:8px 0;font-size:12.5px;}
+.ask-md :is(th,td){border:1px solid var(--line);padding:4px 9px;text-align:left;}
+.ask-md th{background:var(--field);font-weight:600;}
+.ask-md input[type="checkbox"]{margin-right:6px;}
+
+.ask-notice{font-size:12.5px;color:var(--ink-3);}
+.ask-notice-link{color:var(--blue-ink);}
+.ask-error-line{font-size:12.5px;color:var(--red-ink);}
+
+.ask-card{margin-top:2px;display:flex;flex-direction:column;gap:10px;padding:13px 15px;
+  border:1.5px solid var(--line);border-radius:16px;background:var(--panel);}
+.ask-card-title{font-weight:600;font-size:12.5px;color:var(--ink);}
+.ask-card-seg{display:flex;gap:4px;}
+.ask-card-seg-btn{padding:5px 12px;border:1px solid var(--line-2);border-radius:999px;background:transparent;
+  color:var(--ink-2);font-family:inherit;font-weight:600;font-size:11px;cursor:pointer;transition:.15s;}
+.ask-card-seg-btn.on{background:var(--ink);border-color:var(--ink);color:var(--panel);}
+.ask-card-target{display:flex;flex-direction:column;gap:10px;}
+.ask-card-field{display:flex;flex-direction:column;gap:4px;}
+.ask-card-label{font-weight:600;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
+.ask-card :is(select,input[type="text"],textarea){font-size:12.5px;padding:8px 11px;border-radius:10px;}
+.ask-card textarea.ask-card-brief{min-height:0;height:auto;max-height:160px;resize:none;line-height:1.5;}
+.ask-card-members{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
+.ask-card-members-src-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.ask-card-err{font-size:12px;color:var(--red-ink);min-height:0;}
+.ask-card-err:empty{display:none;}
+.ask-card-actions{display:flex;align-items:center;gap:8px;}
+.ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
+  font-size:11.5px;cursor:pointer;}
+.ask-card-not-now{padding:8px 13px;border:0;border-radius:999px;background:transparent;color:var(--ink-2);
+  font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;transition:.15s;}
+.ask-card-not-now:hover{background:var(--field);color:var(--ink);}
+.ask-card-start{display:flex;align-items:center;gap:7px;padding:8px 15px;border:0;border-radius:999px;
+  background:var(--ink);color:var(--panel);font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;transition:.15s;}
+.ask-card-start:hover{filter:brightness(1.08);}
+.ask-card-start:disabled{opacity:.55;cursor:default;}
+.ask-card :is(.ask-card-seg-btn,.ask-card-not-now,.ask-card-start,.ask-card-open-np):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-card-stub{font-size:12.5px;color:var(--ink-3);}
+.ask-card-failed{color:var(--red-ink);}
+.ask-card-link{color:var(--blue-ink);}
+
+.ask-jump{position:absolute;left:0;right:0;bottom:104px;margin:0 auto;width:max-content;
+  display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;
+  background:var(--panel);color:var(--ink);font-family:inherit;font-weight:600;font-size:11.5px;cursor:pointer;
+  box-shadow:0 6px 18px rgba(25,25,27,.10);transition:border-color .15s;}
+.ask-jump:hover{border-color:var(--ink);}
+.ask-jump[hidden]{display:none;}
+.ask-jump:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+.ask-composer{position:relative;flex:0 0 auto;border-top:1px solid var(--line);padding:10px 12px 11px;
+  display:flex;flex-direction:column;gap:4px;}
+.ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
+.ask-chips[hidden]{display:none;}
+.ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
+  border-radius:8px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;max-width:240px;}
+.ask-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-chip-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
+  font-size:13px;line-height:1;padding:1px 4px;border-radius:5px;transition:.15s;}
+.ask-chip-x:hover{background:var(--line);color:var(--ink);}
+.ask-composer textarea.ask-input{min-height:0;height:auto;max-height:120px;resize:none;border:0;border-radius:0;
+  background:transparent;padding:6px 6px 8px;font-size:13.5px;line-height:1.6;}
+.ask-composer textarea.ask-input:focus{background:transparent;border-color:transparent;}
+.ask-composer textarea.ask-input:focus-visible{outline:none;}
+.ask-composer-msg{font-size:11.5px;color:var(--red-ink);padding:0 6px;}
+.ask-composer-msg[hidden]{display:none;}
+.ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+.ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
+  color:var(--ink-3);white-space:nowrap;}
+.ask-meter-sep{color:var(--line-2);}
+.ask-meter-cost{color:var(--ink-2);}
+.ask-agents-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-3);font-family:var(--mono);font-size:10.5px;white-space:nowrap;
+  cursor:pointer;transition:.15s;}
+.ask-agents-btn:hover{background:var(--field);color:var(--ink);}
+.ask-model-btn{display:flex;align-items:center;gap:7px;padding:6px 10px;border:0;border-radius:9px;
+  background:transparent;color:var(--ink);font-family:inherit;font-weight:600;font-size:12.5px;cursor:pointer;transition:.15s;}
+.ask-model-btn:hover{background:var(--field);}
+.ask-model-btn-effort{font-weight:500;color:var(--ink-3);}
+.ask-send,.ask-stop{display:inline-flex;align-items:center;justify-content:center;width:31px;height:31px;
+  flex:0 0 31px;border-radius:50%;cursor:pointer;transition:.15s;}
+.ask-send{border:0;background:var(--ink);color:var(--panel);}
+.ask-send:hover{filter:brightness(1.08);}
+.ask-send[hidden]{display:none;}
+.ask-stop{border:1.5px solid var(--line);background:var(--panel);color:var(--ink);}
+.ask-stop:hover{border-color:var(--ink);}
+.ask-stop[hidden]{display:none;}
+.ask-composer :is(.ask-agents-btn,.ask-wt-btn,.ask-model-btn,.ask-send,.ask-stop,.ask-chip-x):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The button shares .ask-agents-btn, which is display:flex — that AUTHOR rule
+   outranks the UA [hidden]{display:none}, so without this twin the button never
+   hides and shows a permanent "0 worktrees". */
+.ask-wt-btn[hidden]{display:none;}
+
+.ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
+  padding:6px;box-shadow:0 12px 34px rgba(25,25,27,.12);border-radius:16px;}
+.ask-pop-threads{top:46px;right:76px;width:326px;}
+.ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
+.ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
+.ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:10px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+.ask-pop-caption-row{display:flex;align-items:baseline;gap:8px;}
+.ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
+.ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
+.ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:0;border-radius:12px;
+  background:transparent;text-align:left;font-family:inherit;cursor:pointer;transition:.15s;}
+.ask-pop-item:hover,.ask-pop-item:focus-visible{background:var(--field);outline:none;}
+.ask-model-name{font-weight:500;font-size:13.5px;color:var(--ink);}
+.ask-model-check{margin-left:auto;color:var(--blue-ink);font-weight:600;}
+.ask-pop-row-value{margin-left:auto;font-weight:400;font-size:12.5px;color:var(--ink-3);}
+.ask-pop-row-chev{color:var(--ink-3);}
+/* The threads list is the only scrollport in a popover: /api/ask/threads returns up
+   to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
+   unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
+   on a short one -- the popover starts 46px down and the sheet is 100vh - 46px at most.
+   The radius clips the rows so they do not bleed over the panel's own corners. */
+.ask-threads-list{max-height:min(360px,calc(100vh - 200px));overflow-y:auto;overscroll-behavior:contain;
+  border-radius:10px;}
+.ask-thread-row{display:flex;align-items:center;border-radius:10px;}
+.ask-thread-row:hover{background:var(--field);}
+.ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:10px;}
+/* The date leads the meter line: bold and on --ink so it anchors the scan while
+   the ctx/cost/agent figures beside it keep the meter's grey. An inline span, so
+   the mono and the 10px come from .ask-thread-meter; nowrap is what now keeps it
+   on one line, flex:0 0 auto having gone with the left-edge column. */
+.ask-thread-when{font-weight:700;color:var(--ink);white-space:nowrap;}
+/* Scoped to the threads rows -- .ask-dot elsewhere (agents popover, agent rows,
+   the activity head) keeps showing its --seq dot. Here a dot means "this chat is
+   live", so an idle row shows none; display, not visibility, so the 6px slot and
+   the row's 10px gap collapse with it and the title moves to the left edge. */
+.ask-thread-dot{display:none;}
+.ask-thread-dot.ask-dot-live{display:block;}
+.ask-thread-col{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.ask-thread-title{font-weight:500;font-size:12.5px;color:var(--ink);display:-webkit-box;
+  -webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;}
+.ask-thread-meter{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-thread-trash{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+  flex:0 0 26px;margin-right:5px;border:0;border-radius:8px;background:transparent;color:var(--seq);
+  cursor:pointer;transition:.15s;}
+.ask-thread-trash:hover{background:var(--red-bg);color:var(--red-ink);}
+.ask-thread-trash:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-runinfo-row{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:10px;}
+.ask-runinfo-row:hover{background:var(--field);}
+.ask-runinfo-col{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.ask-runinfo-name{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-runinfo-sub{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-runinfo-elapsed{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);}
+/* .ask-pop-worktrees inherits .ask-pop-runinfo's right/bottom offset, which is
+   calibrated for the AGENTS button; the worktrees button sits to its left. */
+.ask-pop-worktrees{min-width:340px;right:187px;}
+.ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
+.ask-wt-row .ask-thread-trash{flex:none;}
+
+/* ---------- Ask Worca dock clearance ---------- */
+/* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
+   ~47px pill occludes a ~73px strip at the bottom of every scrollport, while the page
+   gutters reserve only 40px. One late override lifts the BOTTOM padding of all five
+   scroll gutters to --ask-dock-clearance: 96px = 73px strip + breathing room. Source
+   order is load-bearing -- this must follow the base rules at :234, :1718, :1742,
+   :2312, :2335 and precede the reduced-motion block below. The -list screen classes
+   are targeted, NOT .run-screen/.hist-screen, so the -detail scrollports keep
+   padding:0 for their sticky tab bars and take clearance via .rd-body/.hd-body
+   instead; body.view-history/.view-running .main keep padding:0 by specificity. */
+.main,.run-screen-list,.hist-screen-list,.rd-body,.hd-body{padding-bottom:var(--ask-dock-clearance);}
+
 /* ---------- reduced motion for the Running redesign ---------- */
 /* MUST be the LAST block in the file: @media contributes no specificity, so a
    (0,1,0) `animation:none` here would LOSE the source-order tie against any
@@ -2835,5 +3197,8 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
      Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
      own reduced-motion block (:1253-1258) is unaffected — it substitutes
      box-shadows, and only its redundant `animation:none` is overridden. */
+  /* Ask Worca: every element inside the dock, same blanket rationale as the
+     .run-shell one below. */
+  .ask-dock *{animation:none !important;}
   .run-shell *{animation:none !important;}
 }

@@ -1,0 +1,17 @@
+{
+  "scenario": "bogus-resume",
+  "prompt": "Reply with exactly the single word: pong",
+  "model": "claude-haiku-4-5",
+  "exitCode": 1,
+  "error": "claude exited with code 1: No conversation found with session ID: 00000000-0000-0000-0000-000000000000",
+  "stderr": [
+    "No conversation found with session ID: 00000000-0000-0000-0000-000000000000"
+  ],
+  "flags": {
+    "maxTurns": 6,
+    "maxBudgetUsd": 1,
+    "resume": "00000000-0000-0000-0000-000000000000"
+  },
+  "captured": "2026-08-22T13:25:06.616Z",
+  "claudeVersion": null
+}

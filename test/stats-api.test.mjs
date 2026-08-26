@@ -14,7 +14,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getStats } from '../src/core/stats.mjs';
-import { recordCostDelta } from '../src/core/cost-budget.mjs';
+import { recordCostDelta, recordAskCostDelta } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
 useTempHome(after); // DB sandbox (WORCA_HOME)
@@ -78,6 +78,23 @@ async function seedWorld() {
   recordCostDelta({ pipelineId: a, amountUsd: 0.5,  tsMs: +new Date(2026, 7, 3, 10) });
   recordCostDelta({ pipelineId: b, amountUsd: 0.25, tsMs: +new Date(2026, 7, 5, 10) });
   recordCostDelta({ pipelineId: d, amountUsd: 2,    tsMs: +new Date(2026, 6, 28, 10) });
+  // ask ledger: this week — thread A twice, thread B once; prev week — thread A
+  // again (a session counts in EVERY window it spent in, D6) + thread C
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000001', amountUsd: 0.10,
+    tokens: 1000, model: 'claude-opus-5', tsMs: +new Date(2026, 7, 3, 11) });
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000002', amountUsd: 0.05,
+    tokens: 500, model: 'claude-opus-5', tsMs: +new Date(2026, 7, 5, 11) });
+  recordAskCostDelta({ threadId: 'ask_bbbbbbbb', messageId: 'askm_00000003', amountUsd: 0.25,
+    tokens: 2000, model: 'claude-haiku-4-5', tsMs: +new Date(2026, 7, 4, 11) });
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000004', amountUsd: 0.20,
+    tokens: 800, model: 'claude-opus-5', tsMs: +new Date(2026, 6, 30, 11) });
+  recordAskCostDelta({ threadId: 'ask_cccccccc', messageId: 'askm_00000005', amountUsd: 1,
+    tokens: 900, model: 'claude-opus-5', tsMs: +new Date(2026, 6, 28, 11) });
+  // one costed pipeline AFTER the stats windowEnd: allTimeTotals() counts it,
+  // cohortTotals(0, windowEnd) does not — pins range=all's fallback-aware
+  // pipelineSpendUsd source (D7) against a cohort-sum regression.
+  const { id: f } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 5 });
+  setStarted(f, iso(2026, 9, 15));
 }
 
 test('range=week: cohort totals incl. archived; ledger money; prev window; daily zero-filled series', async () => {
@@ -92,18 +109,23 @@ test('range=week: cohort totals incl. archived; ledger money; prev window; daily
   assert.equal(s.totals.paused, 1);                   // interrupted groups into paused
   assert.equal(s.totals.prsOpened, 1);                // a
   assert.equal(s.totals.prsMerged, 1);
-  assert.equal(s.totals.spentUsd, 0.75);              // ledger this week
+  assert.equal(s.totals.spentUsd, 1.15);              // 0.75 pipeline + 0.40 ask
+  assert.equal(s.totals.pipelineSpendUsd, 0.75);
+  assert.deepEqual(s.totals.ask, { spendUsd: 0.4, sessions: 2, turns: 3 });
   assert.equal(s.prev.runs, 1);                       // d
-  assert.equal(s.prev.spentUsd, 2);
+  assert.equal(s.prev.spentUsd, 3.2);                 // 2 + 1.2
+  assert.equal(s.prev.pipelineSpendUsd, 2);
+  assert.deepEqual(s.prev.ask, { spendUsd: 1.2, sessions: 2, turns: 2 });
   assert.equal(s.prev.prsOpened, 1);
   // series: Mon..Thu (through the current bucket), zero-filled
   assert.equal(s.series.length, 4);
   assert.equal(s.series[0].bucketStartMs, +new Date(2026, 7, 3));
-  assert.equal(s.series[0].spentUsd, 0.5);
+  assert.equal(s.series[0].spentUsd, 0.6);            // Mon: 0.5 pipeline + 0.10 ask
   assert.equal(s.series[0].finished, 1);
+  assert.equal(s.series[1].spentUsd, 0.25);           // Tue: ask only
   assert.equal(s.series[1].finished, 0);              // Tue: stopped only
   assert.equal(s.series[1].stopped, 1);
-  assert.equal(s.series[2].spentUsd, 0.25);
+  assert.equal(s.series[2].spentUsd, 0.3);            // Wed: 0.25 pipeline + 0.05 ask
   assert.ok('budget' in s);
 });
 
@@ -116,7 +138,11 @@ test('range=month: daily buckets from the 1st; range=all: monthly buckets + fall
   assert.equal(all.bucket, 'month');
   assert.equal(all.prev, null);
   assert.equal(all.totals.runs, 5);
-  assert.ok(all.totals.spentUsd >= 3);                // pipelines fallback sums (a:1 + d:2)
+  assert.deepEqual(all.totals.ask, { spendUsd: 1.6, sessions: 3, turns: 5 });
+  assert.equal(all.totals.pipelineSpendUsd, 8,
+    'fallback-aware pipelines sums (a:1 + d:2 + post-window:5) — NOT the cohort sum (3)');
+  assert.equal(all.totals.spentUsd, 9.6);
+  for (const k of ['spentUsd', 'pipelineSpendUsd', 'ask']) assert.ok(k in all.totals, `totals.${k}`);
   assert.ok(all.series.length >= 2);                  // Jul + Aug buckets present
 });
 

@@ -30,6 +30,7 @@ import {
 } from './run-manifest.mjs';
 import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
+import { deleteCommentsForRun } from './diff-comments.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
@@ -252,6 +253,12 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   //    pipeline_steps and the other children stay: stats fallback sums need them.
   tx(() => {
     getDb().prepare('DELETE FROM artifacts WHERE pipeline_id = ?').run(row.id);
+    // The run dir (and with it diff-patch.patch) was just removed, so nothing could
+    // re-anchor these comments and creation is refused from here on. They die with
+    // the artifacts index rather than lingering as unreachable rows — the declared
+    // pipelines cascade cannot do it, because the pipelines row is never DELETEd
+    // (see this file's header).
+    deleteCommentsForRun(row.id);
     getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
       .run(new Date().toISOString(), row.id);
   });

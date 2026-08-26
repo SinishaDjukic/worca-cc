@@ -12,7 +12,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { setPipelineCostLimitUsd, setTotalCostLimitUsd } from '../src/core/settings.mjs';
-import { recordCostDelta, setCostCapOverride } from '../src/core/cost-budget.mjs';
+import { recordCostDelta, setCostCapOverride, recordAskCostDelta } from '../src/core/cost-budget.mjs';
 import { listAllPipelines, listPipelines } from '../src/core/artifacts.mjs';
 
 useTempHome(after);
@@ -120,6 +120,18 @@ test('total cap trips from the seeded ledger even with the override set', async 
   assert.equal(orch.pauseReason, 'cost_total');
   await setTotalCostLimitUsd('');
   clearLedger();
+});
+
+test('total cap trips from Ask Worca spend alone (count-everywhere D3)', async () => {
+  clearLedger();
+  getDb().exec('DELETE FROM ask_cost_ledger');
+  await setTotalCostLimitUsd(2);
+  const { orch } = await makeOrchWithPipeline({ status: 'running' });
+  recordAskCostDelta({ threadId: 'ask_ffffffff', amountUsd: 2.5, tsMs: Date.now() });
+  assert.throws(() => orch._checkCostLimits(), (e) => e.name === 'PauseError');
+  assert.equal(orch.pauseReason, 'cost_total');
+  await setTotalCostLimitUsd('');
+  getDb().exec('DELETE FROM ask_cost_ledger');
 });
 
 test('resume point JSON carries pauseReason', async () => {

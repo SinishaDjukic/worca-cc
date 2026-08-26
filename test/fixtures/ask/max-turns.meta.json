@@ -1,0 +1,35 @@
+{
+  "scenario": "max-turns",
+  "prompt": "Call the list_runs tool with input {}, then call it again with input {\"limit\":1}, then reply.",
+  "model": "claude-haiku-4-5",
+  "exitCode": 1,
+  "error": "claude exited with code 1: no stderr",
+  "stderr": [],
+  "flags": {
+    "maxTurns": 1,
+    "maxBudgetUsd": 1,
+    "resume": null
+  },
+  "captured": "2026-08-22T13:24:59.887Z",
+  "claudeVersion": "2.1.239",
+  "initTools": [
+    "Task",
+    "mcp__worca__get_run",
+    "mcp__worca__get_run_diff",
+    "mcp__worca__list_projects",
+    "mcp__worca__list_runs",
+    "mcp__worca__list_workflows",
+    "mcp__worca__propose_run",
+    "mcp__worca__read_attachment"
+  ],
+  "initMcpServers": [
+    {
+      "name": "worca",
+      "status": "connected"
+    }
+  ],
+  "expect": {
+    "subtype": "error_max_turns",
+    "exitCode": 1
+  }
+}

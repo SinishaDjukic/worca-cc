@@ -117,7 +117,7 @@ test('runClaude FORWARDS mcpConfigPath + mcpServerGrants to runReal (not just bu
 });
 
 // ── runClaude -> runMock forwarding of workspaceWriteTargets (§8.10, Phase 4) ─
-// Same drop-at-runClaude hazard as the MCP fields, on the mock branch: the six-field
+// Same drop-at-runClaude hazard as the MCP fields, on the mock branch: the eight-field
 // runMock call is a GATE, so a field added to runMock/mockImplementer alone would
 // never arrive. The mock's own file writes are the observable proof.
 
