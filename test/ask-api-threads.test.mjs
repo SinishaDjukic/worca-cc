@@ -133,9 +133,15 @@ test('GET /api/ask/models returns the chat catalog', async () => {
   assert.ok(Array.isArray(j.models) && j.models.length > 0);
   assert.ok(Array.isArray(j.efforts) && j.efforts.includes('high'));
   const entry = j.models.find((m) => /opus/i.test(m.id));
-  assert.ok(entry, 'a predefined opus id survives the filter');
+  assert.ok(entry, 'a predefined opus id is offered');
   assert.ok(Array.isArray(entry.efforts));
-  assert.ok(entry.custom === false || entry.custom === 'global');
+  // Plugin entries are now offered too; only legacy per-project ones are excluded.
+  assert.ok(entry.custom === false || entry.custom === 'global' || entry.custom === 'plugin');
+  assert.equal(typeof entry.hasEnv, 'boolean');
+  assert.ok(!j.models.some((m) => m.custom === 'project'), 'the project-less chat never offers legacy project models');
+  assert.ok(j.default && typeof j.default.model === 'string' && typeof j.default.effort === 'string',
+    'the backend ships the D8 default');
+  assert.ok(j.models.some((m) => m.id === j.default.model), 'the default is a model that exists');
 });
 
 test('hello carries an ask array; a threadId subscribe for an unknown thread is a no-op', async () => {

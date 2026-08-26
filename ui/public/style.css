@@ -3123,6 +3123,21 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-model-check{margin-left:auto;color:var(--blue-ink);font-weight:600;}
 .ask-pop-row-value{margin-left:auto;font-weight:400;font-size:12.5px;color:var(--ink-3);}
 .ask-pop-row-chev{color:var(--ink-3);}
+/* .ask-pop-model is a fixed 292px panel (256px of row content) and a plugin name is
+   arbitrary text, so something in the row has to give. Rigid badges win every
+   negotiation: measured in Chrome, "DS Fast" + "plugin: discretestack-models" +
+   "secret not set" starves the name to 0px and spills the row 45px past the panel,
+   which sets no overflow of its own -- .ask-sheet then chops the check mark off.
+   So the PLUGIN badge is the one that shrinks; the name shrinks to a legible floor
+   and never grows (badges keep hugging it); and the two status badges opt back out,
+   because ellipsising "⚠cost" down to a bare "…" would eat the warning itself. */
+.ask-model-tag{flex:0 1 auto;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;
+  font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 8px;
+  border-radius:999px;white-space:nowrap;background:var(--field);color:var(--ink-3);}
+.ask-model-tag.is-warn{flex:0 0 auto;max-width:none;background:var(--amber-bg);color:var(--amber-ink);}
+.ask-model-tag.is-err{flex:0 0 auto;max-width:none;background:var(--red-bg);color:var(--red-ink);}
+.ask-model-item .ask-model-name{flex:0 1 auto;min-width:4.5ch;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
 /* The threads list is the only scrollport in a popover: /api/ask/threads returns up
    to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
    unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
