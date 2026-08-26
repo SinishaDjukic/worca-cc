@@ -287,7 +287,13 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   try {
     await gitDir(cache, ['archive', '--format=tar', '-o', tarFile, ...(sub ? [sha, '--', sub] : [sha])], exec);
     const strip = sub ? ['--strip-components', String(sub.split('/').length)] : [];
-    await exec('tar', ['-xf', tarFile, '-C', versionDir, ...strip]);
+    // Windows GNU tar (shipped by Git for Windows) mishandles native paths two
+    // ways: a colon in the `-f` value is read as a `host:path` remote spec ("cannot
+    // connect to C:"), and backslash separators are not understood at all. So pass
+    // the archive as a RELATIVE name resolved against cwd, and give `-C` a
+    // forward-slashed path. On POSIX the replace is a no-op.
+    await exec('tar', ['-xf', 'export.tar', '-C', versionDir.replace(/\\/g, '/'), ...strip],
+      { cwd: scratch });
   } catch (err) {
     rmSync(versionDir, { recursive: true, force: true });
     throw err;
