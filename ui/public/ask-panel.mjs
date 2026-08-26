@@ -9,6 +9,14 @@ import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 
+/**
+ * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
+ * only if that payload carries no `default` (older stubs / a 500). The authoritative
+ * default is ASK_LIMITS.defaultModel/defaultEffort, shipped as `catalog.default`
+ * and already validated against the live catalog by src/core/ask/models.mjs.
+ */
+const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5', effort: 'high' });
+
 const ICONS = {
   threads: 'M4 6h16M4 12h16M4 18h9',
   plus: 'M12 5v14M5 12h14',
@@ -69,11 +77,20 @@ function clipInput(input) {
 }
 
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, loadMarkdown, hljsLoader, storage, raf, now }) {
+  const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
     open: false,
     threadId: null,
     model: null,              // createThreadModel for the active thread (Task 4+)
-    picker: readStoredModel(),
+    picker: {
+      model: storedPick && storedPick.model ? storedPick.model : FALLBACK_PICK.model,
+      effort: storedPick ? storedPick.effort : FALLBACK_PICK.effort,
+    },
+    // D11 provenance, tracked per slot: only a MODEL the user actually picked
+    // outranks the backend default. An effort-only record leaves the model slot
+    // unclaimed, so a later change to ASK_LIMITS.defaultModel still reaches here.
+    pickerFromStore: !!(storedPick && storedPick.model),
+    effortFromStore: storedPick !== null,
     catalog: null,
     popover: null,            // {panel, trigger, onClose}
     expandedAgents: new Set(),
@@ -102,15 +119,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
 
   // ---- storage --------------------------------------------------------------
+  /**
+   * The stored pick, or null when nothing usable is stored. `model` is null for an
+   * EFFORT-ONLY record — the user moved the effort while the model was still the
+   * backend default, so there is no model choice to honour (D11). `effort` is always
+   * a string. A legacy record (always `{model,effort}`) reads back unchanged.
+   */
   function readStoredModel() {
     try {
       const raw = storage.getItem('worca-cc.ask.model');
       const v = raw ? JSON.parse(raw) : null;
-      if (v && typeof v.model === 'string' && typeof v.effort === 'string') return { model: v.model, effort: v.effort };
+      if (v && typeof v.effort === 'string') {
+        return { model: typeof v.model === 'string' && v.model ? v.model : null, effort: v.effort };
+      }
     } catch { /* storage unavailable */ }
-    return { model: 'claude-opus-5', effort: 'high' };
+    return null;                                    // no stored pick — the catalog decides (D5/D6/D11)
   }
-  function storeModel() { try { storage.setItem('worca-cc.ask.model', JSON.stringify(st.picker)); } catch { /* ignore */ } }
+  function storeModel() {
+    // Provenance travels with the record: writing st.picker.model when the user never
+    // chose one would pin the cold-start literal (or a default they merely saw), and
+    // the backend would be authoritative exactly once per browser.
+    const rec = { model: st.pickerFromStore ? st.picker.model : null, effort: st.picker.effort };
+    try { storage.setItem('worca-cc.ask.model', JSON.stringify(rec)); } catch { /* ignore */ }
+  }
   function readStoredThread() { try { return storage.getItem('worca-cc.ask.thread') || null; } catch { return null; } }
   function storeThread(id) {
     try {
@@ -681,7 +712,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
     const entry = catalogEntry(st.picker.model);
-    el.modelBtnLabel.textContent = entry ? entry.label : st.picker.model;
+    // Same '⚠' marker the run-graph node label uses (ui/public/app.js:998).
+    const flagged = !!entry && (entry.costUnreliable === true
+      || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0));
+    el.modelBtnLabel.textContent = (entry ? entry.label : st.picker.model) + (flagged ? ' ⚠' : '');
     el.modelBtnEffort.textContent = st.picker.effort;
   }
 
@@ -690,15 +724,34 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return entry.efforts.includes('high') ? 'high' : entry.efforts[0];
   }
 
+  /** The backend's D8 default, or the cold-start literal for a payload without one. */
+  function catalogDefault() {
+    const d = st.catalog && st.catalog.default;
+    if (d && typeof d.model === 'string' && typeof d.effort === 'string') return { model: d.model, effort: d.effort };
+    return { ...FALLBACK_PICK };
+  }
+
   function applyCatalogToPicker() {
-    const entry = catalogEntry(st.picker.model);
-    const next = entry
-      ? { model: st.picker.model, effort: coerceEffort(entry, st.picker.effort) }
-      : { model: 'claude-opus-5', effort: 'high' }; // unknown stored model → initial default (§11)
-    if (next.model !== st.picker.model || next.effort !== st.picker.effort) {
-      st.picker = next;
-      storeModel();
-    }
+    const fallback = catalogDefault();
+    // Each slot is decided by its own provenance: a stored MODEL outranks the backend
+    // default, and a stored EFFORT survives even when the model comes from the default.
+    // (effortFromStore ⊇ pickerFromStore — a stored model always carries its effort.)
+    const wanted = {
+      model: st.pickerFromStore ? st.picker.model : fallback.model,
+      effort: st.effortFromStore ? st.picker.effort : fallback.effort,
+    };
+    const list = st.catalog && Array.isArray(st.catalog.models) ? st.catalog.models : [];
+    const wantedEntry = catalogEntry(wanted.model);
+    // Unknown stored/default id -> the backend default -> the first model we do have.
+    const entry = wantedEntry || catalogEntry(fallback.model) || list[0] || null;
+    if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
+    const effort = wantedEntry ? wanted.effort : fallback.effort;
+    const next = { model: entry.id, effort: coerceEffort(entry, effort) };
+    const changed = next.model !== st.picker.model || next.effort !== st.picker.effort;
+    st.picker = next;
+    // D11: persist ONLY a repair of a pick the user actually made. Writing the
+    // backend default here would make it authoritative exactly once, ever.
+    if (changed && st.pickerFromStore) storeModel();
     updatePickerButton();
   }
 
@@ -725,15 +778,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (stored && !st.threadId) switchThread(stored);
   }
 
+  /**
+   * Primary-list grouping key. Claude ids group by family; a PLUGIN model groups by
+   * its plugin, so a plugin shipping ten ids contributes one primary row and the rest
+   * land under "More models" — instead of each foreign id becoming its own "family"
+   * (the old `|| m.id` fallback) and flooding the list. Anything else shares one
+   * 'other' bucket.
+   */
+  function familyKey(m) {
+    const fam = (m.id.match(/^claude-(opus|fable|sonnet|haiku)-/) || [])[1];
+    if (fam) return `claude:${fam}`;
+    if (m.custom === 'plugin' && m.plugin) return `plugin:${m.plugin}`;
+    return 'other';
+  }
+
   function splitCatalog() {
     const primary = [];
     const rest = [];
     const seen = new Set();
     for (const m of st.catalog ? st.catalog.models : []) {
-      if (!m) continue;
-      if (m.custom === 'global') { primary.push(m); continue; }
-      const fam = (m.id.match(/^claude-(opus|fable|sonnet|haiku)-/) || [])[1] || m.id;
-      if (seen.has(fam)) rest.push(m);
+      if (!m || typeof m.id !== 'string') continue;
+      if (m.custom === 'global') { primary.push(m); continue; }   // user models are never demoted
+      const fam = familyKey(m);
+      // The picked model always shows up front so its ✓ is visible and it is one click away.
+      if (seen.has(fam) && m.id !== st.picker.model) rest.push(m);
       else { seen.add(fam); primary.push(m); }
     }
     return { primary, rest };
@@ -741,6 +809,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function setPickerModel(id) {
     st.picker = { model: id, effort: coerceEffort(catalogEntry(id), st.picker.effort) };
+    st.pickerFromStore = true;                      // an explicit model choice claims the slot (D11)
+    st.effortFromStore = true;
     storeModel();
     updatePickerButton();
     closePopover({ focusTrigger: false });
@@ -749,6 +819,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function setPickerEffort(effort) {
     st.picker = { ...st.picker, effort };
+    st.effortFromStore = true;                      // the effort only — the model slot is untouched (D11)
     storeModel();
     updatePickerButton();
     closePopover({ focusTrigger: false });
@@ -759,9 +830,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const panel = openPopover({ panelClass: 'ask-pop-model', trigger, build: () => {} });
     if (!panel) return;
     const focusFirst = () => { const f = menuItems(panel)[0]; if (f) { f.tabIndex = 0; try { f.focus(); } catch { /* ignore */ } } };
+    const tag = (text, variant, title) => {
+      const t = make('span', variant ? `ask-model-tag ${variant}` : 'ask-model-tag', text);
+      if (title) t.title = title;
+      return t;
+    };
     const modelItem = (m) => {
       const item = menuItem('ask-model-item', () => setPickerModel(m.id));
+      // The row carries NO provenance: a plugin name is arbitrary text and an origin
+      // badge starved the label in a 292px panel. Where a model comes from is the
+      // Models view's job; here the name is the thing being picked.
       item.appendChild(make('span', 'ask-model-name', m.label || m.id));
+      // The two STATUS badges stay (models-view.mjs:116,120-123) — they are warnings, not provenance.
+      if (m.costUnreliable) {
+        item.appendChild(tag('⚠cost', 'is-warn',
+          'This model reported no cost while consuming tokens — chat spend may not count toward the budget.'));
+      }
+      if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
+        item.appendChild(tag('secret not set', 'is-err',
+          `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
+      }
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
     };

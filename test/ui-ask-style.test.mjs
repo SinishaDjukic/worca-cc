@@ -140,6 +140,37 @@ test('ui-ask-style: the thread date leads the meter in bold; an idle dot collaps
   assert.ok(!/display:none/.test(ruleBody('.ask-dot') || ''), 'hiding is scoped to the threads rows');
 });
 
+test('ui-ask-style: a model row survives an arbitrarily long plugin name', () => {
+  // .ask-pop-model is a fixed 292px panel and plugin names are arbitrary, so the
+  // origin is not in the row at all and the name is the only thing left that can
+  // give. A rigid badge wins every negotiation — with flex:0 0 auto + nowrap the
+  // name renders at 0px and the row (check mark included) overflows the panel,
+  // which sets no overflow of its own.
+  const tag = ruleBody('.ask-model-tag');
+  assert.ok(tag, '.ask-model-tag rule exists');
+  assert.match(tag, /flex:0 1 auto/, 'the base badge may shrink');
+  assert.match(tag, /min-width:0/, '…below its content width, all the way to a nub');
+  assert.match(tag, /overflow:hidden/);
+  assert.match(tag, /text-overflow:ellipsis/, 'a truncated badge still reads as a badge');
+  assert.match(tag, /max-width:/, 'and it never claims the whole row');
+
+  // The status badges are the warning itself — three fixed short strings. Letting the
+  // shrink rule reach them turns "⚠cost" into a bare "…", which is the wrong trade,
+  // so they opt back out. The plugin badge alone absorbs the deficit.
+  for (const variant of ['.ask-model-tag.is-warn', '.ask-model-tag.is-err']) {
+    const body = ruleBody(variant);
+    assert.ok(body, `${variant} rule exists`);
+    assert.match(body, /flex:0 0 auto/, `${variant} keeps its full width`);
+    assert.match(body, /max-width:none/, `${variant} opts out of the share cap`);
+  }
+
+  const name = ruleBody('.ask-model-item .ask-model-name');
+  assert.ok(name, 'the model-row name is scoped away from the effort pane');
+  assert.match(name, /flex:0 1 auto/, 'shrink but never grow — badges keep hugging the name');
+  assert.match(name, /min-width:(?!0[;\s}])/, 'and it keeps a legible floor rather than collapsing to 0');
+  assert.match(name, /text-overflow:ellipsis/);
+});
+
 test('ui-ask-style: only the threads popover was widened', () => {
   assert.match(ruleBody('.ask-pop-model') || '', /width:292px/);
   assert.match(ruleBody('.ask-pop-runinfo') || '', /width:326px/);

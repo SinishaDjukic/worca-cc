@@ -85,7 +85,9 @@ test('ask-panel-pickers: effort pane lists the current model efforts; picking pe
   const max = [...ctx.doc.querySelectorAll('.ask-pop-model [role="menuitem"]')].find((b) => b.textContent.includes('max'));
   max.click();
   assert.equal(ctx.doc.querySelector('.ask-model-btn-effort').textContent, 'max');
-  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-opus-5', effort: 'max' });
+  // The user changed the EFFORT only, so the model slot stays unclaimed (model:null)
+  // and the backend default keeps winning it on the next load (D11).
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: null, effort: 'max' });
 });
 
 test('ask-panel-pickers: picking a model with fewer efforts coerces the effort', async () => {
@@ -109,6 +111,117 @@ test('ask-panel-pickers: an unknown stored model resets to the initial default o
   ctx2.panel.open();
   await ctx2.tick(); await ctx2.tick();
   assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-opus-5', effort: 'high' });
+});
+
+// A catalog with plugin entries + a backend default (the widened /api/ask/models).
+const CATALOG_WIDE = {
+  models: [
+    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
+    { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
+    { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
+    { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true },
+    { id: 'acme-fast', label: 'Acme Fast', efforts: ['medium', 'high'], custom: 'plugin', plugin: 'acme', hasEnv: true },
+    { id: 'acme-slow', label: 'Acme Slow', efforts: ['medium'], custom: 'plugin', plugin: 'acme', hasEnv: true, costUnreliable: true },
+    { id: 'bolt-x', label: 'Bolt X', efforts: ['high'], custom: 'plugin', plugin: 'bolt', hasEnv: true, secretsMissing: ['BOLT_KEY'] },
+  ],
+  efforts: ['medium', 'high', 'xhigh', 'max'],
+  default: { model: 'claude-opus-5', effort: 'high' },
+};
+
+function wideHandler(catalog = CATALOG_WIDE) {
+  const base = handler();
+  return (url, opts) => (url === '/api/ask/models'
+    ? { ok: true, status: 200, json: async () => catalog }
+    : base(url, opts));
+}
+
+async function openPicker(ctx) {
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click();
+  await ctx.tick();
+  return ctx.doc.querySelector('.ask-pop-model');
+}
+
+test('ask-panel-pickers: an unknown stored model resets to the BACKEND default, not a hardcoded id', async () => {
+  const seed = makePanel({ fetchHandler: handler() });   // never opened: builds a storage, fetches nothing
+  seed.storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-gone-1', effort: 'high' }));
+  const ctx = makePanel({
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'my-corp-model', effort: 'high' } }),
+    storage: seed.storage,
+  });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  // A stored pick that no longer exists IS repaired on disk — otherwise the dead id sticks forever.
+  assert.deepEqual(JSON.parse(seed.storage.getItem('worca-cc.ask.model')), { model: 'my-corp-model', effort: 'high' });
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Corp');
+});
+
+test('ask-panel-pickers: with no stored pick the backend default wins, and is NOT persisted (D11)', async () => {
+  const ctx = makePanel({
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'claude-haiku-4-5', effort: 'medium' } }),
+  });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Haiku 4.5');
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-effort').textContent, 'medium');
+  // D11: a default the user never chose must not be written, or a later change to
+  // ASK_LIMITS.defaultModel would lose to it forever.
+  assert.equal(ctx.storage.getItem('worca-cc.ask.model'), null, 'the backend default is not persisted');
+});
+
+test('ask-panel-pickers: a payload without `default` still falls back to the cold-start pick', async () => {
+  // Guards the three ui-* suites, whose /api/ask/models stubs ship {models,efforts} only.
+  const ctx = makePanel({ fetchHandler: handler() }); // CATALOG has no `default`
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5');
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-effort').textContent, 'high');
+});
+
+test('ask-panel-pickers: an effort-only change does not pin the model (D11)', async () => {
+  // Changing the effort is routine. If it persisted the whole pick, the backend
+  // default would be authoritative exactly once per browser — the failure D11 exists
+  // to prevent — so the stored record has to say "this effort, no model".
+  const ctx = makePanel({
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'claude-haiku-4-5', effort: 'high' } }),
+  });
+  await openPicker(ctx);
+  ctx.doc.querySelector('[data-ask-effort-row]').click();
+  [...ctx.doc.querySelectorAll('.ask-pop-model [role="menuitem"]')].find((b) => b.textContent === 'medium').click();
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-effort').textContent, 'medium');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: null, effort: 'medium' });
+
+  // Same browser, same storage, an operator who has since moved ASK_LIMITS.defaultModel:
+  // the new default reaches it, and the effort the user DID choose survives.
+  const later = makePanel({
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'claude-opus-5', effort: 'high' } }),
+    storage: ctx.storage,
+  });
+  later.panel.open();
+  await later.tick(); await later.tick();
+  assert.equal(later.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5');
+  assert.equal(later.doc.querySelector('.ask-model-btn-effort').textContent, 'medium');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: null, effort: 'medium' },
+    'adopting the backend default still writes nothing');
+});
+
+test('ask-panel-pickers: an effort picked BEFORE the catalog lands does not pin the cold-start model', async () => {
+  // A slow /api/ask/models renders the popover with no model rows but a live Effort
+  // row; picking there must not persist FALLBACK_PICK — a model the user never saw.
+  const ctx = makePanel({
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'my-corp-model', effort: 'high' } }),
+  });
+  ctx.panel.open();
+  ctx.doc.querySelector('[data-ask-model-btn]').click();   // no tick: st.catalog is still null
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')], [], 'no model rows yet');
+  ctx.doc.querySelector('[data-ask-effort-row]').click();
+  [...ctx.doc.querySelectorAll('.ask-pop-model [role="menuitem"]')].find((b) => b.textContent === 'xhigh').click();
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: null, effort: 'xhigh' });
+
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Corp',
+    'the backend default still wins the model slot once the catalog lands');
 });
 
 test('ask-panel-pickers: the send body carries the picked model', async () => {
@@ -213,4 +326,94 @@ test('ask-panel-pickers: run-info popover shows per-agent ctx and a cost-only he
   const pop = ctx.doc.querySelector('.ask-pop-runinfo');
   assert.match(pop.textContent, /11\.6k ctx/, 'the row shows the agent context fill');
   assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '≈$0.62', 'header: cost only — summing ctx across agents means nothing');
+});
+
+test('ask-panel-pickers: plugin models group by plugin — one per plugin up front, the rest in More', async () => {
+  const ctx = makePanel({ fetchHandler: wideHandler() });
+  const pop = await openPicker(ctx);
+  const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
+  // one per claude family + every global + one per plugin
+  assert.deepEqual(names, ['Opus 5', 'Haiku 4.5', 'Corp', 'Acme Fast', 'Bolt X']);
+  // renderPane() calls panel.replaceChildren() (:769), so the More pane holds ONLY the rest.
+  ctx.doc.querySelector('[data-ask-more-models]').click();
+  const more = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
+  assert.deepEqual(more, ['Opus 4.8', 'Acme Slow'], 'the plugin\'s second model does not flood the primary list');
+});
+
+test('ask-panel-pickers: the selected model is always in the primary pane', async () => {
+  const seed = makePanel({ fetchHandler: handler() });
+  seed.storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'acme-slow', effort: 'medium' }));
+  const ctx = makePanel({ fetchHandler: wideHandler(), storage: seed.storage });
+  const pop = await openPicker(ctx);
+  const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
+  assert.ok(names.includes('Acme Slow'), 'the picked model is reachable without opening More');
+  const checked = pop.querySelector('.ask-model-check');
+  assert.ok(checked && checked.closest('[role="menuitem"]').textContent.includes('Acme Slow'));
+});
+
+test('ask-panel-pickers: a row shows the name and the warnings — never where the model came from', async () => {
+  const ctx = makePanel({ fetchHandler: wideHandler() });
+  const pop = await openPicker(ctx);
+  const row = (label) => [...pop.querySelectorAll('.ask-model-item')].find((b) => b.textContent.includes(label));
+
+  // A plugin model reads exactly like a built-in: name first, nothing about its origin.
+  const acme = row('Acme Fast');
+  assert.equal(acme.firstChild.className, 'ask-model-name', 'the name leads the row');
+  assert.equal(acme.childNodes.length, 1, 'and it is the whole row');
+  assert.equal(row('Corp').childNodes.length, 1, 'a global model is just as plain');
+  // Opus 5 is the picked model, so its row is name + ✓ — and still nothing else.
+  assert.deepEqual([...row('Opus 5').childNodes].map((n) => n.className), ['ask-model-name', 'ask-model-check']);
+
+  // The two STATUS badges are warnings, not provenance — they stay.
+  const bolt = [...row('Bolt X').querySelectorAll('.ask-model-tag')].map((t) => t.textContent);
+  assert.deepEqual(bolt, ['secret not set']);
+  assert.match(row('Bolt X').querySelector('.ask-model-tag.is-err').title, /BOLT_KEY/);
+
+  ctx.doc.querySelector('[data-ask-more-models]').click();
+  const slow = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].find((b) => b.textContent.includes('Acme Slow'));
+  assert.deepEqual([...slow.querySelectorAll('.ask-model-tag')].map((t) => t.textContent), ['⚠cost']);
+});
+
+test('ask-panel-pickers: a long plugin name does not cost the model its name', async () => {
+  // The row a long plugin name used to wreck: nothing about the plugin reaches the
+  // row now, so the name is the only variable-width text in it. The JS emits the
+  // FULL label; trimming is the stylesheet's job (.ask-model-item .ask-model-name,
+  // pinned by ui-ask-style).
+  const LONG = 'discretestack-models';
+  const ctx = makePanel({
+    fetchHandler: wideHandler({
+      models: [
+        { id: 'ds-fast', label: 'DS Fast', efforts: ['medium'], custom: 'plugin', plugin: LONG, hasEnv: true, secretsMissing: ['ds-other'] },
+      ],
+      efforts: ['medium', 'high', 'xhigh', 'max'],
+      default: { model: 'ds-fast', effort: 'medium' },
+    }),
+  });
+  const pop = await openPicker(ctx);
+  const row = pop.querySelector('.ask-model-item');
+  assert.equal(row.querySelector('.ask-model-name').textContent, 'DS Fast', 'the name is emitted in full');
+  assert.ok(!row.textContent.includes(LONG), 'the plugin name is nowhere in the row');
+  assert.deepEqual([...row.querySelectorAll('.ask-model-tag')].map((t) => t.textContent), ['secret not set']);
+  assert.ok(row.querySelector('.ask-model-check'), 'the check mark is still the last child of the row');
+  assert.equal(row.lastChild.className, 'ask-model-check');
+});
+
+test('ask-panel-pickers: the trigger button flags a picked model that is cost-flagged or secret-less', async () => {
+  const bodies = [];
+  const w = wideHandler();
+  const ctx = makePanel({
+    fetchHandler: (url, opts) => {
+      if (url.endsWith('/messages') && opts.method === 'POST') bodies.push(JSON.parse(opts.body));
+      return w(url, opts);
+    },
+  });
+  await openPicker(ctx);
+  [...ctx.doc.querySelectorAll('.ask-pop-model [role="menuitem"]')].find((b) => b.textContent.includes('Bolt X')).click();
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Bolt X ⚠');
+  // …and the pick still reaches the wire unchanged (D9: warn, do not block).
+  ctx.doc.querySelector('textarea.ask-input').value = 'hi there';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  assert.equal(bodies[0].model, 'bolt-x');
+  assert.equal(bodies[0].effort, 'high');
 });
