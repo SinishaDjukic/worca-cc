@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { MAX_FILE_SECTION_CODE_UNITS } from '../ui/public/diff-view.mjs';
 import { MAX_HIGHLIGHT_INPUT_BYTES } from '../ui/public/syntax-highlight.mjs';
 
@@ -519,11 +520,9 @@ test('discarding the retained worktree clears the banner and re-enables Archive'
       : null),
   });
   await openDetail(ctx);
-  // setupDiscardWorktreeButton still uses window.confirm — D2's confirmModal change
-  // covers Archive only.
-  ctx.window.confirm = () => true;
   const doc = ctx.window.document;
   click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  await confirmDialog(ctx.window);
   await settle(ctx.window, 5);
 
   assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
@@ -559,8 +558,8 @@ test('deep-linked discard still clears the banner after the real row lands', asy
     'the action arrives with the authoritative row');
 
   // (3) discard acts on THAT row, so the repaint really clears
-  ctx.window.confirm = () => true;
   click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
   assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
@@ -2154,10 +2153,9 @@ test('discard confirms honestly, POSTs the keyed route, and shows the saved reco
     },
   });
   await openDetail(ctx);
-  let confirmText = '';
-  ctx.window.confirm = (text) => { confirmText = text; return true; };
   const doc = ctx.window.document;
   click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  const confirmText = await confirmDialog(ctx.window);
   await settle(ctx.window, 5);
 
   assert.equal(request.method, 'POST');
@@ -2180,9 +2178,9 @@ test('a failed discard keeps the banner, the badge and the Archive block — and
       : null),
   });
   await openDetail(ctx);
-  ctx.window.confirm = () => true;
   const doc = ctx.window.document;
   click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  await confirmDialog(ctx.window);
   await settle(ctx.window, 5);
 
   assert.equal(doc.querySelector('#hist-detail .hist-retained-badge').hidden, false, 'badge stays');

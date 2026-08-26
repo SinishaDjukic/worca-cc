@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -79,7 +80,6 @@ test('Save serializes the canvas to contract topology and POSTs {name,steps,feed
   window.Element.prototype.scrollIntoView = function () {};
   Object.defineProperty(window.HTMLElement.prototype, 'offsetParent', { get() { return window.document.body; }, configurable: true });
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  window.prompt = () => 'My Flow';
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   window.fetch = (url, opts) => {
     const u = String(url);
@@ -107,7 +107,8 @@ test('Save serializes the canvas to contract topology and POSTs {name,steps,feed
   assert.equal(cols.length, 5, 'default = 5 steps');
 
   window.document.getElementById('composer-save').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 10));
+  // Save now asks for name + domain in ONE promptModal instead of two window.prompts.
+  await confirmDialog(window, { name: 'My Flow' });
   assert.equal(posted.length, 1, 'one POST');
   assert.equal(posted[0].name, 'My Flow');
   assert.deepEqual(posted[0].steps.map((c) => c.map((x) => x.key)),
@@ -135,7 +136,6 @@ test('saved list renders rows with meta line + chips; expand builds a read-only 
   window.Element.prototype.scrollIntoView = function () {};
   Object.defineProperty(window.HTMLElement.prototype, 'offsetParent', { get() { return window.document.body; }, configurable: true });
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  window.confirm = () => true;
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   window.fetch = (url, opts) => {
     const u = String(url);
@@ -172,7 +172,7 @@ test('saved list renders rows with meta line + chips; expand builds a read-only 
   assert.equal(quick.querySelectorAll('.pl-body .ro-flow .node').length, 3, 'preview has 3 nodes');
 
   quick.querySelector('.pl-del').dispatchEvent(new window.Event('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 10));
+  await confirmDialog(window);
   assert.deepEqual(deleted, ['wf_quickfix'], 'DELETE called for the workflow id');
   assert.equal(window.document.querySelectorAll('#composer-saved-list .pl-item').length, 1, 'row removed after reload');
 });

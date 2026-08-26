@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -29,7 +30,6 @@ async function boot({ fetchHandler } = {}) {
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;
-  window.confirm = () => true;
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0); // composer paints via rAF (same stub as ui-composer.test.mjs)
   window.fetch = (url, opts) => {
     const u = String(url);
@@ -94,13 +94,13 @@ test('Delete issues DELETE /api/agents/:key; a 409 keeps the card + surfaces the
   const doc = window.document;
   const card = doc.querySelector('.agent-card[data-agent-key="docsWriter"]');
   click(window, card.querySelector('.agent-delete'));
-  await new Promise((r) => setTimeout(r, 0));
+  await confirmDialog(window);
   assert.equal(calls.length, 1);
   assert.ok(doc.querySelector('.agent-card[data-agent-key="docsWriter"]'), '409 keeps the card');
   assert.match(doc.querySelector('#agents-msg').textContent, /Uses Docs/);
   mode = 200;
   click(window, doc.querySelector('.agent-card[data-agent-key="docsWriter"] .agent-delete'));
-  await new Promise((r) => setTimeout(r, 0));
+  await confirmDialog(window);
   assert.equal(doc.querySelector('.agent-card[data-agent-key="docsWriter"]'), null, '200 removes the card');
 });
 
@@ -146,7 +146,6 @@ test('composer save surfaces server warnings via the link-banner toast', async (
       return null;
     },
   });
-  window.prompt = () => 'Warny';
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
@@ -154,8 +153,7 @@ test('composer save surfaces server warnings via the link-banner toast', async (
   const doc = window.document;
   assert.ok(window.__composer.steps.length >= 1, 'canvas seeded from default');
   click(window, doc.querySelector('#composer-save'));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
+  await confirmDialog(window, { name: 'Warny' });
   assert.match(doc.querySelector('#composer-link-text').textContent, /consumes "checklist"/, 'warning toasted');
   assert.equal(doc.querySelector('#composer-link-banner').hidden, false);
 });

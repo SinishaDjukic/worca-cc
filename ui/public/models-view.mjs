@@ -331,13 +331,13 @@ export function renderExportWizard(globals, { doc = globalThis.document } = {}) 
 
   const pick = step('1 — Models to include', 'Only your global models can be shared.');
   for (const m of globals) {
-    const lab = h(doc, 'label', 'mvx-model');
+    const lab = h(doc, 'label', 'mvx-model opt-row');
     const cb = h(doc, 'input', 'mvx-model-cb');
     cb.type = 'checkbox'; cb.value = m.id;
     cb.dataset.envKeys = Object.keys(m.env || {}).join('\n');
     lab.appendChild(cb);
-    lab.appendChild(h(doc, 'span', null, `${m.label || m.id} `));
-    lab.appendChild(h(doc, 'small', 'hint', m.id));
+    lab.appendChild(h(doc, 'span', 'opt-name', `${m.label || m.id} `));
+    lab.appendChild(h(doc, 'small', 'hint opt-sub', m.id));
     pick.appendChild(lab);
   }
   if (!globals.length) pick.appendChild(h(doc, 'div', 'hist-empty', 'No global models to share yet.'));

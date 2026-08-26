@@ -58,12 +58,17 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
     if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
     if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
+    // Enabling a plugin acts on a live system the moment it flips, so it reads
+    // as a switch. `.switch` MUST be the input's immediate next sibling — the
+    // `.sw-input:checked + .switch` rule is what paints the on state.
     const toggle = h(doc, 'label', 'pl-enable');
-    const cb = h(doc, 'input', 'pl-toggle');
+    const cb = h(doc, 'input', 'sw-input pl-toggle');
     cb.type = 'checkbox';
     cb.checked = p.enabled !== false;
     cb.dataset.name = p.name;
+    cb.setAttribute('aria-label', `Enable ${p.name}`);
     toggle.appendChild(cb);
+    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
     toggle.appendChild(h(doc, 'span', '', p.enabled !== false ? 'enabled' : 'disabled'));
     head.appendChild(toggle);
     card.appendChild(head);
