@@ -3,13 +3,13 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { getDb, migrate } from '../src/core/db.mjs';
+import { getDb, migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 useTempHome(after);
 
-test('v10 adds nullable owner_pid/owner_host/heartbeat_at; user_version becomes 15', () => {
+test('v10 adds nullable owner_pid/owner_host/heartbeat_at; user_version becomes the current version', () => {
   const db = getDb(); // getDb() opens + migrates to SCHEMA_VERSION
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 17);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   const cols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   for (const c of ['owner_pid', 'owner_host', 'heartbeat_at']) assert.ok(cols.includes(c), c);
 });
@@ -51,7 +51,7 @@ test('incremental v9->v10 migration: migrate() adds columns on a v9 DB and stamp
   // Now run the incremental migration
   migrate(db);
 
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 17);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   const cols = db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name);
   for (const c of ['owner_pid', 'owner_host', 'heartbeat_at']) assert.ok(cols.includes(c), c);
   const row = db.prepare('SELECT owner_pid, owner_host, heartbeat_at FROM pipelines WHERE id = ?').get('seed1');

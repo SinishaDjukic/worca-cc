@@ -84,7 +84,14 @@ import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
   removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
 } from '../src/core/marketplaces.mjs';
-import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core/plugin-config.mjs';
+import {
+  redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
+  createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
+} from '../src/core/plugin-config.mjs';
+import {
+  setBinding, clearBinding, listBindingsForScope,
+  clearBindingsForProfile, resolveProfile,
+} from '../src/core/source-bindings.mjs';
 import { createChannelHost } from '../src/core/chat/channel-host.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
@@ -750,6 +757,9 @@ function normalizeRunSource(raw) {
         return { ok: false, error: `source.${k} is required for type "plugin"` };
       }
     }
+    if (raw.profile !== undefined && !isValidProfileId(raw.profile)) {
+      return { ok: false, error: 'source.profile is not a valid profile id' };
+    }
     return {
       ok: true,
       source: {
@@ -758,6 +768,9 @@ function normalizeRunSource(raw) {
         sourceId: raw.sourceId.trim(),
         taskId: raw.taskId.trim(),
         inputs: raw.inputs && typeof raw.inputs === 'object' && !Array.isArray(raw.inputs) ? raw.inputs : undefined,
+        // Which configuration of the source the task came from. Absent is legal
+        // (single-profile sources); an id that is not path-safe is not.
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
       },
     };
   }
@@ -802,6 +815,29 @@ app.post('/api/run', async (req, res) => {
     const sourceCheck = normalizeRunSource(body.source);
     if (sourceCheck && !sourceCheck.ok) return badRequest(res, sourceCheck.error);
     const source = sourceCheck ? sourceCheck.source : null;
+
+    // A multiProfile source without a profile would run against the (empty)
+    // default bucket and die mid-pipeline with a confusing connector error —
+    // reject it here, at submit, where the client can still fix it. The same
+    // goes for a profile that is no longer IN the roster (deleted in another
+    // tab after the client resolved it) and for a profile supplied to a source
+    // that does not use them (it would read a phantom bucket instead of the
+    // real config). A broken or uninstalled plugin is left for
+    // resolveTaskInput to report.
+    if (source && source.type === 'plugin') {
+      const m = readInstalledManifest(source.plugin);
+      const ts = m && (m.taskSources || []).find((s) => s.id === source.sourceId);
+      if (ts && ts.multiProfile) {
+        if (!source.profile) {
+          return badRequest(res, `source.profile is required — task source "${source.sourceId}" has per-profile configuration`);
+        }
+        if (!listProfileIds(source.plugin).includes(source.profile)) {
+          return badRequest(res, `plugin "${source.plugin}" has no profile "${source.profile}" — it may have been deleted; re-select one`);
+        }
+      } else if (ts && source.profile) {
+        return badRequest(res, `task source "${source.sourceId}" does not use profiles — omit source.profile`);
+      }
+    }
 
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
@@ -3184,6 +3220,8 @@ app.delete('/api/plugins/:name', async (req, res) => {
   if (!name) return;
   const purge = isTruthy(req.query.purge) || !!(req.body && req.body.purge === true);
   try {
+    // uninstallPlugin also drops the plugin's source bindings (core-side, so
+    // the CLI's `worca plugin remove` clears them identically).
     await uninstallPlugin(name, { purge });
     reloadChatWorkers(name);
     res.json({ ok: true, purged: purge });
@@ -3221,17 +3259,38 @@ app.post('/api/plugins/:name/doctor', async (req, res) => {
 // GET /api/plugins/:name/config -> per-source schema + redacted values. Secrets
 // NEVER travel to the browser: redactedConfig replaces a stored secret with
 // { set: true } (§7.6).
+// ?profile=<id> selects which configuration to echo (multi-profile sources);
+// absent = the default bucket, which is all a single-profile source ever uses.
 app.get('/api/plugins/:name/config', (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const manifest = readInstalledManifest(name);
   if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const wanted = typeof req.query.profile === 'string' && req.query.profile ? req.query.profile : null;
+  if (wanted && !isValidProfileId(wanted)) return badRequest(res, 'invalid profile id');
   try {
-    const sources = (manifest.taskSources || []).map((s) => ({
-      id: s.id,
-      schema: s.configSchema,
-      values: redactedConfig(name, s.configSchema),
-    }));
+    const profiles = listProfiles(name);
+    const sources = (manifest.taskSources || []).map((s) => {
+      // For a multi-profile source, "which profile" is a real choice: echo the
+      // requested one, else the first in the roster. A source with no profiles
+      // yet has nothing to show — the UI's move is "create one", not a form.
+      // A requested profile that is not in the roster is a caller error (a
+      // typo'd URL) — echoing an empty form for it would let a Save quietly
+      // create the typo as a real profile. Checked inside the map so the guard
+      // only fires for sources that use profiles at all.
+      if (s.multiProfile && wanted && !profiles.some((p) => p.id === wanted)) {
+        throw Object.assign(new Error(`plugin "${name}" has no profile "${wanted}"`), { code: 'BAD_REQUEST' });
+      }
+      const profile = s.multiProfile ? (wanted || profiles[0]?.id || null) : null;
+      return {
+        id: s.id,
+        schema: s.configSchema,
+        multiProfile: s.multiProfile === true,
+        profile,
+        profiles: s.multiProfile ? profiles : [],
+        values: s.multiProfile && !profile ? {} : redactedConfig(name, s.configSchema, profile),
+      };
+    });
     const channels = (manifest.chatChannels || []).map((c) => ({
       id: c.id,
       displayName: c.displayName,
@@ -3252,7 +3311,78 @@ app.get('/api/plugins/:name/config', (req, res) => {
   }
 });
 
-// PUT /api/plugins/:name/config { sourceId | channelId, values } ->
+// POST /api/plugins/:name/profiles { sourceId, id, label } — create (or relabel)
+// a profile of a multi-profile source. Creating a profile is deliberately
+// separate from saving into it: the roster entry must exist BEFORE the config
+// form has anything to write to.
+app.post('/api/plugins/:name/profiles', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const body = req.body || {};
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const source = (manifest.taskSources || []).find((s) => s.id === body.sourceId);
+  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
+  if (!isValidProfileId(body.id)) {
+    return badRequest(res, 'profile id must be lowercase letters, digits and dashes');
+  }
+  // "default" is the implicit bucket every profile-less read/write shares
+  // (chat channels, model secrets, migrated legacy config). Enrolled in the
+  // roster it would become deletable like any member — and deleting it wipes
+  // that shared bucket. createProfile throws too; 400 with the reason here.
+  if (body.id === DEFAULT_PROFILE) {
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — pick another name`);
+  }
+  try {
+    res.json({ ok: true, profile: createProfile(name, body.id, body.label) });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// DELETE /api/plugins/:name/profiles/:id?sourceId=… — drop a profile, its stored
+// config/secrets/state, and every project binding that named it (a binding
+// pointing at a deleted profile would otherwise resolve to nothing at run time).
+// Binding cleanup is PLUGIN-wide, not per-source: deleteProfile removes the
+// profile's buckets for the whole plugin, so a sibling source's binding naming
+// it would dangle just the same. sourceId is still required — it authorizes the
+// call against a source that actually uses profiles.
+app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
+  const sources = manifest.taskSources || [];
+  const source = sources.find((s) => s.id === sourceId) || (sources.length === 1 ? sources[0] : null);
+  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  // Mirror the POST guard: a single-profile source only has the implicit
+  // 'default' bucket, and deleting THAT would wipe its entire config/secrets/
+  // state. Same for ids not in the roster — deleteProfile would still drop
+  // whatever buckets happen to share the id (e.g. migrated legacy data under
+  // 'default'), so only roster members are deletable.
+  if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
+  if (!isValidProfileId(req.params.id)) return badRequest(res, 'invalid profile id');
+  // Reserved even if a pre-reservation roster enrolled it: deleting "default"
+  // would strip the shared bucket (chat-channel config, model secrets,
+  // migrated legacy data) out of all three files.
+  if (req.params.id === DEFAULT_PROFILE) {
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — it cannot be deleted`);
+  }
+  if (!listProfiles(name).some((p) => p.id === req.params.id)) {
+    return badRequest(res, `plugin "${name}" has no profile "${req.params.id}"`);
+  }
+  try {
+    deleteProfile(name, req.params.id);
+    const unbound = clearBindingsForProfile(name, req.params.id);
+    res.json({ ok: true, unbound });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// PUT /api/plugins/:name/config { sourceId | channelId, values, profile? } ->
 // writePluginConfig routes secret:true keys to data/secrets.json (0600,
 // atomic). Request values are NEVER logged and NEVER echoed back (the response
 // is a bare receipt). A channelId save also hot-restarts the channel worker.
@@ -3278,6 +3408,8 @@ app.put('/api/plugins/:name/config', (req, res) => {
     }
   }
   let schema;
+  let source = null;
+  let profile = null;
   if (typeof body.channelId === 'string' && body.channelId) {
     const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
     if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
@@ -3287,12 +3419,22 @@ app.put('/api/plugins/:name/config', (req, res) => {
     const sourceId = typeof body.sourceId === 'string' && body.sourceId
       ? body.sourceId
       : (sources.length === 1 ? sources[0].id : '');
-    const source = sources.find((s) => s.id === sourceId);
+    source = sources.find((s) => s.id === sourceId);
     if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+    profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
+    if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
+    if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
+    // Saves go only into EXISTING roster members — mirroring the GET guard,
+    // whose whole point is that a Save must not quietly mint a typo'd (or
+    // just-deleted) id as a real profile with secrets stored under it.
+    // Creation stays solely on POST /profiles.
+    if (source.multiProfile && !listProfiles(name).some((p) => p.id === profile)) {
+      return badRequest(res, `plugin "${name}" has no profile "${profile}" — create it first`);
+    }
     schema = source.configSchema;
   }
   try {
-    writePluginConfig(name, schema, body.values);
+    writePluginConfig(name, schema, body.values, profile);
     reloadChatWorkers(name);
     res.json({ ok: true });
   } catch (err) {
@@ -3318,6 +3460,78 @@ app.get('/api/plugins/:name/model-env', (req, res) => {
     else secretKeys.push(k);
   }
   res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
+});
+
+// ---------------------------------------------------------------------------
+// /api/source-bindings -> which PROFILE of a task source a project/workspace
+// pulls from. Set once per project; every run then resolves it silently, which
+// is the point — a per-run dropdown is how you start a pipeline against the
+// wrong tracker without noticing (see src/core/source-bindings.mjs).
+// ---------------------------------------------------------------------------
+
+/** Shared scope parsing for the two binding routes. Accepts a project by key or
+ *  by path (the New Pipeline form knows the path, the Projects view the key). */
+function bindingScope(q = {}) {
+  const workspaceId = typeof q.workspaceId === 'string' && q.workspaceId.trim() ? q.workspaceId.trim() : '';
+  if (workspaceId) return { scopeType: 'workspace', scopeKey: workspaceId };
+  const key = typeof q.projectKey === 'string' && q.projectKey.trim() ? q.projectKey.trim() : '';
+  if (key) return { scopeType: 'project', scopeKey: key };
+  const dir = typeof q.projectDir === 'string' && q.projectDir.trim() ? q.projectDir.trim() : '';
+  if (dir) return { scopeType: 'project', scopeKey: projectKey(path.resolve(dir)) };
+  return null;
+}
+
+// GET /api/source-bindings?projectDir=…|projectKey=…|workspaceId=…
+//   [&plugin=&sourceId=] -> { bindings: [...] } or, when a source is named,
+//   the RESOLVED profile for it: { profile, via, candidates? }.
+app.get('/api/source-bindings', async (req, res) => {
+  const scope = bindingScope(req.query);
+  if (!scope) return badRequest(res, 'projectDir, projectKey or workspaceId is required');
+  const plugin = typeof req.query.plugin === 'string' ? req.query.plugin.trim() : '';
+  const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId.trim() : '';
+  try {
+    if (!plugin || !sourceId) return res.json({ ...scope, bindings: listBindingsForScope(scope.scopeType, scope.scopeKey) });
+    // A workspace with no binding of its own inherits from its members when they
+    // agree, so the member keys have to be resolved before asking.
+    let memberKeys;
+    if (scope.scopeType === 'workspace') {
+      const ws = await readWorkspace(scope.scopeKey);
+      memberKeys = ws ? ws.projectKeys : [];
+    }
+    res.json({
+      ...scope,
+      ...resolveProfile({ ...scope, plugin, sourceId, memberKeys, available: listProfileIds(plugin) }),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// PUT /api/source-bindings { projectDir|projectKey|workspaceId, plugin,
+//   sourceId, profile } — profile:null clears the binding.
+app.put('/api/source-bindings', (req, res) => {
+  const body = req.body || {};
+  const scope = bindingScope(body);
+  if (!scope) return badRequest(res, 'projectDir, projectKey or workspaceId is required');
+  const plugin = typeof body.plugin === 'string' ? body.plugin.trim() : '';
+  const sourceId = typeof body.sourceId === 'string' ? body.sourceId.trim() : '';
+  if (!plugin || !sourceId) return badRequest(res, 'plugin and sourceId are required');
+  const ref = { ...scope, plugin, sourceId };
+  try {
+    if (body.profile === null || body.profile === '') {
+      clearBinding(ref);
+      return res.json({ ok: true, ...scope, profile: null });
+    }
+    if (!isValidProfileId(body.profile)) return badRequest(res, 'invalid profile id');
+    // Binding to a profile that does not exist would resolve to nothing at run
+    // time — reject it here, where the user can still see why.
+    if (!listProfileIds(plugin).includes(body.profile)) {
+      return badRequest(res, `plugin "${plugin}" has no profile "${body.profile}"`);
+    }
+    res.json({ ok: true, ...scope, profile: setBinding(ref, body.profile) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -3359,8 +3573,21 @@ app.post('/api/sources/call', async (req, res) => {
     if (input && typeof input.optionsFrom === 'string' && input.optionsFrom) allowed.add(input.optionsFrom);
   }
   if (!allowed.has(op)) return badRequest(res, `op "${op}" is not allowed for this source`);
+  const profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
+  if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
+  if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
+  // Same submit-time guards as /api/run: a deleted profile must 400 here, not
+  // fail deep in the connector against an empty bucket, and a profile on a
+  // single-profile source would read (and persist state into) a phantom
+  // bucket instead of the real config.
+  if (source.multiProfile && !listProfileIds(plugin).includes(profile)) {
+    return badRequest(res, `plugin "${plugin}" has no profile "${profile}"`);
+  }
+  if (!source.multiProfile && profile) {
+    return badRequest(res, `task source "${sourceId}" does not use profiles — omit profile`);
+  }
   try {
-    const result = await callSource({ plugin, sourceId, op, args });
+    const result = await callSource({ plugin, sourceId, op, args, profile });
     res.json({ ok: true, result });
   } catch (err) {
     if (err instanceof PluginOpError) {
