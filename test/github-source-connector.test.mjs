@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import createTaskSource, { parseFilter } from '../plugins/github-source/connector/index.mjs';
+import { ghAuthToken } from '../plugins/github-source/connector/gh-cli.mjs';
 
 // ── harness ────────────────────────────────────────────────────────────────────
 function res(status, body, headers = {}) {
@@ -169,5 +170,83 @@ test('parseFilter: defaults + assignee/state/label tokens; unknown tokens ignore
   assert.deepEqual(parseFilter(''), { state: 'open', labels: [], assignee: null });
   assert.deepEqual(parseFilter('assignee:@me state:closed label:x label:y wat:huh'), {
     state: 'closed', labels: ['x', 'y'], assignee: '@me',
+  });
+});
+
+// ── token resolution: gh CLI fallback ──────────────────────────────────────────
+/** Reads the Authorization header off the first recorded call. */
+function authOf(fetch) {
+  return fetch.calls[0]?.init?.headers?.authorization ?? null;
+}
+
+test('token: falls back to the gh CLI when no token is configured', async () => {
+  const fetch = fakeFetch([{ match: /\/user$/, reply: res(200, { login: 'octo' }) }]);
+  const src = createTaskSource(makeCtx({}), { fetch, ghAuthToken: () => 'gho_from_cli' });
+  assert.deepEqual(await src.validateConfig(), { ok: true, identity: 'octo' });
+  assert.equal(authOf(fetch), 'Bearer gho_from_cli');
+});
+
+test('token: an explicit config token wins and never shells out to gh', async () => {
+  const fetch = fakeFetch([{ match: /\/user$/, reply: res(200, { login: 'octo' }) }]);
+  const ghAuthToken = () => { throw new Error('gh must not be consulted when a token is configured'); };
+  const src = createTaskSource(makeCtx({ token: 'tok' }), { fetch, ghAuthToken });
+  await src.validateConfig();
+  assert.equal(authOf(fetch), 'Bearer tok');
+});
+
+test('token: the gh fallback is lazy and resolved at most once per op', async () => {
+  let calls = 0;
+  const fetch = fakeFetch([{ match: /\/repos\/acme\/api\/issues\?/, reply: res(200, [issue(1, 'Alpha')]) }]);
+  const src = createTaskSource(makeCtx({}), { fetch, ghAuthToken: () => { calls += 1; return 'gho_x'; } });
+  assert.equal(calls, 0, 'building the source must not shell out');
+  const q = { inputs: { repo: 'acme/api', filter: 'state:open' } };
+  await src.listTasks(q);
+  await src.listTasks(q);
+  assert.equal(calls, 1, 'the resolved token must be memoized across requests');
+});
+
+test('token: a gh fallback failure surfaces as kind:auth, not network', async () => {
+  const fetch = fakeFetch([{ match: /./, reply: res(200, []) }]);
+  const boom = () => { throw Object.assign(new Error('gh not logged in'), { kind: 'auth' }); };
+  const src = createTaskSource(makeCtx({}), { fetch, ghAuthToken: boom });
+  await assert.rejects(() => src.listTasks({ inputs: { repo: 'acme/api' } }), (e) => {
+    assert.equal(e.kind, 'auth', 'must not be swallowed by ghFetch\'s network catch');
+    assert.equal(e.message, 'gh not logged in');
+    return true;
+  });
+  assert.equal(fetch.calls.length, 0, 'no request may go out without a token');
+});
+
+test('validateConfig: a gh fallback failure reports as a token field error', async () => {
+  const boom = () => { throw Object.assign(new Error('gh not logged in'), { kind: 'auth' }); };
+  const src = createTaskSource(makeCtx({}), { fetch: fakeFetch([]), ghAuthToken: boom });
+  const v = await src.validateConfig();
+  assert.equal(v.ok, false);
+  assert.equal(v.errors[0].field, 'token');
+  assert.match(v.errors[0].message, /gh not logged in/);
+});
+
+// ── gh-cli.mjs: the subprocess seam (injected runner, never spawns in tests) ────
+test('ghAuthToken: trims the token; empty output and spawn failure map to kind:auth', () => {
+  assert.equal(ghAuthToken(() => 'gho_abc\n'), 'gho_abc');
+
+  assert.throws(() => ghAuthToken(() => '  \n'), (e) => {
+    assert.equal(e.kind, 'auth');
+    assert.match(e.message, /gh CLI/);
+    return true;
+  });
+
+  const enoent = () => { throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' }); };
+  assert.throws(() => ghAuthToken(enoent), (e) => {
+    assert.equal(e.kind, 'auth');
+    assert.match(e.message, /ENOENT/);
+    return true;
+  });
+
+  const notLoggedIn = () => { throw Object.assign(new Error('Command failed'), { stderr: Buffer.from('gh: not logged in\n') }); };
+  assert.throws(() => ghAuthToken(notLoggedIn), (e) => {
+    assert.equal(e.kind, 'auth');
+    assert.match(e.message, /not logged in/);
+    return true;
   });
 });

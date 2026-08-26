@@ -9,6 +9,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import {
   costWindowStart, costWindowEnd, recordCostDelta, windowedSpendUsd,
   allTimeTotals, readCostCapOverride, setCostCapOverride, budgetStatus, roundUsd,
+  recordAskCostDelta, askWindowedSpendUsd, totalWindowSpendUsd,
 } from '../src/core/cost-budget.mjs';
 import { setTotalCostLimitUsd, setPipelineCostLimitUsd, setCostLimitResetPeriod }
   from '../src/core/settings.mjs';
@@ -149,4 +150,58 @@ test('allTimeTotals falls back to per-step sums when the row totals are 0', asyn
   const after = allTimeTotals();
   assert.equal(roundUsd(after.spendUsd - before.spendUsd), 0.75, 'step costs stand in for a $0 row');
   assert.equal(after.activeMs - before.activeMs, 3000, 'step active time stands in too');
+});
+
+test('recordAskCostDelta appends raw rows; skips null/zero/negative and missing threadId', () => {
+  getDb().exec('DELETE FROM ask_cost_ledger');
+  recordAskCostDelta({ threadId: 'ask_00000001', messageId: 'askm_00000001',
+    amountUsd: 0.123456, tokens: 1500, model: 'claude-opus-5', tsMs: 2000 });
+  recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: null, tsMs: 2001 }); // pre-result turn
+  recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: 0, tsMs: 2002 });    // mock
+  recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: -1, tsMs: 2003 });
+  recordAskCostDelta({ threadId: '', amountUsd: 5, tsMs: 2004 });
+  const rows = getDb().prepare('SELECT * FROM ask_cost_ledger ORDER BY id').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].thread_id, 'ask_00000001');
+  assert.equal(rows[0].message_id, 'askm_00000001');
+  assert.equal(rows[0].amount_usd, 0.123456); // raw, unrounded
+  assert.equal(rows[0].tokens, 1500);
+  assert.equal(rows[0].model, 'claude-opus-5');
+  assert.equal(rows[0].ts, 2000);
+});
+
+test('askWindowedSpendUsd: open-ended and bounded (toMs exclusive), 4dp rounding', () => {
+  getDb().exec('DELETE FROM ask_cost_ledger');
+  recordAskCostDelta({ threadId: 'ask_a', amountUsd: 0.11111, tsMs: 1000 });
+  recordAskCostDelta({ threadId: 'ask_b', amountUsd: 0.2, tsMs: 2000 });
+  assert.equal(askWindowedSpendUsd(1000), roundUsd(0.31111));
+  assert.equal(askWindowedSpendUsd(1500), 0.2);
+  assert.equal(askWindowedSpendUsd(1000, 2000), 0.1111, 'toMs is exclusive');
+  assert.equal(askWindowedSpendUsd(3000), 0);
+});
+
+test('totalWindowSpendUsd + budgetStatus combine both ledgers; ask growth flips the block', async () => {
+  getDb().exec('DELETE FROM cost_ledger');
+  getDb().exec('DELETE FROM ask_cost_ledger');
+  const now = local(2026, 8, 6, 12);
+  await setCostLimitResetPeriod('weekly');
+  await setTotalCostLimitUsd(1);
+  const winStart = +costWindowStart(now, 'weekly');
+  recordCostDelta({ pipelineId: 'p-combined', amountUsd: 0.4, tsMs: winStart + 1000 });
+  recordAskCostDelta({ threadId: 'ask_a', amountUsd: 0.3, tsMs: winStart + 2000 });
+  recordAskCostDelta({ threadId: 'ask_b', amountUsd: 0.9, tsMs: winStart - 1000 }); // previous window
+  assert.equal(totalWindowSpendUsd(winStart), 0.7);
+  const b = budgetStatus(now);
+  assert.equal(b.windowSpendUsd, 0.7);
+  assert.equal(b.blocked, false);
+  assert.equal(b.remainingUsd, 0.3);
+  recordAskCostDelta({ threadId: 'ask_a', amountUsd: 0.5, tsMs: winStart + 3000 });
+  const b2 = budgetStatus(now);
+  assert.equal(b2.windowSpendUsd, 1.2);
+  assert.equal(b2.blocked, true, 'chat spend counts toward the total-limit block (D3)');
+  // allTimeSpendUsd = pipelines-table sums + EVERY ask row (0.3 + 0.9 + 0.5)
+  assert.equal(b2.allTimeSpendUsd, roundUsd(allTimeTotals().spendUsd + 1.7),
+    'every ask row counts in all-time spend, window or not');
+  await setTotalCostLimitUsd('');
+  await setCostLimitResetPeriod('');
 });

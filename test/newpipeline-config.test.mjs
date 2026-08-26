@@ -808,3 +808,33 @@ test('a VANISHED selection falls back to Permissive with a VISIBLE form message 
   assert.equal(window.document.querySelector('#guardrailsSelect').value, 'permissive', 'fell back to the default');
   assert.match(window.document.querySelector('#form-msg').textContent, /no longer exists/, 'said out loud');
 });
+
+// Review of PR #376: populateBranchSelect had three un-guarded callers (project
+// change, target change, prefill) and whichever /api/branches response resolved
+// LAST rebuilt the options — wiping the source branch the prefill had just set.
+test('branch select: a slower, older /api/branches response cannot overwrite a newer one', async () => {
+  let releaseA = null;
+  const branches = (list, current) => ({ ok: true, status: 200, json: async () => ({ branches: list, current }) });
+  const { window } = await boot({ fetchHandler: (url) => {
+    if (url.includes('/api/branches') && url.includes('projA')) return new Promise((r) => { releaseA = () => r(branches(['main', 'a-only'], 'main')); });
+    if (url.includes('/api/branches') && url.includes('projB')) return Promise.resolve(branches(['main', 'b-only'], 'b-only'));
+    if (url.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'projA', path: '/tmp/projA', exists: true }, { name: 'projB', path: '/tmp/projB', exists: true }] }) });
+    return null;
+  } });
+  const doc = window.document;
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 5; i++) await tick();
+  const sel = [...doc.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === '/tmp/projA'));
+  assert.ok(sel, 'the project select lists both projects');
+  const branchSel = doc.getElementById('sourceBranch');
+  const values = () => [...branchSel.options].map((o) => o.value);
+  sel.value = '/tmp/projA'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  for (let i = 0; i < 3; i++) await tick();
+  assert.ok(releaseA, 'A is in flight');
+  sel.value = '/tmp/projB'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.ok(values().includes('b-only'), `B's branches landed: ${values()}`);
+  releaseA();                                            // the stale response for A
+  for (let i = 0; i < 5; i++) await tick();
+  assert.ok(values().includes('b-only') && !values().includes('a-only'), `the stale A response lost: ${values()}`);
+});

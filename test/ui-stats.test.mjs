@@ -18,7 +18,8 @@ const PROJECT = '/tmp/proj';
 const STATS_FIXTURE = {
   range: 'week', bucket: 'day',
   windowStartMs: Date.now() - 3 * 86400000, windowEndMs: Date.now() + 4 * 86400000,
-  totals: { spentUsd: 3.5, workedMs: 7200000, runs: 3, finished: 2, stopped: 1,
+  totals: { spentUsd: 3.5, pipelineSpendUsd: 3, ask: { spendUsd: 0.5, sessions: 2, turns: 4 },
+    workedMs: 7200000, runs: 3, finished: 2, stopped: 1,
     failed: 0, paused: 0, running: 0, prsOpened: 1, prsMerged: 1 },
   prev: null,
   // resetPeriod MUST be 'monthly' here: this object is also the /api/budget
@@ -86,6 +87,7 @@ test('nav: sidebar + topnav carry data-nav="stats"; #stats opens the view and fe
   // real budgetState reads the monthly fixture.
   assert.ok(calls.some((u) => u.includes('range=month')), 'default range is month');
   assert.ok(window.document.querySelector('#stats-body .stat-row'), 'KPI row painted');
+  assert.equal(window.document.querySelectorAll('#stats-body .stat-tile').length, 6);
 });
 
 test('range seg: clicking All time refetches range=all and moves .on', async () => {
@@ -166,4 +168,24 @@ test('pipelines-changed while stats open refetches', async () => {
   await tick();
   assert.ok(calls.length > before, 'a second /api/stats fetch happened');
   assert.equal(body.classList.contains('is-loading'), false, 'loading state cleared');
+});
+
+test('ask-done and ask-error while stats open refetch; other ask-* frames do not', async () => {
+  const { calls, wsBox, tick, showStats } = await boot();
+  await showStats();
+  const before = calls.length;
+  wsBox.ws.dispatch('message', { data: JSON.stringify(
+    { type: 'ask-usage', threadId: 'ask_00000000', messageId: 'askm_00000000', usage: {} }) });
+  await tick();
+  assert.equal(calls.length, before, 'ask-usage does not refetch');
+  wsBox.ws.dispatch('message', { data: JSON.stringify(
+    { type: 'ask-done', threadId: 'ask_00000000', messageId: 'askm_00000000',
+      status: 'done', usage: {}, costUsd: 0.1, threadTotals: null }) });
+  await tick();
+  assert.ok(calls.length > before, 'ask-done refetches /api/stats (D12)');
+  const afterDone = calls.length;
+  wsBox.ws.dispatch('message', { data: JSON.stringify(
+    { type: 'ask-error', threadId: 'ask_00000000', messageId: 'askm_00000000', message: 'boom' }) });
+  await tick();
+  assert.ok(calls.length > afterDone, 'ask-error refetches too — an error turn can carry recorded spend');
 });

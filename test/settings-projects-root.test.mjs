@@ -309,8 +309,8 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
 test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    assert.deepEqual(Object.keys(j).sort(), ['chat', 'costLimitResetPeriod', 'default', 'pipelineCostLimitUsd',
-      'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
+    assert.deepEqual(Object.keys(j).sort(), ['askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
+      'default', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');
@@ -318,6 +318,34 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     assert.equal(j.pipelineCostLimitUsd, null, 'no cap set -> unlimited');
     assert.equal(j.totalCostLimitUsd, null, 'no cap set -> unlimited');
     assert.equal(j.costLimitResetPeriod, 'monthly', 'the default window');
+  });
+});
+
+test('REGRESSION (Ask Worca): an ask-only POST must not clear the root or the budget keys', async () => {
+  await withEnv(undefined, async () => {
+    await postApi({ root: home });                         // set a custom root first
+    await postApi({ totalCostLimitUsd: 5 });
+    const r = await postApi({ askMaxTurns: 12, askMaxBudgetUsd: null });
+    assert.equal(r.status, 200);
+    const j = await getApi();
+    assert.equal(j.root, home, 'root untouched by an ask-only save');
+    assert.equal(j.totalCostLimitUsd, 5, 'budget untouched');
+    assert.equal(j.askMaxTurns, 12);
+    assert.equal(j.askMaxBudgetUsd, null, 'null = no cap round-trips');
+    const bad = await postApi({ askMaxTurns: 0 });
+    assert.equal(bad.status, 400);
+    assert.equal((await bad.json()).error, 'askMaxTurns must be an integer between 1 and 500');
+    assert.equal((await getApi()).askMaxTurns, 12, 'rejected: nothing written');
+    const multi = await postApi({ askMaxTurns: 7, askMaxBudgetUsd: 1000 });   // first key valid, second invalid
+    assert.equal(multi.status, 400);
+    assert.equal((await multi.json()).error, 'askMaxBudgetUsd must be null (no cap) or a number between 0.1 and 100');
+    assert.equal((await getApi()).askMaxTurns, 12, 'validated as a SET before any write: the valid first key was NOT persisted');
+    const cleared = await postApi({ askMaxTurns: '', askMaxBudgetUsd: '' });
+    assert.equal(cleared.status, 200);
+    const k = await getApi();
+    assert.equal(k.askMaxTurns, 40);
+    assert.equal(k.askMaxBudgetUsd, 2);
+    assert.equal(k.root, home, 'still untouched');
   });
 });
 

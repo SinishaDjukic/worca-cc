@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd } = {}) {
+function defaultRun(cmd, args, { cwd, timeout = 0 } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -18,12 +18,23 @@ function defaultRun(cmd, args, { cwd } = {}) {
       return;
     }
     let stdout = '', stderr = '';
+    let settled = false;
+    const done = (val) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); resolve(val); };
+    // `-M -l0` (unlimited rename detection) can run for minutes on a huge diff, and
+    // the diff helpers sit on the Stop/error terminal path (review of PR #376) —
+    // a bound keeps a stop from hanging on git. 0 = no bound (the default).
+    const timer = timeout > 0
+      ? setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } done({ ok: false, stdout, stderr: `${cmd} timed out after ${timeout} ms`, code: -1 }); }, timeout)
+      : null;
     child.stdout?.on('data', (b) => (stdout += b.toString()));
     child.stderr?.on('data', (b) => (stderr += b.toString()));
-    child.on('error', (err) => resolve({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
-    child.on('close', (code) => resolve({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
+    child.on('error', (err) => done({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
+    child.on('close', (code) => done({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
   });
 }
+
+/** Bound for the diff helpers below (persisted-diff generation on every terminal path). */
+export const DIFF_TIMEOUT_MS = 120_000;
 
 let _run = defaultRun;
 let _ghCache = null;
@@ -49,12 +60,16 @@ export async function diffShortstat(projectDir, source, feature) {
  * `pathspecs` (optional) are appended AFTER the bare '--' so callers can restrict
  * or, more usefully, EXCLUDE paths (`:(exclude)<path>` — exclude-only pathspecs are
  * valid git). Passing nothing yields the byte-identical argv of before (§8.8).
+ * `core.quotePath=false` matches diffPatch below, so results.json and the persisted
+ * patch name a non-ASCII file the same way instead of `"cl\303\251.pem"` vs `clé.pem`.
+ * `-l0` matches it for the same reason: `diff.renameLimit` would otherwise decide
+ * per command whether a rename is one `R` row or a `D` plus an `A`.
  * @returns {Promise<Array<{status:string, path:string, from?:string}>>}
  */
 export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
   if (!projectDir || !base) return [];
-  const args = ['diff', '--name-status', '-M', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const args = ['-c', 'core.quotePath=false', 'diff', '--name-status', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   if (!r.ok) return [];
   const out = [];
   for (const line of r.stdout.split('\n')) {
@@ -73,14 +88,15 @@ export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
 /**
  * Parse `git diff --numstat -M` into a Map keyed by path. Binary files report
  * `-`/`-` and are flagged `binary:true` with zero counts. `pathspecs` (optional)
- * are appended AFTER the bare '--' — see diffNameStatus.
+ * are appended AFTER the bare '--' — see diffNameStatus, whose `core.quotePath=false`
+ * and `-l0` this shares so the Map keys match the name-status paths.
  * @returns {Promise<Map<string,{added:number, removed:number, binary:boolean}>>}
  */
 export async function diffNumstat(projectDir, base, head, pathspecs = []) {
   const m = new Map();
   if (!projectDir || !base) return m;
-  const args = ['diff', '--numstat', '-M', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const args = ['-c', 'core.quotePath=false', 'diff', '--numstat', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   if (!r.ok) return m;
   for (const line of r.stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -95,12 +111,34 @@ export async function diffNumstat(projectDir, base, head, pathspecs = []) {
 /**
  * Full unified diff (`git diff -M base [head]`). Empty string on failure.
  * `pathspecs` (optional) are appended AFTER the bare '--' — see diffNameStatus.
+ * `core.quotePath=false` keeps non-ASCII paths literal instead of C-quoted, so
+ * every `diff --git a/X b/X` parser downstream sees the real path. The prefixes
+ * themselves are a SETTING, not a constant — `diff.noprefix`,
+ * `diff.mnemonicPrefix` (`c/` … `w/`) and `diff.srcPrefix`/`diff.dstPrefix` come
+ * from the user's own ~/.gitconfig and apply to every worktree — and
+ * `diff.external`/`GIT_EXTERNAL_DIFF` replaces the patch wholesale, emitting no
+ * `diff --git` line at all. Pin all four so the header shape those parsers
+ * (ask/tools.mjs, ui/public/diff-view.mjs) rely on is ours, not the user's.
+ * `color.diff`/`color.ui = always` is the same class of setting — it wraps every
+ * header in SGR escapes, which no parser here strips — so `--no-color` is pinned too.
+ * `diff.submodule = diff` is the same class one level down: git spawns an INNER
+ * `git diff` inside the submodule and propagates none of these pins into it, so an
+ * external diff tool (config or GIT_EXTERNAL_DIFF) makes the inner patch header-less
+ * and it rides inside the section before it. `--submodule=short` keeps a submodule
+ * as one `Subproject commit` hunk under its own path — the name the two row parsers
+ * above already use.
+ * `diff.renameLimit` decides whether git PAIRS a rename+edit at all: below it a
+ * rename out of a credential file arrives as delete + add, and the add's `+` lines
+ * are the old file's content under the new, harmless name. `-l0` pins the unlimited
+ * detection the old-path filter in ask/tools.mjs depends on.
  * @returns {Promise<string>}
  */
 export async function diffPatch(projectDir, base, head, pathspecs = []) {
   if (!projectDir || !base) return '';
-  const args = ['diff', '-M', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir });
+  const args = ['-c', 'core.quotePath=false', 'diff', '-M', '-l0', '--no-color', '--no-ext-diff', '--submodule=short',
+    '--src-prefix=a/', '--dst-prefix=b/',
+    base, ...(head ? [head] : []), '--', ...pathspecs];
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
   return r.ok ? r.stdout : '';
 }
 
@@ -195,6 +233,7 @@ export async function findPrForBranch({ projectDir, head } = {}) {
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
 export const _testing = {
+  defaultRun,
   setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
   reset() { _run = defaultRun; _ghCache = null; },
 };

@@ -19,16 +19,19 @@ import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
-import { readPluginConfig, readPluginState, writePluginState } from './plugin-config.mjs';
+import { readPluginConfig, readPluginState, writePluginState, listProfileIds, DEFAULT_PROFILE } from './plugin-config.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
 
-/** Error kinds an op can surface (spec §11); anything else normalizes to 'plugin'. */
-const KINDS = new Set(['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol']);
+/** Error kinds an op can surface (spec §11) plus the host-synthesized
+ *  'unimplemented' (the connector lacks the op — distinct from an implemented
+ *  op that CRASHED, because callers like the capabilities probe must default
+ *  differently for the two); anything else normalizes to 'plugin'. */
+const KINDS = new Set(['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol', 'unimplemented']);
 
 export class PluginOpError extends Error {
   /**
-   * @param {'auth'|'rate-limit'|'network'|'plugin'|'timeout'|'protocol'} kind
+   * @param {'auth'|'rate-limit'|'network'|'plugin'|'timeout'|'protocol'|'unimplemented'} kind
    * @param {string} message
    */
   constructor(kind, message) {
@@ -74,7 +77,7 @@ async function mockCall(op, args) {
   if (entry === undefined) {
     // Mirror the real child's answer for an unimplemented op — Task 13's
     // capabilities tolerant-default keys on exactly this kind.
-    throw new PluginOpError('plugin', `mock: no canned response for op "${op}"`);
+    throw new PluginOpError('unimplemented', `mock: no canned response for op "${op}"`);
   }
   try {
     return await (typeof entry === 'function' ? entry(args) : entry);
@@ -131,33 +134,81 @@ export const WIN32_ENV_BASELINE = Object.freeze([
   'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
 ]);
 
+/** The profile invariant, enforced in the shim itself so EVERY caller — the
+ *  CLI's `worca plugin exec`, future workers — is safe by construction, not
+ *  just the HTTP routes. Presence alone is not enough: a typo'd or deleted
+ *  profile passes a presence check, silently runs against an EMPTY bucket
+ *  (false "not configured" verdicts) and then persists state into a phantom
+ *  bucket the DELETE route can never purge — so membership in the roster is
+ *  checked here too. `allowLegacyDefault` is the ONE host-internal exception:
+ *  write-back for a pipeline row that predates profiles targets the
+ *  DEFAULT_PROFILE bucket, because that is where the pre-upgrade flat config
+ *  migrated — i.e. the instance the task actually came from (sources.mjs). */
+function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault }) {
+  if (source.multiProfile === true) {
+    if (!profile) {
+      throw new PluginOpError('plugin',
+        `task source "${plugin}/${sourceId}" has per-profile configuration — pass a profile (e.g. --profile <id>)`);
+    }
+    if (profile === DEFAULT_PROFILE) {
+      if (!allowLegacyDefault) {
+        throw new PluginOpError('plugin',
+          `"${DEFAULT_PROFILE}" is the reserved shared bucket, not a profile of "${plugin}/${sourceId}" — pass a profile from the roster`);
+      }
+    } else if (!listProfileIds(plugin).includes(profile)) {
+      throw new PluginOpError('plugin',
+        `plugin "${plugin}" has no profile "${profile}" — create it in Plugins settings (or POST /api/plugins/${plugin}/profiles) first`);
+    }
+  } else if (profile && profile !== DEFAULT_PROFILE) {
+    throw new PluginOpError('plugin', `task source "${plugin}/${sourceId}" does not use profiles`);
+  }
+}
+
 /**
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI/routes) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source — see
+ * assertProfileInvariant.
  * @returns {Promise<any>}
  */
-export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 30000, logger } = {}) {
+export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger, allowLegacyDefault = false } = {}) {
   const log = typeof logger === 'function'
     ? logger
     : (level, msg) => console.error(`[plugin:${plugin}] ${level}: ${msg}`);
+  // Which configuration of the source to run against (plugin-config.mjs
+  // profiles). Absent -> DEFAULT_PROFILE, which is what every single-profile
+  // source uses, so this parameter is invisible unless a plugin opts in.
+  const prof = profile || DEFAULT_PROFILE;
 
   if (mockMode()) {
-    // Canned responses, no spawn, no plugin needed. reportResult additionally
-    // records its args into the plugin state — mirroring the real-child
-    // stateDelta path — so the offline smoke (Task 19) can assert write-back ran.
+    // Canned responses, no spawn, no plugin needed. The profile invariant still
+    // holds whenever the plugin IS installed (behavioral parity so mock runs
+    // catch missing/typo'd profiles too); an uninstalled plugin — the offline
+    // smoke's whole point — skips it. reportResult additionally records its
+    // args into the plugin state — mirroring the real-child stateDelta path —
+    // so the offline smoke (Task 19) can assert write-back ran.
+    let mockSource = null;
+    try { mockSource = loadSource(plugin, sourceId).source; } catch { mockSource = null; }
+    if (mockSource) assertProfileInvariant({ plugin, sourceId, source: mockSource, profile, allowLegacyDefault });
     const r = await mockCall(op, args);
-    if (op === 'reportResult') writePluginState(plugin, { lastReport: JSON.stringify(args) });
+    if (op === 'reportResult') writePluginState(plugin, { lastReport: JSON.stringify(args) }, prof);
     return r;
   }
 
   const { dir, source, apiVersion } = loadSource(plugin, sourceId);
+  assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault });
   const payload = JSON.stringify({
     apiVersion,
     module: resolve(dir, source.module), // './'-relative, '..'-free (normalizeManifest)
     op,
-    config: readPluginConfig(plugin, source.configSchema),
-    state: readPluginState(plugin),
+    // The connector sees ONE profile's config/state and is told which — a
+    // connector that keeps its own storage (jira-source hangs a $JTR_CONFIG_DIR
+    // off it) needs the id, not just the values.
+    profile: prof,
+    config: readPluginConfig(plugin, source.configSchema, prof),
+    state: readPluginState(plugin, prof),
     args,
   });
 
@@ -203,7 +254,7 @@ export async function callSource({ plugin, sourceId, op, args = {}, timeoutMs = 
     throw new PluginOpError(frame.error?.kind || 'plugin', frame.error?.message || `plugin "${plugin}" op "${op}" failed`);
   }
   if (frame.stateDelta && typeof frame.stateDelta === 'object' && Object.keys(frame.stateDelta).length) {
-    writePluginState(plugin, frame.stateDelta); // host-side persist; child never touches the store
+    writePluginState(plugin, frame.stateDelta, prof); // host-side persist; child never touches the store
   }
   return frame.result;
 }

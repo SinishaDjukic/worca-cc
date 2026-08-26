@@ -44,8 +44,9 @@ test('listProjects reads rows from the DB and recomputes exists on read', async 
   assert.equal(byName.demo.path, home);
   assert.equal(byName.demo.exists, true, 'real dir => exists true (recomputed)');
   assert.equal(byName.ghost.exists, false, 'missing dir => exists false (recomputed)');
-  // The returned shape is exactly {name, path, exists} — no DB-only fields leak.
-  assert.deepEqual(Object.keys(byName.demo).sort(), ['exists', 'name', 'path']);
+  // The returned shape is exactly {key, name, path, exists} — `key` is the registry
+  // key (Ask Worca needs it); no other DB-only field leaks.
+  assert.deepEqual(Object.keys(byName.demo).sort(), ['exists', 'key', 'name', 'path']);
 });
 
 test('addProject inserts a row keyed by projectKey, returns the annotated list', async () => {

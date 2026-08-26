@@ -56,6 +56,8 @@ function icon(doc, d) {
 
 const ICONS = {
   spent: 'M12 4v16M16 6.8c-.8-1-2.2-1.6-4-1.6-2.2 0-3.8 1-3.8 2.7 0 3.6 7.8 1.7 7.8 5.4 0 1.7-1.7 2.9-4 2.9-1.9 0-3.4-.7-4.2-1.8',
+  pipeline: 'M12 3.2 20.5 8 12 12.8 3.5 8 12 3.2ZM3.5 12l8.5 4.8 8.5-4.8M3.5 16l8.5 4.8 8.5-4.8',
+  ask: 'M12 19.6l-3.2-2.8H6.4A3.4 3.4 0 0 1 3 13.4V7.8a3.4 3.4 0 0 1 3.4-3.4h11.2A3.4 3.4 0 0 1 21 7.8v5.6a3.4 3.4 0 0 1-3.4 3.4h-2.4L12 19.6Z',
   time: 'M12 8v4l3 2M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z',
   finished: 'M20 7 9 18l-5-5',
   prs: 'M6 8.6v6.8M18 15.4V11a4 4 0 0 0-4-4h-2M6 3.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM6 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM18 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z',
@@ -125,7 +127,7 @@ function meterEl(doc, cls, pct) {
   return m;
 }
 
-/** KPI row: Spent · Time worked · Pipelines finished · PRs merged (spec §6.13). */
+/** KPI row: Spent · Pipeline spend · Ask Worca · Time worked · Pipelines finished · PRs merged (D4). */
 export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
   const { totals, prev, budget, range } = model;
   const row = h(doc, 'div', 'stat-row');
@@ -158,6 +160,32 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
         ? `of ${fmt.usd(limit)} · resets in ${fmtIn(budget.msUntilReset)}`
         : `this ${windowRange}: ${fmt.usd(budget.windowSpendUsd)} of ${fmt.usd(limit)}`,
     title: fmt.estTitle(totals.spentUsd),
+  }));
+
+  // Pipeline spend (D7): pipeline-only money; sub = share of the combined
+  // total. Falls back to spentUsd when the payload predates the ask split.
+  const pipeSpend = totals.pipelineSpendUsd ?? totals.spentUsd;
+  row.appendChild(tile(doc, {
+    iconD: ICONS.pipeline, label: 'Pipeline spend',
+    chip: prev ? deltaChip(doc, pipeSpend, prev.pipelineSpendUsd, range) : null,
+    valueNodes: [doc.createTextNode(fmt.usd(pipeSpend))],
+    sub: totals.spentUsd > 0
+      ? `${Math.round((pipeSpend / totals.spentUsd) * 100)}% of spend`
+      : 'no spend in this period',
+    title: fmt.estTitle(pipeSpend),
+  }));
+
+  // Ask Worca (D5/D6): chat spend; a session = a thread with a costed turn in
+  // the range, so cost/session is window spend over that count.
+  const ask = totals.ask || { spendUsd: 0, sessions: 0, turns: 0 };
+  row.appendChild(tile(doc, {
+    iconD: ICONS.ask, label: 'Ask Worca',
+    chip: prev ? deltaChip(doc, ask.spendUsd, prev.ask?.spendUsd, range) : null,
+    valueNodes: [doc.createTextNode(fmt.usd(ask.spendUsd))],
+    sub: ask.sessions > 0
+      ? `${ask.sessions} session${ask.sessions === 1 ? '' : 's'} · ${fmt.usd(ask.spendUsd / ask.sessions)}/session · ${ask.turns} turn${ask.turns === 1 ? '' : 's'}`
+      : 'no sessions in this period',
+    title: fmt.estTitle(ask.spendUsd),
   }));
 
   // Time worked

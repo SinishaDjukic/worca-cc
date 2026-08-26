@@ -19,6 +19,10 @@ import {
   removeWorktree,
   isValidSourceRef,
   worktreePathForBranch,
+  createDetachedWorktree,
+  worktreeHead,
+  runGitCapture,
+  ASK_GIT_ENV,
 } from '../src/core/worktree.mjs';
 
 const created = [];
@@ -340,4 +344,78 @@ test('createWorktree names an aborted `git worktree add` AbortError (a stop is n
       return true;
     },
   );
+});
+
+// ── P4: the Ask Worca detached-checkout primitives ───────────────────────────
+test('createDetachedWorktree: detached HEAD at ref, no branch created, no branch lock, removable', async () => {
+  const repo = await freshRepo();
+  const g = (args) => spawnSync('git', args, { cwd: repo });
+  g(['checkout', '-qb', 'feature']);
+  await writeFile(join(repo, 'f.txt'), 'x\n');
+  g(['add', '-A']); g(['commit', '-qm', 'feat']);
+  g(['checkout', '-q', 'main']);
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-dwt-'));
+  created.push(base);
+  const dir = join(base, 'wt_00000001');
+  const { commit } = await createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'feature' });
+  assert.match(commit, /^[0-9a-f]{40}$/);
+  assert.ok(existsSync(join(dir, 'f.txt')), 'feature files checked out');
+  assert.notEqual(spawnSync('git', ['symbolic-ref', '-q', 'HEAD'], { cwd: dir }).status, 0, 'HEAD is detached');
+  assert.deepEqual((await listLocalBranches(repo)).sort(), ['feature', 'main'], 'no branch created');
+  assert.equal(await worktreePathForBranch(repo, 'feature'), null, 'feature is NOT locked by the detached checkout (M2 untouched)');
+  assert.equal(await worktreeHead(dir), commit);
+  const res = await removeWorktree({ projectDir: repo, worktreeDir: dir, branch: null, force: true });
+  assert.ok(res.ok, JSON.stringify(res.steps));
+  assert.ok(!existsSync(dir));
+  assert.ok(!String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('wt_00000001'), 'registration pruned');
+});
+
+test('createDetachedWorktree: unknown ref and option-injection are rejected before git worktree add', async () => {
+  const repo = await freshRepo();
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-dwt2-'));
+  created.push(base);
+  await assert.rejects(() => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'w1'), ref: 'no-such-ref' }), /not a valid commit-ish/);
+  await assert.rejects(() => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'w2'), ref: '--force' }), /not a valid commit-ish/);
+  await assert.rejects(() => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'w3') }), /not a valid commit-ish/);
+  assert.equal(existsSync(join(base, 'w1')), false, 'nothing was created');
+});
+
+test('runGitCapture: plain capture, never throws, ASK_GIT_ENV hardening applied', async () => {
+  const repo = await freshRepo();
+  const ok = await runGitCapture(repo, ['rev-parse', 'HEAD']);
+  assert.ok(ok.ok);
+  assert.match(ok.stdout.trim(), /^[0-9a-f]{40}$/);
+  const bad = await runGitCapture(repo, ['definitely-not-a-subcommand']);
+  assert.equal(bad.ok, false);
+  assert.ok(bad.stderr.length > 0);
+  // the pager/prompt hardening reaches the child (else a credential-prompting
+  // fetch hangs to the 120s SIGKILL):
+  assert.deepEqual(Object.keys(ASK_GIT_ENV).sort(),
+    ['GIT_ASKPASS', 'GIT_PAGER', 'GIT_TERMINAL_PROMPT', 'PAGER', 'SSH_ASKPASS']);
+  const pager = await runGitCapture(repo, ['var', 'GIT_PAGER']);
+  assert.equal(pager.stdout.trim(), 'cat', 'GIT_PAGER=cat reached the git child');
+});
+
+// Mutation-audit: the prune step, the throw-on-failure and the AbortError stamp.
+test('createDetachedWorktree: prunes a stale registration first, throws on git failure, stamps abort', async () => {
+  const repo = await freshRepo();
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-dwt3-'));
+  created.push(base);
+  const dir = join(base, 'wt_0000000a');
+  // 1) a stale registration at the SAME path (dir removed behind git's back) —
+  //    without the prune-before-add step the re-add fails "already registered".
+  await createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'main' });
+  await rm(dir, { recursive: true, force: true });
+  assert.ok(String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('wt_0000000a'),
+    'precondition: registration still present');
+  const again = await createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'main' });
+  assert.match(again.commit, /^[0-9a-f]{40}$/, 'the prune let the re-add through');
+  // 2) an occupied path is a THROW, never a {commit:null} success.
+  await assert.rejects(() => createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'main' }),
+    /git worktree add --detach failed/);
+  // 3) an aborted signal is named AbortError (isAbort classifiers depend on it).
+  const ac = new AbortController(); ac.abort();
+  await assert.rejects(
+    () => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'wt_0000000b'), ref: 'main', signal: ac.signal }),
+    (err) => { assert.equal(err.name, 'AbortError'); return true; });
 });

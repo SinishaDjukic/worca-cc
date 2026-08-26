@@ -142,14 +142,32 @@ test('GET /api/history/:key/:id/diff serves the persisted patch inline', async (
   assert.equal(r.headers.get('content-disposition'), null);    // inline, not attachment
   assert.equal(await r.text(), patch);
 
-  // A zero-length patch is a real (rare) outcome — diffPatch() returns '' when git
-  // fails and persistDiffPatch writes it verbatim. readRunArtifactText answers ''
-  // (which is != null), so this must be 200 + empty body, NOT 404: an empty patch
-  // is not a missing artifact.
+  // The orchestrator no longer persists an empty patch (orchestrator.mjs:3474).
+  // This pins the ROUTE's `text == null` semantics for a hand-written or legacy
+  // 0-byte artifact, which is still readable and must still answer 200-empty.
   await writeFile(join(alphaDir, 'diff-patch.patch'), '');
   const empty = await fetch(`${base}/api/history/${alphaKey}/${alphaId}/diff`);
   assert.equal(empty.status, 200);
   assert.equal(await empty.text(), '');
+});
+
+// The route is status-agnostic and always was; this pins that, because the
+// orchestrator now persists the artifact on the stopped/error paths too and the
+// Diff tab for those runs depends on the route serving it.
+test('GET /api/history/:key/:id/diff serves the patch for a STOPPED run', async () => {
+  const stoppedProj = await mkdtemp(join(tmpdir(), 'worca-cc-histapi-stopped-'));
+  const seeded = await seedPipeline(stoppedProj, { title: 'Halted', status: 'stopped',
+    startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z' });
+
+  // Absent artifact first: a stopped run with no patch must still 404, not 200-empty.
+  assert.equal((await fetch(`${base}/api/history/${seeded.key}/${seeded.id}/diff`)).status, 404);
+
+  const patch = 'diff --git a/p.js b/p.js\n--- a/p.js\n+++ b/p.js\n@@ -1 +1 @@\n-a\n+partial\n';
+  await writeFile(join(seeded.dir, 'diff-patch.patch'), patch);
+  const r = await fetch(`${base}/api/history/${seeded.key}/${seeded.id}/diff`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /text\/x-diff/);
+  assert.equal(await r.text(), patch);
 });
 
 test('GET /api/history/:key/:id/diff -> 404 when absent / malformed key', async () => {

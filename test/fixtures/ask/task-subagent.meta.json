@@ -1,0 +1,31 @@
+{
+  "scenario": "task-subagent",
+  "prompt": "Use the Task tool once (subagent_type \"general-purpose\", description \"count runs\") and instruct the sub-agent to call list_runs with {} and report only the count. CAPTURE-SECRET-7f3a must not be repeated. Then answer with only that count.",
+  "model": "claude-haiku-4-5",
+  "exitCode": 0,
+  "error": null,
+  "stderr": [],
+  "flags": {
+    "maxTurns": 6,
+    "maxBudgetUsd": 1,
+    "resume": null
+  },
+  "captured": "2026-08-22T13:24:43.371Z",
+  "claudeVersion": "2.1.239",
+  "initTools": [
+    "Task",
+    "mcp__worca__get_run",
+    "mcp__worca__get_run_diff",
+    "mcp__worca__list_projects",
+    "mcp__worca__list_runs",
+    "mcp__worca__list_workflows",
+    "mcp__worca__propose_run",
+    "mcp__worca__read_attachment"
+  ],
+  "initMcpServers": [
+    {
+      "name": "worca",
+      "status": "connected"
+    }
+  ]
+}

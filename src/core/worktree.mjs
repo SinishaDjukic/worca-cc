@@ -49,12 +49,17 @@ const BRANCH_STOPWORDS = new Set([
 // 30 s on large repos — give them a longer leash before the SIGKILL deadline.
 const SLOW_GIT_TIMEOUT_MS = 120_000;
 
-/** Run git and resolve to { ok, stdout, stderr, code }. Never throws. */
-function git(cwd, args, { signal, timeout = 30_000 } = {}) {
+/** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
+ *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
+ *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
+function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
   return new Promise((res) => {
     let child;
     try {
-      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], signal });
+      child = spawn('git', args, {
+        cwd, stdio: ['ignore', 'pipe', 'pipe'], signal,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
+      });
     } catch (err) {
       res({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -73,7 +78,24 @@ function git(cwd, args, { signal, timeout = 30_000 } = {}) {
           done({ ok: false, stdout, stderr: stderr ? `git timed out: ${stderr}` : 'git timed out', code: -1 });
         }, timeout)
       : null;
-    child.stdout?.on('data', (b) => (stdout += b.toString()));
+    // `maxBytes` caps the CAPTURE (review of PR #376): the Ask `git` tool re-runs a
+    // command per `offset` page, so `log -p --all` on a big repo accumulated the
+    // whole history in memory every page. Past the cap the child is killed and
+    // the result is `ok` with `truncated: true` — the caller says so and pages
+    // within what it got.
+    let captured = 0;
+    let truncated = false;
+    child.stdout?.on('data', (b) => {
+      if (truncated) return;
+      captured += b.length;
+      stdout += b.toString();
+      if (maxBytes > 0 && captured > maxBytes) {
+        truncated = true;
+        stdout = Buffer.from(stdout, 'utf8').subarray(0, maxBytes).toString('utf8');
+        try { child.kill('SIGKILL'); } catch { /* gone */ }
+        done({ ok: true, stdout, stderr, code: 0, truncated: true });
+      }
+    });
     child.stderr?.on('data', (b) => (stderr += b.toString()));
     child.on('error', (err) => done({ ok: false, stdout, stderr: stderr || err.message, code: -1 }));
     child.on('close', (code) => done({ ok: code === 0, stdout, stderr, code: code ?? -1 }));
@@ -316,6 +338,65 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
     steps.push({ step: 'branch-delete', ok: r.ok, stderr: r.stderr.trim() });
   }
   return { ok: steps.every((s) => s.ok), steps };
+}
+
+/**
+ * Create a DETACHED worktree at `worktreeDir` checking out `ref` — the Ask
+ * Worca inspection checkout (ask-worca-worktrees-design.md §3). Detached by
+ * construction: no branch is created, locked or deleted, so the pipeline
+ * branch-in-use check (M2) never sees these. The caller (ask/worktrees.mjs)
+ * owns path construction and containment; this validates only the ref (M1
+ * doctrine: reject option-injection before git parses argv) and throws on a
+ * fatal git failure with the same AbortError stamp createWorktree uses.
+ */
+export async function createDetachedWorktree({ projectDir, worktreeDir, ref, signal } = {}) {
+  if (!projectDir) throw new Error('projectDir required');
+  if (!worktreeDir) throw new Error('worktreeDir required');
+  if (!(await isValidSourceRef(projectDir, ref))) {
+    throw new Error(`ref is not a valid commit-ish: ${JSON.stringify(ref ?? null)}`);
+  }
+  await git(projectDir, ['worktree', 'prune']);
+  const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
+    { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  if (!r.ok) {
+    const err = new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+    if (signal?.aborted) err.name = 'AbortError';
+    throw err;
+  }
+  const head = await git(worktreeDir, ['rev-parse', 'HEAD']);
+  return { worktreeDir, commit: head.ok ? head.stdout.trim() : null };
+}
+
+/** HEAD commit sha of any checkout (worktree or repo), or null. */
+export async function worktreeHead(dir) {
+  const r = await git(dir, ['rev-parse', 'HEAD']);
+  return r.ok ? r.stdout.trim() : null;
+}
+
+/**
+ * Env for every Ask Worca git spawn (spec §8). Pager OFF and — load-bearing —
+ * NEVER prompt: an https/ssh fetch with no cached credential would otherwise
+ * block on a terminal/askpass prompt until the SLOW_GIT_TIMEOUT_MS SIGKILL,
+ * holding the MCP call open for two minutes. GIT_ASKPASS/SSH_ASKPASS='' stop the
+ * GUI askpass fallback too. NOTE we deliberately do NOT set GIT_CONFIG_GLOBAL:
+ * the keychain credential helper for https fetch lives in the user's global
+ * config (E3), so nuking it would break authenticated fetch; the external-diff
+ * exec vector is closed per-invocation in the tool handler with
+ * `-c diff.external=` + `--no-ext-diff` instead.
+ */
+export const ASK_GIT_ENV = Object.freeze({
+  GIT_PAGER: 'cat', PAGER: 'cat', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '',
+});
+
+/**
+ * Raw capture runner for the Ask Worca `git` MCP tool. The ONLY gate between a
+ * model-authored argv and this spawn is ask/git-allowlist.mjs — callers pass
+ * exclusively its validated output. Spawn semantics identical to every other
+ * helper here ({ok, stdout, stderr, code}, never throws), plus the ASK_GIT_ENV
+ * hardening and the caller's abort signal.
+ */
+export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_MS, maxBytes = 0 } = {}) {
+  return git(cwd, args, { signal, timeout: timeoutMs, env: ASK_GIT_ENV, maxBytes });
 }
 
 /**

@@ -18,7 +18,30 @@ project's working tree, so nothing is ever committed to your repo.
     reviews/    <DD-MM-YY>-<name>-impl-review.md     (review markdown)
     pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
       prompt.md          the prompt text (or copied markdown brief)
+      diff-patch.patch   the run's captured diff (written when the run completes)
       extras/            any optional extra files you attached
+                         Internal, line-anchored review comments on that diff are DB
+                         rows (diff_comments), never files; ask_card_comments carries
+                         a proposal's comment ids from propose_run through to launch.
+                         Archiving a run deletes its comments with its artifacts.
+  ask/<threadId>/att/<attachmentId>.txt  Ask Worca attachment bodies (threads, messages and
+                                        run links live in the DB: ask_threads, ask_messages,
+                                        ask_attachments, ask_run_links); removed with the thread.
+                                        Chat spend is copied per turn into ask_cost_ledger
+                                        (append-only, FK-free), so Statistics keeps session
+                                        count and cost after deletion
+  ask/<threadId>/wt/<worktreeId>/       Ask Worca chat worktrees: read-only DETACHED git
+                                        checkouts the assistant opens (registry: ask_worktrees;
+                                        removed with the thread, reconciled at boot)
+  tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
+                                        mcp-<messageId>.json (never a project folder)
+  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  plugins/                              installed plugin checkouts
+  agents/                               installed agent registry checkouts
+  workflows/                            saved workflow templates
+  projects.json                         registered project index
+  workspaces.json                       workspace index
+  chat-context.json                     chat context cache
 ```
 
 Everything that used to be a per-run `.json`/`.md` control file —

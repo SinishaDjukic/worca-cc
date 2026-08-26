@@ -61,7 +61,7 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
 } from './settings.mjs';
 import {
-  recordCostDelta, readCostCapOverride, windowedSpendUsd, costWindowStart,
+  recordCostDelta, readCostCapOverride, totalWindowSpendUsd, costWindowStart,
 } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -275,6 +275,14 @@ class Orchestrator extends EventEmitter {
       model: this.opts.claude?.model,
       mock: !!this.opts.claude?.mock,
     };
+    // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
+    // runMock, rule R-F), so a mock pipeline role under dontAsk writes no artifact and
+    // the run dies at its first artifact read with no hint why. Fail at construction
+    // instead (review of PR #376). WORCA_MOCK counts: the runner honours the env too.
+    if (this.claude.permissionMode === 'dontAsk'
+      && (this.claude.mock || /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? '')))) {
+      throw new Error('permissionMode "dontAsk" is reserved for the Ask Worca runner in mock mode — a mock pipeline role spawned with it would take the ask mock and write no artifact');
+    }
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
@@ -742,6 +750,15 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          // The diff artifact must survive a non-done terminal path too: the work done
+          // up to this point IS committed onto the kept feature branch by the teardown
+          // in the finally below, so History has to be able to show it. Safe HERE and
+          // only here — the checkpoint refs and the worktree are still live until that
+          // teardown runs. Best-effort by construction (its own try/catch logs a warn
+          // and never rethrows), and a no-op when the run stopped before any checkpoint
+          // existed. The terminal `done` event is emitted AFTER it so the History row never
+          // paints as "no diff captured" for the tick before the artifact lands.
+          await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', {
@@ -756,6 +773,15 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        // The diff artifact must survive a non-done terminal path too: the work done
+        // up to this point IS committed onto the kept feature branch by the teardown
+        // in the finally below, so History has to be able to show it. Safe HERE and
+        // only here — the checkpoint refs and the worktree are still live until that
+        // teardown runs. Best-effort by construction (its own try/catch logs a warn
+        // and never rethrows), and a no-op when the run stopped before any checkpoint
+        // existed. The terminal `done` event is emitted AFTER it so the History row never
+        // paints as "no diff captured" for the tick before the artifact lands.
+        await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', {
@@ -993,6 +1019,15 @@ class Orchestrator extends EventEmitter {
         if (this.pipeline) {
           await this._persist().catch(() => {});
           await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          // The diff artifact must survive a non-done terminal path too: the work done
+          // up to this point IS committed onto the kept feature branch by the teardown
+          // in the finally below, so History has to be able to show it. Safe HERE and
+          // only here — the checkpoint refs and the worktree are still live until that
+          // teardown runs. Best-effort by construction (its own try/catch logs a warn
+          // and never rethrows), and a no-op when the run stopped before any checkpoint
+          // existed. The terminal `done` event is emitted AFTER it so the History row never
+          // paints as "no diff captured" for the tick before the artifact lands.
+          await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
@@ -1004,6 +1039,15 @@ class Orchestrator extends EventEmitter {
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
+        // The diff artifact must survive a non-done terminal path too: the work done
+        // up to this point IS committed onto the kept feature branch by the teardown
+        // in the finally below, so History has to be able to show it. Safe HERE and
+        // only here — the checkpoint refs and the worktree are still live until that
+        // teardown runs. Best-effort by construction (its own try/catch logs a warn
+        // and never rethrows), and a no-op when the run stopped before any checkpoint
+        // existed. The terminal `done` event is emitted AFTER it so the History row never
+        // paints as "no diff captured" for the tick before the artifact lands.
+        await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
@@ -1815,11 +1859,14 @@ class Orchestrator extends EventEmitter {
     if (!commit.ok && excludePathspecs.length) {
       // §8.8 (detached runs — the same scope as the exclusion set): a failing hook
       // must never silently delete an agent's work. Teardown removeWorktree(force:true)s
-      // the checkout right after this returns, and on the error path _buildResults is
-      // skipped, so not even a diff artifact survives. Detached worktrees make hook
-      // failure MORE likely (§8.1: husky/lint-staged resolve through an ancestor
-      // node_modules today and do not detached). Retry ONCE with hooks disabled for
-      // that invocation only, logging both facts.
+      // the checkout right after a successful commit, so this commit is the ONLY thing
+      // that carries the work onto the kept branch. A diff artifact does now survive
+      // every terminal path (run()/resume() build results on stopped and error too),
+      // but that is a read-only snapshot in the store — not a branch to check out,
+      // rebase or push. Detached worktrees make hook failure MORE likely (§8.1:
+      // husky/lint-staged resolve through an ancestor node_modules today and do not
+      // detached). Retry ONCE with hooks disabled for that invocation only, logging
+      // both facts.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
       this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
@@ -2540,7 +2587,7 @@ class Orchestrator extends EventEmitter {
     const totalLimit = totalCostLimitUsd();
     if (totalLimit != null) {
       const period = costLimitResetPeriod();
-      const spent = windowedSpendUsd(costWindowStart(new Date(), period).getTime());
+      const spent = totalWindowSpendUsd(costWindowStart(new Date(), period).getTime());
       if (spent >= totalLimit) {
         this._pauseForCost('cost_total',
           `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
@@ -3407,9 +3454,18 @@ class Orchestrator extends EventEmitter {
    * Layer 1: build + persist the deterministic results view while the worktree(s)
    * and checkpoint refs are still live. Best-effort: never throws into run().
    */
-  async _buildResults() {
+  async _buildResults({ stage = false } = {}) {
     if (!this.pipeline) return;
     try {
+      // stage: the non-done terminal paths never reached the review loop's staging
+      // (:2204, :2311), so `git add -A -N` has not run and the `git diff <checkpoint>`
+      // below cannot see a file the agent CREATED — the kept branch would carry it
+      // while the persisted patch showed nothing. ignoreAbort for the same reason
+      // _commitWork pins it (:1804): stop() has already tripped this.abort, and a
+      // bound signal kills the staging before git can touch the index.
+      // INSIDE the try: the stopped path calls _buildResults from run()'s catch, so
+      // anything that escaped here would reject run() itself.
+      if (stage) await this._stageWorkingTree({ ignoreAbort: true });
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
       // BOTH modes (the _ensureGitCheckpoint mirror), so a single-project run reads
@@ -3430,17 +3486,39 @@ class Orchestrator extends EventEmitter {
         ]);
         const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
         members.push({ projectKey: key, results });
-        patches.push({ key, patch });
+        patches.push({ key, patch, listed: ns.length > 0 });
       }
       if (!members.length) return;
+      // Nothing changed under the checkpoint. Persisting here would index a 0-byte
+      // diff-patch.patch plus an all-zero results.json, and every downstream
+      // "does this run have a diff?" test is an EXISTENCE test, not an emptiness
+      // one: /diff answers 200-empty instead of 404 (ui/server.mjs:1994 tests
+      // `text == null`), /recovery-patch serves an empty attachment (:1690), the
+      // comments routes report patchAvailable:false and then 409 every create (:1882),
+      // and History detail opens on the Diff tab to render "(no files changed)"
+      // (app.js:11110 tests `d.results`). Write nothing — absent IS the truth, and
+      // it is the state the UI's empty state already describes.
+      const noPatch = patches.every((p) => !p.patch);
+      // An EMPTY patch while name-status lists changes is a failed `git diff`
+      // spawn (diffPatch returns '' on error), not a clean tree — say so, and
+      // still persist the results the other two diffs produced.
+      const listed = patches.some((p) => p.listed);
+      if (noPatch && listed) this._log('results', 'warn', 'diff patch is empty although name-status lists changes — git diff failed; results.json is persisted without a patch');
+      // Stopped/error paths (`stage`) with nothing changed write nothing — absent IS
+      // the truth (above). The DONE path always persists results.json: it carries
+      // the review-derived keyThingsToCheck/blockingIssues that the task-source
+      // write-back (sources.mjs) and History read, so a review-only / plan-only /
+      // no-op run must not lose them (review of PR #376). The 0-byte
+      // diff-patch.patch is still never written on any path.
+      if (noPatch && stage && !listed) return;
       if (members.length === 1 && !this.isWorkspace) {
         await persistResults(this.pipeline.dir, members[0].results);
-        await persistDiffPatch(this.pipeline.dir, patches[0].patch);
+        if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
       } else {
         const perProject = buildPerProject(members);
         const results = { summary: rollupSummary(perProject), perProject };
         await persistResults(this.pipeline.dir, results);
-        await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
+        if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
       }
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);
@@ -3449,12 +3527,14 @@ class Orchestrator extends EventEmitter {
 
   /**
    * Task-source write-back (spec §7.5): report the finished run to the plugin
-   * source that produced it. Runs on EVERY terminal path — after
-   * _buildResults() on the done paths (results.json exists for the summary;
-   * statusToResult -> 'completed') and after persist on the stopped/error
-   * branches (statusToResult -> 'failed'; the summary is thinner because
-   * results.json may not exist — chat-connectivity design PR12 closed the old
-   * success-only gap). NEVER throws and
+   * source that produced it. Runs on EVERY terminal path and ALWAYS after
+   * _buildResults() — done (statusToResult -> 'completed') and stopped/error alike
+   * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap).
+   * So the payload is the same SHAPE on all three: retryWriteback reads
+   * results.json (sources.mjs:215), and a stopped/error run that persisted one now
+   * carries the diffstat and "Key things to check" lines too. Only a run with
+   * nothing to persist — no checkpoint, or an empty diff under it — falls back to
+   * the thin status-only summary. NEVER throws and
    * never fails the run: a failure emits a warn `log` event and the results view
    * offers a manual retry via the same retryWriteback (Task 15 endpoint, Task 21
    * button). Prompt/markdown
@@ -3531,8 +3611,11 @@ class Orchestrator extends EventEmitter {
    * Uses `git add -A -N`: it records intent-to-add for new paths (making their
    * content visible to `git diff`) without actually creating a commit, so the
    * checkpoint commit remains the single diff base. Best-effort; never throws.
+   * `ignoreAbort` is for the terminal-path callers only (_buildResults on stop /
+   * error): every in-run caller must stay killable by stop().
+   * @param {{ignoreAbort?:boolean}} [opts]
    */
-  async _stageWorkingTree() {
+  async _stageWorkingTree({ ignoreAbort = false } = {}) {
     // Stage EVERY member worktree (keyed — the pathspec lookup needs the projectKey)
     // so each per-project reviewer's `git diff` sees that project's agent edits.
     // Single-project runs have exactly one entry (populated in both modes). The
@@ -3544,7 +3627,7 @@ class Orchestrator extends EventEmitter {
       // byte-identically — `--` with no trailing pathspec is a no-op for git add.
       const ex = this._excludePathspecs(key);
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
-      const res = await this._git(args, { cwd: dir });
+      const res = await this._git(args, { cwd: dir, ignoreAbort });
       if (!res.ok && res.stderr && res.stderr.trim()) {
         this._log('git', 'debug', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }
