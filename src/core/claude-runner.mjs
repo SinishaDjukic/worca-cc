@@ -195,7 +195,7 @@ export function buildSpawnEnv(envScrub, envAllowlist) {
  * passed through by the orchestrator (handled by caller mapping mock->env or
  * by passing systemPrompt/prompt markers; we also honor a `mock` field).
  */
-function mockEnabled(opts) {
+export function mockEnabled(opts) {
   if (opts && opts.mock) return true;
   const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
   return !!v && v !== '0' && v.toLowerCase() !== 'false';
@@ -233,6 +233,16 @@ function mockEnabled(opts) {
  * @param {string[]} [o.workspaceWriteTargets] §8.10 MOCK-ONLY member checkouts the mock
  *   implementer writes into instead of `cwd` (empty/absent => today's cwd behavior).
  *   Never reaches argv: `runReal` ignores it by construction.
+ * @param {string[]} [o.tools]              --tools <list>: the built-in tool allowlist ([] ⇒ `--tools ""`,
+ *   no built-ins at all; MCP tools are unaffected). Absent ⇒ flag omitted (claude defaults).
+ * @param {boolean} [o.strictMcpConfig]     --strict-mcp-config: only --mcp-config servers load
+ * @param {string[]} [o.settingSources]     --setting-sources <list> (e.g. ['project'] drops user hooks/plugins/skills)
+ * @param {boolean} [o.disableSlashCommands] --disable-slash-commands
+ * @param {boolean} [o.includePartialMessages] --include-partial-messages (stream_event text deltas)
+ * @param {number} [o.maxTurns]             --max-turns <n> (positive safe integer; else omitted)
+ * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
+ * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
+ *   All eight are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -259,6 +269,16 @@ export async function runClaude(o = {}) {
     modelEnv,
     workspaceWriteTargets,
     resumeSessionId,
+    // Ask Worca sandbox hardening (ask-worca-design.md §6.3/§6.8). All default-off:
+    // undefined here ⇒ nothing emitted ⇒ every legacy argv stays byte-identical.
+    tools,
+    strictMcpConfig,
+    settingSources,
+    disableSlashCommands,
+    includePartialMessages,
+    maxTurns,
+    maxBudgetUsd,
+    appendSubagentSystemPrompt,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -273,7 +293,7 @@ export async function runClaude(o = {}) {
     // workspaceWriteTargets is the one option that is mock-ONLY (§8.10) and it must be
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
-    return runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets });
+    return runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
   return runReal({
@@ -294,6 +314,14 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    tools,
+    strictMcpConfig,
+    settingSources,
+    disableSlashCommands,
+    includePartialMessages,
+    maxTurns,
+    maxBudgetUsd,
+    appendSubagentSystemPrompt,
   });
 }
 
@@ -320,6 +348,11 @@ export async function runClaude(o = {}) {
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
   mcpConfigPath, mcpServerGrants, permissionRules,
+  // Ask Worca hardening options (ask-worca-design.md §6.3). `tools` is renamed on the
+  // way in because the legacy body below already owns a local `tools` (the
+  // --allowedTools union).
+  tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
 }) {
   const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
   if (resumeSessionId) args.push('--resume', resumeSessionId);
@@ -344,10 +377,39 @@ export function buildClaudeArgs({
   if (tools.length) {
     args.push('--allowedTools', tools.join(','));
   }
+  // ── Ask Worca hardening flags (ask-worca-design.md §6.3 / §6.8) ──────────────
+  // Every one is default-off: absent / false / invalid ⇒ NOTHING is emitted, so
+  // every legacy argv stays byte-identical (test/spawn-args.test.mjs). Appended
+  // AFTER the legacy block so the baseline prefix never moves. Probed on 2.1.239:
+  // `--tools ""` = no built-in tools (MCP tools survive); the hidden `--max-turns`
+  // and `--append-subagent-system-prompt` are accepted and enforced.
+  // Filter to usable names FIRST, then decide: testing the RAW list while emitting
+  // the FILTERED join made `settingSources: [1]` emit `--setting-sources ""` (where
+  // `[]` emits nothing) and `['Read', '']` emit a trailing comma.
+  const names = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s) : []);
+  // --tools is the one list whose empty value is meaningful (`--tools ""` = no
+  // built-in tools at all, §6.3), so the ARRAY decides whether the flag is emitted.
+  if (Array.isArray(builtinTools)) {
+    args.push('--tools', names(builtinTools).join(','));
+  }
+  if (strictMcpConfig === true) args.push('--strict-mcp-config');
+  const sources = names(settingSources);
+  if (sources.length) {
+    args.push('--setting-sources', sources.join(','));
+  }
+  if (disableSlashCommands === true) args.push('--disable-slash-commands');
+  if (includePartialMessages === true) args.push('--include-partial-messages');
+  if (Number.isSafeInteger(maxTurns) && maxTurns > 0) args.push('--max-turns', String(maxTurns));
+  if (typeof maxBudgetUsd === 'number' && Number.isFinite(maxBudgetUsd) && maxBudgetUsd > 0) {
+    args.push('--max-budget-usd', String(maxBudgetUsd));
+  }
+  if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
+    args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
+  }
   return args;
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -382,6 +444,8 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     const args = buildClaudeArgs({
       prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
       mcpConfigPath, mcpServerGrants, permissionRules,
+      tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
+      maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
     });
 
     // undefined when the guardrail is off, and the spread then adds NO `env` key —
@@ -708,6 +772,109 @@ async function emitMockSubAgents(role, onEvent, signal) {
   }
 }
 
+// ── Ask Worca mock role (ask-worca-design.md §6.7) ───────────────────────────
+
+/** Emit a raw stream-json frame through the SAME envelope runReal uses (the rl 'line' handler above). */
+function emitRaw(onEvent, raw) {
+  const cost = extractResultCost(raw);
+  const text = extractText(raw);
+  safeEmit(onEvent, { type: raw.type, raw, text: text || undefined, ...(cost != null ? { costUsd: cost } : {}) });
+}
+
+const ASK_CONTEXT_BLOCK_RE = /\[worca context\][\s\S]*?\[\/worca context\]\s*/;
+
+/**
+ * The offline Ask Worca assistant: frames in the shapes probed on claude 2.1.239
+ * (system/init → message_start → text deltas → assistant blocks → tool_use /
+ * tool_result pairs → message_delta → result), chosen from the USER text so
+ * tests control the scenario. Never touches the filesystem, never reads prompt
+ * markers, never spawns the MCP child. The limit / failure scenarios emit their
+ * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
+ */
+async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
+  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '');
+  let card = {};
+  try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
+  if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
+  const fail = /\bMOCK_FAIL\b/.test(userText);
+  const maxTurns = /\bMOCK_MAX_TURNS\b/.test(userText);
+  const maxBudget = /\bMOCK_MAX_BUDGET\b/.test(userText);
+  const slow = /\bMOCK_SLOW\b/.test(userText);
+  const agents = /\bagents?\b/i.test(userText);
+  const propose = /\b(propose|start|run)\b/i.test(userText);
+
+  const SID = resumeSessionId || 'mock-session-ask-1';
+  const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+  const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
+  const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run'],
+    mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
+  const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
+  const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
+  const mdelta = { type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: USAGE }, parent_tool_use_id: null, session_id: SID };
+  const atext = (id, t) => ({ type: 'assistant', message: { id, model: 'mock', role: 'assistant', content: [{ type: 'text', text: t }], usage: USAGE }, parent_tool_use_id: null, session_id: SID });
+  const atool = (id, toolId, name, input, ptu = null) => ({ type: 'assistant', message: { id, model: 'mock', role: 'assistant', content: [{ type: 'tool_use', id: toolId, name, input, caller: { type: 'direct' } }], usage: USAGE }, parent_tool_use_id: ptu, session_id: SID });
+  const uresult = (toolId, text, ptu = null, extra = {}) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text }] }] }, parent_tool_use_id: ptu, session_id: SID, ...extra });
+  const result = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, duration_ms: 10, duration_api_ms: 8, num_turns: 1, session_id: SID, total_cost_usd: 0,
+    usage: USAGE, modelUsage: {}, permission_denials: [], terminal_reason: 'completed', result: ANSWER, ...over });
+  const MSG1 = 'msg_mock_ask_1';
+  const MSG2 = 'msg_mock_ask_2';
+
+  const frames = [init, mstart(MSG1)];
+  if (fail) {
+    frames.push(result({ subtype: 'error_during_execution', is_error: true, errors: ['mock failure'], terminal_reason: 'api_error', result: 'mock failure', num_turns: 0 }));
+  } else if (maxTurns || maxBudget) {
+    frames.push(delta('[mock] '), delta('partial'), atext(MSG1, '[mock] partial'),
+      atool(MSG1, 'toolu_mock_1', 'mcp__worca__list_runs', {}), uresult('toolu_mock_1', '[]'));
+    frames.push(maxTurns
+      ? result({ subtype: 'error_max_turns', is_error: true, errors: ['Reached maximum number of turns (1)'], terminal_reason: 'max_turns', num_turns: 2, stop_reason: 'tool_use', result: undefined })
+      : result({ subtype: 'error_max_budget_usd', is_error: true, errors: ['Reached maximum budget ($0.0001)'], terminal_reason: 'budget_exhausted', result: undefined }));
+  } else {
+    let answerMsg = MSG1;
+    if (agents) {
+      frames.push(
+        atool(MSG1, 'toolu_mock_task', 'Agent', { description: 'count runs', subagent_type: 'general-purpose', prompt: 'count the runs' }),
+        atool('msg_mock_child_1', 'toolu_mock_child_1', 'mcp__worca__list_runs', {}, 'toolu_mock_task'),
+        uresult('toolu_mock_child_1', '[]', 'toolu_mock_task'),
+        uresult('toolu_mock_task', 'count: 0', null, { tool_use_result: {
+          status: 'completed', agentId: 'mock-agent-1', agentType: 'general-purpose', content: [{ type: 'text', text: 'count: 0' }],
+          resolvedModel: 'mock-haiku', totalDurationMs: 10, totalTokens: 1234, totalToolUseCount: 1,
+          usage: { input_tokens: 1000, output_tokens: 234, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        } }),
+      );
+      answerMsg = MSG2;
+    }
+    if (propose) {
+      frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'),
+        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', card), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (answerMsg !== MSG1) frames.push(mstart(answerMsg));
+    frames.push(delta('[mock] '), delta(firstLine.slice(0, 200)), atext(answerMsg, ANSWER), mdelta);
+    frames.push(result(agents
+      ? { modelUsage: { 'mock-haiku': { inputTokens: 1000, outputTokens: 234, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0, canonicalModel: 'mock-haiku' } } }
+      : {}));
+  }
+
+  safeEmit(onEvent, { type: 'session', sessionId: SID });
+  for (const f of frames) {
+    abortIfNeeded(signal);
+    emitRaw(onEvent, f);
+    await new Promise((r) => setTimeout(r, slow ? 300 : 0));
+  }
+  abortIfNeeded(signal);
+  if (fail || maxTurns || maxBudget) {
+    // Probed on 2.1.239: these subtypes exit 1 with EMPTY stderr, so runReal rejects with the
+    // stdout `result` text (MOCK_FAIL) or 'no stderr' (the limits). turn.mjs (P2) reads the
+    // reducer's resultSubtype before classifying the rejection.
+    const err = new Error(`claude exited with code 1: ${fail ? 'mock failure' : 'no stderr'}`);
+    err.errorClass = null;
+    throw err;
+  }
+  return { text: ANSWER, exitCode: 0 };
+}
+
 function abortIfNeeded(signal) {
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -719,8 +886,20 @@ function abortIfNeeded(signal) {
 /**
  * Offline mock: emits a few log lines and performs role-appropriate writes.
  */
-async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets }) {
+async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode }) {
   abortIfNeeded(signal);
+  // Ask Worca mock role (ask-worca-design.md §6.7): detected from the SYSTEM PROMPT
+  // ONLY and dispatched before any prompt-sourced marker is honoured — a chat
+  // message containing `MOCK_ASK: /x.json` (or any MOCK_* line) must never reach
+  // the MOCK_ASK file-write arm below, and the user text can never pick the role.
+  // `dontAsk` is the ask recipe's permission mode and has no legacy caller
+  // (spawn.mjs:20), so it takes the ask arm markers or not: a P2 turn that forgot
+  // `turn.mock` must not fall through to parseMarkers(prompt)/inferRole, where the
+  // chat text alone picks a role that writes to the scratch cwd.
+  const sysMarkers = parseMarkers('', systemPrompt);
+  if (sysMarkers.MOCK_ROLE === 'ask' || permissionMode === 'dontAsk') {
+    return mockAsk({ markers: sysMarkers, prompt, cwd, onEvent, signal, resumeSessionId });
+  }
   const m = parseMarkers(prompt, systemPrompt);
   const role = m.MOCK_ROLE || inferRole(prompt, systemPrompt);
   const cycle = Number(m.MOCK_CYCLE || '1') || 1;
@@ -737,7 +916,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
   // Ask-then-resume (spec 2026-07-11): asking replaces the role side effects
   // for this invocation; the orchestrator gates the user and resumes. The
   // session event above already fired, so the resume has a session id.
-  if (m.MOCK_ASK) {
+  if (m.MOCK_ASK && permissionMode !== 'dontAsk') {   // belt and braces: dontAsk already took the ask arm above
     await ensureDir(m.MOCK_ASK);
     await writeFile(m.MOCK_ASK, JSON.stringify({
       questions: [{ id: 'q1', question: `Mock question from ${role}?`, options: ['Option A', 'Option B'], allowFreeText: true }],

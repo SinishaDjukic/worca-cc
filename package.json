@@ -46,11 +46,14 @@
     "smoke": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs --project sandbox --prompt \"demo task\" --mock --yes",
     "smoke:workspace": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning scripts/smoke-workspace.mjs",
     "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning scripts/smoke-plugin.mjs",
+    "ask:fixtures": "node --disable-warning=ExperimentalWarning scripts/ask-capture-fixtures.mjs",
     "test": "rm -rf .worca-cc-test && WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
+    "dompurify": "3.4.14",
     "express": "^4.19.2",
+    "marked": "18.0.10",
     "ws": "^8.18.0"
   },
   "devDependencies": {

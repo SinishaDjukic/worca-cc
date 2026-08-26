@@ -132,3 +132,52 @@ test('/api/resume still answers { ok, runId, pipelineId }', async () => {
   assert.ok(body.runId);
   assert.equal(body.pipelineId, resumableId);
 });
+
+// Review of PR #376: resumeRun built a NEW orchestrator but never re-attached
+// the Ask follower of a card-linked run, so the link row stayed 'paused' for
+// ever and the thread never heard the outcome. The link must follow the resumed
+// runId and reach a terminal status through a fresh follower.
+test('resumeRun re-attaches the Ask follower of a linked paused run: link moves to the new runId and reaches a terminal status', async () => {
+  const { createThread, linkRun, listRunLinks, listMessages } = await import('../src/core/ask/store.mjs');
+  const projD = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-projD-'));
+  const wtD = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-livewtD-'));
+  await addProject({ name: 'pauseapi-projD', path: projD });
+  const { id } = await seedPipeline(projD, {
+    title: 'linked paused run', status: 'paused',
+    branch: { source: 'main', feature: 'f', worktreeDir: wtD, reusedExisting: false },
+    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+      bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
+      pipelineDir: projD, pausedAt: '2026-06-09T00:00:00Z' },
+  });
+  const t = createThread();
+  linkRun(t.id, { runId: 'dead-lineage-uuid', cardId: null, pipelineId: id, status: 'paused' });
+
+  const out = await _testing.resumeRun(id, { mock: true });
+  assert.equal(out.ok, true);
+  const links = listRunLinks(t.id);
+  assert.equal(links.length, 1, 'one link row, taken over — not duplicated');
+  assert.equal(links[0].runId, out.runId, 'the link follows the resumed run');
+  assert.ok(listMessages(t.id).some((m) => /Run resumed/.test(m.text)), 'the thread hears about the resume');
+
+  // /api/resume never forwards `auto`, so the mock run parks at HITL gates — answer
+  // them the way test/ask-api-cards.test.mjs does until the follower reports.
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < 15000) {
+    const st = listRunLinks(t.id)[0].status;
+    if (/^(done|error|stopped)$/.test(st)) break;
+    const pq = runs.get(out.runId)?.pendingQuestion;
+    if (pq && pq !== last) {
+      last = pq;
+      const payload = (pq.kind === 'clarify' || pq.kind === 'questions')
+        ? { answers: (pq.questions || []).map((q) => ({ id: q.id, choice: (q.options || []).find((o) => o && o.trim()) || 'auto' })) }
+        : { decision: 'continue' };
+      await post('/api/answer', { runId: out.runId, id: pq.id, payload });
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const final = listRunLinks(t.id)[0];
+  assert.match(final.status, /^(done|error|stopped)$/, `follower reported a terminal status, got ${final.status}`);
+  assert.ok(listMessages(t.id).some((m) => /Run finished|Run failed/.test(m.text)), 'terminal notice posted by the re-attached follower');
+  await rm(wtD, { recursive: true, force: true });
+});

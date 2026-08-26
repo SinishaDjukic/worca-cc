@@ -25,6 +25,7 @@ const state = {
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
   channelIds: [], // known channel ids from /api/agents (drives the agent editor)
   historyAll: [],    // full /api/history dataset; client-side filter cache
+  commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
   ghAvailable: false,// gh CLI availability, from the last /api/history load
 
@@ -42,6 +43,10 @@ const state = {
   // --- Pluggable task sources (New Pipeline) ---
   pluginSources: [],        // GET /api/sources entries with type:'plugin'
   activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
+  // The profile the active source resolved to for the selected project /
+  // workspace (multiProfile sources only; null otherwise). Submitted with the
+  // run so the pipeline records WHICH instance the task came from.
+  activePluginProfile: null,
 };
 
 import {
@@ -60,6 +65,7 @@ import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
 import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
+import { createAskPanel } from './ask-panel.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
 } from './diff-view.mjs';
@@ -72,7 +78,7 @@ import {
 } from './file-tree.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
@@ -84,10 +90,15 @@ import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
-import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
+import {
+  renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
+} from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
+
+let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -367,6 +378,7 @@ let sidebarCollapsed = readSidebarCollapsed();
 function applySidebarCollapsed() {
   const aside = $('.sidebar');
   if (aside) aside.classList.toggle('collapsed', sidebarCollapsed);
+  document.body.classList.toggle('rail-collapsed', sidebarCollapsed);
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!sidebarCollapsed));
@@ -565,6 +577,23 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Ask Worca frames are tagged by threadId (job frames also carry messageId +
+  // seq) and ride the same broadcast socket. Handle them BEFORE the
+  // !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    askPanel?.pushServerFrame(msg);
+    // D12: a settled chat turn moves the combined spend — repaint the sidebar
+    // indicator and, when open, the Statistics view. ask-error included: an
+    // error turn that saw a result frame carries recorded spend. refreshBudget
+    // here is REQUIRED, not a nicety — the budget tick only refetches while
+    // pipelines are live, so chat-only spend would otherwise stay stale.
+    if (msg.type === 'ask-done' || msg.type === 'ask-error') {
+      refreshBudget();
+      if (currentView() === 'stats') loadStatsView();
+    }
+    return;
+  }
+
   // History PR-enrichment batches are token-tagged (not runId-tagged) and ride the
   // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'history-pr') {
@@ -597,6 +626,22 @@ function handleServerMessage(msg) {
   if (msg.type === 'workspaces-changed') {
     refreshAllCounts();
     if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
+  // A diff comment changed — from this tab, another tab, or the Ask assistant's MCP
+  // tools (which run in a child process and reach us through the turn). A poke
+  // carrying ids only: the open Diff tab refetches its comments and re-renders the
+  // CARDS in place, never the diff. Tabs showing another run ignore it.
+  if (msg.type === 'diff-comments-changed') {
+    // Both jobs are COALESCED (:9816): an Ask turn writing a dozen comments
+    // broadcasts a dozen frames, and each one otherwise costs a counts round trip
+    // plus a whole paintHistory(). The open tab's repaint is queued FIRST, so the
+    // poke survives even if the counts refresh ever throws.
+    if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
+      pokeOpenDiffTab();
+    }
+    pokeCommentCounts();
     return;
   }
 
@@ -751,6 +796,18 @@ function onHello(msg) {
     }
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
+
+  askPanel?.onHello(msg.ask);
+
+  // diff-comments-changed is a plain global broadcast with no per-socket buffer
+  // (ui/server.mjs:389-398), so any comment written while the socket was down is
+  // simply lost. `hello` is the fresh-socket hook — the same one the backfill
+  // subscribes ride — so replay both halves of the poke here. Coalesced, so a
+  // reconnect that lands mid-burst still costs one pass. pokeCommentCounts() is
+  // redundant ONLY on the history view (loadHistoryView() at :801 refreshes counts
+  // itself) — it is load-bearing on every other view, so it is not a duplicate.
+  if (hdCommentState) pokeOpenDiffTab();
+  pokeCommentCounts();
 
   refreshAllCounts();
   refreshBudget();
@@ -4705,21 +4762,35 @@ async function loadTaskSources() {
     el.sourceSeg.appendChild(b);
   }
   // Active source vanished (uninstalled/disabled)? Fall back to the radios.
-  if (state.activePluginSource && !state.pluginSources.some((s) =>
-      s.plugin === state.activePluginSource.plugin && s.sourceId === state.activePluginSource.sourceId)) {
+  const fresh = state.activePluginSource && state.pluginSources.find((s) =>
+    s.plugin === state.activePluginSource.plugin && s.sourceId === state.activePluginSource.sourceId);
+  if (state.activePluginSource && !fresh) {
     state.activePluginSource = null;
     el.pluginSourcePane.replaceChildren();
     syncSourceToggle();
+  } else if (fresh && fresh !== state.activePluginSource
+      && JSON.stringify(fresh) !== JSON.stringify(state.activePluginSource)) {
+    // Same source, CHANGED payload — its `profiles` roster is the usual thing
+    // that moves behind the pane's back (added/removed in Plugins settings).
+    // Re-point and re-mount, or the profile bar keeps offering a stale list.
+    // `fresh` is a new object on EVERY fetch, so equality is by value: an
+    // unchanged source keeps the mounted pane (and the user's search, results
+    // and picked task) instead of rebuilding it on each return to this view.
+    state.activePluginSource = fresh;
+    mountPluginSourcePane(fresh);
   }
 }
 
 // The pane's injected `call`: one connector op via POST /api/sources/call.
-function sourceCall(src) {
+// `profile` is the project's binding for a multi-profile source (undefined
+// otherwise) — without it the connector would run against whichever instance
+// the server defaulted to.
+function sourceCall(src, profile) {
   return async (op, args) => {
     const res = await fetch('/api/sources/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plugin: src.plugin, sourceId: src.sourceId, op, args: args || {} }),
+      body: JSON.stringify({ plugin: src.plugin, sourceId: src.sourceId, op, args: args || {}, profile }),
     });
     const data = await safeJson(res);
     if (!res.ok || data.ok === false) {
@@ -4740,24 +4811,151 @@ function selectPluginSource(src, btn) {
   mountPluginSourcePane(src);
 }
 
+// Which project/workspace a binding hangs off, in the shape both binding routes
+// accept. null when nothing is selected yet.
+function bindingScopeRef() {
+  if (state.runTarget === 'workspace') {
+    const id = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    return id ? { workspaceId: id } : null;
+  }
+  const dir = selectedProjectPath();
+  return dir ? { projectDir: dir } : null;
+}
+
+function bindingScopeLabel() {
+  if (state.runTarget === 'workspace') {
+    const ws = state.workspaces.find((w) => w && w.id === (el.workspaceSelect && el.workspaceSelect.value));
+    return (ws && ws.name) || 'this workspace';
+  }
+  return selectedProjectName() || 'this project';
+}
+
+/**
+ * The profile this project/workspace pulls from, or null when the user still
+ * has to say. Only multi-profile sources ask; everything else resolves to
+ * undefined and behaves exactly as it did before profiles existed.
+ * @returns {Promise<{profile?:string, gate?:object}|null>} null = no scope yet
+ */
+async function resolveSourceProfile(src) {
+  if (!src.multiProfile) return { profile: undefined };
+  const ref = bindingScopeRef();
+  if (!ref) return null;
+  const qs = new URLSearchParams({ ...ref, plugin: src.plugin, sourceId: src.sourceId });
+  const { ok, status, data } = await pluginApi('GET', `/api/source-bindings?${qs.toString()}`);
+  // An HTTP failure is NOT "no binding": rendering the first-time gate on a
+  // transient 500 invites the user to overwrite a correct standing binding.
+  // Throw so the caller's retry branch handles it like a network error.
+  if (!ok) throw new Error((data && data.error) || `HTTP ${status}`);
+  if (data.profile) return { profile: data.profile, via: data.via };
+  return {
+    gate: {
+      source: src,
+      profiles: src.profiles || [],
+      via: data.via || 'none',
+      candidates: data.candidates || [],
+      scopeLabel: bindingScopeLabel(),
+    },
+    ref,
+  };
+}
+
 // validateConfig gate first (= "Test connection"); then the declarative pane.
 async function mountPluginSourcePane(src) {
   const host = el.pluginSourcePane;
-  const call = sourceCall(src);
+  // A caller that lost the pane while it awaited (an onPick/retry resolving
+  // after the user switched sources) must not claim it back and orphan the
+  // current owner's loop. Synchronous, so it cannot race the claim below.
+  if (state.activePluginSource !== src) return;
+  // Claim the pane BEFORE the first await. Every mount takes a run id, and any
+  // older mount still in flight (a slow binding fetch, the SSO poll loop) stands
+  // down at its next owns() check. Source identity alone is NOT enough: the
+  // same src object is remounted when the project changes, and the binding is
+  // per-project — an old project's late resolve must never paint (or pin a
+  // profile for) the newly selected project's pane.
+  const run = (Number(host.dataset.gateRun) || 0) + 1;
+  host.dataset.gateRun = String(run);
+  const owns = () => host.isConnected && host.dataset.gateRun === String(run)
+    && state.activePluginSource === src;
+  // Tear the previous pane down BEFORE the first await, not after it resolves:
+  // while the binding fetch is in flight the old scope's task list, picked
+  // task and resolved profile would otherwise stay live and SUBMITTABLE — a
+  // Start in that window runs the new project against the old project's
+  // tracker, the exact silent-wrong-tracker mistake bindings exist to prevent.
+  state.activePluginProfile = null;
   host.replaceChildren(Object.assign(document.createElement('small'),
-    { className: 'hint', textContent: `Checking ${src.displayName} configuration…` }));
-  let v;
-  try { v = await call('validateConfig', {}); }
-  catch (e) { v = { ok: false, errors: [{ message: e.message }] }; }
-  if (state.activePluginSource !== src) return;   // user switched away meanwhile
-  host.replaceChildren();
-  if (!v || v.ok === false) {
+    { className: 'hint', textContent: `Checking ${src.displayName}…` }));
+  // A multi-profile source cannot be asked anything until it is known WHICH
+  // instance to ask, so the binding is resolved before the connection check.
+  // A FAILED resolve (server briefly unreachable mid project switch) must not
+  // resurrect the previous scope's pane either — error box with retry.
+  let resolved;
+  try {
+    resolved = await resolveSourceProfile(src);
+  } catch (err) {
+    if (!owns()) return;
+    state.activePluginProfile = null;
+    const box = document.createElement('div');
+    box.className = 'sp-config-missing';
+    box.appendChild(Object.assign(document.createElement('p'),
+      { className: 'hint err', textContent: `Could not resolve the source profile: ${err.message}` }));
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-ghost btn-mini';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => mountPluginSourcePane(src));
+    box.appendChild(retry);
+    host.replaceChildren(box);
+    return;
+  }
+  if (!owns()) return;
+  if (!resolved) {
+    host.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint', textContent: 'Select a project first — the source profile is bound to it.' }));
+    return;
+  }
+  if (resolved.gate) {
+    host.replaceChildren(renderProfileGate(resolved.gate, {
+      onPick: async (profile) => {
+        const r = await pluginApi('PUT', '/api/source-bindings',
+          { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
+        if (!r.ok) return setFormMsg(r.data.error || 'could not save the profile binding', 'err');
+        mountPluginSourcePane(src);
+      },
+    }));
+    return;
+  }
+  state.activePluginProfile = resolved.profile || null;
+  // The resolved profile stays on screen above the pane: "which tracker am I
+  // about to read from" has to be answerable at a glance, not only on the run
+  // that first bound it. Switching it rebinds the scope, same as the gate.
+  const bar = src.multiProfile ? renderProfileBar({
+    source: src,
+    profiles: src.profiles || [],
+    profile: resolved.profile,
+    via: resolved.via,
+    scopeLabel: bindingScopeLabel(),
+  }, {
+    onChange: async (profile) => {
+      const ref = bindingScopeRef();
+      if (!ref) return;
+      const r = await pluginApi('PUT', '/api/source-bindings',
+        { ...ref, plugin: src.plugin, sourceId: src.sourceId, profile });
+      if (!r.ok) return setFormMsg(r.data.error || 'could not save the profile binding', 'err');
+      mountPluginSourcePane(src);
+    },
+  }) : null;
+  const call = sourceCall(src, resolved.profile);
+  // Above EVERY outcome: a failed connection check is one of the likeliest
+  // moments to discover the wrong profile is bound, so the switcher has to be
+  // reachable from the error and waiting states too.
+  const show = (...nodes) => { host.replaceChildren(); if (bar) host.appendChild(bar); host.append(...nodes); };
+  const hint = (text, cls = 'hint') => Object.assign(document.createElement('small'), { className: cls, textContent: text });
+  const failBox = (message) => {
     const box = document.createElement('div');
     box.className = 'sp-config-missing';
     const msg = document.createElement('p');
     msg.className = 'hint err';
-    msg.textContent = `${src.displayName} is not configured: ${((v && v.errors) || [])
-      .map((x) => x.message).join('; ') || 'connection check failed'}`;
+    msg.textContent = message;
     const link = document.createElement('a');
     link.href = '#plugins';
     link.textContent = 'Open Plugins settings';
@@ -4768,10 +4966,34 @@ async function mountPluginSourcePane(src) {
     retry.textContent = 'Test connection';
     retry.addEventListener('click', () => mountPluginSourcePane(src));
     box.append(msg, link, retry);
-    host.appendChild(box);
+    return box;
+  };
+  host.replaceChildren(hint(`Checking ${src.displayName} configuration…`));
+  const started = Date.now();
+  for (;;) {
+    let v;
+    try { v = await call('validateConfig', {}); }
+    catch (e) { v = { ok: false, errors: [{ message: e.message }] }; }
+    if (!owns()) return;   // user switched away / remounted meanwhile
+    if (v && v.ok === true) break;
+    // { pending } is setup legitimately mid-flight (an SSO sign-in the
+    // connector just launched in a browser) — NOT a failure. Show the
+    // connector's own message neutrally and keep polling, exactly like the
+    // settings pane's Connect, so the pane flips to the inputs by itself
+    // once the sign-in completes.
+    if (v && v.pending && Date.now() - started <= CONNECT_MAX_MS) {
+      show(hint(v.message || `Waiting for ${src.displayName} to connect…`));
+      await new Promise((r) => setTimeout(r, CONNECT_POLL_MS));
+      if (!owns()) return;
+      continue;
+    }
+    const detail = v && v.pending
+      ? 'timed out waiting for the sign-in — press Test connection to try again'
+      : ((v && v.errors) || []).map((x) => x.message).join('; ') || 'connection check failed';
+    show(failBox(`${src.displayName} is not connected: ${detail}`));
     return;
   }
-  host.appendChild(renderSourcePane(src, { call }));
+  show(renderSourcePane(src, { call }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5397,16 +5619,23 @@ function renderProjectOptions(selectName) {
 
 function onProjectChanged() {
   const path = selectedProjectPath();
+  // The source profile is bound to the PROJECT, so a different project may pull
+  // from a different tracker: re-resolve rather than keep listing the old one's.
+  if (state.activePluginSource && state.activePluginSource.multiProfile) {
+    mountPluginSourcePane(state.activePluginSource);
+  }
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
-    loadConfig(path);        // (per-project history load removed — History is independent now)
-    refreshBranches(path);
+    const cfgLoad = loadConfig(path); // its tail repaints the workflow/guardrail pickers (:1821-1822)
+    refreshBranches(path);            // — a prefill caller MUST await it or be clobbered
+    return cfgLoad;
   } else {
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
-    loadConfig('');
+    const cfgLoad = loadConfig('');
     refreshBranches('');
+    return cfgLoad;
   }
 }
 
@@ -5428,12 +5657,20 @@ function seedBranchPlaceholder(select, text) {
 // the repo's current branch (HEAD). Empty value still falls back to HEAD on submit.
 async function populateBranchSelect(select, projectDir) {
   if (!select) return;
+  // Per-select request generation (review of PR #376): three un-guarded callers
+  // (project change, target change, prefill) raced, and whichever fetch resolved
+  // LAST rebuilt the options — wiping a source branch the prefill had just set.
+  // A response for a superseded request is dropped.
+  const gen = (select._branchGen = (select._branchGen || 0) + 1);
+  const stale = () => select._branchGen !== gen;
   if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); return; }
   const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
+    if (stale()) return;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
+    if (stale()) return;
     const branches = Array.isArray(data.branches) ? data.branches : [];
     if (!branches.length) { placeholder.textContent = 'current branch (auto)'; return; }
     // Rebuild: explicit "auto" first, then every branch (current pre-selected).
@@ -5445,6 +5682,7 @@ async function populateBranchSelect(select, projectDir) {
       select.appendChild(opt);
     }
   } catch {
+    if (stale()) return;
     // m2: surface the failure instead of leaving a silently-empty select. The
     // empty value still makes the server fall back to HEAD on submit.
     placeholder.textContent = 'current branch (auto — branch list unavailable)';
@@ -5682,6 +5920,11 @@ function setRunTarget(target) {
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
     loadConfig('');
     ensureWorkspaceOptions();
+    // The binding scope just changed from a project to a workspace; the project
+    // mode branch below re-resolves via onProjectChanged().
+    if (state.activePluginSource && state.activePluginSource.multiProfile) {
+      mountPluginSourcePane(state.activePluginSource);
+    }
   } else {
     // Restore the single project-driven dropdown; clear the per-project list.
     if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
@@ -5818,6 +6061,11 @@ if (el.workspaceSelect) {
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
+    // Same as onProjectChanged: a workspace has its own binding (or inherits
+    // one from its members), so the resolved profile can differ.
+    if (state.activePluginSource && state.activePluginSource.multiProfile) {
+      mountPluginSourcePane(state.activePluginSource);
+    }
   });
 }
 
@@ -7115,7 +7363,14 @@ el.form.addEventListener('submit', async (e) => {
   if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return setFormMsg(picked.error, 'err');
-    body.source = { type: 'plugin', plugin: psrc.plugin, sourceId: psrc.sourceId, taskId: picked.taskId, inputs: picked.inputs };
+    // The profile travels with the run and is pinned onto the row, so a result
+    // is reported back to the instance the task actually came from even if the
+    // project is re-bound in the meantime.
+    body.source = {
+      type: 'plugin', plugin: psrc.plugin, sourceId: psrc.sourceId,
+      taskId: picked.taskId, inputs: picked.inputs,
+      profile: state.activePluginProfile || undefined,
+    };
   } else if (source === 'markdown') {
     if (!mdText) return setFormMsg('Provide markdown text or load a .md file.', 'err');
     body.promptMarkdown = mdText;
@@ -7244,6 +7499,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
     paintBudgetSettings(data);
+    paintAskSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -7523,6 +7779,59 @@ if (el.budgetReset) {
   });
 }
 
+// ---- Ask Worca limits card (budget-card pattern above) ---------------------
+function setAskLimitsMsg(text, kind) {
+  const n = document.getElementById('askLimitsMsg');
+  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
+}
+function paintAskSettings(data) {
+  const turns = document.getElementById('askMaxTurns');
+  const budget = document.getElementById('askMaxBudgetUsd');
+  const noCap = document.getElementById('askNoCap');
+  if (!turns || !budget || !noCap) return;
+  turns.value = data.askMaxTurns == null ? '' : String(data.askMaxTurns);
+  noCap.checked = data.askMaxBudgetUsd === null;
+  budget.disabled = noCap.checked;
+  budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
+}
+async function postAskLimits(body) {
+  setAskLimitsMsg('');
+  let res = null;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch { setAskLimitsMsg('network error', 'err'); return; }
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) { setAskLimitsMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
+  paintAskSettings(data || {});
+  setAskLimitsMsg('Saved.');
+}
+function saveAskLimits() {
+  const turnsRaw = document.getElementById('askMaxTurns').value.trim();
+  const noCap = document.getElementById('askNoCap').checked;
+  const budgetRaw = document.getElementById('askMaxBudgetUsd').value.trim();
+  let askMaxTurns = '';
+  if (turnsRaw !== '') {
+    const n = Number(turnsRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 500) { setAskLimitsMsg('the turn limit must be an integer between 1 and 500', 'err'); return; }
+    askMaxTurns = n;
+  }
+  let askMaxBudgetUsd = '';
+  if (noCap) askMaxBudgetUsd = null;
+  else if (budgetRaw !== '') {
+    const b = Number(budgetRaw);
+    if (!Number.isFinite(b) || b < 0.1 || b > 100) { setAskLimitsMsg('the per-turn cap must be between 0.1 and 100', 'err'); return; }
+    askMaxBudgetUsd = b;
+  }
+  postAskLimits({ askMaxTurns, askMaxBudgetUsd });
+}
+document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
+document.getElementById('askLimitsReset')?.addEventListener('click', () => postAskLimits({ askMaxTurns: '', askMaxBudgetUsd: '' }));
+document.getElementById('askNoCap')?.addEventListener('change', () => {
+  const budget = document.getElementById('askMaxBudgetUsd');
+  if (budget) budget.disabled = document.getElementById('askNoCap').checked;
+});
+
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
 if (el.settingsProjectsRootBrowse) {
@@ -7673,8 +7982,91 @@ function openInstallConsent(entry) {
   ]);
 }
 
-async function openPluginSettings(name) {
-  const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config`);
+// One PUT per source form, each with ITS OWN sourceId — merging every form
+// into a single sourceId-less PUT would 400 for multi-source plugins (the
+// server only infers sourceId when the plugin has exactly one source).
+async function savePluginConfigForms(name, body) {
+  for (const f of body.querySelectorAll('.pl-config-form')) {
+    // `profile` is absent for a single-profile source, so this PUT is identical
+    // to the pre-profiles one there. Channel forms carry channelId instead of
+    // sourceId; the model-secrets form routes through { target: 'modelSecrets' }.
+    const collected = collectConfigForm(f); // { sourceId | channelId, values } (+ profile)
+    const payload = f.dataset.target === 'modelSecrets'
+      ? { target: 'modelSecrets', values: collected.values }
+      : collected;
+    const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, payload);
+    if (!r.ok) return r.data.error || 'save failed';
+  }
+  return null;
+}
+
+// Creating a profile is its own call: the roster entry has to exist before the
+// config form has anything to write into. Reopens on the NEW profile, which is
+// what the user wants to fill in next.
+async function addPluginProfile(name, sourceId) {
+  const id = (window.prompt('Profile id (lowercase letters, digits and dashes — e.g. "work"):') || '').trim();
+  if (!id) return;
+  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/profiles`, { sourceId, id, label });
+  if (!r.ok) return setPluginsMsg(r.data.error || 'could not create the profile', 'err');
+  loadTaskSources();               // the New Pipeline profile bar lists this roster
+  openPluginSettings(name, id);
+}
+
+async function deletePluginProfile(name, sourceId, profile) {
+  if (!profile) return;
+  // The server also drops every project binding that named it, so this is not
+  // just a settings delete — say so before it happens, not after.
+  if (!window.confirm(`Delete profile "${profile}"? Its settings, token and any project bound to it are removed.`)) return;
+  const url = `/api/plugins/${encodeURIComponent(name)}/profiles/${encodeURIComponent(profile)}?sourceId=${encodeURIComponent(sourceId)}`;
+  const r = await pluginApi('DELETE', url);
+  if (!r.ok) return setPluginsMsg(r.data.error || 'could not delete the profile', 'err');
+  // Deleting also drops the bindings that named it, so the pane may fall back
+  // to the gate — refresh it rather than leaving a profile that no longer exists.
+  loadTaskSources();
+  openPluginSettings(name);
+}
+
+// Connect: save the form, then poll validateConfig until it settles. Polling
+// is what lets an interactive sign-in (a browser the connector launched, which
+// outlives the 30s op budget) finish without the user clicking again — the
+// connector answers { pending: true } for as long as it is still waiting.
+const CONNECT_POLL_MS = 5000;
+const CONNECT_MAX_MS = 5 * 60 * 1000;
+
+async function connectPluginSource(name, sourceId, slot, profile) {
+  // A second Connect click starts a NEW loop over the same slot; the run id
+  // makes the old one stand down instead of the two fighting over what the
+  // slot shows (each has already re-launched validateConfig).
+  const run = (Number(slot.dataset.connectRun) || 0) + 1;
+  slot.dataset.connectRun = String(run);
+  const owns = () => slot.isConnected && slot.dataset.connectRun === String(run);
+  const started = Date.now();
+  for (;;) {
+    // The modal can be dismissed mid-poll (or the loop superseded by a newer
+    // Connect); stop rather than render into a detached or stolen node.
+    if (!owns()) return;
+    const { ok, data } = await pluginApi('POST', '/api/sources/call', { plugin: name, sourceId, op: 'validateConfig', profile });
+    if (!owns()) return; // superseded while the call was in flight
+    const result = ok && data.ok ? data.result : { ok: false, ...(data || {}) };
+    slot.replaceChildren(renderConnectResult(result));
+    if (result.ok || !result.pending) return;
+    if (Date.now() - started > CONNECT_MAX_MS) {
+      slot.replaceChildren(renderConnectResult({
+        ok: false,
+        errors: [{ message: 'Timed out waiting for the sign-in. Click Connect to try again.' }],
+      }));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, CONNECT_POLL_MS));
+  }
+}
+
+// profile: which configuration of a multiProfile source to echo. Absent = the
+// server's pick (the first in the roster), which is what opening from the list does.
+async function openPluginSettings(name, profile) {
+  const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
+  const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config${qs}`);
   if (!ok) return setPluginsMsg(data.error || 'config load failed', 'err');
   // Multi-source { sources:[{id,schema,values}] }, single-source { schema, values } tolerated.
   const sources = Array.isArray(data.sources) ? data.sources
@@ -7692,21 +8084,73 @@ async function openPluginSettings(name) {
     msForm.dataset.target = 'modelSecrets';
     body.appendChild(msForm);
   }
+  // Roster controls (multiProfile sources only — absent otherwise). Switching
+  // profile REOPENS the pane: the values are the server's per-profile echo, so
+  // there is nothing sensible to show until it has answered for the new one.
+  // Reopening discards typed-but-unsaved edits, so a dirty form asks first —
+  // and puts the select back when the answer is no.
+  const sourceById = (id) => sources.find((s) => (s.id || '') === id) || {};
+  let dirty = false;
+  body.querySelectorAll('.pl-config-form').forEach((f) => {
+    f.addEventListener('input', () => { dirty = true; });
+  });
+  body.querySelectorAll('.pl-profile-sel').forEach((sel) => {
+    const prev = sel.value;
+    sel.addEventListener('change', () => {
+      if (dirty && !window.confirm('Discard unsaved changes and switch profiles?')) {
+        sel.value = prev;
+        return;
+      }
+      openPluginSettings(name, sel.value);
+    });
+  });
+  body.querySelectorAll('.pl-profile-add').forEach((btn) => {
+    btn.addEventListener('click', () => addPluginProfile(name, btn.dataset.sourceId));
+  });
+  body.querySelectorAll('.pl-profile-del').forEach((btn) => {
+    btn.addEventListener('click', () => deletePluginProfile(name, btn.dataset.sourceId, sourceById(btn.dataset.sourceId).profile));
+  });
+  const slot = document.createElement('div');
+  slot.className = 'pl-connect-slot';
+  body.appendChild(slot);
+  // A multi-profile source with an empty roster has nothing to connect WITH.
+  const connectable = sources.filter((s) => !s.multiProfile || s.profile);
   pluginModal(`Settings: ${name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Save', 'btn btn-primary btn-mini', async () => {
-      // One PUT per source form, each with ITS OWN sourceId — merging every form
-      // into a single sourceId-less PUT would 400 for multi-source plugins (the
-      // server only infers sourceId when the plugin has exactly one source).
-      let failed = null;
-      for (const f of body.querySelectorAll('.pl-config-form')) {
-        const collected = collectConfigForm(f); // { sourceId | channelId, values }
-        const payload = f.dataset.target === 'modelSecrets'
-          ? { target: 'modelSecrets', values: collected.values }
-          : collected;
-        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, payload);
-        if (!r.ok) { failed = r.data.error || 'save failed'; break; }
+    // Connect only exists for task sources (validateConfig is a task-source
+    // op): a channels-only chat plugin would get a button whose every outcome
+    // misleads — "Add a profile first." for a plugin that CANNOT have
+    // profiles — so it gets no button at all.
+    ...(sources.length ? [['Connect', 'btn btn-ghost btn-mini', async () => {
+      if (!connectable.length) {
+        return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: 'Add a profile first.' }] }));
       }
+      const failed = await savePluginConfigForms(name, body);
+      if (failed) return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: failed }] }));
+      // One result block PER SOURCE, kept side by side: a later source's
+      // success must never paint over an earlier source's failure.
+      slot.replaceChildren();
+      const subs = connectable.map((s) => {
+        const sub = document.createElement('div');
+        sub.className = 'pl-connect-sub';
+        if (connectable.length > 1) {
+          sub.appendChild(Object.assign(document.createElement('div'),
+            { className: 'pl-config-h', textContent: s.id }));
+        }
+        const out = document.createElement('div');
+        sub.appendChild(out);
+        out.replaceChildren(renderConnectResult({ ok: false, pending: true, message: 'Connecting…' }));
+        slot.appendChild(sub);
+        return out;
+      });
+      // Sequential so two sources never race the same browser launch.
+      for (let i = 0; i < connectable.length; i++) {
+        const s = connectable[i];
+        await connectPluginSource(name, s.id, subs[i], s.profile || undefined);
+      }
+    }]] : []),
+    ['Save', 'btn btn-primary btn-mini', async () => {
+      const failed = await savePluginConfigForms(name, body);
       closePluginModal();
       setPluginsMsg(failed || 'Settings saved.', failed ? 'err' : 'ok');
     }],
@@ -9015,6 +9459,7 @@ async function loadHistoryView({ force = false } = {}) {
   }
   const pipelines = Array.isArray(data.pipelines) ? data.pipelines : [];
   state.historyAll = pipelines;
+  void refreshCommentCounts();   // non-blocking: the pill lands on the next tick
   state.ghAvailable = !!data.ghAvailable;
   restoreHistoryFilter();
   paintHistory();                                        // fresh skeleton repaint
@@ -9656,6 +10101,7 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
 
   renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
+  renderHistCommentPill(node.querySelector('.hist-cmt-pill'), p);
 
   // Branch line: "source → destination" plus a copy button for the destination.
   // Legacy rows may lack sourceBranch — then the source half (and arrow) stays
@@ -9710,6 +10156,64 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   });
   node.querySelector('.hist-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
   return node;
+}
+
+// Unresolved diff-comment counts, keyed "<storeKey>/<pipelineId>" — the same key
+// the server groups by. Its own fetch rather than a field on /api/history: that
+// response has a localStorage skeleton cache (test/ui-history-cache.test.mjs), so a
+// cached paint would render a stale pill.
+async function refreshCommentCounts() {
+  try {
+    const res = await fetch('/api/diff-comments/counts');
+    if (!res.ok) return;
+    const out = await res.json();
+    state.commentCounts = (out && out.counts) || {};
+  } catch { return; }
+  if (currentView() === 'history') paintHistory();
+}
+
+// A single Ask turn can write a dozen comments and EVERY write broadcasts, so the
+// raw poke is a repaint storm: one /api/diff-comments/counts round trip plus a
+// whole paintHistory() per frame, and a comments refetch + card repaint for the
+// run on screen. coalesce() runs the FIRST frame of a burst immediately — a poke
+// caused by the user's own click must feel instant — and collapses every further
+// frame inside the window into ONE trailing run. Trailing-edge only (debounce()
+// in source-pane.mjs) would delay that first frame by the whole window, which is
+// latency the local mutation path does not have.
+//
+// TWO independent coalescers, not one: the counts refresh fires for EVERY run's
+// poke while the tab reload fires only for the run on screen, so sharing a window
+// would let another run's frame delay this run's repaint.
+const COMMENT_POKE_MS = 250;
+function coalesce(fn, ms) {
+  let timer = null;
+  let queued = false;
+  const run = () => {
+    fn();
+    timer = setTimeout(() => {
+      timer = null;
+      if (!queued) return;
+      queued = false;
+      run();
+    }, ms);
+    // A real browser's setTimeout returns a number (no .unref) -> a no-op there.
+    // Under node:test, boot() copies only window/document/location/localStorage/
+    // WebSocket/fetch/navigator onto globalThis, so this is NODE's setTimeout and
+    // .unref stops a 250 ms tail from holding the event loop open (:9705).
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  };
+  return () => { if (timer == null) run(); else queued = true; };
+}
+const pokeCommentCounts = coalesce(() => { void refreshCommentCounts(); }, COMMENT_POKE_MS);
+const pokeOpenDiffTab = coalesce(() => { if (hdCommentState) void hdCommentState.reload(); }, COMMENT_POKE_MS);
+
+function renderHistCommentPill(pill, p) {
+  if (!pill) return;
+  const n = (state.commentCounts || {})[`${p && p.projectKey}/${p && p.id}`] || 0;
+  if (!n) { pill.hidden = true; return; }
+  pill.hidden = false;
+  pill.querySelector('.hist-cmt-count').textContent = String(n);
+  pill.title = `${n} unresolved diff comment${n === 1 ? '' : 's'}`;
 }
 
 // Diff pill: merged PR -> hidden ("the diff is no longer the story"); survived
@@ -9775,6 +10279,23 @@ function historyDiffUrl(id, record) {
   const key = record && record.projectKey ? record.projectKey : '';
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/diff`;
 }
+
+// Twin of historyDiffUrl for the comments family. The /api/history/:key/:id key
+// regex forbids a slash, so a workspace run MUST use the /api/workspaces arm — the
+// same split logs and diffs already carry.
+function historyCommentsUrl(id, record, suffix = '') {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/comments${suffix}`;
+  }
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/comments${suffix}`;
+}
+
+// The History store key of a record — byte-identical to the `storeKey` the server
+// puts in a diff-comments-changed frame. Workspace records already carry the
+// "workspaces/" prefix (historyDiffUrl strips it to build its URL).
+const hdStoreKey = (record) => (record && record.projectKey) || '';
 
 // Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
 function issueList(rows) {
@@ -10002,6 +10523,11 @@ function parseHistDetailParam(param) {
 }
 
 let histDetailState = null; // { key, id, record, data, screen } while open
+// The open Diff tab's comment layer, published so the WS router can poke it.
+// Assigned by buildHdDiff, cleared by closeHistDetail and by the next buildHdDiff.
+// `reload` refetches the comments and repaints CARDS ONLY — never the diff, never
+// the patch (D18).
+let hdCommentState = null; // { key, id, reload }
 // One-shot "the user pressed Create PR on the list card" intent, consumed by
 // openHistDetail unconditionally so it can never strand across visits.
 let pendingShipIt = null;   // { id, projectKey } | null
@@ -10094,8 +10620,9 @@ function closeHistDetail({ instant = false } = {}) {
   const shell = el.histShell;
   const host = el.histDetail;
   if (!shell || !host) return;
-  if (!shell.classList.contains('detail-open')) { histDetailState = null; return; }
+  if (!shell.classList.contains('detail-open')) { histDetailState = null; hdCommentState = null; return; }
   histDetailState = null;
+  hdCommentState = null;
   host.setAttribute('aria-hidden', 'true');
   // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
   const list = shell.querySelector('.hist-screen-list');
@@ -11093,6 +11620,162 @@ function refreshHdOverviewTab() {
 
 // --- Diff tab: file list + patch viewer -------------------------------------
 
+const HD_CMT_BLOCK = 'hd-cmt-block';
+
+// Comments indexed by the SAME key the patch index uses, so a card and its section
+// can never disagree about which file they belong to. The server already orders by
+// path, line and creation (D17); that order is preserved inside each bucket.
+function hdCommentIndex(list) {
+  const byFile = new Map();
+  for (const c of Array.isArray(list) ? list : []) {
+    const key = sectionKey(c.projectKey || null, c.path);
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key).push(c);
+  }
+  return byFile;
+}
+
+const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved).length;
+
+function hdCmtStamp(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const s = d.toISOString();
+  return `${s.slice(0, 10)} ${s.slice(11, 16)}`;
+}
+
+// The live row for one anchor inside the CURRENT window, or null. hdDiffRow stamps
+// data-old AND data-new on every row, using '' where that side has no number, so
+// an exact-value match is unambiguous: a ctx row carries both, a del row only the
+// old, an add row only the new.
+function hdRowFor(body, comment) {
+  const attr = comment.side === 'old' ? 'data-old' : 'data-new';
+  return body.querySelector(`.hd-dl-row[${attr}="${cssEscape(String(comment.line))}"]`);
+}
+
+// One comment card. Actions are wired to `ctx` (the per-tab controller) rather than
+// to captured DOM, so a repaint after a WS poke rebuilds them cleanly.
+function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
+  const card = doc.createElement('div');
+  card.className = `hd-cmt-card${comment.resolved ? ' resolved' : ''}${detached ? ' detached' : ''}`;
+  card.dataset.commentId = comment.id;
+
+  const head = doc.createElement('div');
+  head.className = 'hd-cmt-head';
+  const who = doc.createElement('span');
+  who.className = `hd-cmt-author ${comment.author === 'ask' ? 'ask' : 'user'}`;
+  who.textContent = comment.author === 'ask' ? 'Ask' : 'User';
+  const when = doc.createElement('span');
+  when.className = 'hd-cmt-time';
+  when.textContent = hdCmtStamp(comment.createdAt);
+  head.append(who, when);
+  if (comment.resolved) {
+    const tag = doc.createElement('span');
+    tag.className = 'hd-cmt-tag';
+    tag.textContent = 'Resolved';
+    head.appendChild(tag);
+  }
+  if (comment.sentRunId) {
+    const sent = doc.createElement('span');
+    sent.className = 'hd-cmt-sent';
+    sent.textContent = `sent to #${comment.sentRunId}`;
+    head.appendChild(sent);
+  }
+  card.appendChild(head);
+
+  if (detached) {
+    // The anchor could not be rendered (cut by the parse cap, a binary section, or
+    // a path that is not in the patch at all). The comment is NEVER dropped — the
+    // line_text snapshot is exactly what this case exists for. Anchoring is
+    // exact-match only; nothing is ever re-attached to a "nearby" line.
+    const where = doc.createElement('div');
+    where.className = 'hd-cmt-where mono';
+    where.textContent = `${comment.path}:${comment.line} (${comment.side})`;
+    const quoted = doc.createElement('div');
+    quoted.className = 'hd-cmt-quote mono';
+    quoted.textContent = comment.lineText || '';
+    card.append(where, quoted);
+  }
+
+  const bodyEl = doc.createElement('div');
+  bodyEl.className = 'hd-cmt-body';
+  bodyEl.textContent = comment.body;        // textContent: comment bodies are never markup
+  card.appendChild(bodyEl);
+
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  const act = (cls, text, fn) => {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = `hd-cmt-btn ${cls}`;
+    b.textContent = text;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    return b;
+  };
+  actions.append(
+    act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved); }),
+    act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
+    act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+  );
+  card.appendChild(actions);
+  return card;
+}
+
+/** The inline composer, opened from a row's + button. */
+function hdCommentComposer(doc, anchor, ctx, onClose) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'hd-cmt-composer';
+  const ta = doc.createElement('textarea');
+  ta.className = 'hd-cmt-input';
+  ta.rows = 3;
+  ta.placeholder = 'Leave a note on this line…';
+  ta.setAttribute('aria-label', `Comment on ${anchor.path} line ${anchor.line}`);
+  const msg = doc.createElement('div');
+  msg.className = 'hd-cmt-err';
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  const save = doc.createElement('button');
+  save.type = 'button';
+  save.className = 'hd-cmt-btn hd-cmt-save';
+  save.textContent = 'Comment';
+  const cancel = doc.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'hd-cmt-btn hd-cmt-cancel';
+  cancel.textContent = 'Cancel';
+  actions.append(save, cancel);
+  wrap.append(ta, msg, actions);
+
+  const submit = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    save.disabled = true;
+    const err = await ctx.create(anchor, text);
+    save.disabled = false;
+    if (err) { msg.textContent = err; return; }
+    onClose();
+  };
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); onClose(); });
+  save.addEventListener('click', (e) => { e.stopPropagation(); void submit(); });
+  // Bound to `wrap`, NOT to `ta`. The Escape guard opts the whole `.hd-cmt-composer`
+  // subtree out of the global Escape handler, so if this listener only covered the
+  // textarea, Escape while the Comment/Cancel button had focus would be swallowed by
+  // the guard and handled by nobody — the draft would neither close nor navigate.
+  // keydown bubbles, so one listener on `wrap` covers the textarea and both buttons.
+  wrap.addEventListener('keydown', (e) => {
+    // Cmd/Ctrl+Enter saves, Esc cancels.
+    //
+    // stopPropagation() here is NOT what makes Esc safe — see D20. The handler that
+    // would throw the draft away (`location.hash = 'history'`) is registered on
+    // `document` in the CAPTURE phase, so it has already run by the time this
+    // bubble-phase listener sees the event. That handler gets an explicit guard
+    // instead. stopPropagation stays only to shield the draft from BUBBLE-phase
+    // document listeners.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); void submit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+  });
+  return { wrap, focus: () => { try { ta.focus(); } catch { /* detached */ } } };
+}
+
 // File rows for the Diff tab. Single-project: results.newFiles + changedFiles.
 // Workspace: one group per results.perProject[<key>] (a workspace results object
 // has NO top-level file arrays), with the project key carried so patch sections
@@ -11235,6 +11918,7 @@ function hdDiffView(parsed, ownsBody) {
     applied: new Set(),   // hunks whose highlight decision is final
     highlighted: false,   // highlightParsed() has run and set line.html
     hunkIndex: 0, lineIndex: 0, renderedLines: 0,
+    onWindow: null,       // (body, meta) after each window connects — the comment layer
   };
 }
 
@@ -11334,10 +12018,30 @@ function hdDiffAppendWindow(doc, body, view, meta, tail) {
     frag.appendChild(more);
   }
   body.insertBefore(frag, tail);
+  // Rendering is windowed, so a comment whose row is still hidden has nothing to
+  // hang on. Every window that connects gets its cards here — the "Show more"
+  // button re-enters through this same function, so it is covered too.
+  if (typeof view.onWindow === 'function') view.onWindow(body, meta);
+}
+
+/** True only for a run that reached `done`; everything else may hold partial work. */
+function hdRunFinished(data) {
+  return String(data?.state?.status || '').toLowerCase() === 'done';
+}
+
+/** The banner above a non-done run's diff: what the artifact actually is. */
+function hdPartialDiffNotice(doc) {
+  const note = doc.createElement('div');
+  note.className = 'hd-diff-partial';
+  note.textContent = 'This run did not finish. The diff is a snapshot of the worktree at the moment it '
+    + 'stopped, so it may contain partially written files, and any review findings come from the '
+    + 'cycles that completed.';
+  return note;
 }
 
 function buildHdDiff(sec, record, data) {
   sec.innerHTML = '';
+  hdCommentState = null;   // a new Diff tab supersedes the old one's poke target
   const results = data.results;
   if (!results) {
     const empty = document.createElement('div');
@@ -11345,10 +12049,14 @@ function buildHdDiff(sec, record, data) {
     const line = document.createElement('div');
     line.textContent = 'No diff captured for this run.';
     empty.appendChild(line);
-    if (String(data.state.status || '').toLowerCase() !== 'done') {
+    if (!hdRunFinished(data)) {
       const sub = document.createElement('div');
       sub.className = 'hint';
-      sub.textContent = 'Diffs are captured when a run completes.';
+      // NOT "diffs are captured when a run completes" any more: the orchestrator
+      // builds the artifact on the stopped and error paths too. What is left here
+      // is a run that committed nothing (stopped before its first commit, or still
+      // going) and an archived run whose artifacts are gone.
+      sub.textContent = 'Nothing was captured yet — the run has committed no work, or its artifacts have been archived.';
       empty.appendChild(sub);
     }
     sec.appendChild(empty);
@@ -11366,6 +12074,9 @@ function buildHdDiff(sec, record, data) {
   sectionHeading.className = 'sr-only';
   sectionHeading.textContent = 'Changed files and diff';
   sec.append(sectionHeading, grid);
+  // results.json carries NO partial flag — its determinism invariant (results.mjs
+  // header) forbids one — so partial-ness is derived from the run status instead.
+  if (!hdRunFinished(data)) sec.insertBefore(hdPartialDiffNotice(document), grid);
 
   const sums = results.summary || {};
   const head = document.createElement('div');
@@ -11385,13 +12096,324 @@ function buildHdDiff(sec, record, data) {
   rowsHost.className = 'hd-diff-rows';
   listCard.appendChild(rowsHost);
 
-  const rows = hdDiffFileRows(results);
+  const baseRows = hdDiffFileRows(results);
   // patchPromise memoizes the ONE fetch (concurrent selects await the same
   // promise — a bare boolean flag would let a second click read a null index
   // mid-flight); selEpoch drops the stale continuation when the user picks
   // another file while the patch is still downloading (without it both selects
   // resume after the await and append two bodies to the same pane).
   const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
+
+  // ---- the comment layer ---------------------------------------------------
+  const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
+    guarded: new Set(),      // section keys the protected-path floor always refuses (m16)
+    collapsed: new Set() };  // dir keys the user collapsed; survives a tree re-render (m11)
+  let commentsPromise = null;
+  let lastPick = null;   // { entry, key } — the file currently selected
+  let lastMeta = null;   // diffSectionMeta of the body currently in the pane
+
+  const hdPaneLive = () => pane.isConnected && !!histDetailState?.screen?.contains(pane);
+
+  async function fetchComments() {
+    try {
+      const res = await fetch(historyCommentsUrl(record.id, record));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const out = await res.json();
+      cstate.comments = Array.isArray(out.comments) ? out.comments : [];
+      cstate.patchAvailable = !!out.patchAvailable;
+      // Section keys (sectionKey(project, path)) the server's protected-path floor
+      // will always refuse. The glob preset stays server-side; the browser only
+      // ever compares keys it already indexes its file rows by.
+      cstate.guarded = new Set(Array.isArray(out.protectedPaths) ? out.protectedPaths : []);
+    } catch {
+      // A failed fetch leaves patchAvailable false, so this render has no gutter —
+      // but repaintCards() re-arms on every poke and on every successful reload, so
+      // creation comes back on its own; no re-select is needed. Cards are restored
+      // by the same path.
+      cstate.patchAvailable = false;
+    }
+    cstate.byFile = hdCommentIndex(cstate.comments);
+  }
+  // NOTE paintFileList() already calls paintCommentBadges() on BOTH of its arms, so
+  // reload() must not call it a second time (harmless, but it doubles the DOM walk
+  // on every poke).
+  function ensureComments() {
+    if (!commentsPromise) commentsPromise = fetchComments();
+    return commentsPromise;
+  }
+
+  const ctx = {
+    canCreate: () => cstate.patchAvailable,
+    /** true when POST /comments would be refused for this file whatever the line. */
+    guarded: (project, path) => cstate.guarded.has(sectionKey(project || null, path)),
+    for: (project, path) => cstate.byFile.get(sectionKey(project || null, path)) || [],
+    /** @returns {Promise<string|null>} an error message to show inline, or null */
+    async create(anchor, body) {
+      try {
+        const res = await fetch(historyCommentsUrl(record.id, record), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...(anchor.project ? { project: anchor.project } : {}),
+            path: anchor.path, side: anchor.side, line: anchor.line, body,
+          }),
+        });
+        if (!res.ok) {
+          let m = `could not save (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          return m;
+        }
+      } catch { return 'network error — the comment was not saved'; }
+      await reload();
+      return null;
+    },
+    async setResolved(comment, resolved) {
+      try {
+        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolved }),
+        });
+      } catch { /* the WS poke or the next open corrects it */ }
+      await reload();
+    },
+    async remove(comment) {
+      const ok = await confirmModal({
+        title: 'Delete this comment?',
+        message: 'Comments cannot be recovered. This does not change the diff or the run.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), { method: 'DELETE' });
+      } catch { /* as above */ }
+      await reload();
+    },
+    toAsk(comment) { askAboutDiffComment(comment); },
+  };
+
+  // A comment can name a path the patch does not contain (or the patch may be gone
+  // entirely). Such a path gets a SYNTHETIC file row so it is reachable and counts
+  // in the badges; selecting it lands in the no-section branch, which renders its
+  // detached cards.
+  function syntheticCommentRows() {
+    const have = new Set(baseRows.map((r) => sectionKey(r.project ?? null, r.f.path)));
+    const extra = [];
+    for (const [key, list] of cstate.byFile) {
+      if (have.has(key)) continue;
+      const c = list[0];
+      // `f` carries the path and NOTHING else on purpose: hdFileCountsNode returns an
+      // EMPTY chip when `f.added == null`, so a synthetic row shows no counts at all
+      // rather than a bogus "+0 −0" for a file that has no diff here. fileStatus()
+      // with no `status` and isNew:false lands on 'mod', and renderFile's aria-label
+      // degrades to "0 lines added, 0 lines removed".
+      extra.push({ project: c.projectKey || null, f: { path: c.path }, isNew: false, synthetic: true });
+      have.add(key);
+    }
+    return extra;
+  }
+
+  // renderFileTree's `counts` slot is one-shot and has no update hook, so badges are
+  // painted onto the buttons afterwards. `btn.dataset.project` is '' (never null) for
+  // a single-project run, and sectionKey('', p) === sectionKey(null, p) === p, so
+  // `|| null` below is belt-and-braces, not a fix.
+  function paintCommentBadges() {
+    for (const btn of rowsHost.querySelectorAll('.hd-diff-file')) {
+      const n = hdUnresolved(cstate.byFile.get(sectionKey(btn.dataset.project || null, btn.dataset.path)));
+      let badge = btn.querySelector('.hd-cmt-badge');
+      if (!n) { badge?.remove(); continue; }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'hd-cmt-badge';
+        btn.appendChild(badge);
+      }
+      badge.textContent = String(n);
+      badge.title = `${n} unresolved comment${n === 1 ? '' : 's'}`;
+    }
+  }
+
+  // D19: the tree is re-rendered ONLY when the synthetic-row set moves, and only
+  // into rowsHost — never the pane, so the open diff and its window cursor are
+  // untouched. `initialKey` re-activates the selected button without firing onPick.
+  // @returns the first file node, or null when there is nothing to select.
+  function paintFileList({ force = false } = {}) {
+    const extra = syntheticCommentRows();
+    // Join on a SEPARATOR, never ''. With an empty joiner ['ab','c'] and ['a','bc']
+    // hash the same, so a real change to the synthetic-row set would be skipped and
+    // the new file row would never appear.
+    const sig = extra.map((r) => sectionKey(r.project, r.f.path)).join('\u0001');
+    if (!force && sig === cstate.treeSig) { paintCommentBadges(); return null; }
+    cstate.treeSig = sig;
+    const nodes = buildFileTree([...baseRows, ...extra]);
+    const firstNode = firstFile(nodes);
+    const tree = renderFileTree(nodes, {
+      doc: document,
+      initialKey: (lastPick && lastPick.key) || firstNode?.key || null,
+      counts: (entry) => hdFileCountsNode(document, entry.f),
+      onPick: (entry, key) => { lastPick = { entry, key }; select(entry, key).catch(() => {}); },
+      // The SAME Set across re-renders, mutated by renderFileTree's own toggles:
+      // a poke that adds a synthetic row must not silently re-open every folder
+      // the user collapsed (D19 keeps the diff pane; this keeps the file list).
+      collapsed: cstate.collapsed,
+    });
+    // replaceChildren resets scrollTop, and .hd-diff-rows is a 860px scroller.
+    const scrolled = rowsHost.scrollTop;
+    rowsHost.replaceChildren(tree);
+    rowsHost.scrollTop = scrolled;
+    paintCommentBadges();
+    return firstNode;
+  }
+
+  // Cards for every comment of this file: under its row when that row is in the
+  // CURRENT window, in the detached block otherwise. Idempotent — a later window
+  // never doubles a card, and a comment whose window has just materialised loses
+  // its detached copy in the same pass.
+  function attachComments(body, meta) {
+    const list = ctx.for(meta.project, meta.path);
+    const orphans = [];
+    for (const comment of list) {
+      const row = hdRowFor(body, comment);
+      if (!row) { orphans.push(comment); continue; }
+      body.querySelector(`.hd-cmt-detached [data-comment-id="${cssEscape(comment.id)}"]`)?.remove();
+      if (body.querySelector(`.hd-cmt-block [data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+      // A context row carries BOTH numbers, so one row can host an old-side and a
+      // new-side block: match on line AND side, and scan the whole run of blocks
+      // already following the row rather than only its immediate sibling. A new
+      // block goes after the LAST of that run — row.after() would put the later
+      // comment above the earlier one. An open composer is a block too; it is
+      // skipped, never appended into.
+      let block = null;
+      let tail = row;
+      for (let n = row.nextElementSibling;
+        n && n.classList.contains(HD_CMT_BLOCK); n = n.nextElementSibling) {
+        tail = n;
+        if (n.dataset.composer !== '1'
+          && n.dataset.line === String(comment.line)
+          && n.dataset.side === comment.side) { block = n; break; }
+      }
+      if (!block) {
+        block = document.createElement('div');
+        block.className = HD_CMT_BLOCK;
+        block.dataset.line = String(comment.line);
+        block.dataset.side = comment.side;
+        tail.after(block);
+      }
+      block.appendChild(hdCommentCard(document, comment, ctx));
+    }
+    paintDetached(body, orphans);
+  }
+
+  // A comment whose anchor is not renderable still shows — as a detached card at
+  // the BOTTOM of the pane, below the truncation / no-textual-diff note.
+  //
+  // The block is re-appended on EVERY call, not only when it is created: `tail` is
+  // null for any file that is not truncated, and hdDiffAppendWindow's
+  // `body.insertBefore(frag, tail)` degrades to a plain append when tail is null.
+  // So on a long-but-not-truncated file the next "Show more" window would land
+  // AFTER this block and strand it mid-diff, where it would stay for every further
+  // window. appendChild MOVES an already-connected node, so calling it
+  // unconditionally is both the fix and a no-op when the block is already last.
+  function paintDetached(body, orphans) {
+    let block = body.querySelector(':scope > .hd-cmt-detached');
+    if (!orphans.length) { block?.remove(); return; }
+    if (!block) {
+      block = document.createElement('div');
+      block.className = 'hd-cmt-detached';
+      const head = document.createElement('div');
+      head.className = 'hd-cmt-detached-head';
+      head.textContent = 'Comments on lines not shown here';
+      block.appendChild(head);
+    }
+    body.appendChild(block);   // create OR re-home: always the last child
+    const keep = new Set(orphans.map((c) => c.id));
+    for (const card of block.querySelectorAll('[data-comment-id]')) {
+      if (!keep.has(card.dataset.commentId)) card.remove();
+    }
+    for (const comment of orphans) {
+      if (block.querySelector(`[data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+      block.appendChild(hdCommentCard(document, comment, ctx, { detached: true }));
+    }
+  }
+
+  // D18: patch the CARDS of the body already on screen. NEVER re-run select() — it
+  // starts with pane.innerHTML = '', which would discard the window cursor and the
+  // scroll position of anyone who had clicked "Show more".
+  function repaintCards() {
+    const body = pane.querySelector('.hd-diff-body');
+    if (!body || !lastMeta) return;
+    for (const el of body.querySelectorAll(':scope > .hd-cmt-block, :scope > .hd-cmt-detached')) {
+      if (el.dataset.composer === '1') continue;   // never destroy an open draft
+      el.remove();
+    }
+    attachComments(body, lastMeta);
+    // The FIRST comment fetch may have failed, in which case select() rendered
+    // this body with canCreate() false and no gutter. Re-arm here so a poke (or a
+    // retried fetch) brings the '+' back without forcing a re-select;
+    // armCommentGutter is idempotent per body. Unlike select(), this also reaches
+    // the two early-return bodies (the "(no textual diff for this file)" notes) —
+    // inert, since they carry no .hd-dl-row for the delegated mouseover to match.
+    armCommentGutter(body, lastMeta);
+  }
+
+  // What a diff-comments-changed poke calls, and what every local mutation calls
+  // after its request settles. Refetch, repaint badges + cards. The patch is never
+  // refetched (pstate memoizes it) and the diff is never rebuilt.
+  async function reload() {
+    commentsPromise = null;
+    await ensureComments();
+    if (!hdPaneLive()) return;
+    const late = paintFileList();     // paints the badges on both of its arms
+    repaintCards();
+    // Nothing was selectable before (no results files) but comments now name one.
+    if (!lastPick && late) { lastPick = { entry: late.entry, key: late.key }; await select(late.entry, late.key); }
+  }
+
+  // ONE button per body, moved into the hovered row's code cell. A button per row
+  // would double the node count HD_DIFF_WINDOW_LINES exists to bound, and
+  // `.hd-dl-row{display:contents}` gives the row no box for a CSS :hover to match
+  // anyway — so hover is delegated. It rides in `.hd-dl-code`, NEVER in
+  // `.hd-dl-src`: hdApplyHighlights calls replaceChildren on that span.
+  function armCommentGutter(body, meta) {
+    if (!ctx.canCreate()) return;                       // no patch: read-only, no creation
+    if (ctx.guarded(meta.project, meta.path)) return;   // the floor refuses every line here  [m16]
+    if (body.dataset.gutterArmed === '1') return;       // idempotent: repaintCards re-arms
+    body.dataset.gutterArmed = '1';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hd-cmt-add';
+    btn.title = 'Comment on this line';
+    btn.setAttribute('aria-label', 'Comment on this line');
+    btn.textContent = '+';
+    let armed = null;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!armed || !body.contains(armed)) return;
+      // A ctx row carries BOTH numbers; the brief anchors it on the new side.
+      const side = armed.dataset.new ? 'new' : 'old';
+      const line = Number(armed.dataset.new || armed.dataset.old);
+      if (!Number.isSafeInteger(line) || line < 1) return;   // an unnumbered row is not anchorable
+      body.querySelector(':scope > .hd-cmt-block[data-composer="1"]')?.remove();  // one draft at a time
+      const host = document.createElement('div');
+      host.className = HD_CMT_BLOCK;
+      host.dataset.composer = '1';
+      host.dataset.line = String(line);
+      armed.after(host);
+      const { wrap, focus } = hdCommentComposer(
+        document, { project: meta.project || null, path: meta.path, side, line }, ctx,
+        () => host.remove());
+      host.appendChild(wrap);
+      focus();
+    });
+    body.addEventListener('mouseover', (e) => {
+      const row = e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null;
+      if (!row || !body.contains(row)) return;
+      if (!row.dataset.new && !row.dataset.old) return;      // no line number -> not anchorable
+      armed = row;
+      const code = row.querySelector('.hd-dl-code');
+      if (code && btn.parentElement !== code) code.prepend(btn);
+    });
+    body.addEventListener('mouseleave', () => { btn.remove(); armed = null; });
+  }
 
   function ensurePatch() {
     if (!pstate.patchPromise) {
@@ -11429,15 +12451,29 @@ function buildHdDiff(sec, record, data) {
     ph.append(selectedPath, hdFileCountsNode(document, entry.f));
     pane.appendChild(ph);
 
-    await ensurePatch();
+    // Both loads, not just the patch — so the first window already has cards and
+    // canCreate() is decided before the gutter is armed.
+    await Promise.all([ensurePatch(), ensureComments()]);
     if (epoch !== pstate.selEpoch
       || !pane.isConnected
       || !histDetailState?.screen?.contains(pane)) return;
+
+    // The floor is a BASENAME match, so it also catches ordinary files (`*.key`,
+    // `**/secrets/**` — src/secrets/README.md is refused). Say so once, here,
+    // instead of arming a '+' that only fails on submit.
+    if (cstate.patchAvailable && ctx.guarded(entry.project, entry.f.path)) {
+      const lock = document.createElement('span');
+      lock.className = 'hd-diff-guarded';
+      lock.textContent = 'protected path';
+      lock.title = 'New comments are not stored for credential-shaped paths (.env*, *.pem, *.key, **/secrets/**, …). Existing comments still show.';
+      ph.appendChild(lock);
+    }
 
     const body = document.createElement('div');
     body.className = 'hd-diff-body mono';
     const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
     const meta = diffSectionMeta(entry, fileKey, section);
+    lastMeta = meta;                                   // what repaintCards re-attaches against
     if (!section) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -11447,6 +12483,7 @@ function buildHdDiff(sec, record, data) {
         ? `Could not load the patch: ${pstate.error}`
         : '(no textual diff for this file)';
       body.appendChild(note);
+      attachComments(body, meta);                      // detached cards below the note
       pane.appendChild(body);
       return;
     }
@@ -11458,6 +12495,7 @@ function buildHdDiff(sec, record, data) {
       setSectionData(note, meta);
       note.textContent = '(no textual diff for this file)';
       body.appendChild(note);
+      attachComments(body, meta);                      // same for binary / hunk-less
       pane.appendChild(body);
       return;
     }
@@ -11467,6 +12505,7 @@ function buildHdDiff(sec, record, data) {
       && pane.contains(body)
       && histDetailState?.screen?.contains(pane);
     const view = hdDiffView(parsed, ownsBody);
+    view.onWindow = (b, m) => attachComments(b, m);    // every window, incl. "Show more"
     // The size-cap note is about rows the PARSER dropped, so it stays the last
     // row; every window (and the show-more control) is inserted above it.
     let tail = null;
@@ -11478,6 +12517,7 @@ function buildHdDiff(sec, record, data) {
       body.appendChild(tail);
     }
     hdDiffAppendWindow(document, body, view, meta, tail);
+    armCommentGutter(body, meta);                      // once per rendered body
     body.style.setProperty('--hd-gutter-width', `calc(${view.digits}ch + 16px)`);
     pane.appendChild(body);
 
@@ -11488,22 +12528,36 @@ function buildHdDiff(sec, record, data) {
     }
   }
 
-  const nodes = buildFileTree(rows);
-  const first = firstFile(nodes);
-  const tree = renderFileTree(nodes, {
-    doc: document,
-    initialKey: first?.key ?? null,
-    counts: (entry) => hdFileCountsNode(document, entry.f),
-    onPick: (entry, key) => { select(entry, key).catch(() => {}); },
-  });
-  rowsHost.appendChild(tree);
-  if (first) select(first.entry, first.key).catch(() => {});
-  else {
+  // The file list paints immediately from `results`; the comment load runs in
+  // parallel and repaints when it lands, so the first paint is never blocked on a
+  // second round trip — while select() still awaits both, so cards attach in the
+  // first window rather than a tick later.
+  const firstNode = paintFileList({ force: true });
+  if (firstNode) {
+    lastPick = { entry: firstNode.entry, key: firstNode.key };
+    select(firstNode.entry, firstNode.key).catch(() => {});
+  } else {
     const none = document.createElement('div');
     none.className = 'hint hd-diff-none';
     none.textContent = '(no files changed)';
     pane.appendChild(none);
   }
+  // Publish the poke target BEFORE the first fetch settles: a mutation from another
+  // tab can land while this one is still loading.
+  hdCommentState = { key: hdStoreKey(record), id: record.id, reload };
+  void ensureComments().then(() => {
+    if (!hdPaneLive()) return;
+    // Synthetic rows may appear now (a comment on a path the patch never had, or a
+    // run whose patch is gone entirely — D7 rule 4: the list comes from comments).
+    const late = paintFileList();
+    if (!lastPick && late) {
+      lastPick = { entry: late.entry, key: late.key };
+      select(late.entry, late.key).catch(() => {});
+    } else if (lastPick) {
+      paintCommentBadges();
+      repaintCards();
+    }
+  });
 }
 
 // --- Overview tab: verdict, stat cards, task card ---------------------------
@@ -12472,11 +13526,17 @@ function paintRdTerminal(screen, r) {
 // per-invocation handler run in bubble phase after.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  // An open diff-comment composer owns Escape: it cancels the draft (the textarea's
+  // own keydown does that) instead of sending the whole detail screen back to the
+  // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
+  // a guard here is the only way to opt a subtree out.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
   const ship = document.getElementById('shipit-modal');
   if (ship && !ship.classList.contains('hidden')) return;
   // Symmetry with the Running arm below. #stop-modal also opens from a LIST card,
@@ -12492,6 +13552,7 @@ document.addEventListener('keydown', (e) => {
 // reason the History arm above is: the guard must read each modal's PRE-close state.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
@@ -14192,11 +15253,20 @@ function showView(name, param = '') {
   if (name === 'settings') loadSettings();
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
-    // Coming BACK to the form (not boot — loadConfig owns the first fill): a
-    // workflow saved in Composer or a guardrail set created in Guardrails must
-    // show up in the pickers without a page reload, and a re-saved workflow
-    // must repaint with its new topology rather than the cached one.
-    if (prevView && prevView !== 'new') refreshNewPipelinePickers();
+    // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
+    // in Composer repaints with its new topology rather than the cached one.
+    state.workflowCache = {};
+    if (newPipelinePrefill) {
+      // An Ask handoff reloads BOTH pickers itself (with the card's ids) at the
+      // end of its own awaits — a second, un-awaited refresh here would race it
+      // and could reset the selection it just made.
+      applyAskPrefill();
+    } else if (prevView && prevView !== 'new') {
+      // Coming BACK to the form (not boot — loadConfig owns the first fill): a
+      // workflow saved in Composer or a guardrail set created in Guardrails must
+      // show up in the pickers without a page reload.
+      refreshNewPipelinePickers();
+    }
   }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
@@ -14269,6 +15339,142 @@ const _timerTick = setInterval(() => {
 // exit cleanly with zero effect on browser behaviour.
 if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
+// ---- Ask Worca seams (§10.2) ----------------------------------------------
+
+// Append a reference to the chat composer WITHOUT sending, so several comments can
+// stack and the user presses send once. Plain text: the [worca context] block is
+// server-built and any attempt to forge one here is flattened server-side.
+function askAboutDiffComment(comment) {
+  const where = `${comment.path}:${comment.line} (${comment.side})`;
+  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}] "${comment.body}"`);
+}
+
+// Server-resolvable page context only (§6.5 keys); the server re-validates and
+// resolves every id against its own rows — never send titles or names.
+function getPageContext() {
+  const [view, param] = parseHash();
+  const ctx = { view: VIEW_NAMES.includes(view) ? view : 'new' };
+  if (ctx.view === 'running' && param) {
+    const r = runs.get(param);
+    if (r) {
+      ctx.runId = param;
+      if (r.pipelineId) ctx.pipelineId = r.pipelineId;
+      if (r.kind === 'workspace-run' && r.workspaceId) ctx.workspaceId = r.workspaceId;
+      else if (r.projectDir) ctx.projectDir = r.projectDir;
+      return ctx;
+    }
+  }
+  if (ctx.view === 'history' && param) {
+    const p = parseHistDetailParam(param);
+    if (p) {
+      ctx.view = 'history-detail';
+      ctx.pipelineId = p.id;
+      if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
+      else ctx.projectKey = p.projectKey;
+      // The file open in the Diff tab, so "this file" / "the comments here" resolve
+      // without the user naming a path. A repo-relative path is server-resolvable
+      // data — the "never a title, never a name" rule above holds.
+      // Scoped to the LIVE screen, not a global selector: getPageContext reads the
+      // hash, which can already name a detail that is mid-teardown.
+      // The VISIBLE Diff section only: initDetailTabs hides sections with
+      // `sec.hidden`, it never tears them down, so an unscoped query would report
+      // a file the user last looked at three tabs ago.
+      const diffSec = histDetailState?.screen?.querySelector('.hd-sec[data-sec="diff"]:not([hidden])');
+      const selected = diffSec?.querySelector('.hd-diff-file.active');
+      if (selected && selected.dataset.path) {
+        // The member key rides along on a workspace run: add_diff_comment needs
+        // memberProjectKey and never guesses it, so a bare path is unusable.
+        ctx.diffPath = selected.dataset.project
+          ? `${selected.dataset.path} (member ${selected.dataset.project})`
+          : selected.dataset.path;
+      }
+      return ctx;
+    }
+  }
+  if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
+    ctx.workspaceId = state.selectedWorkspaceId;
+    return ctx;
+  }
+  const dir = selectedProjectPath();
+  if (dir) ctx.projectDir = dir;
+  return ctx;
+}
+
+function openNewPipeline(prefill) {
+  newPipelinePrefill = prefill || null;
+  askPanel?.close();
+  // hash already #new fires no hashchange — call showView directly (the
+  // nav-click guard at the navLinks handler models this exact case).
+  if (location.hash.slice(1) === 'new') showView('new');
+  else location.hash = 'new';
+}
+
+// Apply a card handoff to the New Pipeline form (§10.2 seam 7). One-shot; runs
+// at the end of showView('new'). Async — the pickers and branch lists load
+// through their normal async loaders; every await keeps the user-visible form
+// consistent if they start typing meanwhile.
+async function applyAskPrefill() {
+  const p = newPipelinePrefill;
+  if (!p) return;
+  newPipelinePrefill = null;
+  setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
+  // force the prompt source — the three-step reset of the segment handler
+  state.activePluginSource = null;
+  el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
+  document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.src === 'prompt');
+    b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
+  });
+  document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
+    b.classList.remove('on');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  syncSourceToggle();
+  if (p.target === 'workspace') {
+    await ensureWorkspaceOptions();
+    if (p.workspaceId && el.workspaceSelect) {
+      el.workspaceSelect.value = p.workspaceId;
+      // bare `Event` is Node's under the test globals and jsdom rejects it
+      el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    }
+  } else if (p.projectDir) {
+    const idx = state.projects.findIndex((x) => x && x.path === p.projectDir);
+    if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+    // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
+    await onProjectChanged();
+  }
+  el.prompt.value = p.prompt || '';
+  refreshMentionHighlights();
+  const titleInput = document.getElementById('title');
+  if (titleInput) titleInput.value = p.title || '';
+  await loadWorkflowsInto(p.workflowId);
+  await loadGuardrailsInto(p.guardrailsId);
+  if (el.advancedConfig) el.advancedConfig.open = true;
+  if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
+  if (p.target === 'workspace') {
+    // the per-member selects are rebuilt asynchronously on the change above
+    // populateBranchSelect rebuilds each member select's options when its fetch
+    // resolves (app.js:5419-5442) — a value written before that rebuild is
+    // silently reverted. Bounded settle per select, then write.
+    const byKey = p.sourceBranchByKey || {};
+    for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
+      const want = byKey[sel.dataset.projectKey];
+      if (!want) continue;
+      for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
+      if (![...sel.options].some((o) => o.value === want)) sel.appendChild(option(want, want));
+      sel.value = want;
+    }
+  } else {
+    await refreshBranches(selectedProjectPath());
+    if (p.sourceBranch && el.sourceBranch) {
+      if (![...el.sourceBranch.options].some((o) => o.value === p.sourceBranch)) {
+        el.sourceBranch.appendChild(option(p.sourceBranch, p.sourceBranch));
+      }
+      el.sourceBranch.value = p.sourceBranch;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
@@ -14286,3 +15492,29 @@ showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(b
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
+
+// Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
+// untouched so ui-shell's data-view census stays at 14. No network happens here;
+// the panel fetches only on first open / hello.
+askPanel = createAskPanel({
+  doc: document,
+  win: window,
+  fetch: (...args) => fetch(...args),
+  sendWs: (obj) => {
+    const ws = state.ws;
+    if (ws && state.wsReady) {
+      try { ws.send(JSON.stringify(obj)); } catch { /* ignore */ }
+    }
+  },
+  confirm: confirmModal,
+  getPageContext,
+  openNewPipeline,
+  loadMarkdown: window.__worcaTestHooks?.askMarkdown
+    ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+      .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  hljsLoader: diffHljsLoader,
+  storage: window.localStorage,
+  raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),
+  now: () => Date.now(),
+});
+document.body.appendChild(askPanel.root);

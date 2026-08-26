@@ -13,7 +13,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getDb, _resetForTests, dbPath } from '../src/core/db.mjs';
+import { getDb, _resetForTests, dbPath, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 
 const _require = createRequire(import.meta.url);
@@ -80,7 +80,7 @@ test('opening a user_version=1 DB forward-migrates to v2 (adds sub_agents + inde
 
   // 2) Open through production getDb() — migrate() must run the v2 ladder step.
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 17, 'forward-migrated to v17 (the v2 step added sub_agents)');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'forward-migrated to the current version (the v2 step added sub_agents)');
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='sub_agents'").get().n,
     1, 'sub_agents table created by the v1->v2 migration');

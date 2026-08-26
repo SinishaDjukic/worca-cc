@@ -173,7 +173,12 @@ export function fileStatus(entry) {
 let nextTreeInstance = 0;
 
 export function renderFileTree(nodes, options = {}) {
-  const { doc = document, onPick, counts = () => doc.createTextNode(''), initialKey } = options;
+  // `collapsed` is a Set of DIRECTORY keys the caller owns across re-renders; this
+  // function reads it for the initial state and writes it on every toggle. The
+  // default is a throwaway Set, so a caller that does not pass one keeps the old
+  // always-expanded behaviour.
+  const { doc = document, onPick, counts = () => doc.createTextNode(''), initialKey,
+    collapsed = new Set() } = options;
   const idPrefix = `hd-tree-${nextTreeInstance++}`;
   let nextGroup = 0;
   const nav = doc.createElement('nav');
@@ -243,13 +248,15 @@ export function renderFileTree(nodes, options = {}) {
     button.type = 'button';
     button.className = 'hd-tree-dir';
     button.style.setProperty('--tree-indent', `${10 + depth * 14}px`);
-    button.setAttribute('aria-expanded', 'true');
+    button.dataset.dirKey = node.key;
+    const open = !collapsed.has(node.key);
+    button.setAttribute('aria-expanded', String(open));
     const fullLabel = node.project ? `${node.project}/${node.path}` : node.path;
-    button.setAttribute('aria-label', `Collapse directory ${fullLabel}`);
+    button.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} directory ${fullLabel}`);
     const group = doc.createElement('div');
     group.className = 'hd-tree-group';
     group.id = `${idPrefix}-group-${nextGroup++}`;
-    group.hidden = false;
+    group.hidden = !open;
     button.setAttribute('aria-controls', group.id);
     const chevron = chevronIcon(doc);
     const folder = treeIcon(doc, 'folder');
@@ -262,6 +269,7 @@ export function renderFileTree(nodes, options = {}) {
       const expanded = button.getAttribute('aria-expanded') === 'true';
       button.setAttribute('aria-expanded', String(!expanded));
       group.hidden = expanded;
+      if (expanded) collapsed.add(node.key); else collapsed.delete(node.key);
       button.setAttribute('aria-label',
         `${expanded ? 'Expand' : 'Collapse'} directory ${fullLabel}`);
     });

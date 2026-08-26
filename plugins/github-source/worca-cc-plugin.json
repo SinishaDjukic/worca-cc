@@ -1,6 +1,6 @@
 {
   "name": "github-source",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pull tasks from GitHub Issues, write results back",
   "author": "Denislav Prinov",
   "homepage": "https://github.com/denislavprinov/maestro",
@@ -16,9 +16,8 @@
           "key": "token",
           "type": "text",
           "secret": true,
-          "required": true,
           "label": "GitHub token",
-          "help": "Fine-grained PAT (Issues R/W + Metadata R), `gh auth token`, or {\"$env\":\"GH_TOKEN\"}"
+          "help": "Optional. Fine-grained PAT (Issues R/W + Metadata R) or {\"$env\":\"GH_TOKEN\"}. Leave blank to use the account the `gh` CLI is logged in as — note that token's scopes are usually far broader than this plugin needs"
         },
         {
           "key": "closeOnComplete",

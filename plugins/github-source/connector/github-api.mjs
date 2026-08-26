@@ -30,11 +30,15 @@ function err(kind, message) {
  */
 export async function ghFetch(gh, path, init = {}) {
   const url = path.startsWith('http') ? path : API + path;
+  // Read the token OUTSIDE the try: it may be a lazy getter that shells out to
+  // the gh CLI and throws kind:'auth'. Inside, the catch below would relabel
+  // that as 'network' ("GitHub unreachable") and hide the real cause.
+  const token = gh.token;
   let res;
   try {
     res = await gh.fetch(url, {
       method: init.method || 'GET',
-      headers: headers(gh.token, init.headers),
+      headers: headers(token, init.headers),
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
   } catch (e) {

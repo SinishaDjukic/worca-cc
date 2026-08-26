@@ -23,17 +23,55 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts,
+  listArtifacts, lookupPipelineRow, findPipelineRowById,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
+import {
+  addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved,
+  deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
+  peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
+} from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
 } from '../src/core/settings.mjs';
+import {
+  ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
+  listThreads as askListThreads, updateThread as askUpdateThread,
+  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  appendMessage as askAppendMessage, getMessage as askGetMessage,
+  listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
+  findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
+  addAttachment as askAddAttachment, listAttachments as askListAttachments,
+  readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
+  linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
+  findRunLinksByPipeline as askFindRunLinksByPipeline,
+  setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
+} from '../src/core/ask/store.mjs';
+import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
+import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
+import { askCatalog, validateModelEffort } from '../src/core/ask/models.mjs';
+import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
+import {
+  buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
+  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
+} from '../src/core/ask/prompt.mjs';
+import {
+  listAskWorktrees as askListWorktrees,
+  removeAskWorktree as askRemoveWorktree,
+  removeThreadWorktrees as askRemoveThreadWorktrees,
+  sweepAskWorktrees,
+} from '../src/core/ask/worktrees.mjs';
+import { createAskTurn } from '../src/core/ask/turn.mjs';
+import { attachRunFollower } from '../src/core/ask/follow.mjs';
+import { mockEnabled } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
@@ -84,7 +122,14 @@ import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
   removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
 } from '../src/core/marketplaces.mjs';
-import { redactedConfig, writePluginConfig, readPluginConfig } from '../src/core/plugin-config.mjs';
+import {
+  redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
+  createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
+} from '../src/core/plugin-config.mjs';
+import {
+  setBinding, clearBinding, listBindingsForScope,
+  clearBindingsForProfile, resolveProfile,
+} from '../src/core/source-bindings.mjs';
 import { createChannelHost } from '../src/core/chat/channel-host.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
@@ -138,6 +183,26 @@ function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.wa
 }
 
 const HLJS_ASSETS = resolveHljsAssets();
+
+// Ask Worca §10.7: the chat's markdown pipeline is served from node_modules the
+// same way the hljs assets are, but resolved with import.meta.resolve — the CJS
+// require.resolve lands on marked's CJS build, and dompurify/package.json is not
+// exported. Each package degrades independently: a missing one just leaves its
+// route unregistered and the existing /vendor no-store 404 answers.
+function resolveEsmAsset(spec, resolve = (s) => import.meta.resolve(s), warn = (msg) => console.warn(msg)) {
+  try {
+    return fileURLToPath(resolve(spec));
+  } catch (err) {
+    warn(`[worca-ui] ask markdown asset unavailable (${spec}): ${err?.message || err}`);
+    return null;
+  }
+}
+
+const ASK_VENDOR_ASSETS = {
+  marked: resolveEsmAsset('marked'),
+  dompurify: resolveEsmAsset('dompurify'),
+};
+
 const PORT = Number(process.env.PORT) || 4317;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
@@ -218,22 +283,29 @@ wss.on('connection', (ws, req) => {
   let requestedRunId = null;
   let requestedScanId = null;
   let requestedGenId = null;
+  let requestedThreadId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
     requestedScanId = u.searchParams.get('scanId');
     requestedGenId = u.searchParams.get('genId');
+    requestedThreadId = u.searchParams.get('threadId');
   } catch {
     requestedRunId = null;
     requestedScanId = null;
     requestedGenId = null;
+    requestedThreadId = null;
   }
   const id = requestedRunId || requestedScanId || requestedGenId;
 
-  send(ws, { type: 'hello', runs: summarizeRuns() });
+  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello() });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
+  }
+
+  if (requestedThreadId && askJobs.has(requestedThreadId)) {
+    replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
   ws.on('close', () => sockets.delete(ws));
@@ -251,6 +323,10 @@ wss.on('connection', (ws, req) => {
     const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId) : null;
     if (subId && runs.has(subId)) {
       replayEntry(ws, runs.get(subId));
+    }
+    const askThreadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
+    if (askThreadId && askJobs.has(askThreadId)) {
+      replayAskJob(ws, askJobs.get(askThreadId));
     }
   });
 });
@@ -321,6 +397,32 @@ function broadcast(obj) {
 // on its next view switch / reload (the agreed product behavior).
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
+}
+
+// Every comment mutation in THIS process (the REST routes below) pokes the open
+// Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
+// ordering concerns; the client refetches and repaints its CARDS, never the diff.
+// MCP-side mutations happen in the stdio CHILD process and cannot reach this
+// listener; they arrive through the turn's comment hook instead.
+onDiffCommentsChanged(({ storeKey, pipelineId }) => {
+  broadcast({ type: 'diff-comments-changed', storeKey, pipelineId });
+});
+
+/** Resolve an 8-hex pipeline id to its History store key and poke the open Diff
+ *  tabs. Used for MCP-side writes, which happen in the stdio CHILD process and
+ *  cannot reach the listener above. The frame is byte-identical to the REST one,
+ *  so the client has ONE code path. findPipelineRowById is key-agnostic and
+ *  includes archived rows. Exported through `_testing` — the wiring at the ask
+ *  turn is a one-liner precisely so this function is the whole testable surface. */
+function emitDiffCommentsChanged(runId) {
+  try {
+    const row = findPipelineRowById(runId);
+    if (!row) return false;
+    const storeKey = (row.target === 'workspace' || row.workspace_key)
+      ? `workspaces/${row.workspace_key}` : row.project_key;
+    broadcast({ type: 'diff-comments-changed', storeKey, pipelineId: row.id });
+    return true;
+  } catch { return false; }   // a poke is best effort
 }
 
 // Append a tagged event to an entry's ring buffer (runId LAST so the runs-Map key
@@ -636,6 +738,24 @@ if (HLJS_ASSETS) {
   });
 }
 
+// Ask Worca §10.7 vendor routes. sendHljsModule's shape, reused verbatim: the
+// sendFile error path falls through to the /vendor no-store handlers below.
+const sendEsmModule = (file) => (_req, res, next) => {
+  res.type('text/javascript');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.sendFile(file, (err) => {
+    if (!err) return;
+    if (res.headersSent) return next(err);
+    next();
+  });
+};
+if (ASK_VENDOR_ASSETS.marked) {
+  app.get('/vendor/marked/marked.esm.js', sendEsmModule(ASK_VENDOR_ASSETS.marked));
+}
+if (ASK_VENDOR_ASSETS.dompurify) {
+  app.get('/vendor/dompurify/purify.es.mjs', sendEsmModule(ASK_VENDOR_ASSETS.dompurify));
+}
+
 app.use('/vendor', (err, _req, res, next) => {
   if (res.headersSent) return next(err);
   res.set('Cache-Control', 'no-store');
@@ -750,6 +870,9 @@ function normalizeRunSource(raw) {
         return { ok: false, error: `source.${k} is required for type "plugin"` };
       }
     }
+    if (raw.profile !== undefined && !isValidProfileId(raw.profile)) {
+      return { ok: false, error: 'source.profile is not a valid profile id' };
+    }
     return {
       ok: true,
       source: {
@@ -758,6 +881,9 @@ function normalizeRunSource(raw) {
         sourceId: raw.sourceId.trim(),
         taskId: raw.taskId.trim(),
         inputs: raw.inputs && typeof raw.inputs === 'object' && !Array.isArray(raw.inputs) ? raw.inputs : undefined,
+        // Which configuration of the source the task came from. Absent is legal
+        // (single-profile sources); an id that is not path-safe is not.
+        profile: typeof raw.profile === 'string' && raw.profile ? raw.profile : undefined,
       },
     };
   }
@@ -773,6 +899,67 @@ function fallbackRunTitle(effectivePrompt, source) {
   if (source && source.type === 'plugin') return `${source.plugin}: ${source.taskId}`;
   const text = (source && (source.prompt || source.promptText || source.promptFile)) || 'task';
   return String(text).slice(0, 80);
+}
+
+// Wire an Ask Worca follower for a card-linked run: the orchestrator's
+// state/question/error/done events become thread notices, ask_run_links patches
+// and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
+// (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
+// detached on done{paused}, so the link must be re-followed — review of PR #376).
+function attachAskFollower(orch, { threadId, runId, cardId }) {
+  const follower = attachRunFollower(orch, {
+    threadId,
+    runId,
+    cardId,
+    post: ({ text, href }) => {
+      try {
+        const m = askAppendMessage(threadId, {
+          role: 'system', text, blocks: [{ kind: 'notice', text, href }],
+        });
+        broadcast({ type: 'ask-message', threadId, message: m });
+      } catch { /* thread deleted mid-run */ }
+    },
+    updateStatus: (patch) => {
+      try {
+        const linkPatch = {};
+        if (patch.pipelineId) linkPatch.pipelineId = patch.pipelineId;
+        if (patch.status) linkPatch.status = patch.status;
+        if (patch.phase !== undefined) linkPatch.phase = patch.phase;
+        const row = Object.keys(linkPatch).length
+          ? askUpdateRunLink(threadId, runId, linkPatch) : null;
+        // The 8-hex History id lands on the FIRST state event (follow.mjs guards
+        // "first truthy sight only"), which is the first moment a
+        // "sent to #<runId>" marker could point anywhere real. Never the
+        // runs-Map UUID, never at launch, and never a resolve.
+        if (linkPatch.pipelineId && row && row.commentIds.length) {
+          try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
+        }
+        if (patch.cardFailed) {
+          flipCard(threadId, cardId, { state: 'failed', error: patch.cardFailed });
+        }
+        broadcast({
+          type: 'ask-run-status', threadId, runId,
+          pipelineId: (row && row.pipelineId) || patch.pipelineId || null,
+          cardId,
+          status: patch.status || (row && row.status) || null,
+          phase: patch.phase !== undefined ? patch.phase : ((row && row.phase) || null),
+        });
+      } catch { /* thread deleted mid-run */ }
+    },
+    onDetached: () => {
+      const set = askFollowers.get(threadId);
+      if (set) {
+        set.delete(follower);
+        if (!set.size) askFollowers.delete(threadId);
+      }
+    },
+  });
+  let set = askFollowers.get(threadId);
+  if (!set) {
+    set = new Set();
+    askFollowers.set(threadId, set);
+  }
+  set.add(follower);
 }
 
 // ---------------------------------------------------------------------------
@@ -795,6 +982,28 @@ app.post('/api/run', async (req, res) => {
       return badRequest(res, 'workspaceId or projectDir is required');
     }
 
+    // Ask Worca card link (§8.1): both or neither; the thread must exist and
+    // the card must still be `proposed` BEFORE any run state is created.
+    const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
+    const hasAskCard = body.askCardId !== undefined && body.askCardId !== null;
+    let askLink = null;
+    if (hasAskThread || hasAskCard) {
+      if (!hasAskThread || !hasAskCard) {
+        return badRequest(res, 'askThreadId and askCardId must be provided together');
+      }
+      if (typeof body.askThreadId !== 'string' || !ASK_ID_RE.test(body.askThreadId)
+        || typeof body.askCardId !== 'string' || !ASK_ID_RE.test(body.askCardId)) {
+        return badRequest(res, 'invalid askThreadId or askCardId');
+      }
+      if (!askGetThread(body.askThreadId)) return badRequest(res, 'unknown askThreadId');
+      const found = askFindCard(body.askThreadId, body.askCardId);
+      if (!found) return badRequest(res, 'unknown askCardId');
+      if (found.block.state !== 'proposed') {
+        return res.status(409).json({ error: `card is ${found.block.state}` });
+      }
+      askLink = { threadId: body.askThreadId, cardId: body.askCardId };
+    }
+
     // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
     // NEW (plugins §7.3): body.source is the task-source descriptor; shape-check
     // only and pass through — the orchestrator resolves it exactly once. Absent
@@ -802,6 +1011,29 @@ app.post('/api/run', async (req, res) => {
     const sourceCheck = normalizeRunSource(body.source);
     if (sourceCheck && !sourceCheck.ok) return badRequest(res, sourceCheck.error);
     const source = sourceCheck ? sourceCheck.source : null;
+
+    // A multiProfile source without a profile would run against the (empty)
+    // default bucket and die mid-pipeline with a confusing connector error —
+    // reject it here, at submit, where the client can still fix it. The same
+    // goes for a profile that is no longer IN the roster (deleted in another
+    // tab after the client resolved it) and for a profile supplied to a source
+    // that does not use them (it would read a phantom bucket instead of the
+    // real config). A broken or uninstalled plugin is left for
+    // resolveTaskInput to report.
+    if (source && source.type === 'plugin') {
+      const m = readInstalledManifest(source.plugin);
+      const ts = m && (m.taskSources || []).find((s) => s.id === source.sourceId);
+      if (ts && ts.multiProfile) {
+        if (!source.profile) {
+          return badRequest(res, `source.profile is required — task source "${source.sourceId}" has per-profile configuration`);
+        }
+        if (!listProfileIds(source.plugin).includes(source.profile)) {
+          return badRequest(res, `plugin "${source.plugin}" has no profile "${source.profile}" — it may have been deleted; re-select one`);
+        }
+      } else if (ts && source.profile) {
+        return badRequest(res, `task source "${source.sourceId}" does not use profiles — omit source.profile`);
+      }
+    }
 
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
@@ -995,6 +1227,48 @@ app.post('/api/run', async (req, res) => {
 
     runs.set(runId, entry);
     wireRun(entry);
+    if (askLink) {
+      // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
+      // B's `proposed` check and here — a concurrent Start may have flipped
+      // the card already. That is a LOST RACE, not a detail to log: the loser
+      // must not launch a second pipeline for the same card (review of PR #376).
+      // Withdraw the run entry (nothing has run or been announced yet) and 409.
+      const still = askFindCard(askLink.threadId, askLink.cardId);
+      if (!still || still.block.state !== 'proposed') {
+        runs.delete(runId);
+        return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
+      }
+      try {
+        askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
+        flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        // The card's pending comment ids move onto the link row, keyed by the minted
+        // UUID exactly as pipeline_id is before it exists. Consumed one-shot: a card
+        // launches at most once. Own try/catch — comment bookkeeping must never
+        // abort the card flip or the run.
+        try {
+          // Read, WRITE, then consume — not consume-then-write. A combined take()
+          // deletes the rows it returns, so if askUpdateRunLink throws in between (its
+          // catch here only logs) the ids are gone and the sent_run_id stamp is lost
+          // with no way to recover them. peek/commit keeps the delete on the success
+          // path only; a second launch of the same card cannot happen anyway (the
+          // card must be in state 'proposed' above).
+          const pendingComments = peekPendingCardComments(askLink.cardId);
+          if (pendingComments.length) {
+            askUpdateRunLink(askLink.threadId, runId, { commentIds: pendingComments });
+            clearPendingCardComments(askLink.cardId);
+          }
+        } catch (e) { console.error('[diff-comments] pending-card handoff failed:', e && e.message ? e.message : e); }
+        const startedMsg = askAppendMessage(askLink.threadId, {
+          role: 'system',
+          text: `Run started — "${title}"`,
+          blocks: [{ kind: 'notice', text: `Run started — "${title}"`, href: `#running/${runId}` }],
+        });
+        broadcast({ type: 'ask-message', threadId: askLink.threadId, message: startedMsg });
+        attachAskFollower(orch, { threadId: askLink.threadId, runId, cardId: askLink.cardId });
+      } catch (err) {
+        console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
+      }
+    }
     announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events.
@@ -1311,6 +1585,22 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
   wireRun(entry);
   announceRun(entry);
 
+  // A card-linked run keeps reporting to its chat across the resume: the link
+  // row moves to the new runId and a fresh follower takes over (the old one
+  // detached on done{paused}). Best-effort per row — chat bookkeeping must never
+  // block a resume.
+  for (const link of askFindRunLinksByPipeline(pipelineId)) {
+    try {
+      if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
+      const text = `Run resumed — "${saved.row.title || 'run'}"`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+    } catch (err) {
+      console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+
   // Evict the superseded paused/interrupted lineage for this pipeline. The old
   // entry is inert (paused), but summarizeRuns() broadcasts EVERY Map entry on
   // each hello — leaving it resurfaces the now-resumed (and possibly already
@@ -1595,9 +1885,175 @@ app.get('/api/history/:key/:id/log', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Internal, line-anchored diff comments. Bound to BOTH route families below: the
+// /api/history/:key/:id key regex forbids a slash, so a workspace run (store key
+// "workspaces/<id>") can only be reached through /api/workspaces/:id/runs/:runId —
+// the same split the /diff and /log routes already carry. One handler set, two
+// registrations: the two can never diverge.
+//
+// Traversal posture matches the /diff route below: the run dir comes from a DB row
+// via readRunArtifactText, and the relPath is the CONSTANT DIFF_PATCH_FILE. No
+// route here ever passes user input as a path.
+// ---------------------------------------------------------------------------
+
+// The history key regex is an inline literal on every route in this family; this
+// block keeps that convention rather than introducing a shared constant the rest
+// of the file does not use.
+const commentsHistoryKey = (res, key) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(key)) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  return key;
+};
+const commentsWorkspaceKey = (res, id) => {
+  if (!WORKSPACE_KEY_RE.test(id)) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return `workspaces/${id}`;
+};
+const commentIdParam = (res, value) => {
+  if (typeof value !== 'string' || !DC_ID_RE.test(value)) {
+    res.status(400).json({ error: 'invalid comment id' });
+    return null;
+  }
+  return value;
+};
+const commentsFail = (res, err) => res.status(500).json({ error: err && err.message ? err.message : String(err) });
+
+/** The run row for a store key + id, or null after answering 404. */
+function commentRun(res, storeKey, id) {
+  const row = lookupPipelineRow(storeKey, id);
+  if (!row) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return row;
+}
+
+async function commentsList(res, storeKey, id) {
+  try {
+    const row = commentRun(res, storeKey, id);
+    if (!row) return;
+    // The UI needs to know whether the '+' affordance may appear at all; a run
+    // whose patch is gone (archived, or never captured) can only read and delete.
+    const patchText = await readRunArtifactText(storeKey, row.id, DIFF_PATCH_FILE);
+    res.json({
+      comments: listDiffComments(storeKey, row.id),
+      patchAvailable: !!patchText,
+      // Section keys the protected-path floor will refuse whatever the line, so the
+      // browser can drop the '+' up front instead of surfacing a 400 on submit. The
+      // preset itself never leaves the server.
+      protectedPaths: protectedSectionKeys(patchText),
+    });
+  } catch (err) { commentsFail(res, err); }
+}
+
+async function commentsCreate(req, res, storeKey, id) {
+  try {
+    const row = commentRun(res, storeKey, id);
+    if (!row) return;
+    const body = req.body || {};
+    const patchText = await readRunArtifactText(storeKey, row.id, DIFF_PATCH_FILE);
+    // `!patchText` covers BOTH null (absent/unreadable) and '' (present but empty):
+    // addDiffComment refuses the empty string too, and it must surface as 409, not
+    // as the 400 an anchor failure would get.
+    if (!patchText) {
+      // 409, not 400: the request is well-formed, the RUN is no longer commentable.
+      return res.status(409).json({ error: 'this run has no stored diff — comments cannot be created on it' });
+    }
+    const comment = addDiffComment({
+      storeKey, pipelineId: row.id, patchText,
+      project: body.project ?? null, path: body.path, side: body.side, line: body.line,
+      body: body.body, author: 'user',
+    });
+    res.status(201).json({ comment });
+  } catch (err) {
+    if (err instanceof DiffCommentError) return badRequest(res, err.message);
+    commentsFail(res, err);
+  }
+}
+
+/** A comment reached through a run URL must BELONG to that run — never id alone. */
+function commentOfRun(res, storeKey, id, cid) {
+  const row = commentRun(res, storeKey, id);
+  if (!row) return null;
+  const comment = getDiffComment(cid);
+  if (!comment || comment.storeKey !== storeKey || comment.pipelineId !== row.id) {
+    res.status(404).json({ error: 'comment not found' });
+    return null;
+  }
+  return comment;
+}
+
+function commentsPatch(req, res, storeKey, id, cid) {
+  try {
+    // Existence BEFORE shape: an unknown run must 404 on every verb, including a
+    // PATCH whose body happens to be malformed.
+    if (!commentOfRun(res, storeKey, id, cid)) return;
+    const raw = (req.body || {}).resolved;
+    if (typeof raw !== 'boolean') return badRequest(res, 'resolved must be a boolean');
+    res.json({ comment: setDiffCommentResolved(cid, raw) });
+  } catch (err) { commentsFail(res, err); }
+}
+
+function commentsDelete(res, storeKey, id, cid) {
+  try {
+    if (!commentOfRun(res, storeKey, id, cid)) return;
+    deleteDiffComment(cid);
+    res.json({ ok: true });
+  } catch (err) { commentsFail(res, err); }
+}
+
+app.get('/api/history/:key/:id/comments', async (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  await commentsList(res, key, req.params.id);
+});
+app.post('/api/history/:key/:id/comments', async (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  await commentsCreate(req, res, key, req.params.id);
+});
+app.patch('/api/history/:key/:id/comments/:cid', (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsPatch(req, res, key, req.params.id, cid);
+});
+app.delete('/api/history/:key/:id/comments/:cid', (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsDelete(res, key, req.params.id, cid);
+});
+
+app.get('/api/workspaces/:id/runs/:runId/comments', async (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  await commentsList(res, key, req.params.runId);
+});
+app.post('/api/workspaces/:id/runs/:runId/comments', async (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  await commentsCreate(req, res, key, req.params.runId);
+});
+app.patch('/api/workspaces/:id/runs/:runId/comments/:cid', (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsPatch(req, res, key, req.params.runId, cid);
+});
+app.delete('/api/workspaces/:id/runs/:runId/comments/:cid', (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsDelete(res, key, req.params.runId, cid);
+});
+
+// Unresolved counts for every run, for the History list pill. Its own endpoint
+// rather than a field on /api/history: that response has a localStorage skeleton
+// cache, so a cached paint would show a stale pill; and diff-comments-changed can
+// repaint pills from here without forcing a whole History reload.
+app.get('/api/diff-comments/counts', (_req, res) => {
+  try { res.json({ counts: unresolvedCounts() }); } catch (err) { commentsFail(res, err); }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/history/:key/:id/diff -> the run's persisted diff-patch.patch, inline
-// (text/x-diff). Exists only for runs that reached done (results are built on
-// the done path only); everything else 404s and the UI shows its empty state.
+// (text/x-diff). The route is status-agnostic and always has been: the artifact
+// exists for every run that reached a checkpoint AND changed something under it —
+// the done path AND the stopped/error paths, which build results too (orchestrator
+// run() and resume()). A run stopped before its checkpoint has none, nor does one
+// that changed nothing (_buildResults writes neither artifact for an empty patch),
+// and neither does an archived one; all of those 404 and the UI shows its empty state.
 // Key validation mirrors the /log route (:1529); the artifact read follows the
 // recovery-patch route's readRunArtifactText pattern (:1408) — the log routes
 // themselves use the specialized readRunLogText. The relPath is the CONSTANT
@@ -2118,6 +2574,8 @@ app.get('/api/workspaces/:id/runs/:runId/log', async (req, res) => {
   }
 });
 
+// NOTE: the /comments twins for workspace runs are registered with their project
+// siblings up at the diff-comments block — the pair must be read together.
 app.get('/api/workspaces/:id/runs/:runId/diff', async (req, res) => {
   if (!WORKSPACE_KEY_RE.test(req.params.id)) {
     return res.status(404).json({ error: 'pipeline not found' });
@@ -2162,6 +2620,8 @@ const settingsState = () => ({
   pipelineCostLimitUsd: pipelineCostLimitUsd(),
   totalCostLimitUsd: totalCostLimitUsd(),
   costLimitResetPeriod: costLimitResetPeriod(),
+  askMaxTurns: askMaxTurns(),
+  askMaxBudgetUsd: askMaxBudgetUsd(),
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2176,6 +2636,7 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2187,8 +2648,15 @@ app.post('/api/settings', async (req, res) => {
   if (has('costLimitResetPeriod')) {
     budget.costLimitResetPeriod = typeof body.costLimitResetPeriod === 'string' ? body.costLimitResetPeriod : '';
   }
+  // Ask Worca per-turn guards (ask-worca-design.md §6.9): same set-validation
+  // discipline. `null` is a VALUE for askMaxBudgetUsd (no cap) and must survive
+  // normalisation; only undefined becomes a clear.
+  const ask = {};
+  if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
+  if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     assertCostLimitInputs(budget);
+    assertAskLimitInputs(ask);
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
@@ -2196,9 +2664,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
     if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
-    // Legacy contract: a POST that names no known key clears root. Budget keys
-    // must not trip it — a budget-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || has('chat'))) {
+    if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
+    if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
+    // Legacy contract: a POST that names no known key clears root. Budget and ask
+    // keys must not trip it — a budget-only or ask-only save would otherwise wipe the root.
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat'))) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (hasBudgetKey) emitChanged('budget-changed');
@@ -2807,6 +3277,577 @@ app.delete('/api/guardrails/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Ask Worca (ask-worca-design.md §8). askJobs is SEPARATE from the runs Map —
+// the client's Running badge counts runs entries, and a thread id is the
+// subscription key (§8.3). No store/home access at import time (the chatCtx
+// rule): the Maps are bare and every store call lives inside a handler or
+// bootMaintenance.
+// ---------------------------------------------------------------------------
+const askJobs = new Map();      // threadId -> {turn, messageId, userMessageId, events, seq, status, startedAt, graceTimer}
+// Threads whose DELETE is past its first await (worktree removal spawns git):
+// POST /messages refuses them so no turn can start against rows that are
+// about to cascade (review of PR #376 — a turn started in that window outlived
+// the delete as a live job holding a global slot).
+const askDeleting = new Set();
+const askFollowers = new Map(); // threadId -> Set<{detach}>
+const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
+
+function askInFlight(threadId) {
+  const job = askJobs.get(threadId);
+  return job && job.status === 'running' ? job : null;
+}
+
+function askRunningCount() {
+  let n = 0;
+  for (const job of askJobs.values()) if (job.status === 'running') n += 1;
+  return n;
+}
+
+/** hello payload: running turns only (§8.2). A job whose slot was just
+ *  reserved (messageId still null — the message route's atomic reservation,
+ *  Task 6) is skipped: it becomes visible once its assistant row exists. */
+function askHello() {
+  const out = [];
+  for (const [threadId, job] of askJobs.entries()) {
+    if (job.status === 'running' && job.messageId) out.push({ threadId, messageId: job.messageId });
+  }
+  return out;
+}
+
+/** Replay a job's stamped ring buffer to one socket. No state snapshot — the
+ *  REST thread GET is the snapshot; the client dedupes by seq (§6.6). */
+function replayAskJob(ws, job) {
+  for (const ev of job.events) send(ws, ev);
+}
+
+/** The stamping closure (§17: reducer frames are BARE; the server stamps).
+ *  Shared by the turn's own ask-start/ask-done/ask-error and every reducer
+ *  frame, so ALL job frames are buffered, replayed and seq-ordered alike. */
+function stampAskFrames(threadId, job) {
+  return (bare) => {
+    const frame = { ...bare, threadId, messageId: job.messageId, seq: ++job.seq };
+    job.events.push(frame);
+    if (job.events.length > ASK_JOB_MAX_BUFFER) job.events.splice(0, job.events.length - ASK_JOB_MAX_BUFFER);
+    broadcast(frame);
+  };
+}
+
+/** 400 on shape (spec §8.1 — a DELIBERATE divergence from the house 404-on-
+ *  malformed-param style), null-return contract like badRequest. */
+function askIdParam(res, value, kind) {
+  if (typeof value !== 'string' || !ASK_ID_RE.test(value)) {
+    res.status(400).json({ error: `invalid ${kind} id` });
+    return null;
+  }
+  return value;
+}
+
+app.get('/api/ask/threads', (req, res) => {
+  try {
+    const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
+    const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
+    res.json({ threads });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/ask/threads', (req, res) => {
+  try {
+    const body = req.body || {};
+    let title = null;
+    if (body.title !== undefined && body.title !== null && body.title !== '') {
+      if (typeof body.title !== 'string' || body.title.length > 120) {
+        return badRequest(res, 'title must be a string of at most 120 characters');
+      }
+      title = body.title.trim() || null;
+    }
+    const thread = askCreateThread();
+    if (title) askUpdateThread(thread.id, { title });
+    res.status(201).json({ thread: askGetThread(thread.id) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/ask/threads/:id', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    const job = askInFlight(id);
+    res.json({
+      thread,
+      messages: askListMessages(id),
+      attachments: askListAttachments(id),
+      runLinks: askListRunLinks(id),
+      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool returns —
+      // never the full row (threadId/projectDir/updatedAt stay server-side).
+      worktrees: askListWorktrees(id).map((w) => ({
+        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
+        commit: w.commit, path: w.path, createdAt: w.createdAt,
+      })),
+      inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/ask/threads/:id', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const raw = (req.body || {}).title;
+    if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
+      return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+    }
+    const thread = askUpdateThread(id, { title: raw.trim() });
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    res.json({ thread });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// §7.5 order: abort the in-flight turn -> detach followers -> remove the chat's
+// worktrees git-properly -> delete the row (tx + cascades) + rm -rf inside
+// deleteThread -> drop the job entry.
+app.delete('/api/ask/threads/:id', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    askDeleting.add(id);
+    const stopJob = () => {
+      const job = askJobs.get(id);
+      if (job && job.turn && typeof job.turn.stop === 'function') {
+        try { job.turn.stop(); } catch { /* best-effort */ }
+      }
+      return job;
+    };
+    stopJob();
+    const followers = askFollowers.get(id);
+    if (followers) {
+      for (const f of [...followers]) {
+        try { f.detach(); } catch { /* best-effort */ }
+      }
+      askFollowers.delete(id);
+    }
+    // P4 §5: git-proper removal of every worktree BEFORE the row cascade — the
+    // rmSync inside askDeleteThread alone would leave stale `git worktree`
+    // registrations in the source repos. Never throws (best-effort per row).
+    await askRemoveThreadWorktrees(id);
+    // Re-read the job AFTER the await: askDeleting blocks new turns, but a turn
+    // that was already mid-start is stopped here rather than left running.
+    const job = stopJob();
+    askDeleteThread(id);
+    if (job) {
+      if (job.graceTimer) clearTimeout(job.graceTimer);
+      askJobs.delete(id);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  } finally {
+    askDeleting.delete(id);
+  }
+});
+
+// P4 §10: manual worktree delete from the panel. Allowed while a turn is in
+// flight — the model's next operation on it gets a clean tool error.
+app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const wtId = askIdParam(res, req.params.wtId, 'worktree');
+  if (!wtId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const out = await askRemoveWorktree({ threadId: id, wtId });
+    res.json(out);
+  } catch (err) {
+    if (err && err.name === 'AskWorktreeError') return res.status(404).json({ error: err.message });
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const attId = askIdParam(res, req.params.attId, 'attachment');
+  if (!attId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const att = askReadAttachmentText(id, attId);
+    if (!att) return res.status(404).json({ error: 'attachment not found' });
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', 'inline');
+    res.type('text/plain; charset=utf-8').send(att.text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// D8/§8.1: the chat model catalog. Fresh per request (the /api/config
+// precedent) — a cache would go stale against global-model edits.
+app.get('/api/ask/models', async (_req, res) => {
+  try {
+    res.json(await askCatalog());
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+/** lookupPipelineRow/findPipelineRowById return the RAW `SELECT * FROM pipelines`
+ *  row: snake_case columns, and `branch` is a JSON DOCUMENT
+ *  ({source, feature, worktreeDir, …}), not a branch name. Reading
+ *  row.startedAt/row.branch directly loses the date and pastes a JSON blob into
+ *  the [worca context] line (dry-run-verified). */
+function askRunFromPipelineRow(row) {
+  let branchObj = null;
+  if (typeof row.branch === 'string') {
+    try { branchObj = JSON.parse(row.branch); } catch { branchObj = null; }
+  } else if (row.branch && typeof row.branch === 'object') {
+    branchObj = row.branch;
+  }
+  const branch = branchObj && typeof branchObj.feature === 'string'
+    ? branchObj.feature
+    : (typeof branchObj === 'string' ? branchObj : null);
+  return {
+    id: row.id,
+    title: row.title || '',
+    status: row.status || '',
+    startedAt: row.started_at || row.updated_at || '',
+    branch,
+  };
+}
+
+/** Resolve the VALIDATED client context into the server-side shape
+ *  buildContextHeader consumes (§6.5: server-resolved rows only — never
+ *  client-supplied titles or paths). Every lookup is individually guarded:
+ *  a vanished row degrades to an absent header line, never a 500. */
+async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
+  const out = { now: new Date().toISOString() };
+  if (ctx.view) out.view = ctx.view;
+  if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
+  try {
+    if (ctx.projectKey || ctx.projectDir) {
+      const projects = await listProjects();
+      const p = projects.find((x) =>
+        (ctx.projectKey && x.key === ctx.projectKey) || (ctx.projectDir && x.path === ctx.projectDir));
+      if (p) out.project = { name: p.name, key: p.key };
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.workspaceId) {
+      const ws = await readWorkspace(ctx.workspaceId);
+      if (ws) {
+        // readWorkspace returns {id, name, projectPaths, projectKeys, …} — there
+        // is NO per-member name object (the {projectName} shape is a local
+        // /api/run construction, ui/server.mjs:894). Member display names are
+        // the path basenames, same as that precedent.
+        out.workspace = {
+          name: ws.name, id: ws.id,
+          members: (ws.projectPaths || []).map((p) => path.basename(p)).filter(Boolean),
+        };
+      }
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.pipelineId) {
+      const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
+      const row = (key ? lookupPipelineRow(key, ctx.pipelineId) : null) || findPipelineRowById(ctx.pipelineId);
+      if (row) out.run = askRunFromPipelineRow(row);
+    } else if (ctx.runId && runs.has(ctx.runId)) {
+      const entry = runs.get(ctx.runId);
+      out.run = {
+        id: entry.pipelineId || ctx.runId.slice(0, 8), title: entry.title || '',
+        status: entry.status || '', startedAt: entry.startedAt || '', branch: null,
+      };
+    }
+  } catch { /* absent line */ }
+  // (the ctx.runId branch reads the LIVE runs-Map entry, which really is
+  // camelCase — only the DB pipeline row needs askRunFromPipelineRow)
+  try {
+    const links = askListRunLinks(threadId).slice(0, ASK_LIMITS.headerRuns).map((l) => {
+      const live = runs.get(l.runId);
+      return {
+        id: l.pipelineId || l.runId.slice(0, 8),
+        title: (live && live.title) || '', status: l.status || (live && live.status) || '',
+        phase: l.phase || '',
+      };
+    });
+    if (links.length) out.linkedRuns = links;
+    const cards = [];
+    for (const m of askListMessages(threadId)) {
+      if (!Array.isArray(m.blocks)) continue;
+      for (const b of m.blocks) {
+        if (b && b.kind === 'card') {
+          cards.push({
+            id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
+            targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
+          });
+        }
+      }
+    }
+    if (cards.length) out.cards = cards.slice(-ASK_LIMITS.headerCards);
+    // §6.5: the CURRENT message's non-inlined files, then EARLIER attachments
+    // newest first — inlined current files must not be double-listed, so the
+    // earlier set excludes the whole current message, not just `listed` ids.
+    const earlier = askListAttachments(threadId)
+      .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
+      .slice(-ASK_LIMITS.headerAttachments)
+      .reverse()
+      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes }));
+    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes })), ...earlier];
+    if (atts.length) out.attachments = atts.slice(0, ASK_LIMITS.headerAttachments);
+  } catch { /* absent lines */ }
+  return out;
+}
+
+/** R-F: whenever mock mode is on, EVERY ask spawn carries markers. The card is
+ *  the mock propose_run INPUT, derived from page context so a seeded project/
+ *  workspace validates and an empty context exercises the rejection notice. */
+function mockAskCard(ctx = {}, text = '') {
+  const target = ctx.workspaceId
+    ? { workspaceId: ctx.workspaceId }
+    : { projectKey: ctx.projectKey || 'mock-project-00000000' };
+  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run' };
+}
+
+app.post('/api/ask/threads/:id/messages', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+    // Budget gate (F6), same figure /api/run enforces: Ask spend is folded into the
+    // total window (cost-budget.mjs totalWindowSpendUsd), so chat must stop at
+    // the cap it helps fill instead of spending past it while pipelines are 403'd
+    // (review of PR #376).
+    const budget = budgetStatus();
+    if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
+    if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
+      return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
+    }
+    const body = req.body || {};
+    const text = typeof body.text === 'string' ? body.text : '';
+    if (!text.trim()) return badRequest(res, 'text is required');
+    const mv = await validateModelEffort(body.model, body.effort);
+    if (!mv.ok) return badRequest(res, mv.error);
+    const cv = validateClientContext(body.context);
+    if (!cv.ok) return badRequest(res, cv.error);
+
+    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
+    const files = [];
+    if (body.attachments !== undefined) {
+      if (!Array.isArray(body.attachments)) return badRequest(res, 'attachments must be an array');
+      if (body.attachments.length > ASK_LIMITS.attachment.maxFiles) {
+        return badRequest(res, `at most ${ASK_LIMITS.attachment.maxFiles} attachments per message`);
+      }
+      const dec = new TextDecoder('utf-8', { fatal: true });
+      for (const a of body.attachments) {
+        const name = a && typeof a.name === 'string' ? a.name : '';
+        const dot = name.lastIndexOf('.');
+        const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
+        if (!ASK_LIMITS.attachment.extensions.includes(ext)) {
+          return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
+        }
+        const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
+        const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
+        if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
+        if (buf.length > ASK_LIMITS.attachment.maxBytesPerFile) {
+          return res.status(413).json({ error: `attachment over ${ASK_LIMITS.attachment.maxBytesPerFile} bytes: ${name}` });
+        }
+        let bodyText;
+        try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
+        if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
+        files.push({ name, text: bodyText, bytes: buf.length });
+      }
+      const total = askThreadAttachmentBytes(id) + files.reduce((s, f) => s + f.bytes, 0);
+      if (total > ASK_LIMITS.attachment.maxBytesPerThread) {
+        return res.status(413).json({ error: 'attachment budget for this thread exceeded' });
+      }
+    }
+
+    // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
+    // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
+    // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
+    // reads), so the route is macrotask-atomic and two POSTs cannot interleave
+    // (empirically instrumented). The reservation is what keeps that true if
+    // any of those readers ever becomes genuinely async: it is synchronous —
+    // check-and-set cannot interleave — and runs BEFORE the first write, so a
+    // loser leaves no rows.
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+    if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
+      return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
+    }
+    const prev = askJobs.get(id);
+    if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
+    const job = {
+      turn: null, messageId: null, userMessageId: null, // ids filled once the rows exist;
+      events: [], seq: 0, status: 'running',            // askHello()/GET inFlight skip a null messageId
+      startedAt: new Date().toISOString(), graceTimer: null,
+    };
+    askJobs.set(id, job);
+
+    let asstMsg = null;
+    let turn;
+    try {
+      // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
+      askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
+      let deterministicTitle = thread.title;
+      let titleWasAuto = false;
+      if (thread.title == null) {
+        // §7.4 — no frame for the deterministic title. titleWasAuto gates the
+        // D13 background replacement: a title given at THREAD CREATION is the
+        // user's, and the haiku call must never fire for it (§17 Q&A 1).
+        deterministicTitle = askSanitizeTitle(text.slice(0, 80)) || 'New chat';
+        askSetThreadTitle(id, deterministicTitle);
+        titleWasAuto = true;
+      }
+      const userMsg = askAppendMessage(id, { role: 'user', text });
+      job.userMessageId = userMsg.id;
+      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, text: f.text }));
+      if (attRows.length) {
+        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes })));
+      }
+      broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
+      asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
+      job.messageId = asstMsg.id;
+
+      // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
+      const catalog = await askBuildCatalog();
+      const systemPrompt = askBuildSystemPrompt(catalog);
+      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, text: files[i].text }));
+      const { inline, listed } = askSelectInlineAttachments(withText);
+      const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
+      const header = askBuildContextHeader(headerCtx);
+      const prompt = askBuildTurnPrompt(header, text, inline);
+      const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
+      const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
+      const attachmentNames = {};
+      for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
+
+      turn = createAskTurn({
+        threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
+        prompt, systemPrompt, restoredPrompt,
+        model: mv.model, effort: mv.effort,
+        resumeSessionId: thread.sessionId || null,
+        firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
+        firstText: text,
+        deterministicTitle,
+        mock: mockEnabled({}) ? { card: mockAskCard(cv.context, text) } : null, // R-F
+        attachmentNames,
+        deps: {
+          onFrame: stampAskFrames(id, job),
+          onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
+          onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
+        },
+      });
+      job.turn = turn;
+    } catch (err) {
+      // A write/assembly failure must release the reserved slot and never leave
+      // a `streaming` row for the boot sweep to find.
+      if (askJobs.get(id) === job) askJobs.delete(id);
+      if (asstMsg) {
+        try {
+          askFinishMessage(asstMsg.id, {
+            text: '', blocks: [{ kind: 'notice', text: 'failed to start the turn' }],
+            status: 'error', reason: null, usage: null, costUsd: null, durationMs: null,
+          });
+        } catch { /* thread gone */ }
+      }
+      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    }
+    const settleJob = (status) => {
+      if (askJobs.get(id) !== job) return;
+      job.status = status;
+      job.graceTimer = setTimeout(() => {
+        if (askJobs.get(id) === job) askJobs.delete(id);
+      }, ASK_LIMITS.jobGraceMs);
+      job.graceTimer.unref?.();
+    };
+    turn.on('done', () => settleJob('done'));
+    turn.on('error', () => settleJob('error'));
+    // Fire-and-forget with a backstop (startAgentGen shape) — run() never throws.
+    Promise.resolve()
+      .then(() => turn.run())
+      .catch((err) => {
+        console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
+        settleJob('error');
+      });
+    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId });
+  } catch (err) {
+    // Only pre-reservation throws land here (`job` is block-scoped to the outer
+    // try and every post-reservation failure returned from the inner catch), so
+    // there is no slot to release.
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Idempotent stop (the /api/agents/generate/stop family): always {ok:true}
+// after the shape check; the costUsd:null rule lives in the turn (R-C).
+app.post('/api/ask/threads/:id/stop', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const job = askInFlight(id);
+  if (job && job.turn && typeof job.turn.stop === 'function') {
+    try { job.turn.stop(); } catch { /* best-effort */ }
+  }
+  res.json({ ok: true });
+});
+
+/** R-B dual update. Flip in the STORE and, when the owning thread's turn is
+ *  still streaming, in the LIVE reducer (updateBlock re-emits the stamped
+ *  ask-card job frame) — otherwise finishMessage at turn end reverts the flip
+ *  with the reducer's stale copy. When no live reducer held the card (turn
+ *  over, or the card sits on an earlier message), re-broadcast the whole
+ *  message so tabs upsert the flipped block by message.id (§6.6 out-of-turn). */
+function flipCard(threadId, cardId, patch) {
+  const block = askUpdateCardBlock(threadId, cardId, patch);
+  if (!block) return null;
+  const job = askInFlight(threadId);
+  const live = job && job.turn && job.turn.reducer ? job.turn.reducer.updateBlock(cardId, patch) : null;
+  if (!live) {
+    const found = askFindCard(threadId, cardId);
+    if (found) broadcast({ type: 'ask-message', threadId, message: found.message });
+  }
+  return block;
+}
+
+// D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed').
+app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const cardId = askIdParam(res, req.params.cardId, 'card');
+  if (!cardId) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if ((req.body || {}).state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
+    const found = askFindCard(id, cardId);
+    if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.state !== 'proposed') {
+      return res.status(409).json({ error: `card is ${found.block.state}` });
+    }
+    const block = flipCard(id, cardId, { state: 'dismissed' });
+    // Dismiss is terminal: the card's parked comment ids can never reach a run,
+    // so drop them here exactly as the launch path does at its own success point
+    // (:1155). Own try/catch — comment bookkeeping must never fail the dismiss.
+    try { clearPendingCardComments(cardId); }
+    catch (e) { console.error('[diff-comments] dismiss cleanup failed:', e && e.message ? e.message : e); }
+    res.json({ block });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // /api/agents* -> agent registry + user-agent CRUD, delegated to
 // src/core/agent-store.mjs (layered builtin + ~/.worca-cc/agents user pairs).
 // GET returns palette render order (.order ascending) with origin stamped; the
@@ -3184,6 +4225,8 @@ app.delete('/api/plugins/:name', async (req, res) => {
   if (!name) return;
   const purge = isTruthy(req.query.purge) || !!(req.body && req.body.purge === true);
   try {
+    // uninstallPlugin also drops the plugin's source bindings (core-side, so
+    // the CLI's `worca plugin remove` clears them identically).
     await uninstallPlugin(name, { purge });
     reloadChatWorkers(name);
     res.json({ ok: true, purged: purge });
@@ -3221,17 +4264,38 @@ app.post('/api/plugins/:name/doctor', async (req, res) => {
 // GET /api/plugins/:name/config -> per-source schema + redacted values. Secrets
 // NEVER travel to the browser: redactedConfig replaces a stored secret with
 // { set: true } (§7.6).
+// ?profile=<id> selects which configuration to echo (multi-profile sources);
+// absent = the default bucket, which is all a single-profile source ever uses.
 app.get('/api/plugins/:name/config', (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const manifest = readInstalledManifest(name);
   if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const wanted = typeof req.query.profile === 'string' && req.query.profile ? req.query.profile : null;
+  if (wanted && !isValidProfileId(wanted)) return badRequest(res, 'invalid profile id');
   try {
-    const sources = (manifest.taskSources || []).map((s) => ({
-      id: s.id,
-      schema: s.configSchema,
-      values: redactedConfig(name, s.configSchema),
-    }));
+    const profiles = listProfiles(name);
+    const sources = (manifest.taskSources || []).map((s) => {
+      // For a multi-profile source, "which profile" is a real choice: echo the
+      // requested one, else the first in the roster. A source with no profiles
+      // yet has nothing to show — the UI's move is "create one", not a form.
+      // A requested profile that is not in the roster is a caller error (a
+      // typo'd URL) — echoing an empty form for it would let a Save quietly
+      // create the typo as a real profile. Checked inside the map so the guard
+      // only fires for sources that use profiles at all.
+      if (s.multiProfile && wanted && !profiles.some((p) => p.id === wanted)) {
+        throw Object.assign(new Error(`plugin "${name}" has no profile "${wanted}"`), { code: 'BAD_REQUEST' });
+      }
+      const profile = s.multiProfile ? (wanted || profiles[0]?.id || null) : null;
+      return {
+        id: s.id,
+        schema: s.configSchema,
+        multiProfile: s.multiProfile === true,
+        profile,
+        profiles: s.multiProfile ? profiles : [],
+        values: s.multiProfile && !profile ? {} : redactedConfig(name, s.configSchema, profile),
+      };
+    });
     const channels = (manifest.chatChannels || []).map((c) => ({
       id: c.id,
       displayName: c.displayName,
@@ -3252,7 +4316,78 @@ app.get('/api/plugins/:name/config', (req, res) => {
   }
 });
 
-// PUT /api/plugins/:name/config { sourceId | channelId, values } ->
+// POST /api/plugins/:name/profiles { sourceId, id, label } — create (or relabel)
+// a profile of a multi-profile source. Creating a profile is deliberately
+// separate from saving into it: the roster entry must exist BEFORE the config
+// form has anything to write to.
+app.post('/api/plugins/:name/profiles', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const body = req.body || {};
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const source = (manifest.taskSources || []).find((s) => s.id === body.sourceId);
+  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
+  if (!isValidProfileId(body.id)) {
+    return badRequest(res, 'profile id must be lowercase letters, digits and dashes');
+  }
+  // "default" is the implicit bucket every profile-less read/write shares
+  // (chat channels, model secrets, migrated legacy config). Enrolled in the
+  // roster it would become deletable like any member — and deleting it wipes
+  // that shared bucket. createProfile throws too; 400 with the reason here.
+  if (body.id === DEFAULT_PROFILE) {
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — pick another name`);
+  }
+  try {
+    res.json({ ok: true, profile: createProfile(name, body.id, body.label) });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// DELETE /api/plugins/:name/profiles/:id?sourceId=… — drop a profile, its stored
+// config/secrets/state, and every project binding that named it (a binding
+// pointing at a deleted profile would otherwise resolve to nothing at run time).
+// Binding cleanup is PLUGIN-wide, not per-source: deleteProfile removes the
+// profile's buckets for the whole plugin, so a sibling source's binding naming
+// it would dangle just the same. sourceId is still required — it authorizes the
+// call against a source that actually uses profiles.
+app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  const manifest = readInstalledManifest(name);
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
+  const sources = manifest.taskSources || [];
+  const source = sources.find((s) => s.id === sourceId) || (sources.length === 1 ? sources[0] : null);
+  if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+  // Mirror the POST guard: a single-profile source only has the implicit
+  // 'default' bucket, and deleting THAT would wipe its entire config/secrets/
+  // state. Same for ids not in the roster — deleteProfile would still drop
+  // whatever buckets happen to share the id (e.g. migrated legacy data under
+  // 'default'), so only roster members are deletable.
+  if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
+  if (!isValidProfileId(req.params.id)) return badRequest(res, 'invalid profile id');
+  // Reserved even if a pre-reservation roster enrolled it: deleting "default"
+  // would strip the shared bucket (chat-channel config, model secrets,
+  // migrated legacy data) out of all three files.
+  if (req.params.id === DEFAULT_PROFILE) {
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — it cannot be deleted`);
+  }
+  if (!listProfiles(name).some((p) => p.id === req.params.id)) {
+    return badRequest(res, `plugin "${name}" has no profile "${req.params.id}"`);
+  }
+  try {
+    deleteProfile(name, req.params.id);
+    const unbound = clearBindingsForProfile(name, req.params.id);
+    res.json({ ok: true, unbound });
+  } catch (err) {
+    sendPluginError(res, err);
+  }
+});
+
+// PUT /api/plugins/:name/config { sourceId | channelId, values, profile? } ->
 // writePluginConfig routes secret:true keys to data/secrets.json (0600,
 // atomic). Request values are NEVER logged and NEVER echoed back (the response
 // is a bare receipt). A channelId save also hot-restarts the channel worker.
@@ -3278,6 +4413,8 @@ app.put('/api/plugins/:name/config', (req, res) => {
     }
   }
   let schema;
+  let source = null;
+  let profile = null;
   if (typeof body.channelId === 'string' && body.channelId) {
     const channel = (manifest.chatChannels || []).find((c) => c.id === body.channelId);
     if (!channel) return badRequest(res, 'channelId does not match a chat channel of this plugin');
@@ -3287,12 +4424,22 @@ app.put('/api/plugins/:name/config', (req, res) => {
     const sourceId = typeof body.sourceId === 'string' && body.sourceId
       ? body.sourceId
       : (sources.length === 1 ? sources[0].id : '');
-    const source = sources.find((s) => s.id === sourceId);
+    source = sources.find((s) => s.id === sourceId);
     if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
+    profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
+    if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
+    if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
+    // Saves go only into EXISTING roster members — mirroring the GET guard,
+    // whose whole point is that a Save must not quietly mint a typo'd (or
+    // just-deleted) id as a real profile with secrets stored under it.
+    // Creation stays solely on POST /profiles.
+    if (source.multiProfile && !listProfiles(name).some((p) => p.id === profile)) {
+      return badRequest(res, `plugin "${name}" has no profile "${profile}" — create it first`);
+    }
     schema = source.configSchema;
   }
   try {
-    writePluginConfig(name, schema, body.values);
+    writePluginConfig(name, schema, body.values, profile);
     reloadChatWorkers(name);
     res.json({ ok: true });
   } catch (err) {
@@ -3318,6 +4465,78 @@ app.get('/api/plugins/:name/model-env', (req, res) => {
     else secretKeys.push(k);
   }
   res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
+});
+
+// ---------------------------------------------------------------------------
+// /api/source-bindings -> which PROFILE of a task source a project/workspace
+// pulls from. Set once per project; every run then resolves it silently, which
+// is the point — a per-run dropdown is how you start a pipeline against the
+// wrong tracker without noticing (see src/core/source-bindings.mjs).
+// ---------------------------------------------------------------------------
+
+/** Shared scope parsing for the two binding routes. Accepts a project by key or
+ *  by path (the New Pipeline form knows the path, the Projects view the key). */
+function bindingScope(q = {}) {
+  const workspaceId = typeof q.workspaceId === 'string' && q.workspaceId.trim() ? q.workspaceId.trim() : '';
+  if (workspaceId) return { scopeType: 'workspace', scopeKey: workspaceId };
+  const key = typeof q.projectKey === 'string' && q.projectKey.trim() ? q.projectKey.trim() : '';
+  if (key) return { scopeType: 'project', scopeKey: key };
+  const dir = typeof q.projectDir === 'string' && q.projectDir.trim() ? q.projectDir.trim() : '';
+  if (dir) return { scopeType: 'project', scopeKey: projectKey(path.resolve(dir)) };
+  return null;
+}
+
+// GET /api/source-bindings?projectDir=…|projectKey=…|workspaceId=…
+//   [&plugin=&sourceId=] -> { bindings: [...] } or, when a source is named,
+//   the RESOLVED profile for it: { profile, via, candidates? }.
+app.get('/api/source-bindings', async (req, res) => {
+  const scope = bindingScope(req.query);
+  if (!scope) return badRequest(res, 'projectDir, projectKey or workspaceId is required');
+  const plugin = typeof req.query.plugin === 'string' ? req.query.plugin.trim() : '';
+  const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId.trim() : '';
+  try {
+    if (!plugin || !sourceId) return res.json({ ...scope, bindings: listBindingsForScope(scope.scopeType, scope.scopeKey) });
+    // A workspace with no binding of its own inherits from its members when they
+    // agree, so the member keys have to be resolved before asking.
+    let memberKeys;
+    if (scope.scopeType === 'workspace') {
+      const ws = await readWorkspace(scope.scopeKey);
+      memberKeys = ws ? ws.projectKeys : [];
+    }
+    res.json({
+      ...scope,
+      ...resolveProfile({ ...scope, plugin, sourceId, memberKeys, available: listProfileIds(plugin) }),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// PUT /api/source-bindings { projectDir|projectKey|workspaceId, plugin,
+//   sourceId, profile } — profile:null clears the binding.
+app.put('/api/source-bindings', (req, res) => {
+  const body = req.body || {};
+  const scope = bindingScope(body);
+  if (!scope) return badRequest(res, 'projectDir, projectKey or workspaceId is required');
+  const plugin = typeof body.plugin === 'string' ? body.plugin.trim() : '';
+  const sourceId = typeof body.sourceId === 'string' ? body.sourceId.trim() : '';
+  if (!plugin || !sourceId) return badRequest(res, 'plugin and sourceId are required');
+  const ref = { ...scope, plugin, sourceId };
+  try {
+    if (body.profile === null || body.profile === '') {
+      clearBinding(ref);
+      return res.json({ ok: true, ...scope, profile: null });
+    }
+    if (!isValidProfileId(body.profile)) return badRequest(res, 'invalid profile id');
+    // Binding to a profile that does not exist would resolve to nothing at run
+    // time — reject it here, where the user can still see why.
+    if (!listProfileIds(plugin).includes(body.profile)) {
+      return badRequest(res, `plugin "${plugin}" has no profile "${body.profile}"`);
+    }
+    res.json({ ok: true, ...scope, profile: setBinding(ref, body.profile) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -3359,8 +4578,21 @@ app.post('/api/sources/call', async (req, res) => {
     if (input && typeof input.optionsFrom === 'string' && input.optionsFrom) allowed.add(input.optionsFrom);
   }
   if (!allowed.has(op)) return badRequest(res, `op "${op}" is not allowed for this source`);
+  const profile = typeof body.profile === 'string' && body.profile ? body.profile : null;
+  if (profile && !isValidProfileId(profile)) return badRequest(res, 'invalid profile id');
+  if (source.multiProfile && !profile) return badRequest(res, 'profile is required for this task source');
+  // Same submit-time guards as /api/run: a deleted profile must 400 here, not
+  // fail deep in the connector against an empty bucket, and a profile on a
+  // single-profile source would read (and persist state into) a phantom
+  // bucket instead of the real config.
+  if (source.multiProfile && !listProfileIds(plugin).includes(profile)) {
+    return badRequest(res, `plugin "${plugin}" has no profile "${profile}"`);
+  }
+  if (!source.multiProfile && profile) {
+    return badRequest(res, `task source "${sourceId}" does not use profiles — omit profile`);
+  }
   try {
-    const result = await callSource({ plugin, sourceId, op, args });
+    const result = await callSource({ plugin, sourceId, op, args, profile });
     res.json({ ok: true, result });
   } catch (err) {
     if (err instanceof PluginOpError) {
@@ -3560,12 +4792,12 @@ app.use((req, res, next) => {
  * everything up to the first `await` — including the reconcile — still runs before
  * `server.listen`, exactly as it did when this was an inline block.
  *
- * @param {{log?: (scope:'run-root'|'legacy', level:string, msg:string) => void}} [args]
+ * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees', level:string, msg:string) => void}} [args]
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null };
+  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -3619,6 +4851,34 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] legacy worktree sweep failed: ${err && err.message ? err.message : err} — nothing was removed`);
   }
+
+  // Ask Worca (§6.2): mark turns orphaned by a restart, sweep stale empty threads.
+  try {
+    const interrupted = sweepStreamingMessages();
+    const emptyThreads = sweepEmptyThreads();
+    summary.ask = { interrupted, emptyThreads };
+    if (interrupted || emptyThreads) {
+      console.log(`[worca-ui] ask sweep: ${interrupted} interrupted turn(s), ${emptyThreads} empty thread(s)`);
+    }
+  } catch (err) {
+    summary.ask = { interrupted: 0, emptyThreads: 0 };
+    console.error(`[worca-ui] ask sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Ask worktrees (P4 §5): reconcile ask_worktrees rows vs on-disk checkouts
+  // both ways. Three-state inside the sweep: a DB failure aborts with nothing
+  // removed. `sink('ask-worktrees')` is undefined on a log-less boot, which is
+  // exactly the sweep's own default — never call sink(...) directly.
+  try {
+    const r = await sweepAskWorktrees({ log: sink('ask-worktrees') });
+    summary.askWorktrees = r;
+    if (r.removedDirs || r.prunedRows) {
+      console.log(`[worca-ui] ask-worktree sweep: removed ${r.removedDirs} orphan dir(s), dropped ${r.prunedRows} stale row(s)`);
+    }
+    if (r.failed) console.error(`[worca-ui] ask-worktree sweep: ${r.failed} candidate(s) skipped`);
+  } catch (err) {
+    console.error(`[worca-ui] ask-worktree sweep failed: ${err && err.message ? err.message : err}`);
+  }
   return summary;
 }
 
@@ -3666,5 +4926,6 @@ export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
-  chatNotifier, resumeRun, resolveHljsAssets,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
+  emitDiffCommentsChanged,
 };

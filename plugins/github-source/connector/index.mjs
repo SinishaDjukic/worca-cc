@@ -3,6 +3,7 @@
 // zero dependencies. Task ids round-trip opaquely as "owner/repo#123".
 
 import { ghFetch } from './github-api.mjs';
+import { ghAuthToken } from './gh-cli.mjs';
 
 const PER_PAGE = 30;
 
@@ -44,8 +45,17 @@ function toSummary(repo, it) {
   };
 }
 
-export default function createTaskSource(ctx, deps = { fetch: globalThis.fetch }) {
-  const gh = { fetch: deps.fetch, token: String(ctx.config?.token || '') };
+export default function createTaskSource(ctx, deps = {}) {
+  const resolveToken = deps.ghAuthToken || ghAuthToken;
+  // An explicit config token wins. With none, fall back to the gh CLI's
+  // logged-in account — the same identity worca uses for `gh pr create`.
+  // Lazy AND memoized: building the source must not spawn anything, and one op
+  // must not spawn gh once per request.
+  let token = String(ctx.config?.token || '') || null;
+  const gh = {
+    fetch: deps.fetch || globalThis.fetch,
+    get token() { return token ?? (token = resolveToken()); },
+  };
   const closeOnComplete = toBool(ctx.config?.closeOnComplete);
 
   /** @me resolution: login cached in state by validateConfig; lazily fetched otherwise. */

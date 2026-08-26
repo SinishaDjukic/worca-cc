@@ -47,6 +47,14 @@ const REPO_ROOT = resolve(__dirname, '..', '..');
 // ── arg parsing ────────────────────────────────────────────────────────────────
 
 /**
+ * The permission modes a pipeline run may be launched with. Deliberately NOT the
+ * full set claude accepts: `dontAsk` belongs to the Ask Worca runner alone
+ * (core/ask/spawn.mjs), which owns its own spawn options and never comes through
+ * here.
+ */
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk'];
+
+/**
  * Parse argv into a flags object. Supports "--flag value" and "--flag=value", plus the
  * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help.
  */
@@ -134,6 +142,12 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
+        // A pipeline run's mode reaches claude-runner as-is. `dontAsk` is a legitimate
+        // headless mode for a REAL run (allowedTools decide what runs); only the
+        // MOCK runner treats it as the Ask Worca recipe — that pair is refused below,
+        // after --mock/WORCA_MOCK are known (review of PR #376).
+        fail(`--permission-mode must be one of ${PERMISSION_MODES.join(', ')}, got: ${value}`);
       } else {
         out[key] = value;
       }
@@ -194,7 +208,8 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --permission-mode <m>    Claude permission mode (default acceptEdits)
+  --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
+                           bypassPermissions (default acceptEdits)
   --workflow <id>          Saved workflow id to run (default: wf_default)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
@@ -589,6 +604,16 @@ async function cmdDoctor() {
   } catch (err) {
     process.stderr.write(`worca doctor: run-root sweep failed: ${err?.message || err}\n`);
   }
+  // P4: BEFORE the legacy return 0 — that block short-circuits the whole function
+  // whenever the effective mode is not `detached` (the default), so an ask-worktree
+  // sweep appended after it would never run for most users.
+  try {
+    const { sweepAskWorktrees } = await import('../core/ask/worktrees.mjs');
+    const res = await sweepAskWorktrees({ log: (level, msg) => out(level === 'warn' ? c('yellow', msg) : msg) });
+    out(`ask worktrees: removed ${res.removedDirs} orphan dir(s), dropped ${res.prunedRows} stale row(s), skipped ${res.failed}`);
+  } catch (err) {
+    process.stderr.write(`worca doctor: ask-worktree sweep failed: ${err?.message || err}\n`);
+  }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
     // and every paused run, so sweeping them would make the documented §10 rollback
@@ -810,7 +835,7 @@ Usage:
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
   worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
-  worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]   Debug one connector op
+  worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]   Debug one connector op
   worca plugin channel <name> <channelId> [--check] [--inspect]            Run a chat channel worker in the
                                                   foreground (typed lines = simulated inbound); --check runs
                                                   the module's validateConfig once and exits
@@ -1286,9 +1311,9 @@ async function cmdPlugin(argv) {
       }
 
       case 'exec': {
-        const a = pluginArgs(rest, ['--args'], ['--inspect']);
+        const a = pluginArgs(rest, ['--args', '--profile'], ['--inspect']);
         const [name, sourceId, op] = a._;
-        if (!name || !sourceId || !op) fail("Usage: worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]");
+        if (!name || !sourceId || !op) fail("Usage: worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]");
         if (a.inspect) process.env.WORCA_PLUGIN_INSPECT = '1'; // shim spawns the child with --inspect-brk
         let args = {};
         if (a.args) {
@@ -1299,7 +1324,9 @@ async function cmdPlugin(argv) {
           }
         }
         const { callSource } = await import('../core/plugin-shim.mjs');
-        const result = await callSource({ plugin: name, sourceId, op, args });
+        // --profile targets one instance of a multi-profile source; absent, the
+        // shim falls back to the implicit default bucket (single-profile case).
+        const result = await callSource({ plugin: name, sourceId, op, args, profile: a.profile || undefined });
         process.stdout.write(JSON.stringify(result, null, 2) + '\n'); // stdout = result ONLY
         return 0;
       }
@@ -1465,6 +1492,12 @@ async function main() {
 
   if (flags.mock) {
     process.env.WORCA_MOCK = '1';
+  }
+  // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
+  // runMock), which writes no pipeline artifact — a mock pipeline under dontAsk dies
+  // at its first artifact read with no hint why. Refuse the PAIR, not the mode.
+  if (flags.permissionMode === 'dontAsk' && /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? ''))) {
+    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
   }
 
   if (!flags.prompt && !flags.file) {

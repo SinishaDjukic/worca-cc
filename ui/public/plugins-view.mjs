@@ -234,6 +234,37 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
   return root;
 }
 
+// The roster row for a multiProfile source: which configuration is being
+// edited, plus add/remove. app.js owns the actions (each is a server round trip
+// that re-opens the pane), so this only renders the controls and marks them.
+function profileBar(doc, src) {
+  const bar = h(doc, 'div', 'pl-profile-bar');
+  bar.dataset.sourceId = src.id || '';
+  bar.appendChild(h(doc, 'label', '', 'Profile'));
+  const sel = h(doc, 'select', 'select pl-profile-sel');
+  sel.dataset.sourceId = src.id || '';
+  for (const p of src.profiles || []) {
+    const id = typeof p === 'string' ? p : String(p.id || '');
+    const label = typeof p === 'string' ? '' : (p.label || '');
+    const opt = h(doc, 'option', '', label ? `${label} (${id})` : id);
+    opt.value = id;
+    sel.appendChild(opt);
+  }
+  if (src.profile) sel.value = src.profile;
+  if (!(src.profiles || []).length) sel.disabled = true;
+  bar.appendChild(sel);
+  const add = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-add', 'Add');
+  add.type = 'button';
+  add.dataset.sourceId = src.id || '';
+  bar.appendChild(add);
+  const del = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-del', 'Remove');
+  del.type = 'button';
+  del.dataset.sourceId = src.id || '';
+  if (!src.profile) del.disabled = true;
+  bar.appendChild(del);
+  return bar;
+}
+
 // renderConfigForm(sections) — one <form.pl-config-form>
 // per task source. secret:true fields (text-only per normalizeManifest) render
 // type=password, NEVER prefilled; a stored value arrives redacted as {set:true}
@@ -250,12 +281,25 @@ export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
     ...channels.map((x) => ({ ...x, _kind: 'channel' })),
   ];
   for (const src of rows) {
+    // A multiProfile source is a ROSTER of configurations, not one form: the
+    // bar picks which profile the form below edits. Rendered before the form so
+    // "which instance am I editing" is answered above the fields, not after.
+    if (src._kind === 'source' && src.multiProfile) {
+      root.appendChild(profileBar(doc, src));
+      // Nothing to write into: creating the profile is a separate call, and the
+      // server rejects a save without one. Offer the add button, not a form.
+      if (!src.profile) {
+        root.appendChild(h(doc, 'p', 'hint', 'No profiles yet — add one to configure this source.'));
+        continue;
+      }
+    }
     const form = h(doc, 'form', 'pl-config-form');
     if (src._kind === 'channel') {
       form.dataset.channelId = src.id || '';
       form.appendChild(h(doc, 'div', 'pl-config-h', `${src.displayName || src.id} (${src.platform || 'chat'} channel)`));
     } else {
       form.dataset.sourceId = src.id || '';
+      if (src.multiProfile) form.dataset.profile = src.profile;
     }
     for (const f of src.schema || []) {
       const field = h(doc, 'div', 'field');
@@ -291,7 +335,9 @@ export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
   return root;
 }
 
-// collectConfigForm(formEl) -> { sourceId | channelId, values }. An untouched
+// collectConfigForm(formEl) -> { sourceId | channelId, values } (+ profile for
+// a multiProfile source; the key is ABSENT otherwise, so a single-profile save
+// stays byte-identical to what it sent before profiles existed). An untouched
 // {set:true} secret (data-set="1", still empty) is OMITTED — saving never
 // wipes a secret. Channel forms carry data-channel-id instead of data-source-id.
 export function collectConfigForm(formEl) {
@@ -301,7 +347,47 @@ export function collectConfigForm(formEl) {
     values[input.dataset.key] = input.value;
   }
   if (formEl.dataset.channelId) return { channelId: formEl.dataset.channelId, values };
-  return { sourceId: formEl.dataset.sourceId || '', values };
+  const out = { sourceId: formEl.dataset.sourceId || '', values };
+  if (formEl.dataset.profile) out.profile = formEl.dataset.profile;
+  return out;
+}
+
+// renderConnectResult(result) — outcome of a source's validateConfig, rendered
+// under the settings form. Three states, because setup can legitimately be
+// mid-flight: connected (ok), waiting (ok:false + pending — the caller keeps
+// polling), or failed (ok:false + errors[], each pinned to its config field).
+// A connector may return no envelope at all on a transport error; `result`
+// then carries { error: { kind, message } } from the /api/sources/call frame.
+export function renderConnectResult(result, { doc = globalThis.document } = {}) {
+  const r = result || {};
+  const root = h(doc, 'div', 'pl-connect-result');
+  if (r.ok) {
+    root.appendChild(h(doc, 'div', 'badge green', 'connected'));
+    if (r.identity) root.appendChild(h(doc, 'span', 'hint', `signed in as ${r.identity}`));
+    // Which server/project the connector actually resolved — a mistyped sample
+    // URL otherwise connects successfully to the wrong instance.
+    if (r.instance && r.instance.baseUrl) {
+      const where = r.instance.project ? `${r.instance.baseUrl} · ${r.instance.project}` : r.instance.baseUrl;
+      root.appendChild(h(doc, 'div', 'hint mono', where));
+    }
+    return root;
+  }
+  if (r.pending) {
+    root.appendChild(h(doc, 'div', 'badge', 'waiting'));
+    root.appendChild(h(doc, 'span', 'hint', r.message || 'Waiting…'));
+    return root;
+  }
+  root.appendChild(h(doc, 'div', 'badge red', 'not connected'));
+  const errors = Array.isArray(r.errors) && r.errors.length
+    ? r.errors
+    : [{ message: (r.error && r.error.message) || r.message || 'connection failed' }];
+  for (const e of errors) {
+    const row = h(doc, 'div', 'pl-connect-err');
+    if (e.field) row.appendChild(h(doc, 'span', 'mono', e.field));
+    row.appendChild(h(doc, 'span', 'hint err', e.message || ''));
+    root.appendChild(row);
+  }
+  return root;
 }
 
 // renderDoctorReport(report: {ok, checks:[{id,ok,detail}]}) — row per check.
