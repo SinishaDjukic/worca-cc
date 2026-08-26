@@ -94,6 +94,12 @@ function runLine(r) {
   return `${statusEmoji(r.status)} \`${runRef(r.runId || r.id)}\` ${r.status} — ${title}`;
 }
 
+/** Final segment of a host-native path, on either separator ("/x/proj",
+ *  "C:\\x\\proj", trailing separator tolerated). Exported for tests. */
+export function lastPathSegment(p) {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
 /**
  * @param {{actions:object, chatContext:object, logger?:(l:string,m:string)=>void}} deps
  * actions: listRuns(), runState(runId), pendingQuestion(runId),
@@ -107,7 +113,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     const all = actions.listRuns().filter((r) => (r.kind || 'run') === 'run' || r.kind === 'workspace-run');
     const scope = projectOf(chatKey);
     if (!scope) return all;
-    return all.filter((r) => String(r.projectDir || '').split('/').pop() === scope
+    // Last path segment on EITHER separator: projectDir is host-native, so on
+    // Windows it is `C:\\…\\proj` and a "/"-only split never matched the scope.
+    return all.filter((r) => lastPathSegment(r.projectDir) === scope
       || (r.projectNames || []).includes(scope));
   };
 

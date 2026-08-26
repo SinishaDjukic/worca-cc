@@ -16,6 +16,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
 import { slugify } from './artifacts.mjs';
+import { DEFAULT_AGENTS_DIR } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 
 /**
  * Default feedback cycle count when run-config does not override it. Matches the
@@ -32,9 +33,6 @@ function normDomain(raw) {
   const v = typeof raw === 'string' ? raw.trim() : '';
   return DOMAIN_RE.test(v) ? v : 'general';
 }
-
-/** Default location of the agent prompt markdown files (mirrors orchestrator.mjs). */
-const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
 
 /**
  * Read an agent prompt file and pull its declared tools from YAML frontmatter.

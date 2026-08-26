@@ -10,12 +10,22 @@
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
 
-/** Default location of the agent metadata sidecars, relative to this module. */
-const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
+/**
+ * Default location of the agent metadata sidecars, relative to this module.
+ * Single source for every module that needs the built-in agents dir
+ * (workflows.mjs, orchestrator.mjs). MUST go through fileURLToPath: `new URL(...)
+ * .pathname` is a URL path, not a filesystem path — on Windows it yields
+ * `/C:/…/agents/` (ENOENT) and on every platform it leaves spaces as `%20`, so
+ * the built-in layer silently scanned as EMPTY: /api/agents returned nothing,
+ * saved workflows painted "Could not load this workflow", and setStep rejected
+ * every model change with `unknown step` (the New Pipeline picker reverted).
+ */
+export const DEFAULT_AGENTS_DIR = fileURLToPath(new URL('../../agents/', import.meta.url));
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
