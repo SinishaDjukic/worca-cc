@@ -142,12 +142,13 @@ test('ui-ask-style: the thread date leads the meter in bold; an idle dot collaps
 
 test('ui-ask-style: a model row survives an arbitrarily long plugin name', () => {
   // .ask-pop-model is a fixed 292px panel and plugin names are arbitrary, so the
-  // badges must be the ones that give way — with flex:0 0 auto + nowrap they win
-  // every negotiation, the name renders at 0px and the row (check mark included)
-  // overflows the panel, which sets no overflow of its own.
+  // origin is not in the row at all and the name is the only thing left that can
+  // give. A rigid badge wins every negotiation — with flex:0 0 auto + nowrap the
+  // name renders at 0px and the row (check mark included) overflows the panel,
+  // which sets no overflow of its own.
   const tag = ruleBody('.ask-model-tag');
   assert.ok(tag, '.ask-model-tag rule exists');
-  assert.match(tag, /flex:0 1 auto/, 'the plugin badge may shrink');
+  assert.match(tag, /flex:0 1 auto/, 'the base badge may shrink');
   assert.match(tag, /min-width:0/, '…below its content width, all the way to a nub');
   assert.match(tag, /overflow:hidden/);
   assert.match(tag, /text-overflow:ellipsis/, 'a truncated badge still reads as a badge');

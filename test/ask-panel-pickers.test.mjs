@@ -351,29 +351,34 @@ test('ask-panel-pickers: the selected model is always in the primary pane', asyn
   assert.ok(checked && checked.closest('[role="menuitem"]').textContent.includes('Acme Slow'));
 });
 
-test('ask-panel-pickers: rows badge the plugin, the cost flag and an unset secret', async () => {
+test('ask-panel-pickers: a row shows the name and the warnings — never where the model came from', async () => {
   const ctx = makePanel({ fetchHandler: wideHandler() });
   const pop = await openPicker(ctx);
   const row = (label) => [...pop.querySelectorAll('.ask-model-item')].find((b) => b.textContent.includes(label));
 
-  assert.equal(row('Acme Fast').querySelector('.ask-model-tag').textContent, 'plugin: acme');
-  assert.match(row('Acme Fast').querySelector('.ask-model-tag').title, /acme/);
-  assert.equal(row('Opus 5').querySelector('.ask-model-tag'), null, 'built-ins stay clean');
-  assert.equal(row('Corp').querySelector('.ask-model-tag'), null, 'globals stay clean');
+  // A plugin model reads exactly like a built-in: name first, nothing about its origin.
+  const acme = row('Acme Fast');
+  assert.equal(acme.firstChild.className, 'ask-model-name', 'the name leads the row');
+  assert.equal(acme.childNodes.length, 1, 'and it is the whole row');
+  assert.equal(row('Corp').childNodes.length, 1, 'a global model is just as plain');
+  // Opus 5 is the picked model, so its row is name + ✓ — and still nothing else.
+  assert.deepEqual([...row('Opus 5').childNodes].map((n) => n.className), ['ask-model-name', 'ask-model-check']);
 
+  // The two STATUS badges are warnings, not provenance — they stay.
   const bolt = [...row('Bolt X').querySelectorAll('.ask-model-tag')].map((t) => t.textContent);
-  assert.deepEqual(bolt, ['plugin: bolt', 'secret not set']);
+  assert.deepEqual(bolt, ['secret not set']);
   assert.match(row('Bolt X').querySelector('.ask-model-tag.is-err').title, /BOLT_KEY/);
 
   ctx.doc.querySelector('[data-ask-more-models]').click();
   const slow = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].find((b) => b.textContent.includes('Acme Slow'));
-  assert.deepEqual([...slow.querySelectorAll('.ask-model-tag')].map((t) => t.textContent), ['plugin: acme', '⚠cost']);
+  assert.deepEqual([...slow.querySelectorAll('.ask-model-tag')].map((t) => t.textContent), ['⚠cost']);
 });
 
 test('ask-panel-pickers: a long plugin name does not cost the model its name', async () => {
-  // The worst real row this feature ships for: the longest badge pair on the
-  // narrowest name. The JS must still emit the FULL label — trimming is the
-  // stylesheet's job (.ask-model-item .ask-model-name, pinned by ui-ask-style).
+  // The row a long plugin name used to wreck: nothing about the plugin reaches the
+  // row now, so the name is the only variable-width text in it. The JS emits the
+  // FULL label; trimming is the stylesheet's job (.ask-model-item .ask-model-name,
+  // pinned by ui-ask-style).
   const LONG = 'discretestack-models';
   const ctx = makePanel({
     fetchHandler: wideHandler({
@@ -387,8 +392,8 @@ test('ask-panel-pickers: a long plugin name does not cost the model its name', a
   const pop = await openPicker(ctx);
   const row = pop.querySelector('.ask-model-item');
   assert.equal(row.querySelector('.ask-model-name').textContent, 'DS Fast', 'the name is emitted in full');
-  assert.deepEqual([...row.querySelectorAll('.ask-model-tag')].map((t) => t.textContent),
-    [`plugin: ${LONG}`, 'secret not set']);
+  assert.ok(!row.textContent.includes(LONG), 'the plugin name is nowhere in the row');
+  assert.deepEqual([...row.querySelectorAll('.ask-model-tag')].map((t) => t.textContent), ['secret not set']);
   assert.ok(row.querySelector('.ask-model-check'), 'the check mark is still the last child of the row');
   assert.equal(row.lastChild.className, 'ask-model-check');
 });

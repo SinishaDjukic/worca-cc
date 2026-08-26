@@ -837,11 +837,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     const modelItem = (m) => {
       const item = menuItem('ask-model-item', () => setPickerModel(m.id));
+      // The row carries NO provenance: a plugin name is arbitrary text and an origin
+      // badge starved the label in a 292px panel. Where a model comes from is the
+      // Models view's job; here the name is the thing being picked.
       item.appendChild(make('span', 'ask-model-name', m.label || m.id));
-      // Same three affordances the Models view shows (models-view.mjs:114,116,120-123).
-      if (m.custom === 'plugin' && m.plugin) {
-        item.appendChild(tag(`plugin: ${m.plugin}`, null, `Provided by the “${m.plugin}” plugin`));
-      }
+      // The two STATUS badges stay (models-view.mjs:116,120-123) — they are warnings, not provenance.
       if (m.costUnreliable) {
         item.appendChild(tag('⚠cost', 'is-warn',
           'This model reported no cost while consuming tokens — chat spend may not count toward the budget.'));
