@@ -246,18 +246,18 @@ export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt =
   return btn;
 }
 
-/** Compact centre label for the ring: $4 · $317 · $3.2k · $12k. Four glyphs is
- *  what fits inside a 28px disc at 9.5px mono.
+/** Compact centre label for the ring: $4 · $317 · $3k · $12k. Four glyphs is
+ *  what fits inside a 28px disc at 9.5px mono, so thousands are WHOLE — "$8.8k"
+ *  is five glyphs and overflows the disc.
  *  NAME: `ringAmount`, not `compactUsd` — this module ALREADY declares
- *  `compactUsd(fmt, v)` at :382 (the spend-chart y-axis formatter), and a second
+ *  `compactUsd(fmt, v)` at :410 (the spend-chart y-axis formatter), and a second
  *  top-level function declaration in an ES module is a fatal SyntaxError, not a
  *  shadow: it takes down stats-view.mjs, app.js and the whole UI. */
 function ringAmount(n) {
   const v = n || 0;
-  if (v >= 9950) return `$${Math.round(v / 1000)}k`;
   // The ROUNDED value decides: 999.5 would otherwise fall through and render
   // "$1000", five glyphs in a four-glyph disc.
-  if (Math.round(v) >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+  if (Math.round(v) >= 1000) return `$${Math.round(v / 1000)}k`;
   return `$${Math.round(v)}`;
 }
 

@@ -256,7 +256,7 @@ test('no total limit renders a neutral ring showing the amount, not a fake perce
       windowEndMs: Date.now() + 4 * DAY, blocked: false }, { doc: pureDoc() });
   assert.ok(el.classList.contains('no-limit'));
   assert.equal(el.style.getPropertyValue('--ring-pct'), '0');
-  assert.equal(el.querySelector('.spend-ring-val').textContent, '$3.2k');
+  assert.equal(el.querySelector('.spend-ring-val').textContent, '$3k');
   assert.match(el.title, /no total limit/);
 });
 
@@ -268,9 +268,11 @@ test('compact amounts stay within four glyphs', () => {
   assert.equal(val(4.21), '$4');
   assert.equal(val(317.4), '$317');
   // 999.5 rounds to 1000 — five glyphs unless the branch tests the ROUNDED value.
-  assert.equal(val(999.5), '$1.0k');
-  assert.equal(val(3168.85), '$3.2k');
-  assert.equal(val(9949), '$9.9k');
+  assert.equal(val(999.5), '$1k');
+  assert.equal(val(3168.85), '$3k');
+  // Thousands are WHOLE: "$8.8k" is too wide for the 28px disc.
+  assert.equal(val(8800), '$9k');
+  assert.equal(val(9949), '$10k');
   assert.equal(val(12400), '$12k');
 });
 
