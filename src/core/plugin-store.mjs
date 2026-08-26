@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import {
   existsSync, readdirSync, readFileSync, readlinkSync,
-  mkdirSync, rmSync, symlinkSync, renameSync,
+  mkdirSync, rmSync, symlinkSync, renameSync, unlinkSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
@@ -161,6 +161,18 @@ function currentTarget(name) {
   try { return readlinkSync(pluginCurrentDir(name)); } catch { return null; }
 }
 
+// rmSync is the wrong primitive for a POSIX path that may be a symlink: it
+// stats THROUGH the link, so a link to a directory throws ERR_FS_EISDIR and a
+// DANGLING link reads as "already gone" and survives force:true (Node 23).
+// unlink removes the link itself; the fallback covers a real directory
+// (test fixtures build `current` as a plain dir).
+const rmLink = (path) => {
+  try { unlinkSync(path); return; } catch (err) {
+    if (err.code === 'ENOENT') return;
+  }
+  rmSync(path, { recursive: true, force: true });
+};
+
 /** Atomic swap (§6.1 step 3): write current.tmp symlink, rename(2) over current.
  *  Windows can't create a plain symlink without elevated privileges/Developer
  *  Mode, and can't rename() a directory reparse point over an existing one
@@ -177,7 +189,7 @@ function swapCurrent(name, target) {
     return;
   }
   const tmp = `${current}.tmp`;
-  rmSync(tmp, { force: true });
+  rmLink(tmp);
   symlinkSync(target, tmp);
   renameSync(tmp, current);
 }
@@ -186,9 +198,9 @@ function swapCurrent(name, target) {
  *  dir, restore/remove current, tidy now-empty dirs. Prior state untouched. */
 function cleanupFailedVersion(name, versionDir, prevCurrent) {
   rmSync(versionDir, { recursive: true, force: true });
-  rmSync(`${pluginCurrentDir(name)}.tmp`, { force: true });
+  rmLink(`${pluginCurrentDir(name)}.tmp`);
   if (prevCurrent) { try { swapCurrent(name, prevCurrent); } catch { /* best effort */ } }
-  else rmSync(pluginCurrentDir(name), { force: true });
+  else rmLink(pluginCurrentDir(name));
   for (const d of [join(pluginDir(name), 'versions'), pluginDir(name)]) {
     try { if (readdirSync(d).length === 0) rmSync(d, { recursive: true, force: true }); } catch { /* absent */ }
   }
@@ -352,7 +364,7 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
   // a different tracker. Cleared HERE (not only in the server's DELETE route)
   // so the CLI's `worca plugin remove` drops them too.
   clearBindingsForPlugin(name);
-  rmSync(pluginCurrentDir(name), { force: true });
+  rmLink(pluginCurrentDir(name)); // symlink in real installs, a plain dir in test fixtures
   rmSync(join(pluginDir(name), 'versions'), { recursive: true, force: true });
   delete lock[name];
   writePluginsLock(lock);

@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, rmSync, unlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -302,7 +302,10 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   }
   const warnings = [];
   for (const rel of findEscapingSymlinks(versionDir)) {
-    rmSync(join(versionDir, rel), { force: true });
+    // unlink, not rmSync: rmSync stats THROUGH the link, so a link to a
+    // directory throws ERR_FS_EISDIR and a dangling one (the common escaping
+    // case) reads as "already gone" and survives force:true (Node 23).
+    unlinkSync(join(versionDir, rel));
     warnings.push(`removed symlink escaping the export dir: ${rel}`);
   }
   return { versionDir, warnings };
