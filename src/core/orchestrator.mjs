@@ -72,7 +72,7 @@ import { assembleRunContext, renderContextAudit, MCP_GRANT_MODE } from './run-co
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
-  probeClaudeCapabilities,
+  probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost } from './config.mjs';
@@ -1275,6 +1275,13 @@ class Orchestrator extends EventEmitter {
       return;
     }
     const caps = await probeClaudeCapabilities(this.claude.bin);
+    if (caps.version === null) {
+      // No `claude --version` at all. The first node fails loudly anyway; when the
+      // cause is the Windows npm shim, record the actionable reason NOW so the
+      // run's warnings carry it instead of only a spawn ENOENT at the first node.
+      const hint = explainUnspawnableClaude(this.claude.bin);
+      if (hint) await this._recordRunWarning(hint);
+    }
     if (!caps.mcpConfig && this.mcpConfigPath) {
       await this._recordRunWarning(
         `this \`claude\` build does not advertise --mcp-config (version ${caps.version || 'unknown'}); ` +

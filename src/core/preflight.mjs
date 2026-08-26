@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { constants as FS } from 'node:fs';
+import { constants as FS, existsSync } from 'node:fs';
 
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
@@ -332,6 +332,46 @@ export async function detectToolsPerProject(projectDirs) {
  * @param {string} [bin] the claude binary (defaults to `claude`)
  * @returns {Promise<{mcpConfig: boolean, version: string|null}>}
  */
+/**
+ * Why a bare `claude` cannot be spawned on THIS host, or null when the generic
+ * error is the whole story. Native Windows + npm-installed Claude Code: npm's
+ * global install lays down `claude.cmd` / `claude.ps1` shims and no `.exe`,
+ * but Windows resolves a bare name on PATH to `.exe` only, and Node refuses to
+ * run .cmd/.bat without a shell (CVE-2024-27980) — so spawn('claude') is ENOENT
+ * even though `where claude` finds it. The fix is the user's (native build, or
+ * WORCA_CLAUDE_BIN → claude.exe); Worca's job is to SAY so instead of "ENOENT".
+ *
+ * Pure: platform / PATH / existence are injectable for tests. Never throws.
+ * @param {string} [bin] the configured claude binary (name or path)
+ * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean}} [o]
+ * @returns {string|null}
+ */
+export function explainUnspawnableClaude(bin = 'claude', {
+  platform = process.platform,
+  pathEnv = process.env.PATH ?? '',
+  exists = existsSync,
+} = {}) {
+  if (platform !== 'win32') return null;
+  const name = String(bin || 'claude').trim() || 'claude';
+  if (/\.exe$/i.test(name)) return null; // an explicit .exe that fails is a real ENOENT
+  const explicitPath = /[\\/]/.test(name);
+  const shimExt = /\.(cmd|bat|ps1)$/i.test(name);
+  const stems = explicitPath ? [name] : pathEnv.split(';').filter(Boolean).map((d) => join(d, name));
+  const ok = (p) => { try { return !!exists(p); } catch { return false; } }; // a probe error is "absent"
+  const shims = [];
+  for (const stem of stems) {
+    if (!shimExt && ok(stem + '.exe')) return null; // a real exe is reachable — not this problem
+    for (const ext of shimExt ? [''] : ['.cmd', '.bat', '.ps1']) {
+      if (ok(stem + ext)) shims.push(stem + ext);
+    }
+  }
+  if (!shims.length) return null;
+  return `"${name}" resolves to a script shim (${shims[0]}) — the npm install of Claude Code. ` +
+    'Windows only launches a .exe by name and Node cannot run a .cmd/.bat shim without a shell, ' +
+    'so Worca cannot start it. Install the native Windows build (irm https://claude.ai/install.ps1 | iex) ' +
+    'or set WORCA_CLAUDE_BIN to the full path of claude.exe.';
+}
+
 export async function probeClaudeCapabilities(bin = 'claude') {
   const exe = bin && String(bin).trim() ? String(bin).trim() : 'claude';
   const help = await execSafe(exe, ['--help'], { timeout: 8000 });

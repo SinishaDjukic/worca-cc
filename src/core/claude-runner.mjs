@@ -36,11 +36,21 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { prepareModelEnv } from './model-env.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
+import { explainUnspawnableClaude } from './preflight.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
+
+/** The spawn-failure Error for `bin`: the OS message, plus the Windows npm-shim
+ *  explanation when that is what actually went wrong (ENOENT on a bare name
+ *  whose only PATH hit is claude.cmd; EINVAL on an explicit .cmd). */
+function spawnFailure(bin, err, prefix) {
+  const hint = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''))
+    ? explainUnspawnableClaude(bin) : null;
+  return new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+}
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The
 // audit trail and the UI error banner consume that message; an uncapped
@@ -389,7 +399,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     try {
       child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}) });
     } catch (err) {
-      rejectP(new Error(`Failed to spawn ${bin}: ${err.message}`));
+      rejectP(spawnFailure(bin, err, `Failed to spawn ${bin}`));
       return;
     }
 
@@ -509,7 +519,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     });
 
     child.on('error', (err) => {
-      finish(rejectP, new Error(`${bin} error: ${err.message}`));
+      finish(rejectP, spawnFailure(bin, err, `${bin} error`));
     });
 
     child.on('close', (code) => {
