@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 // The Running detail screen's body: live pipeline graph, banners, question panel.
 //
@@ -313,7 +314,6 @@ test('retained work renders from branch.commitFailed and binds Discard exactly o
     },
   });
   const { window, recv } = ctx;
-  window.confirm = () => true;   // setupDiscardWorktreeButton uses window.confirm, not confirmModal
   window.__np.getRun(ID).pipelineId = 'p1';
   const RETAINED = {
     type: 'state', runId: ID, status: 'running', steps: [],
@@ -338,6 +338,7 @@ test('retained work renders from branch.commitFailed and binds Discard exactly o
   const btn = window.document.querySelector('#run-detail .hist-discard');
   assert.equal(btn.hidden, false);
   btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await confirmDialog(window);
   await settle(window, 5);
   assert.equal(posts.length, 1, 'exactly one POST per click, after three paints');
 });
@@ -356,7 +357,6 @@ test('a successful discard clears the Running banner for good and re-arms the bu
     },
   });
   const { window, recv } = ctx;
-  window.confirm = () => true;
   window.__np.getRun(ID).pipelineId = 'p1';
   const RETAINED = {
     type: 'state', runId: ID, status: 'running', steps: [],
@@ -369,6 +369,7 @@ test('a successful discard clears the Running banner for good and re-arms the bu
   const btn = window.document.querySelector('#run-detail .hist-discard');
   const before = btn.textContent;
   btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await confirmDialog(window);
   await settle(window, 6);
 
   assert.equal(window.document.querySelector('#run-detail .retained-banner').hidden, true,

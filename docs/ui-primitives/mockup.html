@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Worca CC — native control skins (design mockup)</title>
+
+<!-- ==========================================================================
+     DESIGN MOCKUP — docs/ui-primitives/mockup.html
+     Proposal for skinning every remaining browser-default control in the
+     Worca CC UI. Open straight from disk (file://) — no server needed.
+
+     Three kinds of CSS live in this file:
+       #tokens  — copied verbatim from ui/public/style.css (do not edit here)
+       #patch   — THE PROPOSAL. This block is the diff for style.css.
+       #mockup  — page chrome for this document only. Never ships.
+     ========================================================================== -->
+
+<style id="tokens">
+/* ---- verbatim from ui/public/style.css :1-49 ---------------------------- */
+@font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:swap;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:500;font-display:swap;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:600;font-display:swap;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:700;font-display:swap;src:url('../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+:root{
+  --bg:#F1F1EF; --panel:#FFFFFF;
+  --ink:#19191B; --ink-2:#5C5C63; --ink-3:#9A9AA1;
+  --line:#ECECEA; --line-2:#E3E3E0; --field:#F6F6F4;
+  --green-bg:#E2F3DF; --green:#5BAE5B; --green-ink:#2F7A38;
+  --peach-bg:#FCEEDA; --peach:#EFA63C; --peach-ink:#B5751A;
+  --red-bg:#FBE3E0;  --red:#E76A5A;  --red-ink:#C5483A;
+  --blue-bg:#DEEFF7; --blue:#5BA6CC; --blue-ink:#3782A8;
+  --violet-bg:#EAE6F8; --violet:#8C7FD6; --violet-ink:#6353B8;
+  --amber-bg:#FCE8C8; --amber:#E6962A; --amber-ink:#A66510;
+  --seq:#B7B7BC; --amber-wash:#FEF7EC;
+  --amber-wash-2:#FEFAF3; --amber-line:#F5D9A8; --radio-ring:#D6D6D2;
+  --r-card:24px; --r-ctrl:14px;
+  --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
+  --shadow-soft:0 2px 12px rgba(25,25,27,.04);
+  --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow);padding:24px;}
+.card h2{font-size:17px;font-weight:700;letter-spacing:-.015em;margin:0 0 18px;}
+.hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
+.field{margin-bottom:18px;}
+.field > label,.field .label{display:block;font-weight:600;font-size:13px;margin-bottom:8px;}
+.label-row{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+.label-row > label{display:inline-block;font-weight:600;font-size:13px;margin-bottom:0;}
+.input,.select,.textarea,input[type="text"],input[type="number"],textarea,select{
+  width:100%;font-family:inherit;font-size:14px;color:var(--ink);background:var(--field);
+  border:1.5px solid transparent;border-radius:var(--r-ctrl);padding:13px 15px;
+  transition:border-color .15s,background .15s;}
+.input::placeholder,input[type="text"]::placeholder,input[type="number"]::placeholder{color:var(--ink-3);}
+.input:focus,.select:focus,input[type="text"]:focus,input[type="number"]:focus,select:focus{
+  outline:none;background:#fff;border-color:var(--ink);}
+.select-wrap{position:relative;}
+.select,select{appearance:none;-webkit-appearance:none;padding-right:40px;cursor:pointer;}
+.select-wrap::after{content:"";position:absolute;right:15px;top:50%;width:9px;height:9px;
+  border-right:2px solid var(--ink-2);border-bottom:2px solid var(--ink-2);
+  transform:translateY(-65%) rotate(45deg);pointer-events:none;}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#fff;
+  border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;font-weight:600;font-size:13.5px;
+  padding:13px 20px;border-radius:999px;cursor:pointer;
+  transition:background .15s,filter .15s,transform .15s,border-color .15s;}
+.btn:hover:not(:disabled){background:var(--field);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:#fff;}
+.btn-primary:hover:not(:disabled){background:var(--ink);transform:translateY(-1px);filter:brightness(1.08);}
+.btn-mini{padding:8px 14px;font-size:12.5px;}
+.btn-ghost{background:#fff;border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
+  font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:999px;cursor:pointer;transition:.15s;}
+.badge{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;padding:5px 10px;border-radius:8px;flex:0 0 auto;white-space:nowrap;
+  background:var(--field);color:var(--ink-3);}
+.badge.green{background:var(--green-bg);color:var(--green-ink);}
+.badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.red{background:var(--red-bg);color:var(--red-ink);}
+.badge.violet{background:var(--violet-bg);color:var(--violet-ink);}
+.switch-row{display:flex;align-items:center;gap:12px;}
+.switch{width:44px;height:26px;border-radius:999px;background:var(--line-2);position:relative;
+  cursor:pointer;flex:0 0 auto;transition:background .18s;}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);transition:left .18s;}
+.switch.on{background:var(--green);}
+.switch.on::after{left:21px;}
+.switch-row .txt{font-weight:500;}
+.viewer-modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;
+  background:rgba(25,25,27,.42);}
+.viewer-modal.hidden{display:none;}
+.viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
+.confirm-modal .card{width:min(440px,100%);}
+.confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:14px;line-height:1.5;white-space:pre-line;}
+.confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.card-head h2{font-size:17px;font-weight:700;letter-spacing:-.015em;margin:0;}
+#confirm-ok.danger{background:var(--red-ink);border-color:var(--red-ink);color:#fff;}
+.chip-select{display:flex;flex-wrap:wrap;gap:8px;}
+.chip-select label{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;border:1px solid var(--line);
+  border-radius:999px;padding:4px 10px;cursor:pointer;}
+.fanout-toggle{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);
+  cursor:pointer;user-select:none;font-weight:500;}
+.fanout-toggle input{margin:0;cursor:pointer;}
+.pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
+.mv-efforts{display:flex;gap:14px;flex-wrap:wrap;}
+.mv-effort{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.chat-event-row{display:flex;gap:8px;align-items:center;margin:4px 0;cursor:pointer;}
+.chat-channel-row{display:flex;gap:10px;align-items:center;margin:6px 0;}
+.chat-channel-toggle{display:flex;gap:8px;align-items:center;cursor:pointer;}
+.grv-source-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);
+  border-radius:10px;cursor:pointer;}
+.wiz-proj{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;cursor:pointer;
+  font-size:13.5px;color:var(--ink);}
+.mono{font-family:var(--mono);}
+</style>
+
+<style id="patch">
+/* ==========================================================================
+   THE PROPOSAL — this block is the patch for ui/public/style.css.
+   Everything here is additive; no existing rule is removed.
+   ========================================================================== */
+
+/* --- 0. Global safety net -------------------------------------------------
+   Anything we do NOT hand-skin (a future <progress>, a date input, the OS
+   spell-check UI) picks up the brand green instead of the OS accent. */
+:root{ accent-color:var(--green); }
+
+/* --- 1. Checkbox + radio --------------------------------------------------
+   The mark is the one the app already draws for .qopt (style.css:761): a
+   1.5px --radio-ring hairline on --panel that fills --green and shows a white
+   glyph when selected. Styling the REAL input (appearance:none) means every
+   one of the ~15 existing sites is fixed with no markup change: :checked,
+   :disabled, :indeterminate, label-click and keyboard all keep working. */
+input[type="checkbox"],
+input[type="radio"]{
+  appearance:none;-webkit-appearance:none;
+  flex:0 0 auto;width:18px;height:18px;margin:0;padding:0;
+  border:1.5px solid var(--radio-ring);border-radius:6px;
+  background:var(--panel);cursor:pointer;vertical-align:middle;
+  transition:background-color .14s,border-color .14s,box-shadow .14s;
+}
+input[type="radio"]{border-radius:50%;}
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled){border-color:var(--ink-3);}
+
+/* checked — the identical white tick used by .qopt.sel */
+input[type="checkbox"]:checked{
+  border-color:var(--green);
+  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+}
+/* mixed — "some of these are on" (model export picker, agent tool chips) */
+input[type="checkbox"]:indeterminate{
+  border-color:var(--green);
+  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");
+}
+/* radio — green ring, white gap, green dot, all from one box-shadow */
+input[type="radio"]:checked{
+  border-color:var(--green);background:var(--green);
+  box-shadow:inset 0 0 0 3.5px var(--panel);
+}
+
+/* disabled reads as "fixed", not as "broken": grey, never red, still legible */
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled{background:var(--field);border-color:var(--line-2);cursor:not-allowed;}
+/* re-state the glyph: the :disabled rule above uses the `background` shorthand,
+   which drops the tick that :checked painted. */
+input[type="checkbox"]:disabled:checked{
+  border-color:var(--seq);
+  background:var(--seq) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+}
+input[type="radio"]:disabled:checked{background:var(--seq);border-color:var(--seq);
+  box-shadow:inset 0 0 0 3.5px var(--panel);}
+
+/* same focus ring as every other control in the app */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+@media (prefers-contrast:more),(forced-colors:active){
+  input[type="checkbox"],input[type="radio"]{border-color:CanvasText;}
+  input[type="checkbox"]:checked,input[type="radio"]:checked{background-color:Highlight;border-color:Highlight;}
+}
+
+/* --- 2. Switch, driven by a real checkbox ---------------------------------
+   The existing .switch is a <div role="switch"> mirrored to a hidden input by
+   hand (app.js:5007). One sibling selector lets the SAME pixels be driven by a
+   real <input type=checkbox>, so a switch needs no JS at all. Both spellings
+   are supported; nothing that exists today changes. */
+.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
+.switch.on,
+.sw-input:checked + .switch{background:var(--green);}
+.switch.on::after,
+.sw-input:checked + .switch::after{left:21px;}
+.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px;}
+.sw-input:disabled + .switch{opacity:.5;cursor:not-allowed;}
+/* compact variant for card headers and dense rows */
+.switch.switch-sm{width:34px;height:20px;}
+.switch.switch-sm::after{width:15px;height:15px;top:2.5px;left:2.5px;}
+.sw-input:checked + .switch.switch-sm::after{left:16.5px;}
+
+/* --- 3. Selectable rows ---------------------------------------------------
+   .qopt generalised: when a choice needs a whole row (a name, a badge, a
+   path), the row itself is the hit target and turns --green-bg when picked. */
+.opt-row{display:flex;align-items:center;gap:11px;width:100%;
+  padding:12px 15px;background:var(--panel);border:1.5px solid var(--line);
+  border-radius:13px;cursor:pointer;font-size:13.5px;font-weight:500;
+  color:var(--ink);transition:background .14s,border-color .14s;}
+.opt-row:hover{border-color:var(--ink-3);}
+.opt-row:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.opt-row:has(input:disabled){opacity:.55;cursor:not-allowed;background:var(--field);}
+.opt-row:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
+.opt-row .opt-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.opt-row .opt-sub{font:400 11.5px var(--mono);color:var(--ink-3);}
+.opt-list{display:flex;flex-direction:column;gap:8px;}
+
+/* --- 3b. Checkbox rows inside a .field -----------------------------------
+   `.check-row` has NO rule in style.css today, so `.field > label` (style.css:304)
+   claims it: display:block, 600 weight, 13px, 8px bottom margin. That is why
+   "No cap" (index.html:1240) renders as a bold heading welded to its box. Same
+   specificity as `.field > label`, so the qualified selector is what wins. */
+.check-row{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+  font-weight:500;font-size:12.5px;color:var(--ink-2);}
+.field > label.check-row,
+.field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
+.check-row + .check-row{margin-left:16px;}
+
+/* --- 4. Chips ------------------------------------------------------------
+   .chip-select already draws the pill (style.css:1400). It only ever lacked a
+   selected state, so the box inside was doing the work alone. */
+.chip-select label{transition:background .14s,border-color .14s;}
+.chip-select label:hover{border-color:var(--ink-3);}
+.chip-select label:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.chip-select label:has(input:disabled){opacity:.55;cursor:not-allowed;}
+.chip-select input{width:14px;height:14px;border-radius:5px;}
+
+/* --- 5. Dialog fields (for promptModal) ----------------------------------
+   window.prompt replaced in the shell the confirm modal already owns. */
+.confirm-field{margin-bottom:14px;}
+.confirm-field > label{display:block;font-weight:600;font-size:12.5px;margin-bottom:6px;}
+.confirm-field .input{font-size:13.5px;padding:11px 14px;}
+.confirm-field .hint.err{color:var(--red-ink);}
+.confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
+  background:var(--field);border-radius:12px;font-size:12.5px;color:var(--ink-2);cursor:pointer;line-height:1.45;}
+.confirm-checkbox.hidden{display:none;}
+.confirm-modal .card h2.danger{color:var(--red-ink);}
+
+/* --- 6. Remaining UA chrome ---------------------------------------------- */
+/* number steppers: the app has min/max/step for validation, not for clicking */
+input[type="number"]{-moz-appearance:textfield;}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+/* the WebKit search "x" is grey-on-grey and off-grid; .field-clear replaces it */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration{-webkit-appearance:none;}
+.field-clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:18px;height:18px;
+  border:none;border-radius:50%;background:var(--line-2);color:var(--ink-2);font:600 11px/1 var(--sans);
+  cursor:pointer;display:grid;place-items:center;padding:0;}
+.field-clear:hover{background:var(--ink-3);color:#fff;}
+.field-clear[hidden]{display:none;}
+/* the OS disclosure triangle, everywhere — .advanced already did this locally */
+.disclosure > summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;}
+.disclosure > summary::-webkit-details-marker{display:none;}
+.disclosure > summary::before{content:"";width:0;height:0;flex:0 0 auto;
+  border:4.5px solid transparent;border-left-color:var(--ink-3);
+  transition:transform .16s;transform-origin:2px 50%;}
+.disclosure[open] > summary::before{transform:rotate(90deg);}
+/* Firefox has no ::-webkit-scrollbar; style.css:899 leaves it on the OS default */
+html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
+
+/* --- 7. Tooltip ----------------------------------------------------------
+   data-tip reuses the .info-bubble the app already creates once (style.css:346),
+   so a hint looks the same whether it hangs off a label or an icon button. */
+[data-tip]{position:relative;}
+</style>
+
+<style id="mockup">
+/* ---- this document only; never ships ------------------------------------ */
+body{padding:0 0 80px;}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px;}
+.masthead{padding:56px 0 30px;}
+.masthead .eyebrow{font:600 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);}
+.masthead h1{font-size:36px;font-weight:700;letter-spacing:-.03em;margin:14px 0 12px;}
+.masthead p{max-width:70ch;color:var(--ink-2);font-size:15px;margin:0 0 8px;}
+.masthead .principle{max-width:70ch;margin-top:22px;padding:16px 20px;background:var(--panel);
+  border:1px solid var(--line);border-left:3px solid var(--green);border-radius:0 14px 14px 0;
+  font-size:14px;color:var(--ink);}
+.toc{position:sticky;top:0;z-index:20;background:rgba(241,241,239,.88);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line-2);margin-bottom:34px;}
+.toc ol{display:flex;flex-wrap:wrap;gap:2px;list-style:none;margin:0 auto;padding:9px 28px;max-width:1180px;
+  font-size:12px;counter-reset:s;}
+.toc a{display:block;padding:6px 11px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:500;}
+.toc a:hover{background:var(--panel);color:var(--ink);}
+section{margin-bottom:34px;scroll-margin-top:60px;}
+section > h2{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  margin:0 0 14px;display:flex;align-items:baseline;gap:10px;}
+section > h2 .num{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+h3{font-size:15px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em;}
+.lede{color:var(--ink-2);font-size:13.5px;margin:0 0 20px;max-width:82ch;}
+.lede code,.n{font-family:var(--mono);font-size:12px;background:var(--field);border-radius:5px;padding:1.5px 5px;}
+
+/* two-column before/after */
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:16px;overflow:hidden;}
+.cmp > div{background:var(--panel);padding:20px 22px;}
+.cmp > div.before{background:#FBFBFA;}
+.tag{display:inline-flex;align-items:center;gap:6px;font:700 10px/1 var(--sans);letter-spacing:.08em;
+  text-transform:uppercase;padding:5px 9px;border-radius:7px;margin-bottom:16px;}
+.tag.now{background:var(--red-bg);color:var(--red-ink);}
+.tag.new{background:var(--green-bg);color:var(--green-ink);}
+
+/* state matrix */
+.states{display:flex;flex-wrap:wrap;gap:10px;}
+.state{flex:0 0 auto;width:92px;display:flex;flex-direction:column;align-items:center;gap:9px;
+  padding:15px 6px 11px;background:var(--field);border-radius:13px;text-align:center;}
+.before .state{background:#F2F2F0;}
+.state .cap{font:500 10.5px/1.3 var(--mono);color:var(--ink-3);}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.grid2 > .card{padding:20px 22px;}
+@media (max-width:900px){.cmp,.grid2{grid-template-columns:1fr;}}
+
+/* faux app surfaces */
+.surface{background:var(--bg);border:1px solid var(--line-2);border-radius:18px;padding:18px;}
+.surface.on-card{background:var(--panel);border-color:var(--line);}
+.agent-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);
+  border:1.5px solid var(--line-2);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow-soft);}
+.agent-row .dot{width:9px;height:9px;border-radius:50%;background:var(--violet);flex:0 0 auto;}
+.agent-row .nm{font-weight:600;font-size:13px;width:88px;flex:0 0 auto;}
+.agent-row .select-wrap{width:118px;}
+.agent-row select{padding:9px 32px 9px 12px;font-size:12.5px;border-radius:11px;background:#fff;
+  border-color:var(--line-2);}
+.pl-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px;}
+.pl-head{display:flex;align-items:center;gap:9px;}
+.pl-name{font-size:14px;}
+.pl-version{font-size:11px;color:var(--ink-3);}
+
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+.tbl th{text-align:left;font:700 10px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);padding:0 12px 10px 0;border-bottom:1px solid var(--line-2);}
+.tbl td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);vertical-align:top;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl td.loc{font-family:var(--mono);font-size:11px;color:var(--ink-2);white-space:nowrap;}
+.tbl td.to{font-family:var(--mono);font-size:11px;color:var(--green-ink);white-space:nowrap;}
+
+.rule{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-radius:13px;background:var(--field);}
+.rule .k{flex:0 0 auto;width:78px;font:700 10px/1.6 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.rule .v{font-size:13px;color:var(--ink-2);}
+.rule .v b{color:var(--ink);font-weight:600;}
+.stack{display:flex;flex-direction:column;gap:10px;}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+
+/* DEMO ONLY: forces genuine UA rendering in the "today" column */
+.native input[type="checkbox"],.native input[type="radio"]{
+  appearance:auto;-webkit-appearance:auto;width:auto;height:auto;border:initial;background:initial;
+  border-radius:initial;box-shadow:none;accent-color:auto;}
+.native input[type="number"]{-moz-appearance:number-input;}
+.native input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:inner-spin-button;}
+.native input[type="search"]::-webkit-search-cancel-button{-webkit-appearance:searchfield-cancel-button;}
+.native .check-row{display:block;font-weight:600;font-size:13px;color:var(--ink);margin-bottom:8px;}
+.native summary{list-style:revert;}
+.native summary::-webkit-details-marker{display:revert;}
+.native summary::before{display:none;}
+.native .opt-row:has(input:checked){background:var(--panel);border-color:var(--line);}
+.native .chip-select label:has(input:checked){background:transparent;border-color:var(--line);}
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="eyebrow">Worca CC · design mockup</div>
+    <h1>Skinning the last of the browser</h1>
+    <p>Thirteen checkbox sites, one radio group, eight blocking system dialogs and a handful of UA
+       widgets still render in the operating system's voice instead of Worca's. This page proposes
+       the whole set, side by side with what ships today.</p>
+    <div class="principle">
+      <b>The mark already exists.</b> <span class="n">.qopt</span> (style.css:761) draws a
+      1.5px&nbsp;<span class="n">--radio-ring</span> hairline on <span class="n">--panel</span> that fills
+      <span class="n">--green</span> behind a white tick. Every control below inherits that one mark, so
+      "chosen" looks identical whether it is a question option, a checkbox, a chip or a whole row.
+    </div>
+  </header>
+</div>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#s1">1 · Checkbox</a></li>
+    <li><a href="#s2">2 · Radio</a></li>
+    <li><a href="#s3">3 · Switch</a></li>
+    <li><a href="#s4">4 · Rows &amp; chips</a></li>
+    <li><a href="#s5">5 · In situ</a></li>
+    <li><a href="#s6">6 · Select</a></li>
+    <li><a href="#s7">7 · Dialogs</a></li>
+    <li><a href="#s8">8 · UA chrome</a></li>
+    <li><a href="#s9">9 · Migration map</a></li>
+  </ol>
+</nav>
+
+<div class="wrap">
+
+<!-- ============================== 1 · CHECKBOX ============================ -->
+<section id="s1">
+  <h2><span class="num">01</span> Checkbox</h2>
+  <p class="lede">An 18px rounded square, <span class="n">--radio-ring</span> hairline on
+     <span class="n">--panel</span>, filling <span class="n">--green</span> with the same white tick
+     <span class="n">.qopt.sel</span> uses. Styled on the real <span class="n">&lt;input&gt;</span> via
+     <span class="n">appearance:none</span> — so <em>the rule reaches all thirteen existing
+     sites with no markup change</em>, and for eight of them that is the whole job. With <span class="n">:checked</span>, <span class="n">:disabled</span>,
+     <span class="n">:indeterminate</span>, label-clicks and keyboard all still free.</p>
+
+  <div class="cmp">
+    <div class="before native">
+      <span class="tag now">Today · OS control</span>
+      <div class="states">
+        <div class="state"><input type="checkbox" /><span class="cap">off</span></div>
+        <div class="state"><input type="checkbox" checked /><span class="cap">on</span></div>
+        <div class="state"><input type="checkbox" class="mixed-n" /><span class="cap">mixed</span></div>
+        <div class="state"><input type="checkbox" disabled /><span class="cap">disabled</span></div>
+        <div class="state"><input type="checkbox" checked disabled /><span class="cap">locked&nbsp;on</span></div>
+      </div>
+      <span class="hint">System accent (blue on stock macOS, whatever the user set on Windows),
+        13px, baseline-misaligned against 12px Poppins labels, and it changes shape per OS.</span>
+    </div>
+    <div>
+      <span class="tag new">Proposed</span>
+      <div class="states">
+        <div class="state"><input type="checkbox" /><span class="cap">off</span></div>
+        <div class="state"><input type="checkbox" checked /><span class="cap">on</span></div>
+        <div class="state"><input type="checkbox" class="mixed" /><span class="cap">mixed</span></div>
+        <div class="state"><input type="checkbox" disabled /><span class="cap">disabled</span></div>
+        <div class="state"><input type="checkbox" checked disabled /><span class="cap">locked&nbsp;on</span></div>
+      </div>
+      <span class="hint">Locked-on is <span class="n">--seq</span> grey, never red: the agent manifest
+        fixed it, nothing is wrong. Focus is the app's usual 2px <span class="n">--ink</span> ring —
+        tab into one to see it.</span>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== 2 · RADIO ============================= -->
+<section id="s2">
+  <h2><span class="num">02</span> Radio</h2>
+  <p class="lede">Same hairline, circular, and the dot is a single
+     <span class="n">inset box-shadow</span> — no pseudo-element, so it works on a replaced element in
+     every engine. One visible group uses it today: guardrails wizard step 1
+     (<span class="n">guardrails-view.mjs:76</span>).</p>
+
+  <div class="cmp">
+    <div class="before native">
+      <span class="tag now">Today · OS control</span>
+      <div class="states">
+        <div class="state"><input type="radio" name="n1" /><span class="cap">off</span></div>
+        <div class="state"><input type="radio" name="n1" checked /><span class="cap">on</span></div>
+        <div class="state"><input type="radio" disabled /><span class="cap">disabled</span></div>
+        <div class="state"><input type="radio" checked disabled /><span class="cap">locked&nbsp;on</span></div>
+      </div>
+    </div>
+    <div>
+      <span class="tag new">Proposed</span>
+      <div class="states">
+        <div class="state"><input type="radio" name="p1" /><span class="cap">off</span></div>
+        <div class="state"><input type="radio" name="p1" checked /><span class="cap">on</span></div>
+        <div class="state"><input type="radio" disabled /><span class="cap">disabled</span></div>
+        <div class="state"><input type="radio" checked disabled /><span class="cap">locked&nbsp;on</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 3 · SWITCH ============================= -->
+<section id="s3">
+  <h2><span class="num">03</span> Switch</h2>
+  <p class="lede">Worca already has a switch (<span class="n">.switch</span>, style.css:470) — but it is a
+     <span class="n">&lt;div role="switch"&gt;</span> hand-mirrored to a hidden input in JS
+     (app.js:5007). Adding one sibling selector lets the <em>same pixels</em> be driven by a real
+     checkbox, so a new switch costs zero JavaScript and stays accessible for free.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>The control</h3>
+      <span class="hint" style="margin-bottom:16px">Existing size, plus a
+        <span class="n">.switch-sm</span> for dense rows like a plugin card header.</span>
+      <div class="stack" style="margin-top:14px">
+        <label class="switch-row"><input type="checkbox" class="sw-input" checked /><span class="switch"></span><span class="txt">Enabled</span></label>
+        <label class="switch-row"><input type="checkbox" class="sw-input" /><span class="switch"></span><span class="txt">Disabled state</span></label>
+        <label class="switch-row"><input type="checkbox" class="sw-input" checked /><span class="switch switch-sm"></span><span class="txt" style="font-size:12.5px">Compact</span></label>
+        <label class="switch-row"><input type="checkbox" class="sw-input" checked disabled /><span class="switch"></span><span class="txt">Locked on</span></label>
+      </div>
+    </div>
+    <div class="card">
+      <h3>When it is a switch, when it is a checkbox</h3>
+      <span class="hint" style="margin-bottom:16px">The single rule that decides all thirteen sites.</span>
+      <div class="stack" style="margin-top:14px">
+        <div class="rule"><span class="k">Switch</span><span class="v"><b>Acts on a live system the moment you flip it.</b>
+          Plugin enabled, chat channel on, notify-on events, mock mode, auto-scroll.</span></div>
+        <div class="rule"><span class="k">Checkbox</span><span class="v"><b>Part of a form you then Save or Next.</b>
+          Supported efforts, models to export, projects to scan, fan-out and questions flags,
+          "No cap", the purge opt-in inside a confirm.</span></div>
+      </div>
+      <span class="hint">Under this rule four sites become switches (<span class="n">plugins-view.mjs:63</span>,
+        <span class="n">chat-settings-view.mjs:36,58</span>) and the other nine keep the box.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========================== 4 · ROWS AND CHIPS ========================= -->
+<section id="s4">
+  <h2><span class="num">04</span> Selectable rows &amp; chips</h2>
+  <p class="lede">When a choice carries more than a word — a name plus a badge, a path, a model id — the
+     box alone cannot show selection at a glance. <span class="n">.opt-row</span> lifts
+     <span class="n">.qopt</span> out of the question panel and makes the whole row the target;
+     the existing <span class="n">.chip-select</span> pill finally gets a checked state.</p>
+
+  <div class="cmp">
+    <div class="before native">
+      <span class="tag now">Today</span>
+      <h3 style="font-size:13px;margin-bottom:10px">Guardrails · starting point</h3>
+      <div class="stack">
+        <label class="grv-source-row"><input type="radio" name="gn" checked /><span>Blank (custom)</span></label>
+        <label class="grv-source-row"><input type="radio" name="gn" /><span>Strict review</span><span class="badge waiting">built-in</span></label>
+      </div>
+      <h3 style="font-size:13px;margin:20px 0 10px">Agent tools</h3>
+      <div class="chip-select">
+        <label><input type="checkbox" checked /><span>Read</span></label>
+        <label><input type="checkbox" checked /><span>Edit</span></label>
+        <label><input type="checkbox" /><span>Bash</span></label>
+        <label><input type="checkbox" /><span>WebFetch</span></label>
+      </div>
+      <span class="hint">Selection is carried by a 13px OS glyph. At a glance the two lists look
+        uniform — you have to read each box.</span>
+    </div>
+    <div>
+      <span class="tag new">Proposed</span>
+      <h3 style="font-size:13px;margin-bottom:10px">Guardrails · starting point</h3>
+      <div class="opt-list">
+        <label class="opt-row"><input type="radio" name="gp" checked /><span class="opt-name">Blank (custom)</span></label>
+        <label class="opt-row"><input type="radio" name="gp" /><span class="opt-name">Strict review</span><span class="badge waiting">built-in</span></label>
+        <label class="opt-row"><input type="radio" name="gp" /><span class="opt-name">Ship guard</span><span class="badge violet">saved</span></label>
+      </div>
+      <h3 style="font-size:13px;margin:20px 0 10px">Agent tools</h3>
+      <div class="chip-select">
+        <label><input type="checkbox" checked /><span>Read</span></label>
+        <label><input type="checkbox" checked /><span>Edit</span></label>
+        <label><input type="checkbox" /><span>Bash</span></label>
+        <label><input type="checkbox" /><span>WebFetch</span></label>
+      </div>
+      <span class="hint">The chosen row and the chosen chips read from across the screen, in the same
+        <span class="n">--green-bg</span> the question panel already uses for a picked answer.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 5 · IN SITU ============================ -->
+<section id="s5">
+  <h2><span class="num">05</span> In situ</h2>
+  <p class="lede">The six real surfaces, rebuilt. Nothing here needs new markup except the four
+     switch conversions.</p>
+
+  <div class="grid2">
+
+    <div class="card">
+      <h3>New Pipeline · Agents accordion</h3>
+      <span class="hint" style="margin-bottom:16px">app.js:3384 &amp; 3401 — the most-seen checkboxes in
+        the product. "Asks questions" is locked by the agent manifest on the second row.</span>
+      <div class="surface stack">
+        <div class="agent-row">
+          <span class="dot"></span><span class="nm">Planner</span>
+          <div class="select-wrap"><select><option>Opus 5</option></select></div>
+          <label class="fanout-toggle"><input type="checkbox" /><span>Fan-out</span></label>
+          <label class="fanout-toggle"><input type="checkbox" checked /><span>Asks questions</span></label>
+        </div>
+        <div class="agent-row">
+          <span class="dot" style="background:var(--green)"></span><span class="nm">Implementer</span>
+          <div class="select-wrap"><select><option>Sonnet 5</option></select></div>
+          <label class="fanout-toggle"><input type="checkbox" checked /><span>Fan-out</span></label>
+          <label class="fanout-toggle" title="Always off for this agent"><input type="checkbox" disabled /><span>Asks questions</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Plugins · enable</h3>
+      <span class="hint" style="margin-bottom:16px">plugins-view.mjs:63 — flips a live system, so it
+        becomes a compact switch. The word beside it already changes; now the control agrees.</span>
+      <div class="surface stack">
+        <div class="pl-card">
+          <div class="pl-head">
+            <b class="pl-name">telegram-chat</b><span class="pl-version mono">1.4.0</span>
+            <span class="badge waiting">linked</span>
+            <label class="pl-enable"><input type="checkbox" class="sw-input" checked /><span class="switch switch-sm"></span><span>enabled</span></label>
+          </div>
+          <span class="hint">1 chat channel · 2 agents</span>
+        </div>
+        <div class="pl-card">
+          <div class="pl-head">
+            <b class="pl-name">linear-tasks</b><span class="pl-version mono">0.9.2</span>
+            <label class="pl-enable"><input type="checkbox" class="sw-input" /><span class="switch switch-sm"></span><span>disabled</span></label>
+          </div>
+          <span class="hint">1 task source</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Chat settings</h3>
+      <span class="hint" style="margin-bottom:16px">chat-settings-view.mjs:36 &amp; 58 — both are live
+        toggles, so both become switches.</span>
+      <div class="surface">
+        <div class="label" style="font-weight:600;font-size:12.5px;margin-bottom:10px">Notify on</div>
+        <div class="stack">
+          <label class="chat-event-row"><input type="checkbox" class="sw-input" checked /><span class="switch switch-sm"></span><span>Pipeline finished</span></label>
+          <label class="chat-event-row"><input type="checkbox" class="sw-input" checked /><span class="switch switch-sm"></span><span>Question asked</span></label>
+          <label class="chat-event-row"><input type="checkbox" class="sw-input" /><span class="switch switch-sm"></span><span>Every step</span></label>
+        </div>
+        <div class="label" style="font-weight:600;font-size:12.5px;margin:18px 0 10px">Channels</div>
+        <div class="chat-channel-row">
+          <label class="chat-channel-toggle"><input type="checkbox" class="sw-input" checked /><span class="switch switch-sm"></span><span>Team (telegram)</span></label>
+          <span class="badge green">connected</span>
+          <button type="button" class="btn btn-mini" style="margin-left:auto">Test</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Models · supported efforts &amp; export</h3>
+      <span class="hint" style="margin-bottom:16px">models-view.mjs:222 &amp; 336 — form state, so
+        boxes stay boxes. The export list gains <span class="n">.opt-row</span> because each option
+        carries a model id.</span>
+      <div class="surface">
+        <div class="label" style="font-weight:600;font-size:12.5px;margin-bottom:10px">Supported efforts</div>
+        <div class="mv-efforts">
+          <label class="mv-effort"><input type="checkbox" checked /><span>low</span></label>
+          <label class="mv-effort"><input type="checkbox" checked /><span>medium</span></label>
+          <label class="mv-effort"><input type="checkbox" checked /><span>high</span></label>
+          <label class="mv-effort"><input type="checkbox" /><span>max</span></label>
+        </div>
+        <div class="label" style="font-weight:600;font-size:12.5px;margin:18px 0 10px">Models to include</div>
+        <div class="opt-list">
+          <label class="opt-row"><input type="checkbox" checked /><span class="opt-name">Opus 5</span><span class="opt-sub">claude-opus-5</span></label>
+          <label class="opt-row"><input type="checkbox" /><span class="opt-name">Haiku 4.5</span><span class="opt-sub">claude-haiku-4-5</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Workspace wizard · projects</h3>
+      <span class="hint" style="margin-bottom:16px">app.js:6329 — a missing project is disabled today
+        but looks almost identical to an unchecked one. As a row, "missing" is unmistakable.</span>
+      <div class="surface">
+        <div class="opt-list">
+          <label class="opt-row"><input type="checkbox" checked /><span class="opt-name">worca-cc</span><span class="opt-sub">~/dev/worca-cc</span></label>
+          <label class="opt-row"><input type="checkbox" /><span class="opt-name">atlas-red</span><span class="opt-sub">~/dev/atlas-red</span></label>
+          <label class="opt-row"><input type="checkbox" disabled /><span class="opt-name">old-api</span><span class="badge red">missing</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Ask limits · "No cap"</h3>
+      <span class="hint" style="margin-bottom:16px">index.html:1240 — <b>the only site with a live layout bug.</b>
+        <span class="n">.check-row</span> has no rule at all, so <span class="n">.field &gt; label</span>
+        makes it a bold 13px block and the label welds itself to the box. §3b adds the missing rule;
+        the stepper arrows go with §8.</span>
+      <div class="surface on-card native">
+        <span class="tag now" style="margin-bottom:12px">Today</span>
+        <div class="field" style="margin-bottom:0">
+          <div class="label-row"><label for="nc-a">Per-turn cost cap (USD)</label></div>
+          <input class="input" type="number" min="0.1" max="100" step="0.1" placeholder="2" />
+          <label class="check-row" for="nc-a"><input id="nc-a" type="checkbox" /> No cap</label>
+        </div>
+      </div>
+      <div class="surface on-card" style="margin-top:12px">
+        <span class="tag new" style="margin-bottom:12px">Proposed</span>
+        <div class="field" style="margin-bottom:0">
+          <div class="label-row"><label for="nc-b">Per-turn cost cap (USD)</label></div>
+          <input class="input" type="number" min="0.1" max="100" step="0.1" placeholder="2" />
+          <label class="check-row" for="nc-b"><input id="nc-b" type="checkbox" /> No cap</label>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================== 6 · SELECT ============================= -->
+<section id="s6">
+  <h2><span class="num">06</span> Select</h2>
+  <p class="lede">The closed state is already ours (<span class="n">appearance:none</span> +
+     <span class="n">.select-wrap::after</span>). The open popup belongs to the OS and cannot be styled —
+     the only fix is to stop using <span class="n">&lt;select&gt;</span>. <b>Recommendation: keep it for
+     the ten plain-text lists.</b> The OS popup is faster, keyboard-complete, screen-reader-correct and
+     far better on a phone; replacing it buys paint and costs behaviour. Reach for
+     <span class="n">.listbox</span> only where an option needs more than a word.</p>
+
+  <div class="cmp">
+    <div>
+      <span class="tag new">Keep · plain lists</span>
+      <span class="hint" style="margin-bottom:14px">Project, workspace, workflow, branch, guardrails,
+        the four log filters, budget period.</span>
+      <div class="select-wrap"><select>
+        <option>worca-cc</option><option>atlas-red</option><option>opendeck</option>
+      </select></div>
+      <span class="hint">Unchanged. The popup is native and that is the right trade.</span>
+    </div>
+    <div>
+      <span class="tag new">Promote · rich options</span>
+      <span class="hint" style="margin-bottom:14px">Agent colour (needs a swatch) and the model picker
+        (needs the id under the label) — the two that today flatten real information into one line.</span>
+      <div class="opt-list">
+        <label class="opt-row" style="padding:9px 13px"><input type="radio" name="clr" checked /><span style="width:13px;height:13px;border-radius:4px;background:var(--violet);flex:0 0 auto"></span><span class="opt-name">violet</span></label>
+        <label class="opt-row" style="padding:9px 13px"><input type="radio" name="clr" /><span style="width:13px;height:13px;border-radius:4px;background:var(--green);flex:0 0 auto"></span><span class="opt-name">green</span></label>
+        <label class="opt-row" style="padding:9px 13px"><input type="radio" name="clr" /><span style="width:13px;height:13px;border-radius:4px;background:var(--peach);flex:0 0 auto"></span><span class="opt-name">peach</span></label>
+      </div>
+      <span class="hint">Same <span class="n">.opt-row</span> as §4 — no new component.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 7 · DIALOGS ============================ -->
+<section id="s7">
+  <h2><span class="num">07</span> Dialogs</h2>
+  <p class="lede"><span class="n">confirmModal()</span> already exists and eleven callers use it — but
+     eight sites still call <span class="n">window.confirm</span> / <span class="n">window.prompt</span>,
+     including all four destructive deletes. A system alert can't show the app's red, wraps a long
+     warning into an OS paragraph, blocks the event loop, and on Chrome offers "prevent this page from
+     creating more dialogs" — which silently breaks the next one. Two changes finish the job:
+     migrate the eight, and add <span class="n">promptModal()</span> so the two double-prompts become
+     one dialog. <b>The buttons below are live.</b></p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Destructive confirm</h3>
+      <span class="hint" style="margin-bottom:16px">app.js:2604, 6245, 6663, 8020 — currently
+        <span class="n">window.confirm</span>. <span class="n">danger:true</span> and the red OK button
+        already exist (style.css:1869); nobody is passing them.</span>
+      <div class="row">
+        <button class="btn btn-mini" onclick="demoDelete()">Delete pipeline</button>
+        <button class="btn btn-mini" onclick="demoPurge()">Delete project (with purge)</button>
+        <button class="btn btn-mini" onclick="demoWorktree()">Discard worktree</button>
+      </div>
+      <span class="hint">The worktree one is the clearest win: three paragraphs of consequence
+        (app.js:9932) currently rendered as an OS alert.</span>
+    </div>
+    <div class="card">
+      <h3>promptModal() — new</h3>
+      <span class="hint" style="margin-bottom:16px">Same <span class="n">.confirm-modal</span> shell,
+        plus <span class="n">.confirm-field</span>. Takes an array of fields, so
+        <span class="n">app.js:2464+2467</span> and <span class="n">app.js:8007+8009</span> —
+        two blocking prompts back to back — collapse into one dialog with live validation.</span>
+      <div class="row">
+        <button class="btn btn-mini" onclick="demoSavePipeline()">Save pipeline (2 prompts → 1)</button>
+        <button class="btn btn-mini" onclick="demoProfile()">New plugin profile</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= 8 · UA CHROME =========================== -->
+<section id="s8">
+  <h2><span class="num">08</span> The rest of the browser</h2>
+  <p class="lede">Small, cheap, and each one is a place where the OS speaks over the app.</p>
+
+  <div class="cmp">
+    <div class="before native">
+      <span class="tag now">Today</span>
+      <div class="stack">
+        <div><span class="hint" style="margin:0 0 6px">Number stepper · 7 fields</span>
+          <input class="input" type="number" value="40" /></div>
+        <div><span class="hint" style="margin:10px 0 6px">Search clear · 2 fields</span>
+          <input class="input" type="search" value="error" /></div>
+        <div><span class="hint" style="margin:10px 0 6px">Disclosure · ask-panel.mjs:1149</span>
+          <details><summary style="font-weight:600;font-size:11px;color:var(--ink-3)">MEMBERS</summary>
+            <div class="hint">Planner, Implementer, Reviewer</div></details></div>
+        <div><span class="hint" style="margin:10px 0 6px">Tooltip · ~97 <span class="n">title=</span></span>
+          <button class="btn btn-mini" title="Copy the visible log lines">copy</button>
+          <span class="hint">Hover and wait — OS bubble, ~1s delay, no styling, invisible on touch.</span></div>
+      </div>
+    </div>
+    <div>
+      <span class="tag new">Proposed</span>
+      <div class="stack">
+        <div><span class="hint" style="margin:0 0 6px">Steppers removed; min/max/step still validate</span>
+          <input class="input" type="number" value="40" /></div>
+        <div><span class="hint" style="margin:10px 0 6px"><span class="n">.field-clear</span> on the app's grid</span>
+          <div style="position:relative"><input class="input" id="dsearch" type="search" value="error" style="padding-right:38px" />
+            <button type="button" class="field-clear" onclick="document.getElementById('dsearch').value=''">&#10005;</button></div></div>
+        <div><span class="hint" style="margin:10px 0 6px"><span class="n">.disclosure</span> — the chevron <span class="n">.advanced</span> already uses</span>
+          <details class="disclosure"><summary style="font-weight:600;font-size:11px;color:var(--ink-3)">MEMBERS</summary>
+            <div class="hint">Planner, Implementer, Reviewer</div></details></div>
+        <div><span class="hint" style="margin:10px 0 6px"><span class="n">data-tip</span> reuses <span class="n">.info-bubble</span></span>
+          <button class="btn btn-mini" data-tip="Copy the visible log lines">copy</button>
+          <span class="hint">Instant, on-brand, and one delegated listener for all ~97.</span></div>
+      </div>
+    </div>
+  </div>
+  <span class="hint" style="margin-top:14px">Also in the patch: <span class="n">accent-color:var(--green)</span>
+    on <span class="n">:root</span> so anything never hand-skinned still lands in brand, and
+    <span class="n">scrollbar-color</span> so Firefox stops falling back to the OS bar that
+    <span class="n">::-webkit-scrollbar</span> (style.css:899) never reaches.</span>
+</section>
+
+<!-- =========================== 9 · MIGRATION MAP ========================= -->
+<section id="s9">
+  <h2><span class="num">09</span> Migration map</h2>
+  <p class="lede">What each site becomes. <b>Everything in the first group is CSS-only</b> — the global
+     <span class="n">input[type=checkbox]</span> rule reaches it with no code change at all.</p>
+
+  <div class="card">
+    <h3 style="margin-bottom:14px">CSS only — no code touched <span class="badge green" style="margin-left:8px">8 sites</span></h3>
+    <table class="tbl">
+      <tr><th>Site</th><th>Control</th><th>Class</th></tr>
+      <tr><td class="loc">index.html:861,867–871</td><td>Composer agent flags (6)</td><td class="to">.fanout-toggle</td></tr>
+      <tr><td class="loc">index.html:1035,1040–1044</td><td>Agent row flags (6)</td><td class="to">.fanout-toggle</td></tr>
+      <tr><td class="loc">index.html:1240</td><td>Ask limits · No cap <span class="badge red">layout bug</span></td><td class="to">.check-row (new)</td></tr>
+      <tr><td class="loc">index.html:1306</td><td>Confirm modal opt-in</td><td class="to">.confirm-checkbox</td></tr>
+      <tr><td class="loc">app.js:3384 / 3401</td><td>Fan-out / Asks questions</td><td class="to">.fanout-toggle</td></tr>
+      <tr><td class="loc">app.js:6707</td><td>Agent tool chips</td><td class="to">.chip-select</td></tr>
+      <tr><td class="loc">models-view.mjs:222</td><td>Supported efforts</td><td class="to">.mv-effort</td></tr>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3 style="margin-bottom:14px">Better pattern — one-line markup change <span class="badge waiting" style="margin-left:8px">7 sites</span></h3>
+    <table class="tbl">
+      <tr><th>Site</th><th>Becomes</th><th>Class</th></tr>
+      <tr><td class="loc">plugins-view.mjs:63</td><td>Plugin enable → switch</td><td class="to">.sw-input + .switch-sm</td></tr>
+      <tr><td class="loc">chat-settings-view.mjs:36</td><td>Notify-on → switch</td><td class="to">.sw-input + .switch-sm</td></tr>
+      <tr><td class="loc">chat-settings-view.mjs:58</td><td>Channel enable → switch</td><td class="to">.sw-input + .switch-sm</td></tr>
+      <tr><td class="loc">guardrails-view.mjs:76</td><td>Starting point → row</td><td class="to">.opt-row</td></tr>
+      <tr><td class="loc">app.js:6329</td><td>Wizard projects → row</td><td class="to">.opt-row</td></tr>
+      <tr><td class="loc">models-view.mjs:336</td><td>Export picker → row</td><td class="to">.opt-row</td></tr>
+      <tr><td class="loc">ask-panel.mjs:1149</td><td>Members disclosure</td><td class="to">.disclosure</td></tr>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3 style="margin-bottom:14px">Dialogs <span class="badge red" style="margin-left:8px">8 sites + 1 new fn</span></h3>
+    <table class="tbl">
+      <tr><th>Site</th><th>Today</th><th>Becomes</th></tr>
+      <tr><td class="loc">app.js:2464 + 2467</td><td>window.prompt &times;2</td><td class="to">promptModal(2 fields)</td></tr>
+      <tr><td class="loc">app.js:2604</td><td>window.confirm</td><td class="to">confirmModal danger</td></tr>
+      <tr><td class="loc">app.js:6245</td><td>window.confirm</td><td class="to">confirmModal danger</td></tr>
+      <tr><td class="loc">app.js:6663</td><td>window.confirm</td><td class="to">confirmModal danger</td></tr>
+      <tr><td class="loc">app.js:8007 + 8009</td><td>window.prompt &times;2</td><td class="to">promptModal(2 fields)</td></tr>
+      <tr><td class="loc">app.js:8020</td><td>window.confirm</td><td class="to">confirmModal danger</td></tr>
+      <tr><td class="loc">app.js:8100</td><td>window.confirm</td><td class="to">confirmModal</td></tr>
+      <tr><td class="loc">app.js:9932</td><td>window.confirm</td><td class="to">confirmModal danger</td></tr>
+    </table>
+    <span class="hint">After this, <span class="n">window.confirm|prompt|alert</span> has zero call
+      sites — worth a test that keeps it that way.</span>
+  </div>
+</section>
+
+</div><!-- /wrap -->
+
+<!-- ===== live demo modal (mirrors index.html:1299 + the proposed field slot) ===== -->
+<div id="confirm-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="card">
+    <div class="card-head"><h2 id="confirm-title">Confirm</h2></div>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div id="confirm-fields"></div>
+    <label id="confirm-checkbox-wrap" class="confirm-checkbox hidden">
+      <input type="checkbox" id="confirm-checkbox" />
+      <span id="confirm-checkbox-label"></span>
+    </label>
+    <div class="confirm-actions">
+      <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
+      <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---- indeterminate can only be set in JS ---- */
+document.querySelectorAll('.mixed,.mixed-n').forEach(function (c) { c.indeterminate = true; });
+
+/* ---- confirmModal + promptModal, close to the shape app.js would get ---- */
+var M = {
+  modal: document.getElementById('confirm-modal'),
+  title: document.getElementById('confirm-title'),
+  msg: document.getElementById('confirm-message'),
+  fields: document.getElementById('confirm-fields'),
+  cbWrap: document.getElementById('confirm-checkbox-wrap'),
+  cb: document.getElementById('confirm-checkbox'),
+  cbLabel: document.getElementById('confirm-checkbox-label'),
+  ok: document.getElementById('confirm-ok'),
+  cancel: document.getElementById('confirm-cancel')
+};
+
+function openModal(opts) {
+  return new Promise(function (resolve) {
+    var o = opts || {};
+    M.title.textContent = o.title || 'Confirm';
+    M.title.classList.toggle('danger', !!o.danger);
+    M.msg.textContent = o.message || '';
+    M.msg.style.display = o.message ? '' : 'none';
+    M.ok.textContent = o.confirmLabel || 'Confirm';
+    M.cancel.textContent = o.cancelLabel || 'Cancel';
+    M.ok.classList.toggle('danger', !!o.danger);
+
+    M.fields.innerHTML = '';
+    var inputs = [];
+    (o.fields || []).forEach(function (f) {
+      var wrap = document.createElement('div'); wrap.className = 'confirm-field';
+      var lab = document.createElement('label'); lab.textContent = f.label; wrap.appendChild(lab);
+      var inp = document.createElement('input');
+      inp.className = 'input'; inp.type = 'text';
+      inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
+      if (f.mono) inp.style.fontFamily = 'var(--mono)';
+      inp.dataset.id = f.id; wrap.appendChild(inp);
+      if (f.hint) { var h = document.createElement('small'); h.className = 'hint'; h.textContent = f.hint; wrap.appendChild(h); }
+      M.fields.appendChild(wrap); inputs.push(inp);
+      if (f.required) inp.addEventListener('input', validate);
+    });
+    function validate() {
+      var bad = (o.fields || []).some(function (f, i) { return f.required && !inputs[i].value.trim(); });
+      M.ok.disabled = bad;
+    }
+    validate();
+
+    M.cbWrap.classList.toggle('hidden', !o.checkbox);
+    M.cb.checked = false;
+    M.cbLabel.textContent = o.checkbox ? o.checkbox.label : '';
+    M.modal.classList.remove('hidden');
+    (inputs[0] || M.ok).focus();
+
+    function done(val) {
+      var out = null;
+      if (val) {
+        if (o.fields) { out = {}; inputs.forEach(function (i) { out[i.dataset.id] = i.value.trim(); }); }
+        else if (o.checkbox) out = { ok: true, checked: M.cb.checked };
+        else out = true;
+      } else if (o.checkbox && !o.fields) out = { ok: false, checked: false };
+      M.ok.classList.remove('danger'); M.title.classList.remove('danger');
+      M.ok.disabled = false;
+      M.modal.classList.add('hidden');
+      M.ok.removeEventListener('click', onOk);
+      M.cancel.removeEventListener('click', onCancel);
+      M.modal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(out);
+    }
+    function onOk() { if (!M.ok.disabled) done(true); }
+    function onCancel() { done(false); }
+    function onBackdrop(e) { if (e.target === M.modal) done(false); }
+    function onKey(e) {
+      if (e.key === 'Escape') done(false);
+      if (e.key === 'Enter' && o.fields && !M.ok.disabled) done(true);
+    }
+    M.ok.addEventListener('click', onOk);
+    M.cancel.addEventListener('click', onCancel);
+    M.modal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+function confirmModal(o) { return openModal(o); }
+function promptModal(o) { return openModal(Object.assign({ confirmLabel: 'Save' }, o)); }
+
+/* ---- the eight real call sites, as they would read after the change ---- */
+function demoDelete() {
+  confirmModal({
+    title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+    message: 'Delete "nightly-refactor"?\n\nThis cannot be undone.'
+  });
+}
+function demoPurge() {
+  confirmModal({
+    title: 'Remove project', danger: true, confirmLabel: 'Remove',
+    message: 'Remove "worca-cc" from Worca?\n\nThe working tree on disk is left alone.',
+    checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' }
+  });
+}
+function demoWorktree() {
+  confirmModal({
+    title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
+    message: 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of '
+      + 'uncommitted changes will be saved in the pipeline directory before anything is removed.\n\n'
+      + 'If you already committed the work manually, discarding just removes the now-redundant '
+      + 'checkout and clears the warning. The pipeline history and feature branch are kept.'
+  });
+}
+function demoSavePipeline() {
+  promptModal({
+    title: 'Save pipeline',
+    message: 'Give it a name, and a domain so the picker can group it.',
+    fields: [
+      { id: 'name', label: 'Name', placeholder: 'e.g. nightly refactor', required: true },
+      { id: 'domain', label: 'Domain', value: 'coding', hint: 'Organizes the picker — e.g. coding, marketing.' }
+    ]
+  });
+}
+function demoProfile() {
+  promptModal({
+    title: 'New profile',
+    fields: [
+      { id: 'id', label: 'Profile id', placeholder: 'work', mono: true, required: true,
+        hint: 'Lowercase letters, digits and dashes.' },
+      { id: 'label', label: 'Display name', placeholder: 'optional' }
+    ]
+  });
+}
+
+/* ---- data-tip, reusing the app's single floating bubble ---- */
+(function () {
+  var bubble;
+  function show(t) {
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.className = 'info-bubble';
+      bubble.style.cssText = 'position:fixed;z-index:70;background:var(--ink);color:#fff;'
+        + 'border-radius:10px;padding:10px 13px;font-size:12px;line-height:1.5;max-width:340px;'
+        + 'box-shadow:var(--shadow);pointer-events:none;';
+      document.body.appendChild(bubble);
+    }
+    var r = t.getBoundingClientRect();
+    bubble.textContent = t.dataset.tip;
+    bubble.style.display = 'block';
+    bubble.style.left = r.left + 'px';
+    bubble.style.top = (r.bottom + 8) + 'px';
+  }
+  function hide() { if (bubble) bubble.style.display = 'none'; }
+  document.addEventListener('pointerover', function (e) {
+    var t = e.target.closest && e.target.closest('[data-tip]');
+    if (t) show(t); else hide();
+  });
+  document.addEventListener('focusin', function (e) {
+    var t = e.target.closest && e.target.closest('[data-tip]');
+    if (t) show(t);
+  });
+  document.addEventListener('focusout', hide);
+  window.addEventListener('scroll', hide, true);
+})();
+</script>
+</body>
+</html>

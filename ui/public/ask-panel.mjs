@@ -1147,7 +1147,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         srcInput.placeholder = 'auto';
         srcInput.value = card.sourceBranch || '';
         const details = doc.createElement('details');
-        details.className = 'ask-card-members-src';
+        // .disclosure swaps the OS triangle for the app's own chevron
+        details.className = 'ask-card-members-src disclosure';
         details.appendChild(make('summary', null, 'Per-member source branches'));
         const memberHost = make('div', 'ask-card-members-src-list');
         details.appendChild(memberHost);

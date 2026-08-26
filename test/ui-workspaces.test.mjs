@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -20,7 +21,6 @@ async function boot({ fetchHandler, workspaces = WS } = {}) {
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
-  window.confirm = () => true;
   window.fetch = (url, opts) => {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
@@ -130,7 +130,7 @@ test('delete 200 removes the card + decrements the count', async () => {
   const doc = window.document;
   const beta = [...doc.querySelectorAll('#ws-list .ws-card')].find((c) => c.dataset.workspaceId === 'wks-beta-00000002');
   click(window, beta.querySelector('.ws-delete'));
-  await new Promise((r) => setTimeout(r, 0));
+  await confirmDialog(window);
   assert.equal(doc.querySelectorAll('#ws-list .ws-card').length, 1, 'Beta removed');
   assert.equal(doc.querySelector('#nav-workspaces-count').textContent, '1');
 });
@@ -145,7 +145,7 @@ test('delete 409 (live run) keeps the card + surfaces the error', async () => {
   const doc = window.document;
   const alpha = [...doc.querySelectorAll('#ws-list .ws-card')].find((c) => c.dataset.workspaceId === 'wks-alpha-00000001');
   click(window, alpha.querySelector('.ws-delete'));
-  await new Promise((r) => setTimeout(r, 0));
+  await confirmDialog(window);
   assert.equal(doc.querySelectorAll('#ws-list .ws-card').length, 2, 'card kept on 409');
   assert.match(doc.querySelector('#ws-msg').textContent, /run is in progress/, 'verbatim 409 error');
 });

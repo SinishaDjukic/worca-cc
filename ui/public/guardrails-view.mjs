@@ -71,14 +71,16 @@ export function renderStartStep(sources, { doc = globalThis.document, selectedId
   list.setAttribute('role', 'radiogroup');
   list.setAttribute('aria-label', 'Starting point');
   const addRow = (id, label, builtin) => {
-    const row = h(doc, 'label', 'grv-source-row');
+    // .opt-row carries the selection on the WHOLE row (the name and its badge
+    // travel together); .grv-source-row stays for this view's own layout.
+    const row = h(doc, 'label', 'grv-source-row opt-row');
     const radio = h(doc, 'input', 'grv-source');
     radio.type = 'radio';
     radio.name = 'grv-source';
     radio.value = id;
     if (id === selectedId) radio.checked = true;
     row.appendChild(radio);
-    row.appendChild(h(doc, 'span', 'grv-source-name', label));
+    row.appendChild(h(doc, 'span', 'grv-source-name opt-name', label));
     if (builtin) row.appendChild(h(doc, 'span', 'badge waiting', 'built-in'));
     list.appendChild(row);
   };

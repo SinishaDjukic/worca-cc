@@ -3177,6 +3177,152 @@ body.rail-collapsed .ask-dock{left:76px;}
    instead; body.view-history/.view-running .main keep padding:0 by specificity. */
 .main,.run-screen-list,.hist-screen-list,.rd-body,.hd-body{padding-bottom:var(--ask-dock-clearance);}
 
+/* ---------- native control skins (checkbox / radio / switch / rows) -------- */
+/* Everything the browser used to draw for itself. The mark is the one .qopt
+   already draws (:761): a 1.5px --radio-ring hairline on --panel that fills
+   --green behind a white glyph, so "chosen" reads identically on a question
+   option, a checkbox, a chip and a whole row.
+   Styling the REAL <input> through appearance:none — rather than hiding it
+   behind a span — is what lets every existing emitter keep its markup:
+   :checked, :disabled, :indeterminate, label clicks and keyboard all keep
+   working with no JS. NOTHING here sets `display`, so the hidden inputs behind
+   the segmented controls (#mock, [name=target], [name=source]) stay hidden. */
+
+/* Net for anything never hand-skinned (a future <progress>, a date input, the
+   OS spell-check UI): brand green instead of the OS accent. */
+:root{accent-color:var(--green);}
+
+input[type="checkbox"],
+input[type="radio"]{
+  appearance:none;-webkit-appearance:none;
+  flex:0 0 auto;width:18px;height:18px;margin:0;padding:0;
+  border:1.5px solid var(--radio-ring);border-radius:6px;
+  background:var(--panel);cursor:pointer;vertical-align:middle;
+  transition:background-color .14s,border-color .14s;}
+input[type="radio"]{border-radius:50%;}
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled){border-color:var(--ink-3);}
+/* the identical white tick .qopt.sel uses */
+input[type="checkbox"]:checked{border-color:var(--green);
+  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");}
+/* "some of these are on" — set from JS, there is no HTML attribute for it */
+input[type="checkbox"]:indeterminate{border-color:var(--green);
+  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
+/* ring, white gap and dot from one inset shadow — no pseudo-element, which a
+   replaced element cannot be relied on to render */
+input[type="radio"]:checked{border-color:var(--green);background:var(--green);
+  box-shadow:inset 0 0 0 3.5px var(--panel);}
+/* disabled reads as "fixed" (a manifest locked it), never as "broken" */
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled{background:var(--field);border-color:var(--line-2);cursor:not-allowed;}
+/* the :disabled rule above uses the `background` shorthand, which drops the
+   glyph :checked painted — so a locked-on box has to restate it */
+input[type="checkbox"]:disabled:checked{border-color:var(--seq);
+  background:var(--seq) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");}
+input[type="radio"]:disabled:checked{background:var(--seq);border-color:var(--seq);
+  box-shadow:inset 0 0 0 3.5px var(--panel);}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* markdown task lists (:3019 sets the gap; the blanket margin:0 above would
+   otherwise win on source order) */
+.ask-md input[type="checkbox"]{margin-right:6px;}
+
+@media (prefers-contrast:more),(forced-colors:active){
+  input[type="checkbox"],input[type="radio"]{border-color:CanvasText;}
+  input[type="checkbox"]:checked,input[type="radio"]:checked{background-color:Highlight;border-color:Highlight;}
+}
+
+/* ---- switch driven by a real checkbox ----
+   .switch (:470) is a <div role="switch"> mirrored to a hidden input by hand
+   (app.js#wireMockSwitch). One sibling selector lets the SAME pixels be driven
+   by a real <input type=checkbox>, so a new switch needs no JS and keeps its
+   semantics for free. Both spellings work; the existing .on emitters are
+   untouched. */
+.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
+.switch.on,
+.sw-input:checked + .switch{background:var(--green);}
+.switch.on::after,
+.sw-input:checked + .switch::after{left:21px;}
+.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px;}
+.sw-input:disabled + .switch{opacity:.5;cursor:not-allowed;}
+/* A 20px track needs more room between rows than the 13px box it replaced. */
+.chat-event-row,.chat-channel-row{margin:8px 0;gap:10px;}
+.switch.switch-sm{width:34px;height:20px;}
+.switch.switch-sm::after{width:15px;height:15px;top:2.5px;left:2.5px;}
+.sw-input:checked + .switch.switch-sm::after{left:16.5px;}
+
+/* ---- checkbox rows inside a .field ----
+   .check-row carried NO rule, so `.field > label` (:304) claimed it: block,
+   600 weight, 13px, 8px bottom margin — which is why "No cap" rendered as a
+   heading welded to its box. Equal specificity class-count, so the qualified
+   selectors are what win. */
+.check-row{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+  font-weight:500;font-size:12.5px;color:var(--ink-2);}
+.field > label.check-row,
+.field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
+
+/* ---- selectable rows ----
+   .qopt generalised: when a choice carries more than a word (a name plus a
+   badge, a path, a model id) the row itself is the target and the whole row
+   shows the selection. Appended here, so it wins the source-order tie against
+   the .grv-source-row / .wiz-proj / .mvx-model base rules those emitters keep
+   for their own layout; their qualified rules (.wiz-proj.missing) still win. */
+.opt-row{display:flex;align-items:center;gap:11px;width:100%;
+  padding:12px 15px;background:var(--panel);border:1.5px solid var(--line);
+  border-radius:13px;cursor:pointer;font-size:13.5px;font-weight:500;
+  color:var(--ink);transition:background .14s,border-color .14s;}
+.opt-row:hover{border-color:var(--ink-3);}
+.opt-row:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.opt-row:has(input:disabled){opacity:.55;cursor:not-allowed;background:var(--field);}
+.opt-row:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
+.opt-row .opt-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.opt-row .opt-sub{flex:0 0 auto;font:400 11.5px var(--mono);color:var(--ink-3);}
+.wiz-proj-list{gap:8px;}
+
+/* ---- chips ----
+   .chip-select (:1400) already drew the pill and never had a selected state,
+   so the box inside was carrying it alone. */
+.chip-select label{transition:background .14s,border-color .14s;}
+.chip-select label:hover{border-color:var(--ink-3);}
+.chip-select label:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.chip-select label:has(input:disabled){opacity:.55;cursor:not-allowed;}
+.chip-select input{width:14px;height:14px;border-radius:5px;}
+
+/* ---- confirm/prompt modal internals ---- */
+.confirm-field{margin-bottom:14px;}
+.confirm-field > label{display:block;font-weight:600;font-size:12.5px;margin-bottom:6px;}
+.confirm-field .input{font-size:13.5px;padding:11px 14px;}
+.confirm-field .hint.err{color:var(--red-ink);}
+.confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
+  background:var(--field);border-radius:12px;font-size:12.5px;color:var(--ink-2);
+  cursor:pointer;line-height:1.45;}
+.confirm-checkbox.hidden{display:none;}
+.confirm-modal .card h2.danger{color:var(--red-ink);}
+
+/* ---- the rest of the UA chrome ---- */
+/* min/max/step are there to validate, not to be clicked */
+input[type="number"]{-moz-appearance:textfield;}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+/* the WebKit search "x" is grey-on-grey and off-grid; .field-clear replaces it */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration{-webkit-appearance:none;}
+.field-clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  width:18px;height:18px;border:none;border-radius:50%;background:var(--line-2);
+  color:var(--ink-2);font:600 11px/1 var(--sans);cursor:pointer;display:grid;
+  place-items:center;padding:0;}
+.field-clear:hover{background:var(--ink-3);color:#fff;}
+.field-clear[hidden]{display:none;}
+/* the OS disclosure triangle, everywhere — .advanced (:601) already did it locally */
+.disclosure > summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;}
+.disclosure > summary::-webkit-details-marker{display:none;}
+.disclosure > summary::before{content:"";width:0;height:0;flex:0 0 auto;
+  border:4.5px solid transparent;border-left-color:var(--ink-3);
+  transition:transform .16s;transform-origin:2px 50%;}
+.disclosure[open] > summary::before{transform:rotate(90deg);}
+/* Firefox has no ::-webkit-scrollbar, so :899 never reaches it */
+html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
+
 /* ---------- reduced motion for the Running redesign ---------- */
 /* MUST be the LAST block in the file: @media contributes no specificity, so a
    (0,1,0) `animation:none` here would LOSE the source-order tie against any

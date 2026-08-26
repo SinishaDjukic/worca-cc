@@ -236,6 +236,7 @@ const el = {
   confirmMessage: $('#confirm-message'),
   confirmOk: $('#confirm-ok'),
   confirmCancel: $('#confirm-cancel'),
+  confirmFields: $('#confirm-fields'),
   confirmCheckboxWrap: $('#confirm-checkbox-wrap'),
   confirmCheckbox: $('#confirm-checkbox'),
   confirmCheckboxLabel: $('#confirm-checkbox-label'),
@@ -2461,10 +2462,20 @@ function suggestWorkflowDomain(steps) {
 async function composerSave() {
   if (!composer.steps.length) return;
   composerExitLink();
-  const name = (window.prompt('Name this pipeline:', '') || '').trim();
-  if (!name) return;
   const suggested = suggestWorkflowDomain(composer.steps);
-  const domain = (window.prompt('Domain (organizes the picker — e.g. coding, marketing):', suggested) || '').trim() || suggested;
+  const answers = await promptModal({
+    title: 'Save pipeline',
+    message: 'Give it a name, and a domain so the picker can group it.',
+    confirmLabel: 'Save',
+    fields: [
+      { id: 'name', label: 'Name', placeholder: 'e.g. nightly refactor', required: true },
+      { id: 'domain', label: 'Domain', value: suggested,
+        hint: 'Organizes the picker — e.g. coding, marketing.' },
+    ],
+  });
+  if (!answers) return;
+  const name = answers.name;
+  const domain = answers.domain || suggested;
   const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
   const saveBtn = document.getElementById('composer-save');
   let saved, warnings;
@@ -2601,7 +2612,11 @@ function composerRenderList() {
     const body = wrap.querySelector('.pl-body');
     if (del) del.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+      const ok = await confirmModal({
+        title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+        message: `Delete "${item.name}"?\n\nThis cannot be undone.`,
+      });
+      if (!ok) return;
       try { await deleteWorkflow(item.id); } catch (err) {
         appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
       }
@@ -6242,7 +6257,11 @@ async function rescanWorkspace(w) {
 // (live run/scan) keeps the card + surfaces data.error.
 async function deleteWorkspaceCard(card, w) {
   if (!card || !w) return;
-  if (!window.confirm(`Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`)) return;
+  const ok = await confirmModal({
+    title: 'Delete workspace', danger: true, confirmLabel: 'Delete',
+    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`,
+  });
+  if (!ok) return;
   const btn = card.querySelector('.ws-delete');
   if (btn) btn.disabled = true;
   try {
@@ -6324,7 +6343,9 @@ function renderWizardProjects() {
   projects.forEach((p) => {
     if (!p || !p.path) return;
     const row = document.createElement('label');
-    row.className = 'wiz-proj' + (p.exists ? '' : ' missing');
+    // .opt-row puts the selection on the whole row, so a picked project reads
+    // from across the list and "missing" stops looking like "just unchecked".
+    row.className = 'wiz-proj opt-row' + (p.exists ? '' : ' missing');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'wiz-proj-cb';
@@ -6338,8 +6359,22 @@ function renderWizardProjects() {
       syncWizardStartEnabled();
     });
     const txt = document.createElement('span');
-    txt.textContent = p.exists ? p.name : `${p.name} (missing)`;
+    txt.className = 'opt-name';
+    txt.textContent = p.name;
     row.append(cb, txt);
+    if (p.path) {
+      const sub = document.createElement('span');
+      sub.className = 'opt-sub';
+      sub.textContent = p.path;
+      row.appendChild(sub);
+    }
+    // the parenthetical became a badge: same word, but it now reads as state
+    if (!p.exists) {
+      const badge = document.createElement('span');
+      badge.className = 'badge red';
+      badge.textContent = 'missing';
+      row.appendChild(badge);
+    }
     host.appendChild(row);
   });
   syncWizardStartEnabled();
@@ -6660,7 +6695,11 @@ async function fetchAgentFull(key) {
 }
 
 async function deleteAgentCard(card, a) {
-  if (!window.confirm(`Delete agent "${a.displayName || a.key}"?\n\nThis removes its markdown + metadata pair. This cannot be undone.`)) return;
+  const ok = await confirmModal({
+    title: 'Delete agent', danger: true, confirmLabel: 'Delete',
+    message: `Delete agent "${a.displayName || a.key}"?\n\nThis removes its markdown + metadata pair. This cannot be undone.`,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/agents/${encodeURIComponent(a.key)}`, { method: 'DELETE' });
     const data = await safeJson(res);
@@ -6964,46 +7003,114 @@ function renderProjectsList() {
   host.appendChild(card);
 }
 
-// ---- Reusable confirmation modal -> Promise<boolean> ------------------------
-// With opts.checkbox: { label } it resolves { ok, checked } instead.
-// opts.danger tints the OK button red for a destructive action (opt-in, so no
-// existing caller changes). `done` always removes it again — the modal is shared,
-// and the tint must never leak into the next, harmless confirmation.
-function confirmModal({ title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', checkbox = null, danger = false } = {}) {
+// ---- Reusable confirm / prompt modal ---------------------------------------
+// One shell, two public entry points:
+//   confirmModal(opts) -> Promise<boolean>, or Promise<{ok, checked}> when
+//     opts.checkbox is given. Contract unchanged from before promptModal existed.
+//   promptModal(opts)  -> Promise<object|null> keyed by field id. This is what
+//     replaced window.prompt: it takes an ARRAY of fields, so the two places
+//     that used to fire two blocking prompts back to back (name + domain,
+//     profile id + label) now ask once.
+// opts.danger tints the title and the OK button red for a destructive action
+// (opt-in). `done` always clears every opt-in again — the modal is shared, and
+// neither the tint nor a leftover field may leak into the next, harmless call.
+function modalShell({
+  title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
+  checkbox = null, danger = false, fields = null,
+} = {}) {
   return new Promise((resolve) => {
     el.confirmTitle.textContent = title;
+    el.confirmTitle.classList.toggle('danger', !!danger);
     el.confirmMessage.textContent = message;
+    el.confirmMessage.hidden = !message;
     el.confirmOk.textContent = confirmLabel;
     el.confirmCancel.textContent = cancelLabel;
     el.confirmOk.classList.toggle('danger', !!danger);
+
+    // prompt fields: built fresh each time, values bound via .value (never innerHTML)
+    const inputs = [];
+    el.confirmFields.replaceChildren();
+    for (const f of fields || []) {
+      const wrap = document.createElement('div');
+      wrap.className = 'confirm-field';
+      const lab = document.createElement('label');
+      lab.textContent = f.label;
+      lab.htmlFor = `confirm-f-${f.id}`;
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'input';
+      inp.id = `confirm-f-${f.id}`;
+      inp.dataset.fieldId = f.id;
+      inp.value = f.value || '';
+      inp.placeholder = f.placeholder || '';
+      inp.autocomplete = 'off';
+      if (f.mono) inp.style.fontFamily = 'var(--mono)';
+      wrap.append(lab, inp);
+      if (f.hint) {
+        const hint = document.createElement('small');
+        hint.className = 'hint';
+        hint.textContent = f.hint;
+        wrap.appendChild(hint);
+      }
+      el.confirmFields.appendChild(wrap);
+      inputs.push(inp);
+      if (f.required) inp.addEventListener('input', syncOk);
+    }
+    // A required field with nothing in it is the old `if (!name) return` guard,
+    // moved to where the user can see it.
+    function syncOk() {
+      el.confirmOk.disabled = (fields || []).some((f, i) => f.required && !inputs[i].value.trim());
+    }
+    syncOk();
+
     // opt-in checkbox: shown only when requested, always reset to unchecked
     el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
     el.confirmCheckbox.checked = false;
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
-    el.confirmOk.focus();
+    (inputs[0] || el.confirmOk).focus();
 
     const done = (val) => {
       const checked = el.confirmCheckbox.checked;
+      const values = {};
+      for (const i of inputs) values[i.dataset.fieldId] = i.value.trim();
       el.confirmOk.classList.remove('danger');   // never leak the tint to the next caller
+      el.confirmTitle.classList.remove('danger');
+      el.confirmOk.disabled = false;
+      el.confirmMessage.hidden = false;
+      el.confirmFields.replaceChildren();
       el.confirmModal.classList.add('hidden');
       el.confirmCheckboxWrap.classList.add('hidden');
       el.confirmOk.removeEventListener('click', onOk);
       el.confirmCancel.removeEventListener('click', onCancel);
       el.confirmModal.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
-      resolve(checkbox ? { ok: val, checked } : val);
+      if (fields) resolve(val ? values : null);
+      else resolve(checkbox ? { ok: val, checked } : val);
     };
-    const onOk = () => done(true);
+    const onOk = () => { if (!el.confirmOk.disabled) done(true); };
     const onCancel = () => done(false);
     const onBackdrop = (e) => { if (e.target === el.confirmModal) done(false); };
-    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(false);
+      // Enter submits a filled-in prompt, the way the native one did
+      else if (e.key === 'Enter' && fields && !el.confirmOk.disabled) { e.preventDefault(); done(true); }
+    };
 
     el.confirmOk.addEventListener('click', onOk);
     el.confirmCancel.addEventListener('click', onCancel);
     el.confirmModal.addEventListener('click', onBackdrop);
     document.addEventListener('keydown', onKey);
   });
+}
+
+function confirmModal(opts = {}) {
+  return modalShell({ ...opts, fields: null });
+}
+
+// fields: [{ id, label, placeholder, value, hint, mono, required }]
+function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
+  return modalShell({ ...rest, confirmLabel, fields });
 }
 
 async function deleteProject(p) {
@@ -8004,9 +8111,18 @@ async function savePluginConfigForms(name, body) {
 // config form has anything to write into. Reopens on the NEW profile, which is
 // what the user wants to fill in next.
 async function addPluginProfile(name, sourceId) {
-  const id = (window.prompt('Profile id (lowercase letters, digits and dashes — e.g. "work"):') || '').trim();
-  if (!id) return;
-  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  const answers = await promptModal({
+    title: 'New profile',
+    confirmLabel: 'Create',
+    fields: [
+      { id: 'id', label: 'Profile id', placeholder: 'work', mono: true, required: true,
+        hint: 'Lowercase letters, digits and dashes — e.g. "work".' },
+      { id: 'label', label: 'Display name', placeholder: 'optional' },
+    ],
+  });
+  if (!answers) return;
+  const id = answers.id;
+  const label = answers.label;
   const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/profiles`, { sourceId, id, label });
   if (!r.ok) return setPluginsMsg(r.data.error || 'could not create the profile', 'err');
   loadTaskSources();               // the New Pipeline profile bar lists this roster
@@ -8017,7 +8133,11 @@ async function deletePluginProfile(name, sourceId, profile) {
   if (!profile) return;
   // The server also drops every project binding that named it, so this is not
   // just a settings delete — say so before it happens, not after.
-  if (!window.confirm(`Delete profile "${profile}"? Its settings, token and any project bound to it are removed.`)) return;
+  const ok = await confirmModal({
+    title: 'Delete profile', danger: true, confirmLabel: 'Delete',
+    message: `Delete profile "${profile}"?\n\nIts settings, token and any project bound to it are removed.`,
+  });
+  if (!ok) return;
   const url = `/api/plugins/${encodeURIComponent(name)}/profiles/${encodeURIComponent(profile)}?sourceId=${encodeURIComponent(sourceId)}`;
   const r = await pluginApi('DELETE', url);
   if (!r.ok) return setPluginsMsg(r.data.error || 'could not delete the profile', 'err');
@@ -8096,12 +8216,21 @@ async function openPluginSettings(name, profile) {
   });
   body.querySelectorAll('.pl-profile-sel').forEach((sel) => {
     const prev = sel.value;
-    sel.addEventListener('change', () => {
-      if (dirty && !window.confirm('Discard unsaved changes and switch profiles?')) {
+    sel.addEventListener('change', async () => {
+      // The select has ALREADY moved by the time a non-blocking dialog opens, so
+      // snap it back first and only re-apply the choice once the answer is yes.
+      const wanted = sel.value;
+      if (dirty) {
         sel.value = prev;
-        return;
+        const ok = await confirmModal({
+          title: 'Discard unsaved changes?',
+          message: 'Switching profiles discards the edits you have not saved.',
+          confirmLabel: 'Discard and switch',
+        });
+        if (!ok) return;
+        sel.value = wanted;
       }
-      openPluginSettings(name, sel.value);
+      openPluginSettings(name, wanted);
     });
   });
   body.querySelectorAll('.pl-profile-add').forEach((btn) => {
@@ -9928,8 +10057,15 @@ function setupDiscardWorktreeButton(node, projectDir, p, onDiscarded) {
   if (!members.length) return;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const msg = 'Discard the retained worktree?\n\nAny work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed. If you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.\n\nContinue?';
-    if (!window.confirm(msg)) return;
+    // The title carries the question and the OK button carries the verb, so the
+    // body no longer repeats either (it used to open "Discard the retained
+    // worktree?" and end "Continue?" because an OS alert has neither).
+    const msg = 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed.\n\nIf you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.';
+    const ok = await confirmModal({
+      title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
+      message: msg,
+    });
+    if (!ok) return;
     btn.disabled = true;
     const previous = btn.textContent;
     btn.textContent = 'Saving patch…';

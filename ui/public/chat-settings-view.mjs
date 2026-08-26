@@ -32,11 +32,13 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
   evBox.appendChild(h(doc, 'div', 'label-row', 'Notify on'));
   for (const [key, label, hint] of EVENTS) {
     const row = h(doc, 'label', 'chat-event-row');
-    const cb = h(doc, 'input', 'chat-ev');
+    const cb = h(doc, 'input', 'sw-input chat-ev');
     cb.type = 'checkbox';
     cb.dataset.ev = key;
     cb.checked = p.notify?.[key] !== false;
+    cb.setAttribute('aria-label', label);
     row.appendChild(cb);
+    row.appendChild(h(doc, 'span', 'switch switch-sm'));
     row.appendChild(h(doc, 'span', '', label));
     if (hint) row.appendChild(h(doc, 'small', 'hint', hint));
     evBox.appendChild(row);
@@ -54,11 +56,13 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     const row = h(doc, 'div', 'chat-channel-row');
     row.dataset.channelKey = key;
     const toggle = h(doc, 'label', 'chat-channel-toggle');
-    const cb = h(doc, 'input', 'chat-ch');
+    const cb = h(doc, 'input', 'sw-input chat-ch');
     cb.type = 'checkbox';
     cb.dataset.channelKey = key;
     cb.checked = p.channels?.[key]?.enabled !== false;
+    cb.setAttribute('aria-label', `Enable ${c.displayName || c.channelId}`);
     toggle.appendChild(cb);
+    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
     toggle.appendChild(h(doc, 'span', '', `${c.displayName || c.channelId} (${c.platform})`));
     row.appendChild(toggle);
     const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting', unconfigured: 'waiting' }[c.state] || 'red';
