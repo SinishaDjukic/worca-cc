@@ -36,7 +36,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { prepareModelEnv } from './model-env.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
-import { explainUnspawnableClaude } from './preflight.mjs';
+import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -88,6 +88,9 @@ export const ARGV_INLINE_LIMIT = 20000;
 export function argvLength(bin, args) {
   return String(bin || '').length + args.reduce((n, a) => n + String(a).length + 3, 0);
 }
+
+/** Log each npm-shim resolution once per process, not once per spawn. */
+const _resolveNoted = new Set();
 
 /** The spawn-failure Error for `bin`: the OS message, plus the Windows npm-shim
  *  explanation when that is what actually went wrong (ENOENT on a bare name
@@ -534,6 +537,16 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
     }
 
+    // Windows + npm-installed Claude Code: the bare name is a .cmd shim Node
+    // cannot spawn; resolveClaudeBin swaps in the package's native claude.exe.
+    // Everywhere else this is `bin` unchanged. Resolved BEFORE the argv plan so
+    // the command-line measure below counts the path that is actually spawned.
+    const resolved = resolveClaudeBin(bin);
+    if (resolved.note && !_resolveNoted.has(resolved.bin)) {
+      _resolveNoted.add(resolved.bin);
+      console.warn(`[worca] ${resolved.note}`);
+    }
+
     // GH #380: inline argv when it fits, else prompt on stdin + files (see
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
     // terminal path below (finish) and on a failed spawn.
@@ -545,7 +558,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
-      }, { bin, limit });
+      }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
       return;
@@ -572,7 +585,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
 
     let child;
     try {
-      child = spawn(bin, args, {
+      child = spawn(resolved.bin, args, {
         cwd, stdio: [plan.stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}),
       });
     } catch (err) {
