@@ -302,3 +302,31 @@ test('GET /api/plugins/:name/model-env: raw literals/refs for Edit-a-copy; secre
   assert.equal((await jfetch(`/api/plugins/ds-models/model-env?${q({ id: 'nope' })}`)).status, 400);
   assert.equal((await jfetch(`/api/plugins/ghost/model-env?${q({ id: 'x' })}`)).status, 404);
 });
+
+// ── model connectivity test (Models-view Test button) ────────────────────────
+
+test('POST /api/models/:id/test: 404 unknown id; 400 for a plugin model with an unset secret', async () => {
+  const r404 = await post('/api/models/no-such-model/test', {});
+  assert.equal(r404.status, 404);
+  assert.match(r404.body.error, /unknown model id/);
+
+  // A fresh plugin whose model references a secret nobody has set yet — the
+  // route must refuse before spawning anything.
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('unset-plug');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'unset-plug',
+    modelSecrets: [{ key: 'up-token', label: 'UP token' }],
+    models: [{ id: 'up-model', label: 'UP', env: { ANTHROPIC_AUTH_TOKEN: { secret: 'up-token' } } }],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'unset-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+
+  const r400 = await post('/api/models/up-model/test', {});
+  assert.equal(r400.status, 400);
+  assert.match(r400.body.error, /up-token.*not set/);
+});

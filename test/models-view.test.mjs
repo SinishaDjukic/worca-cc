@@ -239,3 +239,32 @@ test('export wizard: token LIMITS are not credentials (MAX_OUTPUT_TOKENS default
   assert.equal(mode('ANTHROPIC_AUTH_TOKEN'), 'secret');
   assert.equal(mode('API_KEY'), 'secret');
 });
+
+test('list: Test button on global + plugin cards (disabled while a secret is unset); built-ins get none', () => {
+  const el = renderModelsList({
+    globals: [GLOBAL],
+    plugins: PLUGINS,
+    predefined: PREDEFINED,
+    efforts: EFFORTS,
+  }, { doc });
+
+  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
+  const gt = globalCard.querySelector('.mv-test');
+  assert.equal(gt.dataset.id, 'glm-4.7');
+  assert.equal(gt.disabled, false);
+  assert.ok(globalCard.querySelector('.mv-test-result'), 'result line present');
+
+  const cards = [...el.querySelectorAll('.mv-plugin')];
+  const unsetBtn = cards[0].querySelector('.mv-test');
+  assert.equal(unsetBtn.dataset.id, 'ds-stable');
+  assert.equal(unsetBtn.dataset.plugin, 'team-models');
+  assert.equal(unsetBtn.disabled, true, 'unset secret disables Test');
+  assert.match(unsetBtn.title, /secret/);
+  const okBtn = cards[1].querySelector('.mv-test');
+  assert.equal(okBtn.disabled, false, 'no secrets → enabled');
+  assert.ok(cards[0].querySelector('.mv-test-result'), 'result line present');
+
+  for (const row of el.querySelectorAll('.mv-builtin')) {
+    assert.equal(row.querySelector('.mv-test'), null, 'no Test on built-ins');
+  }
+});

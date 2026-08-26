@@ -85,6 +85,7 @@ import {
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
+import { testModel } from '../src/core/model-test.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -3057,6 +3058,35 @@ app.delete('/api/models/:id', async (req, res) => {
   } catch (err) {
     // Throws only on an unknown id -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// Live connectivity check for a catalog model — the Models-view Test button.
+// Explicit user action only (one real, tiny API call against wherever the
+// model routes). Caller mistakes get an HTTP status; the test OUTCOME rides a
+// 200 envelope, same convention as POST /api/chat/test. Ids resolve global
+// first, then plugin — resolveModelEnv's precedence.
+const modelTestsInFlight = new Set();
+app.post('/api/models/:id/test', async (req, res) => {
+  const id = String(req.params.id);
+  const lc = id.toLowerCase();
+  const global = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  const plugin = global ? null : listPluginModels().find((m) => m.id.toLowerCase() === lc);
+  if (!global && !plugin) return res.status(404).json({ error: `unknown model id ${JSON.stringify(id)}` });
+  if (plugin && plugin.secrets.length) {
+    // Don't burn a spawn guaranteed to fail — resolveModelEnv drops unset secrets.
+    const unset = pluginModelSecretStatus(plugin.plugin)
+      .filter((s) => plugin.secrets.includes(s.key) && !s.set).map((s) => s.key);
+    if (unset.length) {
+      return badRequest(res, `secret ${unset.join(', ')} is not set — configure it in the plugin's settings`);
+    }
+  }
+  if (modelTestsInFlight.has(lc)) return badRequest(res, 'test already running for this model');
+  modelTestsInFlight.add(lc);
+  try {
+    res.json(await testModel(id));
+  } finally {
+    modelTestsInFlight.delete(lc);
   }
 });
 

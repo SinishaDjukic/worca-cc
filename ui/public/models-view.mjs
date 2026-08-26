@@ -64,6 +64,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     body.appendChild(head);
     const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
     body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+    body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
     card.appendChild(body);
     const del = h(doc, 'button', 'btn-ghost mv-delete', 'Delete');
     del.type = 'button'; del.dataset.id = m.id;
@@ -71,6 +72,9 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     const edit = h(doc, 'button', 'btn-ghost mv-edit', 'Edit');
     edit.type = 'button'; edit.dataset.id = m.id;
     card.appendChild(edit);
+    const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+    tst.type = 'button'; tst.dataset.id = m.id;
+    card.appendChild(tst);
     yours.appendChild(card);
   }
   root.appendChild(yours);
@@ -121,10 +125,19 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
         body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
           s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET — configure it in the plugin's settings`));
       }
+      body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
       card.appendChild(body);
       const copy = h(doc, 'button', 'btn-ghost mv-copy', 'Edit a copy');
       copy.type = 'button'; copy.dataset.id = m.id; copy.dataset.plugin = m.plugin;
       card.appendChild(copy);
+      const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+      tst.type = 'button'; tst.dataset.id = m.id; tst.dataset.plugin = m.plugin;
+      if ((m.secrets || []).some((s) => !s.set)) {
+        // A test would only prove what the NOT SET line already says.
+        tst.disabled = true;
+        tst.title = 'set the plugin secret first';
+      }
+      card.appendChild(tst);
       plug.appendChild(card);
     }
     root.appendChild(plug);
