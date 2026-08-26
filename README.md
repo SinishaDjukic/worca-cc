@@ -162,10 +162,12 @@ Requirements:
 - **Node.js >= 22.13.0** (the built-in `node:sqlite` store)
 - The **[Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI**
   (`claude`) on your `PATH` — for real runs; mock mode needs nothing.
-  On **native Windows** use the [native installer](https://docs.anthropic.com/en/docs/claude-code/setup)
-  (`claude.exe`) or point `WORCA_CLAUDE_BIN` at it: the npm install only ships a
-  `claude.cmd` shim, which Windows won't resolve by name and Node won't spawn
-  without a shell — Worca reports this case explicitly rather than a bare `ENOENT`.
+  On **native Windows** both the [native installer](https://docs.anthropic.com/en/docs/claude-code/setup)
+  (`claude.exe`) and `npm install -g @anthropic-ai/claude-code` work: npm puts a
+  `claude.cmd` shim on `PATH` that Node cannot spawn, so Worca runs the package's
+  native `claude.exe` next to it instead. If that binary is missing (the package's
+  `postinstall` didn't run) or the layout isn't npm's, Worca says so rather than
+  a bare `ENOENT`; `WORCA_CLAUDE_BIN` can always point at a `claude.exe` directly.
 
 ## Quick start
 

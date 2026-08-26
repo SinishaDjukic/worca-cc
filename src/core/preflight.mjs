@@ -11,9 +11,9 @@
 
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { constants as FS, existsSync } from 'node:fs';
+import { constants as FS, existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
@@ -332,48 +332,140 @@ export async function detectToolsPerProject(projectDirs) {
  * @param {string} [bin] the claude binary (defaults to `claude`)
  * @returns {Promise<{mcpConfig: boolean, version: string|null}>}
  */
+// ── Windows: the executable behind a bare `claude` ────────────────────────────
+// Native Windows resolves a bare name on PATH to `.exe` only, and Node refuses
+// to run .cmd/.bat shims without a shell (CVE-2024-27980). The npm install of
+// Claude Code (>= 2.1 — every version Worca supports) puts a `claude.cmd` shim
+// on PATH whose target is a REAL native binary at npm's fixed layout:
+//   <shim dir>\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+// (the package's postinstall copies the platform binary over a ~500-byte text
+// placeholder there). resolveClaudeBin() spawns that .exe directly — no shell,
+// correct kill target, no quoting surface — and explainUnspawnableClaude()
+// covers the cases where that is not possible.
+
+export const NPM_CLAUDE_EXE_SEGMENTS = Object.freeze(['node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe']);
+
+/** A real PE executable (MZ header, bigger than npm's placeholder stub). */
+export function isNativeExe(p) {
+  try {
+    const st = statSync(p);
+    if (!st.isFile() || st.size < 4096) return false;
+    const fd = openSync(p, 'r');
+    try {
+      const head = Buffer.alloc(2);
+      readSync(fd, head, 0, 2, 0);
+      return head.toString('latin1') === 'MZ';
+    } finally { closeSync(fd); }
+  } catch { return false; }
+}
+
+const _ov = { isNativeExe: null };
+const _resolveCache = new Map();
+/** Test seam (mirrors folder-dialog.mjs): swap the PE check so an end-to-end
+ *  test on a POSIX host can stand in a shell script for claude.exe. */
+export const _testing = {
+  set({ isNativeExe: native = _ov.isNativeExe } = {}) { _ov.isNativeExe = native; _resolveCache.clear(); },
+  reset() { _ov.isNativeExe = null; _resolveCache.clear(); },
+};
+
+/** What `bin` reaches on a Windows PATH: a real .exe (spawn works as-is), the
+ *  shims found, and — next to the FIRST shim — the npm package's native binary
+ *  when present, with whether it is real or still the placeholder. */
+function probeWindowsClaude(bin, { pathEnv, exists, native }) {
+  const name = String(bin || 'claude').trim() || 'claude';
+  const ok = (p) => { try { return !!exists(p); } catch { return false; } }; // a probe error is "absent"
+  const out = { name, exe: null, shims: [], npm: null };
+  if (/\.exe$/i.test(name)) { out.exe = name; return out; }       // explicit .exe: nothing to resolve
+  const explicitPath = /[\\/]/.test(name);
+  const shimExt = /\.(cmd|bat|ps1)$/i.test(name);
+  const stems = explicitPath ? [name] : pathEnv.split(';').filter(Boolean).map((d) => join(d, name));
+  for (const stem of stems) {
+    if (!shimExt && ok(stem + '.exe')) { out.exe = stem + '.exe'; return out; }
+    for (const ext of shimExt ? [''] : ['.cmd', '.bat', '.ps1']) {
+      const shim = stem + ext;
+      if (!ok(shim)) continue;
+      out.shims.push(shim);
+      if (!out.npm) {
+        const candidate = join(dirname(shim), ...NPM_CLAUDE_EXE_SEGMENTS);
+        if (ok(candidate)) out.npm = { exe: candidate, native: !!native(candidate) };
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The executable to spawn for `bin` on THIS host. Off Windows, and whenever a
+ * real .exe is reachable, that is `bin` unchanged (spawn's own PATH lookup is
+ * correct). When the only PATH hit is npm's .cmd shim and the package's native
+ * claude.exe sits next to it, that .exe is returned instead — with a one-line
+ * `note` for the log. Otherwise `bin` unchanged again, and the spawn's ENOENT
+ * is what explainUnspawnableClaude() turns into an actionable message.
+ *
+ * Pure with injected platform/pathEnv/exists/isNativeExe; the default
+ * (uninjected) resolution is memoised per bin+PATH — PATH does not change under
+ * a running process, and the probe is a handful of stat()s per spawn otherwise.
+ * @param {string} [bin]
+ * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean, isNativeExe?:(p:string)=>boolean}} [opts]
+ * @returns {{bin:string, source:'as-is'|'exe'|'npm', note:string|null}}
+ */
+export function resolveClaudeBin(bin = 'claude', opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== 'win32') return { bin, source: 'as-is', note: null };
+  const pathEnv = opts.pathEnv ?? (process.env.PATH ?? '');
+  const injected = Object.keys(opts).length > 0;
+  const key = `${bin}\0${pathEnv}`;
+  if (!injected && _resolveCache.has(key)) return _resolveCache.get(key);
+  const p = probeWindowsClaude(bin, {
+    pathEnv, exists: opts.exists ?? existsSync, native: opts.isNativeExe ?? _ov.isNativeExe ?? isNativeExe,
+  });
+  let out;
+  if (p.exe) out = { bin, source: 'exe', note: null };
+  else if (p.npm && p.npm.native) {
+    out = { bin: p.npm.exe, source: 'npm', note:
+      `using the npm-installed Claude Code binary ${p.npm.exe} ("${p.name}" on PATH is npm's .cmd shim, which Node cannot spawn directly)` };
+  } else out = { bin, source: 'as-is', note: null };
+  if (!injected) _resolveCache.set(key, out);
+  return out;
+}
+
 /**
  * Why a bare `claude` cannot be spawned on THIS host, or null when the generic
- * error is the whole story. Native Windows + npm-installed Claude Code: npm's
- * global install lays down `claude.cmd` / `claude.ps1` shims and no `.exe`,
- * but Windows resolves a bare name on PATH to `.exe` only, and Node refuses to
- * run .cmd/.bat without a shell (CVE-2024-27980) — so spawn('claude') is ENOENT
- * even though `where claude` finds it. The fix is the user's (native build, or
- * WORCA_CLAUDE_BIN → claude.exe); Worca's job is to SAY so instead of "ENOENT".
+ * error is the whole story (or when resolveClaudeBin() would have handled it).
+ * Two Windows cases get an actionable message: the npm shim with the package's
+ * binary still being the postinstall placeholder, and a shim with no native
+ * binary next to it at all (non-npm layout, or a pre-native package).
  *
- * Pure: platform / PATH / existence are injectable for tests. Never throws.
+ * Pure: platform / PATH / existence / PE check are injectable. Never throws.
  * @param {string} [bin] the configured claude binary (name or path)
- * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean}} [o]
+ * @param {{platform?:string, pathEnv?:string, exists?:(p:string)=>boolean, isNativeExe?:(p:string)=>boolean}} [o]
  * @returns {string|null}
  */
 export function explainUnspawnableClaude(bin = 'claude', {
   platform = process.platform,
   pathEnv = process.env.PATH ?? '',
   exists = existsSync,
+  isNativeExe: native = _ov.isNativeExe ?? isNativeExe,
 } = {}) {
   if (platform !== 'win32') return null;
-  const name = String(bin || 'claude').trim() || 'claude';
-  if (/\.exe$/i.test(name)) return null; // an explicit .exe that fails is a real ENOENT
-  const explicitPath = /[\\/]/.test(name);
-  const shimExt = /\.(cmd|bat|ps1)$/i.test(name);
-  const stems = explicitPath ? [name] : pathEnv.split(';').filter(Boolean).map((d) => join(d, name));
-  const ok = (p) => { try { return !!exists(p); } catch { return false; } }; // a probe error is "absent"
-  const shims = [];
-  for (const stem of stems) {
-    if (!shimExt && ok(stem + '.exe')) return null; // a real exe is reachable — not this problem
-    for (const ext of shimExt ? [''] : ['.cmd', '.bat', '.ps1']) {
-      if (ok(stem + ext)) shims.push(stem + ext);
-    }
+  const p = probeWindowsClaude(bin, { pathEnv, exists, native });
+  if (p.exe || !p.shims.length) return null;           // a real exe, or a plain "not installed"
+  if (p.npm && p.npm.native) return null;               // resolveClaudeBin() spawns this one — not a failure
+  const base = `"${p.name}" resolves to a script shim (${p.shims[0]}) — the npm install of Claude Code. ` +
+    'Windows only launches a .exe by name and Node cannot run a .cmd/.bat shim without a shell. ';
+  if (p.npm) {
+    const installer = join(dirname(dirname(p.npm.exe)), 'install.cjs');
+    return base + `Worca would run the package's native binary instead, but ${p.npm.exe} is still npm's ` +
+      `placeholder — the package's postinstall did not run (--ignore-scripts / --omit=optional). Run: node ${installer}, ` +
+      'or reinstall Claude Code without those flags.';
   }
-  if (!shims.length) return null;
-  return `"${name}" resolves to a script shim (${shims[0]}) — the npm install of Claude Code. ` +
-    'Windows only launches a .exe by name and Node cannot run a .cmd/.bat shim without a shell, ' +
-    'so Worca cannot start it. Install the native Windows build (irm https://claude.ai/install.ps1 | iex) ' +
-    'or set WORCA_CLAUDE_BIN to the full path of claude.exe.';
+  return base + `No native binary was found next to it (${join(dirname(p.shims[0]), ...NPM_CLAUDE_EXE_SEGMENTS)}). ` +
+    'Install the native Windows build (irm https://claude.ai/install.ps1 | iex), or set WORCA_CLAUDE_BIN to the full path of claude.exe.';
 }
 
 export async function probeClaudeCapabilities(bin = 'claude') {
-  const exe = bin && String(bin).trim() ? String(bin).trim() : 'claude';
+  const name = bin && String(bin).trim() ? String(bin).trim() : 'claude';
+  const exe = resolveClaudeBin(name).bin; // same resolution as the runner's spawn (npm shim → native .exe)
   const help = await execSafe(exe, ['--help'], { timeout: 8000 });
   const raw = await execSafe(exe, ['--version'], { timeout: 8000 });
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
