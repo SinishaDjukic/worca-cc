@@ -38,10 +38,56 @@ import { prepareModelEnv } from './model-env.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude } from './preflight.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
-import { constants as FS } from 'node:fs';
+import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
+
+/** What `--settings` carries, or null when there is nothing to carry (no hook
+ *  telemetry, no permission rules) — then the flag is omitted entirely. */
+export function buildSettingsPayload(permissionRules) {
+  const hook = buildHookSettings();
+  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
+  // truthy while hasRules stays false, so the whole policy would drop out of
+  // argv silently. Say it once, then take the same no-rules path (fail-open,
+  // matching the guardrail-set read path) — the empty/absent cases ({}, {deny: []}, null)
+  // are normal and stay quiet.
+  if (!hasRules && permissionRules && typeof permissionRules === 'object'
+      && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
+    console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
+  }
+  if (!hook && !hasRules) return null;
+  const settings = {};
+  if (hook) settings.hooks = hook.hooks;
+  if (hasRules) settings.permissions = permissionRules;
+  return { hook: !!hook, settings };
+}
+
+/**
+ * Largest command line we hand to spawn() inline (GH #380). Windows caps the
+ * whole CreateProcess command line at 32,767 chars and Linux caps a single
+ * argument at 128 KiB, and a real task prompt (a 1000-line markdown plus the
+ * rendered channel artifacts) sails past both — `spawn ENAMETOOLONG` / E2BIG at
+ * the first node. Above this limit the prompt travels on stdin and the system
+ * prompt / settings as files (planClaudeInvocation); below it the argv is
+ * byte-identical to what it always was. The figure leaves ~12K of headroom
+ * under the Windows cap for the exe path, quoting, and flags this measure
+ * cannot see, and is deliberately platform-independent so the offload path is
+ * exercised (and testable) everywhere, not only on Windows.
+ *
+ * Inline JSON, or the path of a file holding that same JSON when the invocation
+ * is staged (GH #380 — the CLI accepts either).
+ */
+export const ARGV_INLINE_LIMIT = 20000;
+
+/** Conservative size of the command line spawn() would build: every argument
+ *  quoted and space-separated, after the binary. Over-counts slightly on
+ *  purpose (a prompt with embedded quotes grows under Windows escaping). */
+export function argvLength(bin, args) {
+  return String(bin || '').length + args.reduce((n, a) => n + String(a).length + 3, 0);
+}
 
 /** The spawn-failure Error for `bin`: the OS message, plus the Windows npm-shim
  *  explanation when that is what actually went wrong (ENOENT on a bare name
@@ -118,27 +164,15 @@ export function buildHookSettings() {
  * flags would be last-wins at the CLI, silently dropping one payload.
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
+ * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules) {
-  const hook = buildHookSettings();
-  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
-  // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
-  // truthy while hasRules stays false, so the whole policy would drop out of
-  // argv silently. Say it once, then take the same no-rules path (fail-open,
-  // matching the guardrail-set read path) — the empty/absent cases ({}, {deny: []}, null)
-  // are normal and stay quiet.
-  if (!hasRules && permissionRules && typeof permissionRules === 'object'
-      && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
-    console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
-  }
-  if (!hook && !hasRules) return [];
-  const settings = {};
-  if (hook) settings.hooks = hook.hooks;
-  if (hasRules) settings.permissions = permissionRules;
+export function buildSettingsArgs(permissionRules, settingsFile = null) {
+  const payload = buildSettingsPayload(permissionRules);
+  if (!payload) return [];
   const args = [];
-  if (hook) args.push('--include-hook-events');
-  args.push('--settings', JSON.stringify(settings));
+  if (payload.hook) args.push('--include-hook-events');
+  args.push('--settings', settingsFile || JSON.stringify(payload.settings));
   return args;
 }
 
@@ -243,6 +277,7 @@ export function mockEnabled(opts) {
  * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
  * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
  *   All eight are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
+ * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -279,6 +314,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    argvInlineLimit,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -322,6 +358,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    argvInlineLimit,
   });
 }
 
@@ -353,11 +390,18 @@ export function buildClaudeArgs({
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
-}) {
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
+}, delivery = {}) {
+  // delivery (GH #380, set only by planClaudeInvocation's staged branch):
+  //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
+  //   systemPromptFile -> `--append-system-prompt-file <path>` instead of the text
+  //   settingsFile     -> `--settings <path>` instead of the inline JSON
+  const { promptViaStdin = false, systemPromptFile = null, settingsFile = null } = delivery;
+  const args = promptViaStdin ? ['-p'] : ['-p', prompt];
+  args.push('--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode);
   if (resumeSessionId) args.push('--resume', resumeSessionId);
   if (systemPrompt) {
-    args.push('--append-system-prompt', systemPrompt);
+    if (systemPromptFile) args.push('--append-system-prompt-file', systemPromptFile);
+    else args.push('--append-system-prompt', systemPrompt);
   }
   if (model) {
     args.push('--model', model);
@@ -368,7 +412,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules)) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile)) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -409,7 +453,56 @@ export function buildClaudeArgs({
   return args;
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt }) {
+/**
+ * Decide how ONE invocation reaches the CLI (GH #380). Pure: no I/O.
+ *  - inline (the common case): `args` is exactly buildClaudeArgs(opts); `stdin`
+ *    null; `files` empty.
+ *  - staged (argv over `limit`): the prompt goes on stdin (`-p` reads it — the
+ *    model sees the exact text, unlike a "read this file" instruction), the
+ *    system prompt and the settings JSON become files under `dir`, and no
+ *    argument carries free text any more, so the argv is short by construction.
+ * @param {object} opts  the buildClaudeArgs options
+ * @param {{bin?:string, dir?:string|(() => string), limit?:number}} [o]  `dir` may be a
+ *   factory, called only when staging is actually needed (so the caller creates
+ *   a temp dir exactly when one will be used)
+ * @returns {{args:string[], stdin:string|null, files:{path:string,content:string}[], staged:boolean, inlineLength:number}}
+ */
+export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limit = ARGV_INLINE_LIMIT } = {}) {
+  const inline = buildClaudeArgs(opts);
+  const inlineLength = argvLength(bin, inline);
+  if (inlineLength <= limit) return { args: inline, stdin: null, files: [], staged: false, inlineLength };
+  if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit');
+  if (typeof dir === 'function') dir = dir();
+  const files = [];
+  const prompt = typeof opts.prompt === 'string' ? opts.prompt : '';
+  const promptViaStdin = prompt.length > 0;             // an empty prompt stays `-p ''` — nothing to pipe
+  let systemPromptFile = null;
+  if (opts.systemPrompt) {
+    systemPromptFile = join(dir, 'system-prompt.md');
+    files.push({ path: systemPromptFile, content: opts.systemPrompt });
+  }
+  let settingsFile = null;
+  const payload = buildSettingsPayload(opts.permissionRules);
+  if (payload) {
+    settingsFile = join(dir, 'settings.json');
+    files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
+  }
+  const args = buildClaudeArgs(opts, { promptViaStdin, systemPromptFile, settingsFile });
+  return { args, stdin: promptViaStdin ? prompt : null, files, staged: true, inlineLength };
+}
+
+/** planClaudeInvocation + the I/O: a private temp dir is created and the files
+ *  written ONLY on the staged branch (`dir` is null otherwise, so the caller has
+ *  nothing to clean up). Synchronous on purpose — a few hundred KB once per
+ *  spawn, and it keeps the spawn sequence in runReal linear. */
+export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
+  let dir = null;
+  const plan = planClaudeInvocation(opts, { bin, limit, dir: () => (dir = mkdtempSync(join(tmpdir(), 'worca-claude-'))) });
+  for (const file of plan.files) writeFileSync(file.path, file.content, 'utf8');
+  return { ...plan, dir };
+}
+
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, argvInlineLimit }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -441,12 +534,30 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
     }
 
-    const args = buildClaudeArgs({
-      prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
-      mcpConfigPath, mcpServerGrants, permissionRules,
-      tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-      maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
-    });
+    // GH #380: inline argv when it fits, else prompt on stdin + files (see
+    // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
+    // terminal path below (finish) and on a failed spawn.
+    const limit = Number.isFinite(argvInlineLimit) && argvInlineLimit > 0 ? argvInlineLimit : ARGV_INLINE_LIMIT;
+    let plan;
+    try {
+      plan = stageClaudeInvocation({
+        prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
+        mcpConfigPath, mcpServerGrants, permissionRules,
+        tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+      }, { bin, limit });
+    } catch (err) {
+      rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
+      return;
+    }
+    const { args } = plan;
+    const cleanupStaged = () => {
+      if (!plan.dir) return;
+      try { rmSync(plan.dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    };
+    if (plan.staged) {
+      console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);
+    }
 
     // undefined when the guardrail is off, and the spread then adds NO `env` key —
     // spawn inherits process.env exactly as it did before guardrails existed.
@@ -461,10 +572,19 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
 
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}) });
+      child = spawn(bin, args, {
+        cwd, stdio: [plan.stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}),
+      });
     } catch (err) {
+      cleanupStaged();
       rejectP(spawnFailure(bin, err, `Failed to spawn ${bin}`));
       return;
+    }
+    if (plan.stdin != null) {
+      // A child that dies before draining stdin (bad flag, ENOENT surfaced
+      // late) raises EPIPE here; the 'error'/'close' handlers own the real cause.
+      child.stdin.on('error', () => {});
+      child.stdin.end(plan.stdin, 'utf8');
     }
 
     let resultText = '';
@@ -504,6 +624,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      cleanupStaged();
       fn(arg);
     };
 
