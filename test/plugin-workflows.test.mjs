@@ -49,7 +49,9 @@ function installFakePlugin(name, workflows = {}) {
   for (const [file, tpl] of Object.entries(workflows)) {
     writeFileSync(join(versionDir, 'workflows', file), JSON.stringify(tpl));
   }
-  symlinkSync(versionDir, join(pluginDir(name), 'current'), 'dir');
+  // 'junction' on Windows (a plain/dir symlink needs elevated privileges there);
+  // versionDir is absolute, as junctions require. Mirrors plugin-store's swap.
+  symlinkSync(versionDir, join(pluginDir(name), 'current'), process.platform === 'win32' ? 'junction' : 'dir');
   writePluginsLock({ ...readPluginsLock(), [name]: {
     repo: 'https://example.com/p.git', subdir: name, pinnedSha: 'a'.repeat(40),
     version: '0.1.0', enabled: true, installedAt: '2026-07-12T00:00:00.000Z',

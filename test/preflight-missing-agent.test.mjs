@@ -58,7 +58,9 @@ test('a key shipped by a DISABLED plugin gets the "enable it" message naming the
   writeFileSync(join(versionDir, 'agents', 'ghostAgent.md'), '# ghost\n');
   writeFileSync(join(versionDir, 'agents', 'ghostAgent.meta.json'),
     JSON.stringify({ key: 'ghostAgent', agentFile: 'ghostAgent.md', order: 50 }));
-  symlinkSync(versionDir, join(pluginDir('sleepy-source'), 'current'), 'dir');
+  // 'junction' on Windows (a plain/dir symlink needs elevated privileges there);
+  // versionDir is absolute, as junctions require. Mirrors plugin-store's swap.
+  symlinkSync(versionDir, join(pluginDir('sleepy-source'), 'current'), process.platform === 'win32' ? 'junction' : 'dir');
   writePluginsLock({ ...readPluginsLock(), 'sleepy-source': {
     repo: 'r', subdir: 'sleepy-source', pinnedSha: 'a'.repeat(40),
     version: '0.1.0', enabled: false, installedAt: '2026-07-12T00:00:00.000Z',

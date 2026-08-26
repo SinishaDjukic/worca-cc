@@ -29,8 +29,12 @@ export async function inventoryFromCache(repoUrl, sha, subdir, { exec = defaultE
     // be parsed as a git option (defense layer 2; the parser rejects it too).
     await exec('git', ['--git-dir', repoCacheDir(repoUrl), 'archive', '--format=tar', '-o', tar,
       ...(subdir ? [sha, '--', subdir] : [sha])]);
-    await exec('tar', ['-xf', tar, '-C', tmp,
-      ...(subdir ? ['--strip-components', String(subdir.split('/').length)] : [])]);
+    // Extract with cwd = tmp (the destination) so tar never receives a native
+    // Windows path: Git-for-Windows GNU tar reads a colon in `-f` as a `host:path`
+    // remote spec ("cannot connect to C:") and cannot parse backslash separators.
+    // A relative `-f` and no `-C` sidesteps both; the archive lands in cwd.
+    await exec('tar', ['-xf', 'x.tar',
+      ...(subdir ? ['--strip-components', String(subdir.split('/').length)] : [])], { cwd: tmp });
     await rm(tar, { force: true });
     // Defense-in-depth for the consent display: strip any symlink that escapes the
     // export root before inventorying (the tmp dir is deleted in finally regardless).

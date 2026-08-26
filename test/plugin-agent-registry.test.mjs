@@ -37,7 +37,9 @@ function installFakePlugin(name, agents, { enabled = true, broken = false } = {}
   const agentsDir = join(versionDir, 'agents');
   mkdirSync(agentsDir, { recursive: true });
   for (const [key, extra] of agents) writeAgent(agentsDir, key, extra);
-  if (!broken) symlinkSync(versionDir, join(pluginDir(name), 'current'), 'dir');
+  // 'junction' on Windows (a plain/dir symlink needs elevated privileges there);
+  // versionDir is absolute, as junctions require. Mirrors plugin-store's swap.
+  if (!broken) symlinkSync(versionDir, join(pluginDir(name), 'current'), process.platform === 'win32' ? 'junction' : 'dir');
   writePluginsLock({
     ...readPluginsLock(),
     [name]: {
