@@ -1,5 +1,5 @@
 // src/core/diff-comments.mjs
-// Internal, line-anchored comments on a run's persisted diff (diff_comments, v21).
+// Internal, line-anchored comments on a run's persisted diff (diff_comments, v22).
 // The ONE mutation module: the REST routes in ui/server.mjs and the Ask MCP tools
 // (through src/core/ask/comment-deps.mjs) both write through here, so anchor
 // validation, the protected-path floor, the body cap and the change notification

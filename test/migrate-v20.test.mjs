@@ -1,18 +1,18 @@
-// test/migrate-v19.test.mjs
+// test/migrate-v20.test.mjs
 //
-// v19 adds ask_cost_ledger — the append-only, FK-free Ask Worca spend ledger
+// v20 adds ask_cost_ledger — the append-only, FK-free Ask Worca spend ledger
 // (ask-cost-statistics-design.md §6) — and backfills one row per already-
 // persisted costed assistant message (cost_usd > 0), ts = the message's
 // created_at, tokens = the sum of the stored usage fields, so pre-upgrade chat
 // spend lands in Statistics. Threads deleted before the upgrade left no
 // messages (CASCADE), so they backfill nothing. Structure mirrors
 // test/migrate-v16.test.mjs: seed at current version through the production
-// writers, stamp user_version back, reopen — the ladder runs only the v19 step.
+// writers, stamp user_version back, reopen — the ladder runs only the v20 step.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { getDb, migrate, _resetForTests } from '../src/core/db.mjs';
+import { getDb, migrate, _resetForTests, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { createThread, appendMessage, finishMessage, deleteThread } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
@@ -30,7 +30,7 @@ const MINIMAL_SEED = `
 
 const ids = {};
 
-test('v18 -> v19 creates ask_cost_ledger and backfills costed messages', async () => {
+test('v19 -> v20 creates ask_cost_ledger and backfills costed messages', async () => {
   const db = getDb();
   // Fresh-install pin: the ladder (not just the heal) creates table + index.
   assert.ok(tableNames(db).includes('ask_cost_ledger'), 'fresh DB gets the table from the ladder');
@@ -72,13 +72,13 @@ test('v18 -> v19 creates ask_cost_ledger and backfills costed messages', async (
     usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 9, durationMs: 5 });
   deleteThread(t2.id);
 
-  // Rewind: drop the table the fresh-DB ladder already made, stamp 18, reopen.
+  // Rewind: drop the table the fresh-DB ladder already made, stamp 19, reopen.
   db.exec('DROP TABLE IF EXISTS ask_cost_ledger');
-  db.exec('PRAGMA user_version = 18');
+  db.exec('PRAGMA user_version = 19');
   _resetForTests();
   const db2 = getDb();
 
-  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 21);
+  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.ok(tableNames(db2).includes('ask_cost_ledger'));
   assert.ok(indexNames(db2).includes('idx_ask_cost_ledger_ts'));
   assert.deepEqual(cols(db2, 'ask_cost_ledger'),
@@ -104,23 +104,23 @@ test('v18 -> v19 creates ask_cost_ledger and backfills costed messages', async (
   assert.equal(r5.model, null, 'a message without a model backfills model NULL');
 });
 
-test('re-running the v19 step is a no-op: no duplicate rows', () => {
-  // A plain reopen takes the fast path and never re-enters applySchemaV19 —
-  // re-stamp 18 (partial upgrade / divergent stamp) so the ladder REALLY
+test('re-running the v20 step is a no-op: no duplicate rows', () => {
+  // A plain reopen takes the fast path and never re-enters applySchemaV20 —
+  // re-stamp 19 (partial upgrade / divergent stamp) so the ladder REALLY
   // re-runs the backfill against a populated ledger.
-  getDb().exec('PRAGMA user_version = 18');
+  getDb().exec('PRAGMA user_version = 19');
   _resetForTests();
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 2,
     'the NOT EXISTS guard suppresses re-inserts');
 });
 
 test('self-heal on the real home: dropping ONLY ask_cost_ledger recreates it', () => {
-  // Pins the askCostLedgerTable flag in reconcileSchema's clean-path condition:
-  // on an otherwise-healthy DB this table must be the thing that stops the
-  // early return. (The minimal-seed heal test below cannot see that flag —
-  // its seed has other gaps.)
+  // Pins the ask_cost_ledger INCREMENTAL_TABLES entry in reconcileSchema's
+  // clean-path condition: on an otherwise-healthy DB this table must be the thing
+  // that stops the early return. (The minimal-seed heal test below cannot see that
+  // gap — its seed has other gaps.)
   const db = getDb();
   db.exec('DROP TABLE ask_cost_ledger');
   _resetForTests();
@@ -128,21 +128,21 @@ test('self-heal on the real home: dropping ONLY ask_cost_ledger recreates it', (
     'reconcileSchema must not early-return on a DB whose only gap is this table');
 });
 
-test('ladder: a v18 DB gets ask_cost_ledger and is stamped 21', () => {
+test('ladder: a v19 DB gets ask_cost_ledger and is stamped current', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 18');
+  db.exec('PRAGMA user_version = 19');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.ok(tableNames(db).includes('ask_cost_ledger'), 'created by the ladder');
 });
 
-test('self-heal: a DB stamped 21 WITHOUT the table gets it from reconcileSchema, empty', () => {
+test('self-heal: a DB stamped current WITHOUT the table gets it from reconcileSchema, empty', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 21'); // divergent ladder: version says done, schema says otherwise
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`); // divergent ladder: version says done, schema says otherwise
   migrate(db);                          // fast path → reconcileSchema
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'stamp not rewritten');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'stamp not rewritten');
   assert.ok(tableNames(db).includes('ask_cost_ledger'), 'healed');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 0,
     'no backfill on the heal path (accepted, same as cost_ledger)');

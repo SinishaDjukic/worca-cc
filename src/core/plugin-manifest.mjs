@@ -17,7 +17,7 @@ const SOURCE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const FIELD_TYPES = new Set(['text', 'select']);
 const INPUT_TYPES = new Set(['text', 'select', 'remote-select', 'task-browser']);
 const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'chatChannels', 'setup', 'models', 'modelSecrets']);
-const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs']);
+const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
 const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
@@ -195,7 +195,14 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       if (browsers !== 1) {
         errors.push(`${at} ("${id}"): must declare exactly ONE input of type "task-browser" (found ${browsers}) — it is what produces the task (spec §7.4)`);
       }
-      taskSources.push({ id, displayName: str(s.displayName) || id, module, configSchema, inputs });
+      // multiProfile: the source can hold several independent configurations
+      // (two Jira servers, two GitHub orgs), each bound to a project/workspace.
+      // Opt-in, because it changes the settings UI from one form to a roster —
+      // a single-instance source should not pay that.
+      taskSources.push({
+        id, displayName: str(s.displayName) || id, module, configSchema, inputs,
+        multiProfile: s.multiProfile === true,
+      });
     });
   }
   const ids = taskSources.map((s) => s.id);

@@ -59,7 +59,7 @@ function rowToRunLink(r) {
   return {
     threadId: r.thread_id, runId: r.run_id, pipelineId: r.pipeline_id ?? null, cardId: r.card_id ?? null,
     status: r.status ?? null, phase: r.phase ?? null,
-    commentIds: parse(r.comment_ids, null) || [],     // v21: diff comments this run addresses
+    commentIds: parse(r.comment_ids, null) || [],     // v22: diff comments this run addresses
     createdAt: r.created_at,
   };
 }

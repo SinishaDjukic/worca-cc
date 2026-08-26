@@ -36,10 +36,15 @@ The catalog lives in `~/.worca-cc/settings.json` under a new `models` key, read/
 {
   "models": [
     {
-      "id": "glm-4.7",                       // what is passed to `claude --model`
+      "id": "glm-4.7",                       // worca's handle: config refs, cost
+                                             // flags, event attribution — and the
+                                             // wire id sent to `claude --model`
+                                             // UNLESS env.ANTHROPIC_MODEL overrides it (#374)
       "label": "GLM 4.7 (proxy)",            // display name; defaults to id
       "efforts": ["medium", "high"],         // subset of EFFORTS; defaults to all
-      "env": {                                // optional; merged into the spawn env
+      "env": {                                // optional; merged into the spawn env.
+                                              // ANTHROPIC_MODEL here becomes the wire id
+                                              // passed to `--model` (the id stays the handle)
         "ANTHROPIC_BASE_URL": "https://proxy.example/v1",
         "ANTHROPIC_AUTH_TOKEN": "sk-…"
       }
@@ -47,6 +52,19 @@ The catalog lives in `~/.worca-cc/settings.json` under a new `models` key, read/
   ]
 }
 ```
+
+> **Upgrade behavior (#374):** an entry's `env.ANTHROPIC_MODEL` was previously
+> stored-but-inert (the spawned `--model <id>` outranked the env var in the CLI).
+> As of #374 it is the **wire id** passed to `--model`, so a legal-but-dead stored
+> value now changes which model the endpoint runs. An unresolvable/empty value
+> falls back to the catalog id with a warning.
+>
+> **Cost-honesty caveat (§4.6):** the cost-unreliable watchdog gates on the
+> `ANTHROPIC_BASE_URL` key only. A base-URL-less routing shape — e.g.
+> `CLAUDE_CODE_USE_VERTEX=1` + `ANTHROPIC_MODEL` — is the config #374 makes
+> functional, but it is currently invisible to `observeModelCost`: no
+> cost-unreliable badge, and USD budget may record $0 for real spend. Widening
+> the gate is a follow-up.
 
 Reader contract mirrors the module's house style: missing/corrupt → `[]`, per-entry sanitization is loud-and-lenient (drop malformed entries with a `console.warn` naming them), setters throw on invalid input. Sanitization rules:
 

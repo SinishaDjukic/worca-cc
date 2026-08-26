@@ -16,7 +16,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import {
   pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, pluginsRoot, writePluginsLock,
 } from '../src/core/plugins-lock.mjs';
-import { writePluginConfig } from '../src/core/plugin-config.mjs';
+import { writePluginConfig, createProfile } from '../src/core/plugin-config.mjs';
+import { setBinding, listBindingsForScope } from '../src/core/source-bindings.mjs';
 import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
   setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin,
@@ -194,10 +195,14 @@ test('doctorPlugin: detects missing node_modules when setup.node; heals detectio
 
 test('uninstallPlugin keeps data/ by default; purge removes everything', async () => {
   writePluginConfig(NAME, [{ key: 'token', secret: true }], { token: 'keep' });
+  // Bindings live in the DB, not in data/: uninstall must drop them (CLI path
+  // included) or a reinstall with a same-named profile silently rebinds.
+  setBinding({ scopeType: 'project', scopeKey: 'proj-x', plugin: NAME, sourceId: 'demo' }, 'work');
   const r = await uninstallPlugin(NAME);
   assert.equal(r.ok, true);
   assert.equal(r.dataKept, true);
   assert.match(r.note, /kept/);
+  assert.deepEqual(listBindingsForScope('project', 'proj-x'), [], 'bindings cleared with the uninstall');
   assert.equal(existsSync(join(pluginDataDir(NAME), 'secrets.json')), true, 'secrets survive uninstall');
   assert.equal(existsSync(join(pluginDir(NAME), 'versions')), false);
   assert.equal(existsSync(pluginCurrentDir(NAME)), false);
@@ -377,4 +382,37 @@ test('doctor + uninstall guard for plugin models: block-with-list, clear, then u
   await setNodeModel(proj, 'wf_m', 's1_0', { model: '', effort: '' });
   const r = await uninstallPlugin('modelful-plugin', { purge: true });
   assert.equal(r.ok, true);
+});
+
+test('doctorPlugin: a multiProfile source with an EMPTY roster is unhealthy, not green', async () => {
+  // Every run of such a source is rejected ("profile is required") until a
+  // profile exists — validating the implicit default bucket instead can report
+  // green off migrated legacy config while nothing can actually run.
+  const dir = join(scratch, 'profiled-dev');
+  writeTree(dir, {
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'profiled-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+      taskSources: [{
+        id: 'src', displayName: 'Profiled', module: './connector/index.mjs', multiProfile: true,
+        configSchema: [{ key: 'token', type: 'text', secret: true, required: true, label: 'Token' }],
+        inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
+      }],
+    }),
+    'connector/index.mjs': 'export default () => ({});\n',
+  });
+  linkPlugin('profiled-plugin', dir);
+
+  const empty = await doctorPlugin('profiled-plugin');
+  assert.equal(empty.ok, false);
+  const gap = empty.checks.find((c) => c.id === 'config:src');
+  assert.equal(gap.ok, false);
+  assert.match(gap.detail, /no profiles yet/);
+
+  // With a roster the check runs per profile (WORCA_MOCK cans validateConfig ok).
+  createProfile('profiled-plugin', 'work', 'Work');
+  const withProfile = await doctorPlugin('profiled-plugin');
+  assert.ok(withProfile.checks.some((c) => c.id === 'config:src@work' && c.ok));
+  assert.ok(!withProfile.checks.some((c) => c.id === 'config:src'), 'no default-bucket check for a rostered source');
+
+  await uninstallPlugin('profiled-plugin', { purge: true });
 });

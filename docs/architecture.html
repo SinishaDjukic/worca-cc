@@ -1,0 +1,190 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worca Architecture</title>
+<style>
+  :root{
+    --bg:#FFFFFF; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --dark:#131419; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:10px 14px 22px}
+
+  h1{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800;
+    font-size:clamp(30px,4.2vw,48px)}
+  .sub{color:var(--ink-2);font-size:clamp(17px,1.8vw,20px);margin:0}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:18px;
+    padding:clamp(20px,2.6vw,34px);position:relative;overflow:hidden}
+  .sec:first-child{margin-top:0}
+  .sec.plain{background:transparent;border-radius:0;padding:clamp(6px,1vw,10px) 0 0;overflow:visible}
+
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.1s}.rv.d2{transition-delay:.2s}
+
+  /* hero header (compact) */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%);
+    display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+
+  /* ============ DIAGRAM ============ */
+  .band-label{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .band-label .t{font-size:13px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+  .band-label .rule{flex:1;height:1px;background:var(--line)}
+
+  .comp{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);
+    padding:16px 18px 14px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:7px}
+  .comp .ct{font-weight:800;font-size:18px;text-align:center;line-height:1.2}
+  .comp .bl{display:flex;flex-wrap:wrap;gap:5px;justify-content:center}
+
+  .badge{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 8px;white-space:nowrap}
+  .badge.blue{background:var(--wash-2);color:var(--ocean-deep)}
+  .badge.green{background:#E4F0E7;color:var(--ok)}
+  .badge.amber{background:#FBEEDC;color:#9A6A17}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+
+  .row4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .row5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  @media (max-width:860px){.row4,.row5{grid-template-columns:repeat(2,1fr)}}
+
+  /* plain connector */
+  .conn{display:flex;justify-content:center;padding:10px 0}
+  .conn .stem{width:2px;height:26px;background:var(--ocean);border-radius:2px;position:relative}
+  .conn .stem::after{content:"";position:absolute;left:-4px;bottom:-2px;border:5px solid transparent;border-top:7px solid var(--ocean)}
+
+  /* deployment boundary */
+  .host{border:2px dashed #B9B4A8;border-radius:var(--r-md);background:var(--card-2);
+    padding:clamp(14px,2vw,20px);position:relative}
+  .host-tag{position:absolute;top:-17px;left:22px;display:flex;gap:8px}
+  .host-tag .ht{background:var(--ink);color:#fff;border-radius:999px;padding:7px 16px;
+    font-size:12.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap}
+  .host-tag .hs{background:#FBEEDC;border:1px solid #EDD9AE;border-radius:999px;padding:7px 16px;
+    font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9A6A17;white-space:nowrap}
+  @media (max-width:560px){.host-tag .hs{letter-spacing:0;padding:7px 11px}}
+
+  /* the app block */
+  .app{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);padding:16px;margin-top:8px}
+  .blk-head{display:flex;flex-direction:column;align-items:center;gap:7px;margin-bottom:12px}
+  .blk-head b{font-size:19px;letter-spacing:-.01em}
+  .blk-head .bb{display:flex;gap:6px}
+  .app-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+  @media (max-width:640px){.app-grid{grid-template-columns:repeat(2,1fr)}}
+  .mod{border:1px solid var(--line);border-radius:9px;background:var(--card-2);
+    padding:13px 12px;text-align:center}
+  .mod .mt{font-weight:800;font-size:16.5px}
+
+  /* claude code block — stacked cards */
+  .cc-wrap{position:relative}
+  .cc-wrap::before,.cc-wrap::after{content:"";position:absolute;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card)}
+  .cc-wrap::before{inset:-8px -8px 8px 8px;z-index:0}
+  .cc-wrap::after{inset:-4px -4px 4px 4px;z-index:1}
+  .cc{position:relative;z-index:2;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);
+    padding:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+  .cc b{font-size:19px;letter-spacing:-.01em}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:18px 6px 0;color:var(--ink-3);font-size:14px;flex-wrap:wrap;gap:8px}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .rv{opacity:1;transform:none}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- hero header -->
+  <section class="sec hero rv in">
+    <h1>Worca Architecture</h1>
+    <p class="sub">You talk to Worca, Worca drives the headless Claude Code harness, and the harness talks to your model — cloud or on-prem. The host is your laptop or a server. Everything is a plugin.</p>
+  </section>
+
+  <!-- ============ DIAGRAM ============ -->
+  <section class="sec plain">
+    <div role="img" aria-label="Component stack: four clients on top, the Worca host — your laptop or a server — in the middle containing the @worca/app engine and spawned headless Claude Code harness processes, and five model endpoints at the bottom.">
+
+      <!-- YOU -->
+      <div class="rv">
+        <div class="band-label"><span class="t">You</span><span class="rule"></span></div>
+        <div class="row4">
+          <div class="comp"><div class="ct">Web UI</div></div>
+          <div class="comp"><div class="ct">CLI</div></div>
+          <div class="comp"><div class="ct">/worca Skill</div></div>
+          <div class="comp"><div class="ct">Chat</div><span class="bl"><span class="badge amber">Telegram</span><span class="badge amber">Slack</span><span class="badge amber">Discord</span><span class="badge amber">Teams</span></span></div>
+        </div>
+        <div class="conn"><span class="stem"></span></div>
+      </div>
+
+      <!-- HOST -->
+      <div class="host rv d1">
+        <div class="host-tag">
+          <span class="ht">Worca host</span>
+          <span class="hs">Dev Machine</span>
+          <span class="hs">Server</span>
+        </div>
+
+        <div class="app">
+          <div class="blk-head"><b>@worca/app</b><span class="bb"><span class="badge blue">interactive</span><span class="badge blue">headless</span></span></div>
+          <div class="app-grid">
+            <div class="mod"><div class="mt">Engine</div></div>
+            <div class="mod"><div class="mt">Agents</div></div>
+            <div class="mod"><div class="mt">Workflows</div></div>
+            <div class="mod"><div class="mt">Guardrails</div></div>
+            <div class="mod"><div class="mt">Costs &amp; Budgets</div></div>
+            <div class="mod"><div class="mt">Plugins</div></div>
+          </div>
+        </div>
+
+        <div class="conn"><span class="stem"></span></div>
+
+        <div class="cc-wrap">
+          <div class="cc"><b>Claude Code Harness ×N</b><span class="badge blue">headless</span></div>
+        </div>
+      </div>
+
+      <!-- MODELS -->
+      <div class="rv d2">
+        <div class="conn"><span class="stem"></span></div>
+        <div class="band-label"><span class="t">Models</span><span class="rule"></span></div>
+        <div class="row5">
+          <div class="comp"><div class="ct">Anthropic Cloud</div><span class="badge grey">default</span></div>
+          <div class="comp"><div class="ct">Gateway / Proxy</div></div>
+          <div class="comp"><div class="ct">On-Prem</div><span class="badge green">air-gapped</span></div>
+          <div class="comp"><div class="ct">Dev Machine</div><span class="badge green">air-gapped</span></div>
+          <div class="comp"><div class="ct">Bedrock / Vertex</div></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>Worca · <span class="mono">@worca/app</span> · MIT</span>
+    <span class="mono">npm install -g @worca/app</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var rvs = document.querySelectorAll('.rv');
+  if (reduce) { rvs.forEach(function(el){ el.classList.add('in'); }); return; }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){ if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, {threshold:.15});
+  rvs.forEach(function(el){ io.observe(el); });
+})();
+</script>

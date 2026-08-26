@@ -15,7 +15,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { getDb, _resetForTests } from '../src/core/db.mjs';
+import { getDb, _resetForTests, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { getStats } from '../src/core/stats.mjs';
 
 useTempHome(after);
@@ -66,7 +66,7 @@ test('v15 -> v16 backfills cost_ledger from pre-ledger pipeline costs', async ()
   _resetForTests();
   const db2 = getDb();
 
-  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 21);
+  assert.equal(db2.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 
   const rowsFor = db2.prepare(
     'SELECT step_key, amount_usd, ts FROM cost_ledger WHERE pipeline_id = ? ORDER BY id');
@@ -93,7 +93,7 @@ test('v15 -> v16 backfills cost_ledger from pre-ledger pipeline costs', async ()
 test('reopen after backfill is a no-op: no duplicate synthetic rows', () => {
   _resetForTests();
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM cost_ledger').get();
   assert.equal(n, 4, 'still exactly A + B + E + D’s pre-existing row');
 });

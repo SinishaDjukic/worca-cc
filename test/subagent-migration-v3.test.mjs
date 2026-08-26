@@ -10,7 +10,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getDb, _resetForTests, dbPath } from '../src/core/db.mjs';
+import { getDb, _resetForTests, dbPath, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 
 const _require = createRequire(import.meta.url);
@@ -82,7 +82,7 @@ test('opening a user_version=2 DB forward-migrates to v3 (adds sub_agents.ui_pha
   seed.close();
 
   const db = getDb();
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'forward-migrated to v21');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'forward-migrated to the current version');
   const cols = db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name);
   assert.ok(cols.includes('ui_phase'), 'ui_phase column added by v2->v3 migration');
   assert.equal(

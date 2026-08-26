@@ -50,8 +50,10 @@ const BUSY_TIMEOUT_MS = 5000;
 const OPEN_RETRY_LIMIT = 100;
 const OPEN_BACKOFF_MS = 15;
 
-/** Latest schema version. Bump + append a new migration step when the DDL grows. */
-const SCHEMA_VERSION = 21;
+/** Latest schema version. Bump + append a new migration step when the DDL grows.
+ *  Exported so migration tests assert "reached the module's current version"
+ *  instead of hardcoding the number — a schema bump then touches no test file. */
+export const SCHEMA_VERSION = 22;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -513,6 +515,29 @@ CREATE TABLE IF NOT EXISTS step_questions (
 );
 `;
 
+/**
+ * v18 (task-source profiles): which PROFILE of a plugin task source a project or
+ * workspace uses. One row per (scope, plugin, source) — a project that pulls from
+ * two different sources binds each independently.
+ *
+ * scope_type is 'project' | 'workspace'; scope_key is projects.key or
+ * workspaces.id respectively. Deliberately NOT a foreign key: a binding must
+ * survive a project being removed and re-added at the same path (the key is a
+ * path hash, so it comes back identical), and source-bindings.mjs already treats
+ * a row whose plugin/profile no longer exists as "no binding".
+ */
+const SOURCE_BINDINGS_DDL = `
+CREATE TABLE IF NOT EXISTS source_bindings (
+  scope_type TEXT NOT NULL,   -- 'project' | 'workspace'
+  scope_key  TEXT NOT NULL,   -- projects.key | workspaces.id
+  plugin     TEXT NOT NULL,
+  source_id  TEXT NOT NULL,
+  profile    TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key, plugin, source_id)
+);
+`;
+
 const GUARDRAIL_SETS_DDL = `
 CREATE TABLE IF NOT EXISTS guardrail_sets (
   id         TEXT PRIMARY KEY,
@@ -549,10 +574,10 @@ CREATE TABLE IF NOT EXISTS model_cost_flags (
 );
 `;
 
-/** v18: Ask Worca — assistant chat threads, messages, attachments and run links
+/** v19: Ask Worca — assistant chat threads, messages, attachments and run links
  *  (ask-worca-design.md §7.1). ALL `IF NOT EXISTS`, because this DDL runs from TWO
- *  places: the `< 18` ladder step AND the schemaGaps() self-heal — a live DB stamped
- *  18 by a divergent ladder (another branch) would otherwise never get the tables.
+ *  places: the `< 19` ladder step AND the schemaGaps() self-heal — a live DB stamped
+ *  19 by a divergent ladder (another branch) would otherwise never get the tables.
  *  Nothing here is ALTERed later; a future ask_* column goes into INCREMENTAL_COLUMNS. */
 const ASK_DDL = `
 CREATE TABLE IF NOT EXISTS ask_threads (
@@ -605,7 +630,7 @@ CREATE TABLE IF NOT EXISTS ask_run_links (
 );
 `;
 
-/** v19: append-only Ask Worca spend ledger (ask-cost-statistics-design.md §6).
+/** v20: append-only Ask Worca spend ledger (ask-cost-statistics-design.md §6).
  *  NO foreign key on thread_id: spend is a permanent financial fact and must
  *  survive thread deletion (cost_ledger precedent). One row per completed turn
  *  with a finite cost > 0; tokens = input+output+cacheRead+cacheCreation. */
@@ -622,8 +647,8 @@ CREATE TABLE IF NOT EXISTS ask_cost_ledger (
 CREATE INDEX IF NOT EXISTS idx_ask_cost_ledger_ts ON ask_cost_ledger (ts);
 `;
 
-/** v20: Ask Worca worktrees — per-thread detached git checkouts
- *  (ask-worca-worktrees-design.md §4). IF NOT EXISTS + a schemaGaps flag (the
+/** v21: Ask Worca worktrees — per-thread detached git checkouts
+ *  (ask-worca-worktrees-design.md §4). IF NOT EXISTS + an INCREMENTAL_TABLES entry (the
  *  ask_cost_ledger precedent): reconcile-safe on divergent-stamp DBs. The git
  *  state lives on disk under <worcaHome>/ask/<threadId>/wt/<id>; these rows are
  *  the registry the cascade, the sweep and the UI read. */
@@ -643,8 +668,8 @@ CREATE TABLE IF NOT EXISTS ask_worktrees (
 CREATE INDEX IF NOT EXISTS idx_ask_worktrees_thread ON ask_worktrees (thread_id);
 `;
 
-/** v21: internal, line-anchored comments on a run's persisted diff. IF NOT EXISTS
- *  + schemaGaps flags (the ask_worktrees precedent): reconcile-safe on divergent-
+/** v22: internal, line-anchored comments on a run's persisted diff. IF NOT EXISTS
+ *  + INCREMENTAL_TABLES entries (the ask_worktrees precedent): reconcile-safe on divergent-
  *  stamp DBs. The anchor is (project_key, path, side, line_no) against
  *  diff-patch.patch; `line_text` is the server-captured snapshot of that row, which
  *  is what keeps a comment readable after the patch is gone. `source` and
@@ -713,7 +738,46 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
   workflows:              { domain: 'TEXT', origin: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER' },
-  ask_run_links:          { comment_ids: 'TEXT' },        // v21: JSON array of dc_ ids pending at launch
+  ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+};
+
+/**
+ * Tables added after v1, keyed by name -> their IF-NOT-EXISTS DDL. Same hazard
+ * as INCREMENTAL_COLUMNS: a divergent ladder in another checkout can stamp the
+ * user_version past the step that creates one, so schemaGaps probes for them
+ * version-independently rather than trusting the stamp. A DDL block that creates
+ * several tables (ASK_DDL, DIFF_COMMENTS_DDL) is listed under EACH of them, so a
+ * DB missing only one is healed; repairSchemaGaps de-duplicates at exec time.
+ */
+const INCREMENTAL_TABLES = {
+  step_questions:    STEP_QUESTIONS_DDL,
+  guardrail_sets:    GUARDRAIL_SETS_DDL,
+  cost_ledger:       COST_LEDGER_DDL,
+  model_cost_flags:  MODEL_COST_FLAGS_DDL,
+  source_bindings:   SOURCE_BINDINGS_DDL,
+  ask_threads:       ASK_DDL,
+  ask_messages:      ASK_DDL,
+  ask_attachments:   ASK_DDL,
+  ask_run_links:     ASK_DDL,
+  ask_cost_ledger:   ASK_COST_LEDGER_DDL,
+  ask_worktrees:     ASK_WORKTREES_DDL,
+  diff_comments:     DIFF_COMMENTS_DDL,
+  ask_card_comments: DIFF_COMMENTS_DDL,
+};
+
+/**
+ * Indexes added after their host table shipped, keyed by index name. Same hazard
+ * as INCREMENTAL_TABLES, but a missing index cannot be inferred from a missing
+ * table: idx_ask_attachments_thread was added to ASK_DDL after v19 shipped, so a
+ * DB that already HAS ask_attachments never re-runs that DDL. Probed only when
+ * the host table exists — otherwise INCREMENTAL_TABLES fires the DDL, which
+ * carries the CREATE INDEX itself.
+ */
+const INCREMENTAL_INDEXES = {
+  idx_ask_attachments_thread: {
+    table: 'ask_attachments',
+    ddl: 'CREATE INDEX IF NOT EXISTS idx_ask_attachments_thread ON ask_attachments (thread_id)',
+  },
 };
 
 /**
@@ -737,83 +801,41 @@ function missingColumns(db) {
   return missing;
 }
 
+const hasSqliteObject = (db, type, name) => db.prepare(
+  "SELECT count(*) AS n FROM sqlite_master WHERE type=? AND name=?"
+).get(type, name).n > 0;
+
 /**
- * Return missingColumns() plus `stepQuestionsTable`/`guardrailSetsTable: true`
- * flags when those IF-NOT-EXISTS tables are missing (safe to reassert on any
- * stamped DB). Cheap and read-only: one PRAGMA table_info per known table + one
- * sqlite_master probe each, no writes.
+ * The INCREMENTAL_COLUMNS gaps plus the names of any INCREMENTAL_TABLES /
+ * INCREMENTAL_INDEXES that do not exist yet (all CREATEs are IF NOT EXISTS, so
+ * reasserting one on any stamped DB is safe). Cheap and read-only: PRAGMA
+ * table_info per known table plus one sqlite_master probe each, no writes.
  */
 function schemaGaps(db) {
-  const missing = missingColumns(db);
-  const hasStepQuestions = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='step_questions'"
-  ).get().n > 0;
-  const hasGuardrailSets = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='guardrail_sets'"
-  ).get().n > 0;
-  const hasCostLedger = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cost_ledger'"
-  ).get().n > 0;
-  const hasModelCostFlags = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='model_cost_flags'"
-  ).get().n > 0;
-  const hasAskThreads = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_threads'"
-  ).get().n > 0;
-  const hasAskCostLedger = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_cost_ledger'"
-  ).get().n > 0;
-  const hasAskWorktrees = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_worktrees'"
-  ).get().n > 0;
-  const hasDiffComments = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='diff_comments'"
-  ).get().n > 0;
-  const hasAskCardComments = db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='ask_card_comments'"
-  ).get().n > 0;
-  // Added after v18 shipped (review of PR #376): every per-thread attachment read
-  // (`threadAttachmentBytes`, the snapshot, the delete cascade) scanned the table.
-  // IF NOT EXISTS, so it is probed here rather than by a version bump.
-  const hasAskAttachmentsIndex = hasAskThreads && db.prepare(
-    "SELECT count(*) AS n FROM sqlite_master WHERE type='index' AND name='idx_ask_attachments_thread'"
-  ).get().n > 0;
-  return {
-    askAttachmentsIndex: hasAskThreads && !hasAskAttachmentsIndex,
-    columns: missing,
-    stepQuestionsTable: !hasStepQuestions,
-    guardrailSetsTable: !hasGuardrailSets,
-    costLedgerTable: !hasCostLedger,
-    modelCostFlagsTable: !hasModelCostFlags,
-    askTables: !hasAskThreads,
-    askCostLedgerTable: !hasAskCostLedger,
-    askWorktreesTable: !hasAskWorktrees,
-    // ONE flag for both tables: they are created by one IF NOT EXISTS DDL block, so
-    // re-asserting it when either is missing is idempotent and heals the other (and
-    // recreates the index, which schemaGaps never probes directly).
-    diffCommentTables: !(hasDiffComments && hasAskCardComments),
-  };
+  const tables = Object.keys(INCREMENTAL_TABLES)
+    .filter((t) => !hasSqliteObject(db, 'table', t));
+  const indexes = Object.entries(INCREMENTAL_INDEXES)
+    .filter(([name, { table }]) => hasSqliteObject(db, 'table', table)
+                                && !hasSqliteObject(db, 'index', name))
+    .map(([name]) => name);
+  return { columns: missingColumns(db), tables, indexes };
 }
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
  *  the transaction (the ladder tx in migrate(), or reconcileSchema's own lock).
- *  ORDER IS LOAD-BEARING: tables FIRST, then the columns RE-probed against the
- *  post-CREATE schema. `gaps.columns` was computed BEFORE this pass ran, so it
- *  cannot see an incremental column on a table this pass is about to create
- *  (ask_run_links.comment_ids on a >=19-stamped DB missing the ask tables) — the
- *  ALTER would be skipped and the DB stamped current with the column absent, and
- *  only a LATER migrate() would heal it. No gap DDL references an
- *  INCREMENTAL_COLUMNS column, so nothing here needs an ALTER to run first. */
+ *  ORDER IS LOAD-BEARING: tables and indexes FIRST, then the columns RE-probed
+ *  against the post-CREATE schema. `gaps.columns` was computed BEFORE this pass
+ *  ran, so it cannot see an incremental column on a table this pass is about to
+ *  create (ask_run_links.comment_ids on a >=20-stamped DB missing the ask
+ *  tables) — the ALTER would be skipped and the DB stamped current with the
+ *  column absent, and only a LATER migrate() would heal it. No gap DDL
+ *  references an INCREMENTAL_COLUMNS column, so nothing here needs an ALTER to
+ *  run first. */
 function repairSchemaGaps(db, gaps) {
-  if (gaps.stepQuestionsTable) db.exec(STEP_QUESTIONS_DDL);
-  if (gaps.guardrailSetsTable) db.exec(GUARDRAIL_SETS_DDL);
-  if (gaps.costLedgerTable) db.exec(COST_LEDGER_DDL);
-  if (gaps.modelCostFlagsTable) db.exec(MODEL_COST_FLAGS_DDL);
-  if (gaps.askTables) db.exec(ASK_DDL);
-  if (gaps.askCostLedgerTable) db.exec(ASK_COST_LEDGER_DDL);
-  if (gaps.askWorktreesTable) db.exec(ASK_WORKTREES_DDL);
-  if (gaps.diffCommentTables) db.exec(DIFF_COMMENTS_DDL);
-  if (gaps.askAttachmentsIndex) db.exec('CREATE INDEX IF NOT EXISTS idx_ask_attachments_thread ON ask_attachments (thread_id)');
+  // One DDL block can create several tables (ASK_DDL, DIFF_COMMENTS_DDL) — the
+  // Set collapses the duplicate keys to a single idempotent exec.
+  for (const ddl of new Set((gaps.tables || []).map((t) => INCREMENTAL_TABLES[t]))) db.exec(ddl);
+  for (const name of gaps.indexes || []) db.exec(INCREMENTAL_INDEXES[name].ddl);
   for (const { table, col, type } of missingColumns(db)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   }
@@ -832,10 +854,8 @@ function repairSchemaGaps(db, gaps) {
  */
 function reconcileSchema(db) {
   const gaps = schemaGaps(db);
-  if (gaps.columns.length === 0 && !gaps.stepQuestionsTable && !gaps.guardrailSetsTable
-      && !gaps.costLedgerTable && !gaps.modelCostFlagsTable && !gaps.askTables
-      && !gaps.askCostLedgerTable && !gaps.askWorktreesTable && !gaps.diffCommentTables
-      && !gaps.askAttachmentsIndex) return; // clean — no lock
+  if (gaps.columns.length === 0 && gaps.tables.length === 0
+      && gaps.indexes.length === 0) return; // clean — no lock
   db.exec('BEGIN IMMEDIATE');
   try {
     repairSchemaGaps(db, schemaGaps(db)); // re-probe under the lock: race-safe
@@ -862,7 +882,7 @@ function applySchemaV12(db) {
 /**
  * Incremental v12 -> v13 migration (plugin task-sources, spec 2026-07-12 §10):
  *   pipelines.source_type TEXT DEFAULT 'prompt'  -- 'prompt' | 'markdown' | 'plugin'
- *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,url,title}; NULL unless plugin
+ *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title}; NULL unless plugin
  *   workflows.origin      TEXT                   -- 'plugin:<name>' provenance; NULL = user-created
  * Implemented as a CONDITIONAL repair (same shape as applySchemaV12), NOT a plain
  * DDL string: the three columns live in INCREMENTAL_COLUMNS (hard rule above), so
@@ -880,7 +900,7 @@ function applySchemaV13(db) {
  *   guardrail_sets table            -- named guardrail sets (built-ins are virtual, never rows)
  *   pipelines.guardrails_id TEXT    -- the run's selected set id; NULL = legacy/pre-entity row
  * A CONDITIONAL repair like applySchemaV12/13, NOT plain DDL: the column lives in
- * INCREMENTAL_COLUMNS and the table in the schemaGaps flags, so earlier heals on a
+ * INCREMENTAL_COLUMNS and the table in INCREMENTAL_TABLES, so earlier heals on a
  * ladder pass from <12 have ALREADY added them — an unconditional ALTER/CREATE
  * would throw "duplicate column"/"table already exists" on every fresh DB.
  */
@@ -939,17 +959,17 @@ function applySchemaV16(db) {
 }
 
 /**
- * v18 -> v19 (ask-cost-statistics-design.md §6): ask_cost_ledger — the
+ * v19 -> v20 (ask-cost-statistics-design.md §6): ask_cost_ledger — the
  * append-only, FK-free Ask Worca spend ledger (survives thread deletion) —
  * plus a backfill of one row per already-persisted costed assistant message,
  * so pre-upgrade chat spend lands in Statistics. Gap-repair first, v12-v16
  * style; the NOT EXISTS guard keeps re-runs (divergent stamps) idempotent.
  * Threads deleted before the upgrade left no messages (CASCADE) — accepted.
- * The backfill runs only on a ladder pass through <19; a binary downgrade
- * after v19 leaves its chat spend un-ledgered forever (the stamp stays 19) —
+ * The backfill runs only on a ladder pass through <20; a binary downgrade
+ * after v20 leaves its chat spend un-ledgered forever (the stamp stays 20) —
  * same accepted posture as cost_ledger.
  */
-function applySchemaV19(db) {
+function applySchemaV20(db) {
   repairSchemaGaps(db, schemaGaps(db));
   // A hand-built or divergent DB (minimal test seeds) can lack ask_messages
   // columns entirely — such a DB never stored a chat cost, nothing to backfill.
@@ -979,7 +999,7 @@ function applySchemaV19(db) {
   }
 }
 
-/** v21: both new tables are IF NOT EXISTS and the one new ask_run_links column
+/** v22: both new tables are IF NOT EXISTS and the one new ask_run_links column
  *  lives in INCREMENTAL_COLUMNS, so the whole step IS the reconcile — the
  *  applySchemaV12/13/14/15 shape, with nothing to backfill.
  *  On a FRESH DB (indeed any ladder pass from <12) this step is already a no-op
@@ -987,10 +1007,10 @@ function applySchemaV19(db) {
  *  it fires ASK_DDL and DIFF_COMMENTS_DDL, and — because repairSchemaGaps ALTERs
  *  its columns AFTER its CREATEs, against a re-probe — adds
  *  ask_run_links.comment_ids in that same pass. This step is what serves an
- *  EXISTING v19/v20 DB (and any stamp that first materialises ask_run_links right
+ *  EXISTING v20/v21 DB (and any stamp that first materialises ask_run_links right
  *  here), and re-running it is idempotent by construction.
  */
-function applySchemaV21(db) {
+function applySchemaV22(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
@@ -1043,10 +1063,13 @@ export function migrate(db) {
     if (current < 15) applySchemaV15(db);
     if (current < 16) applySchemaV16(db);
     if (current < 17) db.exec(MODEL_COST_FLAGS_DDL); // IF NOT EXISTS — reconcile-safe
-    if (current < 18) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
-    if (current < 19) applySchemaV19(db);
-    if (current < 20) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
-    if (current < 21) applySchemaV21(db);            // tables + the ask_run_links column
+    // v17 -> v18 (task-source profiles): source_bindings. IF NOT EXISTS —
+    // reconcileSchema may already have created it on a divergently-stamped DB.
+    if (current < 18) db.exec(SOURCE_BINDINGS_DDL);
+    if (current < 19) db.exec(ASK_DDL);              // IF NOT EXISTS — reconcile-safe
+    if (current < 20) applySchemaV20(db);            // ask_cost_ledger + backfill
+    if (current < 21) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
+    if (current < 22) applySchemaV22(db);            // tables + the ask_run_links column
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

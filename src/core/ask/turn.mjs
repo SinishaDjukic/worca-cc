@@ -209,7 +209,7 @@ class AskTurn extends EventEmitter {
     // mid-turn — sits OUTSIDE the store try/catches above so it is never
     // skipped; best-effort so a DB hiccup still settles the frames. Written
     // after finishMessage: a process death between the two loses only this
-    // row (accepted — the v19 backfill never re-runs). Runs on done, stopped
+    // row (accepted — the v20 backfill never re-runs). Runs on done, stopped
     // AND error turns alike: a result frame means money was spent.
     try {
       d.recordAskCost({

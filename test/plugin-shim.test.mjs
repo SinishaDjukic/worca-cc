@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
-import { writePluginConfig, writePluginState, readPluginState } from '../src/core/plugin-config.mjs';
+import { writePluginConfig, writePluginState, readPluginState, createProfile, deleteProfile } from '../src/core/plugin-config.mjs';
 import { callSource, PluginOpError, setMockSourceResponses } from '../src/core/plugin-shim.mjs';
 
 useTempHome(after);
@@ -52,6 +52,15 @@ function installFixture() {
       module: './connector/index.mjs',
       configSchema: SCHEMA,
       inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
+    }, {
+      // multiProfile sibling: callSource must refuse to run it profile-less
+      // (the guard lives in the shim so the CLI is covered, not just the routes).
+      id: 'prof',
+      displayName: 'Mock Echo (profiled)',
+      module: './connector/index.mjs',
+      multiProfile: true,
+      configSchema: SCHEMA,
+      inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
     }],
   }));
   writeFileSync(join(cur, 'connector', 'index.mjs'), CONNECTOR);
@@ -89,11 +98,61 @@ test('connector-thrown error maps to PluginOpError with the connector kind', asy
   );
 });
 
-test("unimplemented op yields kind 'plugin' + a 'does not implement' message", async () => {
-  // Task 13's capabilities tolerant-default depends on exactly this behavior.
+test("unimplemented op yields kind 'unimplemented' + a 'does not implement' message", async () => {
+  // Task 13's capabilities tolerant-default keys on exactly this kind — it must
+  // stay distinguishable from an IMPLEMENTED op that crashed (kind 'plugin'),
+  // or a crash would force writeBack:true past a pinned per-run opt-out.
   await rejectsKind(
     callSource({ plugin: NAME, sourceId: 'main', op: 'capabilities' }),
-    'plugin', /does not implement op "capabilities"/,
+    'unimplemented', /does not implement op "capabilities"/,
+  );
+});
+
+test('profile invariant is enforced in callSource itself (CLI-safe, not just the routes)', async () => {
+  // A multi-profile source silently defaulting to the empty default bucket
+  // would report false "not configured" verdicts and persist state into a
+  // bucket no real run reads — refuse before any spawn.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp' }),
+    'plugin', /per-profile configuration/,
+  );
+  // A profile on a single-profile source would read a phantom bucket.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'echoOp', profile: 'work' }),
+    'plugin', /does not use profiles/,
+  );
+  // Naming the implicit bucket explicitly is fine — it is the one that runs.
+  const viaDefault = await callSource({ plugin: NAME, sourceId: 'main', op: 'echoOp', profile: 'default' });
+  assert.equal(viaDefault.token, 'sekret');
+  // And a named ROSTER profile reaches ITS bucket, not the default one.
+  createProfile(NAME, 'work', 'Work');
+  writePluginConfig(NAME, SCHEMA, { token: 'work-tok' }, 'work');
+  const viaWork = await callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'work' });
+  assert.equal(viaWork.token, 'work-tok');
+});
+
+test('profile MEMBERSHIP is enforced too: typo, reserved default, deleted — all refused', async () => {
+  // Presence alone is not enough (`worca plugin exec … --profile wokr`): a
+  // typo'd profile would run against an EMPTY bucket, yield a false "not
+  // configured" verdict, and then MINT a phantom state bucket the DELETE route
+  // can never purge. The roster is the source of truth.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'wokr' }),
+    'plugin', /has no profile "wokr"/,
+  );
+  // "default" on a multiProfile source is the reserved shared bucket (chat
+  // channels, model secrets, migrated legacy config) — never a profile.
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'default' }),
+    'plugin', /reserved shared bucket/,
+  );
+  // A profile deleted between submit and a later call is caught at call time,
+  // not read as an empty bucket mid-run.
+  createProfile(NAME, 'gone', 'Doomed');
+  deleteProfile(NAME, 'gone');
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'prof', op: 'echoOp', profile: 'gone' }),
+    'plugin', /has no profile "gone"/,
   );
 });
 
@@ -147,8 +206,16 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     setMockSourceResponses({ listTasks: { tasks: [{ id: 'T-override', title: 't', state: 'open', updatedAt: 'now' }] } });
     const overridden = await callSource({ plugin: 'x', sourceId: 'x', op: 'listTasks' });
     assert.equal(overridden.tasks[0].id, 'T-override');
-    // …and an op with NO canned response mirrors the real child's kind 'plugin'.
-    await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'plugin');
+    // …and an op with NO canned response mirrors the real child's kind
+    // 'unimplemented' (the capabilities tolerant-default keys on it).
+    await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'unimplemented');
+    // Behavioral parity: when the plugin IS installed, the profile invariant
+    // holds in mock mode too — a mock run must catch a missing profile exactly
+    // like a real one would.
+    await rejectsKind(
+      callSource({ plugin: NAME, sourceId: 'prof', op: 'listTasks' }),
+      'plugin', /per-profile configuration/,
+    );
   } finally {
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);

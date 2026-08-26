@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, renderAvailableList, renderMarketplaceList, relTime,
 } from '../ui/public/plugins-view.mjs';
 
@@ -76,6 +76,55 @@ test('config form masks secrets; collect skips untouched {set:true} markers', ()
   assert.equal(collectConfigForm(form).values.token, 'ghp_new');
 });
 
+// ── profiles ───────────────────────────────────────────────────────────────────
+// A multiProfile source holds several independent configurations (two Jira
+// instances, two GitHub orgs). The settings pane becomes a roster + the
+// selected profile's form; a single-profile source must not pay for any of it.
+test('a multiProfile source renders a profile roster and stamps the form with it', () => {
+  const schema = [{ key: 'ticketUrl', type: 'text', label: 'Ticket URL', secret: false, required: true, default: null, help: null, options: [] }];
+  const root = renderConfigForm([{
+    id: 'jira', schema, multiProfile: true,
+    profile: 'acme',
+    profiles: [{ id: 'acme', label: 'Acme' }, { id: 'globex', label: null }],
+    values: { ticketUrl: 'https://t.example.com/browse/A-1' },
+  }], { doc });
+
+  const sel = root.querySelector('.pl-profile-sel');
+  assert.ok(sel, 'roster select must render');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['acme', 'globex']);
+  assert.equal(sel.value, 'acme', 'the echoed profile is the selected one');
+  assert.match([...sel.options][0].textContent, /Acme/);
+  assert.equal([...sel.options][1].textContent, 'globex', 'no label falls back to the id');
+  assert.ok(root.querySelector('.pl-profile-add'), 'can add a profile');
+  assert.ok(root.querySelector('.pl-profile-del'), 'can remove one');
+
+  // The form carries the profile, so a save/connect targets the right bucket
+  // rather than whichever the server would have defaulted to.
+  const form = root.querySelector('.pl-config-form');
+  assert.equal(form.dataset.profile, 'acme');
+  assert.deepEqual(collectConfigForm(form), {
+    sourceId: 'jira', profile: 'acme', values: { ticketUrl: 'https://t.example.com/browse/A-1' },
+  });
+});
+
+test('a multiProfile source with NO profiles yet asks for one instead of showing a form', () => {
+  // Saving into a profile that does not exist is the one thing the server
+  // rejects outright, so an empty roster must not render a fillable form.
+  const schema = [{ key: 'ticketUrl', type: 'text', label: 'Ticket URL', secret: false, required: true, default: null, help: null, options: [] }];
+  const root = renderConfigForm([{ id: 'jira', schema, multiProfile: true, profile: null, profiles: [], values: {} }], { doc });
+  assert.equal(root.querySelector('.pl-config-form'), null, 'no form without a profile to write to');
+  assert.ok(root.querySelector('.pl-profile-add'), 'the only offered action is creating one');
+  assert.match(root.textContent, /No profiles yet/i);
+});
+
+test('a single-profile source is untouched: no roster, and collect omits profile', () => {
+  const schema = [{ key: 'apiBase', type: 'text', label: 'API base', secret: false, required: false, default: null, help: null, options: [] }];
+  const root = renderConfigForm([{ id: 'github', schema, values: { apiBase: 'https://api.github.com' } }], { doc });
+  assert.equal(root.querySelector('.pl-profile-bar'), null, 'no profile UI for a single-instance source');
+  const got = collectConfigForm(root.querySelector('.pl-config-form'));
+  assert.ok(!('profile' in got), 'the profile key never appears for a single-profile source');
+});
+
 test('update preview shows commit subjects + diffstat + enabled confirm', () => {
   const el = renderUpdatePreview({
     pinnedSha: 'a1b2c3d4e5f6', candidateSha: 'f00dfacecafe',
@@ -120,6 +169,32 @@ test('plugin list shows enabled toggle, disabled state, broken badge, contributi
   assert.ok(cards[1].querySelector('.pl-broken'), 'broken badge must render');
   assert.equal(cards[1].querySelector('.pl-version').textContent, 'deadbee', 'sha7 stands in for a missing version');
   assert.equal(cards[1].querySelector('.pl-remove').dataset.name, 'jira-source'); // delegation hook
+});
+
+test('connect result: connected / waiting / field errors, and a bare transport error', () => {
+  const okEl = renderConnectResult(
+    { ok: true, identity: 'Jane Doe', instance: { baseUrl: 'https://tracker.example.com/jira', project: 'PROJ' } },
+    { doc },
+  );
+  assert.equal(okEl.querySelector('.badge').textContent, 'connected');
+  assert.match(okEl.textContent, /Jane Doe/);
+  assert.match(okEl.textContent, /tracker\.example\.com\/jira · PROJ/); // which instance, not just who
+  // An older/unknown instance is simply omitted, never rendered as "null".
+  assert.doesNotMatch(renderConnectResult({ ok: true, identity: 'X' }, { doc }).textContent, /null/);
+
+  // pending is the poll signal: setup is legitimately mid-flight, not failed.
+  const waitEl = renderConnectResult({ ok: false, pending: true, message: 'Browser opening — sign in there.' }, { doc });
+  assert.equal(waitEl.querySelector('.badge').textContent, 'waiting');
+  assert.match(waitEl.textContent, /Browser opening/);
+
+  const errEl = renderConnectResult({ ok: false, errors: [{ field: 'ticketUrl', message: 'Paste any ticket URL.' }] }, { doc });
+  assert.equal(errEl.querySelector('.badge').textContent, 'not connected');
+  assert.equal(errEl.querySelectorAll('.pl-connect-err').length, 1);
+  assert.match(errEl.textContent, /ticketUrl/);
+
+  // No envelope at all (shim transport failure) still renders one row.
+  const bare = renderConnectResult({ ok: false, error: { kind: 'timeout', message: 'jtr whoami timed out' } }, { doc });
+  assert.match(bare.textContent, /timed out/);
 });
 
 test('doctor report + references-409 render rows', () => {

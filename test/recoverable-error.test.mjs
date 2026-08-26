@@ -49,6 +49,15 @@ test('classifies the Claude CLI mid-response disconnect as network', () => {
   assert.equal(classifyError(new Error('Connection error.')), 'network');
 });
 
+test('classifies the Claude CLI API timeout as network', () => {
+  // The exact string the headless CLI folds into its reject when an API request
+  // times out (the reported refine-step failure: a ~1h stall, then exit 1).
+  assert.equal(classifyError(new Error('claude exited with code 1: Request timed out')), 'network');
+  assert.equal(classifyError(new Error('Request timed out')), 'network');
+  assert.equal(classifyError(new Error('API Error: Request timeout')), 'network');
+  assert.equal(classifyError(new Error('the request timed-out after 60000ms')), 'network');
+});
+
 test('returns null for a plain bug and accepts a raw string / nullish', () => {
   assert.equal(classifyError(new Error('TypeError: x is not a function')), null);
   assert.equal(classifyError('401 Invalid authentication credentials'), 'auth');

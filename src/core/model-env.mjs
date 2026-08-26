@@ -49,9 +49,12 @@ export function modelEnvRef(value) {
 /**
  * Defensive spawn-time pass over a model entry's env (§4.4): drops reserved
  * keys and non-string values, and expands whole-value ${VAR} refs from
- * `sourceEnv` (an unset or empty var drops the key). Write-time validation
- * already rejects reserved keys, so a drop here means a hand-edited settings
- * file — the caller owns warning about `dropped`.
+ * `sourceEnv` (an unset or empty var drops the key). Values are trimmed and a
+ * value that is empty after trimming drops the key — an ANTHROPIC_MODEL wire id
+ * (#374) reaches `--model` verbatim, so a stray-whitespace or empty value must
+ * not survive. Write-time validation already rejects reserved keys, so a drop
+ * here means a hand-edited settings file — the caller owns warning about
+ * `dropped`.
  * @param {Record<string,*>|undefined} modelEnv
  * @param {Record<string,string|undefined>} [sourceEnv]
  * @returns {{env: Record<string,string>, dropped: string[]}}
@@ -64,10 +67,13 @@ export function prepareModelEnv(modelEnv, sourceEnv = process.env) {
     const ref = modelEnvRef(v);
     if (ref !== null) {
       const resolved = sourceEnv ? sourceEnv[ref] : undefined;
-      if (resolved === undefined || resolved === '') { dropped.push(k); continue; }
-      env[k] = resolved;
+      const t = typeof resolved === 'string' ? resolved.trim() : '';
+      if (!t) { dropped.push(k); continue; }
+      env[k] = t;
     } else {
-      env[k] = v;
+      const t = v.trim();
+      if (!t) { dropped.push(k); continue; }
+      env[k] = t;
     }
   }
   return { env, dropped };

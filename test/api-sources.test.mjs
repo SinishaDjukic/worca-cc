@@ -37,6 +37,15 @@ const MANIFEST = {
       { key: 'repo', type: 'remote-select', label: 'Repo', optionsFrom: 'listRepos' },
       { key: 'task', type: 'task-browser', label: 'Task' },
     ],
+  }, {
+    // A second, multiProfile source: the profile-required guards on /api/run,
+    // /api/sources/call and the config echo all branch on this flag.
+    id: 'prof',
+    displayName: 'Profiled Source',
+    module: './connector/index.mjs',
+    multiProfile: true,
+    configSchema: [{ key: 'token', type: 'text', label: 'Token', secret: true, required: true }],
+    inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
   }],
 };
 const CONNECTOR = `export default function createTaskSource(ctx) {
@@ -102,7 +111,9 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   delete process.env.WORCA_MOCK;
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
-  await rm(homeDir, { recursive: true, force: true });
+  // A fire-and-forget mock run may still be writing into the store when this
+  // hook runs — same ENOTEMPTY race rmWithRetry exists for.
+  await rmWithRetry(homeDir);
   await rm(pluginDir, { recursive: true, force: true });
 });
 
@@ -166,6 +177,30 @@ test('POST /api/run source-shape guards -> 400 with pointed messages', async () 
   assert.match((await r.json()).error, /not both/);
 });
 
+test('multiProfile source without a profile is rejected at submit, not mid-run', async () => {
+  const projectDir = join(tmpdir(), 'worca-cc-never-created'); // guard fires before any mkdir
+  // /api/run: a run against the (empty) default bucket would die mid-pipeline
+  // with a confusing connector error — the submit is where the client can fix it.
+  let r = await post('/api/run', {
+    projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'prof', taskId: 't1' },
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /source\.profile is required/);
+  // The single-profile sibling is untouched by the guard (shape-checked only).
+  r = await post('/api/run', { projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'main', taskId: 't1', profile: 'NOT-valid!' } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /not a valid profile id/);
+  // /api/sources/call has the same requirement.
+  r = await post('/api/sources/call', { plugin: 'local-src', sourceId: 'prof', op: 'listTasks', args: { inputs: {} } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /profile is required/);
+  // Config echo: a profile that is not in the roster is a caller error — an
+  // empty form for it would let Save quietly create the typo as a profile.
+  r = await get('/api/plugins/local-src/config?profile=no-such');
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /has no profile/);
+});
+
 test('POST /api/run with a plugin source stamps pipelines.source_type/source_ref', async () => {
   const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-srcrun-'));
   const r = await post('/api/run', {
@@ -216,6 +251,62 @@ test('legacy POST /api/run { prompt } is byte-identical: 200 + runId, default so
   const bad = await post('/api/run', { projectDir: join(tmpdir(), 'worca-cc-never-created') });
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).error, 'prompt or promptMarkdown is required');
+});
+
+test('profiles: "default" is reserved, and a save never mints a profile the roster does not know', async () => {
+  const put = (p, b) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(b) });
+  const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
+  // "default" backs every profile-less read (chat channels, model secrets,
+  // migrated legacy config) — it must be neither creatable nor deletable.
+  let r = await post('/api/plugins/local-src/profiles', { sourceId: 'prof', id: 'default', label: 'Nope' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /reserved/);
+  r = await del('/api/plugins/local-src/profiles/default?sourceId=prof');
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /reserved/);
+  // A save into a non-roster profile is the GET guard's typo scenario from the
+  // write side: 400, and the typo is NOT quietly minted as a real profile.
+  r = await put('/api/plugins/local-src/config', { sourceId: 'prof', profile: 'wrok', values: { token: 't' } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /has no profile "wrok"/);
+  let cfg = await (await get('/api/plugins/local-src/config')).json();
+  assert.deepEqual(cfg.sources.find((s) => s.id === 'prof').profiles, [], 'roster untouched by the rejected save');
+  // The sanctioned path: POST /profiles first, then the save lands.
+  r = await post('/api/plugins/local-src/profiles', { sourceId: 'prof', id: 'work', label: 'Work' });
+  assert.equal(r.status, 200);
+  r = await put('/api/plugins/local-src/config', { sourceId: 'prof', profile: 'work', values: { token: 't' } });
+  assert.equal(r.status, 200);
+  cfg = await (await get('/api/plugins/local-src/config')).json();
+  assert.deepEqual(cfg.sources.find((s) => s.id === 'prof').profiles, [{ id: 'work', label: 'Work' }]);
+});
+
+test('a deleted (or stray) profile is rejected at submit on /api/run and /api/sources/call', async () => {
+  const projectDir = join(tmpdir(), 'worca-cc-never-created'); // guards fire before any mkdir
+  // multiProfile + a profile the roster does not know (deleted in another tab):
+  // 400 at submit, not a confusing connector failure mid-pipeline.
+  let r = await post('/api/run', {
+    projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'prof', taskId: 't1', profile: 'ghost' },
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /has no profile "ghost"/);
+  // A profile on a single-profile source would read a phantom bucket instead
+  // of the real config — rejected, not silently honored.
+  r = await post('/api/run', {
+    projectDir, source: { type: 'plugin', plugin: 'local-src', sourceId: 'main', taskId: 't1', profile: 'work' },
+  });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /does not use profiles/);
+  // Same pair of guards on the pane's data channel.
+  r = await post('/api/sources/call', { plugin: 'local-src', sourceId: 'prof', op: 'listTasks', profile: 'ghost', args: { inputs: {} } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /has no profile "ghost"/);
+  r = await post('/api/sources/call', { plugin: 'local-src', sourceId: 'main', op: 'listTasks', profile: 'work', args: { inputs: {} } });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /does not use profiles/);
+  // The roster member sails through (mock cans listTasks).
+  r = await post('/api/sources/call', { plugin: 'local-src', sourceId: 'prof', op: 'listTasks', profile: 'work', args: { inputs: {} } });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).ok, true);
 });
 
 test('POST /api/pipelines/:id/report-result: 404 unknown id; mock write-back retry -> { ok: true }', async () => {

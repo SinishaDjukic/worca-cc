@@ -63,8 +63,20 @@ test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceM
     );
     assert.equal(input.promptFile, null);
     assert.deepEqual(input.sourceMeta, {
-      plugin: 'gh', sourceId: 'issues', taskId: 'T-9', url: 'https://tracker.test/T-9', title: 'Fix login',
+      plugin: 'gh', sourceId: 'issues', taskId: 'T-9', profile: null, inputs: null,
+      url: 'https://tracker.test/T-9', title: 'Fix login',
     });
+
+    // A multi-profile source pins WHICH configuration the task came from, so
+    // write-back later reports to that instance even if the project has since
+    // been re-bound to another one. The source-panel inputs are pinned for the
+    // same reason: a per-run choice (e.g. writeBack) gates THIS run's report.
+    const bound = await resolveTaskInput(
+      { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-9', profile: 'client', inputs: { writeBack: 'yes' } },
+      { projectDir: tmp() },
+    );
+    assert.equal(bound.sourceMeta.profile, 'client');
+    assert.deepEqual(bound.sourceMeta.inputs, { writeBack: 'yes' });
     // empty meta => no fence; null task => throws
     setMockSourceResponses({ getTask: { id: 'T-1', title: 'T', state: 'open', updatedAt: 'x', body: 'b', meta: {} } });
     const bare = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-1' }, { projectDir: tmp() });

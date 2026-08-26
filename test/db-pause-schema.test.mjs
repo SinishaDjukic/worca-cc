@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { getDb } from '../src/core/db.mjs';
+import { getDb, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { writeState } from '../src/core/artifacts.mjs';
 
 useTempHome(after);
@@ -20,7 +20,7 @@ test('v5 adds resume_point and session_id columns', () => {
   assert.ok(cols('pipelines').includes('resume_point'), 'pipelines.resume_point exists');
   assert.ok(cols('pipeline_steps').includes('session_id'), 'pipeline_steps.session_id exists');
   const v = getDb().prepare('PRAGMA user_version').get().user_version;
-  assert.equal(v, 21);
+  assert.equal(v, SCHEMA_VERSION);
 });
 
 test('writeState persists resumePoint and per-step sessionId', async () => {

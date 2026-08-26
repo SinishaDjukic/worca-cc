@@ -195,7 +195,7 @@ test('project card: propose → Start via /api/run → started flip, notice, fol
   w.ws.close();
 });
 
-// v21: the propose→launch→state chain also carries diff-comment ids. The mock
+// v22: the propose→launch→state chain also carries diff-comment ids. The mock
 // propose scenario cannot pass commentIds through the model, so the card→ids
 // mapping is written directly — that IS the seam turn._onProposal writes and the
 // only part of the chain this test is not about. What it DOES cover is the two

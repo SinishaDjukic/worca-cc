@@ -835,7 +835,7 @@ Usage:
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
   worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
-  worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]   Debug one connector op
+  worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]   Debug one connector op
   worca plugin channel <name> <channelId> [--check] [--inspect]            Run a chat channel worker in the
                                                   foreground (typed lines = simulated inbound); --check runs
                                                   the module's validateConfig once and exits
@@ -1311,9 +1311,9 @@ async function cmdPlugin(argv) {
       }
 
       case 'exec': {
-        const a = pluginArgs(rest, ['--args'], ['--inspect']);
+        const a = pluginArgs(rest, ['--args', '--profile'], ['--inspect']);
         const [name, sourceId, op] = a._;
-        if (!name || !sourceId || !op) fail("Usage: worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--inspect]");
+        if (!name || !sourceId || !op) fail("Usage: worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]");
         if (a.inspect) process.env.WORCA_PLUGIN_INSPECT = '1'; // shim spawns the child with --inspect-brk
         let args = {};
         if (a.args) {
@@ -1324,7 +1324,9 @@ async function cmdPlugin(argv) {
           }
         }
         const { callSource } = await import('../core/plugin-shim.mjs');
-        const result = await callSource({ plugin: name, sourceId, op, args });
+        // --profile targets one instance of a multi-profile source; absent, the
+        // shim falls back to the implicit default bucket (single-profile case).
+        const result = await callSource({ plugin: name, sourceId, op, args, profile: a.profile || undefined });
         process.stdout.write(JSON.stringify(result, null, 2) + '\n'); // stdout = result ONLY
         return 0;
       }

@@ -554,11 +554,15 @@ function sanitizeGlobalModel(raw) {
   const env = {};
   const rawEnv = raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env) ? raw.env : {};
   for (const [k, v] of Object.entries(rawEnv)) {
-    if (isReservedModelEnvKey(k) || typeof v !== 'string' || !v) {
+    // Trim before storing: an ANTHROPIC_MODEL wire id (#374) reaches `--model`
+    // verbatim, so a pasted ' claude-opus-4-8' or whitespace-only value must not
+    // land on disk. Whitespace-only (truthy but empty after trim) is dropped.
+    const t = typeof v === 'string' ? v.trim() : '';
+    if (isReservedModelEnvKey(k) || typeof v !== 'string' || !t) {
       console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} (reserved or not a non-empty string)`);
       continue;
     }
-    env[k] = v;
+    env[k] = t;
   }
   return {
     id,

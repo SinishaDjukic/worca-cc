@@ -43,6 +43,10 @@ const state = {
   // --- Pluggable task sources (New Pipeline) ---
   pluginSources: [],        // GET /api/sources entries with type:'plugin'
   activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
+  // The profile the active source resolved to for the selected project /
+  // workspace (multiProfile sources only; null otherwise). Submitted with the
+  // run so the pipeline records WHICH instance the task came from.
+  activePluginProfile: null,
 };
 
 import {
@@ -74,7 +78,7 @@ import {
 } from './file-tree.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderDoctorReport, renderReferences409,
+  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
@@ -86,7 +90,9 @@ import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
-import { renderSourcePane, collectSourcePane } from './source-pane.mjs';
+import {
+  renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
+} from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
@@ -4746,21 +4752,35 @@ async function loadTaskSources() {
     el.sourceSeg.appendChild(b);
   }
   // Active source vanished (uninstalled/disabled)? Fall back to the radios.
-  if (state.activePluginSource && !state.pluginSources.some((s) =>
-      s.plugin === state.activePluginSource.plugin && s.sourceId === state.activePluginSource.sourceId)) {
+  const fresh = state.activePluginSource && state.pluginSources.find((s) =>
+    s.plugin === state.activePluginSource.plugin && s.sourceId === state.activePluginSource.sourceId);
+  if (state.activePluginSource && !fresh) {
     state.activePluginSource = null;
     el.pluginSourcePane.replaceChildren();
     syncSourceToggle();
+  } else if (fresh && fresh !== state.activePluginSource
+      && JSON.stringify(fresh) !== JSON.stringify(state.activePluginSource)) {
+    // Same source, CHANGED payload — its `profiles` roster is the usual thing
+    // that moves behind the pane's back (added/removed in Plugins settings).
+    // Re-point and re-mount, or the profile bar keeps offering a stale list.
+    // `fresh` is a new object on EVERY fetch, so equality is by value: an
+    // unchanged source keeps the mounted pane (and the user's search, results
+    // and picked task) instead of rebuilding it on each return to this view.
+    state.activePluginSource = fresh;
+    mountPluginSourcePane(fresh);
   }
 }
 
 // The pane's injected `call`: one connector op via POST /api/sources/call.
-function sourceCall(src) {
+// `profile` is the project's binding for a multi-profile source (undefined
+// otherwise) — without it the connector would run against whichever instance
+// the server defaulted to.
+function sourceCall(src, profile) {
   return async (op, args) => {
     const res = await fetch('/api/sources/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plugin: src.plugin, sourceId: src.sourceId, op, args: args || {} }),
+      body: JSON.stringify({ plugin: src.plugin, sourceId: src.sourceId, op, args: args || {}, profile }),
     });
     const data = await safeJson(res);
     if (!res.ok || data.ok === false) {
@@ -4781,24 +4801,151 @@ function selectPluginSource(src, btn) {
   mountPluginSourcePane(src);
 }
 
+// Which project/workspace a binding hangs off, in the shape both binding routes
+// accept. null when nothing is selected yet.
+function bindingScopeRef() {
+  if (state.runTarget === 'workspace') {
+    const id = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    return id ? { workspaceId: id } : null;
+  }
+  const dir = selectedProjectPath();
+  return dir ? { projectDir: dir } : null;
+}
+
+function bindingScopeLabel() {
+  if (state.runTarget === 'workspace') {
+    const ws = state.workspaces.find((w) => w && w.id === (el.workspaceSelect && el.workspaceSelect.value));
+    return (ws && ws.name) || 'this workspace';
+  }
+  return selectedProjectName() || 'this project';
+}
+
+/**
+ * The profile this project/workspace pulls from, or null when the user still
+ * has to say. Only multi-profile sources ask; everything else resolves to
+ * undefined and behaves exactly as it did before profiles existed.
+ * @returns {Promise<{profile?:string, gate?:object}|null>} null = no scope yet
+ */
+async function resolveSourceProfile(src) {
+  if (!src.multiProfile) return { profile: undefined };
+  const ref = bindingScopeRef();
+  if (!ref) return null;
+  const qs = new URLSearchParams({ ...ref, plugin: src.plugin, sourceId: src.sourceId });
+  const { ok, status, data } = await pluginApi('GET', `/api/source-bindings?${qs.toString()}`);
+  // An HTTP failure is NOT "no binding": rendering the first-time gate on a
+  // transient 500 invites the user to overwrite a correct standing binding.
+  // Throw so the caller's retry branch handles it like a network error.
+  if (!ok) throw new Error((data && data.error) || `HTTP ${status}`);
+  if (data.profile) return { profile: data.profile, via: data.via };
+  return {
+    gate: {
+      source: src,
+      profiles: src.profiles || [],
+      via: data.via || 'none',
+      candidates: data.candidates || [],
+      scopeLabel: bindingScopeLabel(),
+    },
+    ref,
+  };
+}
+
 // validateConfig gate first (= "Test connection"); then the declarative pane.
 async function mountPluginSourcePane(src) {
   const host = el.pluginSourcePane;
-  const call = sourceCall(src);
+  // A caller that lost the pane while it awaited (an onPick/retry resolving
+  // after the user switched sources) must not claim it back and orphan the
+  // current owner's loop. Synchronous, so it cannot race the claim below.
+  if (state.activePluginSource !== src) return;
+  // Claim the pane BEFORE the first await. Every mount takes a run id, and any
+  // older mount still in flight (a slow binding fetch, the SSO poll loop) stands
+  // down at its next owns() check. Source identity alone is NOT enough: the
+  // same src object is remounted when the project changes, and the binding is
+  // per-project — an old project's late resolve must never paint (or pin a
+  // profile for) the newly selected project's pane.
+  const run = (Number(host.dataset.gateRun) || 0) + 1;
+  host.dataset.gateRun = String(run);
+  const owns = () => host.isConnected && host.dataset.gateRun === String(run)
+    && state.activePluginSource === src;
+  // Tear the previous pane down BEFORE the first await, not after it resolves:
+  // while the binding fetch is in flight the old scope's task list, picked
+  // task and resolved profile would otherwise stay live and SUBMITTABLE — a
+  // Start in that window runs the new project against the old project's
+  // tracker, the exact silent-wrong-tracker mistake bindings exist to prevent.
+  state.activePluginProfile = null;
   host.replaceChildren(Object.assign(document.createElement('small'),
-    { className: 'hint', textContent: `Checking ${src.displayName} configuration…` }));
-  let v;
-  try { v = await call('validateConfig', {}); }
-  catch (e) { v = { ok: false, errors: [{ message: e.message }] }; }
-  if (state.activePluginSource !== src) return;   // user switched away meanwhile
-  host.replaceChildren();
-  if (!v || v.ok === false) {
+    { className: 'hint', textContent: `Checking ${src.displayName}…` }));
+  // A multi-profile source cannot be asked anything until it is known WHICH
+  // instance to ask, so the binding is resolved before the connection check.
+  // A FAILED resolve (server briefly unreachable mid project switch) must not
+  // resurrect the previous scope's pane either — error box with retry.
+  let resolved;
+  try {
+    resolved = await resolveSourceProfile(src);
+  } catch (err) {
+    if (!owns()) return;
+    state.activePluginProfile = null;
+    const box = document.createElement('div');
+    box.className = 'sp-config-missing';
+    box.appendChild(Object.assign(document.createElement('p'),
+      { className: 'hint err', textContent: `Could not resolve the source profile: ${err.message}` }));
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-ghost btn-mini';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => mountPluginSourcePane(src));
+    box.appendChild(retry);
+    host.replaceChildren(box);
+    return;
+  }
+  if (!owns()) return;
+  if (!resolved) {
+    host.replaceChildren(Object.assign(document.createElement('small'),
+      { className: 'hint', textContent: 'Select a project first — the source profile is bound to it.' }));
+    return;
+  }
+  if (resolved.gate) {
+    host.replaceChildren(renderProfileGate(resolved.gate, {
+      onPick: async (profile) => {
+        const r = await pluginApi('PUT', '/api/source-bindings',
+          { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
+        if (!r.ok) return setFormMsg(r.data.error || 'could not save the profile binding', 'err');
+        mountPluginSourcePane(src);
+      },
+    }));
+    return;
+  }
+  state.activePluginProfile = resolved.profile || null;
+  // The resolved profile stays on screen above the pane: "which tracker am I
+  // about to read from" has to be answerable at a glance, not only on the run
+  // that first bound it. Switching it rebinds the scope, same as the gate.
+  const bar = src.multiProfile ? renderProfileBar({
+    source: src,
+    profiles: src.profiles || [],
+    profile: resolved.profile,
+    via: resolved.via,
+    scopeLabel: bindingScopeLabel(),
+  }, {
+    onChange: async (profile) => {
+      const ref = bindingScopeRef();
+      if (!ref) return;
+      const r = await pluginApi('PUT', '/api/source-bindings',
+        { ...ref, plugin: src.plugin, sourceId: src.sourceId, profile });
+      if (!r.ok) return setFormMsg(r.data.error || 'could not save the profile binding', 'err');
+      mountPluginSourcePane(src);
+    },
+  }) : null;
+  const call = sourceCall(src, resolved.profile);
+  // Above EVERY outcome: a failed connection check is one of the likeliest
+  // moments to discover the wrong profile is bound, so the switcher has to be
+  // reachable from the error and waiting states too.
+  const show = (...nodes) => { host.replaceChildren(); if (bar) host.appendChild(bar); host.append(...nodes); };
+  const hint = (text, cls = 'hint') => Object.assign(document.createElement('small'), { className: cls, textContent: text });
+  const failBox = (message) => {
     const box = document.createElement('div');
     box.className = 'sp-config-missing';
     const msg = document.createElement('p');
     msg.className = 'hint err';
-    msg.textContent = `${src.displayName} is not configured: ${((v && v.errors) || [])
-      .map((x) => x.message).join('; ') || 'connection check failed'}`;
+    msg.textContent = message;
     const link = document.createElement('a');
     link.href = '#plugins';
     link.textContent = 'Open Plugins settings';
@@ -4809,10 +4956,34 @@ async function mountPluginSourcePane(src) {
     retry.textContent = 'Test connection';
     retry.addEventListener('click', () => mountPluginSourcePane(src));
     box.append(msg, link, retry);
-    host.appendChild(box);
+    return box;
+  };
+  host.replaceChildren(hint(`Checking ${src.displayName} configuration…`));
+  const started = Date.now();
+  for (;;) {
+    let v;
+    try { v = await call('validateConfig', {}); }
+    catch (e) { v = { ok: false, errors: [{ message: e.message }] }; }
+    if (!owns()) return;   // user switched away / remounted meanwhile
+    if (v && v.ok === true) break;
+    // { pending } is setup legitimately mid-flight (an SSO sign-in the
+    // connector just launched in a browser) — NOT a failure. Show the
+    // connector's own message neutrally and keep polling, exactly like the
+    // settings pane's Connect, so the pane flips to the inputs by itself
+    // once the sign-in completes.
+    if (v && v.pending && Date.now() - started <= CONNECT_MAX_MS) {
+      show(hint(v.message || `Waiting for ${src.displayName} to connect…`));
+      await new Promise((r) => setTimeout(r, CONNECT_POLL_MS));
+      if (!owns()) return;
+      continue;
+    }
+    const detail = v && v.pending
+      ? 'timed out waiting for the sign-in — press Test connection to try again'
+      : ((v && v.errors) || []).map((x) => x.message).join('; ') || 'connection check failed';
+    show(failBox(`${src.displayName} is not connected: ${detail}`));
     return;
   }
-  host.appendChild(renderSourcePane(src, { call }));
+  show(renderSourcePane(src, { call }));
 }
 
 // ---------------------------------------------------------------------------
@@ -5438,6 +5609,11 @@ function renderProjectOptions(selectName) {
 
 function onProjectChanged() {
   const path = selectedProjectPath();
+  // The source profile is bound to the PROJECT, so a different project may pull
+  // from a different tracker: re-resolve rather than keep listing the old one's.
+  if (state.activePluginSource && state.activePluginSource.multiProfile) {
+    mountPluginSourcePane(state.activePluginSource);
+  }
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
@@ -5734,6 +5910,11 @@ function setRunTarget(target) {
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
     loadConfig('');
     ensureWorkspaceOptions();
+    // The binding scope just changed from a project to a workspace; the project
+    // mode branch below re-resolves via onProjectChanged().
+    if (state.activePluginSource && state.activePluginSource.multiProfile) {
+      mountPluginSourcePane(state.activePluginSource);
+    }
   } else {
     // Restore the single project-driven dropdown; clear the per-project list.
     if (el.sourceBranchWrap) el.sourceBranchWrap.classList.remove('hidden');
@@ -5870,6 +6051,11 @@ if (el.workspaceSelect) {
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
+    // Same as onProjectChanged: a workspace has its own binding (or inherits
+    // one from its members), so the resolved profile can differ.
+    if (state.activePluginSource && state.activePluginSource.multiProfile) {
+      mountPluginSourcePane(state.activePluginSource);
+    }
   });
 }
 
@@ -7167,7 +7353,14 @@ el.form.addEventListener('submit', async (e) => {
   if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return setFormMsg(picked.error, 'err');
-    body.source = { type: 'plugin', plugin: psrc.plugin, sourceId: psrc.sourceId, taskId: picked.taskId, inputs: picked.inputs };
+    // The profile travels with the run and is pinned onto the row, so a result
+    // is reported back to the instance the task actually came from even if the
+    // project is re-bound in the meantime.
+    body.source = {
+      type: 'plugin', plugin: psrc.plugin, sourceId: psrc.sourceId,
+      taskId: picked.taskId, inputs: picked.inputs,
+      profile: state.activePluginProfile || undefined,
+    };
   } else if (source === 'markdown') {
     if (!mdText) return setFormMsg('Provide markdown text or load a .md file.', 'err');
     body.promptMarkdown = mdText;
@@ -7779,8 +7972,91 @@ function openInstallConsent(entry) {
   ]);
 }
 
-async function openPluginSettings(name) {
-  const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config`);
+// One PUT per source form, each with ITS OWN sourceId — merging every form
+// into a single sourceId-less PUT would 400 for multi-source plugins (the
+// server only infers sourceId when the plugin has exactly one source).
+async function savePluginConfigForms(name, body) {
+  for (const f of body.querySelectorAll('.pl-config-form')) {
+    // `profile` is absent for a single-profile source, so this PUT is identical
+    // to the pre-profiles one there. Channel forms carry channelId instead of
+    // sourceId; the model-secrets form routes through { target: 'modelSecrets' }.
+    const collected = collectConfigForm(f); // { sourceId | channelId, values } (+ profile)
+    const payload = f.dataset.target === 'modelSecrets'
+      ? { target: 'modelSecrets', values: collected.values }
+      : collected;
+    const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, payload);
+    if (!r.ok) return r.data.error || 'save failed';
+  }
+  return null;
+}
+
+// Creating a profile is its own call: the roster entry has to exist before the
+// config form has anything to write into. Reopens on the NEW profile, which is
+// what the user wants to fill in next.
+async function addPluginProfile(name, sourceId) {
+  const id = (window.prompt('Profile id (lowercase letters, digits and dashes — e.g. "work"):') || '').trim();
+  if (!id) return;
+  const label = (window.prompt('Display name (optional):', id) || '').trim();
+  const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/profiles`, { sourceId, id, label });
+  if (!r.ok) return setPluginsMsg(r.data.error || 'could not create the profile', 'err');
+  loadTaskSources();               // the New Pipeline profile bar lists this roster
+  openPluginSettings(name, id);
+}
+
+async function deletePluginProfile(name, sourceId, profile) {
+  if (!profile) return;
+  // The server also drops every project binding that named it, so this is not
+  // just a settings delete — say so before it happens, not after.
+  if (!window.confirm(`Delete profile "${profile}"? Its settings, token and any project bound to it are removed.`)) return;
+  const url = `/api/plugins/${encodeURIComponent(name)}/profiles/${encodeURIComponent(profile)}?sourceId=${encodeURIComponent(sourceId)}`;
+  const r = await pluginApi('DELETE', url);
+  if (!r.ok) return setPluginsMsg(r.data.error || 'could not delete the profile', 'err');
+  // Deleting also drops the bindings that named it, so the pane may fall back
+  // to the gate — refresh it rather than leaving a profile that no longer exists.
+  loadTaskSources();
+  openPluginSettings(name);
+}
+
+// Connect: save the form, then poll validateConfig until it settles. Polling
+// is what lets an interactive sign-in (a browser the connector launched, which
+// outlives the 30s op budget) finish without the user clicking again — the
+// connector answers { pending: true } for as long as it is still waiting.
+const CONNECT_POLL_MS = 5000;
+const CONNECT_MAX_MS = 5 * 60 * 1000;
+
+async function connectPluginSource(name, sourceId, slot, profile) {
+  // A second Connect click starts a NEW loop over the same slot; the run id
+  // makes the old one stand down instead of the two fighting over what the
+  // slot shows (each has already re-launched validateConfig).
+  const run = (Number(slot.dataset.connectRun) || 0) + 1;
+  slot.dataset.connectRun = String(run);
+  const owns = () => slot.isConnected && slot.dataset.connectRun === String(run);
+  const started = Date.now();
+  for (;;) {
+    // The modal can be dismissed mid-poll (or the loop superseded by a newer
+    // Connect); stop rather than render into a detached or stolen node.
+    if (!owns()) return;
+    const { ok, data } = await pluginApi('POST', '/api/sources/call', { plugin: name, sourceId, op: 'validateConfig', profile });
+    if (!owns()) return; // superseded while the call was in flight
+    const result = ok && data.ok ? data.result : { ok: false, ...(data || {}) };
+    slot.replaceChildren(renderConnectResult(result));
+    if (result.ok || !result.pending) return;
+    if (Date.now() - started > CONNECT_MAX_MS) {
+      slot.replaceChildren(renderConnectResult({
+        ok: false,
+        errors: [{ message: 'Timed out waiting for the sign-in. Click Connect to try again.' }],
+      }));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, CONNECT_POLL_MS));
+  }
+}
+
+// profile: which configuration of a multiProfile source to echo. Absent = the
+// server's pick (the first in the roster), which is what opening from the list does.
+async function openPluginSettings(name, profile) {
+  const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
+  const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config${qs}`);
   if (!ok) return setPluginsMsg(data.error || 'config load failed', 'err');
   // Multi-source { sources:[{id,schema,values}] }, single-source { schema, values } tolerated.
   const sources = Array.isArray(data.sources) ? data.sources
@@ -7798,21 +8074,73 @@ async function openPluginSettings(name) {
     msForm.dataset.target = 'modelSecrets';
     body.appendChild(msForm);
   }
+  // Roster controls (multiProfile sources only — absent otherwise). Switching
+  // profile REOPENS the pane: the values are the server's per-profile echo, so
+  // there is nothing sensible to show until it has answered for the new one.
+  // Reopening discards typed-but-unsaved edits, so a dirty form asks first —
+  // and puts the select back when the answer is no.
+  const sourceById = (id) => sources.find((s) => (s.id || '') === id) || {};
+  let dirty = false;
+  body.querySelectorAll('.pl-config-form').forEach((f) => {
+    f.addEventListener('input', () => { dirty = true; });
+  });
+  body.querySelectorAll('.pl-profile-sel').forEach((sel) => {
+    const prev = sel.value;
+    sel.addEventListener('change', () => {
+      if (dirty && !window.confirm('Discard unsaved changes and switch profiles?')) {
+        sel.value = prev;
+        return;
+      }
+      openPluginSettings(name, sel.value);
+    });
+  });
+  body.querySelectorAll('.pl-profile-add').forEach((btn) => {
+    btn.addEventListener('click', () => addPluginProfile(name, btn.dataset.sourceId));
+  });
+  body.querySelectorAll('.pl-profile-del').forEach((btn) => {
+    btn.addEventListener('click', () => deletePluginProfile(name, btn.dataset.sourceId, sourceById(btn.dataset.sourceId).profile));
+  });
+  const slot = document.createElement('div');
+  slot.className = 'pl-connect-slot';
+  body.appendChild(slot);
+  // A multi-profile source with an empty roster has nothing to connect WITH.
+  const connectable = sources.filter((s) => !s.multiProfile || s.profile);
   pluginModal(`Settings: ${name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Save', 'btn btn-primary btn-mini', async () => {
-      // One PUT per source form, each with ITS OWN sourceId — merging every form
-      // into a single sourceId-less PUT would 400 for multi-source plugins (the
-      // server only infers sourceId when the plugin has exactly one source).
-      let failed = null;
-      for (const f of body.querySelectorAll('.pl-config-form')) {
-        const collected = collectConfigForm(f); // { sourceId | channelId, values }
-        const payload = f.dataset.target === 'modelSecrets'
-          ? { target: 'modelSecrets', values: collected.values }
-          : collected;
-        const r = await pluginApi('PUT', `/api/plugins/${encodeURIComponent(name)}/config`, payload);
-        if (!r.ok) { failed = r.data.error || 'save failed'; break; }
+    // Connect only exists for task sources (validateConfig is a task-source
+    // op): a channels-only chat plugin would get a button whose every outcome
+    // misleads — "Add a profile first." for a plugin that CANNOT have
+    // profiles — so it gets no button at all.
+    ...(sources.length ? [['Connect', 'btn btn-ghost btn-mini', async () => {
+      if (!connectable.length) {
+        return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: 'Add a profile first.' }] }));
       }
+      const failed = await savePluginConfigForms(name, body);
+      if (failed) return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: failed }] }));
+      // One result block PER SOURCE, kept side by side: a later source's
+      // success must never paint over an earlier source's failure.
+      slot.replaceChildren();
+      const subs = connectable.map((s) => {
+        const sub = document.createElement('div');
+        sub.className = 'pl-connect-sub';
+        if (connectable.length > 1) {
+          sub.appendChild(Object.assign(document.createElement('div'),
+            { className: 'pl-config-h', textContent: s.id }));
+        }
+        const out = document.createElement('div');
+        sub.appendChild(out);
+        out.replaceChildren(renderConnectResult({ ok: false, pending: true, message: 'Connecting…' }));
+        slot.appendChild(sub);
+        return out;
+      });
+      // Sequential so two sources never race the same browser launch.
+      for (let i = 0; i < connectable.length; i++) {
+        const s = connectable[i];
+        await connectPluginSource(name, s.id, subs[i], s.profile || undefined);
+      }
+    }]] : []),
+    ['Save', 'btn btn-primary btn-mini', async () => {
+      const failed = await savePluginConfigForms(name, body);
       closePluginModal();
       setPluginsMsg(failed || 'Settings saved.', failed ? 'err' : 'ok');
     }],

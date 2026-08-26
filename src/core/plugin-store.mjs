@@ -24,6 +24,7 @@ import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './pl
 import { importPluginWorkflows, removePluginWorkflows, referencedPluginAgents } from './plugin-workflows.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
+import { clearBindingsForPlugin } from './source-bindings.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -326,6 +327,12 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
     );
   }
   await removePluginWorkflows(name); // throws its ReferencedError with the referencing list
+  // Bindings live in the DB, not in the plugin's data dir, so they would
+  // outlive the uninstall: a stale row silently rebinds a project the moment
+  // the plugin is reinstalled with a same-named profile — possibly pointing at
+  // a different tracker. Cleared HERE (not only in the server's DELETE route)
+  // so the CLI's `worca plugin remove` drops them too.
+  clearBindingsForPlugin(name);
   rmSync(pluginCurrentDir(name), { force: true });
   rmSync(join(pluginDir(name), 'versions'), { recursive: true, force: true });
   delete lock[name];
@@ -449,12 +456,28 @@ export async function doctorPlugin(name) {
     try { shim = await import('./plugin-shim.mjs'); } // Task 11 module — may not exist yet
     catch (err) { if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err; }
     if (shim) {
+      const { listProfileIds } = await import('./plugin-config.mjs');
       for (const s of manifest.taskSources) {
-        try {
-          const r = await shim.callSource({ plugin: name, sourceId: s.id, op: 'validateConfig' });
-          c(`config:${s.id}`, r?.ok !== false, r?.ok === false ? JSON.stringify(r.errors ?? r) : 'validateConfig ok');
-        } catch (err) {
-          c(`config:${s.id}`, false, String(err?.message || err));
+        // A multi-profile source stores nothing in the implicit default bucket;
+        // validating that would flag a fully configured plugin as broken. Check
+        // each roster profile instead. An EMPTY roster is not healthy-by-vacuity
+        // either: every run of the source is rejected ("profile is required")
+        // until one exists, and validating the default bucket instead can even
+        // report green off legacy config migrated under 'default' after an
+        // upgrade flipped the source to multiProfile — a plugin nothing can run.
+        const profiles = s.multiProfile ? listProfileIds(name) : [];
+        if (s.multiProfile && !profiles.length) {
+          c(`config:${s.id}`, false, 'no profiles yet — create one in Plugins settings (every run is rejected until then)');
+          continue;
+        }
+        for (const profile of profiles.length ? profiles : [undefined]) {
+          const id = profile ? `config:${s.id}@${profile}` : `config:${s.id}`;
+          try {
+            const r = await shim.callSource({ plugin: name, sourceId: s.id, op: 'validateConfig', profile });
+            c(id, r?.ok !== false, r?.ok === false ? JSON.stringify(r.errors ?? r) : 'validateConfig ok');
+          } catch (err) {
+            c(id, false, String(err?.message || err));
+          }
         }
       }
     }

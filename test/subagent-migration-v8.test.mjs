@@ -6,7 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { getDb, dbPath, _resetForTests } from '../src/core/db.mjs';
+import { getDb, dbPath, _resetForTests, SCHEMA_VERSION } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 
 const _require = createRequire(import.meta.url);
@@ -41,7 +41,7 @@ test('opening a user_version=7 DB forward-migrates to v8 (adds graphify_count to
   seed.close();
 
   const db = getDb(); // production open → runs migrate()
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 21, 'forward-migrated to v21');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'forward-migrated to the current version');
   assert.ok(db.prepare('PRAGMA table_info(sub_agents)').all().map((c) => c.name).includes('graphify_count'));
   assert.ok(db.prepare('PRAGMA table_info(pipeline_steps)').all().map((c) => c.name).includes('graphify_count'));
   assert.ok(db.prepare("SELECT 1 FROM pipelines WHERE id='p1'").get(), 'pre-existing data preserved');

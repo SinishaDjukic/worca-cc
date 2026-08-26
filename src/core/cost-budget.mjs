@@ -57,7 +57,7 @@ export function windowedSpendUsd(windowStartMs) {
 /** Append one Ask Worca cost event (ask-cost-statistics-design.md §7.1). Same
  *  no-op gate as recordCostDelta: turns that ended before a `result` frame
  *  (amountUsd null, §6.2.8 of the ask spec) and $0 mock turns leave no row.
- *  messageId is the v19 backfill's idempotency key (db.mjs NOT EXISTS on
+ *  messageId is the v20 backfill's idempotency key (db.mjs NOT EXISTS on
  *  l.message_id) — every live caller must pass it. */
 export function recordAskCostDelta({ threadId, messageId = null, amountUsd,
                                      tokens = null, model = null, tsMs = Date.now() }) {
