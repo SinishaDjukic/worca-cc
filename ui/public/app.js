@@ -8815,6 +8815,32 @@ async function promoteModelFlow(id) {
   }
 }
 
+// Live connectivity check — explicit user action -> POST /api/models/:id/test
+// (mirrors the chat-test handler). Paints the card's own result line instead
+// of repainting the view, so an open editor survives the round trip.
+async function testModelFlow(btn) {
+  const id = btn.dataset.id;
+  const out = btn.closest('.mv-card')?.querySelector('.mv-test-result');
+  const paint = (text, err) => {
+    if (!out) return;
+    out.textContent = text;
+    out.className = `mv-test-result hint${err ? ' err' : ''}`;
+  };
+  btn.disabled = true;
+  paint('Testing…');
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) return paint(`✗ ${data.error || `HTTP ${res.status}`}`, true);
+    if (data.ok) return paint(`✓ replied: ${data.text}`);
+    paint(`✗ ${data.hint || data.message}`, true);
+  } catch (e) {
+    paint(`✗ ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 if (el.modelsList) {
   el.modelsList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
@@ -8831,6 +8857,8 @@ if (el.modelsList) {
       promoteModelFlow(t.dataset.id);
     } else if (t.classList.contains('mv-copy')) {
       editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
+    } else if (t.classList.contains('mv-test')) {
+      testModelFlow(t);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
