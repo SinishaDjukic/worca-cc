@@ -72,6 +72,12 @@ test('a switch can be driven by a real checkbox', () => {
   assert.match(css, /\.switch\.on,\s*\n\.sw-input:checked \+ \.switch\{/);
 });
 
+test('the switch checkbox row is a positioning context (no viewport jump on click)', () => {
+  // .sw-input is position:absolute; its wrapper must be positioned so focusing
+  // the input on click does not scroll the page to the top.
+  assert.match(css, /:has\(> \.sw-input\)\{position:relative/);
+});
+
 test('.check-row beats `.field > label`, which used to claim it', () => {
   assert.match(css, /\.check-row\{[^}]*display:inline-flex/);
   assert.match(css, /\.field > label\.check-row,\s*\n\.field > label\.fanout-toggle\{[^}]*margin-bottom:0/);

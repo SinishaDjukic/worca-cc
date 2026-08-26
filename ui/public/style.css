@@ -3239,6 +3239,11 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
    semantics for free. Both spellings work; the existing .on emitters are
    untouched. */
 .sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
+/* The checkbox is position:absolute; without a positioned wrapper its
+   containing block is the viewport, so its static position sits near the top
+   of the page — clicking the switch focuses it and the browser scrolls that
+   into view, jerking the whole viewport up. Anchor it to its own row. */
+:where(label, div, span):has(> .sw-input){position:relative;}
 .switch.on,
 .sw-input:checked + .switch{background:var(--green);}
 .switch.on::after,
