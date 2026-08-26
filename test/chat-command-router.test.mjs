@@ -288,3 +288,14 @@ test('handler exceptions become error replies, never throws', async () => {
   assert.equal(msg.severity, 'error');
   assert.match(text(msg), /Command failed: db exploded/);
 });
+
+test('/use scopes /runs by project on a Windows-style projectDir (backslash separators)', async () => {
+  const { send, state } = fixture({
+    listProjects: async () => [{ name: 'worca', path: 'C:\\x\\worca' }, { name: 'other', path: 'C:\\x\\other' }],
+  });
+  state.live[0].projectDir = 'C:\\x\\worca';
+  await send('/use worca');
+  assert.match(text(await send('/runs')), /Fix login/, 'the live run in C:\\x\\worca is in scope');
+  await send('/use other');
+  assert.match(text(await send('/runs')), /No live runs/, 'scoped away from it');
+});

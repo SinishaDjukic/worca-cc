@@ -3083,6 +3083,16 @@ async function loadWorkflowsInto(selectId) {
   await renderWorkflowConfig(state.workflowId);
 }
 
+// Re-fill both New-Pipeline pickers from the server, dropping the per-id
+// workflow memo so a workflow edited in Composer repaints with its saved
+// topology. Keeps the active selections (loadWorkflowsInto/loadGuardrailsInto
+// preserve state.workflowId / state.guardrailsId when the id still exists).
+async function refreshNewPipelinePickers() {
+  state.workflowCache = {};
+  await loadWorkflowsInto(state.workflowId);
+  await loadGuardrailsInto(state.guardrailsId);
+}
+
 // Returns the guardrail-set list, or null on failure — callers must distinguish
 // "server answered" (built-ins are always present) from "the list could not be
 // fetched" (null), or a transient failure silently rebuilds the dropdown to
@@ -14180,7 +14190,14 @@ function showView(name, param = '') {
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
-  if (name === 'new') { loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights(); }
+  if (name === 'new') {
+    loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
+    // Coming BACK to the form (not boot — loadConfig owns the first fill): a
+    // workflow saved in Composer or a guardrail set created in Guardrails must
+    // show up in the pickers without a page reload, and a re-saved workflow
+    // must repaint with its new topology rather than the cached one.
+    if (prevView && prevView !== 'new') refreshNewPipelinePickers();
+  }
 }
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;

@@ -112,12 +112,24 @@ function loadSource(plugin, sourceId) {
 /** Child env: PATH + HOME ONLY (spec §7.2). Notably NOT WORCA_*, tokens, npm_*.
  *  Exported for the channel-worker supervisor (chat/channel-host.mjs), which
  *  spawns persistent children under the same rule. */
-export function scrubbedEnv() {
+export function scrubbedEnv(platform = process.platform) {
   const env = {};
   if (process.env.PATH) env.PATH = process.env.PATH;
   if (process.env.HOME) env.HOME = process.env.HOME;
+  // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
+  // docs); the rest are the non-secret system vars node/npm need to resolve
+  // temp dirs, the shell, and the .cmd/.exe lookup. Still no WORCA_*, tokens
+  // or npm_* — the §7.2 rule is unchanged, only the platform baseline differs.
+  if (platform === 'win32') {
+    for (const k of WIN32_ENV_BASELINE) if (process.env[k]) env[k] = process.env[k];
+  }
   return env;
 }
+
+/** Non-secret Windows system vars a child needs to run at all (spec §7.2 note). */
+export const WIN32_ENV_BASELINE = Object.freeze([
+  'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
+]);
 
 /**
  * Run ONE connector op in an ephemeral child. Resolves with the op result;

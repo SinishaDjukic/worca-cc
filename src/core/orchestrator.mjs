@@ -17,6 +17,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join, basename, resolve, dirname, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath, rm } from 'node:fs/promises';
@@ -83,7 +84,7 @@ import { runners as defaultRunners } from './runners.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
-import { loadAgentRegistry, collectChannelDefs } from './agent-registry.mjs';
+import { loadAgentRegistry, collectChannelDefs, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
 import {
@@ -92,11 +93,10 @@ import {
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 
-/**
- * Default location of the agent prompt markdown files, relative to this module.
- */
-const DEFAULT_AGENTS_DIR = new URL('../../agents/', import.meta.url).pathname;
-const REPO_ROOT = new URL('../../', import.meta.url).pathname; // worca-cc repo root; holds skills/
+// worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
+// latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
+// in agent-registry.mjs, which is the single source for the built-in agents dir).
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /**
  * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
