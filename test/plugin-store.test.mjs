@@ -11,7 +11,7 @@ import {
   readlinkSync, lstatSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, isAbsolute } from 'node:path';
+import { join, dirname, isAbsolute, resolve } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, pluginsRoot, writePluginsLock,
@@ -32,6 +32,13 @@ useTempHome(after);
 // deterministic either way. The shim's own tests cover the real spawn path.
 process.env.WORCA_MOCK = '1';
 const execFileP = promisify(execFile);
+// `current` -> version dir link target: POSIX keeps a relative "versions/<sha7>"
+// symlink; Windows uses an absolute directory junction (a plain symlink needs
+// elevated privileges). Assert the target per-platform.
+const curTarget = (name, sha7) =>
+  process.platform === 'win32'
+    ? resolve(pluginDir(name), 'versions', sha7)
+    : join('versions', sha7);
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-store-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -54,7 +61,7 @@ function makeExec({ npmFails = false } = {}) {
     calls.push([cmd, ...args]);
     if (cmd === 'npm') {
       if (npmFails) throw new Error('npm ci exploded (simulated)');
-      mkdirSync(join(args[args.indexOf('--prefix') + 1], 'node_modules'), { recursive: true });
+      mkdirSync(join(opts.cwd, 'node_modules'), { recursive: true }); // runSetup scopes npm ci via cwd
       return { stdout: '', stderr: '' };
     }
     if (cmd === 'uv') return { stdout: '', stderr: '' };
@@ -109,7 +116,7 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
   const sha7 = origin.sha.slice(0, 7);
   const current = pluginCurrentDir(NAME);
   assert.ok(lstatSync(current).isSymbolicLink());
-  assert.equal(readlinkSync(current), join('versions', sha7), 'relative symlink target');
+  assert.equal(readlinkSync(current), curTarget(NAME, sha7), 'current -> versions/<sha7>');
   assert.equal(existsSync(join(current, 'worca-cc-plugin.json')), true, 'current resolves');
   assert.equal(existsSync(join(current, 'node_modules')), true, 'fake npm ci ran');
   assert.ok(calls.some((c) => c[0] === 'npm' && c.includes('ci') && c.includes('--ignore-scripts') && c.includes('--omit=dev')));
@@ -159,7 +166,7 @@ test('updatePlugin: swap to candidate; GC keeps last 2 versions; atomic swap', a
   const r2 = await updatePlugin(NAME, { exec });
   assert.equal(r2.updated, true);
   assert.deepEqual(r2.commits.map((c) => c.subject), ['c2']);
-  assert.equal(readlinkSync(pluginCurrentDir(NAME)), join('versions', sha2.slice(0, 7)));
+  assert.equal(readlinkSync(pluginCurrentDir(NAME)), curTarget(NAME, sha2.slice(0, 7)));
   assert.equal(readPluginsLock()[NAME].pinnedSha, sha2);
   // commit 3 -> GC drops c1
   writeFileSync(join(origin.root, 'connector/index.mjs'), 'export default () => ({ v: 3 });\n');
@@ -176,7 +183,8 @@ test('updatePlugin: swap to candidate; GC keeps last 2 versions; atomic swap', a
 
 test('doctorPlugin: detects missing node_modules when setup.node; heals detection on restore', async () => {
   const cur = pluginCurrentDir(NAME);
-  const target = join(pluginDir(NAME), readlinkSync(cur));
+  const link = readlinkSync(cur); // absolute on a Windows junction, relative on a POSIX symlink
+  const target = isAbsolute(link) ? link : join(pluginDir(NAME), link);
   rmSync(join(target, 'node_modules'), { recursive: true, force: true });
   const sick = await doctorPlugin(NAME);
   assert.equal(sick.ok, false);

@@ -30,6 +30,8 @@ const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
   execFileP(cmd, args, { maxBuffer: 16 * 1024 * 1024, ...opts });
 
+const IS_WINDOWS = process.platform === 'win32';
+
 function readManifestAt(dir) {
   try {
     const res = normalizeManifest(JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8')), { dir });
@@ -122,11 +124,17 @@ export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}
     if (!existsSync(join(versionDir, 'package-lock.json'))) {
       throw new Error(`setup.node declared but ${join(versionDir, 'package-lock.json')} is missing (npm ci requires a lockfile)`);
     }
-    await exec('npm', ['ci', '--prefix', versionDir, '--ignore-scripts', '--omit=dev']);
+    // cwd instead of --prefix so no native path is passed as an argument: on
+    // Windows npm is `npm.cmd`, which needs a shell (bare `npm` -> ENOENT, and
+    // execFile of a `.cmd` -> EINVAL on modern Node), and shell:true does NOT
+    // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
+    // the only args left are flag literals, safe through the shell.
+    await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
+      { cwd: versionDir, shell: IS_WINDOWS });
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {
-    await exec('uv', ['sync', '--project', versionDir]);
+    await exec('uv', ['sync'], { cwd: versionDir });
     commands.push('uv sync');
   }
   return { commands };
@@ -153,12 +161,23 @@ function currentTarget(name) {
   try { return readlinkSync(pluginCurrentDir(name)); } catch { return null; }
 }
 
-/** Atomic swap (§6.1 step 3): write current.tmp symlink, rename(2) over current. */
+/** Atomic swap (§6.1 step 3): write current.tmp symlink, rename(2) over current.
+ *  Windows can't create a plain symlink without elevated privileges/Developer
+ *  Mode, and can't rename() a directory reparse point over an existing one
+ *  (EPERM). It CAN create a directory JUNCTION unprivileged, so there we
+ *  remove-then-create a junction in place. A junction needs an ABSOLUTE target
+ *  (POSIX keeps the relative "versions/<sha7>" so the link survives a moved
+ *  plugin dir); rmSync on a junction drops only the link, never the target. */
 function swapCurrent(name, target) {
   const current = pluginCurrentDir(name);
+  mkdirSync(pluginDir(name), { recursive: true });
+  if (IS_WINDOWS) {
+    rmSync(current, { force: true });
+    symlinkSync(resolve(pluginDir(name), target), current, 'junction');
+    return;
+  }
   const tmp = `${current}.tmp`;
   rmSync(tmp, { force: true });
-  mkdirSync(pluginDir(name), { recursive: true });
   symlinkSync(target, tmp);
   renameSync(tmp, current);
 }
