@@ -87,7 +87,7 @@ async function freshRepo(prefix = 'worca-cc-cliresume-repo-') {
   return dir;
 }
 const repos = [];
-after(() => Promise.all(repos.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => Promise.all(repos.map((d) => rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))));
 
 /**
  * Runners for the pause/resume pin tests. With `pause:true` the first producer node

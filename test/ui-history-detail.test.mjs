@@ -1,5 +1,5 @@
 // test/ui-history-detail.test.mjs
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,8 +29,16 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 
+// jsdom windows are heavy (full DOM + timers); this file boots ~79 of them. Left
+// alive they accumulate and OOM the worker on a memory-constrained host (the
+// Windows CI VM crossed Node's ~2GB heap even though every test passed). Close
+// each after its test so the window and its timers are released.
+const _openDoms = [];
+afterEach(() => { for (const d of _openDoms.splice(0)) { try { d.window.close(); } catch { /* already closed */ } } });
+
 async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
+  _openDoms.push(dom);
   const { window } = dom;
 
   // jsdom doesn't implement scrollIntoView; the viewer modal calls it on open.

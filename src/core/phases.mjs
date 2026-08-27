@@ -18,6 +18,7 @@ import { resolveModelEnv } from './config.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderAttachmentsBlock } from './channels.mjs';
+import { join } from 'node:path';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -710,7 +711,7 @@ export async function runRefiner(ctx, opts) {
  * @param {{ planPath: string, decompositionPath: string }} opts
  */
 export async function runDecomposer(ctx, opts) {
-  const { join, dirname } = await import('node:path');
+  const { dirname } = await import('node:path');
   const { planPath, decompositionPath } = opts || {};
   const role = 'decomposer';
   const tasksDir = join(dirname(decompositionPath), 'tasks');
@@ -1262,8 +1263,11 @@ export async function runGenericVerifier(ctx) {
 
 /** Join a file name onto the pipeline dir without importing node:path's full surface. */
 function joinPipeline(pipelineDir, name) {
-  const base = String(pipelineDir || '').replace(/\/+$/, '');
-  return `${base}/${name}`;
+  // Native separator: this builds a real filesystem path (writeFile targets and
+  // paths compared with join()-built values elsewhere). A hardcoded '/' produced
+  // a mixed-separator path on Windows; on POSIX join() is byte-identical to the
+  // old '/' form, so no non-Windows behaviour changes.
+  return join(String(pipelineDir || '').replace(/[\\/]+$/, ''), name);
 }
 
 /** Render the answered clarifications as a markdown Q&A list for the plan prompt. */
