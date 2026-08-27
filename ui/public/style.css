@@ -1716,6 +1716,20 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mv-env-row .mv-env-copy{flex:0 0 auto;padding:6px 10px;}
 .mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
 .mv-env-btns .btn-ghost{padding:7px 12px;font-size:12px;}
+/* Pricing: the opt-in per-model cost override. Modes read like the effort row;
+   the rate grid is hidden outside per-Mtok mode (explicit — a reset elsewhere
+   must not be able to un-hide it). */
+.mv-cost-edit{display:grid;gap:10px;}
+.mv-cost-modes{display:flex;gap:14px;flex-wrap:wrap;}
+.mv-cost-mode{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-cost-rates{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;}
+.mv-cost-rates[hidden]{display:none;}
+/* Label on its own row spanning both columns, then input + unit — five rates
+   side by side leave a numeric input far too narrow to read its own value. */
+.mv-cost-rate{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 8px;font-size:12.5px;}
+.mv-cost-rate-label{grid-column:1 / -1;}
+.mv-cost-rate .mv-cost-rate-in{min-width:0;font-family:var(--mono);font-size:12.5px;}
+.mv-cost-rate-unit{color:var(--muted,#6b7280);font-size:11.5px;white-space:nowrap;}
 
 /* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
 .mv-secret{display:block;margin:4px 0 0;}

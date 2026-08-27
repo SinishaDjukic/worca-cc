@@ -87,7 +87,7 @@ import {
   renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, deleteRefsSummary,
+  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
 import {
@@ -8880,6 +8880,13 @@ if (el.modelsList) {
     } else if (t.classList.contains('mv-save')) {
       saveModelEditorFlow();
     }
+  });
+  // Pricing mode. A `change` listener, not the click one above: arrow-key
+  // navigation within a radio group changes the selection without a click.
+  el.modelsList.addEventListener('change', (ev) => {
+    if (!ev.target.classList || !ev.target.classList.contains('mv-cost-mode-rb')) return;
+    const editorEl = ev.target.closest('.mv-editor');
+    if (editorEl) applyCostMode(editorEl);
   });
 }
 if (el.modelCreateBtn) {

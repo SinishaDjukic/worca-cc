@@ -330,3 +330,49 @@ test('POST /api/models/:id/test: 404 unknown id; 400 for a plugin model with an 
   assert.equal(r400.status, 400);
   assert.match(r400.body.error, /up-token.*not set/);
 });
+
+// ── the pricing override over HTTP (what the editor form actually sends) ──────
+
+test('POST/PATCH /api/models carry `cost` end-to-end, and GET surfaces it unmasked', async () => {
+  const add = await post('/api/models', {
+    id: 'priced-api', label: 'Priced', efforts: [],
+    env: { ANTHROPIC_BASE_URL: 'https://p' },
+    cost: { perMtok: { input: 0.5, output: 1.5 } },
+  });
+  assert.equal(add.status, 200);
+  assert.deepEqual(add.body.model.cost, { perMtok: { input: 0.5, output: 1.5 } });
+  // Pricing is configuration, never a credential — it must NOT come back masked.
+  const got = (await jfetch('/api/models')).body.models.find((m) => m.id === 'priced-api');
+  assert.deepEqual(got.cost, { perMtok: { input: 0.5, output: 1.5 } });
+  assert.match(got.env.ANTHROPIC_BASE_URL, /^••/, 'env still masked alongside it');
+
+  // The editor replaces the table wholesale (it is small) rather than merging.
+  const toFree = await patch('/api/models/priced-api', { cost: { free: true } });
+  assert.deepEqual(toFree.body.model.cost, { free: true });
+
+  // 'Trust the CLI' sends null — an explicit clear, since the form shows the state.
+  const cleared = await patch('/api/models/priced-api', { cost: null });
+  assert.equal(cleared.body.model.cost, undefined);
+  assert.equal(listGlobalModels().find((m) => m.id === 'priced-api').cost, undefined);
+
+  // An unrelated edit omits `cost` entirely -> the stored override is kept.
+  await patch('/api/models/priced-api', { cost: { perMtok: { input: 2 } } });
+  const relabel = await patch('/api/models/priced-api', { label: 'Renamed' });
+  assert.equal(relabel.body.model.label, 'Renamed');
+  assert.deepEqual(relabel.body.model.cost, { perMtok: { input: 2 } }, 'omitted means keep');
+});
+
+test('POST/PATCH /api/models reject a malformed `cost` with the message the form shows', async () => {
+  const bad = await post('/api/models', { id: 'bad-cost', cost: { perMtok: {} } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /must define at least one rate/);
+  assert.equal(listGlobalModels().some((m) => m.id === 'bad-cost'), false, 'a rejected add leaves nothing behind');
+
+  const neg = await post('/api/models', { id: 'bad-cost', cost: { perMtok: { input: -1 } } });
+  assert.equal(neg.status, 400);
+  assert.match(neg.body.error, /finite number >= 0/);
+
+  const unknown = await patch('/api/models/priced-api', { cost: { perMtok: { bogus: 1 } } });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.error, /unknown cost\.perMtok rate "bogus"/);
+});
