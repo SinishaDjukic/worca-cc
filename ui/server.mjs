@@ -768,6 +768,21 @@ app.use('/vendor', (_req, res) => {
   res.status(404).type('text/plain').send('Not found');
 });
 
+// src/shared/** is the ONE source of the graph model for server + browser
+// (no build step). ui modules import it by relative path that walks above
+// ui/public; the browser clamps that URL at '/', so it must be served here at
+// exactly the repo-relative path. The 404 tail keeps a typo'd path from
+// falling through to the SPA index.html (which Chrome reports as a MIME error).
+const SHARED_DIR = path.join(PROJECT_ROOT, 'src', 'shared');
+app.use('/src/shared', express.static(SHARED_DIR, {
+  index: false,
+  setHeaders: (res) => res.set('X-Content-Type-Options', 'nosniff'),
+}));
+app.use('/src/shared', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(404).type('text/plain').send('Not found');
+});
+
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);

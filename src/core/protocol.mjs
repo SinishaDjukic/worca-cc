@@ -8,20 +8,13 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/**
- * Severity ranking used throughout the pipeline. Order is significant:
- * earlier entries are more severe. "critical" and "major" are *blocking*.
- */
-export const SEVERITIES = ['critical', 'major', 'minor', 'suggestion'];
-
-const BLOCKING = new Set(['critical', 'major']);
-
-/** Normalize an arbitrary value to one of SEVERITIES (default "minor"). */
-function normalizeSeverity(value) {
-  if (typeof value !== 'string') return 'minor';
-  const v = value.trim().toLowerCase();
-  return SEVERITIES.includes(v) ? v : 'minor';
-}
+// The verdict vocabulary lives in the browser-safe shared core (this module
+// imports node:fs/promises and can never be loaded in a browser); re-exported
+// here so every existing importer of protocol.mjs keeps working unchanged.
+export {
+  SEVERITIES, BLOCKING, normalizeSeverity, hasBlocking, blockingIssues,
+} from '../shared/graph/verdict.mjs';
+import { normalizeSeverity } from '../shared/graph/verdict.mjs';
 
 /** Coerce any value to a trimmed string (empty string for null/undefined). */
 function asString(value) {
@@ -234,24 +227,4 @@ export async function readReview(jsonPath) {
     return { issues: [], summary: '' };
   }
   return normalizeReview(safeParseJson(text));
-}
-
-/**
- * True if a review contains any critical or major issue.
- * @param {{issues: Array}} review
- * @returns {boolean}
- */
-export function hasBlocking(review) {
-  if (!review || !Array.isArray(review.issues)) return false;
-  return review.issues.some((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
-}
-
-/**
- * The subset of issues that are critical or major.
- * @param {{issues: Array}} review
- * @returns {Array}
- */
-export function blockingIssues(review) {
-  if (!review || !Array.isArray(review.issues)) return [];
-  return review.issues.filter((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
 }

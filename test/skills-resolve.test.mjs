@@ -83,3 +83,33 @@ test('validateSkills: aborts naming agent + skill + searched paths', async () =>
     (err) => /imagegen/.test(err.message) && /artDirector/.test(err.message) && /Searched/.test(err.message),
   );
 });
+
+test('collectRequiredSkills: accepts a Set of agent keys (harness entry point)', () => {
+  const registry = {
+    planner: { requiresSkills: ['brainstorming'] },
+    implementer: { requiresSkills: ['tdd', 'brainstorming'] },
+    reviewer: {},
+  };
+  assert.deepEqual(collectRequiredSkills(registry, new Set(['planner', 'implementer', 'reviewer'])), [
+    { skill: 'brainstorming', requiredBy: ['implementer', 'planner'] },
+    { skill: 'tdd', requiredBy: ['implementer'] },
+  ]);
+  // An array of keys is an iterable too.
+  assert.deepEqual(collectRequiredSkills(registry, ['planner']), [
+    { skill: 'brainstorming', requiredBy: ['planner'] },
+  ]);
+  // Empty iterable -> empty union (NOT "walk everything").
+  assert.deepEqual(collectRequiredSkills(registry, new Set()), []);
+  // A bare string is iterable but is NOT a key list: it must not union per character.
+  assert.deepEqual(collectRequiredSkills({ ...registry, p: { requiresSkills: ['perChar'] } }, 'planner'), []);
+});
+
+test('collectRequiredSkills: a plan object still walks plan.steps (v1 path intact)', () => {
+  const registry = { planner: { requiresSkills: ['brainstorming'] }, ghost: { requiresSkills: ['nope'] } };
+  const plan = { steps: [[{ key: 'planner' }]] };
+  assert.deepEqual(collectRequiredSkills(registry, plan), [
+    { skill: 'brainstorming', requiredBy: ['planner'] },
+  ]);
+  // A plan is NOT iterable: it must not be treated as a key list.
+  assert.equal(typeof plan[Symbol.iterator], 'undefined');
+});
