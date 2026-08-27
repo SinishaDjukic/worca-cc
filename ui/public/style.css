@@ -3370,3 +3370,112 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
   .ask-dock *{animation:none !important;}
   .run-shell *{animation:none !important;}
 }
+
+/* ========================================================================== */
+/* v2 node-graph canvas — EVERY geometry number comes from the --gv-* custom   */
+/* properties injectGeometry() writes on .gv-stage at mount, so the CSS box    */
+/* model cannot drift from nodeSize()/portAnchor(). Never hard-code a px       */
+/* geometry value here (test/ui-graph-css.test.mjs enforces it).               */
+/* Scoped under .gv-world because style.css declares an UNSCOPED `.node`       */
+/* for the v1 run graph; the resets below neutralise every property it leaks.  */
+/* ========================================================================== */
+.gv-canvas{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;
+  background:#FBFBF9 radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
+.gv-stage{position:absolute;inset:0;outline:none;}
+.gv-stage.panning{cursor:grabbing;}
+.gv-stage.space{cursor:grab;}
+.gv-world{position:absolute;left:0;top:0;width:0;height:0;transform-origin:0 0;will-change:transform;}
+.gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
+/* THE rule that makes a filled ghost blob structurally impossible. */
+.gv-wires path{fill:none;stroke:var(--seq);stroke-width:2;stroke-linecap:round;}
+.gv-wires path.loop{stroke:var(--amber);}
+.gv-wires path.sel{stroke:var(--ink);stroke-width:2.5;}
+.gv-wires path.bad{stroke:var(--red);}
+.gv-wires path.ghost{stroke:var(--ink-3);stroke-dasharray:5 4;visibility:hidden;}
+.gv-wires path.ghost.on{visibility:visible;}
+.gv-wires path.ghost.legal{stroke:var(--green);stroke-dasharray:none;}
+.gv-wires path.ghost.illegal{stroke:var(--red);}
+.gv-world .node{position:absolute;left:0;top:0;display:block;padding:0;gap:0;align-items:stretch;z-index:2;
+  width:var(--gv-node-w);background:#fff;border:var(--gv-border) solid var(--line-2);border-radius:16px;
+  box-shadow:var(--shadow-soft);cursor:grab;transition:box-shadow .12s;}
+.gv-world .node::before{content:none;}
+.gv-world .node:hover{box-shadow:var(--shadow);}
+.gv-world .node.sel{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-world .node.dragging{cursor:grabbing;transition:none;}
+.gv-static .node,.gv-static .wbadge{pointer-events:none;}
+.gv-world .nhead{height:var(--gv-head-h);display:flex;align-items:center;gap:8px;padding:0 11px;
+  border-radius:14.5px 14.5px 0 0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .nhead svg{width:15px;height:15px;flex:0 0 auto;stroke-width:1.85;}
+.gv-world .nhead .tt{overflow:hidden;text-overflow:ellipsis;}
+.gv-world .h-flow{background:var(--ink);color:#fff;}
+.gv-world .h-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.gv-world .h-blue{background:#DEEFF7;color:#2E6E8E;}
+.gv-world .h-green{background:#E2F3DF;color:#3B7C3B;}
+.gv-world .h-red{background:var(--red-bg);color:var(--red-ink);}
+.gv-world .h-peach{background:#FCEEDA;color:#8A5A16;}
+.gv-world .h-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .nbody{padding:var(--gv-pad-t) 0 var(--gv-pad-b);}
+.gv-world .prow{position:relative;height:var(--gv-row-h);display:flex;align-items:center;gap:7px;padding:0 13px;}
+.gv-world .prow.out{justify-content:flex-end;}
+.gv-world .prow .pn{font-size:12.5px;font-weight:500;}
+.gv-world .prow .pt{font:10px/1.3 var(--mono);color:var(--ink-3);}
+.gv-world .prow .pt.cond{color:var(--amber-ink);}
+.gv-world .prow .mla{margin-left:auto;}
+.gv-world .psep{height:var(--gv-sep-h);position:relative;}
+.gv-world .psep::after{content:"";position:absolute;left:13px;right:13px;top:4px;height:1px;background:var(--line);}
+/* dot centre = row centre: top = (ROW_H − DOT)/2; x overhang = DOT/2 + BORDER,
+   so the anchor lands exactly on node.x / node.x + NODE_W. */
+.gv-world .dot,.gv-world .gdot{position:absolute;top:calc((var(--gv-row-h) - var(--gv-dot)) / 2);
+  width:var(--gv-dot);height:var(--gv-dot);border-radius:50%;}
+.gv-world .prow.in .dot,.gv-world .prow.in .gdot{left:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.gv-world .prow.out .dot{right:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.gv-world .dot.md{background:var(--ink);}
+.gv-world .dot.json{background:var(--blue);}
+.gv-world .dot.void{background:#fff;border:2px solid var(--ink-3);}
+.gv-world .dot.any{background:#fff;border:2px solid var(--ink);}
+.gv-world .dia{position:absolute;top:8px;right:calc(-1 * (4px + var(--gv-border)));width:8px;height:8px;
+  background:var(--amber);border-radius:2px;transform:rotate(45deg);}
+.gv-world .gdot{background:var(--field);border:2px dashed var(--seq);}
+.gv-world .prow.gate .pn,.gv-world .prow.gate .pt{color:var(--ink-3);}
+.gv-world .prow.gate.wired .gdot{background:#fff;border-color:var(--ink);}
+.gv-world .prow.gate.wired .pn{color:var(--ink);}
+.gv-world .prow.drop-ok .dot,.gv-world .prow.drop-ok .gdot{transform:scale(1.35);box-shadow:0 0 0 3px #D8EFD6;border-color:var(--green);}
+.gv-world .prow.drop-bad .dot,.gv-world .prow.drop-bad .gdot{box-shadow:0 0 0 3px var(--red-bg);border-color:var(--red);}
+.gv-world .npip{position:absolute;top:-7px;left:-7px;width:14px;height:14px;border-radius:50%;
+  background:var(--red);border:2px solid #fff;cursor:pointer;z-index:3;}
+.gv-world .wbadge{position:absolute;transform:translate(-50%,-50%);z-index:2;background:var(--amber-bg);
+  color:var(--amber-ink);border:1px solid var(--amber);border-radius:999px;padding:1px 7px;
+  font:10px/1.4 var(--mono);pointer-events:none;}
+/* Run-mode executions footer (P6 fills it through view.setFooter, which is the
+   ONE writer of a run card's height). These two heights MUST stay var(--gv-foot-h)
+   / var(--gv-exec-row-h): nodeSize adds FOOT_H for the first band and EXEC_ROW_H
+   for each extra one, and test/ui-graph-css.test.mjs asserts style.css uses the
+   FULL --gv-* set injectGeometry writes — dropping them fails that assertion. */
+.gv-world .xfoot{position:absolute;left:0;right:0;bottom:0;border-top:1px solid var(--line);
+  border-radius:0 0 14.5px 14.5px;overflow:hidden;background:var(--panel);}
+.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult{height:var(--gv-foot-h);
+  display:flex;align-items:center;gap:7px;padding:0 11px;width:100%;box-sizing:border-box;}
+.gv-world .xfoot>.xtoggle{border:none;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
+.gv-world .xfoot>.xrow{height:var(--gv-exec-row-h);display:flex;align-items:center;gap:7px;padding:0 11px;}
+.gv-world .xfoot .xsq{display:flex;gap:3px;}
+.gv-world .xfoot .xq,.gv-world .xfoot .sq{width:7px;height:7px;border-radius:2px;background:var(--line-2);}
+.gv-world .xfoot .xq.is-active,.gv-world .xfoot .sq.on{background:var(--blue);}
+.gv-world .xfoot .xq.is-done{background:var(--green);}
+.gv-world .xfoot .xq.is-error{background:var(--red);}
+.gv-world .xfoot .xsum,.gv-world .xfoot .xl{font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-world .xfoot .xr,.gv-world .xfoot .fl{margin-left:auto;font:10px/1.4 var(--mono);color:var(--ink-3);}
+.gv-world .xfoot .chev{width:13px;height:13px;margin-left:auto;flex:0 0 auto;}
+.gv-world .xfoot .led{width:8px;height:8px;border-radius:50%;background:var(--line-2);flex:0 0 auto;}
+.gv-world .xfoot .xrow.is-active .led{background:var(--blue);}
+.gv-world .xfoot .xrow.is-done .led{background:var(--green);}
+.gv-world .xfoot .xrow.is-error .led{background:var(--red);}
+.gv-world .ngate{position:absolute;top:-7px;right:-7px;width:15px;height:15px;border-radius:50%;
+  background:var(--amber-bg);color:var(--amber-ink);border:1px solid var(--amber);
+  font:9px/13px var(--sans);text-align:center;z-index:3;}
+.gv-world .nrun{position:absolute;top:-9px;right:16px;display:flex;gap:6px;background:#fff;
+  border:1px solid var(--line-2);border-radius:999px;padding:1px 8px;font:10px/1.4 var(--mono);color:var(--ink-3);}
+.gv-world .wbadge .wfired{margin-left:5px;font-weight:700;}
+.gv-chip{position:absolute;z-index:6;pointer-events:none;background:var(--red-bg);color:var(--red-ink);
+  border:1px solid var(--red);border-radius:8px;padding:4px 8px;font-size:11px;font-weight:600;white-space:nowrap;}
+.gv-chip[hidden]{display:none;}
+@media (prefers-reduced-motion:reduce){.gv-world .node{transition:none;}}
