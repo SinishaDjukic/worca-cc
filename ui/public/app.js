@@ -2129,6 +2129,10 @@ async function initComposer() {
   gvComposer.fit();
 }
 
+// The headless-Chrome probe seam (scripts/verify-composer-cdp.mjs). It exposes
+// no mutator the UI does not already own — just the live editor and its view.
+if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
+
 // Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
 // every document-level listener is unbound and any live gesture is cancelled, so
 // Delete/arrows/⌘Z can never edit the graph from another view (a PR #359 bug).
