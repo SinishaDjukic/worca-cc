@@ -261,3 +261,59 @@ test('monitor nav: wheelPan "engaged" ignores a plain wheel until engaged', asyn
   view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: 0, bubbles: true, cancelable: true }));
   assert.equal(view.getTransform().x, -40, 'no listener after destroy');
 });
+
+test('thumbnailFor guards empty templates and returns svg markup otherwise', async () => {
+  const { createGraphView, thumbnailFor } = await import(viewPath);
+  assert.equal(typeof createGraphView, 'function');
+  assert.equal(thumbnailFor(null, portsFn, { width: 240, height: 90 }), '');
+  assert.equal(thumbnailFor({ nodes: [], wires: [] }, portsFn, { width: 240, height: 90 }), '');
+  const svg = thumbnailFor(fixture(), portsFn, { width: 240, height: 90 });
+  assert.match(svg, /^<svg[\s>]/);
+  assert.ok(!svg.includes('NaN'), 'no NaN in the path data');
+});
+
+test('mountStaticGraph renders, fits to width and survives a missing ResizeObserver', async () => {
+  const { doc, host, win } = boot();
+  assert.equal(typeof win.ResizeObserver, 'undefined', 'jsdom 29 has no ResizeObserver');
+  const { mountStaticGraph } = await import(viewPath);
+  const view = mountStaticGraph(host, fixture(), {
+    doc, portsFn, agents: AGENTS, width: 520, viewport: () => ({ left: 0, top: 0, width: 520, height: 300 }),
+  });
+  assert.equal(view.mode, 'static');
+  assert.equal(view.getTransform().z, 0.5);
+  assert.equal(host.querySelectorAll('.node').length, 3);
+});
+
+// Replaces the origin-trust half of the retired test/ui-agent-xss.test.mjs
+// (Task 8 deletes it with the rest of the v1 composer suite): a USER agent's
+// meta is writable through POST /api/agents, so its icon must never reach
+// innerHTML. Keep this test — it is the only guard left on that path.
+test('safeAgentIcon refuses a user agent\'s icon markup and keeps builtin glyphs', async () => {
+  const { doc, host } = boot();
+  const { createGraphView, safeAgentIcon, USER_AGENT_ICON } = await import(viewPath);
+  assert.equal(safeAgentIcon({ origin: 'builtin', icon: '<path d="M4 4h8"/>' }), '<path d="M4 4h8"/>');
+  assert.equal(safeAgentIcon({ origin: 'user', icon: '<img src=x onerror=alert(1)>' }), USER_AGENT_ICON);
+  assert.equal(safeAgentIcon(null), '');
+  const evil = { key: 'evil', displayName: '<img src=x onerror=alert(1)>', color: 'red', origin: 'user', icon: '<script>alert(1)<\/script>' };
+  const view = createGraphView(host, { doc, portsFn, agents: { planner: evil } });
+  view.render(fixture(), {});
+  const head = view.nodeEl('n_agent').querySelector('.nhead');
+  assert.equal(head.querySelector('script'), null, 'no script node reached the DOM');
+  assert.equal(head.querySelector('img'), null, 'no img node reached the DOM');
+  assert.equal(head.querySelector('.tt').textContent, evil.displayName, 'the display name is TEXT, never markup');
+});
+
+test('destroy() removes the stage and leaves no listener that can mutate anything', async () => {
+  const { doc, host, win } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  view.render(fixture(), {});
+  view.createNav({ wheelPan: 'always' });
+  const stage = view.stage;
+  view.setTransform({ x: 0, y: 0, z: 1 });
+  view.destroy();
+  assert.equal(host.querySelector('.gv-stage'), null, 'stage removed');
+  stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, bubbles: true, cancelable: true }));
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'no listener survived destroy()');
+});

@@ -22,6 +22,7 @@ import {
 } from '../../../src/shared/graph/geometry.mjs';
 import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
+import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -621,5 +622,29 @@ export function createGraphView(host, {
   // Internals the later tasks' fast paths close over.
   view._internals = { incident, dCache, footers };
   setTransform(T);
+  return view;
+}
+
+/** Saved-pipeline preview markup. Numbers only — no DOM, no measure. */
+export function thumbnailFor(template, portsFn, { width = 240, height = 96 } = {}) {
+  if (!template || !Array.isArray(template.nodes) || !template.nodes.length) return '';
+  return thumbnailSvg(template, portsFn, { width, height });
+}
+
+/** A non-interactive graph for a fixed-width card (saved rows, Running list).
+ *  NO listeners: the card's own click handler must keep working, which is why
+ *  `.gv-static .node` is pointer-events:none in style.css. */
+export function mountStaticGraph(host, template, { doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null } = {}) {
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport });
+  view.render(template, {});
+  const paint = () => view.fitToWidth(width || host.clientWidth || 0);
+  paint();
+  const win = doc.defaultView || globalThis;
+  if (typeof win.ResizeObserver === 'function') {
+    const ro = new win.ResizeObserver(() => view.fitToWidth(host.clientWidth || width || 0));
+    ro.observe(host);
+    const inner = view.destroy;
+    view.destroy = () => { ro.disconnect(); inner(); };
+  }
   return view;
 }
