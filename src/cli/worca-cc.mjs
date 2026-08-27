@@ -1523,6 +1523,16 @@ async function main() {
     return 1;
   }
 
+  // Validate --workflow before spawning anything: an archived or graph template
+  // must fail with one line, not a stack trace half-way through a run.
+  if (flags.workflow) {
+    const { assertRunnableWorkflow } = await import('../core/workflows.mjs');
+    let row;
+    try { row = await assertRunnableWorkflow(flags.workflow); }
+    catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
+    if (row.version === 2) fail('template is a graph — runs on the graph engine (not available yet)');
+  }
+
   const orch = createOrchestrator({
     projectDir,
     prompt: flags.prompt || undefined,

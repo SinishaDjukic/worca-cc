@@ -93,7 +93,7 @@ test('resolveRunConfig returns the per-workflow nodes+feedbacks maps', async () 
 test('resolveRunConfig for an unconfigured workflow yields empty maps', async () => {
   const p = await freshProject();
   const resolved = await resolveRunConfig(p, 'wf_never');
-  assert.deepEqual(resolved, { nodes: {}, feedbacks: {} });
+  assert.deepEqual(resolved, { nodes: {}, wires: {}, feedbacks: {} });
 });
 
 test('setNodeModel clears a node when model and effort are both blank', async () => {

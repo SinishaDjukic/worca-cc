@@ -1,5 +1,9 @@
 {
   "key": "decomposer",
+  "metaVersion": 2,
+  "mockRole": "decomposer",
+  "inputs": [{ "id": "plan", "type": "md" }],
+  "outputs": [{ "id": "tasks", "type": "json", "filename": "decomposition.json", "artifactKind": "decomposition" }],
   "domain": "coding",
   "displayName": "Decompose",
   "description": "Splits an approved plan into vertical-slice tasks. Each task gets its own implementer.",

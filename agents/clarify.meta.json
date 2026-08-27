@@ -1,5 +1,9 @@
 {
   "key": "clarify",
+  "metaVersion": 2,
+  "mockRole": "clarify",
+  "inputs": [{ "id": "task", "type": "md" }],
+  "outputs": [{ "id": "answers", "type": "json", "filename": "clarify.json", "artifactKind": "clarify" }],
   "domain": "coding",
   "displayName": "Clarify",
   "description": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",

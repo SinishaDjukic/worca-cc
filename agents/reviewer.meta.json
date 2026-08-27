@@ -1,5 +1,18 @@
 {
   "key": "reviewer",
+  "metaVersion": 2,
+  "mockRole": "reviewer",
+  "wantsRequest": true,
+  "workspaceStrategy": "review",
+  "verdict": { "filename": "impl-review-cycle{cycle}.json" },
+  "inputs": [
+    { "id": "plan", "type": "md" },
+    { "id": "done", "type": "void", "required": false, "as": "worktree" }
+  ],
+  "outputs": [
+    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-impl-review.md", "store": "project" },
+    { "id": "pass", "type": "void", "when": "clean" }
+  ],
   "domain": "coding",
   "displayName": "Review Implementation",
   "description": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",

@@ -17,6 +17,8 @@ import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { classifyLoops } from '../shared/graph/loops.mjs';
+import { registryPortsFn } from './graph/registry-ports.mjs';
 
 /**
  * Default feedback cycle count when run-config does not override it. Matches the
@@ -178,6 +180,14 @@ export function sanitizeWorkflowSteps(steps) {
  */
 export function workflowNodeDefaults(tpl) {
   const out = {};
+  if (Array.isArray(tpl?.nodes)) {                       // v2: defaults ARE node.config
+    for (const node of tpl.nodes) {
+      if (node?.kind !== 'agent') continue;
+      const clean = sanitizeNodeDefaults(node.config, node.id);
+      if (clean) out[node.id] = clean;
+    }
+    return out;
+  }
   for (const group of Array.isArray(tpl?.steps) ? tpl.steps : []) {
     for (const node of Array.isArray(group) ? group : []) {
       if (node && node.id && node.defaults && typeof node.defaults === 'object') out[node.id] = node.defaults;
@@ -202,30 +212,44 @@ function parseArr(text) {
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch { return []; }
 }
 
-/** Map a workflows row to the template object shape. */
+/** Map a workflows row to the template object shape. Version-aware: `graph`
+ *  carries {nodes, wires, canvas?} ONLY — id/name/domain/origin stay row columns,
+ *  so a rename can never drift. */
 function rowToTpl(r) {
-  return {
+  const base = {
     id: r.id,
     name: r.name,
     version: r.version,
     domain: r.domain || 'general',          // pre-migration NULL → 'general'
     origin: r.origin || null,               // 'plugin:<name>' provenance; NULL = user-created
-    steps: parseArr(r.steps),
-    feedbacks: parseArr(r.feedbacks),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    archivedAt: r.archived_at || null,
   };
+  if (r.version === 2) {
+    let graph = {};
+    try { graph = JSON.parse(r.graph || '{}') || {}; } catch { graph = {}; }
+    base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    base.wires = Array.isArray(graph.wires) ? graph.wires : [];
+    if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
+    return base;
+  }
+  base.steps = parseArr(r.steps);
+  base.feedbacks = parseArr(r.feedbacks);
+  return base;
 }
 
+const ROW_COLS = 'id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin';
+
 /** Read + shallow-validate one stored template row. Unsafe id / missing => null. */
-function readRaw(id) {
+function readRaw(id, { includeArchived = false } = {}) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
   getDb();
-  const r = prepare(
-    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at, origin FROM workflows WHERE id = ?'
-  ).get(id);
+  const r = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
   if (!r) return null;
+  if (!includeArchived && r.archived_at) return null;
   const tpl = rowToTpl(r);
+  if (tpl.version === 2) return Array.isArray(tpl.nodes) ? tpl : null;
   return Array.isArray(tpl.steps) ? tpl : null; // mirror the legacy steps-array check
 }
 
@@ -269,27 +293,85 @@ export async function writeWorkflow(tpl) {
 }
 
 /**
+ * Persist a v2 graph template. Saving over an archived id UN-archives it (the
+ * user rebuilt it on purpose). v1 columns are written empty so a v1 reader can
+ * never mistake a graph row for a step plan.
+ * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
+ */
+export async function writeGraphWorkflow(tpl) {
+  const now = new Date().toISOString();
+  const name = (tpl && typeof tpl.name === 'string' && tpl.name.trim()) || 'Untitled';
+  // The reserved ids belong to the built-in default and its coexistence alias;
+  // a save may never claim either, so it falls back to the slug.
+  const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
+  const id = asked && isSafeWorkflowId(asked) && asked !== 'wf_default' && asked !== 'wf_default_v2'
+    ? asked
+    : `wf_${slugify(name)}`;
+  const domain = normDomain(tpl && tpl.domain);
+  const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
+  const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
+  if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
+
+  getDb();
+  const existing = prepare('SELECT created_at FROM workflows WHERE id = ?').get(id);
+  const createdAt = (typeof tpl?.createdAt === 'string' && tpl.createdAt) || existing?.created_at || now;
+  tx(() => {
+    prepare(`
+      INSERT INTO workflows (id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin)
+      VALUES (?, ?, 2, ?, '[]', '[]', ?, NULL, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, version = 2, domain = excluded.domain,
+        steps = '[]', feedbacks = '[]', graph = excluded.graph, archived_at = NULL,
+        updated_at = excluded.updated_at,
+        -- COALESCE, never a plain overwrite: the composer's Save on a loaded row
+        -- sends {id, name, nodes, wires} and NO origin, so a plain
+        -- "origin = excluded.origin" would silently detach a plugin-owned wfp_* row
+        -- from removePluginWorkflows' guard. v1's writeWorkflow never touches origin
+        -- on conflict either. (SQL comments only: a backtick here would END the JS literal.)
+        origin = COALESCE(excluded.origin, workflows.origin)
+    `).run(id, name, domain, JSON.stringify(graph), createdAt, now, origin);
+  });
+  // Re-read `origin`: the UPSERT may have KEPT an existing one this call omitted.
+  const stored = prepare('SELECT origin FROM workflows WHERE id = ?').get(id);
+  return { id, name, version: 2, domain, origin: stored?.origin ?? null, ...graph, createdAt, updatedAt: now };
+}
+
+/**
  * Read a template by id. Returns the built-in DEFAULT_WORKFLOW for "wf_default";
- * otherwise the stored row, or null when absent/corrupt/unsafe-id.
+ * otherwise the stored row, or null when absent/corrupt/unsafe-id/archived.
  * @param {string} id
  * @returns {Promise<object|null>}
  */
-export async function readWorkflow(id) {
+export async function readWorkflow(id, opts = {}) {
   if (id === DEFAULT_WORKFLOW.id) return DEFAULT_WORKFLOW;
-  return readRaw(id);
+  return readRaw(id, opts);
 }
 
 /**
  * List user templates (NOT DEFAULT_WORKFLOW — callers prepend it), newest first by
- * createdAt. Empty store => []. Never throws.
+ * createdAt. Archived rows are hidden unless asked for. Empty store => [].
  * @returns {Promise<object[]>}
  */
-export async function listWorkflows() {
+export async function listWorkflows({ includeArchived = false } = {}) {
   getDb();
-  const rows = prepare(
-    'SELECT id, name, version, domain, steps, feedbacks, created_at, updated_at, origin FROM workflows ORDER BY created_at DESC, id'
-  ).all();
+  const where = includeArchived ? '' : 'WHERE archived_at IS NULL';
+  const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
   return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
+}
+
+/** The ONE gate every run path goes through (POST /api/run, the CLI's
+ *  --workflow, Ask's proposal validation). Throws with a `code` the callers map
+ *  to HTTP/exit codes; the ARCHIVED text is user-facing and verbatim. */
+export async function assertRunnableWorkflow(id) {
+  const wanted = typeof id === 'string' && id.trim() ? id.trim() : DEFAULT_WORKFLOW.id;
+  const live = await readWorkflow(wanted);
+  if (live) return live;
+  const archived = await readWorkflow(wanted, { includeArchived: true });
+  if (archived) {
+    throw Object.assign(new Error(`workflow "${wanted}" was archived by the v2 upgrade `
+      + '(v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Composer'), { code: 'ARCHIVED' });
+  }
+  throw Object.assign(new Error(`unknown workflowId "${wanted}"`), { code: 'NOT_FOUND' });
 }
 
 /**
@@ -315,6 +397,24 @@ export async function setWorkflowNodeDefaults(id, map) {
   const tpl = readRaw(id);
   if (!tpl) throw new Error(`workflow not found: ${id}`);
   const patch = map && typeof map === 'object' ? map : {};
+
+  if (tpl.version === 2) {
+    const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
+    const nodes = tpl.nodes.map((node) => {
+      if (!Object.prototype.hasOwnProperty.call(patch, node.id)) return node;
+      const clean = sanitizeNodeDefaults(patch[node.id], node.id) || {};
+      // Only the 4 tunables are defaults; awaitAll/arity/planStoreSeed are
+      // TOPOLOGY and must survive a defaults patch untouched.
+      const kept = Object.fromEntries(Object.entries(node.config || {}).filter(([k]) => !TUNABLES.includes(k)));
+      return { ...node, config: { ...kept, ...clean } };
+    });
+    const now = new Date().toISOString();
+    tx(() => {
+      prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) }), now, id);
+    });
+    return { ...tpl, nodes, updatedAt: now };
+  }
 
   const steps = tpl.steps.map((group) => (Array.isArray(group) ? group.map((node) => {
     if (!node || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(patch, node.id)) return node;
@@ -368,9 +468,143 @@ export async function deleteWorkflow(id) {
  * @returns {Promise<object>} ExecutablePlan
  * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
+/** Port SIGNATURE for the workspace-variant check: the fields that change
+ *  SCHEDULING (ids, types, cardinality, loop/expands, conditional routing).
+ *  Deliberately excludes `as`, filename and store — a variant may render and
+ *  store differently, it may not fire differently. */
+function portSignature(meta) {
+  return JSON.stringify({
+    inputs: (meta?.inputs || []).map((p) => ({ id: p.id, type: p.type, required: p.required !== false,
+      loop: !!p.loop, expands: !!p.expands })),
+    outputs: (meta?.outputs || []).map((p) => ({ id: p.id, type: p.type, when: p.when || 'always' })),
+    verdict: Boolean(meta?.verdict),
+  });
+}
+
+const LAYER_RANK = (origin) => (origin === 'builtin' ? 0 : String(origin || '').startsWith('plugin:') ? 2 : 1);
+
+/**
+ * Workspace substitutions, derived from META alone (no agent-key literals): every
+ * `scope:'workspace-only'` meta that declares `workspaceVariantOf` claims that
+ * target. Ties break by layer — builtin > user > plugin.
+ * @returns {Record<string, object>} target key -> variant meta
+ */
+export function workspaceVariants(registry) {
+  const out = {};
+  for (const meta of Object.values(registry || {})) {
+    if (!meta || meta.scope !== 'workspace-only' || !meta.workspaceVariantOf) continue;
+    const prev = out[meta.workspaceVariantOf];
+    if (!prev || LAYER_RANK(meta.origin) < LAYER_RANK(prev.origin)) out[meta.workspaceVariantOf] = meta;
+  }
+  return out;
+}
+
+/**
+ * Merge a v2 template + the project's run-config + the registry into everything a
+ * graph run needs. The template comes back UNMUTATED; effective per-node config
+ * lives in `nodes`, per-loop-wire budgets in `wires`. P4's _resolveTopology feeds
+ * `nodes`/`wires` to buildGraphManifest as `overlays`.
+ * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
+ */
+export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
+  const stored = await readWorkflow(workflowId);
+  if (!stored) throw new Error(`unknown workflowId "${workflowId}"`);
+  if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
+  // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
+  // constant) whose agent nodes carry the RESOLVED key after workspace substitution.
+  const tpl = structuredClone(stored);
+  const reg = registry && typeof registry === 'object' ? registry : {};
+  const isWorkspace = !!opts.isWorkspace;
+  const variants = isWorkspace ? workspaceVariants(reg) : {};
+  const { nodes: nodeCfg, wires: wireCfg } = await resolveRunConfig(projectDir, workflowId);
+  // The legacy per-role layer is the Default workflow's storage only (saved rows
+  // use nodeCfg); it is addressed by agent KEY, never by node id.
+  const stepsCfg = workflowId === DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
+  const firstDefined = (...vals) => vals.find((v) => v !== undefined);
+
+  const nodes = {};
+  const agentsByKey = {};
+  const agentKeys = new Set();
+  for (const node of Array.isArray(tpl.nodes) ? tpl.nodes : []) {
+    if (node.kind !== 'agent') {
+      nodes[node.id] = { nodeId: node.id, kind: node.kind, key: null, config: { ...(node.config || {}) } };
+      continue;
+    }
+    const authored = node.key;
+    const key = variants[authored]?.key || authored;
+    if (key !== authored) node.key = key;          // the resolved template carries the resolved key
+    const meta = reg[key];
+    if (!meta) throw new Error(`unknown agent "${key}" — no such key in the registry`);
+    if (!Array.isArray(meta.inputs) || !Array.isArray(meta.outputs)) {
+      throw new Error(`agent "${key}" has no v2 ports — port its sidecar to metaVersion 2`);
+    }
+    if (meta.placeable === false) throw new Error(`agent "${key}" declares placeable: false and cannot be a graph node`);
+    if (key !== authored && portSignature(meta) !== portSignature(reg[authored] || {})) {
+      throw new Error(`workspace variant "${key}" does not match the port signature of "${authored}"`);
+    }
+    const { prompt, tools } = await loadAgentFile(agentsDir, meta.agentFile ?? null, meta.agentPath ?? null);
+    const sel = nodeCfg[node.id] || {};
+    // Legacy per-role config is keyed by the AUTHORED key, so a substituted
+    // variant still inherits the user's model/effort for that role.
+    const legacy = stepsCfg[authored] || {};
+    const cfg = node.config && typeof node.config === 'object' ? node.config : {};
+    nodes[node.id] = {
+      nodeId: node.id,
+      kind: 'agent',
+      key,
+      authoredKey: authored,
+      meta,
+      runnerType: meta.runnerType || 'producer',
+      agentFile: meta.agentFile ?? null,
+      agentPrompt: prompt,
+      promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
+      tools,
+      config: { ...cfg },
+      model: firstDefined(sel.model, legacy.model, cfg.model),
+      // An effort only travels with the model that advertises it: an override
+      // naming its own model must not inherit the lower layer's effort.
+      effort: firstDefined(sel.effort, legacy.effort, (sel.model || legacy.model) ? undefined : cfg.effort),
+      // workspaceFanOut forces fan-out on a workspace run (the generic
+      // replacement for the v1 FANOUT_ELIGIBLE key list).
+      fanOut: isWorkspace && meta.workspaceFanOut
+        ? true
+        : !!firstDefined(sel.fanOut, legacy.fanOut, cfg.fanOut, meta.fanOut, false),
+      askQuestions: !meta.asksQuestions
+        ? false
+        : (meta.questionsLocked
+          ? !!meta.questionsDefault
+          : !!firstDefined(sel.askQuestions, legacy.askQuestions, cfg.askQuestions, meta.questionsDefault, false)),
+      awaitAll: !!cfg.awaitAll,
+    };
+    agentsByKey[key] = meta;
+    agentKeys.add(key);
+  }
+
+  // Two nodes sharing one agent key prefix their run-store outputs (executor dupPrefix).
+  const keyCount = new Map();
+  for (const nc of Object.values(nodes)) if (nc.kind === 'agent') keyCount.set(nc.key, (keyCount.get(nc.key) || 0) + 1);
+  for (const nc of Object.values(nodes)) if (nc.kind === 'agent') nc.duplicateKey = (keyCount.get(nc.key) || 0) > 1;
+
+  // Budgets ride LOOP wires only: overlay > authored > DEFAULT_MAX_CYCLES.
+  // portsFn + loops are computed ONCE here and RETURNED — P4 hands them to the
+  // scheduler and the manifest builder instead of re-deriving them.
+  const portsFn = registryPortsFn(agentsByKey);
+  const loops = classifyLoops(tpl, portsFn);
+  const { loopWireIds } = loops;
+  const wires = {};
+  for (const w of Array.isArray(tpl.wires) ? tpl.wires : []) {
+    if (!loopWireIds.has(w.id)) continue;
+    const raw = Number(wireCfg[w.id]?.maxCycles ?? w.config?.maxCycles);
+    wires[w.id] = { maxCycles: Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES };
+  }
+  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys };
+}
+
 export async function resolveWorkflow(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   const tpl = await readWorkflow(workflowId);
   if (!tpl) throw new Error(`workflow not found: ${workflowId}`);
+  // A v2 row is the graph engine's; the v1 dispatcher cannot read nodes/wires.
+  if (tpl.version === 2) throw new Error('template is a graph — runs on the graph engine');
   const reg = registry && typeof registry === 'object' ? registry : {};
   const isWorkspace = !!(opts && opts.isWorkspace);
   const { nodes: nodeCfg, feedbacks: fbCfg } = await resolveRunConfig(projectDir, workflowId);

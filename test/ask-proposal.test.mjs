@@ -25,6 +25,13 @@ const deps = {
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
         : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' } : null),
+  // The runnable gate rides the same seam: derive it from the fake reader so the
+  // two can never disagree about which ids exist.
+  assertRunnableWorkflow: async (id) => {
+    const wf = await deps.readWorkflow(id);
+    if (!wf) throw Object.assign(new Error(`unknown workflowId "${id}"`), { code: 'NOT_FOUND' });
+    return wf;
+  },
   readGuardrailSet: async (id) => (['permissive', 'normal', 'secure', 'custom1'].includes(id) ? { id } : null),
   isGitRepo: (p) => gitRepos.has(p),
   pathExists: (p) => existing.has(p),
@@ -115,4 +122,16 @@ test('isSyntacticRef: git ref-format rules, no shell-outs', () => {
   for (const bad of ['', '-x', 'a b', 'a..b', 'a/', '/a', 'a//b', '.hidden', 'a/.b', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b', 'a\\b', 'a@{1}', 'a.', 'a'.repeat(256), 42, null]) {
     assert.ok(!isSyntacticRef(bad), JSON.stringify(bad));
   }
+});
+
+test('propose_run refuses a graph template', async () => {
+  const { validateProposal: v } = createProposalValidator({
+    ...deps,
+    readWorkflow: async (id) => (id === 'wf_g' ? { id, name: 'G', version: 2, nodes: [], wires: [] } : null),
+    assertRunnableWorkflow: async (id) => (id === 'wf_g'
+      ? { id, name: 'G', version: 2, nodes: [], wires: [] }
+      : (() => { throw Object.assign(new Error(`unknown workflowId "${id}"`), { code: 'NOT_FOUND' }); })()),
+  });
+  const errors = errs(await v({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_g' }));
+  assert.ok(errors.includes('template is a graph — runs on the graph engine (not available yet)'));
 });

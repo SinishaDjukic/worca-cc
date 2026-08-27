@@ -1,5 +1,20 @@
 {
   "key": "workspaceReviewer",
+  "metaVersion": 2,
+  "mockRole": "workspace-reviewer",
+  "workspaceVariantOf": "reviewer",
+  "promptHints": "The issue list is the UNION of every per-project critical/major issue (never collapse one), sorted by projectKey then severity, each location prefixed \"<projectKey>: \".",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "review",
+  "verdict": { "filename": "ws-review-cycle{cycle}.json" },
+  "inputs": [
+    { "id": "plan", "type": "md" },
+    { "id": "done", "type": "void", "required": false, "as": "worktree" }
+  ],
+  "outputs": [
+    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-ws-review.md", "store": "project" },
+    { "id": "pass", "type": "void", "when": "clean" }
+  ],
   "domain": "shared",
   "displayName": "Workspace Review",
   "description": "Fans out one review per changed project in the workspace. Synthesizes a single cross-project verdict.",

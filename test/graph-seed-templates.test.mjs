@@ -9,6 +9,9 @@ import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from '../src/core/graph/seed
 import { GRAPH_DEFAULT_WORKFLOW, deepFreeze } from '../src/core/graph/builtin-workflows.mjs';
 import { NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE, TEMPLATE_VERSION } from '../src/shared/graph/constants.mjs';
 import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
+import { validateGraph } from '../src/shared/graph/validate.mjs';
+import { classifyLoops } from '../src/shared/graph/loops.mjs';
+import { realPortsFn } from './helpers/graph-ports.mjs';
 
 const ALL = [...SEED_TEMPLATES, GRAPH_DEFAULT_WORKFLOW];
 const byId = Object.fromEntries(ALL.map((t) => [t.id, t]));
@@ -256,4 +259,56 @@ test('the shipping constants are deep-frozen', () => {
   const o = deepFreeze({ a: { b: 1 } });
   assert.ok(Object.isFrozen(o.a));
   assert.equal(deepFreeze(5), 5);
+});
+
+// ── P2 seed drift guard: the seeds, the validator and the ported sidecars ─────
+const LOOP_WIRES = {
+  'wf_full': ['w12', 'w15', 'w5'],
+  'wf_no-clarify': ['w10', 'w3'],
+  'wf_provided-plan': ['w12', 'w2', 'w9'],
+  'wf_full-no-decompose': ['w10', 'w13', 'w5'],
+  'wf_quick-fix': ['w5'],
+  'wf_clarify-implement': ['w5', 'w9'],
+  'wf_clarify-quick-fix': ['w7'],
+  'wf_default': ['w5', 'w9'],
+};
+const allGraphs = () => [...SEED_TEMPLATES, GRAPH_DEFAULT_WORKFLOW];
+
+test('every seed graph validates against the REAL sidecars: 0 errors, 0 warnings', () => {
+  const portsFn = realPortsFn();
+  const graphs = allGraphs();
+  assert.equal(graphs.length, 8);
+  for (const tpl of graphs) {
+    const { ok, errors, warnings } = validateGraph(tpl, portsFn);
+    assert.deepEqual(errors, [], `${tpl.id} errors: ${JSON.stringify(errors, null, 1)}`);
+    assert.deepEqual(warnings, [], `${tpl.id} warnings: ${JSON.stringify(warnings, null, 1)}`);
+    assert.equal(ok, true);
+  }
+});
+
+test('loop wires are exactly the budgeted feedback wires (Amendment f pins)', () => {
+  const portsFn = realPortsFn();
+  for (const tpl of allGraphs()) {
+    const { loopWireIds } = classifyLoops(tpl, portsFn);
+    assert.deepEqual([...loopWireIds].sort(), LOOP_WIRES[tpl.id], `${tpl.id} loop wires`);
+    // Every loop wire carries a budget and no plain wire does (V13's placement rule).
+    for (const w of tpl.wires) {
+      // `!!` is load-bearing: a plain seed wire has NO `config` key at all, so
+      // `w.config && …` short-circuits to `undefined`, and assert/strict's
+      // `equal` IS `strictEqual` — `undefined !== false` fails on the very first
+      // plain wire (`wf_full.w1`).
+      const budgeted = !!(w.config && w.config.maxCycles !== undefined);
+      assert.equal(budgeted, loopWireIds.has(w.id), `${tpl.id}.${w.id} budget placement`);
+    }
+  }
+});
+
+test('FB_WIRE_MAP names exactly the loop wires of each seed', () => {
+  const portsFn = realPortsFn();
+  for (const tpl of SEED_TEMPLATES) {
+    const mapped = Object.values(FB_WIRE_MAP[tpl.id] || {}).sort();
+    assert.deepEqual(mapped, [...classifyLoops(tpl, portsFn).loopWireIds].sort(), tpl.id);
+  }
+  assert.deepEqual(Object.values(FB_WIRE_MAP.wf_default).sort(),
+    [...classifyLoops(GRAPH_DEFAULT_WORKFLOW, realPortsFn()).loopWireIds].sort());
 });

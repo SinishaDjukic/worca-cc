@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { listProjects as realListProjects } from '../projects.mjs';
 import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
-import { readWorkflow as realReadWorkflow } from '../workflows.mjs';
+import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
@@ -49,12 +49,14 @@ export function isSyntacticRef(s) {
 }
 
 /**
- * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
+ * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
  */
 export function createProposalValidator({
   listProjects = realListProjects,
   readWorkspace = realReadWorkspace,
   readWorkflow = realReadWorkflow,
+  // The ONE runnable gate, injectable like every other reader on this seam.
+  assertRunnableWorkflow = realAssertRunnableWorkflow,
   readGuardrailSet = realReadGuardrailSet,
   isGitRepo = realIsGitRepo,
   pathExists = existsSync,
@@ -102,8 +104,10 @@ export function createProposalValidator({
 
     // ── workflow ───────────────────────────────────────────────────────────
     const workflowId = str(inp.workflowId) || 'wf_default';
-    const wf = await readWorkflow(workflowId);
-    if (!wf) errors.push(PROPOSAL_ERRORS.unknownWorkflow(workflowId));
+    let wf = null;
+    try { wf = await assertRunnableWorkflow(workflowId); }
+    catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
+    if (wf && wf.version === 2) errors.push('template is a graph — runs on the graph engine (not available yet)');
 
     // ── guardrails: default normal, permissive refused (D3) ────────────────
     let guardrailsId = 'normal';

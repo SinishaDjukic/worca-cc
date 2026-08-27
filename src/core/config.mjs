@@ -551,7 +551,7 @@ function readWorkflowsMap(key) {
   getDb();
   const workflows = {};
   const ensure = (wf) => {
-    if (!workflows[wf]) workflows[wf] = { nodes: {}, feedbacks: {} };
+    if (!workflows[wf]) workflows[wf] = { nodes: {}, feedbacks: {}, wires: {} };
     return workflows[wf];
   };
   for (const r of prepare(
@@ -569,6 +569,12 @@ function readWorkflowsMap(key) {
     'SELECT workflow_id, fb_id, max_cycles FROM config_workflow_feedbacks WHERE project_key = ?'
   ).all(key)) {
     ensure(r.workflow_id).feedbacks[r.fb_id] = { maxCycles: r.max_cycles };
+  }
+  // v23: per-loop-wire budgets (the graph twin of config_workflow_feedbacks).
+  for (const r of prepare(
+    'SELECT workflow_id, wire_id, max_cycles FROM config_workflow_wires WHERE project_key = ?'
+  ).all(key)) {
+    ensure(r.workflow_id).wires[r.wire_id] = { maxCycles: r.max_cycles };
   }
   return workflows;
 }
@@ -684,6 +690,23 @@ export async function setFeedbackCycles(projectDir, workflowId, fbId, maxCycles)
 }
 
 /**
+ * Set the cycle budget for ONE loop wire of a v2 workflow. Coerced to an integer
+ * >= 1 (a loop runs at least once), exactly like setFeedbackCycles — this never
+ * throws, so a stale UI value cannot 500 a save. Writes only config_workflow_wires.
+ */
+export async function setWireCycles(projectDir, workflowId, wireId, maxCycles) {
+  const n = Math.max(1, Math.floor(Number(maxCycles) || 0) || 1);
+  const key = projectKey(projectDir);
+  tx(() => {
+    prepare(`
+      INSERT INTO config_workflow_wires (project_key, workflow_id, wire_id, max_cycles)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(project_key, workflow_id, wire_id) DO UPDATE SET max_cycles = excluded.max_cycles
+    `).run(key, workflowId, wireId, n);
+  });
+}
+
+/**
  * Drop every per-project override for one workflow — the New-Pipeline accordion's
  * "Reset to defaults" (newpipeline-ux-design.md §4.5). Deletes the workflow's
  * config_workflow_nodes + config_workflow_feedbacks rows, so each node falls back
@@ -708,6 +731,7 @@ export async function resetWorkflowConfig(projectDir, workflowId) {
   tx(() => {
     prepare('DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ?').run(key, id);
     prepare('DELETE FROM config_workflow_feedbacks WHERE project_key = ? AND workflow_id = ?').run(key, id);
+    prepare('DELETE FROM config_workflow_wires WHERE project_key = ? AND workflow_id = ?').run(key, id);
     if (clearLegacy) {
       prepare(`
         INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
@@ -748,6 +772,7 @@ export async function resolveRunConfig(projectDir, workflowId) {
   const wf = readWorkflowsMap(projectKey(projectDir))[workflowId] || {};
   return {
     nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},
+    wires: wf.wires && typeof wf.wires === 'object' ? wf.wires : {},
     feedbacks: wf.feedbacks && typeof wf.feedbacks === 'object' ? wf.feedbacks : {},
   };
 }

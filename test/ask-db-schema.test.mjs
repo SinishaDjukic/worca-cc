@@ -77,7 +77,7 @@ test('ladder: a v20 DB gets ask_worktrees and is stamped current', () => {
 test('self-heal: a stamped-current DB missing ONLY ask_worktrees is healed, stamp untouched', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 17');            // 17 -> 22: run the ask ladder steps
+  db.exec('PRAGMA user_version = 17');            // 17 -> 23: run the ask ladder steps
   migrate(db);
   db.exec('DROP TABLE ask_worktrees');
   assert.ok(!tableNames(db).includes('ask_worktrees'), 'precondition: only this table is missing');

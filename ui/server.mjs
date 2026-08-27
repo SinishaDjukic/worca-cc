@@ -79,7 +79,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
-  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow, resetWorkflowConfig,
+  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -92,9 +92,11 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
-  setWorkflowNodeDefaults, workflowNodeDefaults,
+  DEFAULT_WORKFLOW, listWorkflows, writeWorkflow, deleteWorkflow,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
 } from '../src/core/workflows.mjs';
+import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
+import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
@@ -1074,7 +1076,19 @@ app.post('/api/run', async (req, res) => {
     // so the client gets a clean 400 instead of a mid-run error event.
     const workflowId =
       typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
-    if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
+    // ONE gate for every run entry point, ONE status: unknown (today's text),
+    // archived (the upgrade explanation the UI shows verbatim) and — until P4 —
+    // a graph row all answer 400 through badRequest. The graph branch dies in
+    // P4, when createOrchestratorFor routes v2 rows to the engine.
+    let workflowRow;
+    try {
+      workflowRow = await assertRunnableWorkflow(workflowId);
+    } catch (err) {
+      return badRequest(res, err && err.message ? err.message : String(err));
+    }
+    if (workflowRow.version === 2) {
+      return badRequest(res, 'template is a graph — runs on the graph engine (not available yet)');
+    }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2761,7 +2775,7 @@ app.post('/api/config', async (req, res) => {
 // validates model/effort against the effective catalog exactly like setStep
 // (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
 // maxCycles to >= 1 (it never throws).
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
@@ -2782,6 +2796,12 @@ app.patch('/api/config', async (req, res) => {
       if (!workflowId) return badRequest(res, 'workflowId is required to set feedback config');
       for (const [fbId, sel] of Object.entries(body.feedbacks)) {
         await setFeedbackCycles(projectDir, workflowId, fbId, sel && sel.maxCycles);
+      }
+    }
+    if (body.wires && typeof body.wires === 'object') {
+      if (!workflowId) return badRequest(res, 'workflowId is required to set wire config');
+      for (const [wireId, sel] of Object.entries(body.wires)) {
+        await setWireCycles(projectDir, workflowId, wireId, sel && sel.maxCycles);
       }
     }
     if (typeof body.activeWorkflowId === 'string' && body.activeWorkflowId.trim()) {
@@ -3128,8 +3148,12 @@ function nodeDefaultsError(raw, models, where) {
   return '';
 }
 
-app.get('/api/workflows', async (_req, res) => {
+app.get('/api/workflows', async (req, res) => {
   try {
+    if (isTruthy(req.query.archived)) {
+      const all = await listWorkflows({ includeArchived: true });
+      return res.json({ workflows: all.filter((w) => w.archivedAt) });
+    }
     // The built-in default is never persisted to the user store; callers
     // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
     res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
@@ -3140,16 +3164,57 @@ app.get('/api/workflows', async (_req, res) => {
 
 app.get('/api/workflows/:id', async (req, res) => {
   try {
-    const tpl = await readWorkflow(req.params.id); // CONV-1: await; returns DEFAULT_WORKFLOW for "wf_default"
-    if (!tpl) return res.status(404).json({ error: 'workflow not found' });
-    res.json(tpl);
+    // ONE gate, ONE message: an archived id explains itself instead of reading
+    // as a plain 404 (assertRunnableWorkflow owns both texts).
+    res.json(await assertRunnableWorkflow(req.params.id));
   } catch (err) {
+    if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
+      return res.status(404).json({ error: err.message });
+    }
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
 app.post('/api/workflows', async (req, res) => {
   const body = req.body || {};
+  // ── v2 graph save ──────────────────────────────────────────────────────────
+  // The 422 body is the SHARED validator's issue list, by construction: the
+  // composer renders exactly what it would have computed locally, so the server
+  // and the client can never disagree about why a graph is illegal.
+  if (body.version === 2) {
+    const graph = {
+      id: typeof body.id === 'string' ? body.id : undefined,
+      name: typeof body.name === 'string' ? body.name.trim() : '',
+      domain: typeof body.domain === 'string' ? body.domain : undefined,
+      nodes: Array.isArray(body.nodes) ? body.nodes : [],
+      wires: Array.isArray(body.wires) ? body.wires : [],
+      ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
+    };
+    if (!graph.name) return badRequest(res, 'name is required');
+    try {
+      // Catalog validation FIRST, exactly like the v1 branch below: a v2 node's
+      // `config` IS its defaults block (§4), so a model/effort the per-project
+      // override could not name must not ride in through a template save.
+      // nodeDefaultsError reads only `model`/`effort`, so only the tunables are
+      // handed to it — topology keys (awaitAll, arity, planStoreSeed) never are.
+      const models = await listModels('');
+      const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
+      for (const n of graph.nodes) {
+        if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
+        const picked = Object.fromEntries(
+          TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
+        const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
+        if (bad) return badRequest(res, bad);
+      }
+      const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
+      const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
+      if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
+      const workflow = await writeGraphWorkflow(graph);
+      return res.status(201).json({ workflow, warnings });
+    } catch (err) {
+      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    }
+  }
   // Build the candidate template from the editor payload (topology only).
   const tpl = {
     name: typeof body.name === 'string' ? body.name.trim() : '',

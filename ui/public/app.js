@@ -1972,6 +1972,7 @@ if (typeof window !== 'undefined') {
   window.__composer = composer;
   window.__composerRefresh = composerRefresh;
   window.__composerAddFeedback = composerAddFeedback;
+  window.__composerRenderList = composerRenderList;
 }
 
 // Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
@@ -2560,6 +2561,8 @@ function composerWfDomains() {
 
 function composerRenderList() {
   const listEl = composer.els.list, cntEl = composer.els.count;
+  // The v1 composer cannot render a graph; P5 replaces this view wholesale.
+  composer.saved = (composer.saved || []).filter((w) => w && w.version !== 2);
   listEl.innerHTML = '';
   cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' workflow' : ' workflows');
   // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
@@ -2667,6 +2670,10 @@ function option(value, text) {
 // so the renderer can mark deviation and the writer can prune a redundant save
 // back to "inherit". `override` is layer 1 verbatim.
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
+  // v2 graph rows have no steps/feedbacks: render nothing until the graph
+  // run-setup branch lands (P5). Guarding here keeps New Pipeline from throwing
+  // on a saved graph the moment one exists.
+  if (workflow && workflow.version === 2) return [];
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
@@ -2811,6 +2818,10 @@ function pruneNodeSelection(row, next = {}) {
 // A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
 // by more than one node in the workflow. Unknown ids fall back to the raw id.
 function buildFeedbackRows(workflow, registry, runConfig) {
+  // v2 graph rows have no steps/feedbacks: render nothing until the graph
+  // run-setup branch lands (P5). Guarding here keeps New Pipeline from throwing
+  // on a saved graph the moment one exists.
+  if (workflow && workflow.version === 2) return [];
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
   const reg = registry || {};

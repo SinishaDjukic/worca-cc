@@ -1,5 +1,10 @@
 {
   "key": "manualTestsChecklist",
+  "metaVersion": 2,
+  "mockRole": "manual-tests-checklist",
+  "promptHints": "Read the implementation plan and the implemented changes ({diffInstruction}), then write a markdown checklist of concrete manual test cases a human can run against the app. Each case: a `- [ ]` line with steps and the expected result.",
+  "inputs": [{ "id": "plan", "type": "md" }],
+  "outputs": [{ "id": "checklist", "type": "md", "filename": "manual-tests-checklist.md" }],
   "domain": "coding",
   "displayName": "Manual Tests Checklist",
   "description": "Drafts a manual test checklist for the change. User-visible flows, edge cases, regressions worth clicking through.",

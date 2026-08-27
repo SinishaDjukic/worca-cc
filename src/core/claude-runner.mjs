@@ -843,6 +843,24 @@ async function emitLog(onEvent, text) {
 }
 
 /**
+ * The roles the offline mock runner can SERVE — one per arm of the role switch
+ * below (the `ask` arm is the Ask-Worca assistant, not a writer role). Exported
+ * because three consumers need the vocabulary and none of them may hard-code it:
+ * meta v2 validation (an unknown `mockRole` is a warning + drop), GET /api/agents
+ * (the Agents view's role picker) and the graph executor's mock-role chain.
+ * test/mock-writer-roles.test.mjs parses the switch and pins the lockstep.
+ */
+export const MOCK_WRITER_ROLES = new Set([
+  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
+  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing',
+  'generic-producer', 'generic-verifier',
+]);
+
+/** Named so the executor's mock-role chain and the switch cannot drift apart. */
+export const MOCK_ROLE_CLARIFY = 'clarify';
+export const MOCK_ROLE_DECOMPOSER = 'decomposer';
+
+/**
  * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
  * roles whose real runs may spawn sub-agents. Keyed by the MOCK_ROLE strings.
  */
@@ -1063,7 +1081,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
 
   let text = `[mock] role ${role} complete`;
   switch (role) {
-    case 'clarify':
+    case MOCK_ROLE_CLARIFY:
       text = await mockClarify(m, cycle, onEvent);
       break;
     case 'planner-plan':
@@ -1072,7 +1090,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'refiner':
       text = await mockRefiner(m, cycle, onEvent);
       break;
-    case 'decomposer':
+    case MOCK_ROLE_DECOMPOSER:
       text = await mockDecomposer(m, onEvent);
       break;
     case 'implementer':

@@ -130,11 +130,13 @@ export async function deleteAgent(key) {
     );
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
-  const refs = (await listWorkflows())
-    .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key)))
+  const refs = (await listWorkflows({ includeArchived: true }))
+    .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key))
+      || (wf.nodes || []).some((n) => n && n.key === key))
     .map((wf) => wf.name || wf.id);
   if (refs.length) {
-    throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} — delete or edit those first`, 'REFERENCED');
+    throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} `
+      + '— delete or edit those first (archived rows count)', 'REFERENCED');
   }
   const dir = requireUserDir();
   await rm(join(dir, `${key}.meta.json`), { force: true });

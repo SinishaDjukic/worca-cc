@@ -53,7 +53,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -733,13 +733,31 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT' },
-  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
+                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
+                            outcome: 'TEXT' },
+  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
+                            execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
+                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
-  workflows:              { domain: 'TEXT', origin: 'TEXT' },
+  workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER' },
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
 };
+
+/** v23: per-loop-wire cycle budgets, the graph-engine twin of
+ *  config_workflow_feedbacks (which becomes vestigial at the v1 kill list, never
+ *  dropped). IF NOT EXISTS + an INCREMENTAL_TABLES entry: some DBs already carry
+ *  this table from an earlier branch, with the PK columns in a different ORDER —
+ *  harmless, because every statement names its columns. */
+const CONFIG_WORKFLOW_WIRES_DDL = `
+CREATE TABLE IF NOT EXISTS config_workflow_wires (
+  project_key  TEXT NOT NULL,
+  workflow_id  TEXT NOT NULL,
+  wire_id      TEXT NOT NULL,
+  max_cycles   INTEGER NOT NULL,
+  PRIMARY KEY (project_key, workflow_id, wire_id)
+);
+`;
 
 /**
  * Tables added after v1, keyed by name -> their IF-NOT-EXISTS DDL. Same hazard
@@ -750,6 +768,7 @@ const INCREMENTAL_COLUMNS = {
  * DB missing only one is healed; repairSchemaGaps de-duplicates at exec time.
  */
 const INCREMENTAL_TABLES = {
+  config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
   guardrail_sets:    GUARDRAIL_SETS_DDL,
   cost_ledger:       COST_LEDGER_DDL,
@@ -1014,6 +1033,15 @@ function applySchemaV22(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v23 (node-graph v2): workflows.graph/archived_at, the pipeline_steps execution
+ *  ledger columns, pipelines.outcome and config_workflow_wires. Every piece lives
+ *  in INCREMENTAL_COLUMNS/INCREMENTAL_TABLES, so the whole step IS the reconcile —
+ *  the applySchemaV22 shape, with nothing to backfill. Purely additive: no row is
+ *  read, rewritten or archived here (that is the v24 break). */
+function applySchemaV23(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
@@ -1070,6 +1098,7 @@ export function migrate(db) {
     if (current < 20) applySchemaV20(db);            // ask_cost_ledger + backfill
     if (current < 21) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
     if (current < 22) applySchemaV22(db);            // tables + the ask_run_links column
+    if (current < 23) applySchemaV23(db);            // graph columns + config_workflow_wires
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

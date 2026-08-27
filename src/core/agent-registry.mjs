@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
+import { normalizeAgentMeta } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
+import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
 
 /**
  * Default location of the agent metadata sidecars, relative to this module.
@@ -213,7 +215,7 @@ export function normalizeMeta(raw) {
   const produces = channelList(raw.produces, key, 'produces') || spec.produces || (runnerType === 'verifier' ? ['review'] : []);
   const optionalConsumes = channelList(raw.optionalConsumes, key, 'optionalConsumes') || spec.optionalConsumes || [];
   const connectsTo = normalizeConnectsTo(raw.connectsTo, spec.connectsTo || '*');
-  return {
+  const base = {
     key,
     displayName: typeof raw.displayName === 'string' && raw.displayName.trim()
       ? raw.displayName.trim()
@@ -245,6 +247,34 @@ export function normalizeMeta(raw) {
       ? raw.requiresSkills.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
       : [],
   };
+  // ── meta v2 merge (dual shape, P2a..P8) ────────────────────────────────────
+  // A v2 sidecar KEEPS every v1 field and GAINS typed ports + capabilities, so
+  // both engines read the same file during coexistence. normalizeMeta returns a
+  // FIXED key set and agent-store round-trips {...existing, ...raw} through it,
+  // so a v2 sidecar that only "passed unknown keys through" would lose its ports
+  // on the next save. Invalid v2 => warn and SKIP THE WHOLE SIDECAR: half-loading
+  // an agent whose ports are wrong is worse than not loading it.
+  if (raw.metaVersion !== 2) return base;
+  const { meta, errors } = normalizeAgentMeta(raw, {
+    mockWriterRoles: MOCK_WRITER_ROLES,
+    warn: (msg) => console.warn(msg),
+  });
+  if (errors.length) {
+    console.warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
+    return null;
+  }
+  const merged = {
+    ...base,
+    metaVersion: 2,
+    inputs: meta.inputs,
+    outputs: meta.outputs,
+    portSummary: meta.portSummary,
+  };
+  for (const field of ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable']) {
+    if (field in meta) merged[field] = meta[field];
+  }
+  return merged;
 }
 
 /**

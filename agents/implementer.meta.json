@@ -1,5 +1,20 @@
 {
   "key": "implementer",
+  "metaVersion": 2,
+  "mockRole": "implementer",
+  "sideEffect": "code",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
+  "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+  "inputs": [
+    { "id": "fix", "type": "md", "required": false, "loop": true, "as": "fix-review",
+      "directive": "Address EVERY critical and major issue in the review below, then re-run the tests. Follow the plan; deviate only if something does not work at all." },
+    { "id": "task", "type": "json", "required": false, "expands": true,
+      "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan." },
+    { "id": "plan", "type": "md",
+      "directive": "Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; deviate slightly only if a step does not work at all." }
+  ],
+  "outputs": [{ "id": "done", "type": "void" }],
   "domain": "coding",
   "displayName": "Implementation",
   "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",

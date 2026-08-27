@@ -163,15 +163,18 @@ export function referencedPluginAgents(name) {
   getDb();
   const out = [];
   for (const row of prepare(
-    'SELECT id, name, steps FROM workflows WHERE origin IS NULL OR origin != ?',
+    'SELECT id, name, steps, graph FROM workflows WHERE origin IS NULL OR origin != ?',
   ).all(`plugin:${name}`)) {
-    let steps;
-    try { steps = JSON.parse(row.steps); } catch { continue; }
     const found = new Set();
+    let steps;
+    try { steps = JSON.parse(row.steps); } catch { steps = null; }
     for (const group of Array.isArray(steps) ? steps : []) {
-      for (const node of Array.isArray(group) ? group : []) {
-        if (node && keys.has(node.key)) found.add(node.key);
-      }
+      for (const node of Array.isArray(group) ? group : []) if (node && keys.has(node.key)) found.add(node.key);
+    }
+    let graph;
+    try { graph = JSON.parse(row.graph || 'null'); } catch { graph = null; }
+    for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+      if (node && keys.has(node.key)) found.add(node.key);
     }
     if (found.size) out.push({ workflowId: row.id, name: row.name, keys: [...found].sort() });
   }

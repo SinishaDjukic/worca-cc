@@ -6,9 +6,17 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadAgentRegistry, collectChannelDefs } from '../src/core/agent-registry.mjs';
+import { validateMetaV2 } from '../src/shared/graph/agent-meta.mjs';
+import { MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
+
+const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
+const rawSidecars = () => readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.meta.json'))
+  .map((f) => JSON.parse(readFileSync(join(AGENTS_DIR, f), 'utf8')));
 
 const scratch = [];
 function tmp() { const d = mkdtempSync(join(tmpdir(), 'worca-cc-schema-')); scratch.push(d); return d; }
@@ -87,13 +95,107 @@ test('collectChannelDefs merges registry-wide; first definition wins on conflict
   });
 });
 
-test('the 11 shipped sidecars are unchanged by v2 (backward compatibility)', () => {
+test('all 11 builtins validate as meta v2', () => {
+  const raws = rawSidecars();
+  assert.equal(raws.length, 11);
+  for (const raw of raws) {
+    assert.equal(raw.metaVersion, 2, `${raw.key} declares metaVersion 2`);
+    assert.deepEqual(validateMetaV2(raw, { mockWriterRoles: MOCK_WRITER_ROLES }).errors, [], raw.key);
+    assert.equal(MOCK_WRITER_ROLES.has(raw.mockRole), true, `${raw.key} names a real mock role`);
+  }
+});
+
+test('the 11 shipped sidecars keep their v1 shape AND gain v2 ports (dual shape)', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
   assert.equal(Object.keys(reg).length, 11);
   for (const m of Object.values(reg)) {
     assert.deepEqual(m.channelDefs, [], `${m.key} has no channelDefs`);
-    assert.equal(m.promptHints, '');
+    assert.ok(Array.isArray(m.consumes) && m.consumes.length, `${m.key} keeps consumes`);
+    assert.ok(Array.isArray(m.produces), `${m.key} keeps produces`);
+    assert.equal(m.metaVersion, 2, `${m.key} merged v2`);
+    assert.ok(Array.isArray(m.inputs) && m.inputs.length, `${m.key} has typed inputs`);
+    assert.ok(Array.isArray(m.outputs) && m.outputs.length, `${m.key} has typed outputs`);
+    assert.equal(typeof m.portSummary, 'string');
+    assert.equal(m.inputs.some((p) => p.id === 'await'), false, 'await is synthesized, never declared');
   }
   assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
   assert.deepEqual(reg.planner.produces, ['plan']);
+  // Exactly SIX builtins carry prompt hints; the other five stay empty (this
+  // replaces the old "promptHints === '' for all 11" pin). `implementer` is one
+  // of the six — spec §6's implementer row carries the hint (phases.mjs:836) and
+  // P3's parity pins depend on it, so a "fix" that deletes the hint to make a
+  // five-item list pass would break P3.
+  assert.deepEqual(Object.values(reg).filter((m) => m.promptHints).map((m) => m.key).sort(),
+    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'refiner', 'workspaceReviewer']);
+  assert.deepEqual(reg.implementer.inputs.map((p) => p.id), ['fix', 'task', 'plan'],
+    'the single-directive rule renders the FIRST fresh directive in DECLARED order');
+  assert.equal(reg.reviewer.workspaceFanOut, undefined, 'the reviewer does not fan out per project');
+  assert.equal(reg.workspaceReviewer.workspaceVariantOf, 'reviewer');
+  assert.equal(reg.workspaceScanner.placeable, false);
+});
+
+// The v2 ports and the v1 channels describe the SAME data flow until P8 deletes
+// the channel layer. This table is the mapping; the assertion below is what stops
+// one side drifting from the other.
+const PORT_CHANNELS = {
+  clarify: { inputs: { task: 'userPrompt' }, outputs: { answers: 'clarify' } },
+  planner: { inputs: { task: 'userPrompt', answers: 'clarify', revise: 'review' }, outputs: { plan: 'plan' } },
+  refiner: { inputs: { plan: 'plan', revise: 'plan' }, outputs: { plan: 'plan', revise: 'plan' } },
+  planReviewer: { inputs: { plan: 'plan' }, outputs: { review: 'review' } },
+  decomposer: { inputs: { plan: 'plan' }, outputs: { tasks: 'decomposition' } },
+  implementer: { inputs: { fix: 'review', task: 'decomposition', plan: 'plan' }, outputs: { done: 'code' } },
+  reviewer: { inputs: { plan: 'plan', done: 'code' }, outputs: { review: 'review' } },
+  workspaceReviewer: { inputs: { plan: 'plan', done: 'code' }, outputs: { review: 'review' } },
+  manualTestsChecklist: { inputs: { plan: 'plan' }, outputs: { checklist: 'checklist' } },
+  manualWebUiTesting: { inputs: { checklist: 'checklist' }, outputs: { review: 'review' } },
+  workspaceScanner: { inputs: { task: 'userPrompt' }, outputs: { workspace: 'workspace' } },
+};
+// The only sanctioned asymmetries, each with its reason.
+const CHANNEL_DELTA = {
+  manualTestsChecklist: { missingIn: ['code'] },   // reads the diff from its cwd, not through a port
+  manualWebUiTesting: { missingIn: ['code'] },     // drives the live app, not a port
+  implementer: { extraIn: ['decomposition'] },     // the expands port; v1 modeled fan-out outside the channels
+};
+
+test('ports <-> channels consistency (dual-shape guard until the v1 kill list)', () => {
+  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
+  assert.deepEqual(Object.keys(PORT_CHANNELS).sort(), Object.keys(reg).sort());
+  for (const [key, meta] of Object.entries(reg)) {
+    const map = PORT_CHANNELS[key];
+    const delta = CHANNEL_DELTA[key] || {};
+    for (const p of meta.inputs) assert.ok(map.inputs[p.id], `${key}: input "${p.id}" is missing from PORT_CHANNELS`);
+    for (const p of meta.outputs) {
+      if (p.type === 'void' && !map.outputs[p.id]) continue;    // `pass` is a signal, not a channel
+      assert.ok(map.outputs[p.id], `${key}: output "${p.id}" is missing from PORT_CHANNELS`);
+    }
+    const fromPorts = new Set(meta.inputs.map((p) => map.inputs[p.id]));
+    const v1In = new Set(meta.consumes);
+    assert.deepEqual([...v1In].filter((c) => !fromPorts.has(c)).sort(), (delta.missingIn || []).sort(), `${key} consumes`);
+    assert.deepEqual([...fromPorts].filter((c) => !v1In.has(c)).sort(), (delta.extraIn || []).sort(), `${key} ports->consumes`);
+    const outChannels = new Set(meta.outputs.map((p) => map.outputs[p.id]).filter(Boolean));
+    if (meta.verdict) outChannels.add('review');   // the verdict JSON IS the v1 review channel
+    assert.deepEqual([...outChannels].sort(), [...new Set(meta.produces)].sort(), `${key} produces`);
+  }
+});
+
+test('normalizeMeta: a v2 sidecar merges, an invalid one is skipped, a v1 one has no ports', () => {
+  const dir = tmp();
+  writeMeta(dir, 'v1only', {});
+  writeMeta(dir, 'ported', { metaVersion: 2, inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }], mockRole: 'generic-producer' });
+  writeMeta(dir, 'broken', { metaVersion: 2, inputs: [{ id: 'await', type: 'md' }], outputs: [] });
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let reg;
+  try { reg = load(dir); } finally { console.warn = orig; }
+  assert.equal(reg.v1only.metaVersion, undefined);
+  assert.equal(reg.v1only.inputs, undefined, 'a v1 sidecar carries NO ports');
+  assert.equal(reg.v1only.version, '1', 'the legacy string version field is not overloaded');
+  assert.equal(reg.ported.metaVersion, 2);
+  assert.deepEqual(reg.ported.inputs.map((p) => p.id), ['plan']);
+  assert.equal(reg.ported.mockRole, 'generic-producer');
+  assert.deepEqual(reg.ported.consumes, ['userPrompt'], 'the v1 fields survive the merge');
+  assert.equal(reg.broken, undefined, 'an invalid v2 sidecar is skipped whole');
+  assert.ok(warned.some((w) => /broken/.test(w) && /reserved/.test(w)), warned.join('\n'));
 });

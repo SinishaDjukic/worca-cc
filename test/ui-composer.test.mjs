@@ -221,3 +221,29 @@ test('composer declines a disallowed feedback edge', async () => {
   window.__composerAddFeedback('a', 'b');        // reviewer -> planner is illegal
   assert.equal(composer.feedbacks.length, 0, 'disallowed feedback must not be added');
 });
+
+test('v2 graph rows are inert in the v1 run-setup builders and the v1 composer list', async () => {
+  const window = await boot();
+  // The v2 row deliberately carries STALE v1 cells: without the version guard the
+  // builders would walk them and paint rows, so this is what makes the guard
+  // load-bearing (an empty-steps fixture is inert either way — measured).
+  const v2 = { id: 'wf_g', name: 'Graph', version: 2, nodes: [], wires: [],
+    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'implementer' }]],
+    feedbacks: [{ id: 'fb_x', from: 's1_0', to: 's0_0' }] };
+  // Zero rows, no throw — the builders walk steps/feedbacks that a graph row
+  // does not have.
+  assert.deepEqual(window.__np.buildNodeConfigRows(v2, {}, {}), []);
+  assert.deepEqual(window.__np.buildFeedbackRows(v2, {}, {}), []);
+  // The v1 composer list drops it: the v1 editor cannot render a graph, and
+  // `composerRenderList` (app.js:2561) reads `item.steps` at :2588/:2593 and its
+  // expand painter `composerRenderRO` dereferences `item.steps.length` UNGUARDED
+  // (app.js:2533) — a graph row reaching either is a TypeError, not a blank row.
+  window.location.hash = 'composer';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  window.__composer.saved = [DEFAULT_WF, v2];
+  window.__composerRenderList();
+  assert.deepEqual(window.__composer.saved.map((w) => w.id), ['wf_default'], 'the v2 row is filtered out');
+  const rendered = window.document.getElementById('composer-saved-list').textContent;
+  assert.equal(rendered.includes('Graph'), false, 'nothing was painted for it');
+});

@@ -1,5 +1,10 @@
 {
   "key": "workspaceScanner",
+  "metaVersion": 2,
+  "mockRole": "workspace-scan",
+  "placeable": false,
+  "inputs": [{ "id": "task", "type": "md" }],
+  "outputs": [{ "id": "workspace", "type": "md", "filename": "workspace-description.md" }],
   "domain": "shared",
   "displayName": "Workspace Scan",
   "description": "Maps how the workspace's projects relate before pipelines run. Shared APIs, schemas, queues, and build dependencies.",
