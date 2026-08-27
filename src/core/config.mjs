@@ -260,11 +260,24 @@ export function costUnreliableModelIds() {
  * @param {string} modelId
  * @param {number|null} costUsd  the reported cost (null when absent)
  * @param {object} [usage]
+ * @param {object|null} [costCfg]  this model's already-looked-up cost override
+ *   (modelCostConfig). Pass it when the caller has one in hand — every lookup is
+ *   a fresh settings.json read (settings.mjs is deliberately uncached), and the
+ *   result path needs the same answer for resolveModelCost. `undefined` = look
+ *   it up here; `null` = "checked, there is none".
  * @returns {'flagged'|'cleared'|null} what changed — 'flagged' asks the caller
  *   to surface its one-per-run warning; null = no observation recorded
  */
-export function observeModelCost(modelId, costUsd, usage) {
+export function observeModelCost(modelId, costUsd, usage, costCfg = undefined) {
   if (!modelHasBaseUrlRouting(modelId)) return null;
+  // An explicit per-model cost override GOVERNS this model's spend (resolveModelCost
+  // below) — the CLI's own figure is never trusted for it, so the "unreliable"
+  // badge is meaningless. Never flag it, and lift any flag left from before the
+  // override existed. Derived state: a DB hiccup here must never fail the run.
+  if (costCfg !== undefined ? costCfg : modelCostConfig(modelId)) {
+    try { prepare('DELETE FROM model_cost_flags WHERE model_id = ?').run(String(modelId).trim()); } catch { /* derived */ }
+    return null;
+  }
   const u = usage && typeof usage === 'object' ? usage : {};
   const tokens = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
     .reduce((n, k) => n + (Number(u[k]) || 0), 0);
@@ -284,6 +297,123 @@ export function observeModelCost(modelId, costUsd, usage) {
     return 'flagged';
   }
   return null; // no cost AND no tokens (e.g. an errored run) — no signal either way
+}
+
+// ── per-model cost override (opt-in) ──────────────────────────────────────────
+// The Claude CLI computes total_cost_usd from its OWN per-model price table keyed
+// on the model NAME — so an on-prem/proxied endpoint (even one that returns no
+// cost) still gets a fabricated dollar figure, which observeModelCost cannot
+// distinguish from a real one once it is positive. A user who KNOWS a model's
+// real price (or that it is free) can pin it in the GLOBAL catalog; that override
+// then wins over whatever the CLI reports. Inspired by worca 0.x's cost_alias /
+// worca.pricing.models mechanism. Opt-in: with no override the CLI value stands.
+//
+// It governs EVERY surface that books spend, because they share one windowed
+// budget (cost-budget.mjs combinedWindowedSpendUsd): the orchestrator's result
+// intake and sub-agent telemetry (orchestrator.mjs), an Ask Worca turn (the
+// `resolveCost` hook ask/turn.mjs injects into the reducer), and the overview
+// agent's telemetry row. Re-pricing only some of them would leave the phantom
+// spend this exists to remove still inflating the budget from the others.
+
+/** The explicit cost override governing a model, or null. Shape: {free:true} |
+ *  {perMtok:{input?,output?,cacheRead?,cacheWrite?,cacheWrite1h?}} (USD per
+ *  million tokens). Resolved with the SAME precedence as the rest of a model's
+ *  configuration (§9.3, mirroring modelHasBaseUrlRouting): the user's GLOBAL
+ *  entry wins outright, else the winning PLUGIN entry's manifest price — a
+ *  plugin shipping a model on its own endpoint is exactly the case that needs
+ *  one. Note a global entry shadows the plugin's price even when it pins none:
+ *  taking over a model id means owning its pricing too, so the two layers can
+ *  never half-merge. Built-ins carry none. Never throws. */
+export function modelCostConfig(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
+  const lc = id.toLowerCase();
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  if (entry) return entry.cost ?? null;
+  const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
+  return pm?.cost ?? null;
+}
+
+/** The four token classes read off a usage object, accepting BOTH spellings in
+ *  play here: the RAW Claude result usage (`input_tokens`, …) that the pipeline
+ *  path carries, and Ask Worca's normalized persisted shape (`input`, `output`,
+ *  `cacheRead`, `cacheCreation` — ask/events.mjs normalizeUsage). Same tokens,
+ *  two names; a missing field counts as 0. Only the raw shape ever carries the
+ *  ephemeral cache-creation breakdown. */
+function usageTokens(u) {
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const pick = (snake, camel) => (u[snake] != null ? num(u[snake]) : num(u[camel]));
+  const cc = u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : null;
+  return {
+    input: pick('input_tokens', 'input'),
+    output: pick('output_tokens', 'output'),
+    cacheRead: pick('cache_read_input_tokens', 'cacheRead'),
+    cacheWrite: pick('cache_creation_input_tokens', 'cacheCreation'),
+    eph1h: cc ? num(cc.ephemeral_1h_input_tokens) : 0,
+    eph5m: cc ? num(cc.ephemeral_5m_input_tokens) : 0,
+  };
+}
+
+/** True when `usage` is an object that actually reports token counts — i.e. it
+ *  can be priced. A result event that carried NO usage at all is unpriceable and
+ *  must not be silently booked at $0 (resolveModelCost returns NaN for it); an
+ *  object whose counts are genuinely all zero IS priceable, at $0. */
+export function isPriceableUsage(usage) {
+  if (!usage || typeof usage !== 'object') return false;
+  return ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
+    'cache_creation', 'input', 'output', 'cacheRead', 'cacheCreation'].some((k) => usage[k] != null);
+}
+
+/** Estimate USD from a `usage` object (either spelling, see usageTokens) and a
+ *  per-million-token rate table (mirrors worca 0.x estimate_cost). Absent rates/
+ *  fields count as 0. When the CLI breaks cache-creation into ephemeral 1h/5m
+ *  buckets they are priced separately (1h falls back to the cacheWrite rate);
+ *  otherwise the flat cache_creation_input_tokens total is priced at cacheWrite. */
+export function estimateCost(usage, perMtok) {
+  if (!perMtok || typeof perMtok !== 'object') return 0;
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const rate = (k) => num(perMtok[k]);
+  const t = usageTokens(u);
+  const cacheWriteCost = (t.eph1h || t.eph5m)
+    ? (t.eph5m * rate('cacheWrite')
+        + t.eph1h * (perMtok.cacheWrite1h != null ? rate('cacheWrite1h') : rate('cacheWrite'))) / 1e6
+    : t.cacheWrite * rate('cacheWrite') / 1e6;
+  return (
+    t.input * rate('input')
+    + t.output * rate('output')
+    + t.cacheRead * rate('cacheRead')
+  ) / 1e6 + cacheWriteCost;
+}
+
+/**
+ * The AUTHORITATIVE cost for a dispatched model: the CLI's own figure unless the
+ * model carries an explicit override, which then wins. {free} → $0; {perMtok} →
+ * recomputed from `usage`. This is what stops a CLI that prices an on-prem model
+ * by name from inflating the ledger. With no override, `cliCostUsd` is returned
+ * verbatim (finite or not — the caller already gates on Number.isFinite).
+ *
+ * ONLY call this on a genuinely cost-bearing event. A {free} model answers 0 for
+ * ANY input, so feeding it a non-result stream frame (whose `cliCostUsd` is NaN)
+ * would turn "nothing to record" into a real $0 the caller then books.
+ *
+ * A {perMtok} model is priced from tokens ALONE, so a result that carried no
+ * usage object at all is UNPRICEABLE: NaN comes back rather than a silent $0, so
+ * the caller's existing "no cost estimate" branch reports it instead of the
+ * operator quietly under-billing a model they explicitly asked to be priced.
+ * @param {string} modelId  the dispatched model id
+ * @param {number} cliCostUsd  the cost the CLI reported (may be NaN)
+ * @param {object} [usage]  the result event's usage object (either spelling)
+ * @param {object|null} [costCfg]  this model's already-looked-up cost override;
+ *   `undefined` = look it up here (see observeModelCost's note on sharing it)
+ * @returns {number}
+ */
+export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined) {
+  const cost = costCfg !== undefined ? costCfg : modelCostConfig(modelId);
+  if (!cost) return cliCostUsd;
+  if (cost.free) return 0;
+  if (cost.perMtok) return isPriceableUsage(usage) ? estimateCost(usage, cost.perMtok) : NaN;
+  return cliCostUsd;
 }
 
 /**

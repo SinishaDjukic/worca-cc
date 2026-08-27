@@ -29,6 +29,48 @@ export function envSummary(env) {
   return keys.includes('ANTHROPIC_BASE_URL') ? `${n} · routes via base URL` : n;
 }
 
+/** The per-Mtok rate keys, in editor order, with their display labels. Mirrors
+ *  settings.mjs COST_RATE_KEYS — the server is the validator, this is the form. */
+export const COST_RATES = [
+  ['input', 'Input'],
+  ['output', 'Output'],
+  ['cacheRead', 'Cache read'],
+  ['cacheWrite', 'Cache write (5m)'],
+  ['cacheWrite1h', 'Cache write (1h)'],
+];
+
+/** One-line pricing summary for a card, or '' when the model has no override
+ *  (the overwhelming default — the CLI's own figure is trusted). */
+export function costSummary(cost) {
+  if (!cost || typeof cost !== 'object') return '';
+  if (cost.free) return 'priced free';
+  const p = cost.perMtok;
+  if (!p || typeof p !== 'object') return '';
+  const set = COST_RATES.filter(([k]) => p[k] != null);
+  if (!set.length) return '';
+  return `${set.map(([k, lab]) => `${lab.toLowerCase()} $${p[k]}`).join(' · ')} /Mtok`;
+}
+
+/**
+ * A free id for a duplicate of `id`: `<id>-copy`, then `-copy-2`, `-copy-3`…
+ * Compared case-insensitively against EVERY id the catalog knows (global,
+ * plugin, built-in, legacy) — the add would be rejected for colliding with any
+ * of them, and a suggestion the server refuses is worse than no suggestion.
+ * @param {string} id  the source model's id
+ * @param {Iterable<string>} takenIds
+ * @returns {string}
+ */
+export function suggestDuplicateId(id, takenIds = []) {
+  const taken = new Set([...takenIds].map((t) => String(t).toLowerCase()));
+  const base = `${id}-copy`;
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 1000; n += 1) {
+    const c = `${base}-${n}`;
+    if (!taken.has(c.toLowerCase())) return c;
+  }
+  return base; // 998 copies of one model: let the server reject the duplicate
+}
+
 /**
  * The Models view body: global entries (editable), the selected project's
  * legacy custom models (promotable), and the built-in catalog (read-only).
@@ -60,9 +102,13 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
     if (predefLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides built-in'));
     else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
-    if (m.costUnreliable) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+    // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
+    // model's spend — and the backend only lifts the stored flag on the model's
+    // next result event, so suppress it here the moment pricing is pinned.
+    if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+    if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
     body.appendChild(head);
-    const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
+    const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
     body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
     body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
     card.appendChild(body);
@@ -72,6 +118,12 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     const edit = h(doc, 'button', 'btn-ghost mv-edit', 'Edit');
     edit.type = 'button'; edit.dataset.id = m.id;
     card.appendChild(edit);
+    // Duplicate opens a CREATE editor seeded from this entry (app.js fetches the
+    // raw env values first — the card only ever holds masked ones). The point is
+    // deriving a sibling: same routing, one parameter changed.
+    const dup = h(doc, 'button', 'btn-ghost mv-duplicate', 'Duplicate');
+    dup.type = 'button'; dup.dataset.id = m.id;
+    card.appendChild(dup);
     const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
     tst.type = 'button'; tst.dataset.id = m.id;
     card.appendChild(tst);
@@ -117,9 +169,12 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
-      if (m.costUnreliable) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+      // Same rule as a global card: a manifest-pinned price governs the spend,
+      // so the §4.6 "unreliable" flag says nothing about it.
+      if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+      if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
       body.appendChild(head);
-      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
       for (const s of m.secrets || []) {
         body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
@@ -258,7 +313,48 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   }
   grid.appendChild(envBtns);
 
+  // ── Pricing (opt-in per-model cost override, config.mjs resolveModelCost) ──
+  // The CLI computes total_cost_usd from its OWN table keyed on the model NAME,
+  // so an on-prem/proxied endpoint gets a fabricated figure worca cannot tell
+  // from a real one. Three mutually exclusive modes; the default is unchanged
+  // behavior. Rendered detached like everything else here — app.js wires the
+  // mode change to applyCostMode.
+  const costWrap = h(doc, 'div', 'mv-cost-edit');
+  const modes = h(doc, 'div', 'mv-cost-modes');
+  const groupName = `mv-cost-mode-${editing ? model.id : 'new'}`;
+  for (const [value, text] of [
+    ['cli', 'Trust the CLI'],
+    ['free', 'Free ($0)'],
+    ['perMtok', 'Per million tokens'],
+  ]) {
+    const lab = h(doc, 'label', 'mv-cost-mode');
+    const rb = h(doc, 'input', 'mv-cost-mode-rb');
+    rb.type = 'radio'; rb.name = groupName; rb.value = value;
+    lab.appendChild(rb);
+    lab.appendChild(h(doc, 'span', null, text));
+    modes.appendChild(lab);
+  }
+  costWrap.appendChild(modes);
+
+  const rates = h(doc, 'div', 'mv-cost-rates');
+  for (const [key, labelText] of COST_RATES) {
+    const lab = h(doc, 'label', 'mv-cost-rate');
+    lab.appendChild(h(doc, 'span', 'mv-cost-rate-label', labelText));
+    const inp = h(doc, 'input', 'input mv-cost-rate-in');
+    inp.type = 'number'; inp.min = '0'; inp.step = '0.01'; inp.placeholder = '0';
+    inp.dataset.rate = key;
+    lab.appendChild(inp);
+    lab.appendChild(h(doc, 'span', 'mv-cost-rate-unit', '$/Mtok'));
+    rates.appendChild(lab);
+  }
+  costWrap.appendChild(rates);
+  grid.appendChild(field('Pricing', costWrap,
+    'Only for an endpoint the CLI prices by NAME rather than from what the endpoint reports — an on-prem or proxied model. '
+    + 'Trust the CLI is the default and leaves spend exactly as today. Blank rates count as $0, except Cache write (1h), '
+    + 'which falls back to the 5m rate when blank.'));
+
   root.appendChild(grid);
+  setModelCost(root, editing ? model.cost : null); // grid is attached now — the block is reachable from root
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
@@ -271,6 +367,41 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   btns.appendChild(save); btns.appendChild(cancel);
   root.appendChild(btns);
   return root;
+}
+
+/**
+ * Load a `cost` override into an editor: pick the matching mode and fill the
+ * rates. The ONE place that maps a stored cost onto the form, shared by the
+ * initial render and by "Edit a copy"'s prefill of a plugin model's pricing —
+ * a second implementation of this mapping is exactly how the two would drift.
+ * Safe on an editor with no pricing block. Pass null/undefined for no override.
+ * @param {Element} rootEl  the .mv-editor root
+ * @param {{free?:boolean, perMtok?:Record<string,number>}|null} [cost]
+ */
+export function setModelCost(rootEl, cost) {
+  const rates = rootEl && rootEl.querySelector('.mv-cost-rates');
+  if (!rates) return;
+  const mode = !cost ? 'cli' : (cost.free ? 'free' : 'perMtok');
+  for (const rb of rootEl.querySelectorAll('.mv-cost-mode-rb')) rb.checked = rb.value === mode;
+  const p = cost && cost.perMtok && typeof cost.perMtok === 'object' ? cost.perMtok : {};
+  for (const inp of rootEl.querySelectorAll('.mv-cost-rate-in')) {
+    const v = p[inp.dataset.rate];
+    inp.value = v == null ? '' : String(v);
+  }
+  applyCostMode(rootEl);
+}
+
+/**
+ * Show the per-Mtok rate inputs only in that mode. The single place that knows
+ * the rule, so the initial render and the delegated `change` handler in app.js
+ * can never drift apart. Safe on an editor with no pricing block.
+ * @param {Element} rootEl  the .mv-editor root
+ */
+export function applyCostMode(rootEl) {
+  const rates = rootEl && rootEl.querySelector('.mv-cost-rates');
+  if (!rates) return;
+  const picked = rootEl.querySelector('.mv-cost-mode-rb:checked');
+  rates.hidden = (picked ? picked.value : 'cli') !== 'perMtok';
 }
 
 /** app.js exposes envRow creation to the delegated mv-env-add handler. */
@@ -307,12 +438,30 @@ export function collectModelEditor(rootEl) {
     }
   }
 
+  // Pricing. The editor renders the STORED override, so it round-trips: a user
+  // who came to change a label leaves it untouched. 'cli' is therefore an
+  // explicit CLEAR (null), not an omission — it is what the form now shows.
+  // Rate values are sent raw for the server to validate (settings.mjs
+  // assertModelCost owns the rules; duplicating them here would let them drift).
+  const mode = rootEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli';
+  let cost = null;
+  if (mode === 'free') cost = { free: true };
+  else if (mode === 'perMtok') {
+    const perMtok = {};
+    for (const inp of rootEl.querySelectorAll('.mv-cost-rate-in')) {
+      const raw = (inp.value ?? '').trim();
+      if (raw !== '') perMtok[inp.dataset.rate] = Number(raw);
+    }
+    cost = { perMtok };   // empty -> the server rejects it by name, surfaced in the form
+  }
+
   const body = {
     ...(editing ? {} : { id }),
     label,
     // All boxes checked = the full set = store the default (empty).
     efforts: efforts.length === allCount ? [] : efforts,
     env,
+    cost,
   };
   return { id: editing ? id : null, body };
 }

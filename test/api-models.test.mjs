@@ -330,3 +330,115 @@ test('POST /api/models/:id/test: 404 unknown id; 400 for a plugin model with an 
   assert.equal(r400.status, 400);
   assert.match(r400.body.error, /up-token.*not set/);
 });
+
+// ── the pricing override over HTTP (what the editor form actually sends) ──────
+
+test('POST/PATCH /api/models carry `cost` end-to-end, and GET surfaces it unmasked', async () => {
+  const add = await post('/api/models', {
+    id: 'priced-api', label: 'Priced', efforts: [],
+    env: { ANTHROPIC_BASE_URL: 'https://p' },
+    cost: { perMtok: { input: 0.5, output: 1.5 } },
+  });
+  assert.equal(add.status, 200);
+  assert.deepEqual(add.body.model.cost, { perMtok: { input: 0.5, output: 1.5 } });
+  // Pricing is configuration, never a credential — it must NOT come back masked.
+  const got = (await jfetch('/api/models')).body.models.find((m) => m.id === 'priced-api');
+  assert.deepEqual(got.cost, { perMtok: { input: 0.5, output: 1.5 } });
+  assert.match(got.env.ANTHROPIC_BASE_URL, /^••/, 'env still masked alongside it');
+
+  // The editor replaces the table wholesale (it is small) rather than merging.
+  const toFree = await patch('/api/models/priced-api', { cost: { free: true } });
+  assert.deepEqual(toFree.body.model.cost, { free: true });
+
+  // 'Trust the CLI' sends null — an explicit clear, since the form shows the state.
+  const cleared = await patch('/api/models/priced-api', { cost: null });
+  assert.equal(cleared.body.model.cost, undefined);
+  assert.equal(listGlobalModels().find((m) => m.id === 'priced-api').cost, undefined);
+
+  // An unrelated edit omits `cost` entirely -> the stored override is kept.
+  await patch('/api/models/priced-api', { cost: { perMtok: { input: 2 } } });
+  const relabel = await patch('/api/models/priced-api', { label: 'Renamed' });
+  assert.equal(relabel.body.model.label, 'Renamed');
+  assert.deepEqual(relabel.body.model.cost, { perMtok: { input: 2 } }, 'omitted means keep');
+});
+
+test('POST/PATCH /api/models reject a malformed `cost` with the message the form shows', async () => {
+  const bad = await post('/api/models', { id: 'bad-cost', cost: { perMtok: {} } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /must define at least one rate/);
+  assert.equal(listGlobalModels().some((m) => m.id === 'bad-cost'), false, 'a rejected add leaves nothing behind');
+
+  const neg = await post('/api/models', { id: 'bad-cost', cost: { perMtok: { input: -1 } } });
+  assert.equal(neg.status, 400);
+  assert.match(neg.body.error, /finite number >= 0/);
+
+  const unknown = await patch('/api/models/priced-api', { cost: { perMtok: { bogus: 1 } } });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.error, /unknown cost\.perMtok rate "bogus"/);
+});
+
+test('export-plugin carries `cost` into the generated manifest (pricing is config, not a credential)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { normalizeManifest } = await import('../src/core/plugin-manifest.mjs');
+  await post('/api/models', {
+    id: 'exp-priced', label: 'Priced export',
+    env: { ANTHROPIC_BASE_URL: 'https://p.example', ANTHROPIC_AUTH_TOKEN: 'sk-live-never-export' },
+    cost: { perMtok: { input: 0.5, output: 1.5, cacheWrite1h: 1.2 } },
+  });
+  await post('/api/models', { id: 'exp-free', cost: { free: true } });
+  await post('/api/models', { id: 'exp-unpriced' });
+
+  const dest = join(proj, 'export', 'priced-models');
+  const r = await post('/api/models/export-plugin', {
+    name: 'priced-models', dest,
+    models: [
+      { id: 'exp-priced', env: { ANTHROPIC_BASE_URL: 'include', ANTHROPIC_AUTH_TOKEN: 'secret' } },
+      { id: 'exp-free' },
+      { id: 'exp-unpriced' },
+    ],
+  });
+  assert.equal(r.status, 200);
+
+  const manifest = JSON.parse(readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8'));
+  const byId = Object.fromEntries(manifest.models.map((m) => [m.id, m]));
+  assert.deepEqual(byId['exp-priced'].cost, { perMtok: { input: 0.5, output: 1.5, cacheWrite1h: 1.2 } },
+    'a shared on-prem model would otherwise be re-priced by NAME on every machine that installs this');
+  assert.deepEqual(byId['exp-free'].cost, { free: true });
+  assert.equal(byId['exp-unpriced'].cost, undefined, 'no override -> no key');
+
+  // The scaffold must install anywhere this host would, and the secret still never travels.
+  assert.equal(normalizeManifest(manifest).ok, true);
+  assert.doesNotMatch(readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8'), /sk-live-never-export/);
+});
+
+test('a plugin model\'s manifest price reaches GET /api/models and Edit-a-copy', async () => {
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('priced-plug');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'priced-plug',
+    models: [
+      { id: 'pp-rated', label: 'PP Rated', env: { ANTHROPIC_BASE_URL: 'https://pp.example' },
+        cost: { perMtok: { input: 1, output: 3 } } },
+      { id: 'pp-plain', label: 'PP Plain' },
+    ],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'priced-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+
+  const { body } = await jfetch('/api/models');
+  const priced = body.plugin.find((m) => m.id === 'pp-rated');
+  assert.deepEqual(priced.cost, { perMtok: { input: 1, output: 3 } }, 'pricing is config — surfaced, never masked');
+  assert.equal(body.plugin.find((m) => m.id === 'pp-plain').cost, undefined);
+
+  // Edit-a-copy seeds the global copy from the plugin's pricing: a copy that
+  // dropped it would revert to the CLI's by-name figure, since a global entry
+  // shadows the plugin price whether or not it pins one.
+  const copy = await jfetch(`/api/plugins/priced-plug/model-env?${q({ id: 'PP-Rated' })}`);
+  assert.equal(copy.status, 200);
+  assert.deepEqual(copy.body.cost, { perMtok: { input: 1, output: 3 } });
+  assert.equal((await jfetch(`/api/plugins/priced-plug/model-env?${q({ id: 'pp-plain' })}`)).body.cost, undefined);
+});

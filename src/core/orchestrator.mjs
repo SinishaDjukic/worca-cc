@@ -75,7 +75,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig } from './config.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
@@ -3113,12 +3113,32 @@ class Orchestrator extends EventEmitter {
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
     // (non-JSON line) — `.type` on it is just undefined, so this never throws.
     // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
-    const cost = e.costUsd != null
+    const isResult = !!(e.raw && typeof e.raw === 'object' && e.raw.type === 'result');
+    const rawCost = e.costUsd != null
       ? Number(e.costUsd)
-      : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
+      : (isResult ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
+    // A per-model cost override (config.mjs) wins over the CLI's own figure — so a
+    // CLI that prices an on-prem/proxied model by name can't inflate the ledger.
+    // With no override this is `rawCost` unchanged (default behavior preserved).
+    //
+    // Gated on `isResult` — NOT merely on attr.model. Every stream frame reaches
+    // here, and only the terminal `result` carries cost; on the others rawCost is
+    // NaN and falls through untouched today. A {free} override answers 0 for any
+    // input, so resolving unconditionally would turn each of those into a real $0
+    // and fire _recordCost — a full writeState + 'state' broadcast — per FRAME
+    // instead of once per node. Looked up ONCE and shared with observeModelCost
+    // below: modelCostConfig re-reads settings.json on every call.
+    const costCfg = isResult && attr?.model ? modelCostConfig(attr.model) : null;
+    const cost = costCfg
+      ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
+      : rawCost;
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
-    else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
-      this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
+    else if (isResult && !this.claude.mock) {
+      // A {perMtok} model prices from tokens alone, so a result with no usage is
+      // unpriceable (NaN) — say so plainly rather than blaming a missing cost field.
+      this._log('orchestrator', 'warn', costCfg?.perMtok
+        ? `model "${attr.model}" is priced per-Mtok but the result carried no token usage — this step's spend is unaccounted`
+        : 'result event carried no cost estimate (total_cost_usd absent)', attr);
     }
 
     // §4.6 cost-reliability observation: only terminal result events of REAL
@@ -3126,9 +3146,9 @@ class Orchestrator extends EventEmitter {
     // carries no attr and is skipped), and only env-routed models inside
     // observeModelCost. One warning per model per run; the observation itself
     // is derived state and must never fail the run.
-    if (e.raw && e.raw.type === 'result' && !this.claude.mock && attr?.model) {
+    if (isResult && !this.claude.mock && attr?.model) {
       try {
-        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.raw.usage);
+        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.raw.usage, costCfg);
         if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
           this._costUnreliableWarned.add(attr.model);
           this._log('orchestrator', 'warn',
@@ -3247,6 +3267,13 @@ class Orchestrator extends EventEmitter {
         startedAt: new Date().toISOString(),
         finishedAt: null,
         subagentType: c.input?.subagent_type ?? null,
+        // In-memory only (no column): lets _recordSubAgentTelemetry price this
+        // child. A sub-agent runs on the PARENT node's endpoint, so the parent's
+        // model is the right price — UNLESS the Task input names a model that
+        // itself carries an explicit override, which then governs the child.
+        // A bare alias ('haiku') with no catalog entry is not one, so it keeps
+        // the parent's rather than silently reverting to the CLI's figure.
+        model: subAgentCostModel(c.input?.model, attr.model),
       };
       this.state.subAgents.push(rec);
       this._upsertSubAgent(rec);
@@ -3394,7 +3421,16 @@ class Orchestrator extends EventEmitter {
     if (Number.isFinite(Number(tr.totalDurationMs))) rec.durationMs = Number(tr.totalDurationMs);
     if (Number.isFinite(Number(tr.totalTokens))) rec.tokens = Number(tr.totalTokens);
     const cost = tr.usage?.cost_usd ?? tr.usage?.total_cost_usd ?? tr.cost_usd;
-    if (Number.isFinite(Number(cost))) rec.costUsd = Number(cost);
+    if (Number.isFinite(Number(cost))) {
+      // Apply the same per-model cost override as the node result path, so a
+      // sub-agent of a free/priced model doesn't display the CLI's fabricated
+      // figure. rec.model is set at spawn (see subAgentCostModel); absent (e.g.
+      // after a resume, which rebuilds records from the table) → the CLI value
+      // stands. A {perMtok} model with unpriceable usage yields NaN — leave the
+      // row's cost UNSET rather than write a made-up figure into the display.
+      const resolved = rec.model ? resolveModelCost(rec.model, Number(cost), tr.usage) : Number(cost);
+      if (Number.isFinite(resolved)) rec.costUsd = resolved;
+    }
     this._upsertSubAgent(rec);
     this._subAgentTransition('update', rec);
   }
@@ -4088,6 +4124,22 @@ function rel(base, p) {
 // independent on purpose — a long description may render at ≤60 on the parent line
 // and ≤40 inside the child tag.
 const SUBAGENT_LABEL_MAX = 40;
+
+/**
+ * Which model id prices a sub-agent. The child runs inside the parent node's CLI
+ * invocation — same endpoint, same price — so the parent's dispatched model is the
+ * default. A Task input MAY name its own model; that only changes the price when
+ * the named model carries an explicit cost override of its own (a bare alias like
+ * 'haiku' resolves to nothing and must not drop the parent's override).
+ * @param {unknown} inputModel  the Task/Agent tool_use input's `model`, if any
+ * @param {string|undefined} parentModel  the parent node's dispatched model
+ * @returns {string|null}
+ */
+function subAgentCostModel(inputModel, parentModel) {
+  const own = typeof inputModel === 'string' && inputModel.trim() ? inputModel.trim() : null;
+  try { if (own && modelCostConfig(own)) return own; } catch { /* catalog read is best-effort */ }
+  return parentModel ?? null;
+}
 
 /**
  * Record id -> short description for every Task/Agent tool_use block in a

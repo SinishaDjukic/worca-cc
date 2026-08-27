@@ -429,3 +429,71 @@ test('context fill: a child message_delta sets the agent block ctx (last call wi
   assert.equal(agentFrames().at(-1).block.ctx, 11869, 'the last child call replaces');
   assert.equal(h.r.snapshot().usage.ctx, 11, 'main ctx comes from the main call (the spawn message), never the child');
 });
+
+// ── the injected cost override (config.mjs resolveModelCost) ─────────────────
+// The reducer never imports config/DB; the turn injects `resolveCost`, so these
+// pin the CONTRACT with hand-rolled overrides. Ask spend feeds the same windowed
+// budget as pipeline spend, which is why a re-priced turn matters here at all.
+
+test('resolveCost: the injected override replaces the CLI cost everywhere the turn reports it', () => {
+  const seen = [];
+  const h = harness({ resolveCost: (cli, usage) => { seen.push({ cli, usage }); return 0; } });
+  h.push(init(), mstart('msg_1'), mdelta({ output_tokens: 7 }), atext('msg_1', 'hi'));
+  assert.deepEqual(h.frames.filter((f) => f.type === 'ask-usage').map((f) => f.costUsd), [null],
+    'nothing to re-price before the result frame — the hook is not even called');
+  assert.equal(seen.length, 0);
+
+  h.push(result());
+  const usageFrames = h.frames.filter((f) => f.type === 'ask-usage');
+  assert.equal(usageFrames.at(-1).costUsd, 0, 'the ask-usage frame carries the OVERRIDE, not 0.0234');
+  assert.equal(h.r.snapshot().costUsd, 0);
+  assert.equal(h.r.finish().costUsd, 0);
+  assert.equal(seen.length, 1, 'memoized on the result — one catalog read per turn, not one per reader');
+  assert.equal(seen[0].cli, 0.0234, 'the hook sees what the CLI reported…');
+  assert.deepEqual(seen[0].usage, { ...normalizeUsage(RESULT_USAGE), ctx: 7 }, '…and this turn\'s usage');
+});
+
+test('resolveCost: absent, non-finite or throwing → the CLI figure stands (never a forged price)', () => {
+  assert.equal(harnessAfterResult({}).costUsd, 0.0234, 'no hook = default behavior');
+  assert.equal(harnessAfterResult({ resolveCost: () => NaN }).costUsd, 0.0234, 'unpriceable falls back');
+  assert.equal(harnessAfterResult({ resolveCost: () => { throw new Error('catalog on fire'); } }).costUsd, 0.0234,
+    'a pricing override must never break a turn');
+});
+
+function harnessAfterResult(opts) {
+  const h = harness(opts);
+  h.push(init(), atext('msg_1', 'hi'), result());
+  return h.r.finish();
+}
+
+test('resolveCost: a turn with NO result frame stays costUsd:null — §6.2.8 is not a price to re-price', () => {
+  const h = harness({ resolveCost: () => 0 });
+  h.push(init(), atext('msg_1', 'hi'));
+  assert.equal(h.r.finish().costUsd, null);
+});
+
+test('resolveCost: the §6.6 per-agent split is scaled so agent rows never out-total their turn', () => {
+  const MU = { 'claude-haiku-4-5': { inputTokens: 8032, outputTokens: 246, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.02 } };
+  const runAgentTurn = (opts) => {
+    const h = harness(opts);
+    h.push(init(), atool('msg_1', 'toolu_agent', 'Agent', { subagent_type: 'general-purpose', description: 'count runs', prompt: 'P' }));
+    h.push(uresult('toolu_agent', [{ type: 'text', text: 'count: 1' }], { tur: AGENT_TUR }));
+    h.push(result({ modelUsage: MU }));
+    const s = h.r.finish();
+    return { agent: s.blocks.find((b) => b.kind === 'agent'), total: s.costUsd };
+  };
+  // Baseline (unchanged): w(agent)=4016+5·123=4631, w(total)=8032+5·246=9262 → 0.02 × 0.5.
+  const base = runAgentTurn({});
+  assert.equal(base.agent.costUsd, 0.01);
+
+  // {free}: the turn is $0, so its agents must be too.
+  const free = runAgentTurn({ resolveCost: () => 0 });
+  assert.equal(free.total, 0);
+  assert.equal(free.agent.costUsd, 0, 'a $0 turn cannot contain a billing agent');
+
+  // {perMtok}-style re-price: halve the turn, halve every share.
+  const half = runAgentTurn({ resolveCost: (cli) => cli / 2 });
+  assert.equal(half.total, 0.0117);
+  assert.equal(half.agent.costUsd, 0.005);
+  assert.equal(half.agent.estimated, true, 'still an estimate — scaling does not make it exact');
+});

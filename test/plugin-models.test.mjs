@@ -18,7 +18,7 @@ import {
 } from '../src/core/plugin-models.mjs';
 import {
   listModels, resolveModelEnv, modelHasBaseUrlRouting, referencedPluginModels,
-  setNodeModel,
+  setNodeModel, modelCostConfig, resolveModelCost,
 } from '../src/core/config.mjs';
 import { addGlobalModel, removeGlobalModel } from '../src/core/settings.mjs';
 
@@ -201,4 +201,56 @@ test('referencedPluginModels: refs block; global-shadow and other-plugin carve-o
   await setNodeModel(proj, 'wf_x', 's1_0', { model: '', effort: '' });
   assert.deepEqual(referencedPluginModels('discretestack-models'), [], 'cleared selection unblocks');
   writePluginsLock({ ...readPluginsLock(), 'zz-other': zz });
+});
+
+// ── manifest-pinned pricing (config.mjs modelCostConfig) ─────────────────────
+// A plugin that ships a model on its OWN endpoint is exactly the case the CLI
+// prices by NAME, so the price must travel WITH the model rather than having to
+// be re-pinned by hand on every machine that installs the plugin.
+
+test('a manifest `cost` reaches the plugin layer and GOVERNS that model\'s spend', () => {
+  installFixture('priced-plug', {
+    models: [
+      { id: 'pp-free', label: 'PP Free', env: { ANTHROPIC_BASE_URL: 'https://pp.example' }, cost: { free: true } },
+      { id: 'pp-rated', label: 'PP Rated', env: { ANTHROPIC_BASE_URL: 'https://pp.example' }, cost: { perMtok: { input: 1, output: 3 } } },
+      { id: 'pp-plain', label: 'PP Plain' },
+    ],
+  });
+  const byId = Object.fromEntries(allPluginModels().map((m) => [m.id, m]));
+  assert.deepEqual(byId['pp-free'].cost, { free: true });
+  assert.deepEqual(byId['pp-rated'].cost, { perMtok: { input: 1, output: 3 } });
+  assert.equal(byId['pp-plain'].cost, undefined, 'no cost key when the manifest pins none');
+
+  // The whole point: it actually prices a run.
+  assert.deepEqual(modelCostConfig('pp-free'), { free: true });
+  assert.equal(modelCostConfig('PP-RATED').perMtok.output, 3, 'case-insensitive, like every other lookup');
+  assert.equal(modelCostConfig('pp-plain'), null);
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  assert.equal(resolveModelCost('pp-free', 0.4625, usage), 0, 'the CLI\'s by-name figure is discarded');
+  assert.equal(resolveModelCost('pp-rated', 999, usage), 4, '1M input@1 + 1M output@3');
+  assert.equal(resolveModelCost('pp-plain', 0.4625, usage), 0.4625, 'unpriced plugin model: unchanged');
+});
+
+test('a user GLOBAL entry shadows the plugin price — even when it pins none (§9.3)', async () => {
+  // Taking over a model id means owning its pricing too: the two layers must
+  // never half-merge (a global label + a plugin price would be untraceable).
+  await addGlobalModel({ id: 'pp-rated', label: 'Mine', env: { ANTHROPIC_BASE_URL: 'https://mine' } });
+  assert.equal(modelCostConfig('pp-rated'), null, 'the global entry pins no price, so there is none');
+  assert.equal(resolveModelCost('pp-rated', 0.4625, {}), 0.4625);
+
+  await addGlobalModel({ id: 'pp-free', label: 'Mine too', cost: { perMtok: { input: 2 } } });
+  assert.deepEqual(modelCostConfig('pp-free'), { perMtok: { input: 2 } }, 'a global price wins outright');
+
+  await removeGlobalModel('pp-rated');
+  await removeGlobalModel('pp-free');
+  assert.deepEqual(modelCostConfig('pp-rated'), { perMtok: { input: 1, output: 3 } }, 'the plugin price returns');
+});
+
+test('a disabled plugin takes its pricing with it', () => {
+  installFixture('priced-plug', {
+    models: [{ id: 'pp-free', cost: { free: true } }],
+  }, { enabled: false });
+  assert.equal(modelCostConfig('pp-free'), null);
+  installFixture('priced-plug', { models: [{ id: 'pp-free', cost: { free: true } }] });
+  assert.deepEqual(modelCostConfig('pp-free'), { free: true });
 });

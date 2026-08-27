@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  effortsSummary, envSummary, renderModelsList, renderModelEditor,
-  collectModelEditor, makeEnvRow, deleteRefsSummary,
+  effortsSummary, envSummary, costSummary, suggestDuplicateId, renderModelsList, renderModelEditor,
+  collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from '../ui/public/models-view.mjs';
 
@@ -120,7 +120,7 @@ test('collect (create): id from input, partial efforts, env rows as typed; full 
 
   let { id, body } = collectModelEditor(el);
   assert.equal(id, null);
-  assert.deepEqual(body, { id: 'my-model', label: 'Mine', efforts: [], env: { ANTHROPIC_BASE_URL: 'https://x' } });
+  assert.deepEqual(body, { id: 'my-model', label: 'Mine', efforts: [], env: { ANTHROPIC_BASE_URL: 'https://x' }, cost: null });
 
   // Uncheck one effort -> the subset is sent.
   el.querySelector('.mv-effort-cb[value="max"]').checked = false;
@@ -267,4 +267,197 @@ test('list: Test button on global + plugin cards (disabled while a secret is uns
   for (const row of el.querySelectorAll('.mv-builtin')) {
     assert.equal(row.querySelector('.mv-test'), null, 'no Test on built-ins');
   }
+});
+
+// ── Pricing: the opt-in per-model cost override (config.mjs resolveModelCost) ──
+
+const PRICED = {
+  id: 'discreetstack', label: 'DiscreetStack', efforts: EFFORTS,
+  env: { ANTHROPIC_BASE_URL: '••••••e/v1' },
+  cost: { perMtok: { input: 0.5, output: 1.5 } },
+};
+const FREE = { id: 'onprem', label: 'On-prem', efforts: EFFORTS, cost: { free: true } };
+const mode = (el) => el.querySelector('.mv-cost-mode-rb:checked')?.value;
+const rate = (el, k) => el.querySelector(`.mv-cost-rate-in[data-rate="${k}"]`);
+
+test('costSummary: only a real override says anything', () => {
+  assert.equal(costSummary(undefined), '');
+  assert.equal(costSummary({}), '');
+  assert.equal(costSummary({ perMtok: {} }), '');
+  assert.equal(costSummary({ free: true }), 'priced free');
+  assert.equal(costSummary({ perMtok: { input: 0.5, output: 1.5 } }), 'input $0.5 · output $1.5 /Mtok');
+  assert.equal(costSummary({ perMtok: { cacheWrite1h: 1 } }), 'cache write (1h) $1 /Mtok');
+  assert.equal(costSummary({ perMtok: { input: 0 } }), 'input $0 /Mtok', 'a pinned ZERO rate is not "unset"');
+});
+
+test('editor (create): pricing defaults to Trust the CLI with the rate grid hidden', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  assert.equal(mode(el), 'cli', 'default behavior is unchanged behavior');
+  assert.equal(el.querySelector('.mv-cost-rates').hidden, true);
+  assert.equal(el.querySelectorAll('.mv-cost-rate-in').length, 5, 'all five rate keys are offered');
+  assert.deepEqual([...el.querySelectorAll('.mv-cost-rate-in')].map((i) => i.dataset.rate),
+    ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h']);
+  assert.ok([...el.querySelectorAll('.mv-cost-rate-in')].every((i) => i.value === ''));
+});
+
+test('editor (edit): the STORED override is what the form shows', () => {
+  const free = renderModelEditor(FREE, EFFORTS, { doc });
+  assert.equal(mode(free), 'free');
+  assert.equal(free.querySelector('.mv-cost-rates').hidden, true, 'rates are irrelevant to free');
+
+  const priced = renderModelEditor(PRICED, EFFORTS, { doc });
+  assert.equal(mode(priced), 'perMtok');
+  assert.equal(priced.querySelector('.mv-cost-rates').hidden, false);
+  assert.equal(rate(priced, 'input').value, '0.5');
+  assert.equal(rate(priced, 'output').value, '1.5');
+  assert.equal(rate(priced, 'cacheRead').value, '', 'an unset rate stays blank, not "0"');
+
+  // A model with no override opens on Trust the CLI, like create.
+  assert.equal(mode(renderModelEditor(GLOBAL, EFFORTS, { doc })), 'cli');
+});
+
+test('applyCostMode: the rate grid follows the selected mode (app.js wires it to change)', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  const rates = el.querySelector('.mv-cost-rates');
+  el.querySelector('.mv-cost-mode-rb[value="perMtok"]').checked = true;
+  applyCostMode(el);
+  assert.equal(rates.hidden, false);
+  el.querySelector('.mv-cost-mode-rb[value="free"]').checked = true;
+  applyCostMode(el);
+  assert.equal(rates.hidden, true);
+  // Never throws on an editor without the block (defensive: shared entry point).
+  applyCostMode(doc.createElement('div'));
+});
+
+test('collect: each mode emits its own cost shape; only filled rates are sent, as numbers', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  el.querySelector('.mv-id').value = 'm';
+  assert.equal(collectModelEditor(el).body.cost, null, 'Trust the CLI = no override');
+
+  el.querySelector('.mv-cost-mode-rb[value="free"]').checked = true;
+  assert.deepEqual(collectModelEditor(el).body.cost, { free: true });
+
+  el.querySelector('.mv-cost-mode-rb[value="perMtok"]').checked = true;
+  rate(el, 'input').value = '0.5';
+  rate(el, 'cacheRead').value = '0.05';
+  rate(el, 'output').value = '';
+  assert.deepEqual(collectModelEditor(el).body.cost, { perMtok: { input: 0.5, cacheRead: 0.05 } },
+    'blank rates are omitted (cacheWrite1h then falls back to the 5m rate), values are numbers');
+
+  // A pinned ZERO is a rate, not a blank.
+  rate(el, 'output').value = '0';
+  assert.deepEqual(collectModelEditor(el).body.cost.perMtok.output, 0);
+});
+
+test('collect: per-Mtok with every rate blank is sent as-is for the server to reject by name', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  el.querySelector('.mv-id').value = 'm';
+  el.querySelector('.mv-cost-mode-rb[value="perMtok"]').checked = true;
+  assert.deepEqual(collectModelEditor(el).body.cost, { perMtok: {} },
+    'settings.mjs owns the rules — duplicating them here would let them drift');
+});
+
+test('collect: the override ROUND-TRIPS, so editing a label never silently reprices a model', () => {
+  const el = renderModelEditor(PRICED, EFFORTS, { doc });
+  el.querySelector('.mv-label').value = 'Renamed';
+  const { body } = collectModelEditor(el);
+  assert.equal(body.label, 'Renamed');
+  assert.deepEqual(body.cost, { perMtok: { input: 0.5, output: 1.5 } }, 'untouched pricing survives');
+});
+
+test('list: a priced model shows its rates and drops the now-meaningless "cost not verified" badge', () => {
+  const el = renderModelsList({
+    globals: [
+      { ...PRICED, costUnreliable: true },
+      { ...FREE, costUnreliable: true },
+      { ...GLOBAL, costUnreliable: true },
+    ],
+    predefined: [], efforts: EFFORTS,
+  }, { doc });
+  const cards = [...el.querySelectorAll('.mv-card')];
+  const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
+
+  assert.ok(badges(cards[0]).includes('priced'));
+  assert.ok(!badges(cards[0]).includes('cost not verified'),
+    'an override GOVERNS the spend — the unreliable flag says nothing about it');
+  assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$0\.5 · output \$1\.5 \/Mtok/);
+
+  assert.ok(badges(cards[1]).includes('free'));
+  assert.match(cards[1].querySelector('.mv-summary').textContent, /priced free/);
+
+  // A model with NO override still shows the flag — unchanged.
+  assert.ok(badges(cards[2]).includes('cost not verified'));
+  assert.ok(!badges(cards[2]).includes('priced'));
+});
+
+test('setModelCost: loads any override into an editor (the ONE cost -> form mapping)', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  setModelCost(el, { perMtok: { input: 0.5, cacheWrite1h: 1.2 } });
+  assert.equal(mode(el), 'perMtok');
+  assert.equal(el.querySelector('.mv-cost-rates').hidden, false);
+  assert.equal(rate(el, 'input').value, '0.5');
+  assert.equal(rate(el, 'cacheWrite1h').value, '1.2');
+  assert.equal(rate(el, 'output').value, '');
+
+  setModelCost(el, { free: true });
+  assert.equal(mode(el), 'free');
+  assert.equal(rate(el, 'input').value, '', 'switching modes clears the stale rates');
+
+  setModelCost(el, null);
+  assert.equal(mode(el), 'cli');
+  assert.equal(el.querySelector('.mv-cost-rates').hidden, true);
+  setModelCost(doc.createElement('div'), { free: true }); // never throws without the block
+});
+
+test('list: a plugin card shows its MANIFEST price, same rules as a global card', () => {
+  const el = renderModelsList({
+    globals: [],
+    plugins: [
+      { id: 'pp-rated', label: 'PP Rated', efforts: EFFORTS, plugin: 'priced-plug', secrets: [],
+        env: { ANTHROPIC_BASE_URL: '••••••mple' }, cost: { perMtok: { input: 1, output: 3 } }, costUnreliable: true },
+      { id: 'pp-free', label: 'PP Free', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], cost: { free: true } },
+      { id: 'pp-plain', label: 'PP Plain', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], costUnreliable: true },
+    ],
+    predefined: [], efforts: EFFORTS,
+  }, { doc });
+  const cards = [...el.querySelectorAll('.mv-plugin')];
+  const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
+
+  assert.ok(badges(cards[0]).includes('priced'));
+  assert.ok(!badges(cards[0]).includes('cost not verified'), 'a pinned price governs the spend');
+  assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$1 · output \$3 \/Mtok/);
+  assert.ok(badges(cards[1]).includes('free'));
+  assert.ok(badges(cards[2]).includes('cost not verified'), 'unpriced plugin model: flag unchanged');
+});
+
+// ── Duplicate ────────────────────────────────────────────────────────────────
+
+test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', () => {
+  assert.equal(suggestDuplicateId('glm-4.7', []), 'glm-4.7-copy');
+  assert.equal(suggestDuplicateId('glm-4.7', ['glm-4.7']), 'glm-4.7-copy');
+  assert.equal(suggestDuplicateId('glm-4.7', ['glm-4.7', 'glm-4.7-copy']), 'glm-4.7-copy-2');
+  assert.equal(suggestDuplicateId('glm-4.7', ['GLM-4.7-COPY', 'glm-4.7-copy-2']), 'glm-4.7-copy-3',
+    'ids collide case-insensitively, so the suggestion must too');
+  // Duplicating a duplicate keeps stacking rather than fighting over one name.
+  assert.equal(suggestDuplicateId('glm-4.7-copy', ['glm-4.7-copy']), 'glm-4.7-copy-copy');
+});
+
+test('list: only global cards get Duplicate — plugin cards already have Edit a copy', () => {
+  const el = renderModelsList({
+    globals: [GLOBAL],
+    legacy: [{ id: 'old-local', label: 'Old Local' }],
+    plugins: [{ id: 'pp', label: 'PP', efforts: EFFORTS, plugin: 'p', secrets: [] }],
+    predefined: PREDEFINED,
+    efforts: EFFORTS,
+  }, { doc });
+
+  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
+  const dup = globalCard.querySelector('.mv-duplicate');
+  assert.ok(dup, 'global card offers Duplicate');
+  assert.equal(dup.dataset.id, GLOBAL.id, 'carries the SOURCE id — the flow reads the raw env by it');
+  assert.equal(dup.type, 'button', 'never submits a form');
+
+  assert.equal(el.querySelector('.mv-plugin .mv-duplicate'), null);
+  assert.equal(el.querySelector('.mv-legacy .mv-duplicate'), null);
+  assert.equal(el.querySelector('.mv-builtin .mv-duplicate'), null);
 });
