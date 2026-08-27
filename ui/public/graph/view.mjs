@@ -204,6 +204,45 @@ export function createGraphView(host, {
     if (el) el.style.transform = `translate(${node.x}px, ${node.y}px)`;
   }
 
+  const svgChevron = () => {
+    const s = doc.createElementNS(SVG_NS, 'svg');
+    s.setAttribute('class', 'chev'); s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
+    s.innerHTML = '<path d="M6 9l6 6 6-6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+    return s;
+  };
+  /** One footer band -> one element (the run monitor's vocabulary; see Interfaces). */
+  function bandEl(nodeId, band) {
+    if (band.kind === 'fan') {
+      const fan = h('div', 'fan');
+      for (const led of band.leds || []) fan.appendChild(h('i', `sq${led === 'run' ? ' on' : ''}`));
+      fan.appendChild(h('span', 'fl', `×${band.count}`));
+      return fan;
+    }
+    if (band.kind === 'strip') {
+      const btn = doc.createElement('button');
+      btn.type = 'button'; btn.className = 'xtoggle'; btn.dataset.nodeId = nodeId;
+      btn.setAttribute('aria-expanded', band.expanded ? 'true' : 'false');
+      const sq = h('span', 'xsq');
+      for (const led of band.leds || []) sq.appendChild(h('i', `xq is-${led}`));
+      btn.append(sq, h('span', 'xsum', band.summary || ''), svgChevron());
+      return btn;
+    }
+    if (band.kind === 'exec') {
+      const row = h('div', `xrow is-${band.led || 'pending'}`);
+      row.dataset.executionId = band.executionId || '';
+      row.dataset.nodeId = nodeId;
+      row.append(h('i', 'led'), h('span', 'xl', band.label || ''), h('span', 'xr', band.right || ''));
+      return row;
+    }
+    const res = h('div', 'xresult');           // kind: 'result'
+    if (!band.path) { res.textContent = band.text || ''; return res; }
+    const a = h('a', null, band.text || '');
+    a.href = '#'; a.dataset.path = band.path; a.title = band.path;
+    res.appendChild(a);
+    return res;
+  }
+
   function paintCard(el, node) {
     const p = portsAt(node);
     const orType = node.kind === 'or' ? resolveOrOutType(current, portsFn, node.id, new Set()) : null;
@@ -360,6 +399,18 @@ export function createGraphView(host, {
     return { ...T };
   }
 
+  let R = { left: 0, top: 0, width: 0, height: 0 };
+  /** The ONE measurement in the whole renderer. `viewport` injects it under jsdom. */
+  function readRect() {
+    if (viewport) { R = { ...viewport() }; return R; }
+    const b = stage.getBoundingClientRect();
+    R = { left: b.left, top: b.top, width: b.width, height: b.height };
+    stats.rectReads += 1;
+    return R;
+  }
+  const toWorld = (cx, cy) => ({ x: (cx - R.left - T.x) / T.z, y: (cy - R.top - T.y) / T.z });
+  const toScreen = (wx, wy) => ({ x: wx * T.z + T.x, y: wy * T.z + T.y });
+
   const view = {
     stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule, wheelPan,
     zoomMin: zMin, zoomMax: zMax,
@@ -379,6 +430,96 @@ export function createGraphView(host, {
       for (const [id, el] of wireEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
     },
     // (no applyDecor on the view: run-decor.mjs's applyDecor(view, decor) — P6 — owns the decor pass)
+    /** Statuses the monitor sets; every one is a class toggle, never a rebuild. */
+    setStatus(nodeId, status) {
+      const el = nodeEls.get(nodeId);
+      if (!el) return;
+      for (const s of ['pending', 'active', 'done', 'paused', 'stopped', 'error', 'skipped']) {
+        el.classList.toggle(`is-${s}`, s === status);
+      }
+      if (status) el.dataset.status = status; else delete el.dataset.status;
+    },
+    /** Replace the executions footer with `bands` (the run monitor's vocabulary,
+     *  see the Interfaces block) and RE-SIZE the card from the band count. Anchors
+     *  are top-relative, so no wire re-routes (D8) — only height, hit box and fit
+     *  bounds change. The ONE place a run-mode card height is written. */
+    setFooter(nodeId, bands) {
+      const node = ctx && ctx.byId.get(nodeId);
+      const el = nodeEls.get(nodeId);
+      if (!node || !el) return;
+      const list = Array.isArray(bands) ? bands.filter(Boolean) : [];
+      for (const stale of el.querySelectorAll(':scope > .xfoot')) stale.remove();
+      if (list.length) {
+        const foot = h('div', 'xfoot');
+        foot.dataset.nodeId = nodeId;
+        for (const band of list) foot.appendChild(bandEl(nodeId, band));
+        el.appendChild(foot);
+      }
+      if (list.length) footers.set(nodeId, list.length); else footers.delete(nodeId);
+      el.style.height = `${sizeOf(node).h}px`;
+    },
+    /** Per-card ornaments: agent colour, gate pip, header duration · cost. */
+    setNodeChrome(nodeId, { color = '', gate = null, totals = null } = {}) {
+      const el = nodeEls.get(nodeId);
+      if (!el) return;
+      el.style.setProperty('--c', color ? `var(--${color})` : '');
+      // Keep the 1 s elapsed tick (app.js `.run-node[data-id] .dur`) working on v2 cards.
+      el.classList.add('run-node');
+      el.dataset.id = nodeId;
+      for (const stale of el.querySelectorAll(':scope > .ngate')) stale.remove();
+      if (gate) {
+        const pip = h('div', 'ngate', '?');
+        pip.dataset.wireId = gate.wireId || '';
+        pip.title = gate.title || '';
+        el.appendChild(pip);
+      }
+      let run = el.querySelector(':scope > .nrun');
+      if (!totals) { if (run) run.remove(); return; }
+      if (!run) { run = h('div', 'nrun'); run.append(h('span', 'dur'), h('span', 'cost')); el.appendChild(run); }
+      run.querySelector('.dur').textContent = totals.dur || '';
+      run.querySelector('.cost').textContent = totals.cost || '';
+    },
+    /** The amber `N×` delivery badge on a loop wire's bow (no-op on a plain wire). */
+    setWireBadge(wireId, badge) {
+      const badgeHost = badgeEls.get(wireId);
+      if (!badgeHost) return;
+      for (const stale of badgeHost.querySelectorAll('.wfired')) stale.remove();
+      if (!badge) return;
+      const b = h('span', 'wfired', badge.text || '');
+      if (badge.title) b.title = badge.title;
+      badgeHost.appendChild(b);
+    },
+    setWireLive(ids) {
+      const live = new Set(ids || []);
+      for (const [id, el] of wireEls) el.classList.toggle('wire-live', live.has(id));
+    },
+    /** One transform write per dragged node + its incident wires only. */
+    moveNode(nodeId) {
+      const node = ctx && ctx.byId.get(nodeId);
+      if (!node) return;
+      placeCard(node);
+      for (const wid of incident.get(nodeId) || []) paintWire(wid);
+    },
+    paintWire,
+    /** `d = null` hides the ghost. Identical `d` never re-writes the attribute. */
+    setGhost(d, cls = '') {
+      if (d == null) { ghost.setAttribute('class', 'wire ghost'); return; }
+      if (ghost.getAttribute('d') !== d) { ghost.setAttribute('d', d); stats.ghostUpdates += 1; }
+      ghost.setAttribute('class', `wire ghost on${cls ? ` ${cls}` : ''}`);
+    },
+    /** Pan (never zoom) the node's box centre to the viewport centre. */
+    centerOn(nodeId) {
+      const node = ctx && ctx.byId.get(nodeId);
+      if (!node) return;
+      const r = view.readRect();
+      const s = sizeOf(node);
+      setTransform({
+        x: r.width / 2 - (node.x + s.w / 2) * T.z,
+        y: r.height / 2 - (node.y + s.h / 2) * T.z,
+        z: T.z,
+      });
+    },
+    readRect, toWorld, toScreen, rect: () => ({ ...R }),
     /** Swap the registry the headers read (the palette arrives after the first
      *  paint when /api/agents is slow). Header signatures are invalidated so the
      *  next render repaints tint, icon and title. Never destroy the view here —
@@ -398,7 +539,7 @@ export function createGraphView(host, {
     },
   };
   // Internals the later tasks' fast paths close over.
-  view._internals = { nodeEls, wireEls, badgeEls, incident, dCache, footers, paintWire, placeCard, sizeOf, portsAt, h, viewport, doc, getCtx: () => ctx, getCurrent: () => current };
+  view._internals = { incident, dCache, footers };
   setTransform(T);
   return view;
 }
