@@ -345,6 +345,20 @@ export class GraphOrchestrator extends RunHarness {
       }
     }
     this._emit('exec', { ...payload, costUsd: step ? (step.costUsd || 0) : 0 });
+    // ── coexistence shim (P4–P7, deleted in P8) ──
+    // Every unported v1 consumer drives off `phase`. Derived, never authored:
+    // the vocabulary is the manifest node's uiPhase (UI_PHASE[key] || key for
+    // agents, the kind for flow cards), the cycle is the ordinal, and a task
+    // slice reports its PARENT node/ordinal (the exec payload already does).
+    // `skipped` has no v1 counterpart, so it emits nothing.
+    if (payload.status !== 'skipped') {
+      this._emit('phase', {
+        phase: this._uiPhaseOf(payload.nodeId),
+        cycle: payload.ordinal,
+        status: payload.status,
+        nodeId: payload.nodeId,
+      });
+    }
   }
 
   /**
