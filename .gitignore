@@ -11,3 +11,6 @@ graphify-out/
 /*.png
 
 .superpowers/
+
+# OpenDeck baked narration (generated locally by the Audio Studio)
+docs/why-worca/narration-audio.js
