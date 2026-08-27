@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  modelCostConfig, estimateCost, resolveModelCost,
+  modelCostConfig, estimateCost, isPriceableUsage, resolveModelCost,
   observeModelCost, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -87,6 +87,53 @@ test('resolveModelCost: {perMtok} → recomputed from tokens, ignoring the CLI v
   await addGlobalModel({ id: 'priced', cost: { perMtok: { input: 1, output: 3 } } });
   // 1M input @1 + 1M output @3 = 4, no matter what the CLI said.
   assert.equal(resolveModelCost('priced', 999, USAGE), 4);
+});
+
+test('estimateCost also reads Ask Worca\'s normalized usage shape (same tokens, other spelling)', () => {
+  const rates = { input: 1, output: 3, cacheRead: 0.1, cacheWrite: 1.25 };
+  const ask = { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheCreation: 1_000_000, ctx: 4_000_000 };
+  assert.equal(estimateCost(ask, rates), estimateCost(USAGE, rates), 'both spellings price identically');
+  assert.equal(estimateCost({ input: 500_000 }, { input: 3 }), 1.5);
+  // The raw spelling wins when (impossibly) both are present — it is the source shape.
+  assert.equal(estimateCost({ input_tokens: 1_000_000, input: 9_000_000 }, { input: 1 }), 1);
+  // A raw ZERO is a real count, not a gap: it must not fall through to the camel key.
+  assert.equal(estimateCost({ input_tokens: 0, input: 9_000_000 }, { input: 1 }), 0);
+});
+
+test('isPriceableUsage: an absent usage object is unpriceable; genuine zeroes are priceable', () => {
+  assert.equal(isPriceableUsage(undefined), false);
+  assert.equal(isPriceableUsage(null), false);
+  assert.equal(isPriceableUsage('nope'), false);
+  assert.equal(isPriceableUsage({}), false, 'an object with no token fields says nothing');
+  assert.equal(isPriceableUsage({ input_tokens: 0 }), true, 'zero tokens IS a count');
+  assert.equal(isPriceableUsage({ output: 0 }), true, 'the ask spelling counts too');
+  assert.equal(isPriceableUsage({ cache_creation: { ephemeral_1h_input_tokens: 5 } }), true);
+});
+
+test('resolveModelCost: {perMtok} with NO usage is NaN — never a silent $0, never the CLI figure', async () => {
+  await addGlobalModel({ id: 'priced', cost: { perMtok: { input: 1, output: 3 } } });
+  assert.ok(Number.isNaN(resolveModelCost('priced', 0.4625, undefined)),
+    'unpriceable: the caller reports it instead of booking a made-up number');
+  assert.ok(Number.isNaN(resolveModelCost('priced', 0.4625, null)));
+  assert.equal(resolveModelCost('priced', 0.4625, { input_tokens: 0, output_tokens: 0 }), 0,
+    'but a usage object of genuine zeroes prices at $0');
+  // {free} needs no usage at all — it is $0 by decree.
+  await addGlobalModel({ id: 'onprem', cost: { free: true } });
+  assert.equal(resolveModelCost('onprem', 0.4625, undefined), 0);
+});
+
+test('resolveModelCost / observeModelCost accept a pre-resolved override (one catalog read per event)', async () => {
+  await addGlobalModel({ id: 'onprem', env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { free: true } });
+  // An explicitly passed config is USED — including `null`, which means "checked,
+  // there is none" and must not trigger a second lookup that finds one.
+  assert.equal(resolveModelCost('onprem', 0.4625, USAGE, { free: true }), 0);
+  assert.equal(resolveModelCost('onprem', 0.4625, USAGE, null), 0.4625,
+    'null = the caller already established there is no override');
+  assert.equal(resolveModelCost('onprem', 0.4625, USAGE), 0, 'undefined = look it up');
+  // Same contract on the observer: a passed-in override suppresses the flag.
+  assert.equal(observeModelCost('onprem', 0, USAGE, { free: true }), null);
+  assert.equal(observeModelCost('onprem', 0, USAGE, null), 'flagged',
+    'told there is no override, it flags the zero-cost-with-tokens run as before');
 });
 
 test('observeModelCost: a model with an override is never flagged and its stale flag is lifted', async () => {

@@ -16,7 +16,7 @@ import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 
 import { runClaude } from '../claude-runner.mjs';
-import { resolveModelEnv } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
 import { generateTitle } from '../title.mjs';
 import { createTurnReducer } from './events.mjs';
@@ -68,6 +68,7 @@ class AskTurn extends EventEmitter {
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
+      resolveModelCost: deps.resolveModelCost ?? resolveModelCost,
       worcaHome: deps.worcaHome ?? worcaHome,
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
@@ -153,6 +154,12 @@ class AskTurn extends EventEmitter {
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,
       attachmentNames: this.attachmentNames,
+      // Ask spend feeds the SAME windowed budget as pipeline spend
+      // (cost-budget.mjs combinedWindowedSpendUsd), so an on-prem model the CLI
+      // prices by name inflates it from here too — re-price the turn exactly as
+      // the orchestrator's result intake does. Trusts the CLI when the model
+      // carries no override, which is the default.
+      resolveCost: (cliCostUsd, usage) => d.resolveModelCost(this.model, cliCostUsd, usage),
       limits: d.limits,
       onProposal: ({ input }) => this._onProposal(input),
       // The MCP child cannot broadcast; the parent turns its comment writes into
@@ -190,6 +197,10 @@ class AskTurn extends EventEmitter {
     await this._settle();
     const summary = this.reducer.finish();
     const finalStatus = kind === 'error' ? 'error' : status;
+    // Already AUTHORITATIVE: the reducer applied this turn's per-model cost
+    // override (the `resolveCost` hook in _makeReducer), so this one value is
+    // correct for all four sinks below — the message row, the thread totals, the
+    // budget ledger, and the ask-done frame.
     const costUsd = summary.costUsd;
     // Persist BEFORE broadcasting: a client re-fetch on the terminal frame must
     // never see a still-streaming row. finishMessage gets the FULL patch (B-5).
