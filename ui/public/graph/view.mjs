@@ -107,6 +107,7 @@ export function createGraphView(host, {
   const incident = new Map();     // nodeId  -> Set(wireId)
   const dCache = new Map();       // wireId  -> last written `d`
   const footers = new Map();      // nodeId  -> footerRows (int)
+  const navs = [];                // nav controllers created by createNav()
   let T = { x: 0, y: 0, z: 1 };
   let current = null;             // last rendered template
   let ctx = null;                 // last render context (ports, loops, wired inputs)
@@ -399,6 +400,28 @@ export function createGraphView(host, {
     return { ...T };
   }
 
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  /** MODEL bounds (no DOM measure): the shared `graphBounds` over the rendered
+   *  template, with this view's footer rows (only the view knows them). */
+  function bounds(pad = 0) {
+    if (!current || !current.nodes.length) return null;
+    return graphBounds(current, portsAt, { pad, footerRowsOf: (n) => footers.get(n.id) || 0 });
+  }
+  /** `fitBounds` → `{z, tx, ty}` mapped onto this view's `{x, y, z}` transform. */
+  const applyFit = (b, width, height, zoomMax) => {
+    const f = fitBounds(b, { width, height }, { zoomMin: zMin, zoomMax });
+    setTransform({ x: f.tx, y: f.ty, z: f.z });
+  };
+
+  /** Zoom about a stage-local point s: w = (s − t)/z is invariant ⇒ t' = s − w·z'. */
+  function zoomAbout(zNext, sx, sy) {
+    const z2 = clamp(zNext, zMin, zMax);
+    const wx = (sx - T.x) / T.z;
+    const wy = (sy - T.y) / T.z;
+    setTransform({ x: sx - wx * z2, y: sy - wy * z2, z: z2 });
+  }
+
   let R = { left: 0, top: 0, width: 0, height: 0 };
   /** The ONE measurement in the whole renderer. `viewport` injects it under jsdom. */
   function readRect() {
@@ -520,6 +543,62 @@ export function createGraphView(host, {
       });
     },
     readRect, toWorld, toScreen, rect: () => ({ ...R }),
+    bounds,
+    zoomAbout,
+    /** Auto-fit from MODEL bounds into the band left of the floating inspector.
+     *  Fit NEVER magnifies past 1x; the user zoom range stays zoomMin..zoomMax.
+     *  Runs on view entry/re-entry and template load only — never after an edit. */
+    fit({ insetRight = 0, pad = 60 } = {}) {
+      const r = view.readRect();
+      const b = bounds(pad);
+      if (!b) return;
+      applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, r.height || 0), 1);   // never past 1×
+    },
+    /** Static hosts: fit the graph into a card of width `w` (ResizeObserver-driven). */
+    fitToWidth(w) {
+      const r = view.readRect();
+      const b = bounds(60);
+      if (!b) return;
+      const vw = Math.max(1, w || r.width || 0);
+      const f = fitBounds(b, { width: vw, height: Number.MAX_SAFE_INTEGER }, { zoomMin: zMin, zoomMax: 1 });   // width decides z
+      setTransform({ x: f.tx, y: (Math.max(1, r.height || 0) - b.h * f.z) / 2 - b.y * f.z, z: f.z });
+    },
+    /** Wheel/zoom nav for `monitor` hosts. `static` gets nothing; `edit` binds its
+     *  own richer pipeline in composer.mjs and does NOT call this. */
+    createNav({ wheelPan: pan = wheelPan, onEngaged = null } = {}) {
+      if (mode === 'static') return { destroy() {} };
+      let engaged = pan === 'always';
+      const setEngaged = (v) => { if (engaged !== v) { engaged = v; if (onEngaged) onEngaged(v); } };
+      const onWheel = (ev) => {
+        const zoom = ev.ctrlKey || ev.metaKey;
+        if (!zoom && !engaged) return;                   // engaged-only: let the PAGE scroll
+        ev.preventDefault();
+        const m = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? (R.height || 560) : 1;
+        if (zoom) { zoomAbout(T.z * Math.exp(-ev.deltaY * m * 0.002), ev.clientX - R.left, ev.clientY - R.top); return; }
+        setTransform({ x: T.x - ev.deltaX * m, y: T.y - ev.deltaY * m, z: T.z });
+      };
+      const engage = () => setEngaged(true);
+      const disengage = (ev) => { if (pan !== 'always' && !stage.contains(ev.target)) setEngaged(false); };
+      const onKey = (ev) => { if (ev.key === 'Escape' && pan !== 'always') setEngaged(false); };
+      view.readRect();
+      stage.addEventListener('wheel', onWheel, { passive: false });
+      stage.addEventListener('pointerdown', engage);
+      stage.addEventListener('focus', engage);
+      doc.addEventListener('pointerdown', disengage, true);
+      doc.addEventListener('keydown', onKey);
+      const nav = {
+        isEngaged: () => engaged,
+        destroy() {
+          stage.removeEventListener('wheel', onWheel);
+          stage.removeEventListener('pointerdown', engage);
+          stage.removeEventListener('focus', engage);
+          doc.removeEventListener('pointerdown', disengage, true);
+          doc.removeEventListener('keydown', onKey);
+        },
+      };
+      navs.push(nav);
+      return nav;
+    },
     /** Swap the registry the headers read (the palette arrives after the first
      *  paint when /api/agents is slow). Header signatures are invalidated so the
      *  next render repaints tint, icon and title. Never destroy the view here —
@@ -533,6 +612,7 @@ export function createGraphView(host, {
       if (current) render(current, {});
     },
     destroy() {
+      for (const n of navs.splice(0)) n.destroy();
       stage.remove();
       nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear();
       current = null; ctx = null;

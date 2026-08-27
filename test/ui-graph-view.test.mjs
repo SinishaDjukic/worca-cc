@@ -206,3 +206,58 @@ test('centerOn puts the node box centre at the viewport centre', async () => {
   assert.equal(T.x, 500 - 510);
   assert.equal(T.y, 300 - 175.75);
 });
+
+const VP = { left: 0, top: 0, width: 1280, height: 560 };
+
+test('fit centres model bounds and never magnifies past 1x', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  view.render(fixture(), {});
+  view.fit({ insetRight: 0, pad: 60 });
+  const T = view.getTransform();
+  // boxes span x 60..980, y 80..271.5 => padded bounds (0, 20, 1040, 311.5)
+  assert.equal(T.z, 1, 'fit caps at 1x');
+  assert.equal(T.x, 120);
+  assert.equal(T.y, 104.25);
+  view.fit({ insetRight: 280, pad: 60 });               // inspector expanded band
+  assert.ok(Math.abs(view.getTransform().z - 1000 / 1040) < 1e-12);
+});
+
+test('static mode binds NO listeners and fitToWidth uses the host width', async () => {
+  const { doc, host, win } = boot();
+  const { createGraphView } = await import(viewPath);
+  let bound = 0;
+  const realAdd = win.HTMLElement.prototype.addEventListener;
+  win.HTMLElement.prototype.addEventListener = function (...a) { bound += 1; return realAdd.apply(this, a); };
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  view.render(fixture(), {});
+  const nav = view.createNav();                          // refused in static mode
+  win.HTMLElement.prototype.addEventListener = realAdd;
+  assert.equal(bound, 0, 'static mode installs zero element listeners, even via createNav');
+  assert.equal(typeof nav.destroy, 'function');
+  assert.ok(view.stage.classList.contains('gv-static'));
+  view.fitToWidth(520);                                  // 520/1040 = 0.5 >= zoomMin 0.3
+  assert.equal(view.getTransform().z, 0.5);
+});
+
+test('monitor nav: wheelPan "engaged" ignores a plain wheel until engaged', async () => {
+  const { doc, host, win } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  view.render(fixture(), {});
+  const nav = view.createNav({ wheelPan: 'engaged' });
+  view.setTransform({ x: 0, y: 0, z: 1 });
+  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: -25, bubbles: true, cancelable: true }));
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'not engaged => page scrolls, graph does not pan');
+  // ctrl+wheel is captured even when not engaged
+  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaY: -120, ctrlKey: true, clientX: 600, clientY: 300, bubbles: true, cancelable: true }));
+  assert.ok(view.getTransform().z > 1);
+  view.setTransform({ x: 0, y: 0, z: 1 });
+  view.stage.dispatchEvent(new win.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 10, clientY: 10, bubbles: true }));
+  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: -25, bubbles: true, cancelable: true }));
+  assert.deepEqual(view.getTransform(), { x: -40, y: 25, z: 1 }, 'engaged => plain wheel pans by exactly -delta');
+  nav.destroy();
+  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: 0, bubbles: true, cancelable: true }));
+  assert.equal(view.getTransform().x, -40, 'no listener after destroy');
+});
