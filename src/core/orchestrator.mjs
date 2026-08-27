@@ -75,7 +75,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost } from './config.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
@@ -3113,9 +3113,15 @@ class Orchestrator extends EventEmitter {
     // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
     // (non-JSON line) — `.type` on it is just undefined, so this never throws.
     // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
-    const cost = e.costUsd != null
+    const rawCost = e.costUsd != null
       ? Number(e.costUsd)
       : (e.raw && e.raw.type === 'result' ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
+    // A per-model cost override (config.mjs) wins over the CLI's own figure — so a
+    // CLI that prices an on-prem/proxied model by name can't inflate the ledger.
+    // With no override this is `rawCost` unchanged (default behavior preserved).
+    const cost = attr?.model
+      ? resolveModelCost(attr.model, rawCost, e.raw && typeof e.raw === 'object' ? e.raw.usage : undefined)
+      : rawCost;
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (e.raw && e.raw.type === 'result' && !this.claude.mock) {
       this._log('orchestrator', 'warn', 'result event carried no cost estimate (total_cost_usd absent)', attr);
@@ -3247,6 +3253,7 @@ class Orchestrator extends EventEmitter {
         startedAt: new Date().toISOString(),
         finishedAt: null,
         subagentType: c.input?.subagent_type ?? null,
+        model: attr.model ?? null, // in-memory: lets telemetry apply the cost override
       };
       this.state.subAgents.push(rec);
       this._upsertSubAgent(rec);
@@ -3394,7 +3401,13 @@ class Orchestrator extends EventEmitter {
     if (Number.isFinite(Number(tr.totalDurationMs))) rec.durationMs = Number(tr.totalDurationMs);
     if (Number.isFinite(Number(tr.totalTokens))) rec.tokens = Number(tr.totalTokens);
     const cost = tr.usage?.cost_usd ?? tr.usage?.total_cost_usd ?? tr.cost_usd;
-    if (Number.isFinite(Number(cost))) rec.costUsd = Number(cost);
+    if (Number.isFinite(Number(cost))) {
+      // Apply the same per-model cost override as the node result path, so a
+      // sub-agent of a free/priced model doesn't display the CLI's fabricated
+      // figure. rec.model is the parent node's dispatched model (the sub-agent
+      // shares its endpoint); absent (e.g. after resume) → the CLI value stands.
+      rec.costUsd = rec.model ? resolveModelCost(rec.model, Number(cost), tr.usage) : Number(cost);
+    }
     this._upsertSubAgent(rec);
     this._subAgentTransition('update', rec);
   }

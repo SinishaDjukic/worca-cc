@@ -265,6 +265,14 @@ export function costUnreliableModelIds() {
  */
 export function observeModelCost(modelId, costUsd, usage) {
   if (!modelHasBaseUrlRouting(modelId)) return null;
+  // An explicit per-model cost override GOVERNS this model's spend (resolveModelCost
+  // below) — the CLI's own figure is never trusted for it, so the "unreliable"
+  // badge is meaningless. Never flag it, and lift any flag left from before the
+  // override existed. Derived state: a DB hiccup here must never fail the run.
+  if (modelCostConfig(modelId)) {
+    try { prepare('DELETE FROM model_cost_flags WHERE model_id = ?').run(String(modelId).trim()); } catch { /* derived */ }
+    return null;
+  }
   const u = usage && typeof usage === 'object' ? usage : {};
   const tokens = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
     .reduce((n, k) => n + (Number(u[k]) || 0), 0);
@@ -284,6 +292,70 @@ export function observeModelCost(modelId, costUsd, usage) {
     return 'flagged';
   }
   return null; // no cost AND no tokens (e.g. an errored run) — no signal either way
+}
+
+// ── per-model cost override (opt-in) ──────────────────────────────────────────
+// The Claude CLI computes total_cost_usd from its OWN per-model price table keyed
+// on the model NAME — so an on-prem/proxied endpoint (even one that returns no
+// cost) still gets a fabricated dollar figure, which observeModelCost cannot
+// distinguish from a real one once it is positive. A user who KNOWS a model's
+// real price (or that it is free) can pin it in the GLOBAL catalog; that override
+// then wins over whatever the CLI reports. Inspired by worca 0.x's cost_alias /
+// worca.pricing.models mechanism. Opt-in: with no override the CLI value stands.
+
+/** The explicit cost override for a model from the user's GLOBAL catalog, or
+ *  null. Shape: {free:true} | {perMtok:{input?,output?,cacheRead?,cacheWrite?,
+ *  cacheWrite1h?}} (USD per million tokens). Predefined/plugin models carry none
+ *  — pinning a price is a user-catalog concern. Never throws. */
+export function modelCostConfig(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
+  const lc = id.toLowerCase();
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  return entry?.cost ?? null;
+}
+
+/** Estimate USD from a Claude result `usage` object and a per-million-token rate
+ *  table (mirrors worca 0.x estimate_cost). Absent rates/fields count as 0. When
+ *  the CLI breaks cache-creation into ephemeral 1h/5m buckets they are priced
+ *  separately (1h falls back to the cacheWrite rate); otherwise the flat
+ *  cache_creation_input_tokens total is priced at cacheWrite. */
+export function estimateCost(usage, perMtok) {
+  if (!perMtok || typeof perMtok !== 'object') return 0;
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const rate = (k) => num(perMtok[k]);
+  const cc = u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : null;
+  const eph1h = cc ? num(cc.ephemeral_1h_input_tokens) : 0;
+  const eph5m = cc ? num(cc.ephemeral_5m_input_tokens) : 0;
+  const cacheWriteCost = (eph1h || eph5m)
+    ? (eph5m * rate('cacheWrite')
+        + eph1h * (perMtok.cacheWrite1h != null ? rate('cacheWrite1h') : rate('cacheWrite'))) / 1e6
+    : num(u.cache_creation_input_tokens) * rate('cacheWrite') / 1e6;
+  return (
+    num(u.input_tokens) * rate('input')
+    + num(u.output_tokens) * rate('output')
+    + num(u.cache_read_input_tokens) * rate('cacheRead')
+  ) / 1e6 + cacheWriteCost;
+}
+
+/**
+ * The AUTHORITATIVE cost for a dispatched model: the CLI's own figure unless the
+ * model carries an explicit override, which then wins. {free} → $0; {perMtok} →
+ * recomputed from `usage`. This is what stops a CLI that prices an on-prem model
+ * by name from inflating the ledger. With no override, `cliCostUsd` is returned
+ * verbatim (finite or not — the caller already gates on Number.isFinite).
+ * @param {string} modelId  the dispatched model id
+ * @param {number} cliCostUsd  the cost the CLI reported (may be NaN)
+ * @param {object} [usage]  the result event's usage object
+ * @returns {number}
+ */
+export function resolveModelCost(modelId, cliCostUsd, usage) {
+  const cost = modelCostConfig(modelId);
+  if (!cost) return cliCostUsd;
+  if (cost.free) return 0;
+  if (cost.perMtok) return estimateCost(usage, cost.perMtok);
+  return cliCostUsd;
 }
 
 /**

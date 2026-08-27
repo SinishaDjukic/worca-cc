@@ -564,17 +564,68 @@ function sanitizeGlobalModel(raw) {
     }
     env[k] = t;
   }
+  const cost = sanitizeModelCost(raw.cost, id);
   return {
     id,
     label,
     efforts: efforts.length ? efforts : [...EFFORTS],
     ...(Object.keys(env).length ? { env } : {}),
+    ...(cost ? { cost } : {}),
   };
 }
 
+/** Allowed per-million-token rate keys for a model's `cost.perMtok` table. */
+const COST_RATE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h'];
+
 /**
- * The sanitized global model catalog: [{id, label, efforts, env?}], effective
- * shape (label/efforts always present). Missing/corrupt -> []. Malformed and
+ * Validate a model `cost` override (opt-in per-model pricing, config.mjs
+ * resolveModelCost). Returns the normalized shape or undefined; THROWS on
+ * malformed input (write path). Accepted:
+ *   { free: true }                              → recorded spend is always $0
+ *   { perMtok: { input, output, cacheRead, … } } → USD per million tokens, ≥ 0
+ * `{ free: false }` / `{}` mean "no override" → undefined.
+ * @throws {Error}
+ */
+function assertModelCost(cost) {
+  if (cost === undefined || cost === null) return undefined;
+  if (typeof cost !== 'object' || Array.isArray(cost)) throw new Error('cost must be an object');
+  if (cost.free !== undefined && typeof cost.free !== 'boolean') throw new Error('cost.free must be a boolean');
+  if (cost.free === true) return { free: true };
+  if (cost.perMtok !== undefined) {
+    const p = cost.perMtok;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      throw new Error('cost.perMtok must be an object of USD-per-million-token rates');
+    }
+    const rates = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (!COST_RATE_KEYS.includes(k)) {
+        throw new Error(`unknown cost.perMtok rate ${JSON.stringify(k)} — allowed: ${COST_RATE_KEYS.join(', ')}`);
+      }
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw new Error(`cost.perMtok.${k} must be a finite number >= 0`);
+      rates[k] = n;
+    }
+    if (!Object.keys(rates).length) throw new Error('cost.perMtok must define at least one rate');
+    return { perMtok: rates };
+  }
+  return undefined; // { free: false } or {} — no override
+}
+
+/** Lenient read-side counterpart of assertModelCost: drops an invalid `cost`
+ *  loudly instead of throwing (a corrupt settings.json must never break reads). */
+function sanitizeModelCost(raw, id) {
+  if (raw == null) return undefined;
+  try {
+    return assertModelCost(raw);
+  } catch (e) {
+    console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping invalid cost — ${e.message}`);
+    return undefined;
+  }
+}
+
+/**
+ * The sanitized global model catalog: [{id, label, efforts, env?, cost?}],
+ * effective shape (label/efforts always present). Missing/corrupt -> []. Malformed and
  * case-insensitively duplicate entries are dropped loudly (first wins). Never
  * throws.
  */
@@ -652,12 +703,13 @@ function assertTestSettingsAccess() {
 }
 
 /** The MINIMAL stored shape for validated parts (see section comment). */
-function storedModelShape(id, label, efforts, env) {
+function storedModelShape(id, label, efforts, env, cost) {
   return {
     id,
     ...(label && label !== id ? { label } : {}),
     ...(efforts.length && efforts.length !== EFFORTS.length ? { efforts } : {}),
     ...(Object.keys(env).length ? { env } : {}),
+    ...(cost ? { cost } : {}),
   };
 }
 
@@ -675,21 +727,23 @@ function rawModels(settings) {
 
 /**
  * Add a global catalog entry. `label` defaults to the id; `efforts` must be a
- * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved.
- * @returns {Promise<{id:string,label:string,efforts:string[],env?:object}>} the effective entry
+ * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved;
+ * `cost` is an optional per-model override ({free} | {perMtok}, see assertModelCost).
+ * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
   const vefforts = assertEfforts(efforts);
   const venv = assertEnvPairs(env);
+  const vcost = assertModelCost(cost);
   const settings = readSettings();
   const models = rawModels(settings);
   if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
-  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv)];
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -698,11 +752,12 @@ export async function addGlobalModel({ id, label, efforts, env } = {}) {
  * Patch a global catalog entry. Omitted fields are kept. `label`: ''/null
  * resets to the id. `efforts`: []/null resets to all. `env`: null clears the
  * whole map; an object merges per key, where a null value DELETES that key and
- * a string sets it (write-only PATCH semantics, design §4.10).
+ * a string sets it (write-only PATCH semantics, design §4.10). `cost`: null/''
+ * removes the override; an object replaces it wholesale.
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env } = {}) {
+export async function updateGlobalModel(id, { label, efforts, env, cost } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
@@ -730,8 +785,13 @@ export async function updateGlobalModel(id, { label, efforts, env } = {}) {
     }
   }
 
+  // cost: omitted keeps the current override; null/'' removes it; an object
+  // replaces it wholesale (not a per-key merge — the table is small).
+  let nextCost = current.cost;
+  if (cost !== undefined) nextCost = isClearInput(cost) ? undefined : assertModelCost(cost);
+
   settings.models = models.slice();
-  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv);
+  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost);
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }

@@ -2869,7 +2869,7 @@ app.get('/api/models', (req, res) => {
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env });
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // addGlobalModel throws only on validation (empty/dup id, unknown effort,
@@ -3022,7 +3022,7 @@ app.patch('/api/models/:id', async (req, res) => {
     env = Object.fromEntries(Object.entries(env).filter(([, v]) => !isMaskedEcho(v)));
   }
   try {
-    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env });
+    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env, cost: b.cost });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // updateGlobalModel throws only on validation (unknown id, unknown effort,
