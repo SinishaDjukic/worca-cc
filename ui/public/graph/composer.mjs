@@ -408,6 +408,19 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   function onKeyUp(ev) { if (ev.key === ' ') { space = false; stage.classList.remove('space'); } }
 
+  function firstErrorNode() {
+    const e = (lastReport.errors || []).find((x) => x.nodeId);
+    return e ? e.nodeId : null;
+  }
+  const onErrChip = () => { const id = firstErrorNode(); if (id) { select({ kind: 'node', id }); view.centerOn(id); } };
+  const onWorldClick = (ev) => {
+    const pip = ev.target.closest && ev.target.closest('.npip');
+    if (!pip) return;
+    ev.stopPropagation();
+    const id = pip.dataset.nodeId;
+    if (id) { select({ kind: 'node', id }); view.centerOn(id); }
+  };
+
   function mount() {
     empty = doc.createElement('div');
     empty.className = 'gv-empty';
@@ -419,6 +432,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     doc.addEventListener('keyup', onKeyUp);
     hostEls.autoBtn?.addEventListener('click', runAutoLayout);
     hostEls.newBtn?.addEventListener('click', onNewCanvas);
+    hostEls.errors?.addEventListener('click', onErrChip);
+    view.world.addEventListener('click', onWorldClick);
     stage.addEventListener('pointermove', onMove);
     stage.addEventListener('pointerup', onUp);
     stage.addEventListener('pointercancel', onCancelEv);
@@ -443,6 +458,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     doc.removeEventListener('keyup', onKeyUp);
     hostEls.autoBtn?.removeEventListener('click', runAutoLayout);
     hostEls.newBtn?.removeEventListener('click', onNewCanvas);
+    hostEls.errors?.removeEventListener('click', onErrChip);
+    view.world.removeEventListener('click', onWorldClick);
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
     stage.removeEventListener('pointercancel', onCancelEv);

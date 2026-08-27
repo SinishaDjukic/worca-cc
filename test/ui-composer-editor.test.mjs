@@ -214,3 +214,58 @@ test('fit centres the model in the band left of the inspector and never magnifie
   s.c.fit({ insetRight: 28 });                 // rail collapsed => vw 1252
   assert.equal(s.c.view.getTransform().z, 1, 'fit never magnifies past 1x');
 });
+
+test('a whole drag is ONE undo entry and the ring caps at 50', async () => {
+  const s = await open();
+  assert.equal(s.c.undoDepth(), 0);
+  down(s, 400, 80);
+  for (let i = 0; i < 20; i += 1) { move(s, 400 + i * 5, 80 + i * 3); s.flush(); }
+  up(s, 500, 140); s.flush();
+  assert.equal(s.c.undoDepth(), 1, '20 frames => one undo entry');
+  const moved = { ...s.c.template().nodes[1] };
+  s.c.undo();
+  assert.equal(s.c.template().nodes[1].x, 400);
+  s.c.redo();
+  assert.equal(s.c.template().nodes[1].x, moved.x);
+  for (let i = 0; i < 60; i += 1) s.c.commit('n', () => { s.c.template().nodes[1].x += 11; });
+  assert.equal(s.c.undoDepth(), 50, 'ring capped at UNDO_LIMIT');
+});
+
+test('errors disable Save, show the chip, pip the node, and centre it on click', async () => {
+  const s = await open({ template: { id: '', name: '', version: 2, domain: '', nodes: [], wires: [] } });
+  await new Promise((r) => setTimeout(r, 0));            // let scheduleValidate run
+  assert.ok(s.el.save.disabled, 'Save disabled while the graph has errors');
+  assert.equal(s.el.errors.hidden, false);
+  assert.match(s.el.errors.textContent, /^\d+ errors?$/);
+  const s2 = await open();
+  // Drop the End node and ONLY the wire that fed it. Clearing EVERY wire (the
+  // first draft did) also unwires n_agent.task and n_task.task, so V9 + V20 stay
+  // red after the repair below and the recovery half of this test can never pass.
+  // Verified 2026-08-27: end removed + w1 kept => exactly [V21]; + n_end2 + w9 => ok.
+  s2.c.commit('rm-end', () => {
+    const t = s2.c.template();
+    t.nodes = t.nodes.filter((n) => n.kind !== 'end');
+    t.wires = t.wires.filter((w) => w.id === 'w1');
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s2.el.save.disabled, true, 'V21: exactly one End node');
+  s2.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const pip = s2.c.view.world.querySelector('.npip');
+  if (pip) { pip.dispatchEvent(new s2.win.MouseEvent('click', { bubbles: true })); assert.notDeepEqual(s2.c.view.getTransform(), { x: 0, y: 0, z: 1 }, 'pip click centres the offender'); }
+  s2.c.commit('fix', () => { s2.c.template().nodes.push({ id: 'n_end2', kind: 'end', x: 900, y: 200, config: {} }); s2.c.template().wires.push({ id: 'w9', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_end2', port: 'result' } }); });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s2.el.errors.hidden, true);
+  assert.equal(s2.el.save.disabled, false);
+});
+
+test('validation runs ONCE per commit, never per frame', async () => {
+  const s = await open();
+  await new Promise((r) => setTimeout(r, 0));
+  const v0 = s.c.stats.validations;
+  down(s, 400, 80);
+  for (let i = 0; i < 30; i += 1) { move(s, 400 + i, 80 + i); s.flush(); }
+  assert.equal(s.c.stats.validations, v0, 'zero validations during the drag');
+  up(s, 430, 110); s.flush();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.c.stats.validations, v0 + 1, 'exactly one after the commit');
+});
