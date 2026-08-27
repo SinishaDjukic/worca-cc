@@ -992,11 +992,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id)
+        source_type, source_ref, guardrails_id, outcome)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id)
+        @source_type,@source_ref,@guardrails_id,@outcome)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1004,6 +1004,7 @@ export async function writeState(pipelineDir, stateObj) {
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
+        outcome=excluded.outcome,
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -1011,10 +1012,19 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills, graphify_count)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id,
+        skills, graphify_count,
+        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
+      // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
+      // the readers below reproduce today's exact shape for a v1 pipeline.
+      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null)
+        ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
+              title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
+              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null })
+        : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
         st.stepIndex ?? null, st.cycle ?? null, st.status ?? null,
@@ -1025,6 +1035,13 @@ export async function writeState(pipelineDir, stateObj) {
         st.sessionId ?? null,
         s(st.skills),
         Number.isFinite(st.graphifyCount) ? st.graphifyCount : null,
+        st.executionId ?? null,
+        st.kind ?? null,
+        st.agentKey ?? null,
+        st.endedAt ?? null,
+        st.trigger === undefined ? null : s(st.trigger),
+        st.result === undefined ? null : s(st.result),
+        meta,
       );
     }
   });
@@ -1334,6 +1351,17 @@ function toPipelineRow(o) {
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
+    // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
+    // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
+    outcome: (o.engine === 2 || o.endReached !== undefined)
+      ? s({
+          endReached: !!o.endReached,
+          result: o.result ?? null,
+          warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          wireDeliveries: o.wireDeliveries ?? {},
+          tokens: o.tokens ?? {},
+        })
+      : null,
   };
 }
 
@@ -1647,6 +1675,22 @@ function stepRowToStep(r) {
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
+  if (r.execution_id != null) step.executionId = r.execution_id;
+  if (r.exec_kind != null) step.kind = r.exec_kind;
+  if (r.agent_key != null) step.agentKey = r.agent_key;
+  if (r.ended_at != null) step.endedAt = r.ended_at;
+  if (r.execution_id != null && r.cycle != null) step.ordinal = r.cycle;  // `ordinal` is the v2 name; `cycle` is its alias
+  if (r.exec_trigger != null) step.trigger = j(r.exec_trigger, { wireIds: [], freshPorts: [] });
+  if (r.exec_result != null) step.result = j(r.exec_result, null);
+  const em = r.exec_meta != null ? j(r.exec_meta, null) : null;
+  if (em) {
+    if (em.taskId != null) step.taskId = em.taskId;
+    if (em.parentExecutionId != null) step.parentExecutionId = em.parentExecutionId;
+    if (em.title != null) step.title = em.title;
+    if (em.phaseOrdinal != null) step.phaseOrdinal = em.phaseOrdinal;
+    if (em.taskIndex != null) step.taskIndex = em.taskIndex;
+    if (em.taskTotal != null) step.taskTotal = em.taskTotal;
+  }
   return step;
 }
 
@@ -1681,11 +1725,23 @@ function rowToState(row) {
     guardrailsId: row.guardrails_id ?? null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd, session_id, skills, graphify_count
+             active_ms, running_since, cost_usd, session_id, skills, graphify_count,
+             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
   };
+  const outcome = j(row.outcome, null);
+  if (outcome) {
+    state.engine = 2;
+    state.endReached = !!outcome.endReached;
+    state.result = outcome.result ?? null;
+    state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.wireDeliveries = outcome.wireDeliveries ?? {};
+    state.tokens = outcome.tokens ?? {};
+    state.active = [];        // nothing is in flight in a rehydrated snapshot
+    state.gate = null;
+  }
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
   // Workspace superset: spread workspace_meta back onto the top level + target.
