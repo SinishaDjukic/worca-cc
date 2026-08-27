@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -46,7 +46,7 @@ async function boot({ local, fetchHandler } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const show = () => { window.location.hash = 'history'; window.dispatchEvent(new window.Event('hashchange')); };
   // The card no longer expands — open the run's DETAIL screen (#history/<key>/<id>).

@@ -13,6 +13,8 @@ import { join } from 'node:path';
 import { worktreeGraphInstruction, runGraphifyUpdate } from '../src/core/preflight.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const tmpDirs = [];
 async function makeTmpDir(prefix = 'worca-cc-graph-') {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -40,7 +42,7 @@ test('worktreeGraphInstruction: cwd-relative, AST-only, lists the query commands
   assert.doesNotMatch(text, /Skill\(/, 'CLI workflow, not the Skill tool');
 });
 
-test('runGraphifyUpdate: success — runs in cwd and targets the dir arg', async () => {
+test('runGraphifyUpdate: success — runs in cwd and targets the dir arg', POSIX_SHIM, async () => {
   const binDir = await makeTmpDir('worca-cc-bin-');
   const work = await makeTmpDir('worca-cc-work-');   // the dir arg (target)
   const cwd = await makeTmpDir('worca-cc-cwd-');      // the spawn cwd
@@ -74,7 +76,7 @@ test('runGraphifyUpdate: missing binary → ok:false, never throws', async () =>
   }
 });
 
-test('runGraphifyUpdate: non-zero exit → ok:false, timedOut:false (clean failure)', async () => {
+test('runGraphifyUpdate: non-zero exit → ok:false, timedOut:false (clean failure)', POSIX_SHIM, async () => {
   const binDir = await makeTmpDir('worca-cc-bin-');
   const work = await makeTmpDir('worca-cc-work-');
   // Binary runs and FAILS — exercises the close(code!==0) branch, distinct from
@@ -92,7 +94,7 @@ test('runGraphifyUpdate: non-zero exit → ok:false, timedOut:false (clean failu
   }
 });
 
-test('runGraphifyUpdate: overrun is killed and reported as timedOut', async () => {
+test('runGraphifyUpdate: overrun is killed and reported as timedOut', POSIX_SHIM, async () => {
   const binDir = await makeTmpDir('worca-cc-bin-');
   const work = await makeTmpDir('worca-cc-work-');
   await fakeGraphify(binDir, '#!/bin/sh\nsleep 5\nexit 0\n');
@@ -211,7 +213,7 @@ test('_buildWorktreeGraph: build failure clears the instruction and logs a warni
   );
 });
 
-test('_buildWorktreeGraph: success builds in the worktree and sets the worktree instruction', async () => {
+test('_buildWorktreeGraph: success builds in the worktree and sets the worktree instruction', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const work = await makeTmpDir('worca-cc-work-');
   const binDir = await makeTmpDir('worca-cc-bin-');
@@ -232,7 +234,7 @@ test('_buildWorktreeGraph: success builds in the worktree and sets the worktree 
   assert.ok(existsSync(join(work, 'graphify-out')), 'graph built inside the worktree');
 });
 
-test('_buildWorktreeGraph: success is fail-safe even when the audit write fails', async () => {
+test('_buildWorktreeGraph: success is fail-safe even when the audit write fails', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const work = await makeTmpDir('worca-cc-work-');
   const binDir = await makeTmpDir('worca-cc-bin-');
@@ -263,7 +265,7 @@ test('_buildWorktreeGraph: success is fail-safe even when the audit write fails'
 // single mode into the workspace helper would silently strip in-worktree graphify
 // grounding from every single-project prompt — this is the regression guard for the
 // collapse that must not happen, asserted on the ctx a real node receives.
-test('a single-project run\'s node ctx still carries worktreeGraphInstruction() after the relocation', async () => {
+test('a single-project run\'s node ctx still carries worktreeGraphInstruction() after the relocation', POSIX_SHIM, async () => {
   for (const mode of ['legacy', 'detached']) {
     const prev = process.env.WORCA_RUN_ROOT;
     process.env.WORCA_RUN_ROOT = mode;

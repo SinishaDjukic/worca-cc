@@ -27,6 +27,8 @@ import { fileURLToPath } from 'node:url';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
+const POSIX_BASH = { skip: process.platform === 'win32' ? 'fake graphify on PATH is a bash script' : false };
+
 useTempHome(after); // tmp/scan scratch dir lands in an isolated home, not real ~/.worca-cc
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents', import.meta.url));
@@ -204,7 +206,7 @@ async function withFakeGraphify(fn) {
   }
 }
 
-test('run() (graphify cli success, D4): scan worktree + branch are force-removed in finally', async () => {
+test('run() (graphify cli success, D4): scan worktree + branch are force-removed in finally', POSIX_BASH, async () => {
   const a = await freshRepo();
   const b = await freshRepo();
   // Graph phase runs for real (graphify kind==='cli'); the scanning AGENT is still

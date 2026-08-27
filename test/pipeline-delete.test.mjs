@@ -20,6 +20,8 @@ import { writeRunManifest, updateRunManifest } from '../src/core/run-manifest.mj
 import { deleteWorkspace } from '../src/core/workspaces.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const created = [];
 after(() => {
   _resetForTests();
@@ -474,7 +476,7 @@ test('snapshotWorktreePatch on a clean tree is success with no file (discard-aft
   assert.equal(existsSync(out), false, 'no 0-byte patch is left behind');
 });
 
-test('discard reports the truth when a checkout survives removal (and keeps its stamp + run root)', async () => {
+test('discard reports the truth when a checkout survives removal (and keeps its stamp + run root)', POSIX_SHIM, async () => {
   if (typeof process.getuid === 'function' && process.getuid() === 0) return; // chmod is inert under root
   const repo = await freshRepo();
   const prev = process.env.WORCA_HOME;

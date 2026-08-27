@@ -12,6 +12,8 @@ import { maybeMigrateFromFs } from '../src/core/migrate-fs-to-db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 // Each test gets its own WORCA_HOME so the singleton DB + legacy tree are fully
 // isolated. _resetForTests() drops the cached handle so the next getDb() reopens
 // against the new home (mirrors db.test.mjs / the temp-home discipline).
@@ -29,7 +31,8 @@ beforeEach(() => { freshHome(); });
 after(() => {
   _resetForTests();
   delete process.env.WORCA_HOME;
-  for (const d of homes) rmSync(d, { recursive: true, force: true });
+  // Teardown hygiene never fails the file: Windows EPERMs while a just-closed handle lingers.
+  for (const d of homes) { try { rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); } catch { /* best effort */ } }
 });
 
 // ── fixture builder ────────────────────────────────────────────────────────────
@@ -178,7 +181,7 @@ function buildFixture(home) {
   return { projA, projB, keyA, keyB, runId, runDir, keyDir };
 }
 
-test('maybeMigrateFromFs imports the full legacy tree into every table', () => {
+test('maybeMigrateFromFs imports the full legacy tree into every table', POSIX_SHIM, () => {
   const home = worcaHome();                 // <WORCA_HOME>/.worca-cc
   mkdirSync(home, { recursive: true });
   const fx = buildFixture(home);
@@ -766,8 +769,10 @@ test('M-min3a: a header-less pipeline.md fabricates no pipeline_events', () => {
 test('M-min3b: an archive failure is swallowed but logged', {
   // Skip under root: root ignores directory write perms, so chmod 0o500 would not block
   // renameSync and no archive failure would be injected (the brief's env is non-root).
-  skip: typeof process.getuid === 'function' && process.getuid() === 0
-    ? 'requires non-root: chmod perms are ignored as root' : false,
+  // Windows has no POSIX mode bits at all, so the injection cannot happen there either.
+  skip: (process.platform === 'win32' && 'POSIX file modes are not modelled on Windows')
+    || (typeof process.getuid === 'function' && process.getuid() === 0
+      ? 'requires non-root: chmod perms are ignored as root' : false),
 }, () => {
   const home = worcaHome();
   mkdirSync(home, { recursive: true });

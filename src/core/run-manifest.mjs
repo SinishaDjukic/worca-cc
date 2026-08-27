@@ -108,7 +108,11 @@ export async function rmGuarded(runRoot, { worcaHome, pipelineId } = {}) {
     return { ok: false, removed: false, reason: `refusing to remove ${target}: basename !== pipelineId ${pipelineId}` };
   }
   try {
-    await rm(target, { recursive: true, force: true });
+    // maxRetries: the run root holds git worktree checkouts; on Windows a dir
+    // cannot be removed while git's index/packed-refs handle (or a virus scanner)
+    // is still open, so a single rm EBUSY/EPERMs under load. Node backs off across
+    // attempts (~cumulative seconds); POSIX takes the first try.
+    await rm(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     return { ok: true, removed: true };
   } catch (err) {
     return { ok: false, removed: false, reason: err?.message || String(err) };

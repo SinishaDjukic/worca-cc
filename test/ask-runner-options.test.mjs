@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const BASE = { prompt: 'p', permissionMode: 'acceptEdits' };
 const BASELINE = [
   '-p', 'p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
@@ -108,7 +110,7 @@ async function fakeBin(dir, outFile) {
 /** NUL-split that KEEPS empty arguments (`--tools ""`): only the trailing empty entry is dropped. */
 function splitArgv(dump) { const parts = dump.split('\0'); parts.pop(); return parts; }
 
-test('runClaude forwards all eight options to the spawned argv (five gates)', async () => {
+test('runClaude forwards all eight options to the spawned argv (five gates)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-runner-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -130,7 +132,7 @@ test('runClaude forwards all eight options to the spawned argv (five gates)', as
   assert.ok(!argv.includes('--add-dir'), 'never --add-dir');
 });
 
-test('runClaude without the eight options spawns the legacy argv (parity)', async () => {
+test('runClaude without the eight options spawns the legacy argv (parity)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-runner-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);

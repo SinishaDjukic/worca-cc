@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 
 import { writeFile as fsWriteFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { posix } from './helpers/posix-path.mjs';
 
 import {
   sanitizeBranchName,
@@ -118,7 +119,7 @@ test('createWorktree checks out a new branch from source in an isolated dir', as
     sourceBranch: 'main',
     featureBranch: 'worca-cc/x-pid1',
   });
-  assert.match(wt.worktreeDir, /\.worca-cc\/worktrees\/pid1$/);
+  assert.match(posix(wt.worktreeDir), /\.worca-cc\/worktrees\/pid1$/);
   assert.equal(wt.branch, 'worca-cc/x-pid1');
   assert.equal(wt.reusedExisting, false);
   const head = spawnSync('git', ['-C', wt.worktreeDir, 'rev-parse', '--abbrev-ref', 'HEAD']);

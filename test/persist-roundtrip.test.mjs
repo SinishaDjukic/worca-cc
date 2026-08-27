@@ -32,6 +32,7 @@ import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 const PROMPT = 'add a login screen with email + password';
 
@@ -134,7 +135,7 @@ test('A16: a completed mock run indexes the shared review md; deletePipeline unl
   const arts = await listArtifacts(id);
   const review = arts.find((a) => a.kind === 'review');
   assert.ok(review, 'a review artifact row was indexed by the orchestrator (A16)');
-  assert.match(review.relPath, /^reviews\/.*-impl-review\.md$/, 'indexed shared review path is store-root-relative');
+  assert.match(posix(review.relPath), /^reviews\/.*-impl-review\.md$/, 'indexed shared review path is store-root-relative');
 
   // The shared file exists on disk under the project store root
   // (<WORCA_HOME>/.worca-cc/store/<key>/reviews/...).

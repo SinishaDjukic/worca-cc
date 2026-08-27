@@ -38,7 +38,8 @@ async function freshProject() {
 }
 after(async () => {
   delete process.env.WORCA_HOME;
-  await Promise.all([...homes, ...projects].map((d) => rm(d, { recursive: true, force: true })));
+  _resetForTests(); // closes the sqlite handle first: Windows refuses to unlink an open -shm
+  await Promise.all([...homes, ...projects].map((d) => rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })));
 });
 
 test('DEFAULT_WORKFLOW is the Plan->Refine->Implement->Review topology', () => {

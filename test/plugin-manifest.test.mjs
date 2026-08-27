@@ -9,6 +9,8 @@ import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
 } from '../src/core/plugin-manifest.mjs';
 
+const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
+
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-manifest-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -232,7 +234,7 @@ test('validatePluginDir: skill without SKILL.md, missing module file, strict pro
   );
 });
 
-test('validatePluginDir: escaping symlink rejected; internal symlink fine', () => {
+test('validatePluginDir: escaping symlink rejected; internal symlink fine', WIN_SYMLINK, () => {
   const dir = mkPluginDir(VALID_FILES);
   symlinkSync('../..', join(dir, 'escape'));
   symlinkSync('./connector', join(dir, 'alias'));

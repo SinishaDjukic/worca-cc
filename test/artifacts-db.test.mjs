@@ -409,7 +409,7 @@ test('createPipeline does not write a redundant pipeline.md', async () => {
   const { dir } = await createPipeline(projectDir, { prompt: 'hello', title: 'T' });
   assert.equal(existsSync(join(dir, 'pipeline.md')), false, 'pipeline.md stub removed');
   assert.equal(existsSync(join(dir, 'prompt.md')), true, 'prompt.md still written');
-  await rm(projectDir, { recursive: true, force: true });
+  await rm(projectDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 // ── M1.1 — readPipelineExtras enumerates clarify + every review row ──────────────

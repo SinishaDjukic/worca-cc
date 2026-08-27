@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { createTurnReducer } from '../src/core/ask/events.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 let prevMock, prevOrch;
 beforeEach(() => { prevMock = process.env.WORCA_MOCK; prevOrch = process.env.ORCH_MOCK; delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK; });
 afterEach(() => {
@@ -33,7 +35,7 @@ async function fakeBin(dir, { stdout = '', stderr = '', code = 0 } = {}) {
   return path;
 }
 
-test('bogus --resume: the runner rejects with the stderr text; the reducer shows no model call happened', async () => {
+test('bogus --resume: the runner rejects with the stderr text; the reducer shows no model call happened', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-resume-'));
   const bin = await fakeBin(dir, { stdout: STDOUT, stderr: STDERR, code: 1 });
   const frames = [];
@@ -56,7 +58,7 @@ test('bogus --resume: the runner rejects with the stderr text; the reducer shows
   assert.equal(s.status, 'done', 'not a limit subtype — the turn layer classifies from the rejection');
 });
 
-test('a healthy run through the same fake-bin path resolves and the reducer sees the assistant', async () => {
+test('a healthy run through the same fake-bin path resolves and the reducer sees the assistant', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-resume-'));
   const ok = [
     JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', tools: ['Task'], mcp_servers: [] }),

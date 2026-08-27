@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateTitle } from '../src/core/title.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 let prevMock, prevOrch;
 beforeEach(() => {
   prevMock = process.env.WORCA_MOCK; prevOrch = process.env.ORCH_MOCK;
@@ -29,7 +31,7 @@ async function fakeBin(dir, outFile) {
 }
 function splitArgv(dump) { const parts = dump.split('\0'); parts.pop(); return parts; }
 
-test('hardened call: --tools "" + the three flags reach the spawned argv; the title still comes back', async () => {
+test('hardened call: --tools "" + the three flags reach the spawned argv; the title still comes back', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-title-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -47,7 +49,7 @@ test('hardened call: --tools "" + the three flags reach the spawned argv; the ti
   assert.ok(!argv.includes('--mcp-config'), 'no mcpConfigPath given ⇒ none passed');
 });
 
-test('legacy call: none of the new flags appear', async () => {
+test('legacy call: none of the new flags appear', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-title-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -58,7 +60,7 @@ test('legacy call: none of the new flags appear', async () => {
   }
 });
 
-test('mcpConfigPath is forwarded when given', async () => {
+test('mcpConfigPath is forwarded when given', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-title-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -86,7 +88,7 @@ async function pmArgvBin(dir) {
   return { bin, out };
 }
 
-test('generateTitle forwards permissionMode when given (the ask call passes dontAsk)', async () => {
+test('generateTitle forwards permissionMode when given (the ask call passes dontAsk)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-title-pm-'));
   const { bin, out } = await pmArgvBin(dir);
   const t = await generateTitle('fix the login flow', { cwd: dir, bin, permissionMode: 'dontAsk' });
@@ -98,7 +100,7 @@ test('generateTitle forwards permissionMode when given (the ask call passes dont
   await rm(dir, { recursive: true, force: true });
 });
 
-test('generateTitle without permissionMode keeps the legacy acceptEdits argv', async () => {
+test('generateTitle without permissionMode keeps the legacy acceptEdits argv', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-title-pm-legacy-'));
   const { bin, out } = await pmArgvBin(dir);
   await generateTitle('fix the login flow', { cwd: dir, bin });

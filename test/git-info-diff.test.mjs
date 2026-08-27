@@ -8,6 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { diffNameStatus, diffNumstat, diffPatch } from '../src/core/git-info.mjs';
 import { splitUnifiedDiff } from '../src/core/ask/tools.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 let repo;
 const git = (args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
 
@@ -123,7 +125,7 @@ test('diffPatch pins a/ … b/ against every prefix-changing git setting', async
 // `diff --git` header at all, so splitUnifiedDiff appends it to the last section
 // sorted before the submodule path: a credential file inside the submodule ships
 // under that harmless file's name and inflates its counts.
-test('diffPatch pins --submodule=short: an external diff tool cannot smuggle a submodule file into the previous section', async () => {
+test('diffPatch pins --submodule=short: an external diff tool cannot smuggle a submodule file into the previous section', POSIX_SHIM, async () => {
   const root = await mkdtemp(join(tmpdir(), 'worca-cc-sub-'));
   const prevExt = process.env.GIT_EXTERNAL_DIFF;
   try {

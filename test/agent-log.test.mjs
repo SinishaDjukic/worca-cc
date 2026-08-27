@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 function capture(role, evt, projectDir = '/tmp/proj') {
   const orch = createOrchestrator({ projectDir });
@@ -34,7 +35,7 @@ test('assistant tool_use is logged as a readable tool call, not bare "assistant"
   });
   assert.equal(logs.length, 1);
   assert.equal(logs[0].source, 'planner');
-  assert.equal(logs[0].text, '→ Read src/app.js');
+  assert.equal(posix(logs[0].text), '→ Read src/app.js');
 });
 
 test('user tool_result envelope logs ← result at debug and emits no subagent', () => {
@@ -86,7 +87,7 @@ test('Grep tool_use shows pattern and relative path', () => {
       message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'role', path: '/tmp/proj/src' } }] },
     },
   });
-  assert.equal(logs[0].text, '→ Grep "role" src');
+  assert.equal(posix(logs[0].text), '→ Grep "role" src');
 });
 
 test('multiple tool_use blocks in one event each get their own line', () => {
@@ -102,7 +103,7 @@ test('multiple tool_use blocks in one event each get their own line', () => {
       },
     },
   });
-  assert.deepEqual(logs.map((l) => l.text), ['→ Read a.js', '→ Write b.js']);
+  assert.deepEqual(logs.map((l) => posix(l.text)), ['→ Read a.js', '→ Write b.js']);
 });
 
 test('unknown tool with no recognizable target logs just its name', () => {
@@ -154,7 +155,7 @@ test('a sub-agent tool_use (Read) is tagged + sub by the same parent id', () => 
       { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/proj/src/auth.js' } } ] } } }],
   ]);
   assert.equal(logs[1].source, 'planner ▸ research auth');
-  assert.equal(logs[1].text, '→ Read src/auth.js');
+  assert.equal(posix(logs[1].text), '→ Read src/auth.js');
   assert.equal(logs[1].sub, true);
 });
 
@@ -231,7 +232,7 @@ test('mixed turn logs text at info AND each tool call at debug', () => {
       ] },
     },
   });
-  assert.deepEqual(logs.map((l) => [l.level, l.text]), [
+  assert.deepEqual(logs.map((l) => [l.level, posix(l.text)]), [
     ['info', 'Planning.'],
     ['debug', '→ Read a.js'],
   ]);
@@ -250,7 +251,7 @@ test('mixed turn with two tools logs one info + two debug, in order', () => {
       ] },
     },
   });
-  assert.deepEqual(logs.map((l) => [l.level, l.text]), [
+  assert.deepEqual(logs.map((l) => [l.level, posix(l.text)]), [
     ['info', 'Working.'],
     ['debug', '→ Read a.js'],
     ['debug', '→ Bash npm test'],

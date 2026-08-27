@@ -3933,7 +3933,10 @@ class Orchestrator extends EventEmitter {
         : projectStorePath(projectKey(this.projectDir));
       if (path.startsWith(root + sep)) relPath = relative(root, path); // store-rel (plan/review)
     }
-    if (relPath) recordArtifact(this.pipeline.id, kind, relPath);
+    // Indexed with '/' on every OS: the row is a store-layout key, not a native
+    // path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the store),
+    // so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
+    if (relPath) recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'));
   }
 
   _emit(event, payload) {
@@ -4107,7 +4110,9 @@ function rel(base, p) {
   if (!p) return '';
   const b = resolve(base);
   const full = resolve(p);
-  return full.startsWith(b + '/') ? full.slice(b.length + 1) : full;
+  // Native separator: resolve() yields backslashes on Windows, where a '/'
+  // comparison never matched and every tool-call log line carried the full path.
+  return full.startsWith(b + sep) ? full.slice(b.length + 1) : full;
 }
 
 /**
