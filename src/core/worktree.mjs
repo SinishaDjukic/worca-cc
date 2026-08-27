@@ -335,7 +335,7 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
     // Windows leftover). A non-force refusal on a dirty worktree (r.ok === false)
     // must keep the checkout — deleting it would discard uncommitted agent work.
     if (force || (r.ok && existsSync(worktreeDir))) {
-      const fsRes = await rm(worktreeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      const fsRes = await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
         .then(() => null)
         .catch((e) => e.message);
       if (fsRes) steps.push({ step: 'rm-dir', ok: false, stderr: fsRes });

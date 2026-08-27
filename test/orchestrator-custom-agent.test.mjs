@@ -51,7 +51,7 @@ afterEach(async () => {
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME;
   else process.env.WORCA_HOME = prevHome;
-  for (const d of [home, proj]) if (d) await rm(d, { recursive: true, force: true });
+  for (const d of [home, proj]) if (d) await rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 test('resolveWorkflow stamps meta uiPhase + promptHints on a user-agent node', async () => {
