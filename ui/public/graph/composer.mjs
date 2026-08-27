@@ -329,6 +329,84 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onLost = () => { if (gesture) cancel(); };
   const onBlur = () => { space = false; stage.classList.remove('space'); cancel(); };
   const onRefresh = () => readRect();
+  const onNewCanvas = () => composer.newCanvas();
+
+  function zoomAbout(zNext, sx, sy) {
+    const t = T();
+    const z2 = clamp(zNext, ZOOM_MIN, ZOOM_MAX);
+    view.setTransform({ x: sx - ((sx - t.x) / t.z) * z2, y: sy - ((sy - t.y) / t.z) * z2, z: z2 });
+  }
+
+  function onWheel(ev) {
+    ev.preventDefault();                          // the page never scrolls under the canvas
+    const m = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? (R.height || 560) : 1;
+    const dX = ev.deltaX * m;
+    const dY = ev.deltaY * m;
+    if (ev.ctrlKey || ev.metaKey) {               // trackpad pinch sets ctrlKey
+      zoomAbout(T().z * Math.exp(-dY * ZOOM_K), ev.clientX - R.left, ev.clientY - R.top);
+      return;
+    }
+    const t = T();
+    view.setTransform({ x: t.x - dX, y: t.y - dY, z: t.z });
+  }
+
+  /** px of canvas hidden under the floating rail — the fit band's right inset. */
+  function insetRight() {
+    return hostEls.insRail && hostEls.insRail.dataset.open === 'collapsed' ? INSET_COLLAPSED : INSET_OPEN;
+  }
+  function fit(opts = {}) {
+    view.fit({ insetRight: opts.insetRight == null ? insetRight() : opts.insetRight, pad: 60 });
+  }
+  // `autoLayout(tpl, portsFn)` returns a POSITION MAP `{ [nodeId]: {x, y} }` — not
+  // a template, not `{nodes}` (verified 2026-08-27 against src/shared/graph/layout.mjs,
+  // whose own JSDoc says "the caller applies them").
+  function runAutoLayout() {
+    commit('auto-layout', () => {
+      const pos = autoLayout(tpl, portsFn);
+      for (const n of tpl.nodes) {
+        const p = pos[n.id];
+        if (p) { n.x = p.x; n.y = p.y; }
+      }
+    });
+  }
+  function deleteSelection() {
+    if (!sel) return;
+    if (sel.kind === 'wire') { const id = sel.id; commit('delete wire', () => { tpl.wires = tpl.wires.filter((w) => w.id !== id); }); }
+    else { const id = sel.id; commit('delete node', () => {
+      tpl.nodes = tpl.nodes.filter((n) => n.id !== id);
+      tpl.wires = tpl.wires.filter((w) => w.from.node !== id && w.to.node !== id);
+    }); }
+    select(null);
+  }
+  function nudge(dx, dy) {
+    if (!sel || sel.kind !== 'node') return;
+    const n = nodeById(sel.id);
+    if (!n) return;
+    commit('nudge', () => { n.x = snap(n.x + dx); n.y = snap(n.y + dy); });
+  }
+  function restore(json) {
+    const st = JSON.parse(json);
+    tpl.nodes = st.nodes; tpl.wires = st.wires;
+    if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id)))) sel = null;
+    dirty = metaDirty || snapshot() !== savedHash;
+    render();
+    scheduleValidate();
+  }
+  function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
+  function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+
+  function onKeyDown(ev) {
+    if (isTyping(ev.target)) return;              // guard FIRST — before space, before anything
+    if (ev.key === ' ') { if (!space) { space = true; stage.classList.add('space'); } ev.preventDefault(); return; }
+    if (ev.key === 'Escape') { if (gesture) cancel(); else select(null); return; }
+    if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); deleteSelection(); return; }
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); nudge(-SNAP, 0); return; }
+    if (ev.key === 'ArrowRight') { ev.preventDefault(); nudge(SNAP, 0); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); nudge(0, -SNAP); return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); nudge(0, SNAP); return; }
+    if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
+  }
+  function onKeyUp(ev) { if (ev.key === ' ') { space = false; stage.classList.remove('space'); } }
 
   function mount() {
     empty = doc.createElement('div');
@@ -336,6 +414,11 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     empty.textContent = EMPTY_STATE_COPY;
     hostEls.canvas.appendChild(empty);
     stage.addEventListener('pointerdown', onDown);
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    doc.addEventListener('keydown', onKeyDown);
+    doc.addEventListener('keyup', onKeyUp);
+    hostEls.autoBtn?.addEventListener('click', runAutoLayout);
+    hostEls.newBtn?.addEventListener('click', onNewCanvas);
     stage.addEventListener('pointermove', onMove);
     stage.addEventListener('pointerup', onUp);
     stage.addEventListener('pointercancel', onCancelEv);
@@ -355,6 +438,11 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function destroy() {
     cancel();
     stage.removeEventListener('pointerdown', onDown);
+    stage.removeEventListener('wheel', onWheel);
+    doc.removeEventListener('keydown', onKeyDown);
+    doc.removeEventListener('keyup', onKeyUp);
+    hostEls.autoBtn?.removeEventListener('click', runAutoLayout);
+    hostEls.newBtn?.removeEventListener('click', onNewCanvas);
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
     stage.removeEventListener('pointercancel', onCancelEv);
@@ -384,6 +472,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const composer = {
     view, stats, hooks,
     mount, destroy, commit, loadTemplate,
+    fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     newCanvas: () => loadTemplate(null),
     template: () => tpl,
     serialize: () => serializeTemplate(tpl),

@@ -152,3 +152,65 @@ test('destroy() unbinds everything; pointercancel and window blur end a gesture'
   assert.equal(s.c.gesture(), null, 'no listener survived destroy()');
   assert.equal(JSON.stringify(s.c.template()), before, 'nothing mutated after destroy()');
 });
+
+const wheel = (s, o) => s.c.view.stage.dispatchEvent(new s.win.WheelEvent('wheel', { bubbles: true, cancelable: true, ...o }));
+const key = (s, k, o = {}) => s.doc.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+
+test('ctrl+wheel zooms about the cursor (world point invariant) and clamps 0.4..1.6', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const before = s.c._internal.toWorld(600, 300);
+  wheel(s, { deltaY: -120, ctrlKey: true, clientX: 600, clientY: 300 });
+  const after = s.c._internal.toWorld(600, 300);
+  assert.ok(Math.abs(after.x - before.x) < 1e-6 && Math.abs(after.y - before.y) < 1e-6);
+  assert.ok(Math.abs(s.c.view.getTransform().z - Math.exp(0.24)) < 1e-9);
+  for (let i = 0; i < 12; i += 1) wheel(s, { deltaY: -240, ctrlKey: true, clientX: 600, clientY: 300 });
+  assert.ok(s.c.view.getTransform().z <= 1.6 + 1e-12);
+  for (let i = 0; i < 30; i += 1) wheel(s, { deltaY: 240, ctrlKey: true, clientX: 600, clientY: 300 });
+  assert.ok(s.c.view.getTransform().z >= 0.4 - 1e-12);
+});
+
+test('plain wheel pans by exactly −delta; deltaMode 1 scales by 16', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  wheel(s, { deltaX: 40, deltaY: -25 });
+  assert.deepEqual(s.c.view.getTransform(), { x: -40, y: 25, z: 1 });
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  wheel(s, { deltaX: 1, deltaY: 0, deltaMode: 1 });
+  assert.equal(s.c.view.getTransform().x, -16);
+});
+
+test('keyboard: nudge, delete, undo/redo, Escape — all skipped while typing', async () => {
+  const s = await open();
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  // nudge() is snap(x + SNAP), not x + SNAP: the fixture's 400 is OFF the 11px
+  // grid, and snap(411) = round(411/11)*11 = 37*11 = 407. The first arrow press
+  // therefore moves 7px (onto the grid) and every press after it moves 11.
+  key(s, 'ArrowRight');
+  assert.equal(s.c.template().nodes[1].x, 407, 'nudged onto the 11px grid');
+  assert.equal(s.c.template().nodes[1].x % 11, 0);
+  key(s, 'ArrowRight');
+  assert.equal(s.c.template().nodes[1].x, 418, 'on-grid => a full SNAP step');
+  key(s, 'z', { metaKey: true });
+  assert.equal(s.c.template().nodes[1].x, 407, 'undo');
+  key(s, 'z', { metaKey: true, shiftKey: true });
+  assert.equal(s.c.template().nodes[1].x, 418, 'redo');
+  s.el.name.focus();
+  s.el.name.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+  assert.equal(s.c.template().nodes.length, 3, 'typing in the name field never deletes a node');
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  key(s, 'Backspace');
+  assert.equal(s.c.template().nodes.length, 2, 'node deleted');
+  assert.equal(s.c.template().wires.length, 0, 'its wires went with it');
+  assert.equal(s.c.selection(), null);
+});
+
+test('fit centres the model in the band left of the inspector and never magnifies', async () => {
+  const s = await open();
+  s.c.fit();                                   // rail open => insetRight 280 => vw 1000
+  const T = s.c.view.getTransform();
+  assert.ok(Math.abs(T.z - 1000 / 1040) < 1e-12, 'z = vw / bounds.w');
+  assert.ok(Math.abs(T.x - 0) < 1e-9, 'exactly centred: (1000 - 1040*z)/2 - 0*z = 0');
+  s.c.fit({ insetRight: 28 });                 // rail collapsed => vw 1252
+  assert.equal(s.c.view.getTransform().z, 1, 'fit never magnifies past 1x');
+});
