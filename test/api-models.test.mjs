@@ -376,3 +376,69 @@ test('POST/PATCH /api/models reject a malformed `cost` with the message the form
   assert.equal(unknown.status, 400);
   assert.match(unknown.body.error, /unknown cost\.perMtok rate "bogus"/);
 });
+
+test('export-plugin carries `cost` into the generated manifest (pricing is config, not a credential)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { normalizeManifest } = await import('../src/core/plugin-manifest.mjs');
+  await post('/api/models', {
+    id: 'exp-priced', label: 'Priced export',
+    env: { ANTHROPIC_BASE_URL: 'https://p.example', ANTHROPIC_AUTH_TOKEN: 'sk-live-never-export' },
+    cost: { perMtok: { input: 0.5, output: 1.5, cacheWrite1h: 1.2 } },
+  });
+  await post('/api/models', { id: 'exp-free', cost: { free: true } });
+  await post('/api/models', { id: 'exp-unpriced' });
+
+  const dest = join(proj, 'export', 'priced-models');
+  const r = await post('/api/models/export-plugin', {
+    name: 'priced-models', dest,
+    models: [
+      { id: 'exp-priced', env: { ANTHROPIC_BASE_URL: 'include', ANTHROPIC_AUTH_TOKEN: 'secret' } },
+      { id: 'exp-free' },
+      { id: 'exp-unpriced' },
+    ],
+  });
+  assert.equal(r.status, 200);
+
+  const manifest = JSON.parse(readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8'));
+  const byId = Object.fromEntries(manifest.models.map((m) => [m.id, m]));
+  assert.deepEqual(byId['exp-priced'].cost, { perMtok: { input: 0.5, output: 1.5, cacheWrite1h: 1.2 } },
+    'a shared on-prem model would otherwise be re-priced by NAME on every machine that installs this');
+  assert.deepEqual(byId['exp-free'].cost, { free: true });
+  assert.equal(byId['exp-unpriced'].cost, undefined, 'no override -> no key');
+
+  // The scaffold must install anywhere this host would, and the secret still never travels.
+  assert.equal(normalizeManifest(manifest).ok, true);
+  assert.doesNotMatch(readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8'), /sk-live-never-export/);
+});
+
+test('a plugin model\'s manifest price reaches GET /api/models and Edit-a-copy', async () => {
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('priced-plug');
+  mkdirSync(cur, { recursive: true });
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'priced-plug',
+    models: [
+      { id: 'pp-rated', label: 'PP Rated', env: { ANTHROPIC_BASE_URL: 'https://pp.example' },
+        cost: { perMtok: { input: 1, output: 3 } } },
+      { id: 'pp-plain', label: 'PP Plain' },
+    ],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'priced-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+
+  const { body } = await jfetch('/api/models');
+  const priced = body.plugin.find((m) => m.id === 'pp-rated');
+  assert.deepEqual(priced.cost, { perMtok: { input: 1, output: 3 } }, 'pricing is config — surfaced, never masked');
+  assert.equal(body.plugin.find((m) => m.id === 'pp-plain').cost, undefined);
+
+  // Edit-a-copy seeds the global copy from the plugin's pricing: a copy that
+  // dropped it would revert to the CLI's by-name figure, since a global entry
+  // shadows the plugin price whether or not it pins one.
+  const copy = await jfetch(`/api/plugins/priced-plug/model-env?${q({ id: 'PP-Rated' })}`);
+  assert.equal(copy.status, 200);
+  assert.deepEqual(copy.body.cost, { perMtok: { input: 1, output: 3 } });
+  assert.equal((await jfetch(`/api/plugins/priced-plug/model-env?${q({ id: 'pp-plain' })}`)).body.cost, undefined);
+});

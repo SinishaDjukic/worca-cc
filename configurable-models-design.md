@@ -157,6 +157,26 @@ No destructive auto-migration. Transition plan:
 
 **UI:** a dedicated **Models view** in the sidebar (precedent: Guardrails and Plugins are full views with their own stores — `guardrail-store.mjs`, `plugins-view.mjs`). Per entry: label, id, effort checkboxes, env editor with masked values and reserved-key errors inline, cost-unreliable badge, delete with dangling-ref confirmation. The `+ Add model…` dropdown item in `renderModelEffortPair()` (`app.js:2547-2570`) navigates to this view; the `window.prompt()` flow (`app.js:2997-3120`) is deleted.
 
+### 4.11 Pricing override (opt-in)
+
+§4.6 flags an endpoint that reports *no* cost, but the harder case is the endpoint that reports none and gets one **invented** for it: the Claude CLI computes `total_cost_usd` from its own price table keyed on the model **name**, so an on-prem or proxied model named like a public one is billed as that public model. worca has no price table of its own, so a free on-prem run was priced at the public rate — and `costUnreliable` cannot see it, because a fabricated positive cost is indistinguishable from a real one.
+
+A catalog entry may therefore carry an optional `cost`:
+
+```json
+{ "id": "discreetstack", "env": { "ANTHROPIC_BASE_URL": "…" },
+  "cost": { "perMtok": { "input": 0.5, "output": 1.5, "cacheRead": 0.05, "cacheWrite": 0.6, "cacheWrite1h": 1.2 } } }
+```
+
+- `{"free": true}` — recorded spend is always $0.
+- `{"perMtok": {...}}` — the CLI figure is **discarded** and the cost recomputed from the run's reported token usage (USD per million tokens; the ephemeral 1h/5m cache-write buckets are priced separately, 1h falling back to the `cacheWrite` rate when unset).
+
+**Opt-in**: with no `cost`, the CLI value stands exactly as before. Ported from worca 0.x's `cost_alias` / `worca.pricing.models`.
+
+`resolveModelCost` is the single chokepoint, applied at **every** surface that books spend — they share one windowed budget (`cost-budget.mjs` `combinedWindowedSpendUsd`), so re-pricing only some would leave the phantom spend inflating it from the others: the orchestrator's result intake and sub-agent telemetry, an Ask Worca turn (via a `resolveCost` hook injected into the reducer, keeping `ask/events.mjs` free of config/DB deps), and the overview agent's telemetry row. Two rules keep it honest: only a genuinely cost-bearing terminal `result` may be re-priced (a `{free}` override answers $0 for *any* input, so an ungated call would book a real $0 per stream frame), and a `{perMtok}` model whose result carried **no usage at all** is *unpriceable* — reported, never silently booked at $0. A model with an override is never `costUnreliable`-flagged, and a stale flag is lifted.
+
+**UI**: a *Pricing* section in the model editor — *Trust the CLI* (default) / *Free ($0)* / *Per million tokens* with the five rate inputs — plus a free/priced badge and rate summary on catalog cards. Validation lives server-side only (`assertModelCost`); the form surfaces the API's message. Plugin models carry the same field (§9.1).
+
 ## 5. Testing
 
 - **settings.mjs**: catalog reader sanitization (malformed entries dropped loudly), setter rejections (dup id, reserved env key, non-string env value), unknown-key survival on write.
@@ -211,7 +231,8 @@ A team member configures a custom model locally, adapts pipelines to it, and wan
         "ANTHROPIC_BASE_URL": "https://api.discretestack.com",
         "API_TIMEOUT_MS": "3000000",
         "ANTHROPIC_AUTH_TOKEN": { "secret": "discretestack-token" }
-      } }
+      },
+      "cost": { "perMtok": { "input": 0.5, "output": 1.5 } } }
   ],
   "modelSecrets": [
     { "key": "discretestack-token", "label": "DiscreteStack API token" }
@@ -221,7 +242,11 @@ A team member configures a custom model locally, adapts pipelines to it, and wan
 
 Env values take three forms: a **literal** string (travels verbatim — base URLs, timeouts, tier remaps), a whole-value **`${VAR}` ref** (travels as text, expanded from the teammate's process env at spawn resolution — existing `model-env.mjs` semantics), or a **secret placeholder** `{"secret": "<key>"}` referencing a plugin-level `modelSecrets` entry. Secrets are plugin-level, not per-model, so N models sharing one token prompt for it once.
 
-Validation (`plugin-manifest.mjs`, install fails on error): model ids non-empty + case-insensitively unique within the plugin, efforts a subset of `EFFORTS`, env keys pass `isReservedModelEnvKey` (the same write-time gate as `POST /api/models` — the spawn-time `prepareModelEnv` drop stays as the second gate), every `{"secret"}` ref names a declared `modelSecrets` key, `modelSecrets` keys match the config-field `KEY_RE` and are unique. Unknown fields warn (error under `--strict`), like everything else in the manifest.
+`cost` is the optional per-model **pricing override** (§4.11), in the same shape a global catalog entry uses: `{"free": true}` or `{"perMtok": {...}}` in USD per million tokens. A plugin distributing a model on its own endpoint is precisely the case the Claude CLI prices from its internal table keyed on the model **name**, so the price travels **with** the model rather than having to be re-pinned by hand on every machine that installs the plugin. It is configuration, never a credential: unlike env values it is surfaced unmasked and is carried verbatim by *Share as plugin*.
+
+Validation (`plugin-manifest.mjs`, install fails on error): model ids non-empty + case-insensitively unique within the plugin, efforts a subset of `EFFORTS`, env keys pass `isReservedModelEnvKey` (the same write-time gate as `POST /api/models` — the spawn-time `prepareModelEnv` drop stays as the second gate), every `{"secret"}` ref names a declared `modelSecrets` key, `modelSecrets` keys match the config-field `KEY_RE` and are unique, and `cost` passes `assertModelCost` — the SAME validator `settings.mjs` runs on a global entry, shared from the zero-import leaf `model-env.mjs` so neither catalog layer has to import the other. Unknown fields warn (error under `--strict`), like everything else in the manifest.
+
+Pricing follows the same precedence as the rest of a model's configuration (§9.3): `modelCostConfig` takes the user's **global** entry when one exists, else the winning **plugin** entry's manifest price. A global entry shadows the plugin's price even when it pins none — taking over a model id means owning its pricing too, so the two layers can never half-merge. *Edit a copy* therefore seeds the copy with the plugin's pricing.
 
 ### 9.2 Catalog composition: a fourth layer
 

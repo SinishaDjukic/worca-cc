@@ -87,7 +87,7 @@ import {
   renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, deleteRefsSummary,
+  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
 import {
@@ -8592,9 +8592,12 @@ function renderModelsViewBody() {
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
-// model — id/label/efforts plus its literal/${VAR} env values; each {secret}
-// key becomes an EMPTY row the user must fill (the plugin's secret is never
-// copied). Saving POSTs a global entry that shadows the plugin one.
+// model — id/label/efforts/pricing plus its literal/${VAR} env values; each
+// {secret} key becomes an EMPTY row the user must fill (the plugin's secret is
+// never copied). Saving POSTs a global entry that shadows the plugin one —
+// INCLUDING its pricing, since a global entry shadows the plugin's price too
+// (config.mjs modelCostConfig), so a copy that dropped it would silently go
+// back to being priced by the CLI.
 function prefillModelEditor(editor, pre) {
   const idInput = editor.querySelector('.mv-id');
   if (idInput) idInput.value = pre.id;
@@ -8604,6 +8607,7 @@ function prefillModelEditor(editor, pre) {
   if (efforts.size) {
     for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
   }
+  setModelCost(editor, pre.cost || null);
   const wrap = editor.querySelector('.mv-env');
   if (!wrap) return;
   for (const [k, v] of Object.entries(pre.env || {})) {

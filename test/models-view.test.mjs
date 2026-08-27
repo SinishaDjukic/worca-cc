@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   effortsSummary, envSummary, costSummary, renderModelsList, renderModelEditor,
-  collectModelEditor, makeEnvRow, applyCostMode, deleteRefsSummary,
+  collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from '../ui/public/models-view.mjs';
 
@@ -388,4 +388,44 @@ test('list: a priced model shows its rates and drops the now-meaningless "cost n
   // A model with NO override still shows the flag — unchanged.
   assert.ok(badges(cards[2]).includes('cost not verified'));
   assert.ok(!badges(cards[2]).includes('priced'));
+});
+
+test('setModelCost: loads any override into an editor (the ONE cost -> form mapping)', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  setModelCost(el, { perMtok: { input: 0.5, cacheWrite1h: 1.2 } });
+  assert.equal(mode(el), 'perMtok');
+  assert.equal(el.querySelector('.mv-cost-rates').hidden, false);
+  assert.equal(rate(el, 'input').value, '0.5');
+  assert.equal(rate(el, 'cacheWrite1h').value, '1.2');
+  assert.equal(rate(el, 'output').value, '');
+
+  setModelCost(el, { free: true });
+  assert.equal(mode(el), 'free');
+  assert.equal(rate(el, 'input').value, '', 'switching modes clears the stale rates');
+
+  setModelCost(el, null);
+  assert.equal(mode(el), 'cli');
+  assert.equal(el.querySelector('.mv-cost-rates').hidden, true);
+  setModelCost(doc.createElement('div'), { free: true }); // never throws without the block
+});
+
+test('list: a plugin card shows its MANIFEST price, same rules as a global card', () => {
+  const el = renderModelsList({
+    globals: [],
+    plugins: [
+      { id: 'pp-rated', label: 'PP Rated', efforts: EFFORTS, plugin: 'priced-plug', secrets: [],
+        env: { ANTHROPIC_BASE_URL: '••••••mple' }, cost: { perMtok: { input: 1, output: 3 } }, costUnreliable: true },
+      { id: 'pp-free', label: 'PP Free', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], cost: { free: true } },
+      { id: 'pp-plain', label: 'PP Plain', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], costUnreliable: true },
+    ],
+    predefined: [], efforts: EFFORTS,
+  }, { doc });
+  const cards = [...el.querySelectorAll('.mv-plugin')];
+  const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
+
+  assert.ok(badges(cards[0]).includes('priced'));
+  assert.ok(!badges(cards[0]).includes('cost not verified'), 'a pinned price governs the spend');
+  assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$1 · output \$3 \/Mtok/);
+  assert.ok(badges(cards[1]).includes('free'));
+  assert.ok(badges(cards[2]).includes('cost not verified'), 'unpriced plugin model: flag unchanged');
 });

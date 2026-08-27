@@ -78,3 +78,49 @@ export function prepareModelEnv(modelEnv, sourceEnv = process.env) {
   }
   return { env, dropped };
 }
+
+// ── per-model cost override (opt-in pricing, config.mjs resolveModelCost) ─────
+// Lives HERE for the same reason the env policy does: BOTH catalog layers must
+// validate it against one rule. settings.mjs owns the user's global catalog and
+// plugin-manifest.mjs owns a plugin's models — neither may import the other, and
+// this leaf imports nothing. A plugin that ships a model routed at its own
+// endpoint is exactly the case that needs a price pinned, so its manifest
+// carries `cost` with the same shape and the same validation as a global entry.
+
+/** Allowed per-million-token rate keys for a model's `cost.perMtok` table. */
+export const COST_RATE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h'];
+
+/**
+ * Validate a model `cost` override. Returns the normalized shape or undefined;
+ * THROWS on malformed input (callers that must not throw catch and drop).
+ *   { free: true }                               → recorded spend is always $0
+ *   { perMtok: { input, output, cacheRead, … } } → USD per million tokens, >= 0
+ * `{ free: false }` / `{}` mean "no override" → undefined.
+ * @param {*} cost
+ * @returns {{free:true}|{perMtok:Record<string,number>}|undefined}
+ * @throws {Error}
+ */
+export function assertModelCost(cost) {
+  if (cost === undefined || cost === null) return undefined;
+  if (typeof cost !== 'object' || Array.isArray(cost)) throw new Error('cost must be an object');
+  if (cost.free !== undefined && typeof cost.free !== 'boolean') throw new Error('cost.free must be a boolean');
+  if (cost.free === true) return { free: true };
+  if (cost.perMtok !== undefined) {
+    const p = cost.perMtok;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      throw new Error('cost.perMtok must be an object of USD-per-million-token rates');
+    }
+    const rates = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (!COST_RATE_KEYS.includes(k)) {
+        throw new Error(`unknown cost.perMtok rate ${JSON.stringify(k)} — allowed: ${COST_RATE_KEYS.join(', ')}`);
+      }
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw new Error(`cost.perMtok.${k} must be a finite number >= 0`);
+      rates[k] = n;
+    }
+    if (!Object.keys(rates).length) throw new Error('cost.perMtok must define at least one rate');
+    return { perMtok: rates };
+  }
+  return undefined; // { free: false } or {} — no override
+}

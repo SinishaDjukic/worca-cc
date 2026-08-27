@@ -143,9 +143,12 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
-      if (m.costUnreliable) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+      // Same rule as a global card: a manifest-pinned price governs the spend,
+      // so the §4.6 "unreliable" flag says nothing about it.
+      if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
+      if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
       body.appendChild(head);
-      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env)].filter(Boolean);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
       for (const s of m.secrets || []) {
         body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
@@ -290,8 +293,6 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   // from a real one. Three mutually exclusive modes; the default is unchanged
   // behavior. Rendered detached like everything else here — app.js wires the
   // mode change to applyCostMode.
-  const cost = editing ? model.cost : null;
-  const mode = !cost ? 'cli' : (cost.free ? 'free' : 'perMtok');
   const costWrap = h(doc, 'div', 'mv-cost-edit');
   const modes = h(doc, 'div', 'mv-cost-modes');
   const groupName = `mv-cost-mode-${editing ? model.id : 'new'}`;
@@ -302,7 +303,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   ]) {
     const lab = h(doc, 'label', 'mv-cost-mode');
     const rb = h(doc, 'input', 'mv-cost-mode-rb');
-    rb.type = 'radio'; rb.name = groupName; rb.value = value; rb.checked = value === mode;
+    rb.type = 'radio'; rb.name = groupName; rb.value = value;
     lab.appendChild(rb);
     lab.appendChild(h(doc, 'span', null, text));
     modes.appendChild(lab);
@@ -316,8 +317,6 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
     const inp = h(doc, 'input', 'input mv-cost-rate-in');
     inp.type = 'number'; inp.min = '0'; inp.step = '0.01'; inp.placeholder = '0';
     inp.dataset.rate = key;
-    const v = cost && cost.perMtok ? cost.perMtok[key] : undefined;
-    inp.value = v == null ? '' : String(v);
     lab.appendChild(inp);
     lab.appendChild(h(doc, 'span', 'mv-cost-rate-unit', '$/Mtok'));
     rates.appendChild(lab);
@@ -329,7 +328,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
     + 'which falls back to the 5m rate when blank.'));
 
   root.appendChild(grid);
-  applyCostMode(root); // grid is attached now — the rate block is reachable from root
+  setModelCost(root, editing ? model.cost : null); // grid is attached now — the block is reachable from root
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
@@ -342,6 +341,28 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   btns.appendChild(save); btns.appendChild(cancel);
   root.appendChild(btns);
   return root;
+}
+
+/**
+ * Load a `cost` override into an editor: pick the matching mode and fill the
+ * rates. The ONE place that maps a stored cost onto the form, shared by the
+ * initial render and by "Edit a copy"'s prefill of a plugin model's pricing —
+ * a second implementation of this mapping is exactly how the two would drift.
+ * Safe on an editor with no pricing block. Pass null/undefined for no override.
+ * @param {Element} rootEl  the .mv-editor root
+ * @param {{free?:boolean, perMtok?:Record<string,number>}|null} [cost]
+ */
+export function setModelCost(rootEl, cost) {
+  const rates = rootEl && rootEl.querySelector('.mv-cost-rates');
+  if (!rates) return;
+  const mode = !cost ? 'cli' : (cost.free ? 'free' : 'perMtok');
+  for (const rb of rootEl.querySelectorAll('.mv-cost-mode-rb')) rb.checked = rb.value === mode;
+  const p = cost && cost.perMtok && typeof cost.perMtok === 'object' ? cost.perMtok : {};
+  for (const inp of rootEl.querySelectorAll('.mv-cost-rate-in')) {
+    const v = p[inp.dataset.rate];
+    inp.value = v == null ? '' : String(v);
+  }
+  applyCostMode(rootEl);
 }
 
 /**

@@ -42,7 +42,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
+import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -574,45 +574,9 @@ function sanitizeGlobalModel(raw) {
   };
 }
 
-/** Allowed per-million-token rate keys for a model's `cost.perMtok` table. */
-const COST_RATE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h'];
-
-/**
- * Validate a model `cost` override (opt-in per-model pricing, config.mjs
- * resolveModelCost). Returns the normalized shape or undefined; THROWS on
- * malformed input (write path). Accepted:
- *   { free: true }                              → recorded spend is always $0
- *   { perMtok: { input, output, cacheRead, … } } → USD per million tokens, ≥ 0
- * `{ free: false }` / `{}` mean "no override" → undefined.
- * @throws {Error}
- */
-function assertModelCost(cost) {
-  if (cost === undefined || cost === null) return undefined;
-  if (typeof cost !== 'object' || Array.isArray(cost)) throw new Error('cost must be an object');
-  if (cost.free !== undefined && typeof cost.free !== 'boolean') throw new Error('cost.free must be a boolean');
-  if (cost.free === true) return { free: true };
-  if (cost.perMtok !== undefined) {
-    const p = cost.perMtok;
-    if (!p || typeof p !== 'object' || Array.isArray(p)) {
-      throw new Error('cost.perMtok must be an object of USD-per-million-token rates');
-    }
-    const rates = {};
-    for (const [k, v] of Object.entries(p)) {
-      if (!COST_RATE_KEYS.includes(k)) {
-        throw new Error(`unknown cost.perMtok rate ${JSON.stringify(k)} — allowed: ${COST_RATE_KEYS.join(', ')}`);
-      }
-      const n = Number(v);
-      if (!Number.isFinite(n) || n < 0) throw new Error(`cost.perMtok.${k} must be a finite number >= 0`);
-      rates[k] = n;
-    }
-    if (!Object.keys(rates).length) throw new Error('cost.perMtok must define at least one rate');
-    return { perMtok: rates };
-  }
-  return undefined; // { free: false } or {} — no override
-}
-
-/** Lenient read-side counterpart of assertModelCost: drops an invalid `cost`
- *  loudly instead of throwing (a corrupt settings.json must never break reads). */
+/** Lenient read-side counterpart of assertModelCost (model-env.mjs): drops an
+ *  invalid `cost` loudly instead of throwing (a corrupt settings.json must never
+ *  break reads). */
 function sanitizeModelCost(raw, id) {
   if (raw == null) return undefined;
   try {

@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
+import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -22,7 +22,7 @@ const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingre
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
-const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env']);
+const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost']);
 const KNOWN_MODEL_SECRET = new Set(['key', 'label']);
 /** A manifest env value that defers to the plugin's secrets store (design §9.1). */
 const isSecretRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -310,10 +310,23 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
           errors.push(`${at} ("${id}"): env value for ${JSON.stringify(k)} must be a non-empty string or {"secret": "<key>"}`);
         }
       }
+      // A plugin that ships a model routed at its OWN endpoint is exactly the
+      // case that needs a price pinned (the CLI would price it by NAME), so a
+      // manifest may carry `cost` — same shape, same validator as a global
+      // catalog entry (model-env.mjs). A user's global entry for the same id
+      // still wins, as it does for label/efforts/env (§9.3).
+      let cost;
+      try {
+        cost = assertModelCost(m.cost);
+      } catch (e) {
+        errors.push(`${at} ("${id}"): ${e.message}`);
+        return;
+      }
       models.push({
         id, label: str(m.label) || id,
         efforts: efforts.length ? efforts : [...EFFORTS],
         ...(Object.keys(env).length ? { env } : {}),
+        ...(cost ? { cost } : {}),
       });
     });
     const mids = models.map((m) => m.id.toLowerCase());

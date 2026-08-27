@@ -2857,6 +2857,7 @@ const pluginModelsPayload = () => {
         k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
       ])),
       secrets: status.filter((s) => m.secrets.includes(s.key)),
+      ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing — config, never a credential
       ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
     };
   });
@@ -2952,6 +2953,10 @@ app.post('/api/models/export-plugin', async (req, res) => {
       ...(entry.label !== entry.id ? { label: entry.label } : {}),
       ...(entry.efforts.length && entry.efforts.length !== EFFORTS.length ? { efforts: entry.efforts } : {}),
       ...(Object.keys(env).length ? { env } : {}),
+      // Pricing travels with the model. It is configuration, not a credential —
+      // and a shared on-prem model is precisely one the CLI would otherwise
+      // price by NAME on every machine that installs the plugin.
+      ...(entry.cost ? { cost: entry.cost } : {}),
     });
   }
 
@@ -4494,7 +4499,12 @@ app.get('/api/plugins/:name/model-env', (req, res) => {
     if (typeof v === 'string') env[k] = v;
     else secretKeys.push(k);
   }
-  res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
+  // `cost` rides along so "Edit a copy" starts from the plugin's pricing — a
+  // copy that silently dropped it would repay the CLI's by-name figure.
+  res.json({
+    id: model.id, label: model.label, efforts: model.efforts, env, secretKeys,
+    ...(model.cost ? { cost: model.cost } : {}),
+  });
 });
 
 // ---------------------------------------------------------------------------

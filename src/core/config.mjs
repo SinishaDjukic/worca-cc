@@ -315,16 +315,23 @@ export function observeModelCost(modelId, costUsd, usage, costCfg = undefined) {
 // agent's telemetry row. Re-pricing only some of them would leave the phantom
 // spend this exists to remove still inflating the budget from the others.
 
-/** The explicit cost override for a model from the user's GLOBAL catalog, or
- *  null. Shape: {free:true} | {perMtok:{input?,output?,cacheRead?,cacheWrite?,
- *  cacheWrite1h?}} (USD per million tokens). Predefined/plugin models carry none
- *  — pinning a price is a user-catalog concern. Never throws. */
+/** The explicit cost override governing a model, or null. Shape: {free:true} |
+ *  {perMtok:{input?,output?,cacheRead?,cacheWrite?,cacheWrite1h?}} (USD per
+ *  million tokens). Resolved with the SAME precedence as the rest of a model's
+ *  configuration (§9.3, mirroring modelHasBaseUrlRouting): the user's GLOBAL
+ *  entry wins outright, else the winning PLUGIN entry's manifest price — a
+ *  plugin shipping a model on its own endpoint is exactly the case that needs
+ *  one. Note a global entry shadows the plugin's price even when it pins none:
+ *  taking over a model id means owning its pricing too, so the two layers can
+ *  never half-merge. Built-ins carry none. Never throws. */
 export function modelCostConfig(modelId) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return null;
   const lc = id.toLowerCase();
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
-  return entry?.cost ?? null;
+  if (entry) return entry.cost ?? null;
+  const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
+  return pm?.cost ?? null;
 }
 
 /** The four token classes read off a usage object, accepting BOTH spellings in
