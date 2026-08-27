@@ -85,9 +85,14 @@ import {
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
 import { createComposer } from './graph/composer.mjs';
-import { thumbnailFor, mountStaticGraph } from './graph/view.mjs';
+// mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
+// bare <select> with no preview host on this branch (the v1 read-only mini-graph
+// lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
+// its first caller.
+import { thumbnailFor } from './graph/view.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
+import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -2244,10 +2249,7 @@ function option(value, text) {
 // so the renderer can mark deviation and the writer can prune a redundant save
 // back to "inherit". `override` is layer 1 verbatim.
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
-  // v2 graph rows have no steps/feedbacks: render nothing until the graph
-  // run-setup branch lands (P5). Guarding here keeps New Pipeline from throwing
-  // on a saved graph the moment one exists.
-  if (workflow && workflow.version === 2) return [];
+  if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
@@ -2391,11 +2393,95 @@ function pruneNodeSelection(row, next = {}) {
 //   - self loop:    "<name> ↺ (self loop)"    (from === to)
 // A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
 // by more than one node in the workflow. Unknown ids fall back to the raw id.
+// v2: agent nodes only, in condensation-topo launch order (loop wires excluded
+// from the ranking, exactly as the scheduler orders launches). The four config
+// layers are the same as v1: run-config nodes[nodeId] -> template node.config ->
+// sidecar -> hard default.
+function buildGraphNodeRows(tpl, registry, runConfig) {
+  const reg = registry || {};
+  const nodes = (runConfig && runConfig.nodes) || {};
+  const order = classifyLoops(tpl, gvPortsFn).launchOrder;
+  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const agentNodes = order.map((id) => byId.get(id)).filter((n) => n && n.kind === 'agent');
+  const rows = [];
+  for (const node of agentNodes) {
+    const meta = reg[node.key] || null;
+    const saved = { ...nodes[node.id] };
+    const wfDef = (node.config && typeof node.config === 'object') ? node.config : {};
+    const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
+    const metaAsks = !!(meta && meta.asksQuestions);
+    const metaLocked = !!(meta && meta.questionsLocked);
+    const metaQDefault = !!(meta && meta.questionsDefault);
+    const override = {};
+    if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
+    if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
+    if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
+    if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
+    const def = {
+      model: typeof wfDef.model === 'string' ? wfDef.model : '',
+      effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
+      fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : metaFan,
+      askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : metaQDefault,
+    };
+    const model = override.model !== undefined ? override.model : def.model;
+    const effort = override.effort !== undefined ? override.effort : (override.model !== undefined ? '' : def.effort);
+    const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
+    const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+    rows.push({
+      nodeId: node.id, key: node.key, role: null,
+      label: (meta && meta.displayName) || node.key || node.id,
+      color: (meta && meta.color) || '', description: (meta && meta.description) || '',
+      stepIndex: rank.get(node.id) || 0,
+      parallel: false,
+      model, effort, fanOut,
+      askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : askQuestions),
+      questionsLocked: metaAsks && metaLocked,
+      def, override,
+      modified: modifiedFieldsOf({ model, effort, fanOut, askQuestions }, def,
+        { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
+    });
+  }
+  return rows;
+}
+
+// v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
+// v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
+function buildGraphWireRows(tpl, registry, runConfig) {
+  const reg = registry || {};
+  const saved = (runConfig && runConfig.wires) || {};
+  const { loopWireIds, launchOrder } = classifyLoops(tpl, gvPortsFn);
+  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
+  const rank = new Map(launchOrder.map((id, i) => [id, i]));
+  const nameCount = new Map();
+  const nameOf = (id) => {
+    const n = byId.get(id);
+    if (!n) return id;
+    const meta = n.kind === 'agent' ? reg[n.key] : null;
+    return (meta && meta.displayName) || n.key || n.id;
+  };
+  for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
+  const labelFor = (id) => {
+    const nm = nameOf(id);
+    return (nameCount.get(nm) || 0) > 1 ? `${nm} (step ${(rank.get(id) || 0) + 1})` : nm;
+  };
+  return tpl.wires.filter((w) => loopWireIds.has(w.id)).map((w) => {
+    const rc = saved[w.id] || {};
+    const n = Number(rc.maxCycles);
+    const cfg = Number(w.config && w.config.maxCycles);
+    const fromLabel = labelFor(w.from.node);
+    const toLabel = labelFor(w.to.node);
+    const selfLoop = w.from.node === w.to.node;
+    return {
+      fbId: w.id, from: w.from.node, to: w.to.node, fromLabel, toLabel, selfLoop,
+      label: selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`,
+      maxCycles: Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3),
+    };
+  });
+}
+
 function buildFeedbackRows(workflow, registry, runConfig) {
-  // v2 graph rows have no steps/feedbacks: render nothing until the graph
-  // run-setup branch lands (P5). Guarding here keeps New Pipeline from throwing
-  // on a saved graph the moment one exists.
-  if (workflow && workflow.version === 2) return [];
+  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
   const reg = registry || {};
@@ -2832,6 +2918,9 @@ async function renderWorkflowConfig(workflowId) {
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  // The cycle inputs write through a different endpoint shape per engine
+  // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
+  if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
 }
@@ -3247,6 +3336,25 @@ async function saveFeedback(workflowId, fbId, maxCycles) {
   }
 }
 
+// Persist one loop wire's cycle budget: PATCH /api/config
+// { projectDir, workflowId, wires:{ [wireId]:{maxCycles} } }. The v1 twin above
+// posts `feedbacks:{…}` and stays until the v1 engine dies in P8.
+async function saveWire(workflowId, wireId, maxCycles) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, wires: { [wireId]: { maxCycles } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() }); return; }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
 // Persist the active workflow selection (CONV-2): PATCH /api/config { projectDir, activeWorkflowId }.
 async function saveActiveWorkflow(workflowId) {
   const projectDir = selectedProjectPath();
@@ -3289,7 +3397,8 @@ el.pipelineConfig.addEventListener('change', (e) => {
   if (t instanceof HTMLInputElement && t.dataset.fbId) {
     const n = Math.max(1, Math.round(Number(t.value) || 1));
     t.value = String(n); // normalize the field
-    saveFeedback(state.workflowId, t.dataset.fbId, n).then(() => renderWorkflowConfig(state.workflowId));
+    const write = el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph === '1' ? saveWire : saveFeedback;
+    write(state.workflowId, t.dataset.fbId, n).then(() => renderWorkflowConfig(state.workflowId));
     return;
   }
 

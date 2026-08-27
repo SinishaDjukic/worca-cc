@@ -97,3 +97,47 @@ test('leaving the composer calls composerExit: no document listener survives', a
   doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
   assert.equal(doc.querySelectorAll('#gv-canvas .node').length, before, 'Backspace elsewhere never edits the graph');
 });
+
+test('v2 workflows produce topo-ordered node rows and loop-wire cycle rows', async () => {
+  const win = await boot();
+  const np = win.__np;
+  const tpl = {
+    id: 'wf_g2', name: 'G', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: { model: 'sonnet' } },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_plan', port: 'revise' }, config: { maxCycles: 2 } },
+      { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+  const reg = { planner: { displayName: 'Plan', color: 'violet', fanOut: true, asksQuestions: true },
+    reviewer: { displayName: 'Review', color: 'blue', asksQuestions: true } };
+  const rows = np.buildNodeConfigRows(tpl, reg, { nodes: { n_rev: { effort: 'high' } }, wires: {} });
+  assert.deepEqual(rows.map((r) => r.nodeId), ['n_plan', 'n_rev'], 'agent nodes only, topo order, loop wire ignored');
+  assert.equal(rows[0].label, 'Plan');
+  assert.equal(rows[1].effort, 'high', 'per-project override wins');
+  assert.equal(rows[1].model, 'sonnet', 'template node.config is layer 2');
+  assert.deepEqual(rows[1].override, { effort: 'high' });
+  const fbs = np.buildFeedbackRows(tpl, reg, { nodes: {}, wires: { w3: { maxCycles: 5 } } });
+  assert.equal(fbs.length, 1, 'one row per LOOP wire');
+  assert.equal(fbs[0].fbId, 'w3');
+  assert.equal(fbs[0].maxCycles, 5, 'run-config overlay wins over wire.config');
+  assert.equal(fbs[0].label, 'Plan ← Review');
+  const fbs2 = np.buildFeedbackRows(tpl, reg, { nodes: {}, wires: {} });
+  assert.equal(fbs2[0].maxCycles, 2, 'falls back to wire.config.maxCycles');
+});
+
+test('a v1 workflow still produces v1 rows (no regression)', async () => {
+  const win = await boot();
+  const np = win.__np;
+  const rows = np.buildNodeConfigRows(V1_ROW, { planner: { displayName: 'Plan' } }, { nodes: {} });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].nodeId, 's0_0');
+  assert.deepEqual(np.buildFeedbackRows(V1_ROW, {}, { feedbacks: {} }), []);
+});
