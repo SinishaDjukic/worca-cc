@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
@@ -147,3 +148,97 @@ test('stepper.feedbacks flows through the emitted state AND the persisted state.
   assert.deepEqual(persistedState.stepper.feedbacks, state.stepper.feedbacks,
     'persisted feedbacks === emitted feedbacks (no field stripped on the way to disk)');
 });
+
+// ── P4: dual-engine parity on the eight graphs ────────────────────────────────
+import { execSync } from 'node:child_process';
+import { createGraphOrchestrator } from '../src/core/graph/orchestrator.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
+import { SEED_TEMPLATES, FB_WIRE_MAP } from '../src/core/graph/seed-templates.mjs';
+import { listArtifacts } from '../src/core/artifacts.mjs';
+
+const PARITY_SKIP_KINDS = new Set(['pipeline', 'run-log', 'live-log', 'questions', 'clarify', 'decomposition', 'result']);
+
+function parityGitDir(tag) {
+  const dir = mkdtempSync(join(tmpdir(), `worca-cc-parity-${tag}-`));
+  execSync('git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: dir });
+  return dir;
+}
+const counts = (seq) => seq.reduce((m, k) => ({ ...m, [k]: (m[k] || 0) + 1 }), {});
+const gateKey1 = (q, wfId) => { const m = /^gate-(.+)-(\d+)$/.exec(q.id); return `${(FB_WIRE_MAP[wfId] || {})[m[1]] || m[1]}#${m[2]}`; };
+const gateKey2 = (q) => { const m = /^gate-(.+)-(\d+)$/.exec(q.id); return `${q.wireId || m[1]}#${m[2]}`; };
+const files = async (id) => (await listArtifacts(id)).filter((a) => !PARITY_SKIP_KINDS.has(a.kind)).map((a) => `${a.kind}:${a.relPath}`).sort();
+
+/** Drive a run interactively (gates answered `continue`, clarify with empty answers)
+ *  and collect the START sequence. Answers go through setImmediate: `question` is
+ *  emitted before pendingQuestion is installed. */
+async function drive(orch, { v2 }) {
+  const gateQs = [];
+  const starts = [];
+  const parents = new Set();
+  orch.on('question', (q) => {
+    if (q.kind === 'gate') gateQs.push(q);
+    setImmediate(() => orch.answer(q.id, q.kind === 'gate' ? { decision: 'continue' } : { answers: [] }));
+  });
+  if (v2) {
+    orch.on('exec', (e) => {
+      if (e.kind === 'task' && e.parentExecutionId) parents.add(e.parentExecutionId);
+      if (e.status === 'start' && e.agentKey) starts.push({ key: e.agentKey, executionId: e.executionId });
+    });
+  } else {
+    orch.on('phase', (p) => { if (p.status === 'start' && p.nodeId) starts.push({ nodeId: p.nodeId }); });
+  }
+  const res = await orch.run();
+  const st = orch.getState();
+  const seq = v2
+    ? starts.filter((s) => !parents.has(s.executionId)).map((s) => s.key)
+    : starts.map((s) => (st.steps.find((x) => x.nodeId === s.nodeId) || {}).phase || s.nodeId);
+  return { res, st, gateQs, seq };
+}
+
+/** Same sandboxing the file's runShapeUnderMock uses: a private WORCA_HOME + DB per run. */
+async function withParityHome(fn) {
+  const home = await mkdtemp(join(tmpdir(), 'worca-cc-parity-v2-home-'));
+  const prevHome = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  _resetForTests();
+  try { return await fn(); } finally {
+    _resetForTests();
+    if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
+  }
+}
+
+const PARITY_CASES = [
+  ...SEED_TEMPLATES.map((t) => ({ id: t.id, graph: t })),
+  { id: 'wf_default', graph: null },   // rides the coexistence alias on v2
+];
+
+for (const c of PARITY_CASES) {
+  test(`parity: ${c.id} traces identically on both engines`, { timeout: 300000 }, async () => {
+    await withParityHome(async () => {
+      // ── v1 leg ──
+      const v1Tpl = c.graph
+        ? JSON.parse(await readFile(new URL(`./fixtures/workflows-v1/${c.id}.json`, import.meta.url), 'utf8'))
+        : { id: 'wf_default' };
+      if (c.graph) await writeWorkflow(v1Tpl);
+      const a = await drive(makeOrch({
+        projectDir: parityGitDir(`${c.id}-v1`), workflowId: v1Tpl.id, prompt: 'parity probe',
+        claude: { mock: true }, auto: false,
+      }), { v2: false });
+
+      // ── v2 leg ──
+      if (c.graph) await writeGraphWorkflow({ id: `${c.id}__g`, name: c.graph.name, domain: c.graph.domain, nodes: c.graph.nodes, wires: c.graph.wires });
+      const b = await drive(createGraphOrchestrator({
+        projectDir: parityGitDir(`${c.id}-v2`), workflowId: c.graph ? `${c.id}__g` : 'wf_default_v2',
+        prompt: 'parity probe', claude: { mock: true }, auto: false,
+      }), { v2: true });
+
+      assert.equal(a.res.status, 'done', `v1 leg completed: ${a.res.error || ''}`);
+      assert.equal(b.res.status, 'done', `v2 leg completed: ${b.res.error || ''}`);
+      assert.deepEqual(b.seq, a.seq, `agent execution sequence diverged for ${c.id}`);
+      assert.deepEqual(counts(b.seq), counts(a.seq), `per-key run counts diverged for ${c.id}`);
+      assert.deepEqual(await files(b.st.id), await files(a.st.id), `produced files diverged for ${c.id}`);
+      assert.deepEqual(b.gateQs.map(gateKey2), a.gateQs.map((q) => gateKey1(q, c.id)), `gate prompts diverged for ${c.id}`);
+      if (c.id !== 'wf_no-clarify') assert.equal(b.st.endReached, true, `${c.id}: v2 bound End`);
+    });
+  });
+}
