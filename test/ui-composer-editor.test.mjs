@@ -390,3 +390,60 @@ test('the rail collapse state persists under worca.composer.inspector', async ()
   const s2 = await open({ storage });
   assert.equal(s2.el.insRail.dataset.open, 'collapsed', 'restored on the next mount');
 });
+
+test('Save posts version 2 with the loaded id; Save-as omits it', async () => {
+  const posts = [];
+  const s = await open({ api: { saveWorkflow: async (b) => { posts.push(b); return { ok: true, workflow: { id: b.id || 'wf_new' } }; } } });
+  s.c.loadTemplate({ id: 'wf_loaded', name: 'Loaded', version: 2, domain: 'coding', nodes: fixture().nodes, wires: fixture().wires });
+  await new Promise((r) => setTimeout(r, 0));
+  s.el.save.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  const dlg = s.el.dialogHost.querySelector('dialog.save-dialog');
+  assert.equal(dlg.querySelector('.sd-name').value, 'Loaded');
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts[0].version, 2);
+  assert.equal(posts[0].id, 'wf_loaded');
+  assert.ok(Array.isArray(posts[0].nodes) && Array.isArray(posts[0].wires));
+  assert.equal(s.c.isDirty(), false, 'saving clears the dirty flag');
+  s.c.openSaveDialog({ saveAs: true });
+  const dlg2 = s.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg2.querySelector('.sd-name').value = 'Copy';
+  dlg2.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts[1].id, undefined, 'Save-as omits the id');
+  assert.equal(posts[1].name, 'Copy');
+});
+
+test('a 422 renders the validator issues verbatim and keeps the dialog open', async () => {
+  const s = await open({ api: { saveWorkflow: async () => ({ ok: false, status: 422, issues: [
+    { code: 'V21', message: 'exactly one end node is required' },
+    { code: 'V5', message: 'n_agent.task is not wired', nodeId: 'n_agent' },
+  ] }) } });
+  // The canvas must be DIRTY before we assert a failed save leaves it dirty —
+  // a freshly loaded template is clean, so the first draft's final assertion
+  // could never hold. setName is the cheapest legitimate mutation.
+  s.c.setName('Dirty one');
+  assert.equal(s.c.isDirty(), true, 'precondition');
+  s.el.save.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  const dlg = s.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg.querySelector('.sd-name').value = 'X';
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  const msg = dlg.querySelector('.sd-msg');
+  assert.match(msg.textContent, /exactly one end node is required/);
+  assert.match(msg.textContent, /n_agent\.task is not wired/);
+  assert.ok(dlg.hasAttribute('open') || dlg.open, 'dialog stays open on 422');
+  assert.equal(s.c.isDirty(), true);
+});
+
+test('an empty name is refused client-side before any POST', async () => {
+  let calls = 0;
+  const s = await open({ api: { saveWorkflow: async () => { calls += 1; return { ok: true, workflow: { id: 'x' } }; } } });
+  s.el.save.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  const dlg = s.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg.querySelector('.sd-name').value = '   ';
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls, 0);
+  assert.equal(dlg.querySelector('.sd-msg').textContent, 'name is required');
+});

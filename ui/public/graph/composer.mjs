@@ -12,6 +12,7 @@
 import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
+import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { WIRE_HIT_TOL, PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath }
   from '../../../src/shared/graph/geometry.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
@@ -335,6 +336,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onBlur = () => { space = false; stage.classList.remove('space'); cancel(); };
   const onRefresh = () => readRect();
   const onNewCanvas = () => composer.newCanvas();
+  const onSaveClick = () => openSaveDialog();
 
   function zoomAbout(zNext, sx, sy) {
     const t = T();
@@ -580,6 +582,59 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     paintInspector();                                  // re-read the committed value
   }
 
+  let dialog = null;
+  let savedDomains = [];
+
+  function openSaveDialog({ saveAs = false } = {}) {
+    if (!hostEls.dialogHost) return null;
+    if (dialog) dialog.remove();
+    dialog = renderSaveDialog({
+      name: saveAs ? `${tpl.name || 'Untitled'} copy` : (tpl.name || ''),
+      domain: tpl.domain || '', domains: savedDomains,
+      title: saveAs ? 'Save a copy' : 'Save pipeline', doc,
+    });
+    dialog.dataset.saveAs = saveAs ? '1' : '';
+    hostEls.dialogHost.replaceChildren(dialog);
+    dialog.querySelector('.sd-cancel').addEventListener('click', () => closeDialog(dialog));
+    dialog.querySelector('.sd-confirm').addEventListener('click', () => { confirmSave(); });
+    openDialog(dialog);
+    return dialog;
+  }
+
+  async function confirmSave() {
+    if (!dialog) return;
+    const msg = dialog.querySelector('.sd-msg');
+    const name = dialog.querySelector('.sd-name').value.trim();
+    msg.className = 'sd-msg';
+    if (!name) { msg.textContent = 'name is required'; msg.className = 'sd-msg err'; return; }
+    const domain = dialog.querySelector('.sd-domain').value.trim();
+    const saveAs = dialog.dataset.saveAs === '1';
+    const body = { ...serializeTemplate(tpl), version: 2, name, domain };
+    // Save on a LOADED row sends its id; Save-as omits it so the server mints
+    // wf_${slugify(name)}. wf_default / wf_default_v2 are never targets.
+    if (!saveAs && tpl.id && tpl.id !== 'wf_default' && tpl.id !== 'wf_default_v2') body.id = tpl.id;
+    else delete body.id;
+    try {
+      const res = await api.saveWorkflow(body);
+      if (res && res.ok === false) {
+        // 422 = the shared validator's issues; render them VERBATIM.
+        const issues = Array.isArray(res.issues) ? res.issues : [];
+        msg.textContent = issues.length
+          ? issues.map((i) => (i.code ? `${i.code}: ${i.message}` : i.message)).join('\n')
+          : (res.error || `save failed (${res.status || 'error'})`);
+        msg.className = 'sd-msg err';
+        return;
+      }
+      composer.markSaved(res && res.workflow && res.workflow.id, name, domain);
+      closeDialog(dialog);
+      if (hooks.onSaved) hooks.onSaved(res && res.workflow);
+      render();
+    } catch (err) {
+      msg.textContent = err && err.message ? err.message : String(err);
+      msg.className = 'sd-msg err';
+    }
+  }
+
   function firstErrorNode() {
     const e = (lastReport.errors || []).find((x) => x.nodeId);
     return e ? e.nodeId : null;
@@ -611,6 +666,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.filter?.addEventListener('input', onFilterInput);
     hostEls.insBody?.addEventListener('change', onInspectorChange);
     hostEls.insToggle?.addEventListener('click', onRailToggle);
+    hostEls.saveBtn?.addEventListener('click', onSaveClick);
     setRail(readKey(INSPECTOR_KEY) !== 'collapsed');
     // The model/effort lists are chrome, not graph state: pull them once through
     // the injected api so the inspector's selects are usable the moment the rail
@@ -649,6 +705,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.filter?.removeEventListener('input', onFilterInput);
     hostEls.insBody?.removeEventListener('change', onInspectorChange);
     hostEls.insToggle?.removeEventListener('click', onRailToggle);
+    hostEls.saveBtn?.removeEventListener('click', onSaveClick);
     endPalDrag();
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
@@ -681,6 +738,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     mount, destroy, commit, loadTemplate,
     fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     spawn, paintPalette, paintInspector,
+    openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },
     setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },
     newCanvas: () => loadTemplate(null),
     template: () => tpl,

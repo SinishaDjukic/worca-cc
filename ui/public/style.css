@@ -3421,3 +3421,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-archived[hidden]{display:none;}
 .gv-empty{position:absolute;left:0;right:0;top:44%;text-align:center;color:var(--ink-3);font-size:13px;pointer-events:none;}
 .gv-empty[hidden]{display:none;}
+.save-dialog{border:none;border-radius:16px;padding:0;box-shadow:var(--shadow);max-width:420px;width:92vw;}
+.save-dialog .sd-body{padding:18px 20px;display:flex;flex-direction:column;gap:12px;}
+.save-dialog .sd-title{margin:0;font-size:15px;}
+.save-dialog .sd-field{display:flex;flex-direction:column;gap:5px;}
+.save-dialog .sd-field input{border:1px solid var(--line-2);border-radius:9px;padding:8px 10px;font:13px var(--sans);}
+.save-dialog .sd-msg{margin:0;font-size:12px;color:var(--ink-3);white-space:pre-line;}
+.save-dialog .sd-msg.err{color:var(--red-ink);}
+.save-dialog .sd-actions{display:flex;justify-content:flex-end;gap:8px;}
