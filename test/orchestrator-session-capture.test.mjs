@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 
 useTempHome(after);
 
@@ -21,9 +21,10 @@ function gitDir() {
   return dir;
 }
 
-test('session event lands on the step record and persists', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] session event lands on the step record and persists`, async () => {
   const dir = gitDir();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true,
     claude: { mock: true },
     runners: {
@@ -37,3 +38,4 @@ test('session event lands on the step record and persists', async () => {
   assert.ok(withSession.length >= 2, 'producer and verifier steps captured session ids');
   assert.ok(withSession.some((s) => s.sessionId === 'sess-ver'));
 });
+}

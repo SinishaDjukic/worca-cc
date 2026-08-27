@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 import { listArtifacts, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
@@ -57,9 +58,10 @@ function editOnWorktree(orch, text, name = 'seed.txt') {
 const results = (dir) => join(dir, 'results.json');
 const patch = (dir) => join(dir, 'diff-patch.patch');
 
-test('a run stopped mid-flight persists results.json + diff-patch.patch', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] a run stopped mid-flight persists results.json + diff-patch.patch`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   const edit = editOnWorktree(orch, 'stopped work\n');
@@ -79,9 +81,9 @@ test('a run stopped mid-flight persists results.json + diff-patch.patch', async 
   assert.ok(arts.some((a) => a.kind === 'diff-patch'), 'the diff-patch artifact is indexed');
 });
 
-test('a run that errors mid-flight persists results.json + diff-patch.patch', async () => {
+test(`[${engine.id}] a run that errors mid-flight persists results.json + diff-patch.patch`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     runners: { producer: async () => { throw new Error('boom'); }, verifier: okVerifier },
   });
@@ -99,12 +101,12 @@ test('a run that errors mid-flight persists results.json + diff-patch.patch', as
   assert.ok(arts.some((a) => a.kind === 'diff-patch'), 'the diff-patch artifact is indexed');
 });
 
-test('the persisted patch matches what the kept feature branch commit carries', async () => {
+test(`[${engine.id}] the persisted patch matches what the kept feature branch commit carries`, async () => {
   // Ordering guard: _buildResults must run BEFORE the `finally` tears the checkout
   // down. It diffs the live worktree against the checkpoint; teardown then commits
   // the same exclusion set onto the kept branch — so the two diffs agree.
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   editOnWorktree(orch, 'stopped work\n');
@@ -127,9 +129,9 @@ test('the persisted patch matches what the kept feature branch commit carries', 
 // what a plain `git diff <checkpoint>` cannot see: only the review loop's
 // intent-to-add staging (`git add -A -N`, :2204/:2311) makes it visible, and a
 // stopped run never reaches it. The terminal paths stage themselves.
-test('a stopped run keeps the files the agent CREATED (untracked) in the patch', async () => {
+test(`[${engine.id}] a stopped run keeps the files the agent CREATED (untracked) in the patch`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   const made = editOnWorktree(orch, 'agent created this\n', 'brand-new.txt');
@@ -155,9 +157,9 @@ test('a stopped run keeps the files the agent CREATED (untracked) in the patch',
   assert.match(fromBranch, /\+agent created this/, 'precondition: the kept branch carries the file');
 });
 
-test('an errored run keeps the files the agent CREATED too', async () => {
+test(`[${engine.id}] an errored run keeps the files the agent CREATED too`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     runners: { producer: async () => { throw new Error('boom'); }, verifier: okVerifier },
   });
@@ -174,9 +176,9 @@ test('an errored run keeps the files the agent CREATED too', async () => {
 // /diff answer 200-empty instead of 404, /recovery-patch serve an empty
 // attachment, the comments routes report patchAvailable:false and 409 every
 // create, and the detail page open on the Diff tab to render "(no files changed)".
-test('a stopped run whose worktree was never touched persists nothing', async () => {
+test(`[${engine.id}] a stopped run whose worktree was never touched persists nothing`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   // No editOnWorktree: the checkpoint IS established (step 3 precedes the worktree
@@ -194,9 +196,9 @@ test('a stopped run whose worktree was never touched persists nothing', async ()
     'nothing is indexed either, so both artifact routes keep 404-ing');
 });
 
-test('a run stopped before the checkpoint exists writes no results and does not throw', async () => {
+test(`[${engine.id}] a run stopped before the checkpoint exists writes no results and does not throw`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   const p = orch.run();
@@ -208,9 +210,9 @@ test('a run stopped before the checkpoint exists writes no results and does not 
   assert.ok(!existsSync(patch(res.pipelineDir)), 'no diff-patch.patch without checkpoint refs');
 });
 
-test('the done path still persists both artifacts (unchanged)', async () => {
+test(`[${engine.id}] the done path still persists both artifacts (unchanged)`, async () => {
   const repo = await freshRepo();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   editOnWorktree(orch, 'finished work\n');
@@ -220,7 +222,7 @@ test('the done path still persists both artifacts (unchanged)', async () => {
   assert.match(readFileSync(patch(res.pipelineDir), 'utf8'), /\+finished work/);
 });
 
-test('a resumed run that is then stopped persists results.json + diff-patch.patch', async () => {
+test(`[${engine.id}] a resumed run that is then stopped persists results.json + diff-patch.patch`, async () => {
   const repo = await freshRepo();
   let orchRef = null;
   let hangOnce = true;
@@ -243,7 +245,7 @@ test('a resumed run that is then stopped persists results.json + diff-patch.patc
     verifier: okVerifier,
   });
 
-  const orch1 = createOrchestrator({
+  const orch1 = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true },
     branch: { source: 'main' }, runners: mkRunners(),
   });
@@ -254,7 +256,7 @@ test('a resumed run that is then stopped persists results.json + diff-patch.patc
   assert.ok(edit.done, 'precondition: the tracked file was edited inside the worktree');
 
   const saved = readPipelineForResume(orch1.state.id);
-  const orch2 = createOrchestrator({
+  const orch2 = engine.create({
     projectDir: repo, auto: true, claude: { mock: true }, runners: mkRunners(), resume: saved,
   });
   orchRef = orch2;
@@ -264,6 +266,7 @@ test('a resumed run that is then stopped persists results.json + diff-patch.patc
   assert.ok(existsSync(results(r2.pipelineDir)), 'results.json is persisted on resume()\'s stopped path');
   assert.match(readFileSync(patch(r2.pipelineDir), 'utf8'), /\+resumed work/);
 });
+}
 
 // Review of PR #376: the empty-patch early return above also ran on the DONE
 // path, so a finished run with no file changes (review-only / plan-only / no-op
