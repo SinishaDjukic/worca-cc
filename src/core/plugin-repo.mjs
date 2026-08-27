@@ -285,7 +285,7 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   const scratch = await mkdtemp(join(tmpdir(), 'worca-cc-export-'));
   const tarFile = join(scratch, 'export.tar');
   try {
-    await gitDir(cache, ['archive', '--format=tar', '-o', tarFile, ...(sub ? [sha, '--', sub] : [sha])], exec);
+    await gitDir(cache, ['-c', 'core.autocrlf=false', 'archive', '--format=tar', '-o', tarFile, ...(sub ? [sha, '--', sub] : [sha])], exec);
     const strip = sub ? ['--strip-components', String(sub.split('/').length)] : [];
     // Windows GNU tar (shipped by Git for Windows) mishandles native paths two
     // ways: a colon in the `-f` value is read as a `host:path` remote spec ("cannot

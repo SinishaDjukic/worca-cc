@@ -766,11 +766,13 @@ test('M-min3a: a header-less pipeline.md fabricates no pipeline_events', () => {
 // successfully, and stamp the M3 marker BEFORE we can strip perms — making a later
 // maybeMigrateFromFs() a marker no-op that never reaches archive). This mirrors the
 // rollback test above so the SINGLE import runs below, after perms are stripped.
-test('M-min3b: an archive failure is swallowed but logged', { ...POSIX_SHIM,
+test('M-min3b: an archive failure is swallowed but logged', {
   // Skip under root: root ignores directory write perms, so chmod 0o500 would not block
   // renameSync and no archive failure would be injected (the brief's env is non-root).
-  skip: typeof process.getuid === 'function' && process.getuid() === 0
-    ? 'requires non-root: chmod perms are ignored as root' : false,
+  // Windows has no POSIX mode bits at all, so the injection cannot happen there either.
+  skip: (process.platform === 'win32' && 'POSIX file modes are not modelled on Windows')
+    || (typeof process.getuid === 'function' && process.getuid() === 0
+      ? 'requires non-root: chmod perms are ignored as root' : false),
 }, () => {
   const home = worcaHome();
   mkdirSync(home, { recursive: true });

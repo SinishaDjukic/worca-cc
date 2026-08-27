@@ -27,7 +27,7 @@ test('allocate(review) for workspaceReviewer uses a ws-review base + workspace s
   const h = allocate('review', { ...ALLOC, key: 'workspaceReviewer', workspaceKey: WS_KEY });
   assert.equal(h.kind, 'review');
   assert.equal(h.reviewKind, 'ws-review');
-  assert.match(h.mdPath, new RegExp(`/store/workspaces/${WS_KEY}/reviews/05-06-26-feat-ws-review\\.md$`));
+  assert.match(posix(h.mdPath), new RegExp(`/store/workspaces/${WS_KEY}/reviews/05-06-26-feat-ws-review\\.md$`));
   // The json verdict stays per-cycle in the pipeline dir (store-root independent).
   assert.match(posix(h.jsonPath), /\/pipe\/ws-review-cycle2\.json$/);
 });

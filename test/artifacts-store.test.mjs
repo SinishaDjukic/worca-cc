@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { artifactPaths, ensureArtifactDirs, createPipeline, planPath, reviewPath, readStoreMeta } from '../src/core/artifacts.mjs';
 import { projectKey, storeRoot, workspaceStorePath } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 test('artifactPaths resolves into the store, not the project dir', async () => {
   const home = await mkdtemp(join(tmpdir(), 'worca-cc-ah-'));
@@ -102,7 +103,7 @@ test('planPath/reviewPath thread the optional workspaceKey into the workspace st
     const rp = reviewPath(proj, 'feat', '03-06-26', 'impl-review', WKEY);
     assert.equal(rp, join(workspaceStorePath(WKEY), 'reviews', '03-06-26-feat-impl-review.md'));
     // Legacy single-project signatures still resolve under the project key.
-    assert.match(planPath(proj, 'feat', 1, '03-06-26'), new RegExp(`${projectKey(proj)}/plans/03-06-26-feat\\.md$`));
+    assert.match(posix(planPath(proj, 'feat', 1, '03-06-26')), new RegExp(`${projectKey(proj)}/plans/03-06-26-feat\\.md$`));
   } finally { if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev; }
 });
 

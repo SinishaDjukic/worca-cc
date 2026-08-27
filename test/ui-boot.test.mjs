@@ -41,7 +41,7 @@ test('app.js boots without throwing and finds 14 views', async () => {
 
   let threw = null;
   try {
-    await import(fileURLToPath(new URL('../ui/public/app.js', import.meta.url)) + `?b=${Date.now()}`);
+    await import(new URL('../ui/public/app.js', import.meta.url).href + `?b=${Date.now()}`);
   } catch (e) {
     threw = e;
   }

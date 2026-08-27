@@ -15,7 +15,8 @@ test('PRESEEDED_CHANNELS is exported and stable', () => {
 });
 
 test('allocate(custom, no def) mints <pipelineDir>/<id>.md, cycle-suffixed on re-runs', () => {
-  assert.deepEqual(allocate('spec', { ...ALLOC, key: 'specWriter' }),
+  const spec = allocate('spec', { ...ALLOC, key: 'specWriter' });
+  assert.deepEqual({ ...spec, path: posix(spec.path) },
     { kind: 'artifact', path: '/pipe/spec.md', channel: 'spec' });
   assert.equal(posix(allocate('spec', { ...ALLOC, key: 'specWriter', cycle: 2 }).path), '/pipe/spec-cycle2.md');
 });

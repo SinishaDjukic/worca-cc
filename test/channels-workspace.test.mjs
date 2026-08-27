@@ -28,14 +28,14 @@ test('allocate threads workspaceKey into the plan path (routes to the workspace 
   const single = allocate('plan', { ...ALLOC, key: 'planner', cycle: 1 });
   const ws = allocate('plan', { ...ALLOC, key: 'planner', cycle: 1, workspaceKey: WS_KEY });
   assert.match(posix(single.path), /\/store\/[^/]+\/plans\/03-06-26-feat\.md$/, 'single-project routes by projectKey');
-  assert.match(ws.path, new RegExp(`/store/workspaces/${WS_KEY}/plans/03-06-26-feat\\.md$`),
+  assert.match(posix(ws.path), new RegExp(`/store/workspaces/${WS_KEY}/plans/03-06-26-feat\\.md$`),
     'workspace plan routes to the workspace store');
   assert.notEqual(single.path, ws.path);
 });
 
 test('allocate threads workspaceKey into the review path (md + json under the workspace store)', () => {
   const ws = allocate('review', { ...ALLOC, key: 'reviewer', workspaceKey: WS_KEY });
-  assert.match(ws.mdPath, new RegExp(`/store/workspaces/${WS_KEY}/reviews/03-06-26-feat-impl-review\\.md$`));
+  assert.match(posix(ws.mdPath), new RegExp(`/store/workspaces/${WS_KEY}/reviews/03-06-26-feat-impl-review\\.md$`));
   // jsonPath lives in the pipeline dir (per-cycle), unaffected by the store root.
   assert.match(posix(ws.jsonPath), /\/pipe\/impl-review-cycle1\.json$/);
 });
