@@ -47,7 +47,7 @@ function normDomain(raw) {
  * @param {string|null} [agentPath]
  * @returns {Promise<{prompt:string, tools:string[]}>}
  */
-async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
+export async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
   if (!agentFile && !agentPath) return { prompt: '', tools: [] };
   let text = '';
   try {
