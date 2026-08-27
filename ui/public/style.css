@@ -950,6 +950,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Confirm dialog must stack ABOVE the plugin/wizard modal (equal .viewer-modal z-index,
    but #confirm-modal precedes #plugin-modal in the DOM). */
 #confirm-modal.viewer-modal{z-index:60;}
+/* The folder browser is a leaf picker opened FROM other modals (add-project,
+   export). It precedes #export-modal in the DOM, so at equal .viewer-modal
+   z-index the export modal would paint over it, hiding the Browse… picker.
+   Elevate it above every other modal so it is always usable when open. */
+#folder-browser.viewer-modal{z-index:70;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
@@ -1047,6 +1052,25 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-remove:disabled{opacity:.6;cursor:default;}
 .pl-remove svg{display:block;}
 
+.pl-export{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
+.pl-export:hover{border-color:var(--accent,#2b6);color:var(--ink);background:var(--field);}
+.pl-export svg{width:16px;height:16px;stroke-width:2;}
+/* Export-to-Claude-Code modal */
+.export-field{margin:12px 0;}
+.export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
+.export-folder-row{display:flex;gap:8px;align-items:center;}
+.export-folder-row .input{flex:1 1 auto;}
+.export-plan{margin:12px 0;max-height:240px;overflow:auto;border:1px solid var(--line-2);border-radius:10px;padding:8px;font-size:12.5px;}
+.export-row{padding:4px 2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.export-conflict-row{flex-direction:column;align-items:flex-start;}
+.export-tag{display:inline-block;min-width:58px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:700;font-size:11px;}
+.export-create{background:var(--green-bg,#e6f7ec);color:var(--green-ink,#137a3b);}
+.export-update{background:var(--field);color:var(--ink);}
+.export-no-op{background:var(--field);color:var(--ink-3);}
+.export-warn,.export-conflict{background:var(--red-bg,#fde8e8);color:var(--red-ink,#b42323);}
+.export-orphan{background:var(--field);color:var(--ink-3);}
+.export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
+.export-choice{font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;

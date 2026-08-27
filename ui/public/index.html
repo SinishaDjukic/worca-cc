@@ -1269,6 +1269,46 @@
       </div>
     </div>
 
+    <!-- ===== Export workflow → Claude Code skill modal ===== -->
+    <div id="export-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="export-title">Export to Claude Code</h2>
+        </div>
+        <p id="export-subtitle" class="confirm-message"></p>
+        <div class="export-field">
+          <span class="export-label">Destination</span>
+          <div id="export-dest" class="seg" role="group" aria-label="Export destination">
+            <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
+            <button type="button" class="seg-btn" data-dest="project">Project folder</button>
+          </div>
+        </div>
+        <div id="export-folder-field" class="export-field hidden">
+          <span class="export-label">Folder</span>
+          <div class="export-folder-row">
+            <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
+            <button type="button" id="export-browse" class="btn btn-ghost btn-mini">Browse…</button>
+          </div>
+        </div>
+        <div class="export-field">
+          <span class="export-label">Slug</span>
+          <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
+          <span id="export-slug-preview" class="hint"></span>
+        </div>
+        <label class="confirm-checkbox">
+          <input type="checkbox" id="export-include-agents" checked />
+          <span>Include referenced agents (recommended)</span>
+        </label>
+        <div id="export-plan" class="export-plan hidden"></div>
+        <p id="export-msg" class="confirm-message"></p>
+        <div class="confirm-actions">
+          <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
+          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Plan</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini" disabled>Apply</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== "Ship it?" PR confirm modal (History detail) ===== -->
     <!-- No z-index of its own: #confirm-modal.viewer-modal{z-index:60} (style.css:781)
          exists because #confirm-modal precedes #plugin-modal in the DOM, and this
