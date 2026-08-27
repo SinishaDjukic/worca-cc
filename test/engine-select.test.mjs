@@ -42,13 +42,14 @@ test('createOrchestratorFor: an unknown workflow id still yields the v1 orchestr
   assert.equal(typeof orch._dispatch, 'function');
 });
 
-test('createOrchestratorFor: P1 returns v1 even when the selector says graph (no graph factory yet)', async () => {
+test('createOrchestratorFor: a v2 resume point builds the graph engine', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-engine-select-'));
   assert.equal(selectEngine({ resumePointVersion: 2 }), 'graph');
   const orch = await createOrchestratorFor({
     projectDir: dir, workflowId: 'wf_default',
     resume: { row: {}, resumePoint: { version: 2 }, steps: [] },
   });
-  assert.equal(typeof orch._dispatch, 'function', 'P4 flips this to GraphOrchestrator');
+  assert.equal(typeof orch._dispatch, 'undefined', 'the graph engine has no v1 dispatcher');
+  assert.equal(orch.getState().engine, 2);
   assert.equal(orch.engine, 'graph', 'the factory consulted the resume point, not just the row');
 });

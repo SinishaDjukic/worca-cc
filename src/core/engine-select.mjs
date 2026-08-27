@@ -2,12 +2,9 @@
 // Which engine runs a pipeline is decided by DATA — the template's `version`,
 // or (on a resume) the frozen resume point's — never by a flag. There is no
 // feature flag anywhere in worca's engine selection.
-//
-// The SELECTOR is final: `selectEngine` already answers 'graph' for version-2
-// inputs. The FACTORY is not: no graph engine exists yet, so
-// createOrchestratorFor still builds the v1 orchestrator for every input.
 
 import { createOrchestrator } from './orchestrator.mjs';
+import { createGraphOrchestrator } from './graph/orchestrator.mjs';
 import { readWorkflow } from './workflows.mjs';
 
 /**
@@ -25,23 +22,28 @@ export function selectEngine({ templateVersion, resumePointVersion } = {}) {
 }
 
 /**
- * Build the orchestrator for `opts`. Reads the resume point's version first,
- * else the workflow row's. Async because the row read is async — every call
- * site awaits it.
- * @param {object} opts createOrchestrator options (+ optional opts.resume)
+ * Build the orchestrator this run needs. Reads the resume point's version first
+ * (a resume must run on the engine that froze the point), else the workflow
+ * row's. Async because the row read is async — every call site awaits it. Pass
+ * `opts.template` when the caller already read the row (POST /api/run does, via
+ * assertRunnableWorkflow) to skip the second read; it is a routing hint, never
+ * an orchestrator option.
+ * @param {object} opts createOrchestrator options (+ optional opts.resume / opts.template)
  * @returns {Promise<object>} an orchestrator instance; its `.engine` is the
  *   selector's answer for the data that was read.
  */
 export async function createOrchestratorFor(opts = {}) {
-  const resumePointVersion = opts.resume?.resumePoint?.version;
+  const { template, ...rest } = opts;
+  const resumePointVersion = rest.resume?.resumePoint?.version;
   // `== null`, not `=== undefined`: a stored point carrying `version: null` is
   // "no point" to selectEngine, so the template row must be read for it too.
-  const templateVersion = resumePointVersion == null && opts.workflowId
-    ? (await readWorkflow(opts.workflowId))?.version
-    : undefined;
+  let templateVersion;
+  if (resumePointVersion == null) {
+    const tpl = template || (rest.workflowId ? await readWorkflow(rest.workflowId) : null);
+    templateVersion = tpl?.version;
+  }
   const engine = selectEngine({ templateVersion, resumePointVersion });
-  // P4 routes 'graph' to createGraphOrchestrator(opts); until then every run is v1.
-  const orch = createOrchestrator(opts);
+  const orch = engine === 'graph' ? createGraphOrchestrator(rest) : createOrchestrator(rest);
   orch.engine = engine; // the decision the data made, observable by callers and tests
   return orch;
 }

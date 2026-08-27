@@ -15,7 +15,7 @@ import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
-import { createOrchestrator } from '../core/orchestrator.mjs';
+import { createOrchestratorFor } from '../core/engine-select.mjs';
 import {
   addProject,
   listProjects,
@@ -806,7 +806,7 @@ async function cmdResume(argv) {
     return 1;
   }
 
-  const orch = createOrchestrator({
+  const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
     claude: { mock },
@@ -1523,23 +1523,24 @@ async function main() {
     return 1;
   }
 
-  // Validate --workflow before spawning anything: an archived or graph template
-  // must fail with one line, not a stack trace half-way through a run.
+  // Validate --workflow before spawning anything: an unknown or archived template
+  // must fail with one line, not a stack trace half-way through a run. The read row
+  // doubles as createOrchestratorFor's routing hint (it skips a second row read).
+  let row;
   if (flags.workflow) {
     const { assertRunnableWorkflow } = await import('../core/workflows.mjs');
-    let row;
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
-    if (row.version === 2) fail('template is a graph — runs on the graph engine (not available yet)');
   }
 
-  const orch = createOrchestrator({
+  const orch = await createOrchestratorFor({
     projectDir,
     prompt: flags.prompt || undefined,
     promptFile: flags.file || undefined,
     title: flags.title || undefined,
     extras,
     workflowId: flags.workflow || undefined,
+    template: row,
     branch: { source: flags.sourceBranch, feature: flags.featureBranch },
     claude: {
       permissionMode: flags.permissionMode,

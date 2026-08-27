@@ -55,12 +55,12 @@ const runDir = async () => {
 };
 after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true }))));
 
-test('POST /api/run refuses a graph row with one clean 400', async () => {
+test('POST /api/run accepts a graph row: it dispatches to the graph engine', async () => {
   await writeGraphWorkflow({ id: 'wf_graph', name: 'G', nodes: [], wires: [] });
   const r = await api('POST', '/api/run',
     { projectDir: await runDir(), prompt: 'hi', workflowId: 'wf_graph', mock: true });
-  assert.equal(r.status, 400);
-  assert.equal(r.body.error, 'template is a graph — runs on the graph engine (not available yet)');
+  assert.equal(r.status, 200);
+  assert.equal(typeof r.body.runId, 'string');
 });
 
 test('POST /api/run: unknown id 400, archived id 400 with the archive message', async () => {
@@ -87,7 +87,7 @@ test('a v1 row still runs (the gate is not a wall)', async () => {
 // The CLI arm. Without this the whole `if (flags.workflow) { … }` block can be
 // deleted and every other suite stays green (measured). The child inherits
 // process.env, so useTempHome's WORCA_HOME reaches it and it sees the same rows.
-test('the CLI --workflow gate: a graph row and an archived row each exit 2', async () => {
+test('the CLI --workflow gate: an archived row exits 2, a graph row RUNS', async () => {
   await writeGraphWorkflow({ id: 'wf_cligraph', name: 'CG', nodes: [], wires: [] });
   await writeGraphWorkflow({ id: 'wf_cliarch', name: 'CA', nodes: [], wires: [] });
   getDb();
@@ -101,8 +101,8 @@ test('the CLI --workflow gate: a graph row and an archived row each exit 2', asy
     [CLI, '--project', project, '--prompt', 'x', '--mock', '--yes', '--workflow', id],
     { env: { ...process.env, WORCA_HOME: homeDir, WORCA_MOCK: '1' }, encoding: 'utf8' });
   const graph = run('wf_cligraph');
-  assert.equal(graph.status, 2, `expected exit 2, got ${graph.status}: ${graph.stderr}`);
-  assert.match(graph.stderr, /worca: template is a graph — runs on the graph engine \(not available yet\)/);
+  assert.equal(graph.status, 0, `expected exit 0, got ${graph.status}: ${graph.stderr}`);
+  assert.doesNotMatch(graph.stderr, /not available yet/);
   const archived = run('wf_cliarch');
   assert.equal(archived.status, 2);
   assert.match(archived.stderr, /worca: workflow "wf_cliarch" was archived by the v2 upgrade/);

@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
@@ -251,7 +251,9 @@ function liveRunIds() {
 // `stepgraphify` (§7.3) was emitted by the orchestrator and handled by the client
 // but missing here, so the graphify badge only appeared after a reload (via the
 // persisted column) and never live. It rides the same pass-through as `stepskills`.
-const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
+// `exec` and `token` are the graph engine's (§5.7). `phase` stays for the v1
+// engine AND for the v2 shim until the graph cut-over retires it.
+const EVENT_NAMES = ['phase', 'exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
@@ -558,7 +560,7 @@ function wireRun(entry) {
         entry.status = 'error';
         resolvePending(entry, { reason: 'error' });
       }
-      if (name === 'phase') {
+      if (name === 'phase' || name === 'exec') {
         entry.status = 'running';
       }
       if (name === 'state' && payload && typeof payload === 'object') {
@@ -1077,18 +1079,15 @@ app.post('/api/run', async (req, res) => {
     // so the client gets a clean 400 instead of a mid-run error event.
     const workflowId =
       typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
-    // ONE gate for every run entry point, ONE status: unknown (today's text),
-    // archived (the upgrade explanation the UI shows verbatim) and — until P4 —
-    // a graph row all answer 400 through badRequest. The graph branch dies in
-    // P4, when createOrchestratorFor routes v2 rows to the engine.
+    // ONE gate for every run entry point, ONE status: unknown (today's text) and
+    // archived (the upgrade explanation the UI shows verbatim) answer 400 through
+    // badRequest. A graph row runs on the graph engine — createOrchestratorFor
+    // routes it off the row's version.
     let workflowRow;
     try {
       workflowRow = await assertRunnableWorkflow(workflowId);
     } catch (err) {
       return badRequest(res, err && err.message ? err.message : String(err));
-    }
-    if (workflowRow.version === 2) {
-      return badRequest(res, 'template is a graph — runs on the graph engine (not available yet)');
     }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
@@ -1177,7 +1176,7 @@ app.post('/api/run', async (req, res) => {
         return badRequest(res, `unknown or invalid sourceBranch: ${badOverride}`);
       }
 
-      orch = createOrchestrator({
+      orch = await createOrchestratorFor({
         workspace: {
           id: ws.id,
           key: ws.id, // ws.id === workspaceKey(ws); routes artifacts to its store
@@ -1191,6 +1190,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        template: workflowRow,
         guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
@@ -1230,7 +1230,7 @@ app.post('/api/run', async (req, res) => {
         return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
       }
 
-      orch = createOrchestrator({
+      orch = await createOrchestratorFor({
         projectDir,
         prompt: effectivePrompt,
         ...(effectiveSource ? { source: effectiveSource } : {}),
@@ -1238,6 +1238,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        template: workflowRow,
         guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
@@ -1587,7 +1588,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
 
   const effMock = mock || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
   const runId = randomUUID();
-  const orch = createOrchestrator({
+  const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
     agentsDir: AGENTS_DIR,

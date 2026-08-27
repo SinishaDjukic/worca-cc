@@ -9,7 +9,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
@@ -290,4 +290,13 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
   } finally {
     await rm(projDir, { recursive: true, force: true });
   }
+});
+
+test('cmdResume routes a v2 resume point to the graph engine', async () => {
+  const { selectEngine } = await import('../src/core/engine-select.mjs');
+  assert.equal(selectEngine({ resumePointVersion: 2 }), 'graph');
+  // and the CLI no longer imports the v1 factory directly
+  const src = await readFile(new URL('../src/cli/worca-cc.mjs', import.meta.url), 'utf8');
+  assert.ok(/createOrchestratorFor/.test(src), 'CLI uses the engine-selecting factory');
+  assert.ok(!/\bcreateOrchestrator\(/.test(src), 'CLI has no direct v1 construction left');
 });
