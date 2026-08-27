@@ -269,3 +269,57 @@ test('validation runs ONCE per commit, never per frame', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(s.c.stats.validations, v0 + 1, 'exactly one after the commit');
 });
+
+test('palette groups by domain, pins Flow last, hides placeable:false, disables placed bookends', async () => {
+  const agents = [
+    { key: 'planner', displayName: 'Plan', domain: 'coding', color: 'violet', order: 1, inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'plan', type: 'md' }, { id: 'revise', type: 'md' }] },
+    { key: 'wsScan', displayName: 'Workspace Scan', domain: 'shared', order: 0.5, placeable: false, inputs: [], outputs: [] },
+    { key: 'docs', displayName: 'Docs', domain: 'writing', order: 2, inputs: [], outputs: [{ id: 'doc', type: 'md' }] },
+  ];
+  const s = await open({ api: { agents: async () => agents, agentsAll: async () => agents } });
+  const { renderPalette } = await import(new URL('../ui/public/graph/palette.mjs', import.meta.url).href);
+  renderPalette(s.el.palette, { agents, placedKinds: ['task', 'end'], collapsed: new Set(), doc: s.doc });
+  const groups = [...s.el.palette.querySelectorAll('.pal-group')].map((g) => g.dataset.domain);
+  assert.deepEqual(groups, ['coding', 'writing', 'flow'], 'domains first-seen (empty groups omitted), pinned Flow last');
+  assert.equal(s.el.palette.querySelector('.ap[data-key="wsScan"]'), null, 'placeable:false never listed');
+  assert.equal(s.el.palette.querySelector('.ap[data-key="planner"] .p').textContent, 'in plan · out plan, revise');
+  assert.equal(s.el.palette.querySelector('.ap[data-kind="task"]').disabled, true);
+  assert.equal(s.el.palette.querySelector('.ap[data-kind="and"]').disabled, false);
+  assert.equal(s.el.palette.querySelector('.ap[data-kind="and"] .p').textContent, 'in in1..inN · out out');
+});
+
+test('click spawns at the canvas centre with the 24-try de-stacker', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const n0 = s.c.template().nodes.length;
+  s.c.spawn({ kind: 'and' });
+  s.c.spawn({ kind: 'and' });
+  const nodes = s.c.template().nodes;
+  assert.equal(nodes.length, n0 + 2);
+  assert.equal(nodes[n0].kind, 'and');
+  assert.equal(nodes[n0].config.arity, 2);
+  assert.notDeepEqual({ x: nodes[n0].x, y: nodes[n0].y }, { x: nodes[n0 + 1].x, y: nodes[n0 + 1].y }, 'second spawn de-stacked');
+  assert.equal(nodes[n0].x % 11, 0, 'snapped to the 11px grid');
+  assert.equal(s.c.undoDepth(), 2, 'each spawn is one undo entry');
+});
+
+test('drag-to-spawn: ghost after 4px, drop inside the stage commits, outside cancels', async () => {
+  const s = await open();
+  const agents = [{ key: 'planner', displayName: 'Plan', domain: 'coding', order: 1, inputs: [], outputs: [] }];
+  const { renderPalette } = await import(new URL('../ui/public/graph/palette.mjs', import.meta.url).href);
+  renderPalette(s.el.palette, { agents, placedKinds: [], collapsed: new Set(), doc: s.doc });
+  const pill = s.el.palette.querySelector('.ap[data-key="planner"]');
+  const n0 = s.c.template().nodes.length;
+  pill.dispatchEvent(new s.win.PointerEvent('pointerdown', { pointerId: 3, button: 0, clientX: 100, clientY: 700, bubbles: true }));
+  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 3, clientX: 102, clientY: 700, bubbles: true }));
+  assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, '2px is still a click');
+  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 3, clientX: 400, clientY: 300, bubbles: true }));
+  assert.ok(s.doc.querySelector('.gv-drag-ghost'), 'ghost after 4px');
+  s.doc.dispatchEvent(new s.win.PointerEvent('pointerup', { pointerId: 3, clientX: 400, clientY: 300, bubbles: true }));
+  assert.equal(s.c.template().nodes.length, n0 + 1, 'dropped inside the stage => spawned');
+  assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, 'ghost removed');
+  pill.dispatchEvent(new s.win.PointerEvent('pointerdown', { pointerId: 4, button: 0, clientX: 100, clientY: 700, bubbles: true }));
+  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 4, clientX: 1270, clientY: 300, bubbles: true }));
+  s.doc.dispatchEvent(new s.win.PointerEvent('pointerup', { pointerId: 4, clientX: 1270, clientY: 300, bubbles: true }));
+  assert.equal(s.c.template().nodes.length, n0 + 1, 'a drop under the inspector rail cancels');
+});

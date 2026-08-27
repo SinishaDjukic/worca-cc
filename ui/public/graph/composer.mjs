@@ -10,6 +10,7 @@
 //    finish() releases capture
 // Depth 3 ⇒ the shared core is three `..` up.
 import { createGraphView } from './view.mjs';
+import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { WIRE_HIT_TOL, PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath }
   from '../../../src/shared/graph/geometry.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
@@ -157,6 +158,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function render() {
     view.render(tpl, { selection: sel, report: lastReport });
     paintChrome();
+    paintPalette();
     if (hooks.onRender) hooks.onRender();
   }
   function paintChrome() {
@@ -398,7 +400,12 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function onKeyDown(ev) {
     if (isTyping(ev.target)) return;              // guard FIRST — before space, before anything
     if (ev.key === ' ') { if (!space) { space = true; stage.classList.add('space'); } ev.preventDefault(); return; }
-    if (ev.key === 'Escape') { if (gesture) cancel(); else select(null); return; }
+    if (ev.key === 'Escape') {
+      if (gesture) cancel();
+      else if (hostEls.filter && hostEls.filter.value) { hostEls.filter.value = ''; onFilterInput(); }
+      else select(null);
+      return;
+    }
     if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); deleteSelection(); return; }
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); nudge(-SNAP, 0); return; }
     if (ev.key === 'ArrowRight') { ev.preventDefault(); nudge(SNAP, 0); return; }
@@ -407,6 +414,99 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
   }
   function onKeyUp(ev) { if (ev.key === ' ') { space = false; stage.classList.remove('space'); } }
+
+  const collapsed = new Set();
+  let query = '';
+
+  function paintPalette() {
+    renderPalette(hostEls.palette, {
+      agents: Object.values(agents), placedKinds: tpl.nodes.map((n) => n.kind), collapsed, query, doc,
+    });
+  }
+  /** Diagonal de-stacker: 24 tries, SNAP*2 per try so each attempt lands one
+   *  dot-grid cell down-right. Not a general overlap avoider — it exists so a
+   *  run of spawns does not stack. */
+  function freeSlot(p) {
+    let { x, y } = p;
+    for (let i = 0; i < 24; i += 1) {
+      if (!tpl.nodes.some((n) => n.x === snap(x) && n.y === snap(y))) break;
+      x += SNAP * 2; y += SNAP * 2;
+    }
+    return { x, y };
+  }
+  function centerWorld() {
+    readRect();
+    const c = toWorld(R.left + (R.width - insetRight()) / 2, R.top + R.height / 2);
+    return { x: c.x - NODE_W / 2, y: c.y - 60 };
+  }
+  function spawn(entry, at) {
+    const p = at || freeSlot(centerWorld());
+    let node = null;
+    commit('add', () => {
+      node = entry.kind
+        ? newNode(entry.kind, null, snap(p.x), snap(p.y))
+        : newNode('agent', entry.key, snap(p.x), snap(p.y));
+      if (entry.kind === 'and' || entry.kind === 'or' || entry.kind === 'combine') node.config.arity = 2;
+      tpl.nodes.push(node);
+    });
+    select({ kind: 'node', id: node.id });
+    return node;
+  }
+
+  // ---- drag-to-spawn: 4px threshold, fixed-position ghost, drop must land
+  // inside the cached stage rect MINUS the inspector inset.
+  let drag = null;
+  function onPalDown(ev) {
+    const btn = ev.target.closest && ev.target.closest('.ap');
+    if (!btn || btn.disabled || ev.button !== 0) return;
+    drag = { entry: btn.dataset.kind ? { kind: btn.dataset.kind } : { key: btn.dataset.key },
+      sx: ev.clientX, sy: ev.clientY, id: ev.pointerId, label: btn.querySelector('.n').textContent, ghost: null };
+    try { btn.setPointerCapture?.(ev.pointerId); } catch { /* synthetic */ }
+    doc.addEventListener('pointermove', onPalMove);
+    doc.addEventListener('pointerup', onPalUp);
+    doc.addEventListener('pointercancel', onPalCancel);
+  }
+  function onPalMove(ev) {
+    if (!drag) return;
+    if (!drag.ghost && Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) < 4) return;
+    if (!drag.ghost) {
+      drag.ghost = doc.createElement('div');
+      drag.ghost.className = 'gv-drag-ghost';
+      drag.ghost.textContent = drag.label;
+      doc.body.appendChild(drag.ghost);
+      readRect();
+    }
+    drag.ghost.style.left = `${ev.clientX + 8}px`;
+    drag.ghost.style.top = `${ev.clientY + 8}px`;
+  }
+  function onPalUp(ev) {
+    const d = drag;
+    if (!d) return;
+    const dragged = Boolean(d.ghost);
+    endPalDrag();
+    if (!dragged) { spawn(d.entry); return; }             // < 4px is a click
+    const inBand = ev.clientX >= R.left && ev.clientX <= R.left + R.width - insetRight()
+      && ev.clientY >= R.top && ev.clientY <= R.top + R.height;
+    if (!inBand) return;
+    const p = toWorld(ev.clientX, ev.clientY);
+    spawn(d.entry, { x: snap(p.x - NODE_W / 2), y: snap(p.y - 20) });
+  }
+  const onPalCancel = () => endPalDrag();
+  function endPalDrag() {
+    if (drag && drag.ghost) drag.ghost.remove();
+    drag = null;
+    doc.removeEventListener('pointermove', onPalMove);
+    doc.removeEventListener('pointerup', onPalUp);
+    doc.removeEventListener('pointercancel', onPalCancel);
+  }
+  function onPalClick(ev) {
+    const chip = ev.target.closest && ev.target.closest('.pal-chip');
+    if (!chip) return;
+    const d = chip.dataset.domain;
+    if (collapsed.has(d)) collapsed.delete(d); else collapsed.add(d);
+    paintPalette();
+  }
+  const onFilterInput = () => { query = hostEls.filter ? hostEls.filter.value : ''; applyFilter(hostEls.palette, query, collapsed); };
 
   function firstErrorNode() {
     const e = (lastReport.errors || []).find((x) => x.nodeId);
@@ -434,6 +534,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.newBtn?.addEventListener('click', onNewCanvas);
     hostEls.errors?.addEventListener('click', onErrChip);
     view.world.addEventListener('click', onWorldClick);
+    hostEls.palette?.addEventListener('pointerdown', onPalDown);
+    hostEls.palette?.addEventListener('click', onPalClick);
+    hostEls.filter?.addEventListener('input', onFilterInput);
     stage.addEventListener('pointermove', onMove);
     stage.addEventListener('pointerup', onUp);
     stage.addEventListener('pointercancel', onCancelEv);
@@ -460,6 +563,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.newBtn?.removeEventListener('click', onNewCanvas);
     hostEls.errors?.removeEventListener('click', onErrChip);
     view.world.removeEventListener('click', onWorldClick);
+    hostEls.palette?.removeEventListener('pointerdown', onPalDown);
+    hostEls.palette?.removeEventListener('click', onPalClick);
+    hostEls.filter?.removeEventListener('input', onFilterInput);
+    endPalDrag();
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
     stage.removeEventListener('pointercancel', onCancelEv);
@@ -490,6 +597,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     view, stats, hooks,
     mount, destroy, commit, loadTemplate,
     fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
+    spawn, paintPalette,
     newCanvas: () => loadTemplate(null),
     template: () => tpl,
     serialize: () => serializeTemplate(tpl),
