@@ -18,6 +18,7 @@ import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 import { classifyLoops } from '../shared/graph/loops.mjs';
+import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 
 /**
@@ -342,8 +343,30 @@ export async function writeGraphWorkflow(tpl) {
  * @param {string} id
  * @returns {Promise<object|null>}
  */
+/**
+ * Coexistence alias (§5.2). GRAPH_DEFAULT_WORKFLOW carries its FINAL id
+ * `wf_default` so the V24 seed/overlay maps never rename; until the break it is
+ * served under this alias, and the v1 DEFAULT_WORKFLOW keeps `wf_default`.
+ * Overlays key on the REQUESTED id, so per-node config on the graph default
+ * lands under `wf_default_v2` and V24 remaps it. writeGraphWorkflow already
+ * refuses to persist a row under either id. Removed in P8.
+ */
+export const GRAPH_DEFAULT_ALIAS_ID = 'wf_default_v2';
+
+/** A fresh shallow clone under the alias identity — GRAPH_DEFAULT_WORKFLOW is
+ *  deep-frozen and resolveGraph structuredClones the result, so nobody mutates it. */
+export function graphDefaultAliasTemplate() {
+  // Same epoch stamps DEFAULT_WORKFLOW carries (:109-110): every listed template
+  // has createdAt/updatedAt. P8 moves them into the constant.
+  return {
+    ...GRAPH_DEFAULT_WORKFLOW, id: GRAPH_DEFAULT_ALIAS_ID, name: 'Default (graph)',
+    createdAt: '1970-01-01T00:00:00.000Z', updatedAt: '1970-01-01T00:00:00.000Z',
+  };
+}
+
 export async function readWorkflow(id, opts = {}) {
   if (id === DEFAULT_WORKFLOW.id) return DEFAULT_WORKFLOW;
+  if (id === GRAPH_DEFAULT_ALIAS_ID) return graphDefaultAliasTemplate();
   return readRaw(id, opts);
 }
 

@@ -48,7 +48,7 @@ test('buildCatalog: injected readers, wf_default first and never duplicated, sha
   assert.deepEqual(cat.projects, [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo' }, { key: 'gone-00000002', name: 'Gone', path: '/p/gone' }]);
   assert.deepEqual(cat.workspaces, [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: ['a-00000001', 'b-00000002'] }]);
   assert.notEqual(cat.workspaces[0].projectKeys, srcKeys, 'projectKeys is copied, never aliased to the reader\'s array');
-  assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_review'], 'default first, a stored twin of its id is dropped');
+  assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_default_v2', 'wf_review'], 'default first, a stored twin of its id is dropped');
   assert.equal(cat.workflows[0].name, 'Default');
   assert.equal(cat.workflows[0].steps.length, 5);
   assert.equal(cat.workflows[0].steps[1][0].key, 'planner');

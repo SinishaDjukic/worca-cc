@@ -94,6 +94,7 @@ import {
 import {
   DEFAULT_WORKFLOW, listWorkflows, writeWorkflow, deleteWorkflow,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
+  graphDefaultAliasTemplate,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
@@ -3154,9 +3155,10 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // The built-in default is never persisted to the user store; callers
-    // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
-    res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
+    // CONTRACT: [ v1 DEFAULT_WORKFLOW, the graph default under its coexistence
+    // alias, ...listWorkflows() ]. The alias row is never persisted, so it can
+    // never appear twice. P8 collapses this to [GRAPH_DEFAULT_WORKFLOW, ...].
+    res.json({ workflows: [DEFAULT_WORKFLOW, graphDefaultAliasTemplate(), ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
