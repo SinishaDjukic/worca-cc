@@ -648,6 +648,28 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (id) { select({ kind: 'node', id }); view.centerOn(id); }
   };
 
+  let live = false;
+  function resume() {
+    if (live) return;
+    live = true;
+    doc.addEventListener('keydown', onKeyDown);
+    doc.addEventListener('keyup', onKeyUp);
+    doc.addEventListener('scroll', onRefresh, { capture: true, passive: true });
+    win.addEventListener('blur', onBlur);
+    win.addEventListener('resize', onRefresh);
+  }
+  function suspend() {
+    if (!live) return;
+    live = false;
+    cancel();
+    space = false; stage.classList.remove('space');
+    doc.removeEventListener('keydown', onKeyDown);
+    doc.removeEventListener('keyup', onKeyUp);
+    doc.removeEventListener('scroll', onRefresh, { capture: true });
+    win.removeEventListener('blur', onBlur);
+    win.removeEventListener('resize', onRefresh);
+  }
+
   function mount() {
     empty = doc.createElement('div');
     empty.className = 'gv-empty';
@@ -655,8 +677,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.canvas.appendChild(empty);
     stage.addEventListener('pointerdown', onDown);
     stage.addEventListener('wheel', onWheel, { passive: false });
-    doc.addEventListener('keydown', onKeyDown);
-    doc.addEventListener('keyup', onKeyUp);
+    resume();                                   // doc/window listeners live here
     hostEls.autoBtn?.addEventListener('click', runAutoLayout);
     hostEls.newBtn?.addEventListener('click', onNewCanvas);
     hostEls.errors?.addEventListener('click', onErrChip);
@@ -678,9 +699,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     stage.addEventListener('pointerup', onUp);
     stage.addEventListener('pointercancel', onCancelEv);
     stage.addEventListener('lostpointercapture', onLost);
-    win.addEventListener('blur', onBlur);
-    win.addEventListener('resize', onRefresh);
-    doc.addEventListener('scroll', onRefresh, { capture: true, passive: true });
     if (typeof win.ResizeObserver === 'function') {
       ro = new win.ResizeObserver(onRefresh);
       ro.observe(stage);
@@ -691,11 +709,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   let ro = null;
 
   function destroy() {
-    cancel();
+    suspend();
     stage.removeEventListener('pointerdown', onDown);
     stage.removeEventListener('wheel', onWheel);
-    doc.removeEventListener('keydown', onKeyDown);
-    doc.removeEventListener('keyup', onKeyUp);
     hostEls.autoBtn?.removeEventListener('click', runAutoLayout);
     hostEls.newBtn?.removeEventListener('click', onNewCanvas);
     hostEls.errors?.removeEventListener('click', onErrChip);
@@ -711,9 +727,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     stage.removeEventListener('pointerup', onUp);
     stage.removeEventListener('pointercancel', onCancelEv);
     stage.removeEventListener('lostpointercapture', onLost);
-    win.removeEventListener('blur', onBlur);
-    win.removeEventListener('resize', onRefresh);
-    doc.removeEventListener('scroll', onRefresh, { capture: true });
     if (ro) { ro.disconnect(); ro = null; }
     if (validateTimer) { clearTimeout(validateTimer); validateTimer = null; }
     if (empty) { empty.remove(); empty = null; }
@@ -735,7 +748,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   const composer = {
     view, stats, hooks,
-    mount, destroy, commit, loadTemplate,
+    mount, destroy, resume, suspend, commit, loadTemplate,
     fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     spawn, paintPalette, paintInspector,
     openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },

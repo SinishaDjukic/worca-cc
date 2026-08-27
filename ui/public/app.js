@@ -84,6 +84,10 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
+import { createComposer } from './graph/composer.mjs';
+import { thumbnailFor, mountStaticGraph } from './graph/view.mjs';
+import { portsFnFor } from '../../src/shared/graph/ports.mjs';
+import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -2020,6 +2024,193 @@ async function deleteWorkflow(id) {
   return true;
 }
 
+
+// ---------------------------------------------------------------------------
+// Workflow Composer v2 (node graph). initComposer() mounts ONCE and re-fits on
+// every re-entry; composerExit() (called by showView's leave-guard) unbinds the
+// keyboard and cancels any live gesture.
+// ---------------------------------------------------------------------------
+let gvComposer = null;
+let gvAgents = [];          // palette list  (GET /api/agents)
+let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
+let gvPortsFn = portsFnFor({});
+
+const gvApi = {
+  agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
+  agentsAll: async () => {
+    const res = await fetch('/api/agents?all=1');
+    if (!res.ok) throw new Error(`agents ${res.status}`);
+    const d = await safeJson(res);
+    return Array.isArray(d) ? d : (d && d.agents) || [];
+  },
+  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [] }; },
+  listWorkflows: async () => listWorkflows(),
+  listArchived: async () => {
+    try {
+      const res = await fetch('/api/workflows?archived=1');
+      if (!res.ok) return [];
+      const d = await safeJson(res);
+      return Array.isArray(d && d.workflows) ? d.workflows : [];
+    } catch { return []; }
+  },
+  readWorkflow: async (id) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return safeJson(res);
+  },
+  saveWorkflow: async (body) => {
+    const res = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await safeJson(res);
+    // 422 = the shared validator's issues, rendered verbatim by the dialog.
+    if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error };
+    return { ok: true, workflow: (d && d.workflow) || d };
+  },
+  deleteWorkflow: async (id) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    return { ok: res.ok };
+  },
+};
+
+function gvEls() {
+  const g = (id) => document.getElementById(id);
+  return {
+    canvas: g('gv-canvas'), chip: g('gv-chip'), head: g('gv-head'), name: g('gv-name'), dirty: g('gv-dirty'),
+    errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
+    insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
+    palette: g('gv-palette'), filter: g('gv-agent-filter'), savedList: g('gv-saved-list'),
+    savedCount: g('gv-saved-count'), archived: g('gv-archived'), dialogHost: g('gv-dialog-host'),
+  };
+}
+
+async function gvLoadAgents() {
+  const els = gvEls();
+  els.palette.textContent = 'Loading agents…';
+  gvComposer.setReady(false);
+  try {
+    const [pal, all, cfg] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config()]);
+    gvAgents = pal; gvAgentsAll = all;
+    gvPortsFn = portsFnFor(indexByKey(all));
+    gvComposer.setModels(cfg);
+    gvComposer.setAgents(indexByKey(pal));
+    gvComposer.setReady(true);
+    gvComposer.paintPalette();
+  } catch {
+    els.palette.replaceChildren();
+    const row = document.createElement('div');
+    row.className = 'gv-pal-err';
+    row.textContent = 'Couldn’t load agents — ';
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'gv-retry'; retry.textContent = 'Retry';
+    retry.addEventListener('click', () => { gvLoadAgents(); });
+    row.appendChild(retry);
+    els.palette.appendChild(row);
+    gvComposer.setReady(false);          // Save stays disabled without a registry
+  }
+}
+
+async function initComposer() {
+  if (gvComposer) { gvComposer.resume(); await gvRefreshSaved(); gvComposer.fit(); return; }
+  gvComposer = createComposer(gvEls(), {
+    doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    portsFn: (node) => gvPortsFn(node),
+  });
+  gvComposer.mount();
+  gvComposer.newCanvas();
+  gvComposer.hooks.onSaved = () => { gvRefreshSaved(); };
+  // Renaming marks the canvas DIRTY (it is an unsaved edit) — never markSaved().
+  gvEls().name.addEventListener('change', (e) => gvComposer.setName(e.target.value));
+  await gvLoadAgents();
+  await gvRefreshSaved();
+  gvComposer.fit();
+}
+
+// Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
+// every document-level listener is unbound and any live gesture is cancelled, so
+// Delete/arrows/⌘Z can never edit the graph from another view (a PR #359 bug).
+function composerExit() {
+  if (gvComposer) gvComposer.suspend();
+}
+
+async function gvRefreshSaved() {
+  const els = gvEls();
+  const list = await gvApi.listWorkflows();
+  els.savedCount.textContent = list.length ? `· ${list.length}` : '';
+  gvComposer.setSavedDomains([...new Set(list.map((w) => w.domain).filter(Boolean))]);
+  els.savedList.replaceChildren();
+  for (const wf of list) {
+    const item = document.createElement('div');
+    item.className = 'pl-item';
+    item.dataset.id = wf.id;
+    const row = document.createElement('div');
+    row.className = 'pl-row';
+    const main = document.createElement('div');
+    main.className = 'pl-main';
+    const name = document.createElement('div');
+    name.className = 'pl-name';
+    name.textContent = wf.name || wf.id;
+    const meta = document.createElement('div');
+    meta.className = 'pl-meta';
+    meta.textContent = wf.domain || 'general';
+    main.append(name, meta);
+    row.appendChild(main);
+    if (wf.version === 2) {
+      const thumb = document.createElement('div');
+      thumb.className = 'pl-thumb';
+      // thumbnailFor is numbers-only markup built from the SAME geometry module.
+      thumb.innerHTML = thumbnailFor(wf, gvPortsFn, { width: 240, height: 96 });
+      item.appendChild(thumb);
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
+      open.addEventListener('click', async () => {
+        const full = await gvApi.readWorkflow(wf.id);
+        if (full) { gvComposer.loadTemplate(full); gvComposer.fit(); }
+      });
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
+      // A delete is destructive and unrecoverable: it asks first, in red — the
+      // guard the v1 composer's saved list owned before it was retired.
+      del.addEventListener('click', async () => {
+        const ok = await confirmModal({
+          title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+          message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+        });
+        if (!ok) return;
+        await gvApi.deleteWorkflow(wf.id);
+        gvRefreshSaved();
+      });
+      row.append(open, del);
+    } else {
+      const tag = document.createElement('span');
+      tag.className = 'pl-legacy';
+      tag.textContent = 'legacy · runnable until the graph cut-over';
+      row.appendChild(tag);
+    }
+    item.prepend(row);
+    els.savedList.appendChild(item);
+  }
+  await gvRefreshArchived();
+}
+
+// The Archived footer only exists once V24 (P8) archives rows: it is rendered
+// when — and only when — GET /api/workflows?archived=1 returns at least one row,
+// so it is invisible today and lights up after the break with no further work.
+async function gvRefreshArchived() {
+  const els = gvEls();
+  const rows = await gvApi.listArchived();
+  els.archived.replaceChildren();
+  els.archived.hidden = rows.length === 0;
+  if (!rows.length) return;
+  const head = document.createElement('span');
+  head.textContent = `Archived (${rows.length}) — v1 templates kept but not runnable. `;
+  els.archived.appendChild(head);
+  for (const wf of rows) {
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'pl-chip'; chip.textContent = `${wf.name || wf.id} ×`;
+    chip.title = 'Delete permanently';
+    chip.addEventListener('click', async () => { await gvApi.deleteWorkflow(wf.id); gvRefreshArchived(); });
+    els.archived.appendChild(chip);
+  }
+}
 
 function modelById(id) {
   return state.models.find((m) => m.id === id) || null;
@@ -14708,6 +14899,9 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'];
 
 function showView(name, param = '') {
+  // Same guard for the composer: unbind its keyboard and cancel any live gesture
+  // so Delete/arrows/⌘Z can never edit the graph from another view.
+  if (currentShownView === 'composer' && name !== 'composer') composerExit();
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
   // scan + resets wizard state (addresses orphaned-background-request risk).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
@@ -14806,6 +15000,7 @@ function showView(name, param = '') {
   if (name === 'models') loadModelsView();
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
+  if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
