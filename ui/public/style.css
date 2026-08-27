@@ -3377,55 +3377,261 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-chip[hidden]{display:none;}
 @media (prefers-reduced-motion:reduce){.gv-world .node{transition:none;}}
 
-/* v2 composer shell — header bar / canvas / agents card / saved list. */
-.gv-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line-2);}
-.gv-head .sp{flex:1;}
-.gv-name{border:1px solid transparent;background:transparent;font:600 15px var(--sans);color:var(--ink);
-  padding:6px 8px;border-radius:8px;min-width:200px;}
-.gv-name:hover{background:var(--field);}
-.gv-name:focus{background:#fff;border-color:var(--line-2);outline:none;}
-.gv-dirty{color:var(--amber);font-size:20px;line-height:1;}
-.gv-dirty[hidden]{display:none;}
+/* ========================================================================== */
+/* v2 composer shell — header bar / canvas / agents card / saved list.        */
+/* The three cards run EDGE TO EDGE (padding:0 + overflow:hidden), the way the */
+/* v1 builder card did: every band below owns its own inset, so a card keeping */
+/* the default .card 24px padding would double it and leave the head bars      */
+/* floating inside a white gutter.                                             */
+/* ========================================================================== */
+.gv-editor,.gv-saved{padding:0;overflow:hidden;}
+/* The composer view stacks its cards directly, with no .col wrapper to space
+   them — so the editor carries the house 22px card gap itself. */
+.gv-editor{margin-bottom:22px;}
+
+/* ---------- header bar ---------- */
+.gv-head{display:flex;align-items:center;gap:9px;padding:13px 18px;border-bottom:1px solid var(--line);}
+.gv-head .sp{flex:1 1 auto;}
+/* The pipeline name is a TITLE, not a form field: without `width:auto` it
+   inherits the global `input[type="text"]{width:100%}` rule and eats the bar,
+   pushing the actions into a 90px column where their labels wrap. */
+input.gv-name{width:auto;flex:0 1 340px;min-width:140px;border:1.5px solid transparent;background:var(--field);
+  font:600 15px var(--sans);letter-spacing:-.01em;color:var(--ink);padding:8px 11px;border-radius:11px;
+  text-overflow:ellipsis;transition:background .15s,border-color .15s;}
+input.gv-name:focus{background:#fff;border-color:var(--ink);outline:none;}
+input.gv-name:focus-visible{outline:none;}
 .gv-errchip{background:var(--red-bg);color:var(--red-ink);border:1px solid var(--red);border-radius:999px;
-  padding:3px 10px;font:600 11.5px var(--sans);cursor:pointer;}
+  padding:4px 11px;font:600 11.5px var(--sans);cursor:pointer;flex:0 0 auto;white-space:nowrap;}
+.gv-errchip:hover{filter:brightness(.97);}
 .gv-errchip[hidden]{display:none;}
-#gv-canvas{height:560px;}
-.gv-ins-rail{position:absolute;top:0;right:0;bottom:0;width:280px;z-index:6;background:var(--panel);
-  border-left:1px solid var(--line-2);display:flex;overflow:hidden;}
-.gv-ins-rail[data-open="collapsed"]{width:28px;}
-.gv-ins-rail[data-open="collapsed"] .gv-ins-body{display:none;}
-.gv-ins-toggle{width:28px;flex:0 0 28px;border:none;background:var(--field);color:var(--ink-2);cursor:pointer;font-size:13px;}
-.gv-ins-body{flex:1;overflow:auto;padding:12px;}
-.gv-agents-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);}
-.gv-legend{margin-left:auto;font:11px var(--mono);color:var(--ink-3);}
-.gv-palette{max-height:300px;overflow:auto;padding:10px 16px 14px;}
-.pal-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
-.pal-chip{border:1px solid var(--line-2);border-radius:999px;background:#fff;padding:3px 11px;font-size:11.5px;cursor:pointer;}
-.pal-chip.off{opacity:.45;}
-.pal-group .grp{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font:600 11.5px var(--sans);color:var(--ink-2);}
+/* Toolbar density: .btn-ghost/.btn-go are PAGE-level pills (13–14px of vertical
+   padding, 20–28px horizontal). In a 52px bar they wrap their own labels, so
+   the bar re-states them at .btn-mini metrics — same skin, toolbar size. */
+.gv-head .btn-ghost,.gv-head .btn-go{padding:8px 15px;font-size:12.5px;white-space:nowrap;}
+.gv-head .btn-go{padding:8px 18px;}
+.gv-head .btn-go:disabled{opacity:.4;cursor:not-allowed;transform:none;filter:none;}
+
+/* ---------- canvas + the floating rail (agents + inspector) ---------- */
+/* 340px / 28px are INSET_OPEN / INSET_COLLAPSED in composer.mjs — the editor
+   subtracts them when it decides whether a drop landed on the canvas. Change
+   one and you MUST change the other (scripts/verify-composer-cdp.mjs too). */
+#gv-canvas{height:clamp(486px,63vh,729px);}
+/* A COLUMN, not a row: the tab bar is the panel's own top row when open, and
+   the bare toggle rides at the top of the grey strip when collapsed — never a
+   full-height gutter beside the content. */
+.gv-ins-rail{position:absolute;top:0;right:0;bottom:0;width:340px;z-index:6;background:var(--panel);
+  border-left:1px solid var(--line-2);display:flex;flex-direction:column;overflow:hidden;}
+.gv-ins-rail[data-open="collapsed"]{width:28px;background:var(--field);}
+.gv-ins-rail[data-open="collapsed"] .gv-ins-pane,
+.gv-ins-rail[data-open="collapsed"] .gv-tabs{display:none;}
+/* `data-tab` shows exactly one pane. Direct-child selectors: the panes are the
+   rail's own children, and nothing nested may answer to the same switch. */
+.gv-ins-rail[data-tab="agents"] > .gv-ins-body{display:none;}
+.gv-ins-rail[data-tab="info"] > .gv-agents-pane{display:none;}
+
+.gv-ins-bar{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:5px 9px 5px 0;
+  border-bottom:1px solid var(--line);}
+.gv-ins-rail[data-open="collapsed"] .gv-ins-bar{padding:0;border-bottom:none;}
+.gv-ins-toggle{flex:0 0 34px;width:34px;height:34px;display:grid;place-items:center;
+  border:none;border-radius:9px;background:transparent;color:var(--ink-3);cursor:pointer;
+  line-height:1;font-family:inherit;transition:background .12s,color .12s;}
+.gv-ins-toggle:hover{background:var(--field);color:var(--ink);}
+/* The icon POINTS where the click sends the rail: right to collapse it into the
+   edge, left to pull it back out. One element, turned by the state — never two
+   glyphs that can disagree with `data-open`. */
+.gv-ins-toggle svg{display:block;flex:0 0 auto;transition:transform .15s;}
+.gv-ins-rail[data-open="collapsed"] .gv-ins-toggle svg{transform:rotate(180deg);}
+.gv-ins-rail[data-open="collapsed"] .gv-ins-toggle{flex-basis:28px;width:28px;border-radius:0;}
+.gv-ins-rail[data-open="collapsed"] .gv-ins-toggle:hover{background:var(--line);color:var(--ink);}
+.gv-ins-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+
+/* Segmented control, not two buttons: one track, the selected half raised. */
+.gv-tabs{flex:1 1 auto;display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--field);}
+.gv-tab{flex:1 1 0;padding:5px 0;border:none;border-radius:8px;background:transparent;color:var(--ink-3);
+  font:600 12px var(--sans);font-family:inherit;cursor:pointer;transition:background .12s,color .12s;}
+.gv-tab:hover{color:var(--ink);}
+.gv-tab[aria-selected="true"]{background:#fff;color:var(--ink);box-shadow:var(--shadow-soft);}
+.gv-tab:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+
+.gv-ins-pane{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;}
+.gv-ins-body{padding:13px 15px 20px;}
+/* The agents pane does NOT scroll as a whole: the filter is pinned and only the
+   palette below it moves, so the search field can never scroll out of reach. */
+.gv-agents-pane{display:flex;flex-direction:column;overflow:hidden;}
+.gv-pal-head{flex:0 0 auto;padding:10px 13px;border-bottom:1px solid var(--line);}
+
+/* ---------- inspector panels (inspector.mjs markup) ---------- */
+.ins-panel{display:flex;flex-direction:column;}
+.ins-head{padding-bottom:11px;margin-bottom:13px;border-bottom:1px solid var(--line);}
+.ins-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;}
+.ins-sub{margin-top:4px;font:10.5px/1.4 var(--mono);color:var(--ink-3);overflow-wrap:anywhere;}
+.ins-body-in{display:flex;flex-direction:column;gap:13px;}
+.ins-f{display:flex;flex-direction:column;gap:6px;}
+.ins-label{font-weight:600;font-size:11.5px;color:var(--ink-2);}
+/* Compact restatement of the global field skin — the page metrics (13px/15px of
+   padding, 14px text) are far too heavy for a 308px rail. */
+.ins-panel .ins-select,.ins-panel .ins-number{width:100%;padding:8px 11px;font-size:12.5px;border-radius:10px;
+  background:var(--field);border:1.5px solid transparent;color:var(--ink);font-family:inherit;}
+.ins-panel .ins-select:focus,.ins-panel .ins-number:focus{background:#fff;border-color:var(--ink);outline:none;}
+/* `select{appearance:none}` (global) strips the native arrow and the product
+   draws its own with .select-wrap::after — which the rail has no wrapper for,
+   so the chevron rides in as a background image instead. */
+.ins-panel .ins-select{padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235C5C63' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;}
+.ins-tog{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;
+  border:1px solid var(--line);border-radius:12px;background:var(--field);}
+.ins-tog input[type="checkbox"]{width:15px;height:15px;flex:0 0 auto;margin:1px 0 0;accent-color:var(--ink);cursor:pointer;}
+.ins-tog input:disabled{cursor:not-allowed;}
+.ins-tog:has(input:disabled){opacity:.55;}
+.ins-tog-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ins-tog-t{font-weight:600;font-size:12.5px;color:var(--ink);}
+.ins-tog-h{font-size:11px;line-height:1.4;color:var(--ink-3);}
+.ins-blurb{margin:0;font-size:12px;line-height:1.55;color:var(--ink-2);}
+.ins-hint{display:block;font-size:11px;line-height:1.45;color:var(--ink-3);margin-top:-6px;}
+.ins-resolved{font:11px/1.4 var(--mono);color:var(--ink-2);background:var(--field);
+  border-radius:9px;padding:6px 9px;}
+.ins-result{font:11px/1.5 var(--mono);color:var(--ink-3);overflow-wrap:anywhere;}
+.ins-result:empty{display:none;}
+.ins-sep{height:1px;background:var(--line);margin:3px 0 1px;}
+/* Port listing: the same dot vocabulary as the canvas cards, read-only. */
+.ins-zone{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 7px;}
+.ins-plist{display:flex;flex-direction:column;gap:4px;}
+.ins-plist + .ins-zone{margin-top:13px;}
+.ins-pitem{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:9px;background:var(--field);}
+.ins-pitem .dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;}
+.ins-pitem .dot.md{background:var(--ink);}
+.ins-pitem .dot.json{background:var(--blue);}
+.ins-pitem .dot.any{background:#fff;border:2px solid var(--ink);}
+.ins-pitem .dot.void{background:#fff;border:2px solid var(--ink-3);}
+.ins-pitem .gdot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#fff;border:2px dashed var(--seq);}
+.ins-pitem .pn{font-size:12px;font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ins-pitem .pt{font:10px/1.4 var(--mono);color:var(--ink-3);white-space:nowrap;}
+.ins-pitem .mla{margin-left:auto;}
+.ins-pitem.gate .pn{color:var(--ink-3);}
+.ins-empty .ins-blurb{color:var(--ink-3);text-align:center;padding:22px 6px;}
+
+/* ---------- the rail's agents pane ---------- */
+/* Restored from the retired v1 palette: a bare <input type="search"> matches
+   none of the global field selectors (they list text/number only), which is
+   why it fell back to the UA skin. */
+.pal-filter{display:block;width:100%;-webkit-appearance:none;appearance:none;
+  padding:7px 11px;border:1.5px solid transparent;border-radius:10px;background:var(--field);
+  color:var(--ink);font-family:inherit;font-size:12.5px;font-weight:500;}
+.pal-filter::placeholder{color:var(--ink-3);}
+.pal-filter::-webkit-search-decoration,.pal-filter::-webkit-search-cancel-button{-webkit-appearance:none;}
+.pal-filter:focus{outline:none;background:#fff;border-color:var(--ink);}
+.pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-palette{flex:1 1 auto;min-height:0;overflow:auto;padding:13px 13px 18px;}
+.gv-pal-err{padding:22px 4px;text-align:center;font-size:13px;color:var(--ink-3);}
+.gv-retry{border:1.5px solid var(--line-2);background:#fff;color:var(--ink);font-family:inherit;
+  font-weight:600;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;}
+.gv-retry:hover{background:var(--field);}
+
 .pal-group[hidden]{display:none;}
-.pills{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
-.ap{display:flex;align-items:center;gap:9px;border:1px solid var(--line-2);border-radius:12px;background:#fff;
-  padding:8px 11px;cursor:grab;text-align:left;}
+/* Each domain is its OWN disclosure — there is no chip row above the list, so a
+   group can only be folded away through the header that names it. */
+.pal-grp{display:flex;align-items:center;gap:8px;width:100%;margin:13px 0 8px;padding:4px 6px;
+  border:none;border-radius:9px;background:transparent;color:inherit;font-family:inherit;
+  text-align:left;cursor:pointer;transition:background .12s;}
+.pal-group:first-of-type .pal-grp{margin-top:0;}
+.pal-grp:hover{background:var(--field);}
+.pal-grp:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.pal-grp .chev{flex:0 0 auto;color:var(--ink-3);transition:transform .15s;}
+.pal-grp[aria-expanded="false"] .chev{transform:rotate(-90deg);}
+.pal-grp .lab{font:600 11px var(--sans);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}
+/* The global .chip is a 7px/13px page pill; a group header needs a count badge. */
+.pal-grp .chip{background:var(--field);color:var(--ink-3);font-weight:700;font-size:10.5px;
+  padding:1px 8px;border-radius:999px;}
+.pal-grp:hover .chip{background:var(--line);}
+.pal-grp .pinned-tag{background:transparent;border:1px solid var(--line-2);}
+.pal-pinned{border-top:1px solid var(--line);margin-top:16px;padding-top:4px;}
+/* One pill per row: the rail is a single column, and a two-up grid at 340px
+   clips the port line every pill's second line carries. */
+.pills{display:flex;flex-direction:column;gap:7px;}
+.pills[hidden]{display:none;}
+.ap{display:flex;align-items:center;gap:9px;min-width:0;border:1.5px solid var(--line-2);border-radius:12px;
+  background:#fff;padding:9px 11px;cursor:grab;text-align:left;font-family:inherit;color:var(--ink);
+  box-shadow:var(--shadow-soft);transition:transform .12s,box-shadow .12s,border-color .12s;user-select:none;}
+.ap:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow);}
+.ap:active:not(:disabled){cursor:grabbing;transform:none;}
+.ap:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ap[hidden]{display:none;}
-.ap:disabled,.ap.dim{opacity:.45;cursor:default;}
+.ap:disabled,.ap.dim{opacity:.45;cursor:default;box-shadow:none;}
 .ap .d{width:9px;height:9px;border-radius:50%;background:var(--seq);flex:0 0 auto;}
-.ap .b{min-width:0;}
-.ap .n{display:block;font:600 12.5px var(--sans);}
-.ap .p{display:block;font:10.5px var(--mono);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ap .d[data-color="flow"]{background:var(--ink);}
+.ap .b{min-width:0;flex:1 1 auto;}
+.ap .n{display:block;font:600 12.5px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ap .p{display:block;margin-top:2px;font:10.5px/1.4 var(--mono);color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ap .chip{flex:0 0 auto;background:var(--field);color:var(--ink-3);font-weight:700;font-size:10px;padding:1px 7px;}
 .gv-drag-ghost{position:fixed;z-index:99;pointer-events:none;border:1.5px dashed var(--ink-3);border-radius:12px;
-  background:#fff;padding:6px 10px;font:600 12px var(--sans);opacity:.9;}
-.gv-saved .pl-thumb{width:100%;height:96px;display:block;}
-.gv-saved .pl-legacy{background:var(--field);color:var(--ink-3);border-radius:999px;padding:2px 9px;font-size:11px;}
-.gv-archived{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-2);}
+  background:#fff;padding:6px 10px;font:600 12px var(--sans);opacity:.9;box-shadow:var(--shadow);}
+
+/* ---------- the editor's legend footer ---------- */
+/* The key describes the CANVAS, so it belongs to the editor card as a whole —
+   canvas and rail — not to a palette card that no longer exists. */
+.gv-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;
+  padding:9px 18px;border-top:1px solid var(--line);background:var(--panel);}
+.gv-legend{font:11px/1.5 var(--mono);color:var(--ink-3);text-align:right;}
+
+/* ---------- saved pipelines ---------- */
+.saved-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line);}
+.saved-head b{font-size:15px;font-weight:600;letter-spacing:-.01em;}
+.saved-head .cnt{color:var(--ink-3);font-size:12.5px;font-weight:600;margin-left:9px;}
+.saved-list{display:flex;flex-direction:column;}
+.gv-saved .pl-item{border-bottom:1px solid var(--line);}
+.gv-saved .pl-item:last-child{border-bottom:none;}
+.gv-saved .pl-row{display:flex;align-items:center;gap:14px;padding:12px 20px;transition:background .12s;}
+.gv-saved .pl-row:hover{background:var(--field);}
+/* The thumbnail is a fixed TILE at the head of the row: the SVG carries its own
+   width/height, so a percentage box would leave it stranded in dead space. */
+.gv-saved .pl-thumb{flex:0 0 auto;width:140px;height:54px;display:grid;place-items:center;overflow:hidden;
+  border:1px solid var(--line-2);border-radius:10px;background:#FBFBF9;}
+.gv-saved .pl-thumb svg{display:block;}
+.gv-saved .pl-thumb.is-empty{border-style:dashed;color:var(--ink-3);font:10px/1 var(--mono);
+  letter-spacing:.08em;text-transform:uppercase;}
+.gv-saved .pl-main{flex:1 1 auto;min-width:0;}
+.gv-saved .pl-name{font-weight:600;font-size:13.5px;letter-spacing:-.01em;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-saved .pl-meta{margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);}
+.gv-saved .pl-open{flex:0 0 auto;padding:7px 15px;font-size:12.5px;}
+.gv-saved .pl-legacy{flex:0 0 auto;background:var(--field);border:1px solid var(--line);color:var(--ink-3);
+  border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;}
+.gv-saved .pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);
+  background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);
+  font-family:inherit;font-size:15px;line-height:1;transition:.12s;}
+.gv-saved .pl-del:hover{border-color:var(--red);color:var(--red-ink);background:var(--red-bg);}
+.gv-saved .pl-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-saved .pl-empty{padding:30px 20px;text-align:center;color:var(--ink-3);font-size:13px;}
+.gv-archived{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
+  padding:12px 20px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-2);}
 .gv-archived[hidden]{display:none;}
-.gv-empty{position:absolute;left:0;right:0;top:44%;text-align:center;color:var(--ink-3);font-size:13px;pointer-events:none;}
-.gv-empty[hidden]{display:none;}
-.save-dialog{border:none;border-radius:16px;padding:0;box-shadow:var(--shadow);max-width:420px;width:92vw;}
-.save-dialog .sd-body{padding:18px 20px;display:flex;flex-direction:column;gap:12px;}
-.save-dialog .sd-title{margin:0;font-size:15px;}
-.save-dialog .sd-field{display:flex;flex-direction:column;gap:5px;}
-.save-dialog .sd-field input{border:1px solid var(--line-2);border-radius:9px;padding:8px 10px;font:13px var(--sans);}
-.save-dialog .sd-msg{margin:0;font-size:12px;color:var(--ink-3);white-space:pre-line;}
+.gv-archived .pl-chip{border:1px solid var(--line-2);background:var(--field);color:var(--ink-3);
+  border-radius:999px;padding:2px 10px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;transition:.12s;}
+.gv-archived .pl-chip:hover{border-color:var(--red);color:var(--red-ink);background:var(--red-bg);}
+
+/* ---------- save dialog ---------- */
+.save-dialog{border:none;border-radius:18px;padding:0;box-shadow:var(--shadow);max-width:420px;width:92vw;}
+.save-dialog::backdrop{background:rgba(25,25,27,.34);}
+.save-dialog .sd-body{padding:20px 22px 18px;display:flex;flex-direction:column;gap:14px;}
+.save-dialog .sd-title{margin:0;font-size:16px;font-weight:700;letter-spacing:-.015em;}
+.save-dialog .sd-field{display:flex;flex-direction:column;gap:6px;}
+.save-dialog .sd-field label{font-weight:600;font-size:12.5px;color:var(--ink-2);}
+.save-dialog .sd-field input{width:100%;border:1.5px solid transparent;background:var(--field);
+  border-radius:11px;padding:10px 12px;font:13px var(--sans);color:var(--ink);}
+.save-dialog .sd-field input:focus{outline:none;background:#fff;border-color:var(--ink);}
+.save-dialog .sd-msg{margin:0;font-size:12px;line-height:1.5;color:var(--ink-3);white-space:pre-line;}
+.save-dialog .sd-msg:empty{display:none;}
 .save-dialog .sd-msg.err{color:var(--red-ink);}
-.save-dialog .sd-actions{display:flex;justify-content:flex-end;gap:8px;}
+.save-dialog .sd-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:2px;}
+.save-dialog .sd-actions .btn-ghost,.save-dialog .sd-actions .btn-go{padding:9px 18px;font-size:13px;}
+
+@media (prefers-reduced-motion:reduce){
+  .ap:hover:not(:disabled){transform:none;}
+  /* The rotations stay — they are the icons' STATE, not motion; only the tween goes. */
+  .gv-ins-toggle svg,.pal-grp .chev{transition:none;}
+}

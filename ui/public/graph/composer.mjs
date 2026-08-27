@@ -22,9 +22,10 @@ import { autoLayout } from '../../../src/shared/graph/layout.mjs';
 
 export const UNDO_LIMIT = 50;
 export const INSPECTOR_KEY = 'worca.composer.inspector';
-export const EMPTY_STATE_COPY = 'Wire agents from the Task node to the End node — outputs → inputs.';
+export const TAB_KEY = 'worca.composer.tab';
+export const TABS = Object.freeze(['agents', 'info']);
 /** px of canvas hidden under the floating inspector rail (§7.6 constants). */
-export const INSET_OPEN = 280;
+export const INSET_OPEN = 340;
 export const INSET_COLLAPSED = 28;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -166,13 +167,11 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   function paintChrome() {
     const n = lastReport.errors.length;
-    if (hostEls.dirty) hostEls.dirty.hidden = !dirty;
     if (hostEls.saveBtn) hostEls.saveBtn.disabled = n > 0 || !ready;
     if (hostEls.errors) {
       hostEls.errors.hidden = n === 0;
       hostEls.errors.textContent = n ? `${n} error${n === 1 ? '' : 's'}` : '';
     }
-    if (empty) empty.hidden = tpl.wires.length > 0;
   }
 
   // ------------------------------------------------------------------- ghost
@@ -320,7 +319,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     finish(g);
   }
 
-  let empty = null;
   let ready = true;                 // false while /api/agents is in flight (app.js sets it)
   const hooks = {};                 // onRender, set by app.js
 
@@ -505,9 +503,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     doc.removeEventListener('pointercancel', onPalCancel);
   }
   function onPalClick(ev) {
-    const chip = ev.target.closest && ev.target.closest('.pal-chip');
-    if (!chip) return;
-    const d = chip.dataset.domain;
+    const head = ev.target.closest && ev.target.closest('.pal-grp');
+    if (!head) return;
+    const d = head.dataset.domain;
     if (collapsed.has(d)) collapsed.delete(d); else collapsed.add(d);
     paintPalette();
   }
@@ -550,6 +548,26 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (persist) writeKey(INSPECTOR_KEY, open ? 'open' : 'collapsed');
   }
   const onRailToggle = () => setRail(hostEls.insRail.dataset.open === 'collapsed', { persist: true });
+
+  /** The rail's two panes. Selection NEVER moves the tab (D2): a canvas click
+   *  repaints Info silently, so placing a run of agents is never interrupted. */
+  function setTab(name, { persist = false } = {}) {
+    if (!hostEls.insRail) return;
+    const tab = TABS.includes(name) ? name : TABS[0];
+    hostEls.insRail.dataset.tab = tab;
+    if (hostEls.insTabs) {
+      for (const btn of hostEls.insTabs.querySelectorAll('[data-tab]')) {
+        btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
+        btn.tabIndex = btn.dataset.tab === tab ? 0 : -1;
+      }
+    }
+    if (persist) writeKey(TAB_KEY, tab);
+  }
+  function onTabClick(ev) {
+    const btn = ev.target.closest && ev.target.closest('[data-tab]');
+    if (!btn) return;
+    setTab(btn.dataset.tab, { persist: true });
+  }
 
   function onInspectorChange(ev) {
     const name = ev.target.dataset && ev.target.dataset.field;
@@ -671,10 +689,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
 
   function mount() {
-    empty = doc.createElement('div');
-    empty.className = 'gv-empty';
-    empty.textContent = EMPTY_STATE_COPY;
-    hostEls.canvas.appendChild(empty);
     stage.addEventListener('pointerdown', onDown);
     stage.addEventListener('wheel', onWheel, { passive: false });
     resume();                                   // doc/window listeners live here
@@ -687,8 +701,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.filter?.addEventListener('input', onFilterInput);
     hostEls.insBody?.addEventListener('change', onInspectorChange);
     hostEls.insToggle?.addEventListener('click', onRailToggle);
+    hostEls.insTabs?.addEventListener('click', onTabClick);
     hostEls.saveBtn?.addEventListener('click', onSaveClick);
     setRail(readKey(INSPECTOR_KEY) !== 'collapsed');
+    setTab(readKey(TAB_KEY) || TABS[0]);
     // The model/effort lists are chrome, not graph state: pull them once through
     // the injected api so the inspector's selects are usable the moment the rail
     // opens. app.js may still call setModels() explicitly; that wins.
@@ -721,6 +737,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.filter?.removeEventListener('input', onFilterInput);
     hostEls.insBody?.removeEventListener('change', onInspectorChange);
     hostEls.insToggle?.removeEventListener('click', onRailToggle);
+    hostEls.insTabs?.removeEventListener('click', onTabClick);
     hostEls.saveBtn?.removeEventListener('click', onSaveClick);
     endPalDrag();
     stage.removeEventListener('pointermove', onMove);
@@ -729,7 +746,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     stage.removeEventListener('lostpointercapture', onLost);
     if (ro) { ro.disconnect(); ro = null; }
     if (validateTimer) { clearTimeout(validateTimer); validateTimer = null; }
-    if (empty) { empty.remove(); empty = null; }
   }
 
   /** Load a saved template (or `null` for a fresh canvas). Resets undo + dirty. */

@@ -13,9 +13,9 @@ import { fixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
 const composerPath = new URL('../ui/public/graph/composer.mjs', import.meta.url).href;
 const RECT = { left: 0, top: 0, width: 1280, height: 560 };
 
-const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-dirty', 'gv-errors', 'gv-new', 'gv-autolayout',
-  'gv-save', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-palette', 'gv-agent-filter', 'gv-saved-list',
-  'gv-saved-count', 'gv-archived', 'gv-dialog-host'];
+const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-errors', 'gv-new', 'gv-autolayout',
+  'gv-save', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-ins-tabs', 'gv-palette', 'gv-agent-filter',
+  'gv-saved-list', 'gv-saved-count', 'gv-archived', 'gv-dialog-host'];
 
 export function shell() {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/' });
@@ -32,14 +32,20 @@ export function shell() {
   }
   // chip and rail are the stage's SIBLINGS inside the canvas host, exactly as in index.html
   doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'));
+  // …and the tablist is the rail's own top row, mirroring index.html.
+  for (const tab of ['agents', 'info']) {
+    const b = doc.createElement('button');
+    b.type = 'button'; b.dataset.tab = tab; b.textContent = tab;
+    doc.getElementById('gv-ins-tabs').appendChild(b);
+  }
   for (const id of IDS) el[id.replace(/^gv-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = doc.getElementById(id);
   const q = [];
   return {
     dom, win: dom.window, doc, el,
     hostEls: {
-      canvas: el.canvas, chip: el.chip, head: el.head, name: el.name, dirty: el.dirty, errors: el.errors,
+      canvas: el.canvas, chip: el.chip, head: el.head, name: el.name, errors: el.errors,
       newBtn: el.new, autoBtn: el.autolayout, saveBtn: el.save, insRail: el.insRail, insBody: el.insBody,
-      insToggle: el.insToggle, palette: el.palette, filter: el.agentFilter, savedList: el.savedList,
+      insToggle: el.insToggle, insTabs: el.insTabs, palette: el.palette, filter: el.agentFilter, savedList: el.savedList,
       savedCount: el.savedCount, archived: el.archived, dialogHost: el.dialogHost,
     },
     raf: (fn) => { q.push(fn); return q.length; },
@@ -135,6 +141,29 @@ test('illegal drops show the reason chip at world→screen + 14 and commit nothi
   assert.equal(s.c.isDirty(), false);
 });
 
+test('a self-loop drop (blocking output → own loop input) is legal and commits an amber loop wire', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  down(s, 620, 193);                                     // n_agent.plan (when:'always')
+  move(s, 400, 160); s.flush();                          // over n_agent.fix (loop input) — same card
+  assert.equal(s.el.chip.textContent, 'same node', 'a plain output still cannot feed its own card');
+  up(s, 400, 160); s.flush();
+  assert.equal(s.c.template().wires.length, 2);
+  down(s, 620, 217);                                     // n_agent.review (when:'blocking')
+  move(s, 400, 160); s.flush();                          // over n_agent.fix again
+  assert.equal(s.c.view.ghostEl.getAttribute('class'), 'wire ghost on legal');
+  assert.equal(s.el.chip.hidden, true);
+  assert.ok(s.c.view.nodeEl('n_agent').querySelector('.prow[data-port="fix"]').classList.contains('drop-ok'));
+  up(s, 400, 160); s.flush();
+  assert.equal(s.c.template().wires.length, 3, 'the self-loop committed');
+  const w = s.c.template().wires[2];
+  assert.deepEqual(w.from, { node: 'n_agent', port: 'review' });
+  assert.deepEqual(w.to, { node: 'n_agent', port: 'fix' });
+  assert.equal(s.c.view.wiresEl.querySelector(`path[data-wire-id="${w.id}"]`).getAttribute('class'), 'wire loop', 'classified as a loop wire');
+  assert.deepEqual(s.c.report().errors, [], 'the validator agrees');
+  assert.equal(s.c.isDirty(), true);
+});
+
 test('destroy() unbinds everything; pointercancel and window blur end a gesture', async () => {
   const s = await open();
   down(s, 400, 80); move(s, 500, 120); s.flush();
@@ -207,10 +236,10 @@ test('keyboard: nudge, delete, undo/redo, Escape — all skipped while typing', 
 
 test('fit centres the model in the band left of the inspector and never magnifies', async () => {
   const s = await open();
-  s.c.fit();                                   // rail open => insetRight 280 => vw 1000
+  s.c.fit();                                   // rail open => insetRight 340 => vw 940
   const T = s.c.view.getTransform();
-  assert.ok(Math.abs(T.z - 1000 / 1040) < 1e-12, 'z = vw / bounds.w');
-  assert.ok(Math.abs(T.x - 0) < 1e-9, 'exactly centred: (1000 - 1040*z)/2 - 0*z = 0');
+  assert.ok(Math.abs(T.z - 940 / 1040) < 1e-12, 'z = vw / bounds.w');
+  assert.ok(Math.abs(T.x - 0) < 1e-9, 'exactly centred: (940 - 1040*z)/2 - 0*z = 0');
   s.c.fit({ insetRight: 28 });                 // rail collapsed => vw 1252
   assert.equal(s.c.view.getTransform().z, 1, 'fit never magnifies past 1x');
 });
@@ -446,4 +475,88 @@ test('an empty name is refused client-side before any POST', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(calls, 0);
   assert.equal(dlg.querySelector('.sd-msg').textContent, 'name is required');
+});
+
+// ---------------------------------------------------------------- rail tabs +
+// palette accordion. The agents card below the canvas is gone: the palette now
+// lives in the rail behind an Agents/Info tab, and each domain is its own
+// disclosure ("dropdown") instead of a row of collapse chips.
+const PAL_AGENTS = [
+  { key: 'planner', displayName: 'Plan', domain: 'coding', order: 1, inputs: [], outputs: [{ id: 'plan', type: 'md' }] },
+  { key: 'docs', displayName: 'Docs', domain: 'writing', order: 2, inputs: [], outputs: [{ id: 'doc', type: 'md' }] },
+];
+const palMod = () => import(new URL('../ui/public/graph/palette.mjs', import.meta.url).href);
+
+test('each palette group is a collapsible header and the chip row is gone', async () => {
+  const s = await open();
+  const { renderPalette } = await palMod();
+  renderPalette(s.el.palette, { agents: PAL_AGENTS, placedKinds: [], collapsed: new Set(), doc: s.doc });
+  assert.equal(s.el.palette.querySelector('.pal-chips'), null, 'the domain chip row is replaced by the headers');
+  const heads = [...s.el.palette.querySelectorAll('.pal-grp')];
+  assert.deepEqual(heads.map((h) => h.dataset.domain), ['coding', 'writing', 'flow'], 'every group, Flow included, is a disclosure');
+  assert.equal(heads[0].tagName, 'BUTTON');
+  assert.equal(heads[0].getAttribute('aria-expanded'), 'true');
+  assert.equal(heads[0].querySelector('.lab').textContent, 'coding');
+  assert.equal(heads[0].querySelector('.chip').textContent, '1');
+  assert.equal(s.el.palette.querySelector('.pal-group[data-domain="coding"] .pills').hidden, false);
+});
+
+test('a collapsed group keeps its header and hides only its pills', async () => {
+  const s = await open();
+  const { renderPalette } = await palMod();
+  renderPalette(s.el.palette, { agents: PAL_AGENTS, placedKinds: [], collapsed: new Set(['coding', 'flow']), doc: s.doc });
+  for (const domain of ['coding', 'flow']) {
+    const sec = s.el.palette.querySelector(`.pal-group[data-domain="${domain}"]`);
+    assert.equal(sec.hidden, false, `${domain} header stays reachable`);
+    assert.equal(sec.querySelector('.pal-grp').getAttribute('aria-expanded'), 'false');
+    assert.equal(sec.querySelector('.pills').hidden, true, `${domain} pills hidden`);
+  }
+  assert.equal(s.el.palette.querySelector('.pal-group[data-domain="writing"] .pills').hidden, false);
+});
+
+test('a live filter force-expands a collapsed group that matches', async () => {
+  const s = await open();
+  const { renderPalette, applyFilter } = await palMod();
+  const collapsed = new Set(['coding']);
+  renderPalette(s.el.palette, { agents: PAL_AGENTS, placedKinds: [], collapsed, doc: s.doc });
+  applyFilter(s.el.palette, 'plan', collapsed);
+  const coding = s.el.palette.querySelector('.pal-group[data-domain="coding"]');
+  assert.equal(coding.querySelector('.pills').hidden, false, 'the query overrides the collapse');
+  assert.equal(coding.querySelector('.pal-grp').getAttribute('aria-expanded'), 'true');
+  assert.equal(s.el.palette.querySelector('.pal-group[data-domain="writing"]').hidden, true, 'a group with no match drops out');
+  applyFilter(s.el.palette, '', collapsed);
+  assert.equal(coding.querySelector('.pills').hidden, true, 'clearing the query restores the collapse');
+});
+
+test('clicking a group header toggles it through the composer', async () => {
+  const s = await open({ api: { agents: async () => PAL_AGENTS, agentsAll: async () => PAL_AGENTS } });
+  s.c.setAgents(Object.fromEntries(PAL_AGENTS.map((a) => [a.key, a])));
+  s.c.paintPalette();
+  const head = s.el.palette.querySelector('.pal-grp[data-domain="coding"]');
+  head.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  assert.equal(s.el.palette.querySelector('.pal-group[data-domain="coding"] .pills').hidden, true);
+  s.el.palette.querySelector('.pal-grp[data-domain="coding"]').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  assert.equal(s.el.palette.querySelector('.pal-group[data-domain="coding"] .pills').hidden, false);
+});
+
+test('the rail opens on the Agents tab and remembers the last tab', async () => {
+  const store = new Map();
+  const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) };
+  const s = await open({ storage });
+  assert.equal(s.el.insRail.dataset.tab, 'agents');
+  assert.equal(s.el.insTabs.querySelector('[data-tab="agents"]').getAttribute('aria-selected'), 'true');
+  s.el.insTabs.querySelector('[data-tab="info"]').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  assert.equal(s.el.insRail.dataset.tab, 'info');
+  assert.equal(s.el.insTabs.querySelector('[data-tab="agents"]').getAttribute('aria-selected'), 'false');
+  assert.equal(store.get('worca.composer.tab'), 'info');
+  const s2 = await open({ storage });
+  assert.equal(s2.el.insRail.dataset.tab, 'info', 'restored on the next mount');
+});
+
+test('selecting a node repaints Info but never switches the tab', async () => {
+  const s = await open();
+  assert.equal(s.el.insRail.dataset.tab, 'agents');
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  assert.equal(s.el.insRail.dataset.tab, 'agents', 'no auto-switch');
+  assert.equal(s.el.insBody.querySelector('.ins-panel').dataset.nodeId, 'n_agent', 'Info is painted anyway');
 });

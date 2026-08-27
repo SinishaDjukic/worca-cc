@@ -55,7 +55,7 @@ test('entering the composer mounts once, preloads Task+End and lists saved rows'
   assert.ok(doc.querySelector('#gv-canvas .gv-stage'), 'stage mounted');
   assert.equal(doc.querySelectorAll('#gv-canvas .gv-stage').length, 1);
   assert.equal(doc.querySelectorAll('#gv-canvas .node').length, 2, 'new canvas preloads Task + End');
-  assert.match(doc.querySelector('.gv-empty').textContent, /^Wire agents from the Task node to the End node/);
+  assert.equal(doc.querySelector('.gv-empty'), null, 'no empty-state overlay on the canvas');
   assert.ok(doc.querySelector('#gv-palette .ap[data-key="planner"]'), 'palette rendered from /api/agents');
   const rows = [...doc.querySelectorAll('#gv-saved-list .pl-item')];
   assert.equal(rows.length, 2);

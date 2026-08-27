@@ -2079,11 +2079,12 @@ const gvApi = {
 function gvEls() {
   const g = (id) => document.getElementById(id);
   return {
-    canvas: g('gv-canvas'), chip: g('gv-chip'), head: g('gv-head'), name: g('gv-name'), dirty: g('gv-dirty'),
+    canvas: g('gv-canvas'), chip: g('gv-chip'), head: g('gv-head'), name: g('gv-name'),
     errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
     insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
-    palette: g('gv-palette'), filter: g('gv-agent-filter'), savedList: g('gv-saved-list'),
-    savedCount: g('gv-saved-count'), archived: g('gv-archived'), dialogHost: g('gv-dialog-host'),
+    insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
+    savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
+    dialogHost: g('gv-dialog-host'),
   };
 }
 
@@ -2152,6 +2153,16 @@ async function gvRefreshSaved() {
     item.dataset.id = wf.id;
     const row = document.createElement('div');
     row.className = 'pl-row';
+    // The preview leads the row, so every entry lines up on one left rail; a v1
+    // row has no graph to draw, so it gets the same tile with a `v1` stamp and
+    // the list keeps its column. The SVG carries its own width/height, which is
+    // why the tile is fixed-size — a percentage box strands it in dead space.
+    const thumb = document.createElement('div');
+    thumb.className = 'pl-thumb';
+    // thumbnailFor is numbers-only markup built from the SAME geometry module.
+    if (wf.version === 2) thumb.innerHTML = thumbnailFor(wf, gvPortsFn, { width: 140, height: 54 });
+    else { thumb.classList.add('is-empty'); thumb.textContent = 'v1'; }
+    row.appendChild(thumb);
     const main = document.createElement('div');
     main.className = 'pl-main';
     const name = document.createElement('div');
@@ -2163,11 +2174,6 @@ async function gvRefreshSaved() {
     main.append(name, meta);
     row.appendChild(main);
     if (wf.version === 2) {
-      const thumb = document.createElement('div');
-      thumb.className = 'pl-thumb';
-      // thumbnailFor is numbers-only markup built from the SAME geometry module.
-      thumb.innerHTML = thumbnailFor(wf, gvPortsFn, { width: 240, height: 96 });
-      item.appendChild(thumb);
       const open = document.createElement('button');
       open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
       open.addEventListener('click', async () => {
@@ -2194,7 +2200,7 @@ async function gvRefreshSaved() {
       tag.textContent = 'legacy · runnable until the graph cut-over';
       row.appendChild(tag);
     }
-    item.prepend(row);
+    item.appendChild(row);
     els.savedList.appendChild(item);
   }
   await gvRefreshArchived();

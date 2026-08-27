@@ -94,8 +94,16 @@ export function newWire(from, to, config, taken) {
 /**
  * Drop legality, derived entirely from the template — which is what lets it see
  * or-homogeneity and existing wires at all. Reasons, in check order:
- *   same node                 — an output and an input of the SAME card
  *   unknown port              — the endpoint does not resolve (V5)
+ *   same node                 — an output and an input of the SAME card, UNLESS
+ *                               the pair is the self-loop the engine runs: a
+ *                               `when:'blocking'` output into a `loop:true`
+ *                               input (the seeded refiner `revise → revise`).
+ *                               Any other same-card pair is refused here rather
+ *                               than left to V10/V11 after the drop. Checked
+ *                               after the ports resolve because it reads their
+ *                               meta; `V0` is the chip's code, not a validator
+ *                               rule.
  *   already connected         — UNIFORM single-wire (V7): ANY wired input rejects,
  *                               agent ports, or `inK`, `end.result` and `await`
  *                               alike. A duplicate (from,to) pair is necessarily a
@@ -112,10 +120,11 @@ export function canWire({ tpl, portsFn, from, to }) {
   const byId = new Map(nodes.filter(isObject).map((n) => [n.id, n]));
   const source = byId.get(from?.node);
   const target = byId.get(to?.node);
-  if (source && target && source.id === target.id) return deny('V0', 'same node');
   const outPort = source ? findPort(portsOf(portsFn, source), from.port, 'out') : null;
   const inPort = target ? findPort(portsOf(portsFn, target), to.port, 'in') : null;
   if (!outPort || !inPort) return deny('V5', 'unknown port');
+  const selfLoop = outPort.when === 'blocking' && inPort.loop === true;
+  if (source.id === target.id && !selfLoop) return deny('V0', 'same node');
   if (inboundWires(tpl, to.node, to.port).length) return deny('V7', 'already connected');
 
   const sourceType = outPort.type && outPort.type !== 'any'

@@ -1,7 +1,8 @@
 // ui/public/graph/palette.mjs
-// The agents card: domain chips, filter, agent pills and the PINNED Flow group.
-// Pure DOM + one delegated controller; it never touches the template — it calls
-// back into the composer, which owns every mutation.
+// The rail's Agents tab: one DISCLOSURE per domain (plus the PINNED Flow group),
+// a filter, and agent pills stacked one per row. Pure DOM + one delegated
+// controller; it never touches the template — it calls back into the composer,
+// which owns every mutation.
 export const FLOW_GROUP = 'flow';
 /** Flow pills advertise their ports the way agent pills do (pill line 2). */
 export const FLOW_PORT_LINE = {
@@ -76,32 +77,42 @@ function pill(doc, entry) {
   return btn;
 }
 
+/** The disclosure caret. Turned by CSS off `aria-expanded`, so the header's
+ *  state can never disagree with the pills it hides. */
+function chevron(doc) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(NS, 'svg');
+  for (const [k, v] of [['class', 'chev'], ['width', '13'], ['height', '13'], ['viewBox', '0 0 24 24'],
+    ['fill', 'none'], ['stroke', 'currentColor'], ['stroke-width', '2.6'], ['aria-hidden', 'true']]) svg.setAttribute(k, v);
+  const path = doc.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M6 9l6 6 6-6');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+  return svg;
+}
+
 export function renderPalette(host, { agents = [], placedKinds = [], collapsed = new Set(), query = '', doc = globalThis.document } = {}) {
   if (!host) return;
   const groups = paletteEntries(agents, { placedKinds });
   const frag = doc.createDocumentFragment();
-  const chips = h(doc, 'div', 'pal-chips');
-  for (const g of groups) {
-    if (g.flow) continue;
-    const c = h(doc, 'button', `pal-chip${collapsed.has(g.domain) ? ' off' : ''}`, g.domain);
-    c.type = 'button';
-    c.dataset.domain = g.domain;
-    chips.appendChild(c);
-  }
-  frag.appendChild(chips);
   for (const g of groups) {
     const sec = h(doc, 'section', `pal-group${g.flow ? ' pal-pinned' : ''}`);
     sec.dataset.domain = g.domain;
-    const head = h(doc, 'div', 'grp');
-    head.append(h(doc, 'span', 'lab', g.flow ? 'Flow' : g.domain), h(doc, 'span', 'chip', String(g.agents.length)));
+    // The group HEAD is the control: there is no separate chip row, so a domain
+    // can only be reached — and only be folded away — through its own header.
+    const head = h(doc, 'button', 'pal-grp');
+    head.type = 'button';
+    head.dataset.domain = g.domain;
+    head.append(chevron(doc), h(doc, 'span', 'lab', g.flow ? 'Flow' : g.domain), h(doc, 'span', 'chip', String(g.agents.length)));
     if (g.flow) head.appendChild(h(doc, 'span', 'chip pinned-tag', 'pinned'));
     const pills = h(doc, 'div', 'pills');
     for (const a of g.agents) pills.appendChild(pill(doc, a));
     sec.append(head, pills);
     frag.appendChild(sec);
   }
-  // host IS the 300px scroll container: replaceChildren collapses scrollHeight,
-  // which clamps scrollTop to 0 and would bounce the list to the top after every
+  // host IS the scroll container: replaceChildren collapses scrollHeight, which
+  // clamps scrollTop to 0 and would bounce the list to the top after every
   // spawn, throwing the pinned Flow group out of reach.
   const keep = host.scrollTop;
   host.replaceChildren(frag);
@@ -109,6 +120,9 @@ export function renderPalette(host, { agents = [], placedKinds = [], collapsed =
   applyFilter(host, query, collapsed);
 }
 
+/** Hides non-matching pills, then settles each group's disclosure. A LIVE QUERY
+ *  force-expands every matching group: a hit folded away inside a collapsed
+ *  header reads as a broken filter. Clearing the query restores the collapse. */
 export function applyFilter(host, query, collapsed = new Set()) {
   if (!host) return;
   const q = String(query || '').trim().toLowerCase();
@@ -120,6 +134,11 @@ export function applyFilter(host, query, collapsed = new Set()) {
       btn.hidden = !show;
       if (show) any = true;
     }
-    sec.hidden = !any || (sec.dataset.domain !== FLOW_GROUP && collapsed.has(sec.dataset.domain));
+    const open = Boolean(q) || !collapsed.has(sec.dataset.domain);
+    sec.hidden = !any;
+    const head = sec.querySelector('.pal-grp');
+    if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const pills = sec.querySelector('.pills');
+    if (pills) pills.hidden = !open;
   }
 }

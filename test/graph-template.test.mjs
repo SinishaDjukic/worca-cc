@@ -83,6 +83,23 @@ test('canWire: same node, unknown port, already connected', () => {
     { ok: false, code: 'V7', reason: 'already connected' });
 });
 
+test('canWire: a self-loop is legal ONLY from a blocking output into a loop input', () => {
+  // The seeded refiner: `revise` (when:'blocking') feeds its own `revise` (loop:true).
+  const pf = portsFnFor({ ...REG, refiner: { key: 'refiner', verdict: { filename: 'r{cycle}.json' },
+    inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'revise', type: 'md', required: false, loop: true }],
+    outputs: [{ id: 'plan', type: 'md', when: 'clean' }, { id: 'revise', type: 'md', when: 'blocking' },
+      { id: 'verdict', type: 'json', when: 'blocking' }] } });
+  const t = tpl();
+  t.nodes.push({ id: 'n_ref', kind: 'agent', key: 'refiner', x: 900, y: 0, config: {} });
+  const self = (from, to) => canWire({ tpl: t, portsFn: pf, from: { node: 'n_ref', port: from }, to: { node: 'n_ref', port: to } });
+  assert.deepEqual(self('revise', 'revise'), { ok: true }, 'blocking → loop on the same card');
+  assert.deepEqual(self('plan', 'revise'), { ok: false, code: 'V0', reason: 'same node' }, 'a clean output never loops');
+  assert.deepEqual(self('revise', 'plan'), { ok: false, code: 'V0', reason: 'same node' }, 'a non-loop input never receives itself');
+  assert.deepEqual(self('verdict', 'revise'), { ok: false, code: 'V8', reason: 'json → md type mismatch' }, 'types still apply');
+  t.wires.push(newWire({ node: 'n_ref', port: 'revise' }, { node: 'n_ref', port: 'revise' }));
+  assert.deepEqual(self('revise', 'revise'), { ok: false, code: 'V7', reason: 'already connected' }, 'single-wire wins once wired');
+});
+
 test('canWire: type mismatch, and `any` inputs accept everything', () => {
   const t = tpl();
   t.nodes.push({ id: 'n_p2', kind: 'agent', key: 'planner', x: 900, y: 0, config: {} });

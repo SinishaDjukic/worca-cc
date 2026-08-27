@@ -114,7 +114,10 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     root.appendChild(head(doc, FLOW_TITLES[node.kind] || node.kind, node.id));
     body.appendChild(h(doc, 'p', 'ins-blurb', FLOW_BLURB[node.kind] || ''));
     if (ARITY_KINDS.has(node.kind)) {
-      body.appendChild(number(doc, 'ins-arity', 'arity', 'Inputs', Number.isInteger(node.config.arity) ? node.config.arity : 2, 2));
+      // "Input count", not "Inputs": the read-only port listing below already
+      // carries an `Inputs` heading, and two of them in one 308px rail read as
+      // one control and its own list.
+      body.appendChild(number(doc, 'ins-arity', 'arity', 'Input count', Number.isInteger(node.config.arity) ? node.config.arity : 2, 2));
     }
     if (node.kind === 'or') {
       const resolved = resolveOrOutType(template, portsFn, node.id, new Set());

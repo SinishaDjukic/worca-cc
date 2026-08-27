@@ -8,7 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-const INSET_OPEN = 280;        // composer.mjs INSET_OPEN — the open rail's width
+const INSET_OPEN = 340;        // composer.mjs INSET_OPEN — the open rail's width
 const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = Number(process.env.CDP_PORT || 9333);
 const T0 = Date.now();
@@ -293,6 +293,49 @@ try {
     && Math.abs(t2.x - t1.x + 40) < 1e-9 && Math.abs(t2.y - t1.y - 25) < 1e-9
     && blur.g === null && blur.cls === 'wire ghost',
     { t0, tMid, t1, t2, blur });
+
+  // ---- (10) the rail's two panes, measured in REAL layout -------------------
+  // The agents card below the canvas is gone: the palette lives in the rail
+  // behind an Agents/Info tab. jsdom has no layout, so single-column pills, the
+  // pinned filter and the footer can only be proven here.
+  await load();
+  const L = () => ev(`(()=>{const q=(s)=>document.querySelector(s);const r=(e)=>{const b=e.getBoundingClientRect();
+    return {l:b.left,t:b.top,r:b.right,b:b.bottom,w:b.width,h:b.height};};
+    const rail=q('#gv-ins-rail'),pane=q('#gv-agents-pane'),body=q('#gv-ins-body'),pal=q('#gv-palette'),
+      head=q('.gv-pal-head'),foot=q('.gv-foot'),canvas=q('#gv-canvas'),editor=q('.gv-editor'),saved=q('.gv-saved'),
+      tabs=[...document.querySelectorAll('#gv-ins-tabs [data-tab]')];
+    const pills=[...pal.querySelectorAll('.pal-group[data-domain]:not([hidden]) .ap:not([hidden])')].map(r);
+    return {tab:rail.dataset.tab,rail:r(rail),canvas:r(canvas),editor:r(editor),saved:r(saved),foot:r(foot),
+      pane:{...r(pane),disp:getComputedStyle(pane).display},body:{...r(body),disp:getComputedStyle(body).display},
+      palHead:r(head),pal:{...r(pal),scrollH:pal.scrollHeight,clientH:pal.clientHeight},
+      tabs:tabs.map(t=>({tab:t.dataset.tab,sel:t.getAttribute('aria-selected'),...r(t)})),
+      groups:[...pal.querySelectorAll('.pal-grp')].map(g=>g.dataset.domain),pills};})()`);
+  const a = await L();
+  const infoTab = a.tabs.find((t) => t.tab === 'info');
+  await press(infoTab.l + infoTab.w / 2, infoTab.t + infoTab.h / 2);
+  await mup(infoTab.l + infoTab.w / 2, infoTab.t + infoTab.h / 2);
+  await settle('tab-info');
+  const b = await L();
+  // one column: consecutive pills share a left edge and step down
+  const column = a.pills.length > 1 && a.pills.every((p, i) => i === 0
+    || (Math.abs(p.l - a.pills[0].l) < 0.6 && p.t > a.pills[i - 1].t));
+  check(10, 'the rail is 340px wide and carries the palette in a pinned-filter, single-column Agents pane',
+    Math.abs(a.rail.w - INSET_OPEN) < 0.6 && Math.abs(a.rail.r - a.canvas.r) < 0.6
+    && a.tab === 'agents' && a.pane.disp !== 'none' && a.body.disp === 'none'
+    && a.groups.includes('flow') && a.pills.length > 1 && column
+    && a.palHead.b <= a.pal.t + 0.6 && a.pal.b <= a.rail.b + 0.6
+    && a.pills.every((p) => p.r <= a.rail.r + 0.6 && p.l >= a.rail.l - 0.6),
+    { rail: a.rail, canvas: a.canvas, tab: a.tab, panes: [a.pane.disp, a.body.disp], groups: a.groups, pills: a.pills.slice(0, 3) });
+  check(11, 'a real click on the Info tab swaps the panes, and the legend footer sits under canvas AND rail',
+    b.tab === 'info' && b.body.disp !== 'none' && b.pane.disp === 'none'
+    && b.tabs.find((t) => t.tab === 'info').sel === 'true' && b.tabs.find((t) => t.tab === 'agents').sel === 'false'
+    && Math.abs(a.foot.t - a.canvas.b) < 0.6 && a.foot.h > 0
+    && Math.abs(a.foot.l - a.canvas.l) < 0.6 && Math.abs(a.foot.r - a.canvas.r) < 0.6,
+    { tab: b.tab, panes: [b.pane.disp, b.body.disp], tabs: b.tabs, foot: a.foot, canvas: a.canvas, editor: a.editor });
+  check(12, 'the editor card and the saved list are separated by the house 22px card gap',
+    Math.abs((a.saved.t - a.editor.b) - 22) < 0.6, { editorBottom: a.editor.b, savedTop: a.saved.t });
+  // leave the persisted tab as we found it — the next run must start on Agents
+  await ev(`(()=>{try{localStorage.removeItem('worca.composer.tab');}catch{}return 1;})()`);
 
   check('console', 'no page errors or exceptions', errors.length === 0, errors.slice(0, 5));
 } catch (e) {
