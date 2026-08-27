@@ -1,0 +1,19 @@
+{
+  "id": "wf_full", "name": "Full", "version": 1, "domain": "coding",
+  "steps": [
+    [{ "id": "s0_0", "key": "clarify" }],
+    [{ "id": "s1_0", "key": "planner" }],
+    [{ "id": "s2_0", "key": "refiner" }],
+    [{ "id": "s3_0", "key": "decomposer" }],
+    [{ "id": "s4_0", "key": "implementer" }],
+    [{ "id": "s5_0", "key": "reviewer" }],
+    [{ "id": "s6_0", "key": "manualTestsChecklist" }],
+    [{ "id": "s7_0", "key": "manualWebUiTesting" }]
+  ],
+  "feedbacks": [
+    { "id": "fb_0", "from": "s2_0", "to": "s2_0" },
+    { "id": "fb_1", "from": "s5_0", "to": "s4_0" },
+    { "id": "fb_2", "from": "s7_0", "to": "s4_0" }
+  ],
+  "createdAt": "2026-07-29T19:39:27.650Z", "updatedAt": "2026-07-29T19:39:27.650Z"
+}

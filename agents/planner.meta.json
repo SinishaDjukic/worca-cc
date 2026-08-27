@@ -2,6 +2,7 @@
   "key": "planner",
   "metaVersion": 2,
   "mockRole": "planner-plan",
+  "promptHints": "Write a complete, build-ready implementation plan. It MUST contain concrete code snippets for the features and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
   "workspaceFanOut": true,
   "workspaceStrategy": "explore",
   "inputs": [

@@ -1,0 +1,17 @@
+{
+  "id": "wf_no-clarify", "name": "No Clarify", "version": 1, "domain": "coding",
+  "steps": [
+    [{ "id": "s0_0", "key": "planner" }],
+    [{ "id": "s1_0", "key": "refiner" }],
+    [{ "id": "s2_0", "key": "decomposer" }],
+    [{ "id": "s3_0", "key": "implementer" }],
+    [{ "id": "s4_0", "key": "reviewer" }],
+    [{ "id": "s5_0", "key": "manualTestsChecklist" }],
+    [{ "id": "s6_0", "key": "manualWebUiTesting" }]
+  ],
+  "feedbacks": [
+    { "id": "fb_0", "from": "s1_0", "to": "s1_0" },
+    { "id": "fb_1", "from": "s4_0", "to": "s3_0" }
+  ],
+  "createdAt": "2026-07-29T19:40:22.212Z", "updatedAt": "2026-07-29T19:40:22.212Z"
+}

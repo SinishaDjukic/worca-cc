@@ -120,13 +120,14 @@ test('the 11 shipped sidecars keep their v1 shape AND gain v2 ports (dual shape)
   }
   assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
   assert.deepEqual(reg.planner.produces, ['plan']);
-  // Exactly SIX builtins carry prompt hints; the other five stay empty (this
-  // replaces the old "promptHints === '' for all 11" pin). `implementer` is one
-  // of the six — spec §6's implementer row carries the hint (phases.mjs:836) and
-  // P3's parity pins depend on it, so a "fix" that deletes the hint to make a
-  // five-item list pass would break P3.
+  // Exactly NINE builtins carry prompt hints; clarify and workspaceScanner stay
+  // empty (clarify's v1 sentences are the executor's clarifier base instruction,
+  // the scanner has no v2 prompt). P3's prompt-parity suite pins every one of these
+  // hints byte-for-byte against dev phases.mjs — a "fix" that deletes a hint to
+  // shorten this list breaks test/graph-prompt-parity.test.mjs.
   assert.deepEqual(Object.values(reg).filter((m) => m.promptHints).map((m) => m.key).sort(),
-    ['implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'refiner', 'workspaceReviewer']);
+    ['decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
+      'planner', 'refiner', 'reviewer', 'workspaceReviewer']);
   assert.deepEqual(reg.implementer.inputs.map((p) => p.id), ['fix', 'task', 'plan'],
     'the single-directive rule renders the FIRST fresh directive in DECLARED order');
   assert.equal(reg.reviewer.workspaceFanOut, undefined, 'the reviewer does not fan out per project');

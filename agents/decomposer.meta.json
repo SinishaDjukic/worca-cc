@@ -2,6 +2,7 @@
   "key": "decomposer",
   "metaVersion": 2,
   "mockRole": "decomposer",
+  "promptHints": "Read the approved plan and break it into tracer-bullet vertical slices grouped into ordered phases. Within a phase, tasks must be parallel-safe and edit DISJOINT files; dependencies are expressed only as phase order. Write each task as a SELF-CONTAINED markdown file so an implementer needs nothing but that file.",
   "inputs": [{ "id": "plan", "type": "md" }],
   "outputs": [{ "id": "tasks", "type": "json", "filename": "decomposition.json", "artifactKind": "decomposition" }],
   "domain": "coding",

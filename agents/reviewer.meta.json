@@ -2,6 +2,7 @@
   "key": "reviewer",
   "metaVersion": 2,
   "mockRole": "reviewer",
+  "promptHints": "Review the git diff of what was implemented against the plan.",
   "wantsRequest": true,
   "workspaceStrategy": "review",
   "verdict": { "filename": "impl-review-cycle{cycle}.json" },

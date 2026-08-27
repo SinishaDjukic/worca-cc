@@ -22,9 +22,9 @@ import { renderAttachmentsBlock } from './channels.mjs';
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
 // skills via the Skill tool; without it, headless `claude -p` denies skill calls.
-const READ_WRITE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill'];
+export const READ_WRITE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill'];
 // Implementer additionally gets MultiEdit for larger, multi-hunk edits.
-const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep', 'Glob', 'Skill'];
+export const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep', 'Glob', 'Skill'];
 
 /**
  * Effective `--allowedTools` for a node: the role's baseline file/exec tools UNION
@@ -318,7 +318,7 @@ export function resolveAgentBody(ctx, key) {
 }
 
 /** Render the MOCK marker block appended to every task prompt. */
-function mockMarkers(fields) {
+export function mockMarkers(fields) {
   const lines = [];
   for (const [key, val] of Object.entries(fields)) {
     if (val === undefined || val === null || val === '') continue;
@@ -394,7 +394,7 @@ export function workspaceWriteTargetsFor(ctx) {
 }
 
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
-function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
+export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   return {
     cwd: ctx.projectDir,
@@ -759,7 +759,7 @@ async function readDecomposition(path) {
  * git ops. Empty string when there are no siblings (solo task in its phase).
  * @param {Array<{id:string,title?:string,file?:string}>|undefined} siblings
  */
-function siblingsBlock(siblings) {
+export function siblingsBlock(siblings) {
   if (!Array.isArray(siblings) || !siblings.length) return '';
   const lines = siblings
     .map((s) => `- ${s.id}${s.title ? ` "${s.title}"` : ''}${s.file ? ` (${s.file})` : ''}`)
@@ -845,6 +845,26 @@ export async function runImplementer(ctx, opts) {
 }
 
 /**
+ * The reviewer's diff instruction — extracted VERBATIM from runReviewer so the v2
+ * executor's `as: 'worktree'` renderer resolves to the same bytes. Prefer diffing
+ * against the recorded checkpoint commit: new files are made visible via the
+ * orchestrator's intent-to-add staging after each implement pass, so
+ * `git diff <ref>` and `git status` both show greenfield work. Pure + exported.
+ * @param {{checkpointRef?:string}} [ctx]
+ * @returns {string}
+ */
+export function diffInstruction(ctx) {
+  const ref = String(ctx?.checkpointRef || '').trim();
+  return ref
+    ? `Inspect the diff with \`git diff ${ref}\` (the orchestrator's pre-implementation ` +
+      `checkpoint) and \`git status\` in your cwd. New/untracked files are intent-to-added, ` +
+      `so they DO appear in that diff; use \`git status\` to cross-check.`
+    : 'Inspect the diff with `git diff` and `git status` in your cwd. If `git diff` looks ' +
+      'empty, the changes may be newly-created files — confirm with `git status` and ' +
+      '`git diff HEAD`.';
+}
+
+/**
  * Code Reviewer — one cycle. Writes review markdown + review JSON. Returns { review }.
  * @param {import('./phases.mjs').PhaseContext} ctx
  * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
@@ -853,23 +873,12 @@ export async function runReviewer(ctx, opts) {
   const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
   const role = 'reviewer';
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'reviewer'), role, ctx.workspace);
-  // Prefer diffing against the recorded checkpoint commit. New files are made
-  // visible via the orchestrator's intent-to-add staging after each implement
-  // pass, so `git diff <ref>` and `git status` both show greenfield work.
-  const ref = (ctx.checkpointRef || '').trim();
-  const diffInstruction = ref
-    ? `Inspect the diff with \`git diff ${ref}\` (the orchestrator's pre-implementation ` +
-      `checkpoint) and \`git status\` in your cwd. New/untracked files are intent-to-added, ` +
-      `so they DO appear in that diff; use \`git status\` to cross-check.`
-    : 'Inspect the diff with `git diff` and `git status` in your cwd. If `git diff` looks ' +
-      'empty, the changes may be newly-created files — confirm with `git status` and ' +
-      '`git diff HEAD`.';
   const prompt =
     taskHeader(ctx, `Review the implementation (cycle ${cycle})`) +
     '\n## What to do\n\n' +
     'Review the git diff of what was implemented against the plan. Write a human-readable review ' +
     'markdown AND a machine-readable review JSON. ' +
-    diffInstruction +
+    diffInstruction(ctx) +
     '\n\n' +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
     workspaceFanOutDirective('review', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +

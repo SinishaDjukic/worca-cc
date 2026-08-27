@@ -1,0 +1,10 @@
+{
+  "id": "wf_quick-fix", "name": "Quick Fix", "version": 1, "domain": "coding",
+  "steps": [
+    [{ "id": "s0_0", "key": "planner" }],
+    [{ "id": "s1_0", "key": "implementer" }],
+    [{ "id": "s2_0", "key": "reviewer" }]
+  ],
+  "feedbacks": [{ "id": "fb_0", "from": "s2_0", "to": "s1_0" }],
+  "createdAt": "2026-08-09T14:40:59.262Z", "updatedAt": "2026-08-09T14:40:59.262Z"
+}

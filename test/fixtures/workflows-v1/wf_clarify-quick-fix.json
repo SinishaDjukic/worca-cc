@@ -1,0 +1,11 @@
+{
+  "id": "wf_clarify-quick-fix", "name": "Clarify -> Quick Fix", "version": 1, "domain": "coding",
+  "steps": [
+    [{ "id": "s0_0", "key": "clarify" }],
+    [{ "id": "s1_0", "key": "planner" }],
+    [{ "id": "s2_0", "key": "implementer" }],
+    [{ "id": "s3_0", "key": "reviewer" }]
+  ],
+  "feedbacks": [{ "id": "fb_0", "from": "s3_0", "to": "s2_0" }],
+  "createdAt": "2026-08-09T15:18:40.077Z", "updatedAt": "2026-08-09T15:18:40.077Z"
+}

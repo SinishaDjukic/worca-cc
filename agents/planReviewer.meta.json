@@ -2,7 +2,7 @@
   "key": "planReviewer",
   "metaVersion": 2,
   "mockRole": "plan-review",
-  "promptHints": "Do NOT rewrite the plan. Only critical/major block (the planner then revises).",
+  "promptHints": "Review the implementation PLAN against the original request and the real codebase. Do NOT rewrite the plan. Only critical/major block (the planner then revises).",
   "wantsRequest": true,
   "workspaceFanOut": true,
   "workspaceStrategy": "explore",
