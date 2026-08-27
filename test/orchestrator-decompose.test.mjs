@@ -10,6 +10,7 @@ import { writeWorkflow } from '../src/core/workflows.mjs';
 import { listPhases, listTasks } from '../src/core/artifacts.mjs';
 import { createOrchestrator, decomposedTaskNode } from '../src/core/orchestrator.mjs';
 import { ctxFanOut } from '../src/core/phases.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 let home, proj;
 beforeEach(async () => {
@@ -73,7 +74,7 @@ test('decomposedTaskNode carries phase siblings (excluding self) for the shared-
   ];
   const node = decomposedTaskNode(implNode, tasks[1], tasks, '/runs/pipe1');
   assert.equal(node.nodeId, 's_impl_p1_t2');
-  assert.equal(node.taskPath, '/runs/pipe1/tasks/p1-t2-b.md');
+  assert.equal(posix(node.taskPath), '/runs/pipe1/tasks/p1-t2-b.md');
   assert.equal(node.decomposedTask, true);
   assert.deepEqual(node.siblings, [
     { id: 'p1t1', title: 'A', file: 'tasks/p1-t1-a.md' },

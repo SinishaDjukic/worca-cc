@@ -8,6 +8,8 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 import {
   ARGV_INLINE_LIMIT, argvLength, buildClaudeArgs, buildSettingsArgs, buildSettingsPayload,
   planClaudeInvocation, stageClaudeInvocation, runClaude,
@@ -117,7 +119,7 @@ async function fakeBin(dir) {
   return bin;
 }
 
-test('runClaude end to end: over the limit the CLI receives the prompt on stdin and the files, then the staging dir is gone', async () => {
+test('runClaude end to end: over the limit the CLI receives the prompt on stdin and the files, then the staging dir is gone', POSIX_SHIM, async () => {
   const dir = await tmpDir();
   const bin = await fakeBin(dir);
   const prompt = 'task prompt\nline two — ünïcödé';
@@ -132,7 +134,7 @@ test('runClaude end to end: over the limit the CLI receives the prompt on stdin 
   assert.ok(!existsSync(spPath), `staging dir cleaned up after close: ${spPath}`);
 });
 
-test('runClaude end to end: under the limit nothing changes — prompt positional, stdin closed', async () => {
+test('runClaude end to end: under the limit nothing changes — prompt positional, stdin closed', POSIX_SHIM, async () => {
   const dir = await tmpDir();
   const bin = await fakeBin(dir);
   await runClaude({ cwd: dir, bin, prompt: 'small', systemPrompt: 'agent body' });
@@ -143,7 +145,7 @@ test('runClaude end to end: under the limit nothing changes — prompt positiona
   assert.ok(!existsSync(join(dir, 'sp-path.txt')));
 });
 
-test('runClaude: a real ~1000-line markdown prompt (the #380 report) stages by default', async () => {
+test('runClaude: a real ~1000-line markdown prompt (the #380 report) stages by default', POSIX_SHIM, async () => {
   const dir = await tmpDir();
   const bin = await fakeBin(dir);
   const prompt = Array.from({ length: 1000 }, (_, i) => `- [ ] requirement ${i}: the system shall do something specific and measurable`).join('\n');

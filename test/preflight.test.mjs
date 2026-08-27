@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectTools, buildInstruction } from '../src/core/preflight.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const tmpDirs = [];
 async function makeTmpDir() {
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-preflight-'));
@@ -103,7 +105,7 @@ test('detectTools: graphify-out/ in project → kind=output-cached, "read" wordi
   }
 });
 
-test('detectTools: skill file under HOME → kind=skill, Skill-tool wording', async () => {
+test('detectTools: skill file under HOME → kind=skill, Skill-tool wording', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const fakeHome = await makeTmpDir();
   await mkdir(join(fakeHome, '.claude', 'skills', 'graphify'), { recursive: true });
@@ -125,7 +127,7 @@ test('detectTools: skill file under HOME → kind=skill, Skill-tool wording', as
   }
 });
 
-test('detectTools: CLI on PATH wins over a skill file (priority order)', async () => {
+test('detectTools: CLI on PATH wins over a skill file (priority order)', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const fakeHome = await makeTmpDir();
   await mkdir(join(fakeHome, '.claude', 'skills', 'graphify'), { recursive: true });

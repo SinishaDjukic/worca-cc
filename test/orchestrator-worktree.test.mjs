@@ -9,6 +9,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 useTempHome(after); // store writes -> isolated temp home, not real ~/.worca-cc
 
@@ -59,7 +60,7 @@ test('orchestrator creates a worktree on source branch with a derived feature br
   assert.ok(state.branch, 'state.branch should be set');
   assert.equal(state.branch.source, 'main');
   assert.match(state.branch.feature, /^worca-cc\//);
-  assert.match(state.branch.worktreeDir, /\.worca-cc\/worktrees\//);
+  assert.match(posix(state.branch.worktreeDir), /\.worca-cc\/worktrees\//);
   assert.equal(state.branch.reusedExisting, false);
 
   // The plan/review name linkage is persisted so a later delete is exact.

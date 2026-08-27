@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { CHANNEL_IDS, allocate, legacyFields } from '../src/core/channels.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 const ALLOC = { projectDir: '/p', pipelineDir: '/pipe', baseName: 'feat', datePrefix: '05-06-26', cycle: 2 };
 const WS_KEY = 'wks-demo-1a2b3c4d';
@@ -28,13 +29,13 @@ test('allocate(review) for workspaceReviewer uses a ws-review base + workspace s
   assert.equal(h.reviewKind, 'ws-review');
   assert.match(h.mdPath, new RegExp(`/store/workspaces/${WS_KEY}/reviews/05-06-26-feat-ws-review\\.md$`));
   // The json verdict stays per-cycle in the pipeline dir (store-root independent).
-  assert.match(h.jsonPath, /\/pipe\/ws-review-cycle2\.json$/);
+  assert.match(posix(h.jsonPath), /\/pipe\/ws-review-cycle2\.json$/);
 });
 
 test('allocate(review) for the single-project reviewer is unchanged (byte-identity)', () => {
   const h = allocate('review', { ...ALLOC, key: 'reviewer' });
   assert.equal(h.reviewKind, 'impl-review');
-  assert.match(h.jsonPath, /\/impl-review-cycle2\.json$/);
+  assert.match(posix(h.jsonPath), /\/impl-review-cycle2\.json$/);
 });
 
 test('legacyFields(workspaceReviewer) threads the same fields as reviewer', () => {
@@ -44,7 +45,7 @@ test('legacyFields(workspaceReviewer) threads the same fields as reviewer', () =
   const r = legacyFields({ key: 'reviewer' }, inputs, outputs, 3, 'feat');
   assert.deepEqual(wsR, r, 'workspaceReviewer ctx fields mirror reviewer exactly');
   assert.equal(wsR.planPath, '/plan.md');
-  assert.equal(wsR.reviewMdPath, '/pipe/ws.md');
-  assert.equal(wsR.reviewJsonPath, '/pipe/ws.json');
+  assert.equal(posix(wsR.reviewMdPath), '/pipe/ws.md');
+  assert.equal(posix(wsR.reviewJsonPath), '/pipe/ws.json');
   assert.equal(wsR.cycle, 3);
 });

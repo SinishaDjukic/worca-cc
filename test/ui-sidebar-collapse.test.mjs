@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -149,7 +149,7 @@ async function boot({ seed = null, breakStorage = false,
   // indicator into a later COLLAPSED test's #side-spend. Park it a day out, and
   // do it BEFORE the import. Seam: test/ui-budget-indicator.test.mjs:89-91.
   window.__budgetTickMs = DAY;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));
   lastWs._l.open?.forEach((fn) => fn());

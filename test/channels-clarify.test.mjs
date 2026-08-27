@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocate, publish, legacyFields } from '../src/core/channels.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 test('allocate(clarify) points at clarify.json in the pipeline dir', () => {
   const out = allocate('clarify', { projectDir: '/p', pipelineDir: '/p/.worca-cc/run', baseName: 'demo', datePrefix: '01-01-26', cycle: 1, key: 'clarify' });
   assert.equal(out.kind, 'clarify');
-  assert.equal(out.path, '/p/.worca-cc/run/clarify.json');
+  assert.equal(posix(out.path), '/p/.worca-cc/run/clarify.json');
 });
 
 test('publish(clarify) folds questions+answers onto the bus', () => {

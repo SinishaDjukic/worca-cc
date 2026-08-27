@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
 import { writeWorkflow } from '../src/core/workflows.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 const SHAPES = {
   'default':       { steps: [['planner'],['refiner'],['implementer'],['reviewer']],
@@ -92,7 +93,7 @@ test('every saved shape converges with the right implementer modes', async () =>
 test('▲ C1: planner writes the canonical v1 plan; refiner writes -v2 (no path drift)', async () => {
   const { artifacts } = await runShapeUnderMock(SHAPES['default']);
   const planPaths = artifacts.filter((a) => a.kind === 'plan').map((a) => a.path);
-  assert.ok(planPaths.some((p) => /\/\d\d-\d\d-\d\d-[^/]+\.md$/.test(p) && !/-v\d+\.md$/.test(p)), 'canonical v1 plan file exists');
+  assert.ok(planPaths.some((p) => /\/\d\d-\d\d-\d\d-[^/]+\.md$/.test(posix(p)) && !/-v\d+\.md$/.test(p)), 'canonical v1 plan file exists');
   assert.ok(planPaths.some((p) => /-v2\.md$/.test(p)), 'refiner v2 plan file exists');
 });
 

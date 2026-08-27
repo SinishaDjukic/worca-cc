@@ -32,6 +32,8 @@ import {
 } from '../src/core/run-context.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const created = [];
 after(() => Promise.all(created.map((d) => rm(d, { recursive: true, force: true }))));
 
@@ -484,7 +486,7 @@ test('§5.6: root skills are SKIPPED when projectsRoot === homeDir (already on t
   assert.ok(!existsSync(join(rr, '.claude', 'skills', 'deploy')));
 });
 
-test('§5.6: never overwrite a TRACKED skill in the worktree — skip + a named warning', async () => {
+test('§5.6: never overwrite a TRACKED skill in the worktree — skip + a named warning', POSIX_SHIM, async () => {
   const wt = await gitRepo('worca-cc-rc-tracked-wt-');
   await writeTree(wt, { '.claude/skills/deploy/SKILL.md': 'COMMITTED VERSION\n' });
   spawnSync('git', ['add', '-A'], { cwd: wt });
@@ -570,7 +572,7 @@ test('§5.5: no server anywhere => mcpConfigPath is null and no mcp.json is writ
   assert.ok(!existsSync(join(rr, 'mcp.json')));
 });
 
-test('§5.5: relative command + path-like args are absolutized; ${CLAUDE_PROJECT_DIR} is substituted', async () => {
+test('§5.5: relative command + path-like args are absolutized; ${CLAUDE_PROJECT_DIR} is substituted', POSIX_SHIM, async () => {
   const real = await writeTree(await tmp('worca-cc-rc-mcpabs-'), {
     '.mcp.json': JSON.stringify({
       mcpServers: {
@@ -596,7 +598,7 @@ test('§5.5: relative command + path-like args are absolutized; ${CLAUDE_PROJECT
   assert.equal(s.type, 'stdio', 'type passes through');
 });
 
-test('§5.5: the cd-wrap is argv-safe for a dir with a space AND a single quote', async () => {
+test('§5.5: the cd-wrap is argv-safe for a dir with a space AND a single quote', POSIX_SHIM, async () => {
   const base = await tmp('worca-cc-rc-mcpq-');
   const real = join(base, "My Drive's proj");
   await writeTree(real, {
@@ -709,7 +711,7 @@ test('§5.5 / V3(d): a cross-scope duplicate in single mode warns by name; an id
   assert.match(w, /config/, 'V3(d) recorded CONFIG scope as effective on this CLI version');
 });
 
-test('§5.5 source 3 / V4: local scope is harvested under the GIT ROOT key, not the member path', async () => {
+test('§5.5 source 3 / V4: local scope is harvested under the GIT ROOT key, not the member path', POSIX_SHIM, async () => {
   const repo = await gitRepo('worca-cc-rc-v4-');
   const sub = join(repo, 'packages', 'app');
   await mkdir(sub, { recursive: true });
@@ -1197,7 +1199,7 @@ test('§8.19 v2: per-member honor — an opted-out member is NOT lifted (full wa
 // SKIP the entry with a named warning — never a throw, or a bad manifest would make a
 // paused run unresumable.
 
-test('S2: a manifest skillResolution with a traversing name is SKIPPED with a warning, never mounted', async () => {
+test('S2: a manifest skillResolution with a traversing name is SKIPPED with a warning, never mounted', POSIX_SHIM, async () => {
   const rr = await mkRunRoot('pidevil1');
   const src = await writeTree(await tmp('worca-cc-rc-evilsrc-'), { 'SKILL.md': '---\nname: pwn\n---\nP\n' });
   const real = await writeTree(await tmp('worca-cc-rc-evilreal-'), { 'CLAUDE.md': 'R\n' });
@@ -1326,7 +1328,7 @@ async function withUnreadable(p, fn) {
   try { return await fn(); } finally { await ch(p, mode); }
 }
 
-test('an UNREADABLE ~/.claude.json warns by member and skips ONLY local scope (§5.5 source 3)', { skip: asRoot && 'root ignores file modes' }, async () => {
+test('an UNREADABLE ~/.claude.json warns by member and skips ONLY local scope (§5.5 source 3)', { ...POSIX_SHIM, skip: asRoot && 'root ignores file modes' }, async () => {
   const real = await writeTree(await tmp('worca-cc-rc-eacces-local-'), {
     '.mcp.json': JSON.stringify({ mcpServers: { projsrv: { command: 'node', args: ['/abs/p.js'] } } }),
   });
@@ -1345,7 +1347,7 @@ test('an UNREADABLE ~/.claude.json warns by member and skips ONLY local scope (�
   assert.match(named[0], /\.mcp\.json/, 'and the remedy is stated');
 });
 
-test('an UNREADABLE member .mcp.json warns by path + code and contributes nothing', { skip: asRoot && 'root ignores file modes' }, async () => {
+test('an UNREADABLE member .mcp.json warns by path + code and contributes nothing', { ...POSIX_SHIM, skip: asRoot && 'root ignores file modes' }, async () => {
   const real = await writeTree(await tmp('worca-cc-rc-eacces-mcp-'), {
     '.mcp.json': JSON.stringify({ mcpServers: { hidden: { command: 'node', args: ['/abs/h.js'] } } }),
   });
@@ -1360,7 +1362,7 @@ test('an UNREADABLE member .mcp.json warns by path + code and contributes nothin
   assert.match(w, /EACCES/);
 });
 
-test('an UNREADABLE member CLAUDE.md warns by path + code and renders the §8.20 placeholder', { skip: asRoot && 'root ignores file modes' }, async () => {
+test('an UNREADABLE member CLAUDE.md warns by path + code and renders the §8.20 placeholder', { ...POSIX_SHIM, skip: asRoot && 'root ignores file modes' }, async () => {
   const real = await writeTree(await tmp('worca-cc-rc-eacces-md-'), { 'CLAUDE.md': 'SECRET MEMORY\n' });
   const file = join(real, 'CLAUDE.md');
   const rr = await mkRunRoot('pidperm1');
@@ -1378,7 +1380,7 @@ test('an UNREADABLE member CLAUDE.md warns by path + code and renders the §8.20
   assert.equal(rc.bytes.bySource[file], undefined, 'and it is not counted as inlined bytes');
 });
 
-test('an unreadable source warns ONCE per file per assembly, and a missing one stays silent', { skip: asRoot && 'root ignores file modes' }, async () => {
+test('an unreadable source warns ONCE per file per assembly, and a missing one stays silent', { ...POSIX_SHIM, skip: asRoot && 'root ignores file modes' }, async () => {
   const real = await writeTree(await tmp('worca-cc-rc-eacces-once-'), {
     'CLAUDE.md': 'A\n',
     '.claude/CLAUDE.md': 'B\n',

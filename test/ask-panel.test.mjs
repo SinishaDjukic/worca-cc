@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makePanel, key, pointerdown } from './helpers/ask-panel-harness.mjs';
-import { fmtStarted } from '../ui/public/ask-panel.mjs';
+import { fmtStarted, shortcutLabel } from '../ui/public/ask-panel.mjs';
 
 const THREADS = {
   threads: [
@@ -365,4 +365,18 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
   } finally {
     process.off('unhandledRejection', onRej);
   }
+});
+
+// The launcher pill's shortcut glyph follows the viewer's OS: the keydown
+// handler accepts Meta+K AND Ctrl+K everywhere, but showing '⌘K' on Windows
+// (where only Ctrl+K works) told users a chord they cannot press.
+test('ask-panel: the pill hint reads ⌘K on macOS and Ctrl K elsewhere', () => {
+  assert.equal(shortcutLabel({ navigator: { platform: 'MacIntel' } }), '⌘K');
+  assert.equal(shortcutLabel({ navigator: { userAgentData: { platform: 'macOS' }, platform: '' } }), '⌘K');
+  assert.equal(shortcutLabel({ navigator: { platform: 'Win32' } }), 'Ctrl K');
+  assert.equal(shortcutLabel({ navigator: { platform: 'Linux x86_64' } }), 'Ctrl K');
+  assert.equal(shortcutLabel({}), 'Ctrl K', 'no navigator at all falls back to the non-Mac chord');
+  // and the mounted pill uses it (jsdom reports an empty platform → Ctrl K)
+  const dock = makePanel().panel.root;
+  assert.equal(dock.querySelector('.ask-kbd').textContent, 'Ctrl K');
 });

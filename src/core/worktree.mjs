@@ -207,7 +207,9 @@ export async function worktreePathForBranch(projectDir, branch) {
   if (!r.ok) return null;
   let curPath = null;
   for (const line of r.stdout.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) curPath = line.slice('worktree '.length).trim();
+    // git prints '/'-separated paths even on Windows; resolve() gives callers the
+    // native form they compare against (createWorktree's own worktreeDir).
+    if (line.startsWith('worktree ')) curPath = resolve(line.slice('worktree '.length).trim());
     else if (line.startsWith('branch ')) {
       const ref = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
       if (ref === branch) return curPath;

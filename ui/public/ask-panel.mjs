@@ -76,6 +76,15 @@ function clipInput(input) {
   return s.length > 60 ? `${s.slice(0, 60)}…` : s;
 }
 
+/** The launcher's shortcut hint: the keydown handler accepts BOTH Meta+K and
+ *  Ctrl+K, but the glyph shown must match the viewer's OS — '⌘K' is meaningless
+ *  on Windows/Linux, where the working chord is Ctrl+K. */
+export function shortcutLabel(win) {
+  const nav = win?.navigator;
+  const platform = String(nav?.userAgentData?.platform || nav?.platform || '');
+  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
+}
+
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, loadMarkdown, hljsLoader, storage, raf, now }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
@@ -197,7 +206,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pillLogo.alt = '';
     pill.appendChild(pillLogo);
     pill.appendChild(make('span', 'ask-pill-label', 'Ask Worca'));
-    pill.appendChild(make('span', 'ask-kbd', '⌘K'));
+    pill.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
     pill.addEventListener('click', openSheet);
 
     const sheet = make('section', 'ask-sheet');

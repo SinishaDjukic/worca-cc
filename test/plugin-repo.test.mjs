@@ -41,6 +41,7 @@ async function makeRepo(dirName, files) {
   const root = join(scratch, dirName);
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'config', 'core.autocrlf', 'false'); // Windows git would CRLF the checkout
   writeTree(root, files);
   await git(root, 'add', '-A');
   await git(root, 'commit', '-qm', 'c1');
@@ -159,6 +160,7 @@ test('exportVersion: escaping symlink deleted with warning; internal symlink kep
   const root = join(scratch, 'exp-link');
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'config', 'core.autocrlf', 'false'); // Windows git would CRLF the checkout
   writeTree(root, {
     'worca-cc-plugin.json': MANIFEST('exp-link-plugin'),
     'index.mjs': 'export default () => ({});\n',

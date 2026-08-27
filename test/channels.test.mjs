@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocate, bindInputs, publish, legacyFields, CHANNEL_IDS } from '../src/core/channels.mjs';
 import { reviewKindOf } from '../src/core/artifacts.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 const ALLOC = { projectDir: '/p', pipelineDir: '/pipe', baseName: 'feat', datePrefix: '03-06-26', cycle: 1 };
 
@@ -13,25 +14,25 @@ test('CHANNEL_IDS is the closed set (workspace added in M3)', () => {
 test('▲ C1: allocate mints the planner plan at v1 and the refiner plan at cycle+1', () => {
   const planner = allocate('plan', { ...ALLOC, key: 'planner', cycle: 1 });
   const refiner = allocate('plan', { ...ALLOC, key: 'refiner', cycle: 1 });
-  assert.match(planner.path, /\/plans\/03-06-26-feat\.md$/);      // canonical v1, NO -v suffix
-  assert.match(refiner.path, /\/plans\/03-06-26-feat-v2\.md$/);   // refiner versions up
+  assert.match(posix(planner.path), /\/plans\/03-06-26-feat\.md$/);      // canonical v1, NO -v suffix
+  assert.match(posix(refiner.path), /\/plans\/03-06-26-feat-v2\.md$/);   // refiner versions up
   assert.notEqual(planner.path, refiner.path, 'planner v1 must differ from refiner v2');
   const replan = allocate('plan', { ...ALLOC, key: 'planner', cycle: 2 });
-  assert.match(replan.path, /\/plans\/03-06-26-feat-v2\.md$/); // replanned planner versions up (no clobber)
+  assert.match(posix(replan.path), /\/plans\/03-06-26-feat-v2\.md$/); // replanned planner versions up (no clobber)
 });
 
 test('allocate review: reviewer/web-ui carry an md; ▲ C2: refiner md is null', () => {
   const rev = allocate('review', { ...ALLOC, key: 'reviewer' });
-  assert.match(rev.jsonPath, /\/impl-review-cycle1\.json$/);
+  assert.match(posix(rev.jsonPath), /\/impl-review-cycle1\.json$/);
   assert.match(rev.mdPath, /-feat-impl-review\.md$/);
   const refine = allocate('review', { ...ALLOC, key: 'refiner' });
-  assert.match(refine.jsonPath, /\/refine-review-cycle1\.json$/);
+  assert.match(posix(refine.jsonPath), /\/refine-review-cycle1\.json$/);
   assert.equal(refine.mdPath, null, 'refiner review is private (no md)');
   const web = allocate('review', { ...ALLOC, key: 'manualWebUiTesting' });
-  assert.match(web.mdPath, /\/webui-review-cycle1\.md$/);
+  assert.match(posix(web.mdPath), /\/webui-review-cycle1\.md$/);
   assert.equal(allocate('code', ALLOC).kind, 'worktree');
   const planRev = allocate('review', { ...ALLOC, key: 'planReviewer' });
-  assert.match(planRev.jsonPath, /\/plan-review-cycle1\.json$/);
+  assert.match(posix(planRev.jsonPath), /\/plan-review-cycle1\.json$/);
   assert.match(planRev.mdPath, /-feat-plan-review\.md$/, 'plan-review md is non-null so it publishes to the bus');
   // reviewKind tags each review with its provenance (the implementer gate reads this)
   assert.equal(allocate('review', { ...ALLOC, key: 'planReviewer' }).reviewKind, 'plan-review');
@@ -51,7 +52,7 @@ test('publish folds plan/review/checklist and clears review on code', () => {
   // plan fold
   const bus = { plan: null, review: null, checklist: null };
   publish(['plan'], { planPath: '/p/v1.md' }, { plan: { path: '/p/v1.md' } }, bus);
-  assert.equal(bus.plan.path, '/p/v1.md');
+  assert.equal(posix(bus.plan.path), '/p/v1.md');
   // review fold (reviewer: has md)
   publish(['review'], { review: { ok: true }, reviewMdPath: '/r.md' }, { review: { mdPath: '/r.md', jsonPath: '/r.json' } }, bus);
   assert.equal(bus.review.mdPath, '/r.md');

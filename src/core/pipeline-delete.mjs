@@ -61,8 +61,12 @@ function lookupRow(storeKey, id) {
  */
 function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
   if (isAbsolute(relPath)) return relPath;
-  if (relPath.startsWith('plans/') || relPath.startsWith('reviews/')) return join(storeRootDir, relPath);
-  return join(pipelineDir, relPath);
+  // Rows are indexed with '/' (see _recordArtifact); rows written by earlier
+  // Windows builds carry '\\' — normalise before the layout check so those
+  // shared plan/review files are still re-rooted (and unlinked) correctly.
+  const rel = relPath.replace(/\\/g, '/');
+  if (rel.startsWith('plans/') || rel.startsWith('reviews/')) return join(storeRootDir, rel);
+  return join(pipelineDir, rel);
 }
 
 /**

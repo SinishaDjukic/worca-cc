@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const tmpDirs = [];
 async function makeTmpDir() {
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-runner-'));
@@ -76,7 +78,7 @@ test('mock emits a session event with a deterministic id', async () => {
 // Real spawn path (no mock): the stream-json parser must translate the CLI's
 // `{"type":"system","subtype":"init","session_id":...}` line into our
 // `{type:'session', sessionId}` event (claude-runner.mjs:249-251).
-test('real path: system/init surfaces {type:"session", sessionId}', async () => {
+test('real path: system/init surfaces {type:"session", sessionId}', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeBin(dir, {
     code: 0,

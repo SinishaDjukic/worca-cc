@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
 
@@ -45,7 +45,7 @@ async function boot() {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   return window;
 }
@@ -96,7 +96,7 @@ test('Save serializes the canvas to contract topology and POSTs {name,steps,feed
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));
@@ -151,7 +151,7 @@ test('saved list renders rows with meta line + chips; expand builds a read-only 
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));

@@ -23,6 +23,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { fileURLToPath } from 'node:url';
 
 /** appendAudit writes pipeline_events rows, not a file (artifacts.mjs:920). */
 function auditText(pipelineId) {
@@ -84,7 +85,7 @@ test('gate: a plan that requires no skills produces an empty set (no gate, no in
 
 // ── Phase 3: the three wiring cases against the restructured :544+ region ─────
 
-const REAL_AGENTS_DIR = new URL('../agents/', import.meta.url).pathname;
+const REAL_AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 
 /** A copy of the real agents dir with `requiresSkills` added to the implementer. */
 async function agentsDirRequiring(skills) {

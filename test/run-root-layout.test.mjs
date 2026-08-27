@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync , writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,7 @@ import { runRootSweepLookups, legacySweepLookups } from '../src/core/artifacts.m
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 useTempHome(after);
 
@@ -208,7 +209,7 @@ test('legacy (pinned): the worktree stays at <projectDir>/.worca-cc/worktrees/<i
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));
     const id = orch.getState().id;
-    assert.match(seen, /\.worca-cc\/worktrees\//, `legacy placement retained: ${seen}`);
+    assert.match(posix(seen), /\.worca-cc\/worktrees\//, `legacy placement retained: ${seen}`);
     assert.ok(seen.endsWith(join('.worca-cc', 'worktrees', id)), `legacy dir is the pipelineId: ${seen}`);
     assert.ok(!existsSync(join(worcaHome(), 'runs', id)), 'legacy runs create no run root');
   });
@@ -229,7 +230,7 @@ test('createWorktree: baseDir + checkoutName place the checkout; omitting baseDi
   const legacy = await createWorktree({
     projectDir: repo, pipelineId: 'pid2', sourceBranch: 'main', featureBranch: 'worca-cc/b-pid2',
   });
-  assert.match(legacy.worktreeDir, /\.worca-cc\/worktrees\/pid2$/);
+  assert.match(posix(legacy.worktreeDir), /\.worca-cc\/worktrees\/pid2$/);
 });
 
 test('createWorktree: the containment guard rejects a traversal-shaped checkoutName', async () => {
@@ -354,7 +355,7 @@ test('detached single run: results.json / diff.patch carry the mock edit (checkp
     orch.on('state', (s) => {
       if (injected || !s.branch?.worktreeDir || !existsSync(s.branch.worktreeDir)) return;
       injected = true;
-      spawnSync('sh', ['-c', `printf 'agent\\n' > ${JSON.stringify(join(s.branch.worktreeDir, 'agent.txt'))}`]);
+      writeFileSync(join(s.branch.worktreeDir, 'agent.txt'), 'agent\n');
     });
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));

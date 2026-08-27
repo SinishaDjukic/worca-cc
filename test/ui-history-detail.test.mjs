@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { MAX_FILE_SECTION_CODE_UNITS } from '../ui/public/diff-view.mjs';
@@ -85,7 +85,7 @@ async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader =
   globalThis.document = window.document;
   if (hljsLoader) window.__worcaTestHooks = { hljsLoader };
 
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0)); // let loadProjects/loadConfig settle
 
   return { window, calls, wsBox };

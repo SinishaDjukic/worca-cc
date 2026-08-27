@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 // Behavior tests for the two-screen Running shell: `#running/<runId>` routes
@@ -70,7 +70,7 @@ async function boot({ url = 'http://localhost:4317/' } = {}) {
   globalThis.document = window.document;
   window.localStorage.clear();   // T4's density key must not leak between cases
 
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
 
   const open = () => lastWs._l.open?.forEach((fn) => fn());

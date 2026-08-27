@@ -13,6 +13,8 @@ import {
 } from '../src/core/preflight.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const NPM = 'C:\\Users\\u\\AppData\\Roaming\\npm';
 const SHIM = join(NPM, 'claude.cmd');
 const EXE = join(NPM, ...NPM_CLAUDE_EXE_SEGMENTS);
@@ -120,7 +122,7 @@ function layoutNpmInstall(bin) {
   return exe;
 }
 
-test('runClaude on a faked win32 host spawns the npm package\'s claude.exe instead of failing on the .cmd shim', async () => {
+test('runClaude on a faked win32 host spawns the npm package\'s claude.exe instead of failing on the .cmd shim', POSIX_SHIM, async () => {
   const bin = 'worca-fake-claude-npm';
   const exe = layoutNpmInstall(bin);
   process.env.PATH = dir;

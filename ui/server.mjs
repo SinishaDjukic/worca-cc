@@ -269,6 +269,20 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 /** All currently connected sockets. */
 const sockets = new Set();
 
+// server.close() only calls back once every connection is gone, and Node's
+// closeAllConnections() skips UPGRADED sockets — a WebSocket whose close
+// handshake has not completed (a client that vanished, or a test tearing down
+// right after ws.close()) keeps the callback from ever firing; under load that
+// is a hang. Terminate the lingering clients first so close() is deterministic
+// on every OS; the per-socket 'close' handlers below drop them from `sockets`.
+{
+  const httpClose = server.close.bind(server);
+  server.close = (cb) => {
+    for (const ws of sockets) { try { ws.terminate(); } catch { /* already gone */ } }
+    return httpClose(cb);
+  };
+}
+
 wss.on('connection', (ws, req) => {
   // S1: WS upgrades bypass the express middleware chain, so re-apply the
   // loopback guard here (same DNS-rebinding protection as the HTTP routes).

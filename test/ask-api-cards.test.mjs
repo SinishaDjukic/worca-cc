@@ -15,6 +15,7 @@ import { WebSocket } from 'ws';
 import http from 'node:http';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 
 useTempHome(after);
 
@@ -87,6 +88,11 @@ after(async () => {
   // recursive rm races those writes and ENOTEMPTYs under full-suite load (seen
   // once in ~2 `npm test` runs; never in isolation). Retry, and never let
   // teardown hygiene fail the file.
+  // Windows cannot unlink an open file: with the sqlite handle still open the
+  // recursive rm retries at EVERY directory level (rimraf compounds maxRetries
+  // per level) and the worker never exits — the suite "hung" there. Close the
+  // handle first so the reap is a plain delete.
+  closeDbForTests();
   const reap = (dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(() => {});
   if (cwdSandbox) await reap(cwdSandbox);
   await reap(homeDir);

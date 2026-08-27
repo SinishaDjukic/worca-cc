@@ -83,7 +83,7 @@ async function waitFor(fn, what, { timeoutMs = 15000, everyMs = 100 } = {}) {
 async function rmWithRetry(dir, { attempts = 12, stepMs = 25 } = {}) {
   for (let i = 0; ; i++) {
     try {
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
       return;
     } catch (err) {
       const code = err?.code || '';
@@ -114,7 +114,7 @@ after(async () => {
   // A fire-and-forget mock run may still be writing into the store when this
   // hook runs — same ENOTEMPTY race rmWithRetry exists for.
   await rmWithRetry(homeDir);
-  await rm(pluginDir, { recursive: true, force: true });
+  await rm(pluginDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 test('GET /api/sources lists ONLY prompt+markdown with zero plugins (feature-off bar)', async () => {
@@ -323,5 +323,5 @@ test('POST /api/pipelines/:id/report-result: 404 unknown id; mock write-back ret
   const r = await post(`/api/pipelines/${id}/report-result`, {});
   assert.equal(r.status, 200);
   assert.equal((await r.json()).ok, true, 'mock write-back reports ok (Task 13 mock guarantee)');
-  await rm(projectDir, { recursive: true, force: true });
+  await rm(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
