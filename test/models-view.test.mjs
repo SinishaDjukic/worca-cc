@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  effortsSummary, envSummary, costSummary, renderModelsList, renderModelEditor,
+  effortsSummary, envSummary, costSummary, suggestDuplicateId, renderModelsList, renderModelEditor,
   collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from '../ui/public/models-view.mjs';
@@ -428,4 +428,36 @@ test('list: a plugin card shows its MANIFEST price, same rules as a global card'
   assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$1 · output \$3 \/Mtok/);
   assert.ok(badges(cards[1]).includes('free'));
   assert.ok(badges(cards[2]).includes('cost not verified'), 'unpriced plugin model: flag unchanged');
+});
+
+// ── Duplicate ────────────────────────────────────────────────────────────────
+
+test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', () => {
+  assert.equal(suggestDuplicateId('glm-4.7', []), 'glm-4.7-copy');
+  assert.equal(suggestDuplicateId('glm-4.7', ['glm-4.7']), 'glm-4.7-copy');
+  assert.equal(suggestDuplicateId('glm-4.7', ['glm-4.7', 'glm-4.7-copy']), 'glm-4.7-copy-2');
+  assert.equal(suggestDuplicateId('glm-4.7', ['GLM-4.7-COPY', 'glm-4.7-copy-2']), 'glm-4.7-copy-3',
+    'ids collide case-insensitively, so the suggestion must too');
+  // Duplicating a duplicate keeps stacking rather than fighting over one name.
+  assert.equal(suggestDuplicateId('glm-4.7-copy', ['glm-4.7-copy']), 'glm-4.7-copy-copy');
+});
+
+test('list: only global cards get Duplicate — plugin cards already have Edit a copy', () => {
+  const el = renderModelsList({
+    globals: [GLOBAL],
+    legacy: [{ id: 'old-local', label: 'Old Local' }],
+    plugins: [{ id: 'pp', label: 'PP', efforts: EFFORTS, plugin: 'p', secrets: [] }],
+    predefined: PREDEFINED,
+    efforts: EFFORTS,
+  }, { doc });
+
+  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
+  const dup = globalCard.querySelector('.mv-duplicate');
+  assert.ok(dup, 'global card offers Duplicate');
+  assert.equal(dup.dataset.id, GLOBAL.id, 'carries the SOURCE id — the flow reads the raw env by it');
+  assert.equal(dup.type, 'button', 'never submits a form');
+
+  assert.equal(el.querySelector('.mv-plugin .mv-duplicate'), null);
+  assert.equal(el.querySelector('.mv-legacy .mv-duplicate'), null);
+  assert.equal(el.querySelector('.mv-builtin .mv-duplicate'), null);
 });

@@ -87,7 +87,8 @@ import {
   renderStartStep, collectStartStep, renderGuardrailReferences409,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
+  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
+  suggestDuplicateId, deleteRefsSummary,
   renderExportWizard, collectExportWizard,
 } from './models-view.mjs';
 import {
@@ -8625,7 +8626,55 @@ function prefillModelEditor(editor, pre) {
   const msg = editor.querySelector('.mv-editor-msg');
   if (msg && (pre.secretKeys || []).length) {
     msg.textContent = `Fill in ${pre.secretKeys.join(', ')} — secret values never leave the plugin.`;
+  } else if (msg && pre.duplicatedFrom) {
+    msg.textContent = `Copy of ${pre.duplicatedFrom} — change what should differ, then Add model.`;
   }
+}
+
+/**
+ * Duplicate a global entry: a CREATE editor seeded from it, with a free id
+ * suggested. Deriving a sibling that differs in one parameter is the common way
+ * a catalog grows — same endpoint, a different wire id or effort set or price.
+ *
+ * The raw env values are fetched first (GET :id/env-value, the same deliberate
+ * reveal the editor's "Show values" uses). The card only ever holds MASKED ones,
+ * and create-mode values are stored literally — seeding from the masks would
+ * write a row of bullets into settings.json as if it were a token.
+ */
+async function duplicateModelFlow(id) {
+  const d = mvState.data || {};
+  const src = (d.models || []).find((m) => m.id === id);
+  if (!src) return;
+  let env = {};
+  if (src.env && Object.keys(src.env).length) {
+    try {
+      const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value`);
+      const data = await safeJson(res);
+      if (!res.ok || !data.env) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+      env = data.env;
+    } catch (e) {
+      return setModelsMsg(e.message, 'err');
+    }
+  }
+  // Every id the catalog knows — the add is rejected for colliding with ANY of
+  // them, so a suggestion has to clear all four layers, not just the global one.
+  const taken = [d.models, d.plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => m.id));
+  const newId = suggestDuplicateId(src.id, taken);
+  mvState.editing = null;
+  mvState.openCreate = true;
+  mvState.openShare = false;
+  mvState.prefill = {
+    id: newId,
+    // Only suffix a label the user actually chose; an entry that never had one
+    // keeps none, so the copy's label defaults to its own new id.
+    label: src.label && src.label !== src.id ? `${src.label} copy` : '',
+    efforts: src.efforts,
+    env,
+    secretKeys: [],
+    ...(src.cost ? { cost: src.cost } : {}),
+    duplicatedFrom: src.id,
+  };
+  renderModelsViewBody();
 }
 
 async function editPluginCopyFlow(plugin, id) {
@@ -8859,6 +8908,8 @@ if (el.modelsList) {
       deleteModelFlow(t.dataset.id);
     } else if (t.classList.contains('mv-promote')) {
       promoteModelFlow(t.dataset.id);
+    } else if (t.classList.contains('mv-duplicate')) {
+      duplicateModelFlow(t.dataset.id);
     } else if (t.classList.contains('mv-copy')) {
       editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
     } else if (t.classList.contains('mv-test')) {

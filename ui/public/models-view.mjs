@@ -52,6 +52,26 @@ export function costSummary(cost) {
 }
 
 /**
+ * A free id for a duplicate of `id`: `<id>-copy`, then `-copy-2`, `-copy-3`…
+ * Compared case-insensitively against EVERY id the catalog knows (global,
+ * plugin, built-in, legacy) — the add would be rejected for colliding with any
+ * of them, and a suggestion the server refuses is worse than no suggestion.
+ * @param {string} id  the source model's id
+ * @param {Iterable<string>} takenIds
+ * @returns {string}
+ */
+export function suggestDuplicateId(id, takenIds = []) {
+  const taken = new Set([...takenIds].map((t) => String(t).toLowerCase()));
+  const base = `${id}-copy`;
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 1000; n += 1) {
+    const c = `${base}-${n}`;
+    if (!taken.has(c.toLowerCase())) return c;
+  }
+  return base; // 998 copies of one model: let the server reject the duplicate
+}
+
+/**
  * The Models view body: global entries (editable), the selected project's
  * legacy custom models (promotable), and the built-in catalog (read-only).
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
@@ -98,6 +118,12 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     const edit = h(doc, 'button', 'btn-ghost mv-edit', 'Edit');
     edit.type = 'button'; edit.dataset.id = m.id;
     card.appendChild(edit);
+    // Duplicate opens a CREATE editor seeded from this entry (app.js fetches the
+    // raw env values first — the card only ever holds masked ones). The point is
+    // deriving a sibling: same routing, one parameter changed.
+    const dup = h(doc, 'button', 'btn-ghost mv-duplicate', 'Duplicate');
+    dup.type = 'button'; dup.dataset.id = m.id;
+    card.appendChild(dup);
     const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
     tst.type = 'button'; tst.dataset.id = m.id;
     card.appendChild(tst);
