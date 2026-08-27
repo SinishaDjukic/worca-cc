@@ -1059,7 +1059,54 @@
         <!-- /view agent-create -->
 
         <!-- ===== VIEW: WORKFLOW COMPOSER (v2 node graph) ===== -->
-        <section class="view hidden" data-view="composer"></section>
+        <section class="view hidden" data-view="composer">
+          <div class="topbar">
+            <div>
+              <h1>Workflow Composer</h1>
+              <div class="sub">Wire agents into a pipeline — outputs feed inputs, loops carry a budget</div>
+            </div>
+          </div>
+
+          <section class="card">
+            <div class="gv-head" id="gv-head">
+              <input id="gv-name" class="gv-name" type="text" spellcheck="false" placeholder="Untitled pipeline" aria-label="Pipeline name">
+              <span class="gv-dirty" id="gv-dirty" hidden title="Unsaved changes">•</span>
+              <button type="button" class="gv-errchip" id="gv-errors" hidden></button>
+              <span class="sp"></span>
+              <button type="button" class="btn-ghost" id="gv-new">New canvas</button>
+              <button type="button" class="btn-ghost" id="gv-autolayout">Auto-layout</button>
+              <button type="button" class="btn-go" id="gv-save">Save</button>
+            </div>
+            <!-- The stage is created INSIDE #gv-canvas by createGraphView. The chip
+                 and the inspector rail are its SIBLINGS: a pointerdown on them can
+                 never reach the stage, so capture can never retarget their click. -->
+            <div class="gv-canvas" id="gv-canvas">
+              <div class="gv-chip" id="gv-chip" hidden></div>
+              <div class="gv-ins-rail" id="gv-ins-rail" data-open="open">
+                <button type="button" class="gv-ins-toggle" id="gv-ins-toggle" aria-expanded="true" aria-label="Collapse inspector">›</button>
+                <div class="gv-ins-body" id="gv-ins-body"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card gv-agents" id="gv-agents">
+            <div class="gv-agents-head">
+              <b>Agents</b>
+              <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
+              <span class="gv-legend" id="gv-legend">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
+            </div>
+            <div class="gv-palette" id="gv-palette"></div>
+          </section>
+
+          <section class="card gv-saved">
+            <div class="saved-head">
+              <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
+            </div>
+            <div class="saved-list" id="gv-saved-list"></div>
+            <div class="gv-archived" id="gv-archived" hidden></div>
+          </section>
+          <div id="gv-dialog-host"></div>
+        </section>
         <!-- /view composer -->
 
         <!-- ===== VIEW: SETTINGS ===== -->
