@@ -58,6 +58,12 @@ test('classifies the Claude CLI API timeout as network', () => {
   assert.equal(classifyError(new Error('the request timed-out after 60000ms')), 'network');
 });
 
+test('classifies HTTP 500 errors as network', () => {
+  assert.equal(classifyError(new Error('API Error: 500 Internal Server Error')), 'network');
+  assert.equal(classifyError(new Error('HTTP request failed with status 500')), 'network');
+  assert.equal(classifyError(new Error('Error: Request failed: Internal Server Error')), 'network');
+});
+
 test('returns null for a plain bug and accepts a raw string / nullish', () => {
   assert.equal(classifyError(new Error('TypeError: x is not a function')), null);
   assert.equal(classifyError('401 Invalid authentication credentials'), 'auth');
