@@ -323,3 +323,70 @@ test('drag-to-spawn: ghost after 4px, drop inside the stage commits, outside can
   s.doc.dispatchEvent(new s.win.PointerEvent('pointerup', { pointerId: 4, clientX: 1270, clientY: 300, bubbles: true }));
   assert.equal(s.c.template().nodes.length, n0 + 1, 'a drop under the inspector rail cancels');
 });
+
+test('agent inspector gates rows on meta booleans and commits every change', async () => {
+  const meta = { key: 'planner', displayName: 'Plan', color: 'violet', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false, inputs: [], outputs: [] };
+  const s = await open({ api: { agents: async () => [meta], agentsAll: async () => [meta] } });
+  s.c.setAgents({ planner: meta });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const body = s.el.insBody;
+  assert.ok(body.querySelector('[data-field="model"]'), 'model select');
+  assert.ok(body.querySelector('[data-field="fanOut"]'), 'fan-out row exists for a fanOut agent');
+  assert.ok(body.querySelector('[data-field="askQuestions"]'));
+  assert.ok(body.querySelector('[data-field="awaitAll"]'));
+  const sel2 = body.querySelector('[data-field="model"]');
+  sel2.value = 'sonnet';
+  sel2.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().nodes[1].config.model, 'sonnet');
+  assert.equal(s.c.undoDepth(), 1, 'a field change is one undo entry');
+  const box = body.querySelector('[data-field="awaitAll"]');
+  box.checked = true;
+  box.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().nodes[1].config.awaitAll, true);
+});
+
+test('locked questions are forced + disabled; a non-asking agent has no row', async () => {
+  const locked = { key: 'planner', displayName: 'Plan', asksQuestions: true, questionsLocked: true, questionsDefault: true, inputs: [], outputs: [] };
+  const s = await open();
+  s.c.setAgents({ planner: locked });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const box = s.el.insBody.querySelector('[data-field="askQuestions"]');
+  assert.equal(box.disabled, true);
+  assert.equal(box.checked, true);
+  assert.equal(box.closest('.ins-tog').title, 'Always on for this agent');
+  const mute = { key: 'planner', displayName: 'Plan', asksQuestions: false, inputs: [], outputs: [] };
+  s.c.setAgents({ planner: mute });
+  s.c.select(null); s.c.select({ kind: 'node', id: 'n_agent' });
+  assert.equal(s.el.insBody.querySelector('[data-field="askQuestions"]'), null);
+});
+
+test('arity stepper floors at 2; loop wires get maxCycles; Task gets planStoreSeed', async () => {
+  const s = await open();
+  s.c.spawn({ kind: 'and' });
+  const andId = s.c.template().nodes[s.c.template().nodes.length - 1].id;
+  const inp = s.el.insBody.querySelector('[data-field="arity"]');
+  inp.value = '1';
+  inp.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().nodes.find((n) => n.id === andId).config.arity, 2, 'floor is 2 (V12)');
+  s.c.select({ kind: 'node', id: 'n_task' });
+  const seed = s.el.insBody.querySelector('[data-field="planStoreSeed"]');
+  assert.ok(seed, 'Task node exposes planStoreSeed');
+  seed.checked = true;
+  seed.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().nodes[0].config.planStoreSeed, true);
+  s.c.select({ kind: 'wire', id: 'w1' });
+  assert.equal(s.el.insBody.querySelector('[data-field="maxCycles"]'), null, 'a plain wire has no budget control (V13)');
+});
+
+test('the rail collapse state persists under worca.composer.inspector', async () => {
+  const store = new Map();
+  const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) };
+  const s = await open({ storage });
+  assert.equal(s.el.insRail.dataset.open, 'open');
+  s.el.insToggle.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  assert.equal(s.el.insRail.dataset.open, 'collapsed');
+  assert.equal(s.el.insToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(store.get('worca.composer.inspector'), 'collapsed');
+  const s2 = await open({ storage });
+  assert.equal(s2.el.insRail.dataset.open, 'collapsed', 'restored on the next mount');
+});

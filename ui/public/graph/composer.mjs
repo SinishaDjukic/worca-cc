@@ -11,6 +11,7 @@
 // Depth 3 ⇒ the shared core is three `..` up.
 import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
+import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
 import { WIRE_HIT_TOL, PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath }
   from '../../../src/shared/graph/geometry.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
@@ -159,6 +160,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     view.render(tpl, { selection: sel, report: lastReport });
     paintChrome();
     paintPalette();
+    paintInspector();
     if (hooks.onRender) hooks.onRender();
   }
   function paintChrome() {
@@ -324,6 +326,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function select(next) {
     sel = next;
     view.setSelection(sel);
+    paintInspector();
     if (hooks.onSelect) hooks.onSelect(sel);
   }
 
@@ -508,6 +511,75 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   const onFilterInput = () => { query = hostEls.filter ? hostEls.filter.value : ''; applyFilter(hostEls.palette, query, collapsed); };
 
+  let models = [];
+  let efforts = [];
+  let modelsSet = false;          // an explicit setModels() wins over the mount fetch
+  const readKey = (k) => { try { return storage ? storage.getItem(k) : null; } catch { return null; } };
+  const writeKey = (k, v) => { try { if (storage) storage.setItem(k, v); } catch { /* private mode */ } };
+
+  function applyModels({ models: m = [], efforts: e = [] } = {}) {
+    models = Array.isArray(m) ? m : [];
+    efforts = Array.isArray(e) ? e : [];
+    paintInspector();
+  }
+
+  function paintInspector() {
+    const hostBody = hostEls.insBody;
+    if (!hostBody) return;
+    if (!sel) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
+    if (sel.kind === 'node') {
+      const node = nodeById(sel.id);
+      if (!node) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
+      const meta = node.kind === 'agent' ? (agents[node.key] || null) : null;
+      return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, doc }));
+    }
+    const wire = wireById(sel.id);
+    if (!wire) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
+    hostBody.replaceChildren(renderWireInspector(wire, { loop: view.isLoopWire(wire.id), doc }));
+  }
+
+  function setRail(open, { persist = false } = {}) {
+    if (!hostEls.insRail) return;
+    hostEls.insRail.dataset.open = open ? 'open' : 'collapsed';
+    if (hostEls.insToggle) {
+      hostEls.insToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      hostEls.insToggle.setAttribute('aria-label', open ? 'Collapse inspector' : 'Expand inspector');
+    }
+    if (persist) writeKey(INSPECTOR_KEY, open ? 'open' : 'collapsed');
+  }
+  const onRailToggle = () => setRail(hostEls.insRail.dataset.open === 'collapsed', { persist: true });
+
+  function onInspectorChange(ev) {
+    const name = ev.target.dataset && ev.target.dataset.field;
+    if (!name || !sel) return;
+    if (sel.kind === 'wire') {
+      const wire = wireById(sel.id);
+      if (!wire || name !== 'maxCycles') return;
+      const n = Number.parseInt(ev.target.value, 10);
+      commit('maxCycles', () => {
+        wire.config = { ...(wire.config || {}) };
+        if (Number.isInteger(n) && n >= 1) wire.config.maxCycles = n; else delete wire.config.maxCycles;
+        if (!Object.keys(wire.config).length) delete wire.config;
+      });
+      return;
+    }
+    const node = nodeById(sel.id);
+    if (!node) return;
+    commit(name, () => {
+      if (name === 'arity') {
+        const n = Number.parseInt(ev.target.value, 10);
+        node.config.arity = Number.isInteger(n) && n >= 2 ? n : 2;   // V12 floor
+      } else if (ev.target.type === 'checkbox') {
+        if (ev.target.checked) node.config[name] = true; else delete node.config[name];
+      } else if (ev.target.value === '') {
+        delete node.config[name];
+      } else {
+        node.config[name] = ev.target.value;
+      }
+    });
+    paintInspector();                                  // re-read the committed value
+  }
+
   function firstErrorNode() {
     const e = (lastReport.errors || []).find((x) => x.nodeId);
     return e ? e.nodeId : null;
@@ -537,6 +609,15 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.palette?.addEventListener('pointerdown', onPalDown);
     hostEls.palette?.addEventListener('click', onPalClick);
     hostEls.filter?.addEventListener('input', onFilterInput);
+    hostEls.insBody?.addEventListener('change', onInspectorChange);
+    hostEls.insToggle?.addEventListener('click', onRailToggle);
+    setRail(readKey(INSPECTOR_KEY) !== 'collapsed');
+    // The model/effort lists are chrome, not graph state: pull them once through
+    // the injected api so the inspector's selects are usable the moment the rail
+    // opens. app.js may still call setModels() explicitly; that wins.
+    if (api && typeof api.config === 'function') {
+      Promise.resolve(api.config()).then((cfg) => { if (!modelsSet && cfg) applyModels(cfg); }).catch(() => {});
+    }
     stage.addEventListener('pointermove', onMove);
     stage.addEventListener('pointerup', onUp);
     stage.addEventListener('pointercancel', onCancelEv);
@@ -566,6 +647,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.palette?.removeEventListener('pointerdown', onPalDown);
     hostEls.palette?.removeEventListener('click', onPalClick);
     hostEls.filter?.removeEventListener('input', onFilterInput);
+    hostEls.insBody?.removeEventListener('change', onInspectorChange);
+    hostEls.insToggle?.removeEventListener('click', onRailToggle);
     endPalDrag();
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
@@ -597,7 +680,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     view, stats, hooks,
     mount, destroy, commit, loadTemplate,
     fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
-    spawn, paintPalette,
+    spawn, paintPalette, paintInspector,
+    setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },
     newCanvas: () => loadTemplate(null),
     template: () => tpl,
     serialize: () => serializeTemplate(tpl),
