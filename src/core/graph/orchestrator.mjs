@@ -944,4 +944,143 @@ export class GraphOrchestrator extends RunHarness {
     const n = Array.isArray(args.phases) ? args.phases.length : 0;
     return { summary: `${label}: composite execution complete (${n} phase(s)).`, outputs: {}, verdict: null };
   }
+  // ── hook 4: rehydrate (PURE — runs before the shell restores anything) ────
+  /**
+   * Decide whether this resume point is ours and hand the shell the fields it
+   * rehydrates from. NOTHING else: this.registry / state.steps / pipeline are
+   * not restored yet (run-harness.mjs:784-790). The engine-side restoration is
+   * _restoreFromResumePoint, which _engineRun({resume}) awaits first.
+   * @param {object} rp the parsed resume_point
+   * @returns {{checkpointRef:string|null, memberWorktrees:Array, plan:null, audit:string}}
+   */
+  _engineRehydrate(rp) {
+    if (!rp || rp.version !== 2) throw new Error(`resume(): unsupported resume point version ${rp?.version}`);
+    if (!rp.manifest || rp.manifest.version !== 2) throw new Error('resume(): the v2 resume point carries no manifest');
+    return {
+      checkpointRef: rp.checkpointRef ?? null,
+      memberWorktrees: (rp.workspace?.projects || []).map((p) => ({
+        projectKey: p.projectKey,
+        worktreeDir: p.worktreeDir,
+        graphInstruction: p.graphInstruction || '',
+      })),
+      plan: null,   // v2 has no frozen ExecutablePlan; the manifest is the topology
+      // The base writes this line (P1 hook-4 contract); v1's is "from <kind> at step <n>".
+      audit: `Pipeline **resumed** (graph snapshot at seq ${rp.snapshot?.seq ?? 0}).`,
+    };
+  }
+
+  /**
+   * Restore the v2 run position — called by _engineRun({resume}) INSIDE the
+   * shell's try, after state.*, pipeline, registry and agentPrompts are back.
+   * The snapshot is authoritative and the workflow ROW is never read: the frozen
+   * manifest supplies the topology, ports and effective budgets, the live
+   * registry only the executor-side meta. Overlays are NOT refreshed — re-reading
+   * them would let a config edit made while the run sat paused change the model
+   * of an execution that is mid-flight in the snapshot.
+   */
+  async _restoreFromResumePoint(rp) {
+    this._resumeSnapshot = rp.snapshot || null;
+    this._graphSnapshot = rp.snapshot || null;
+    this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
+    this.pauseReason = null;
+    const manifest = rp.manifest || this.state.stepper;
+    this.state.stepper = manifest;
+    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry));
+    // §9.4, unchanged messages: the providing plugin may have been disabled or
+    // uninstalled while this run sat paused. (Same place v1 re-preflights.)
+    this._preflightAgentKeys(this.resolved.agentKeys);
+    // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
+    const cache = new Map();
+    for (const nc of Object.values(this.resolved.nodeCtx)) {
+      if (nc.kind !== 'agent') continue;
+      const meta = nc.meta || {};
+      const ck = meta.agentPath || meta.agentFile || nc.key;
+      if (!cache.has(ck)) cache.set(ck, await loadAgentFile(this.agentsDir, meta.agentFile ?? null, meta.agentPath ?? null));
+      const { prompt, tools } = cache.get(ck);
+      nc.agentPrompt = prompt;
+      nc.tools = tools;
+    }
+    // One-shot session re-attach: only executions the pause left PAUSED. The map
+    // is consumed entry-by-entry in _execCtx, so a fix cycle (a NEW executionId)
+    // never re-attaches, and a composite slice re-runs whole.
+    this._resumeSessions = new Map(
+      (this.resumeOpts?.steps || [])
+        .filter((s) => s.status === 'paused' && s.sessionId)
+        .map((s) => [s.key, s.sessionId]),
+    );
+  }
+}
+
+/**
+ * Rebuild a resolveGraph-shaped result from a PERSISTED manifest + the live
+ * registry. The manifest is authoritative for topology, port identity (ids/
+ * types/loop/expands/when), per-node model/effort/askQuestions/awaitAll/fanOut/
+ * config and per-wire maxCycles; the registry supplies only what a manifest
+ * deliberately omits (runnerType, prompt body, frontmatter tools, per-port
+ * as/directive/filename/store/artifactKind, the verdict filename, sideEffect,
+ * mockRole, displayName).
+ * @param {object} manifest a manifest v2
+ * @param {Record<string,object>} registry loadAgentRegistry() output
+ * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>}}
+ */
+export function resolvedFromManifest(manifest, registry) {
+  const reg = registry && typeof registry === 'object' ? registry : {};
+  const template = manifestTemplate(manifest);   // restores node.config + loop wire config.maxCycles verbatim
+  const manPorts = manifestPortsFn(manifest);
+  const regPorts = registryPortsFn(reg);
+  const ports = (node) => {
+    const snap = manPorts(node);
+    const live = regPorts(node) || { inputs: [], outputs: [] };
+    if (!snap) return live;                       // a node the manifest does not know (never, defensively)
+    const merge = (side) => (snap[side] || []).map((p) => {
+      const l = (live[side] || []).find((x) => x.id === p.id);
+      return l ? { ...l, ...p } : p;              // snapshot identity wins; live rendering fields ride along
+    });
+    return {
+      ...live, ...snap,
+      inputs: merge('inputs'), outputs: merge('outputs'),
+      // manifestPortsFn stubs `verdict: { filename: '' }`; the FILENAME is live-only.
+      verdict: live.verdict ?? undefined,
+    };
+  };
+  const nodeCtx = {};
+  const keyCounts = new Map();
+  for (const mn of manifest.graph?.nodes || []) {
+    if (mn.kind !== 'agent') {
+      nodeCtx[mn.id] = { nodeId: mn.id, kind: mn.kind, key: null, config: { ...(mn.config || {}) } };
+      continue;
+    }
+    const meta = reg[mn.key] || {};
+    keyCounts.set(mn.key, (keyCounts.get(mn.key) || 0) + 1);
+    nodeCtx[mn.id] = {
+      nodeId: mn.id, kind: 'agent', key: mn.key, authoredKey: mn.key, meta,
+      runnerType: meta.runnerType || 'producer',
+      agentFile: meta.agentFile ?? null,
+      agentPrompt: '',        // filled by _restoreFromResumePoint
+      promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
+      tools: [],              // filled by _restoreFromResumePoint
+      config: { ...(mn.config || {}) },
+      model: mn.model || undefined,
+      effort: mn.effort || undefined,
+      fanOut: !!mn.fanOut,
+      askQuestions: !!mn.askQuestions,
+      awaitAll: !!mn.awaitAll,
+      duplicateKey: false,
+    };
+  }
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind === 'agent') nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
+  }
+  const wires = {};
+  for (const w of manifest.graph?.wires || []) {
+    if (w.loop) wires[w.id] = { maxCycles: Number.isInteger(w.maxCycles) && w.maxCycles >= 1 ? w.maxCycles : DEFAULT_MAX_CYCLES };
+  }
+  const agentsByKey = {};
+  const agentKeys = new Set();
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind !== 'agent') continue;
+    agentsByKey[nc.key] = nc.meta;
+    agentKeys.add(nc.key);
+  }
+  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys };
 }
