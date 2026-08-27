@@ -128,36 +128,6 @@ test('Duplicate on a builtin GETs the full agent then POSTs a copy with a fresh 
   assert.equal(posts[0].markdown, '# planner body');
 });
 
-test('composer save surfaces server warnings via the link-banner toast', async () => {
-  const { window } = await boot({
-    fetchHandler: (u, opts) => {
-      if (u.endsWith('/api/workflows') && opts.method === 'POST') {
-        return Promise.resolve({ ok: true, status: 201, json: async () => ({
-          workflow: { id: 'wf_warny', name: 'Warny', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] },
-          warnings: ['node "s1_0" consumes "checklist" but no upstream step produces it'],
-        }) });
-      }
-      if (u.endsWith('/api/workflows') && (!opts.method || opts.method === 'GET')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [] }) });
-      }
-      if (u.includes('/api/workflows/')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 'wf_default', name: 'Default', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] }) });
-      }
-      return null;
-    },
-  });
-  window.location.hash = 'composer';
-  window.dispatchEvent(new window.Event('hashchange'));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  const doc = window.document;
-  assert.ok(window.__composer.steps.length >= 1, 'canvas seeded from default');
-  click(window, doc.querySelector('#composer-save'));
-  await confirmDialog(window, { name: 'Warny' });
-  assert.match(doc.querySelector('#composer-link-text').textContent, /consumes "checklist"/, 'warning toasted');
-  assert.equal(doc.querySelector('#composer-link-banner').hidden, false);
-});
-
 test('agents view splits channel pills into labeled Input and Output rows', async () => {
   const { window } = await boot();
   await goAgents(window);

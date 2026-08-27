@@ -1,0 +1,230 @@
+{
+  "id": "wf_no-clarify",
+  "name": "No Clarify",
+  "version": 2,
+  "domain": "coding",
+  "createdAt": "2026-07-29T19:40:22.212Z",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 60,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_plan",
+      "kind": "agent",
+      "key": "planner",
+      "x": 360,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_refine",
+      "kind": "agent",
+      "key": "refiner",
+      "x": 660,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_decompose",
+      "kind": "agent",
+      "key": "decomposer",
+      "x": 960,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_impl",
+      "kind": "agent",
+      "key": "implementer",
+      "x": 1260,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_review",
+      "kind": "agent",
+      "key": "reviewer",
+      "x": 1560,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_check",
+      "kind": "agent",
+      "key": "manualTestsChecklist",
+      "x": 1860,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_webui",
+      "kind": "agent",
+      "key": "manualWebUiTesting",
+      "x": 2160,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 2460,
+      "y": 198,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_plan",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_plan",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_refine",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_refine",
+        "port": "revise"
+      },
+      "to": {
+        "node": "n_refine",
+        "port": "revise"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_refine",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_decompose",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_refine",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_impl",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_refine",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_refine",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_check",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_decompose",
+        "port": "tasks"
+      },
+      "to": {
+        "node": "n_impl",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w9",
+      "from": {
+        "node": "n_impl",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "done"
+      }
+    },
+    {
+      "id": "w10",
+      "from": {
+        "node": "n_review",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_impl",
+        "port": "fix"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w11",
+      "from": {
+        "node": "n_review",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_check",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w12",
+      "from": {
+        "node": "n_check",
+        "port": "checklist"
+      },
+      "to": {
+        "node": "n_webui",
+        "port": "checklist"
+      }
+    },
+    {
+      "id": "w13",
+      "from": {
+        "node": "n_webui",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

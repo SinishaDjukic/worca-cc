@@ -1,0 +1,23 @@
+{
+  "comment": "V17 overlay migration maps (Task 11). NODE_ID_MAP: config_workflow_nodes.node_id rewrites. FB_WIRE_MAP: config_workflow_feedbacks -> config_workflow_wires rows. Includes wf_default for projects with default-workflow overlays. Wire ids reflect Amendment f as revised (single-wire inputs; the double-loop seeds' blocking wires keep their ids as the OR valve's in-wires).",
+  "NODE_ID_MAP": {
+    "wf_full": { "s0_0": "n_clarify", "s1_0": "n_plan", "s2_0": "n_refine", "s3_0": "n_decompose", "s4_0": "n_impl", "s5_0": "n_review", "s6_0": "n_check", "s7_0": "n_webui" },
+    "wf_no-clarify": { "s0_0": "n_plan", "s1_0": "n_refine", "s2_0": "n_decompose", "s3_0": "n_impl", "s4_0": "n_review", "s5_0": "n_check", "s6_0": "n_webui" },
+    "wf_provided-plan": { "s0_0": "n_refine", "s1_0": "n_decompose", "s2_0": "n_impl", "s3_0": "n_review", "s4_0": "n_check", "s5_0": "n_webui" },
+    "wf_full-no-decompose": { "s0_0": "n_clarify", "s1_0": "n_plan", "s2_0": "n_refine", "s3_0": "n_impl", "s4_0": "n_review", "s5_0": "n_check", "s6_0": "n_webui" },
+    "wf_quick-fix": { "s0_0": "n_plan", "s1_0": "n_impl", "s2_0": "n_review" },
+    "wf_clarify-implement": { "s0_0": "n_clarify", "s1_0": "n_plan", "s2_0": "n_refine", "s3_0": "n_impl", "s4_0": "n_review" },
+    "wf_clarify-quick-fix": { "s0_0": "n_clarify", "s1_0": "n_plan", "s2_0": "n_impl", "s3_0": "n_review" },
+    "wf_default": { "s_clarify": "n_clarify", "s0_0": "n_plan", "s1_0": "n_refine", "s2_0": "n_impl", "s3_0": "n_review" }
+  },
+  "FB_WIRE_MAP": {
+    "wf_full": { "fb_0": "w5", "fb_1": "w12", "fb_2": "w15" },
+    "wf_no-clarify": { "fb_0": "w3", "fb_1": "w10" },
+    "wf_provided-plan": { "fb_0": "w2", "fb_1": "w9", "fb_2": "w12" },
+    "wf_full-no-decompose": { "fb_0": "w5", "fb_1": "w10", "fb_2": "w13" },
+    "wf_quick-fix": { "fb_0": "w5" },
+    "wf_clarify-implement": { "fb_0": "w9", "fb_1": "w5" },
+    "wf_clarify-quick-fix": { "fb_0": "w7" },
+    "wf_default": { "fb_refine": "w5", "fb_review": "w9" }
+  }
+}

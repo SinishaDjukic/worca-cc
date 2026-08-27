@@ -1,0 +1,383 @@
+<style>
+/* ============================================================
+   s-plugins — "everything is pluggable"
+   left: the core + five contribution sockets (animated docking)
+   right: the real Plugins view; below: the chat-connector marquee
+   ============================================================ */
+.s-plugins{position:relative;}
+
+/* ---------- header ---------- */
+.s-plugins .pg-head{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);
+  gap:clamp(14px,3vw,44px);align-items:end;margin-bottom:clamp(20px,2.3vw,30px);}
+.s-plugins .pg-title{margin-top:14px;}
+.s-plugins .pg-lead{margin-bottom:3px;}
+@media(max-width:900px){.s-plugins .pg-head{grid-template-columns:minmax(0,1fr);align-items:start;}}
+
+/* ---------- stage: board + floating screen ---------- */
+.s-plugins .pg-stage{display:grid;grid-template-columns:minmax(0,1.04fr) minmax(0,1fr);align-items:center;}
+.s-plugins .pg-left{min-width:0;}
+
+/* ---------- the socket board ---------- */
+.s-plugins .pg-board{background:var(--field);border:1px solid var(--line-2);border-radius:34px;
+  padding:22px 100px 24px 22px;position:relative;overflow:hidden;}
+.s-plugins .pg-btop{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.s-plugins .pg-bfile{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);background:#fff;
+  border:1px solid var(--line-2);border-radius:9px;padding:5px 11px;white-space:nowrap;}
+.s-plugins .pg-bapi{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--violet-ink);background:var(--violet-bg);border-radius:8px;padding:5px 10px;white-space:nowrap;}
+.s-plugins .pg-bay{display:grid;grid-template-columns:82px minmax(0,1fr);}
+.s-plugins .pg-core{position:relative;border-radius:20px;display:grid;place-items:center;
+  background:linear-gradient(163deg,#24242A 0%,var(--dark) 48%);}
+.s-plugins .pg-corelbl{writing-mode:vertical-rl;transform:rotate(180deg);font-family:var(--mono);
+  font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:#8B8B95;}
+.s-plugins .pg-notch{position:absolute;right:-7px;width:14px;height:14px;border-radius:5px;
+  border:3px solid var(--dark);background:var(--k);transform:translateY(-50%);
+  animation:plugins-notch 12s cubic-bezier(.2,.8,.2,1) infinite;animation-delay:var(--d,0s);}
+.s-plugins .pg-n1{top:10%;}.s-plugins .pg-n2{top:30%;}.s-plugins .pg-n3{top:50%;}
+.s-plugins .pg-n4{top:70%;}.s-plugins .pg-n5{top:90%;}
+
+.s-plugins .pg-rows{display:flex;flex-direction:column;}
+.s-plugins .pg-row{flex:1 1 0;min-height:62px;display:flex;align-items:center;min-width:0;}
+.s-plugins .pg-wire{position:relative;flex:0 0 28px;height:2px;border-radius:2px;background:var(--kb);}
+.s-plugins .pg-wire i{position:absolute;top:-2px;left:0;width:6px;height:6px;border-radius:50%;
+  background:var(--k);opacity:0;animation:plugins-flow 12s linear infinite;animation-delay:var(--d,0s);}
+.s-plugins .pg-sock{position:relative;flex:0 0 auto;width:36px;height:36px;border-radius:12px;
+  display:grid;place-items:center;background:var(--kb);color:var(--ki);border:1px solid transparent;
+  animation:plugins-sock 12s cubic-bezier(.2,.8,.2,1) infinite;animation-delay:var(--d,0s);}
+.s-plugins .pg-sock svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round;}
+.s-plugins .pg-ring{position:absolute;inset:-3px;border-radius:15px;border:2px solid var(--k);opacity:0;
+  animation:plugins-ring 12s cubic-bezier(.2,.8,.2,1) infinite;animation-delay:var(--d,0s);}
+.s-plugins .pg-card{flex:1 1 auto;min-width:0;margin-left:12px;position:relative;overflow:hidden;
+  display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--line-2);border-radius:14px;
+  padding:9px 13px 9px 14px;box-shadow:0 7px 18px rgba(25,25,27,.055);will-change:transform,opacity;
+  animation:plugins-dock 12s cubic-bezier(.2,.8,.2,1) infinite;animation-delay:var(--d,0s);}
+.s-plugins .pg-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--k);}
+.s-plugins .pg-ct{font-size:13.5px;font-weight:600;letter-spacing:-.012em;color:var(--ink);white-space:nowrap;}
+.s-plugins .pg-cm{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* kind palettes (local custom props — no token redefinition) */
+.s-plugins .pg-k-src{--k:var(--blue);--kb:var(--blue-bg);--ki:var(--blue-ink);}
+.s-plugins .pg-k-agt{--k:var(--red);--kb:var(--red-bg);--ki:var(--red-ink);}
+.s-plugins .pg-k-wf{--k:var(--amber);--kb:var(--amber-bg);--ki:var(--amber-ink);}
+.s-plugins .pg-k-mdl{--k:var(--violet);--kb:var(--violet-bg);--ki:var(--violet-ink);}
+.s-plugins .pg-k-cht{--k:var(--green);--kb:var(--green-bg);--ki:var(--green-ink);}
+.s-plugins .pg-d2{--d:-2.4s;}.s-plugins .pg-d3{--d:-4.8s;}
+.s-plugins .pg-d4{--d:-7.2s;}.s-plugins .pg-d5{--d:-9.6s;}
+
+/* ---------- scaffold card under the board ---------- */
+.s-plugins .pg-fcard{margin:16px 0 0 clamp(0px,3vw,44px);max-width:404px;background:#fff;
+  border:1px solid var(--line-2);border-radius:20px;padding:13px 16px 15px;box-shadow:var(--shadow-lift);}
+.s-plugins .pg-fk{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);}
+.s-plugins .pg-fcmd{font-family:var(--mono);font-size:12px;color:var(--ink);margin-top:7px;}
+.s-plugins .pg-fcmd i{font-style:normal;color:var(--green-ink);}
+.s-plugins .pg-farg{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:3px;
+  overflow-wrap:anywhere;}
+/* mono strings are literal CLI / manifest text — never let the font ligate "--" */
+.s-plugins .pg-bfile,.s-plugins .pg-corelbl,.s-plugins .pg-cm,.s-plugins .pg-fcmd,.s-plugins .pg-farg,
+.s-plugins .pg-cttl,.s-plugins .pg-pv,.s-plugins .pg-pp,.s-plugins .pg-spill,.s-plugins .pg-cn{
+  font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0;}
+
+/* ---------- the Plugins view, floating over the board ---------- */
+.s-plugins .pg-screen{position:relative;z-index:3;margin-left:-64px;background:#fff;
+  border:1px solid var(--line-2);border-radius:26px;padding:14px 18px 16px;
+  box-shadow:-18px 26px 60px rgba(25,25,27,.15),0 3px 10px rgba(25,25,27,.06);}
+.s-plugins .pg-chrome{display:flex;align-items:center;gap:9px;padding-bottom:9px;
+  border-bottom:1px solid var(--line);margin-bottom:11px;}
+.s-plugins .pg-dots{display:flex;gap:5px;}
+.s-plugins .pg-dots i{width:8px;height:8px;border-radius:50%;background:#E4E4E0;}
+.s-plugins .pg-cttl{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.s-plugins .pg-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;}
+.s-plugins .pg-h1{font-size:17.5px;font-weight:600;letter-spacing:-.025em;}
+.s-plugins .pg-sub{font-size:10.5px;color:var(--ink-3);line-height:1.42;margin-top:2px;max-width:32ch;}
+.s-plugins .pg-add{margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
+  font-size:11px;font-weight:500;color:#fff;background:var(--ink);border-radius:999px;padding:7px 12px;}
+.s-plugins .pg-add svg{width:11px;height:11px;fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;}
+.s-plugins .pg-sect{font-size:11.5px;font-weight:600;color:var(--ink-2);margin-bottom:7px;}
+.s-plugins .pg-list{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;}
+.s-plugins .pg-plug{border:1px solid var(--line-2);border-radius:15px;padding:9px 12px 10px;}
+.s-plugins .pg-ph{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.s-plugins .pg-pn{font-size:12.5px;font-weight:600;letter-spacing:-.01em;}
+.s-plugins .pg-pv{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.s-plugins .pg-pen{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-3);}
+.s-plugins .pg-pen b{width:13px;height:13px;border-radius:4px;background:var(--ink);display:grid;place-items:center;}
+.s-plugins .pg-pen b svg{width:8px;height:8px;fill:none;stroke:#fff;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;}
+.s-plugins .pg-pc{font-size:11px;color:var(--ink-3);margin-top:4px;}
+.s-plugins .pg-pp{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);margin-top:2px;overflow-wrap:anywhere;}
+.s-plugins .pg-chans{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+.s-plugins .pg-bdg{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;font-weight:700;
+  letter-spacing:.07em;text-transform:uppercase;padding:3px 8px;border-radius:7px;
+  background:var(--field);color:var(--ink-3);white-space:nowrap;}
+.s-plugins .pg-bdg i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.s-plugins .pg-bdg.pg-green{background:var(--green-bg);color:var(--green-ink);}
+.s-plugins .pg-bdg.pg-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.s-plugins .pg-bdg.pg-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.s-plugins .pg-bdg.pg-live i{animation:plugins-blip 1.9s ease-in-out infinite;}
+.s-plugins .pg-acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;}
+.s-plugins .pg-gbtn{font-size:10.5px;color:var(--ink-2);background:#fff;border:1px solid var(--line-2);
+  border-radius:8px;padding:5px 9px;white-space:nowrap;}
+.s-plugins .pg-avail{display:flex;flex-direction:column;gap:6px;}
+.s-plugins .pg-arow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border:1px solid var(--line-2);border-radius:13px;padding:7px 11px;}
+.s-plugins .pg-ibtn{margin-left:auto;font-size:10.5px;font-weight:500;color:#fff;background:var(--ink);
+  border-radius:8px;padding:5px 11px;white-space:nowrap;}
+
+/* ---------- chat connector strip ---------- */
+.s-plugins .pg-strip{margin-top:clamp(20px,2.6vw,32px);background:var(--dark);color:#fff;
+  border-radius:32px;padding:20px clamp(16px,2.2vw,28px) 20px;position:relative;overflow:hidden;
+  box-shadow:0 26px 60px rgba(15,15,18,.2);}
+.s-plugins .pg-stop{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:15px;}
+.s-plugins .pg-sk{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#7C7C88;}
+.s-plugins .pg-sh{font-size:clamp(19px,2vw,26px);font-weight:600;letter-spacing:-.03em;margin-top:5px;}
+.s-plugins .pg-spills{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;}
+.s-plugins .pg-spill{font-family:var(--mono);font-size:11px;color:#C4C4CE;background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.09);border-radius:999px;padding:6px 13px;white-space:nowrap;}
+.s-plugins .pg-spill.pg-in{color:#8FDCA0;background:rgba(91,174,91,.12);border-color:rgba(91,174,91,.24);}
+.s-plugins .pg-spill.pg-no{color:#E9A79A;background:rgba(231,106,90,.12);border-color:rgba(231,106,90,.22);}
+.s-plugins .pg-mq{position:relative;overflow:hidden;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);}
+.s-plugins .pg-track{display:flex;width:max-content;animation:plugins-marquee 34s linear infinite;}
+.s-plugins .pg-chip{flex:0 0 auto;margin-right:14px;display:inline-flex;align-items:center;gap:11px;
+  padding:11px 17px;border-radius:15px;background:#1B1B20;border:1px solid #2C2C31;}
+.s-plugins .pg-gl{width:22px;height:22px;flex:0 0 auto;display:block;}
+.s-plugins .pg-cn{font-family:var(--mono);font-size:12px;color:#D2D2DA;white-space:nowrap;}
+.s-plugins .pg-cap{margin-top:11px;font-size:11.5px;color:#7C7C88;}
+
+/* ---------- motion ---------- */
+@keyframes plugins-dock{
+  0%,74%{transform:translateX(0);opacity:1;}
+  78%{transform:translateX(0);opacity:0;}
+  79%{transform:translateX(56px);opacity:0;}
+  88%{transform:translateX(-6px);opacity:1;}
+  92%,100%{transform:translateX(0);opacity:1;}
+}
+@keyframes plugins-sock{
+  0%,74%{background-color:var(--kb);color:var(--ki);border-color:transparent;}
+  79%,84%{background-color:#EFEFEB;color:#B6B6BC;border-color:#DFDFDA;}
+  90%,100%{background-color:var(--kb);color:var(--ki);border-color:transparent;}
+}
+@keyframes plugins-notch{
+  0%,74%{background-color:var(--k);}
+  79%,84%{background-color:#2E2E34;}
+  90%,100%{background-color:var(--k);}
+}
+@keyframes plugins-ring{
+  0%,85%{opacity:0;transform:scale(.72);}
+  89%{opacity:.55;transform:scale(.9);}
+  100%{opacity:0;transform:scale(1.55);}
+}
+@keyframes plugins-flow{
+  0%,83%{opacity:0;transform:translateX(-8px);}
+  85%{opacity:1;transform:translateX(-4px);}
+  91%{opacity:1;transform:translateX(26px);}
+  93%,100%{opacity:0;transform:translateX(26px);}
+}
+@keyframes plugins-blip{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.78);}}
+@keyframes plugins-marquee{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+
+/* ---------- responsive ---------- */
+@media(max-width:1080px){
+  .s-plugins .pg-stage{grid-template-columns:minmax(0,1fr);gap:24px;}
+  .s-plugins .pg-screen{margin-left:0;}
+  .s-plugins .pg-board{padding:22px;}
+  .s-plugins .pg-fcard{margin-left:0;max-width:none;}
+}
+@media(max-width:600px){
+  .s-plugins .pg-board{border-radius:26px;padding:18px;}
+  .s-plugins .pg-bay{grid-template-columns:56px minmax(0,1fr);}
+  .s-plugins .pg-wire{flex-basis:14px;}
+  .s-plugins .pg-card{margin-left:9px;padding-left:12px;}
+  .s-plugins .pg-cm{display:none;}
+  .s-plugins .pg-screen{border-radius:20px;padding:14px 14px 16px;}
+  .s-plugins .pg-sub{display:none;}
+  .s-plugins .pg-strip{border-radius:24px;padding:20px 16px;}
+  .s-plugins .pg-spills{margin-left:0;}
+}
+</style>
+<section class="sec s-plugins" id="plugins">
+  <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true" focusable="false"><defs>
+    <symbol id="plugins-gl-telegram" viewBox="0 0 24 24">
+      <path fill="#29A9EA" d="M9.78 18.65 10.06 14.42 17.74 7.5c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/>
+    </symbol>
+    <symbol id="plugins-gl-slack" viewBox="0 0 24 24">
+      <rect x="6.2" y="2.0" width="4.6" height="10" rx="2.3" fill="#36C5F0"/>
+      <rect x="12.0" y="6.2" width="10" height="4.6" rx="2.3" fill="#2EB67D"/>
+      <rect x="13.2" y="12.0" width="4.6" height="10" rx="2.3" fill="#ECB22E"/>
+      <rect x="2.0" y="13.2" width="10" height="4.6" rx="2.3" fill="#E01E5A"/>
+    </symbol>
+    <symbol id="plugins-gl-discord" viewBox="0 0 24 24">
+      <path fill="#5865F2" d="M19.5 5.6a15.4 15.4 0 0 0-3.9-1.2l-.24.49a13.9 13.9 0 0 1 3.32 1.09 12.3 12.3 0 0 0-9.36 0 13.9 13.9 0 0 1 3.32-1.09l-.24-.49a15.4 15.4 0 0 0-3.9 1.2C5.9 9.2 5.1 12.7 5.4 16.2a15.7 15.7 0 0 0 4.75 2.4l1-1.66a10 10 0 0 1-1.6-.78l.4-.31a11.2 11.2 0 0 0 9.3 0l.4.31a10 10 0 0 1-1.6.78l1 1.66a15.7 15.7 0 0 0 4.75-2.4c.35-4.1-.6-7.55-2.9-10.6z"/>
+      <ellipse cx="9.65" cy="13.1" rx="1.45" ry="1.7" fill="#1B1B20"/>
+      <ellipse cx="14.35" cy="13.1" rx="1.45" ry="1.7" fill="#1B1B20"/>
+    </symbol>
+    <symbol id="plugins-gl-teams" viewBox="0 0 24 24">
+      <rect x="14.6" y="10.9" width="8.2" height="8.4" rx="2.6" fill="#7B83EB"/>
+      <circle cx="18.7" cy="7.2" r="3.2" fill="#7B83EB"/>
+      <rect x="2.2" y="5.6" width="12.4" height="13" rx="2.4" fill="#5059C9"/>
+      <path fill="#fff" d="M4.6 8.6h7.6v1.9H9.3v6H7.5v-6H4.6z"/>
+    </symbol>
+  </defs></svg>
+
+  <div class="wrap">
+    <div class="pg-head" data-rv>
+      <div>
+        <span class="eyebrow">Plugin architecture</span>
+        <h2 class="h2 pg-title">Everything in Worca is pluggable.</h2>
+      </div>
+      <p class="lead pg-lead">Task sources, chat, models, workflows and agents all reach the core the same way — as a plugin.</p>
+    </div>
+
+    <div class="pg-stage">
+      <div class="pg-left" data-rv>
+        <div class="pg-board viz">
+          <div class="pg-btop">
+            <span class="pg-bfile">plugin manifest</span>
+            <span class="pg-bapi">plugin api v2</span>
+          </div>
+          <div class="pg-bay">
+            <div class="pg-core">
+              <span class="pg-corelbl">worca core</span>
+              <i class="pg-notch pg-n1 pg-k-src"></i>
+              <i class="pg-notch pg-n2 pg-k-agt pg-d2"></i>
+              <i class="pg-notch pg-n3 pg-k-wf pg-d3"></i>
+              <i class="pg-notch pg-n4 pg-k-mdl pg-d4"></i>
+              <i class="pg-notch pg-n5 pg-k-cht pg-d5"></i>
+            </div>
+            <div class="pg-rows">
+              <div class="pg-row pg-k-src">
+                <span class="pg-wire"><i></i></span>
+                <span class="pg-sock"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><i class="pg-ring"></i></span>
+                <div class="pg-card"><span class="pg-ct">Task sources</span><span class="pg-cm">taskSources[]</span></div>
+              </div>
+              <div class="pg-row pg-k-agt pg-d2">
+                <span class="pg-wire"><i></i></span>
+                <span class="pg-sock"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><i class="pg-ring"></i></span>
+                <div class="pg-card"><span class="pg-ct">Agents</span><span class="pg-cm">agents/*.md</span></div>
+              </div>
+              <div class="pg-row pg-k-wf pg-d3">
+                <span class="pg-wire"><i></i></span>
+                <span class="pg-sock"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5 15.4 17.5M15.4 6.5 8.6 10.5"/></svg><i class="pg-ring"></i></span>
+                <div class="pg-card"><span class="pg-ct">Workflows</span><span class="pg-cm">workflows/*.json</span></div>
+              </div>
+              <div class="pg-row pg-k-mdl pg-d4">
+                <span class="pg-wire"><i></i></span>
+                <span class="pg-sock"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 1.6v2.9M15 1.6v2.9M9 19.5v2.9M15 19.5v2.9M19.5 9h2.9M19.5 15h2.9M1.6 9h2.9M1.6 15h2.9"/></svg><i class="pg-ring"></i></span>
+                <div class="pg-card"><span class="pg-ct">Models</span><span class="pg-cm">models[]</span></div>
+              </div>
+              <div class="pg-row pg-k-cht pg-d5">
+                <span class="pg-wire"><i></i></span>
+                <span class="pg-sock"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><i class="pg-ring"></i></span>
+                <div class="pg-card"><span class="pg-ct">Chat channels</span><span class="pg-cm">chatChannels[]</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="pg-fcard">
+          <div class="pg-fk">Scaffold one</div>
+          <div class="pg-fcmd"><i>$</i> worca plugin init my-plugin</div>
+          <div class="pg-farg">--with task-source,agents,skills,workflows</div>
+        </div>
+      </div>
+
+      <div class="pg-screen viz" data-rv>
+        <div class="pg-chrome">
+          <span class="pg-dots"><i></i><i></i><i></i></span>
+          <span class="pg-cttl">worca — Plugins</span>
+        </div>
+        <div class="pg-top">
+          <div>
+            <div class="pg-h1">Plugins</div>
+            <div class="pg-sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
+          </div>
+          <span class="pg-add"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add marketplace</span>
+        </div>
+
+        <div class="pg-sect">Installed</div>
+        <div class="pg-list">
+          <div class="pg-plug">
+            <div class="pg-ph">
+              <span class="pg-pn">github-source</span>
+              <span class="pg-pv">0.1.0</span>
+              <span class="pg-bdg pg-blue">task source</span>
+              <span class="pg-pen"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg></b>enabled</span>
+            </div>
+            <div class="pg-pc">1 source</div>
+            <div class="pg-pp">Worca Official @ 3f1c9ab</div>
+            <div class="pg-acts"><span class="pg-gbtn">Settings</span><span class="pg-gbtn">Doctor</span><span class="pg-gbtn">Update</span><span class="pg-gbtn">Remove</span></div>
+          </div>
+          <div class="pg-plug">
+            <div class="pg-ph">
+              <span class="pg-pn">telegram-chat</span>
+              <span class="pg-pv">0.1.0</span>
+              <span class="pg-bdg pg-green">chat</span>
+              <span class="pg-pen"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg></b>enabled</span>
+            </div>
+            <div class="pg-pc">1 chat channel</div>
+            <div class="pg-chans"><span class="pg-bdg pg-green pg-live"><i></i>Telegram · connected</span></div>
+            <div class="pg-acts"><span class="pg-gbtn">Settings</span><span class="pg-gbtn">Doctor</span><span class="pg-gbtn">Update</span><span class="pg-gbtn">Remove</span></div>
+          </div>
+        </div>
+
+        <div class="pg-sect">Available</div>
+        <div class="pg-avail">
+          <div class="pg-arow"><span class="pg-pn">slack-chat</span><span class="pg-pv">0.1.0</span><span class="pg-bdg pg-amber">Worca Official</span><span class="pg-ibtn">Install…</span></div>
+          <div class="pg-arow"><span class="pg-pn">discord-chat</span><span class="pg-pv">0.1.0</span><span class="pg-bdg pg-amber">Worca Official</span><span class="pg-ibtn">Install…</span></div>
+          <div class="pg-arow"><span class="pg-pn">teams-chat</span><span class="pg-pv">0.1.0</span><span class="pg-bdg pg-amber">Worca Official</span><span class="pg-ibtn">Install…</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pg-strip viz" data-rv>
+      <div class="pg-stop">
+        <div>
+          <div class="pg-sk">Chat connectivity plugins</div>
+          <div class="pg-sh">chat in, pipelines out</div>
+        </div>
+        <div class="pg-spills">
+          <span class="pg-spill">question · done · error · paused</span>
+          <span class="pg-spill pg-in">/approve · /pause · /answer</span>
+          <span class="pg-spill pg-no">no /run from chat</span>
+        </div>
+      </div>
+      <div class="pg-mq">
+        <div class="pg-track">
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-telegram"/></svg><span class="pg-cn">telegram-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-slack"/></svg><span class="pg-cn">slack-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-discord"/></svg><span class="pg-cn">discord-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-teams"/></svg><span class="pg-cn">teams-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-telegram"/></svg><span class="pg-cn">telegram-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-slack"/></svg><span class="pg-cn">slack-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-discord"/></svg><span class="pg-cn">discord-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-teams"/></svg><span class="pg-cn">teams-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-telegram"/></svg><span class="pg-cn">telegram-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-slack"/></svg><span class="pg-cn">slack-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-discord"/></svg><span class="pg-cn">discord-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-teams"/></svg><span class="pg-cn">teams-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-telegram"/></svg><span class="pg-cn">telegram-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-slack"/></svg><span class="pg-cn">slack-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-discord"/></svg><span class="pg-cn">discord-chat</span></span>
+          <span class="pg-chip"><svg class="pg-gl" viewBox="0 0 24 24" aria-hidden="true"><use href="#plugins-gl-teams"/></svg><span class="pg-cn">teams-chat</span></span>
+        </div>
+      </div>
+      <div class="pg-cap">Bundled in the built-in marketplace</div>
+    </div>
+  </div>
+</section>
+<script>(function(){
+  var sec = document.querySelector('.s-plugins');
+  if (!sec) return;
+  var boxes = sec.querySelectorAll('.viz');
+  if (!boxes.length) return;
+  if (typeof IntersectionObserver !== 'function') {
+    for (var i = 0; i < boxes.length; i++) boxes[i].classList.add('go');
+    return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    for (var j = 0; j < entries.length; j++) {
+      if (entries[j].isIntersecting) { entries[j].target.classList.add('go'); io.unobserve(entries[j].target); }
+    }
+  }, { rootMargin: '0px 0px -12% 0px' });
+  for (var k = 0; k < boxes.length; k++) io.observe(boxes[k]);
+})();</script>

@@ -49,16 +49,6 @@ const state = {
   activePluginProfile: null,
 };
 
-import {
-  topology,
-  metaLine,
-  distinctAgents,
-  defaultTopologyFromTemplate,
-  mergePalette,
-  canConnect,
-  EMBEDDED_AGENTS,
-  groupPaletteByDomain,
-} from './composer-core.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -951,22 +941,119 @@ function rebuildStepperDom(r) {
 // Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
 // done) have no key -> a neutral cog so they still render an icon.
 //
-// IMPORTANT: read composer.agents[key] RAW (not composerAgent(key)). composerAgent
-// returns a non-undefined default {displayName:key,...} that would shadow the
-// EMBEDDED_AGENTS fallback. Raw access yields undefined when the live registry
-// isn't loaded yet, so the `|| EMBEDDED_AGENTS[key]` fallback fires. Do not simplify.
+// The run graph paints agent icons/labels from the live registry. The cache is
+// filled on demand (buildRunGraph) and by every agent mutation, so a run opened
+// without ever visiting the Composer still shows real icons.
 const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
+const agentMetaCache = new Map();     // key -> normalized meta from GET /api/agents
+let _agentMetaPending = null;
+async function ensureAgentMeta(onReady) {
+  if (agentMetaCache.size) return;
+  if (!_agentMetaPending) _agentMetaPending = fetchAgents();
+  const res = await _agentMetaPending;
+  _agentMetaPending = null;
+  const list = Array.isArray(res) ? res : (res && Array.isArray(res.agents) ? res.agents : []);
+  for (const a of list) if (a && a.key) agentMetaCache.set(a.key, a);
+  if (list.length && typeof onReady === 'function') onReady();
+}
 function runNodeAgent(node) {
   const key = node && node.key;
-  const live = key && composer.agents && composer.agents[key];
-  const embedded = key && EMBEDDED_AGENTS[key];
-  const meta = live || embedded || {};
+  const meta = (key && agentMetaCache.get(key)) || {};
   return {
     icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
     color: node.color || meta.color || 'blue',
     label: node.label || meta.displayName || node.id,
     sub: node.sub || meta.description || '',
   };
+}
+
+// ---- v1 run-graph wire renderer (dies with the v1 engine in P8) ----
+const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
+const COMPOSER_SEQ = '#B7B7BC';
+
+/* ---- wires (shared renderer; ns-namespaced markers) ---- */
+function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
+  opts = opts || {};
+  const ns = opts.ns || 'main';
+  if (flowEl.offsetParent === null) return; // view hidden — skip
+  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
+  // the renderer itself reads the finished count from opts.cycles[fb.from]).
+  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
+  const loopBadge = (cx, cy, color, n) =>
+    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
+    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
+    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
+    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
+  const rect = (id) => {
+    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
+    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
+  };
+  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
+  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
+  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
+  let s = `<defs>` +
+    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
+    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
+    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
+    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
+  for (let i = 0; i < steps.length - 1; i++) {
+    steps[i].forEach((a) => {
+      steps[i + 1].forEach((b) => {
+        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
+        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
+        const dx = Math.max(36, (x2 - x1) * 0.5);
+        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
+        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
+        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
+        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
+      });
+    });
+  }
+  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
+  let maxBottom = 0;
+  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
+  feedbacks.forEach((fb, idx) => {
+    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
+    if (fb.from === fb.to) {
+      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
+      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
+      // toggle owns add/remove (composer); run/history pass cycles for the badge.
+      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
+      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
+      if (opts.cycles && !opts.del) {
+        const n = opts.cycles[fb.from] || 0;
+        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
+      }
+      return;
+    }
+    const p = posOf(fb.from);
+    const below = p.len > 1 && p.i === p.len - 1;
+    let sx, sy, tx, ty, rail, mx, my;
+    if (below) {
+      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
+      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
+      my = rail - (rail - Math.max(sy, ty)) * 0.18;
+    } else {
+      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
+      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
+      my = rail + (Math.min(sy, ty) - rail) * 0.18;
+    }
+    mx = (sx + tx) / 2;
+    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
+    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
+    if (opts.del) {
+      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
+        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
+        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
+    } else if (opts.cycles) {
+      const n = opts.cycles[fb.from] || 0;
+      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
+    }
+  });
+  wiresEl.innerHTML = s;
 }
 
 // Visible status caption under the node label. pending -> the node's description.
@@ -1069,6 +1156,7 @@ function runGraphNodeIds(manifest) {
 // (and its running CSS animations) intact. Trailing <svg class="wires"> is the
 // shared renderer's target.
 function buildRunGraph(host, manifest) {
+  ensureAgentMeta(() => buildRunGraph(host, manifest));
   const m = manifestFor(manifest);
   const ids = runGraphNodeIds(m);
   if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
@@ -1932,711 +2020,6 @@ async function deleteWorkflow(id) {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline Composer module (ported from docs/pipeline-composer/mockups).
-// Pure serialization lives in composer-core.mjs; this is DOM wiring only.
-// Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
-// drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
-// SELF-LOOP NOTE: a SAME-NODE self-loop (fb.from===fb.to, e.g. the default's
-// fb_refine s1_0->s1_0) is created/removed via the node's top-left self-cycle
-// toggle (.selfloop), NOT the bottom-right link button — that one only draws edges
-// to DISTINCT nodes (composerAddFeedback still rejects from===to). paintWires
-// special-cases from===to to draw a small violet lobe beneath the node with NO
-// delete-X (the toggle owns removal; cross-node amber loops keep their X). Manual
-// checklist: Reset shows the Refine node with its self-cycle toggle lit (violet ring)
-// and a violet self-loop arc beneath it; clicking the toggle removes both, clicking
-// again restores them.
-// ---------------------------------------------------------------------------
-const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
-const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
-const COMPOSER_SEQ = '#B7B7BC';
-
-let _composerReady = false;
-const composer = {
-  agents: {},          // key -> {key,displayName,description,color,icon,origin}
-  steps: [],           // Array<Array<{id,key}>> (local ids)
-  feedbacks: [],       // Array<{from,to}> (local ids)
-  saved: [],           // WorkflowTemplate[] from the server
-  linkFrom: null,
-  dragKey: null,
-  uid: 1,
-  els: {},
-};
-const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
-const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
-
-// Test hook: expose the composer state + the mutators the jsdom tests drive
-// directly (mirrors the window.__np convention). composerRefresh/composerAddFeedback
-// are hoisted function declarations, so they are bound by reference here.
-if (typeof window !== 'undefined') {
-  window.__composer = composer;
-  window.__composerRefresh = composerRefresh;
-  window.__composerAddFeedback = composerAddFeedback;
-  window.__composerRenderList = composerRenderList;
-}
-
-// Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
-// the next composer entry so in-session agent mutations show without a reload.
-let _composerPaletteDirty = false;
-
-/** Refetch the registry and rebuild the composer palette in place. */
-async function refreshComposerPalette() {
-  _composerPaletteDirty = false;
-  const agentsRes = await fetchAgents();
-  const pal = mergePalette(agentsRes);
-  composer.agents = {};
-  pal.forEach((a) => { composer.agents[a.key] = a; });
-  composerBuildPalette(pal);
-}
-
-async function initComposer() {
-  if (_composerReady) {
-    if (_composerPaletteDirty) await refreshComposerPalette();
-    composerDrawWires();
-    return;
-  }
-  _composerReady = true;
-  composer.els = {
-    flow: document.getElementById('composer-flow'),
-    wires: document.getElementById('composer-wires'),
-    palette: document.getElementById('composer-palette'),
-    banner: document.getElementById('composer-link-banner'),
-    linkText: document.getElementById('composer-link-text'),
-    list: document.getElementById('composer-saved-list'),
-    count: document.getElementById('composer-saved-count'),
-  };
-  if (!composer.els.flow) return;
-
-  // toolbar + global listeners (bound once)
-  document.getElementById('composer-reset').addEventListener('click', () => { composerExitLink(); composerReset(); });
-  document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
-  document.getElementById('composer-save').addEventListener('click', composerSave);
-  document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
-  const agentFilter = document.getElementById('composer-agent-filter');
-  if (agentFilter) agentFilter.addEventListener('input', composerApplyFilter);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
-  composer.els.wires.addEventListener('click', (e) => {
-    const g = e.target.closest('.fb-del'); if (!g) return;
-    composer.feedbacks.splice(+g.dataset.fb, 1); composerRefresh();
-  });
-  let rt;
-  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
-  // Debounced like the window-resize path one line above (and deliberately
-  // sharing its `rt`): the sidebar's 200ms collapse transition resizes .main
-  // every frame, and an undebounced observer rebuilds every wire ~12 times per
-  // toggle.
-  if (window.ResizeObserver) new window.ResizeObserver(() => {
-    clearTimeout(rt); rt = setTimeout(composerDrawWires, 80);
-  }).observe(composer.els.flow);
-
-  // palette from the registry (or embedded fallback)
-  await refreshComposerPalette();
-
-  // initial canvas = the saved default workflow (4-step)
-  await composerReset();
-  await composerLoadSaved();
-}
-
-/* ---- palette ---- */
-// Ordered header list derived from the already-order-sorted palette, mirroring
-// collectDomains (general last, shared excluded) — no extra API round-trip.
-function paletteDomains(pal) {
-  const seen = [];
-  pal.forEach((a) => { if (a.domain && a.domain !== 'shared' && a.domain !== 'general' && !seen.includes(a.domain)) seen.push(a.domain); });
-  seen.push('general');
-  return seen;
-}
-
-const composerCollapsed = new Set();   // domains the user has collapsed via chips
-
-function composerBuildPalette(pal) {
-  const palette = composer.els.palette;
-  const ro = pillNameRO();
-  if (ro) ro.disconnect();   // old pills are about to be thrown away
-  palette.innerHTML = '';
-  const domains = paletteDomains(pal);
-  const groups = groupPaletteByDomain(pal, domains);
-
-  // Filter chips: one per domain, toggles section visibility.
-  const chips = document.createElement('div');
-  chips.className = 'pal-chips';
-  domains.forEach((d) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'pal-chip' + (composerCollapsed.has(d) ? ' off' : '');
-    chip.textContent = d;
-    chip.addEventListener('click', () => {
-      if (composerCollapsed.has(d)) composerCollapsed.delete(d); else composerCollapsed.add(d);
-      composerBuildPalette(pal);                 // cheap re-render
-    });
-    chips.appendChild(chip);
-  });
-  palette.appendChild(chips);
-
-  groups.forEach((g) => {
-    const sec = document.createElement('div');
-    sec.className = 'pal-section';
-    if (composerCollapsed.has(g.domain)) sec.classList.add('collapsed');
-    const head = document.createElement('div');
-    head.className = 'pal-head';
-    head.textContent = g.domain;
-    sec.appendChild(head);
-    g.agents.forEach((ag) => sec.appendChild(composerPalettedPill(ag)));
-    palette.appendChild(sec);
-  });
-  composerApplyFilter();
-}
-
-// Live palette filter (spec 2026-08-09 §Decisions 7): toggles .hidden only —
-// cards stay in the DOM so drag handlers and collapse state survive filtering.
-// The haystack covers everything the card itself can show: key, name and
-// description always; channel names ONLY when the card's visible blurb IS the
-// derived "in: … · out: …" line. A card that paints a real description never
-// shows its channels, so matching them there is a hit with no visible reason.
-function composerApplyFilter() {
-  const input = document.getElementById('composer-agent-filter');
-  const q = ((input && input.value) || '').trim().toLowerCase();
-  document.querySelectorAll('#composer-palette .pal-section').forEach((sec) => {
-    let visible = 0;
-    sec.querySelectorAll('.agent-pill').forEach((p) => {
-      const ag = composer.agents[p.dataset.key] || {};
-      const chans = paletteDesc(ag).derived
-        ? ` ${(ag.consumes || []).join(' ')} ${(ag.produces || []).join(' ')}`
-        : '';
-      const hay = `${p.dataset.key} ${ag.displayName || ''} ${ag.description || ''}${chans}`.toLowerCase();
-      const hit = !q || hay.includes(q);
-      p.classList.toggle('hidden', !hit);
-      if (hit) visible += 1;
-    });
-    sec.classList.toggle('hidden', !!q && visible === 0);
-  });
-}
-
-// Palette blurb: the resolved sidecar/frontmatter description when present,
-// else a derived in/out line from the agent's channels (derived:true renders
-// italic and reads as a fallback, never as authored copy).
-function paletteDesc(ag) {
-  const d = typeof ag.description === 'string' ? ag.description.trim() : '';
-  if (d) return { text: d, derived: false };
-  const io = [];
-  if (Array.isArray(ag.consumes) && ag.consumes.length) io.push('in: ' + ag.consumes.join(', '));
-  if (Array.isArray(ag.produces) && ag.produces.length) io.push('out: ' + ag.produces.join(', '));
-  return { text: io.length ? io.join(' · ') : 'No description yet', derived: true };
-}
-
-// Name-aware description clamp: the palette card budgets 3 text lines — a name
-// that wraps to 2 lines (.name-2l) leaves 1 for the description, a 1-line name
-// leaves 2. Measured with a ResizeObserver, not guessed: wrapping depends on
-// the rendered width, and a palette built while hidden reports height 0 until
-// the composer first shows — the observer fires again on that resize.
-let pillNameROInst;
-function pillNameRO() {
-  if (pillNameROInst === undefined) {
-    pillNameROInst = window.ResizeObserver
-      ? new window.ResizeObserver((entries) => { entries.forEach((en) => pillApplyNameClamp(en.target)); })
-      : null;
-  }
-  return pillNameROInst;
-}
-function pillApplyNameClamp(pname) {
-  const pill = pname.closest('.agent-pill');
-  const h = pname.getBoundingClientRect().height;
-  if (!pill || !h) return;   // h=0 → not laid out yet; keep the current class
-  const lh = parseFloat(window.getComputedStyle(pname).lineHeight) || 16;
-  pill.classList.toggle('name-2l', h > lh * 1.5);
-}
-
-// Extracted from the old composerBuildPalette loop body so the pill markup + drag
-// handlers live in one place.
-function composerPalettedPill(ag) {
-  const p = document.createElement('div');
-  p.className = 'agent-pill';
-  p.draggable = true;
-  p.tabIndex = 0;
-  p.dataset.key = ag.key;
-  const desc = paletteDesc(ag);
-  const consumesList = Array.isArray(ag.consumes) ? ag.consumes : [];
-  const producesList = Array.isArray(ag.produces) ? ag.produces : [];
-  // Bubble content (three states): tip-desc is the real description or the bare
-  // fallback — never the derived in/out text (the IO line below already shows
-  // the channels; stating them twice in two formats reads as a bug). The IO
-  // line renders only when at least one side has channels ('—' fills the other).
-  const tipDesc = (typeof ag.description === 'string' && ag.description.trim())
-    ? ag.description.trim()
-    : 'No description yet';
-  const tipIo = (consumesList.length || producesList.length)
-    ? `<span class="tip-line">${escapeHtml(consumesList.join(', ') || '—')} → ${escapeHtml(producesList.join(', ') || '—')}</span>`
-    : '';
-  p.innerHTML =
-    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span><span class="pname">${escapeHtml(ag.displayName)}</span></span>` +
-    `<small class="pdesc${desc.derived ? ' derived' : ''}">${escapeHtml(desc.text)}</small>` +
-    `<span class="tip-content hidden">` +
-      `<span class="tip-desc">${escapeHtml(tipDesc)}</span>` +
-      `<span class="tip-line">${escapeHtml(ag.domain || 'general')} · ${escapeHtml(ag.origin || 'builtin')}</span>` +
-      tipIo +
-    `</span>`;
-  p.addEventListener('dragstart', (e) => {
-    composer.dragKey = ag.key; p.classList.add('dragging');
-    clearTimeout(pillTipTimer); hideInfoTip();   // never tooltip mid-drag
-    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
-  });
-  p.addEventListener('dragend', () => {
-    composer.dragKey = null; p.classList.remove('dragging');
-    document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
-  });
-  const ro = pillNameRO();
-  if (ro) ro.observe(p.querySelector('.pname'));
-  return p;
-}
-
-/* ---- node ---- */
-function composerNodeEl(a) {
-  const ag = composerAgent(a.key);
-  const selfOn = composer.feedbacks.some((f) => f.from === a.id && f.to === a.id);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>` +
-    `<div class="nx" title="Remove agent">✕</div>` +
-    `<div class="loop" title="Draw a feedback loop from this agent">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
-  d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
-  d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
-  d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
-  // Exit link mode BEFORE adding the edge: composerExitLink hides the banner and
-  // would swallow the toast composerAddFeedback raises for a block reason or warn.
-  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { const from = composer.linkFrom; composerExitLink(); composerAddFeedback(from, a.id); } });
-  return d;
-}
-
-/* ---- drop helpers ---- */
-function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
-// Transient governance message: reuse the link-banner els (link mode is mutually
-// exclusive with dragging). Falls back to console when no banner is mounted (jsdom).
-function composerToast(msg) {
-  const banner = composer.els.banner, text = composer.els.linkText;
-  if (banner && text) { text.textContent = msg; banner.hidden = false; setTimeout(() => { banner.hidden = true; }, 2200); }
-  else if (typeof console !== 'undefined') console.warn('[composer]', msg); // jsdom/no-banner fallback
-}
-function composerMakeStrip(index, full) {
-  const s = document.createElement('div');
-  s.className = 'strip' + (full ? ' full' : '');
-  s.addEventListener('dragover', (e) => { composerAllow(e); s.classList.add('over'); });
-  s.addEventListener('dragleave', () => s.classList.remove('over'));
-  s.addEventListener('drop', (e) => {
-    e.preventDefault(); s.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[index - 1] || [];
-    const next = composer.steps[index] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
-    if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
-  });
-  return s;
-}
-function composerMakeCol(stepIdx) {
-  const col = document.createElement('div');
-  col.className = 'col';
-  const tag = document.createElement('div'); tag.className = 'col-tag';
-  tag.innerHTML = `Step ${stepIdx + 1}` + (composer.steps[stepIdx].length > 1 ? ' · <em>parallel</em>' : '');
-  col.appendChild(tag);
-  composer.steps[stepIdx].forEach((a) => col.appendChild(composerNodeEl(a)));
-  const hint = document.createElement('div'); hint.className = 'par-hint'; hint.textContent = '+ run in parallel';
-  col.appendChild(hint);
-  col.addEventListener('dragover', (e) => { composerAllow(e); col.classList.add('over'); });
-  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
-  col.addEventListener('drop', (e) => {
-    e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[stepIdx - 1] || [];
-    const next = composer.steps[stepIdx + 1] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev || badNext) {
-      const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
-      composerToast(v.reason); composer.dragKey = null; return;
-    }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
-  });
-  return col;
-}
-
-/* ---- render ---- */
-function composerRefresh() {
-  const flow = composer.els.flow;
-  [...flow.querySelectorAll(':scope > .strip, :scope > .col, :scope > .empty-flow')].forEach((e) => e.remove());
-  if (composer.steps.length === 0) {
-    flow.appendChild(composerMakeStrip(0, true));
-    const empty = document.createElement('div'); empty.className = 'empty-flow';
-    empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14" stroke-linecap="round"/></svg>' +
-      'Drag an agent here to begin<small>Place agents left-to-right for sequence · stack them for parallel steps</small>';
-    flow.appendChild(empty);
-  } else {
-    for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
-    flow.appendChild(composerMakeStrip(composer.steps.length));
-  }
-  const hint = document.getElementById('composer-decomposer-hint');
-  if (hint) {
-    const hasDecomposer = composer.steps.some((col) => col.some((n) => n.key === 'decomposer'));
-    hint.hidden = !hasDecomposer;
-  }
-  requestAnimationFrame(composerDrawWires);
-}
-
-/* ---- mutations ---- */
-function composerRemoveNode(id) {
-  for (let i = 0; i < composer.steps.length; i++) {
-    const j = composer.steps[i].findIndex((a) => a.id === id);
-    if (j >= 0) { composer.steps[i].splice(j, 1); if (composer.steps[i].length === 0) composer.steps.splice(i, 1); break; }
-  }
-  composer.feedbacks = composer.feedbacks.filter((f) => f.from !== id && f.to !== id);
-  if (composer.linkFrom === id) composerExitLink();
-  composerRefresh();
-}
-function composerAddFeedback(from, to) {
-  if (from === to) return;
-  const flat = composer.steps.flat();
-  const fromKey = flat.find((n) => n.id === from)?.key;
-  const toKey = flat.find((n) => n.id === to)?.key;
-  const verdict = canConnect(fromKey, toKey, composer.agents);
-  if (!verdict.ok) { composerToast(verdict.reason); return; }
-  if (verdict.warn) composerToast(verdict.warn);
-  if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
-  composerRefresh();
-}
-// Self-cycle toggle: add/remove a SAME-NODE feedback (from===to). The composer's
-// link button rejects from===to, so this is the only way to set a self-loop. It
-// re-runs the step on its own blocking issues (the default's fb_refine).
-function composerToggleSelf(id) {
-  const node = composer.steps.flat().find((n) => n.id === id);
-  const key = node?.key;
-  const verdict = canConnect(key, key, composer.agents);
-  if (!verdict.ok) { composerToast(`${(composer.agents[key]?.displayName) || key} can’t loop to itself`); return; }
-  const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
-  if (i >= 0) composer.feedbacks.splice(i, 1);
-  else composer.feedbacks.push({ from: id, to: id });
-  composerRefresh();
-}
-
-/* ---- feedback linking mode ---- */
-function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
-function composerEnterLink(id) {
-  composer.linkFrom = id;
-  composer.els.banner.hidden = false;
-  const a = composer.steps.flat().find((n) => n.id === id);
-  composer.els.linkText.textContent = `Loop from "${composerAgent(a.key).displayName}" → click a target agent`;
-  composer.els.flow.querySelectorAll('.node').forEach((n) => {
-    n.classList.toggle('linking', n.dataset.id === id);
-    n.classList.toggle('link-target', n.dataset.id !== id);
-  });
-}
-function composerExitLink() {
-  composer.linkFrom = null;
-  if (composer.els.banner) composer.els.banner.hidden = true;
-  if (composer.els.flow) composer.els.flow.querySelectorAll('.node').forEach((n) => n.classList.remove('linking', 'link-target'));
-}
-
-/* ---- wires (shared renderer; ns-namespaced markers) ---- */
-function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
-  opts = opts || {};
-  const ns = opts.ns || 'main';
-  if (flowEl.offsetParent === null) return; // view hidden — skip
-  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
-  // the renderer itself reads the finished count from opts.cycles[fb.from]).
-  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
-  const loopBadge = (cx, cy, color, n) =>
-    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
-    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
-    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
-    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
-  const rect = (id) => {
-    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
-    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
-    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
-  };
-  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
-  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
-  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
-  let s = `<defs>` +
-    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
-    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
-    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
-    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
-  for (let i = 0; i < steps.length - 1; i++) {
-    steps[i].forEach((a) => {
-      steps[i + 1].forEach((b) => {
-        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
-        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
-        const dx = Math.max(36, (x2 - x1) * 0.5);
-        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
-        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
-        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
-      });
-    });
-  }
-  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
-  let maxBottom = 0;
-  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
-  feedbacks.forEach((fb, idx) => {
-    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
-    if (fb.from === fb.to) {
-      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
-      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
-      // toggle owns add/remove (composer); run/history pass cycles for the badge.
-      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
-      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
-      if (opts.cycles && !opts.del) {
-        const n = opts.cycles[fb.from] || 0;
-        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
-      }
-      return;
-    }
-    const p = posOf(fb.from);
-    const below = p.len > 1 && p.i === p.len - 1;
-    let sx, sy, tx, ty, rail, mx, my;
-    if (below) {
-      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
-      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
-      my = rail - (rail - Math.max(sy, ty)) * 0.18;
-    } else {
-      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
-      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
-      my = rail + (Math.min(sy, ty) - rail) * 0.18;
-    }
-    mx = (sx + tx) / 2;
-    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
-    if (opts.del) {
-      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
-        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
-        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
-    } else if (opts.cycles) {
-      const n = opts.cycles[fb.from] || 0;
-      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
-    }
-  });
-  wiresEl.innerHTML = s;
-}
-function composerDrawWires() {
-  if (!composer.els.flow) return;
-  composerPaintWires(composer.els.flow, composer.els.wires, composer.steps, composer.feedbacks, { ns: 'main', del: true });
-}
-
-/* ---- toolbar actions (server-wired) ---- */
-async function composerReset() {
-  const tpl = await getWorkflow('wf_default');
-  const model = defaultTopologyFromTemplate(tpl, composerMk);
-  composer.steps = model.steps;
-  composer.feedbacks = model.feedbacks;
-  composerRefresh();
-}
-// Auto-suggest the workflow domain = the dominant non-`shared` domain among member
-// agents, else 'general'. The user can override in the second save prompt.
-function suggestWorkflowDomain(steps) {
-  const counts = new Map();
-  distinctAgents(steps).forEach((k) => {
-    const d = (composerAgent(k)?.domain) || 'general';   // composerAgent fallback lacks domain → 'general'
-    if (d === 'shared') return;               // shared never dominates
-    counts.set(d, (counts.get(d) || 0) + 1);
-  });
-  let best = 'general', bestN = 0;
-  for (const [d, n] of counts) if (n > bestN) { best = d; bestN = n; }
-  return best;                                 // 'general' when only shared / none
-}
-
-async function composerSave() {
-  if (!composer.steps.length) return;
-  composerExitLink();
-  const suggested = suggestWorkflowDomain(composer.steps);
-  const answers = await promptModal({
-    title: 'Save pipeline',
-    message: 'Give it a name, and a domain so the picker can group it.',
-    confirmLabel: 'Save',
-    fields: [
-      { id: 'name', label: 'Name', placeholder: 'e.g. nightly refactor', required: true },
-      { id: 'domain', label: 'Domain', value: suggested,
-        hint: 'Organizes the picker — e.g. coding, marketing.' },
-    ],
-  });
-  if (!answers) return;
-  const name = answers.name;
-  const domain = answers.domain || suggested;
-  const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
-  const saveBtn = document.getElementById('composer-save');
-  let saved, warnings;
-  try {
-    ({ workflow: saved, warnings } = await saveWorkflow({ name, domain, steps: body.steps, feedbacks: body.feedbacks }));
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
-    return;
-  }
-  // Soft validator warnings (reachability/governance): the save succeeded, but
-  // tell the user the topology is questionable. Toast the first, count the rest.
-  if (warnings && warnings.length) {
-    composerToast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''));
-  }
-  await composerLoadSaved();
-  // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
-  // expand the first .pl-item (v1 bug: it auto-expanded Default, not the new pipeline).
-  // Expand the row we just saved — match by returned id, then by name; if neither
-  // matches, expand nothing rather than the wrong Default preview.
-  const items = [...composer.els.list.querySelectorAll('.pl-item')];
-  const row = (saved && saved.id && items.find((el) => el.dataset.id === saved.id))
-    || items.find((el) => (el.querySelector('.pl-name')?.textContent || '').trim() === name);
-  if (row) row.querySelector('.pl-row').click();
-  const html = saveBtn.innerHTML;
-  saveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved';
-  saveBtn.style.background = 'var(--green-ink)';
-  setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
-}
-
-async function composerLoadSaved() {
-  await loadEnabledPluginNames();
-  composer.saved = await listWorkflows();
-  composerRenderList();
-}
-
-function composerRoNode(a) {
-  const ag = composerAgent(a.key);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>`;
-  return d;
-}
-
-function composerRenderRO(host, item) {
-  const tag = document.createElement('div'); tag.className = 'pl-readonly-tag';
-  tag.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg> Read-only preview';
-  host.appendChild(tag);
-  const scroll = document.createElement('div'); scroll.className = 'ro-scroll';
-  const f = document.createElement('div'); f.className = 'flow ro-flow';
-  const w = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); w.setAttribute('class', 'wires');
-  f.appendChild(w);
-  for (let i = 0; i < item.steps.length; i++) {
-    f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-    const col = document.createElement('div'); col.className = 'col';
-    const ct = document.createElement('div'); ct.className = 'col-tag';
-    ct.innerHTML = `Step ${i + 1}` + (item.steps[i].length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(ct);
-    item.steps[i].forEach((a) => col.appendChild(composerRoNode(a)));
-    f.appendChild(col);
-  }
-  f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  scroll.appendChild(f); host.appendChild(scroll);
-  const paint = () => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id });
-  requestAnimationFrame(() => requestAnimationFrame(paint));
-  setTimeout(paint, 60);
-}
-
-let composerWfDomain = 'all';   // current filter
-
-// Dynamic filter set (clarify Q4): distinct domains present among saved workflows,
-// plus 'general', led by an 'all' option. wf_default (coding) participates like any row.
-function composerWfDomains() {
-  const seen = [];
-  composer.saved.forEach((w) => { const d = w.domain || 'general';
-    if (d !== 'general' && !seen.includes(d)) seen.push(d); });
-  seen.push('general');
-  return ['all', ...seen];
-}
-
-function composerRenderList() {
-  const listEl = composer.els.list, cntEl = composer.els.count;
-  // The v1 composer cannot render a graph; P5 replaces this view wholesale.
-  composer.saved = (composer.saved || []).filter((w) => w && w.version !== 2);
-  listEl.innerHTML = '';
-  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' workflow' : ' workflows');
-  // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
-  // domain shows an empty list under the chips, not the "no pipelines yet" copy.
-  if (!composer.saved.length) {
-    listEl.innerHTML = '<div class="pl-empty">No saved workflows yet — build one above and hit "Save workflow".</div>';
-    return;
-  }
-  // Domain filter chip row, inserted just before the list (reused across renders).
-  const filterDomains = composerWfDomains();
-  const filterEl = listEl.previousElementSibling?.classList?.contains('wf-filter')
-    ? listEl.previousElementSibling
-    : (() => { const el = document.createElement('div'); el.className = 'wf-filter';
-               listEl.parentNode.insertBefore(el, listEl); return el; })();
-  filterEl.innerHTML = '';
-  filterDomains.forEach((d) => {
-    const c = document.createElement('button'); c.type = 'button';
-    c.className = 'pal-chip' + (composerWfDomain === d ? '' : ' off');
-    c.textContent = d; c.addEventListener('click', () => { composerWfDomain = d; composerRenderList(); });
-    filterEl.appendChild(c);
-  });
-  const rows = composerWfDomain === 'all'
-    ? composer.saved
-    : composer.saved.filter((w) => (w.domain || 'general') === composerWfDomain);
-  rows.forEach((item) => {
-    const used = distinctAgents(item.steps);
-    const chips = used.map((k) => {
-      const ag = composerAgent(k);
-      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>`;
-    }).join('');
-    const meta = metaLine(item.steps, item.feedbacks).replace(
-      / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
-    );
-    const wrap = document.createElement('div'); wrap.className = 'pl-item'; wrap.dataset.id = item.id;
-    const isDefault = item.id === 'wf_default';
-    wrap.innerHTML =
-      `<div class="pl-row">` +
-        `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
-        `<div class="pl-main">` +
-          `<div class="pl-name">${escapeHtml(workflowPickerLabel(item, enabledPluginNames) || item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
-          `<div class="pl-meta">${meta}</div>` +
-          `<div class="pl-chips">${chips}</div>` +
-        `</div>` +
-        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
-      `</div>` +
-      `<div class="pl-body"></div>`;
-    listEl.appendChild(wrap);
-    const row = wrap.querySelector('.pl-row');
-    const del = wrap.querySelector('.pl-del');
-    const body = wrap.querySelector('.pl-body');
-    if (del) del.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const ok = await confirmModal({
-        title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-        message: `Delete "${item.name}"?\n\nThis cannot be undone.`,
-      });
-      if (!ok) return;
-      try { await deleteWorkflow(item.id); } catch (err) {
-        appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
-      }
-      await composerLoadSaved();
-    });
-    row.addEventListener('click', () => {
-      const open = wrap.classList.toggle('open');
-      if (open) {
-        if (!body.dataset.rendered) { composerRenderRO(body, item); body.dataset.rendered = '1'; }
-        else {
-          const f = body.querySelector('.ro-flow'), w = body.querySelector('.wires');
-          if (f && w) requestAnimationFrame(() => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id }));
-        }
-      }
-    });
-  });
-}
 
 function modelById(id) {
   return state.models.find((m) => m.id === id) || null;
@@ -2888,7 +2271,6 @@ const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', 
 // reuse) without leaking them into the app's runtime contract.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
-    composer, composerRefresh,
     buildNodeConfigRows,
     buildFeedbackRows,
     defaultEffortFor,
@@ -6597,10 +5979,10 @@ if (typeof window !== 'undefined') {
 // ---- Agents management view -------------------------------------------------
 
 // After any agent mutation: drop the new-pipeline config registry memo
-// (getAgentsApi) and mark the composer palette for a refetch on next entry.
+// (getAgentsApi) and the run-graph agent-meta cache, so both refetch on demand.
 function invalidateAgentCaches() {
   state.agents = {};
-  _composerPaletteDirty = true;
+  agentMetaCache.clear();
 }
 
 async function loadAgentsList() {
@@ -7788,7 +7170,7 @@ const hideInfoTip = () => {
 // .pdesc), so a cursor move BETWEEN children of the same trigger must be a no-op
 // — without the guard the bubble hides and re-arms on every crossing (strobe).
 // contains(null/undefined) is false, so events with no relatedTarget still work.
-const TIP_SELECTOR = '.info-tip, #composer-palette .agent-pill';
+const TIP_SELECTOR = '.info-tip, #gv-palette .ap';
 let pillTipTimer = null;
 document.addEventListener('mouseover', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
@@ -15424,7 +14806,6 @@ function showView(name, param = '') {
   if (name === 'models') loadModelsView();
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
-  if (name === 'composer') initComposer();
   if (name === 'settings') loadSettings();
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();

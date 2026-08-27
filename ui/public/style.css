@@ -1029,142 +1029,39 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-remove:disabled{opacity:.6;cursor:default;}
 .pl-remove svg{display:block;}
 
-/* ========================================================================== */
-/* Pipeline Composer — drag/drop canvas, wires, palette, saved list           */
-/* (ported from docs/pipeline-composer/mockups; reuses :root tokens)          */
-/* ========================================================================== */
-.builder-card{padding:0;overflow:hidden;}
-/* No top padding: sticky pins to the scrollport's PADDING edge, so a 20px inset
-   here would leave a see-through band above the pinned header for cards to
-   scroll through. The header row re-applies the inset itself (same fix shape as
-   body.view-history .main + .hist-filter). */
-.palette{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:0 24px 20px;border-bottom:1px solid var(--line);background:var(--panel);max-height:320px;overflow-y:auto;}
-.palette .p-label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:100%;margin-bottom:-10px;padding-top:20px;padding-bottom:14px;position:sticky;top:0;z-index:2;background:var(--panel);}
-.palette .p-label svg{width:14px;height:14px;stroke:var(--ink-3);stroke-width:2;}
-.pal-filter{margin-left:auto;width:200px;padding:6px 10px;border:1.5px solid transparent;border-radius:10px;background:var(--field);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;text-transform:none;letter-spacing:normal;}
-.pal-filter::placeholder{color:var(--ink-3);}
-.pal-filter:focus{outline:none;background:#fff;border-color:var(--ink);}
-.pal-filter:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* min-width:0 lets the grid item shrink under its min-content width and
-   overflow:hidden makes the card the last line of defence: without both, a
-   single unbroken 100-char description paints across its neighbours. */
-.agent-pill{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;overflow:hidden;background:#fff;border:1.5px solid var(--line-2);border-radius:12px;padding:10px 12px;font-weight:600;font-size:12.5px;color:var(--ink);cursor:grab;box-shadow:var(--shadow-soft);transition:transform .12s,box-shadow .12s,border-color .12s;user-select:none;}
-.agent-pill:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
-.agent-pill:active{cursor:grabbing;}
-.agent-pill.dragging{opacity:.35;}
-/* Dot pins to the FIRST name line (flex-start + optical nudge), because the
-   name may wrap to a second line — a centered dot would float between them. */
-.agent-pill .pdotc{width:11px;height:11px;border-radius:50%;flex:0 0 auto;margin-top:3px;}
-.agent-pill .phead{display:inline-flex;align-items:flex-start;gap:9px;max-width:100%;min-width:0;overflow-wrap:anywhere;}
-.agent-pill .pname{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere;line-height:1.3;}
-/* align-self:stretch overrides the card's align-items:flex-start — otherwise
-   .pdesc shrink-to-fits to the full string width and its own overflow:hidden
-   clips against that oversized box instead of the card. */
-.agent-pill .pdesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;align-self:stretch;max-width:100%;min-width:0;overflow-wrap:anywhere;font-weight:400;font-size:11.5px;line-height:1.45;color:var(--ink-2);}
-/* 3-line text budget: a name that wrapped to 2 lines (.name-2l, toggled by a
-   ResizeObserver in app.js) leaves only 1 line for the description. */
-.agent-pill.name-2l .pdesc{-webkit-line-clamp:1;}
-.agent-pill .pdesc.derived{font-style:italic;}
-
-.composer-hint {
-  margin: 0 0 10px;
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--ink-3);
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
-  border-radius: 8px;
-}
-.canvas-wrap{position:relative;overflow:auto;background-color:#FBFBF9;min-height:500px;max-height:640px;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
-.flow{position:relative;display:flex;align-items:center;gap:0;padding:70px 30px 50px;min-height:500px;width:max-content;min-width:100%;}
-.wires{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
-
-.strip{flex:0 0 16px;align-self:stretch;border-radius:12px;margin:40px 0;position:relative;transition:flex-basis .14s,background .14s;}
-.strip.full{flex:1;}
-.strip.over{flex-basis:78px;background:rgba(140,127,214,.12);outline:2px dashed var(--violet);outline-offset:-5px;}
-.strip.over::after{content:"+ step";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--violet-ink);white-space:nowrap;text-transform:uppercase;}
-
-.col{display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;align-self:center;padding:14px 10px;border-radius:20px;position:relative;z-index:1;transition:background .14s,outline-color .14s;outline:2px dashed transparent;outline-offset:0;}
-.col.over{background:rgba(91,166,204,.10);outline-color:var(--blue);}
-/* left:10px tracks .col padding:14px 10px — tag left edge lines up with card left edge (was centered, causing feedback arcs to cut through text) */
-.col .col-tag{position:absolute;top:8px;left:10px;transform:translateY(-100%);font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap;}
-.col .col-tag em{font-style:normal;color:var(--blue-ink);}
-.col .par-hint{position:absolute;bottom:6px;left:50%;transform:translate(-50%,100%);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:var(--blue-ink);text-transform:uppercase;opacity:0;transition:opacity .14s;white-space:nowrap;}
-.col.over .par-hint{opacity:1;}
-
-.node{position:relative;width:230px;background:#fff;border:1.5px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-soft);padding:13px 14px 13px 18px;display:flex;align-items:center;gap:12px;z-index:2;transition:box-shadow .12s,transform .12s;}
-.node:hover{box-shadow:var(--shadow);}
-.node::before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:5px;border-radius:0 5px 5px 0;background:var(--c,#ccc);}
-.node .nic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;}
-.node .nic svg{width:19px;height:19px;stroke-width:1.85;}
-.node .nmeta{min-width:0;flex:1;}
-.node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
-.node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
-.flow .node .nmeta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.node .nx,.node .loop,.node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
-.node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
-.node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
-.node .selfloop{top:-10px;left:-10px;width:25px;height:25px;}
-.node:hover .nx,.node:hover .loop,.node:hover .selfloop{opacity:1;}
-.node .nx:hover{color:var(--red-ink);border-color:var(--red);}
-.node .loop svg{width:13px;height:13px;stroke:var(--ink-2);stroke-width:2;}
-.node .loop:hover{border-color:var(--amber);}
-.node .loop:hover svg{stroke:var(--amber-ink);}
-.node .selfloop svg{width:14px;height:14px;stroke:var(--ink-2);stroke-width:2;}
-.node .selfloop:hover{border-color:var(--violet);}
-.node .selfloop:hover svg{stroke:var(--violet-ink);}
+/* v1 run-graph node look (was the shared composer .node; dies in P8).
+   Scoped on .run-flow-wrap, NOT .run-flow: the run-flow block below owns the
+   `.run-flow .node` selector (width/padding/cursor overrides), and a second
+   rule with that exact selector would shadow it for any text-matching reader. */
+.run-flow-wrap .node{position:relative;width:230px;background:#fff;border:1.5px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-soft);padding:13px 14px 13px 18px;display:flex;align-items:center;gap:12px;z-index:2;transition:box-shadow .12s,transform .12s;}
+.run-flow-wrap .node:hover{box-shadow:var(--shadow);}
+.run-flow-wrap .node::before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:5px;border-radius:0 5px 5px 0;background:var(--c,#ccc);}
+.run-flow-wrap .node .nic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;}
+.run-flow-wrap .node .nic svg{width:19px;height:19px;stroke-width:1.85;}
+.run-flow-wrap .node .nmeta{min-width:0;flex:1;}
+.run-flow-wrap .node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
+.run-flow-wrap .node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
+.run-flow-wrap .node .nmeta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.run-flow-wrap .node .nx,.run-flow-wrap .node .loop,.run-flow-wrap .node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
+.run-flow-wrap .node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
+.run-flow-wrap .node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
+.run-flow-wrap .node .selfloop{top:-10px;left:-10px;width:25px;height:25px;}
+.run-flow-wrap .node:hover .nx,.run-flow-wrap .node:hover .loop,.run-flow-wrap .node:hover .selfloop{opacity:1;}
+.run-flow-wrap .node .nx:hover{color:var(--red-ink);border-color:var(--red);}
+.run-flow-wrap .node .loop svg{width:13px;height:13px;stroke:var(--ink-2);stroke-width:2;}
+.run-flow-wrap .node .loop:hover{border-color:var(--amber);}
+.run-flow-wrap .node .loop:hover svg{stroke:var(--amber-ink);}
+.run-flow-wrap .node .selfloop svg{width:14px;height:14px;stroke:var(--ink-2);stroke-width:2;}
+.run-flow-wrap .node .selfloop:hover{border-color:var(--violet);}
+.run-flow-wrap .node .selfloop:hover svg{stroke:var(--violet-ink);}
 /* active self-cycle: always visible, violet ring (mirrors the lit toggle in the mockup) */
-.node .selfloop.on{opacity:1;background:var(--violet-bg);border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-bg);}
-.node .selfloop.on svg{stroke:var(--violet-ink);}
-.node.linking{outline:2px solid var(--amber);outline-offset:3px;}
-.node.linking .loop{opacity:1;border-color:var(--amber);background:var(--amber-bg);}
-.node.link-target{outline:2px dashed var(--amber);outline-offset:3px;cursor:pointer;}
-.node.link-target:hover{background:var(--amber-bg);}
+.run-flow-wrap .node .selfloop.on{opacity:1;background:var(--violet-bg);border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-bg);}
+.run-flow-wrap .node .selfloop.on svg{stroke:var(--violet-ink);}
+.run-flow-wrap .node.linking{outline:2px solid var(--amber);outline-offset:3px;}
+.run-flow-wrap .node.linking .loop{opacity:1;border-color:var(--amber);background:var(--amber-bg);}
+.run-flow-wrap .node.link-target{outline:2px dashed var(--amber);outline-offset:3px;cursor:pointer;}
+.run-flow-wrap .node.link-target:hover{background:var(--amber-bg);}
 
-.builder-foot{display:flex;align-items:center;gap:14px;padding:16px 24px;border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap;}
-.legend{display:flex;align-items:center;gap:20px;font-size:12px;color:var(--ink-2);font-weight:600;}
-.legend .lg{display:flex;align-items:center;gap:8px;}
-.legend .ll{width:12px;height:12px;border-radius:50%;background:var(--seq);display:inline-block;flex:none;}
-.legend .ll.fb{background:var(--amber);}
-.legend .ll.sl{background:var(--violet);}
-.builder-foot .sp{flex:1;}
-.link-banner{display:inline-flex;align-items:center;gap:11px;background:var(--amber-bg);color:var(--amber-ink);font-weight:600;font-size:12.5px;padding:8px 9px 8px 15px;border-radius:999px;}
-.link-banner[hidden]{display:none;}
-.link-banner button{background:#fff;border:none;border-radius:999px;padding:5px 12px;font-family:inherit;font-weight:600;font-size:11.5px;color:var(--amber-ink);cursor:pointer;}
-.empty-flow{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--ink-3);font-weight:600;font-size:14px;pointer-events:none;text-align:center;}
-.empty-flow svg{width:36px;height:36px;stroke:var(--line-2);stroke-width:1.6;}
-.empty-flow small{font-weight:500;font-size:12.5px;}
-
-.saved-card{margin-top:22px;padding:0;overflow:hidden;}
-.saved-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--line);}
-.saved-head b{font-size:15px;font-weight:600;letter-spacing:-.01em;}
-.saved-head .cnt{color:var(--ink-3);font-size:12.5px;font-weight:600;margin-left:9px;}
-.saved-list{display:flex;flex-direction:column;}
-.pl-empty{padding:34px 24px;text-align:center;color:var(--ink-3);font-size:13px;font-weight:500;}
-.pl-item{border-bottom:1px solid var(--line);}
-.pl-item:last-child{border-bottom:none;}
-.pl-row{display:flex;align-items:center;gap:15px;padding:16px 22px;cursor:pointer;transition:background .12s;}
-.pl-row:hover{background:var(--panel);}
-.pl-caret{width:17px;height:17px;flex:0 0 auto;color:var(--ink-3);transition:transform .18s;margin-top:2px;align-self:flex-start;}
-.pl-item.open .pl-caret{transform:rotate(90deg);}
-.pl-main{flex:1;min-width:0;}
-.pl-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);}
-.pl-meta{font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin-top:5px;}
-.pl-meta em{font-style:normal;color:var(--amber-ink);}
-.pl-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;}
-.pl-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ink-2);background:var(--field);border:1px solid var(--line);border-radius:999px;padding:3px 9px 3px 7px;}
-.pl-chip .d{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
-.pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
-.pl-del:hover{border-color:var(--red);color:var(--red-ink);background:var(--red-bg);}
-.pl-del svg{width:16px;height:16px;stroke-width:1.9;}
-.pl-body{display:none;border-top:1px dashed var(--line-2);}
-.pl-item.open .pl-body{display:block;}
-.pl-readonly-tag{display:flex;align-items:center;gap:8px;padding:9px 24px;background:var(--panel);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border-top:1px dashed var(--line-2);}
-.pl-readonly-tag svg{width:13px;height:13px;stroke:var(--ink-3);stroke-width:2;}
-.ro-scroll{overflow:auto;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;max-height:520px;}
-.ro-flow{position:relative;display:flex;align-items:center;padding:26px 30px;min-height:360px;width:max-content;min-width:100%;}
-.ro-flow .strip{flex:0 0 58px;align-self:stretch;margin:40px 0;}
-.ro-flow .col{pointer-events:none;}
-.ro-flow .node{width:218px;}
 
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {

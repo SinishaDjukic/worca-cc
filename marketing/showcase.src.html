@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worca — a dynamic pipeline orchestrator for AI agents</title>
+<meta name="description" content="Worca orchestrates fleets of AI agents as pipelines you compose, audit, guardrail and steer — with statistics, diff comments, mixed models, plugins and Ask Worca built in.">
+<link rel="icon" href="__FAVICON__">
+<style>
+/* ================= fonts ================= */
+@font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:swap;src:url('__FONT_POPPINS_400__') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:500;font-display:swap;src:url('__FONT_POPPINS_500__') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:600;font-display:swap;src:url('__FONT_POPPINS_600__') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:700;font-display:swap;src:url('__FONT_POPPINS_700__') format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('__FONT_MONO_400__') format('woff2');}
+
+/* ================= tokens ================= */
+:root{
+  --bg:#EDEDEA; --sheet:#FFFFFF;
+  --ink:#19191B; --ink-2:#5C5C63; --ink-3:#9A9AA1;
+  --line:#ECECEA; --line-2:#E3E3E0; --field:#F6F6F4;
+  --green-bg:#E2F3DF; --green:#5BAE5B; --green-ink:#2F7A38;
+  --peach-bg:#FCEEDA; --peach:#EFA63C; --peach-ink:#B5751A;
+  --red-bg:#FBE3E0;   --red:#E76A5A;   --red-ink:#C5483A;
+  --blue-bg:#DEEFF7;  --blue:#5BA6CC;  --blue-ink:#3782A8;
+  --violet-bg:#EAE6F8;--violet:#8C7FD6;--violet-ink:#6353B8;
+  --amber-bg:#FCE8C8; --amber:#E6962A; --amber-ink:#A66510;
+  --dark:#141416; --dark-2:#1E1E21; --dark-line:#2C2C31;
+  --r-sheet:40px; --r-card:26px;
+  --shadow-lift:0 18px 50px rgba(25,25,27,.10), 0 2px 6px rgba(25,25,27,.05);
+  --shadow-sheet:0 30px 80px rgba(25,25,27,.07);
+  --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --pad:clamp(20px,5vw,72px);
+}
+
+/* ================= base ================= */
+*,*::before,*::after{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;}
+img,svg{display:block;max-width:100%;}
+a{color:inherit;text-decoration:none;}
+button{font:inherit;color:inherit;}
+h1,h2,h3,h4,p{margin:0;}
+::selection{background:var(--green-bg);color:var(--ink);}
+:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:6px;}
+
+.sheet{background:var(--sheet);border-radius:var(--r-sheet);margin:clamp(8px,1.4vw,18px);
+  box-shadow:var(--shadow-sheet);overflow:hidden;position:relative;}
+.wrap{max-width:1280px;margin:0 auto;padding-left:var(--pad);padding-right:var(--pad);}
+.sec{padding-block:clamp(46px,5.6vw,82px);}
+.sec-tight{padding-block:clamp(34px,3.8vw,56px);}
+
+/* ================= type ================= */
+.h-display{font-weight:600;letter-spacing:-.035em;line-height:1.02;font-size:clamp(35px,4.7vw,60px);}
+.h1{font-weight:600;letter-spacing:-.032em;line-height:1.05;font-size:clamp(31px,4.3vw,54px);}
+.h2{font-weight:600;letter-spacing:-.028em;line-height:1.1;font-size:clamp(26px,3.2vw,40px);}
+.h3{font-weight:600;letter-spacing:-.022em;line-height:1.2;font-size:clamp(19px,1.8vw,23px);}
+.h4{font-weight:600;letter-spacing:-.012em;line-height:1.3;font-size:16px;}
+.lead{color:var(--ink-2);font-size:clamp(15px,1.2vw,17.5px);line-height:1.6;max-width:46ch;}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);}
+.eyebrow::before{content:"";width:16px;height:1.5px;background:currentColor;border-radius:2px;}
+.mono{font-family:var(--mono);}
+.pill-tag{display:inline-flex;align-items:center;gap:8px;padding:7px 15px;border:1px solid var(--line-2);
+  border-radius:999px;font-size:12.5px;font-weight:500;color:var(--ink-2);background:#fff;}
+.pill-tag .dot{width:7px;height:7px;border-radius:50%;background:var(--green);}
+
+/* ================= buttons ================= */
+.btn{display:inline-flex;align-items:center;gap:12px;padding:13px 15px 13px 24px;border-radius:999px;
+  border:1px solid transparent;font-size:14.5px;font-weight:500;cursor:pointer;background:var(--ink);color:#fff;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1),background .18s,border-color .18s;}
+.btn .arw{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.16);display:grid;place-items:center;
+  flex:0 0 auto;transition:transform .25s cubic-bezier(.2,.8,.2,1);}
+.btn .arw svg{width:14px;height:14px;stroke:#fff;stroke-width:2;fill:none;}
+.btn:hover{transform:translateY(-2px);}
+.btn:hover .arw{transform:translateX(3px);}
+.btn-ghost{background:#fff;color:var(--ink);border-color:var(--line-2);}
+.btn-ghost .arw{background:var(--field);}
+.btn-ghost .arw svg{stroke:var(--ink);}
+.btn-ghost:hover{background:var(--field);}
+.btn-sm{padding:10px 12px 10px 18px;font-size:13.5px;}
+.btn-sm .arw{width:24px;height:24px;}
+
+/* ================= shell: nav ================= */
+.nav{position:sticky;top:0;z-index:60;background:rgba(255,255,255,.82);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid transparent;transition:border-color .25s;}
+.nav.stuck{border-bottom-color:var(--line);}
+.nav-in{display:flex;align-items:center;gap:22px;height:74px;}
+.nav-logo{height:30px;width:auto;}
+.nav-links{display:flex;gap:2px;margin-left:auto;}
+.nav-links a{padding:9px 14px;border-radius:999px;font-size:13.5px;font-weight:500;color:var(--ink-2);
+  transition:background .16s,color .16s;}
+.nav-links a:hover{background:var(--field);color:var(--ink);}
+.nav-cta{margin-left:auto;}
+.nav-links + .nav-cta{margin-left:14px;}
+@media(max-width:1080px){.nav-links{display:none;}}
+@media(max-width:520px){.nav-cta{display:none;}}
+
+/* ================= shell: section rhythm ================= */
+.sec{position:relative;}
+.sec + .sec::before{content:"";position:absolute;left:var(--pad);right:var(--pad);top:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--line-2) 12%,var(--line-2) 88%,transparent);}
+.sec-head{max-width:62ch;}
+.sec-head .h2,.sec-head .h1{margin-top:16px;}
+.sec-head .lead{margin-top:16px;}
+
+/* ================= shell: viz gate ================= */
+.viz *{animation-play-state:paused;}
+.viz.go *{animation-play-state:running;}
+
+/* ================= shell: closing band ================= */
+.cta-band{background:linear-gradient(128deg,#E4F2E0 0%,#EFEFEC 46%,#E9E5F7 100%);color:var(--ink);
+  border-radius:var(--r-sheet);padding:clamp(38px,5vw,68px);
+  text-align:center;position:relative;overflow:hidden;}
+.cta-band .glow{position:absolute;width:520px;height:520px;border-radius:50%;filter:blur(90px);opacity:.34;}
+.cta-band .g1{background:#9BD6A2;left:-140px;top:-200px;}
+.cta-band .g2{background:#B7ABE8;right:-150px;bottom:-240px;}
+.cta-band h2,.cta-band .row,.cta-band p{position:relative;}
+.cta-band h2{margin-bottom:14px;}
+.cta-band p{color:var(--ink-2);max-width:44ch;margin:0 auto 28px;font-size:15px;}
+.cta-band .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;}
+.cta-band .btn-ghost{background:rgba(255,255,255,.72);border-color:rgba(25,25,27,.10);}
+.cta-band .btn-ghost:hover{background:#fff;}
+
+.wordmark{position:relative;padding-top:clamp(28px,3.6vw,50px);}
+.wordmark .big{font-weight:700;letter-spacing:-.05em;line-height:.78;text-align:center;
+  font-size:clamp(76px,19vw,268px);color:var(--line-2);user-select:none;}
+
+.foot{display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding-block:32px;border-top:1px solid var(--line);
+  margin-top:clamp(26px,3.6vw,50px);}
+.foot .fl{display:flex;gap:20px;flex-wrap:wrap;}
+.foot .fl a{font-size:13.5px;color:var(--ink-2);}
+.foot .fl a:hover{color:var(--ink);}
+.foot .rt{margin-left:auto;font-size:12.5px;color:var(--ink-3);}
+@media(max-width:600px){.foot .rt{margin-left:0;}}
+
+/* ================= shell: reveal ================= */
+[data-rv]{opacity:0;transform:translateY(18px);}
+[data-rv].seen{opacity:1;transform:none;
+  transition:opacity .7s cubic-bezier(.2,.8,.2,1),transform .7s cubic-bezier(.2,.8,.2,1);}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important;transition-duration:.001ms !important;}
+  [data-rv]{opacity:1;transform:none;}
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- ============ NAV ============ -->
+  <header class="nav" id="nav">
+    <div class="wrap nav-in">
+      <a href="#top" aria-label="Worca"><img class="nav-logo" src="__LOGO__" alt="Worca"></a>
+      <nav class="nav-links">
+        <a href="#audit">Statistics</a>
+        <a href="#diff">Diff review</a>
+        <a href="#composer">Composer</a>
+        <a href="#agents">Agents</a>
+        <a href="#plugins">Plugins</a>
+        <a href="#guardrails">Guardrails</a>
+        <a href="#ask">Ask Worca</a>
+      </nav>
+      <a class="btn btn-sm nav-cta" href="#start">Start a pipeline
+        <span class="arw"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      </a>
+    </div>
+  </header>
+
+__SECTION_hero__
+__SECTION_audit__
+__SECTION_diff__
+__SECTION_composer__
+__SECTION_agents__
+__SECTION_plugins__
+__SECTION_guardrails__
+__SECTION_ask__
+
+  <!-- ============ CLOSING ============ -->
+  <section class="wrap sec" id="start">
+    <div class="cta-band" data-rv>
+      <span class="glow g1"></span><span class="glow g2"></span>
+      <h2 class="h1">Compose it. Run it. Audit it.</h2>
+      <p>One orchestrator for every agent you run — local, inspectable, yours.</p>
+      <div class="row">
+        <a class="btn" href="#top">Start a pipeline
+          <span class="arw"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </a>
+        <a class="btn btn-ghost" href="#ask">Ask Worca first
+          <span class="arw"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ WORDMARK + FOOTER ============ -->
+  <section class="wrap sec-tight">
+    <div class="wordmark"><div class="big">worca</div></div>
+    <div class="foot">
+      <div class="fl">
+        <a href="#audit">Statistics</a>
+        <a href="#composer">Composer</a>
+        <a href="#plugins">Plugins</a>
+        <a href="#guardrails">Guardrails</a>
+        <a href="#ask">Ask Worca</a>
+      </div>
+      <div class="rt">Worca — a dynamic pipeline orchestrator for AI agents.</div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var hasIO = 'IntersectionObserver' in window;
+
+  /* ---- nav hairline once scrolled ---- */
+  var nav = document.getElementById('nav');
+  var onScroll = function(){ if (nav) nav.classList.toggle('stuck', window.scrollY > 8); };
+  onScroll();
+  window.addEventListener('scroll', onScroll, {passive:true});
+
+  /* ---- scroll reveal, staggered by sibling order ---- */
+  var rv = document.querySelectorAll('[data-rv]');
+  if (!hasIO || reduce) {
+    Array.prototype.forEach.call(rv, function(el){ el.classList.add('seen'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (!e.isIntersecting) return;
+        var el = e.target;
+        var sibs = Array.prototype.filter.call(el.parentNode.children, function(n){
+          return n.hasAttribute && n.hasAttribute('data-rv');
+        });
+        el.style.transitionDelay = Math.min(Math.max(0, sibs.indexOf(el)) * 70, 350) + 'ms';
+        el.classList.add('seen');
+        io.unobserve(el);
+      });
+    }, {rootMargin:'0px 0px -8% 0px', threshold:0.08});
+    Array.prototype.forEach.call(rv, function(el){ io.observe(el); });
+  }
+
+  /* ---- run CSS animations only while their card is on screen ---- */
+  var vizzes = document.querySelectorAll('.viz');
+  if (!hasIO) {
+    Array.prototype.forEach.call(vizzes, function(v){ v.classList.add('go'); });
+  } else {
+    var io2 = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){ e.target.classList.toggle('go', e.isIntersecting); });
+    }, {threshold:0.12});
+    Array.prototype.forEach.call(vizzes, function(v){ io2.observe(v); });
+  }
+
+  /* ---- smooth anchor scrolling ---- */
+  document.addEventListener('click', function(ev){
+    var a = ev.target.closest && ev.target.closest('a[href^="#"]');
+    if (!a) return;
+    var id = a.getAttribute('href').slice(1);
+    var t = id && document.getElementById(id);
+    if (!t) return;
+    ev.preventDefault();
+    t.scrollIntoView({behavior: reduce ? 'auto' : 'smooth', block:'start'});
+  });
+})();
+</script>
+</body>
+</html>

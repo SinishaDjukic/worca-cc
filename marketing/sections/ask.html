@@ -1,0 +1,642 @@
+<style>
+/* ─── Ask Worca — the finale: one chat over everything Worca knows ─────────── */
+.s-ask{--aq-e:cubic-bezier(.2,.8,.2,1);--aq-gap:clamp(14px,3vw,52px);
+  --aq-vio:#8C7FD6;--aq-vio-2:#C4BAF7;--aq-seq:#B7B7BC;}
+.s-ask .aq-panel{position:relative;isolation:isolate;overflow:hidden;color:#fff;
+  border-radius:var(--r-sheet);background:var(--dark);
+  padding:clamp(26px,3.4vw,46px) clamp(18px,2.8vw,44px) clamp(30px,3.6vw,50px);
+  box-shadow:0 50px 100px -46px rgba(20,20,22,.72);}
+.s-ask .aq-aura,.s-ask .aq-mesh{position:absolute;inset:0;pointer-events:none;z-index:-1;}
+.s-ask .aq-aura{background:
+  radial-gradient(920px 470px at 79% -18%,rgba(140,127,214,.34),transparent 62%),
+  radial-gradient(720px 420px at 1% 114%,rgba(91,166,204,.20),transparent 60%);}
+.s-ask .aq-mesh{opacity:.55;
+  background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+  background-size:58px 58px;
+  -webkit-mask-image:radial-gradient(700px 430px at 50% 30%,#000,transparent 78%);
+  mask-image:radial-gradient(700px 430px at 50% 30%,#000,transparent 78%);}
+
+/* ── head ── */
+.s-ask .aq-head{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:22px;flex-wrap:wrap;margin:0 0 clamp(24px,2.8vw,38px);}
+.s-ask .aq-head-l{max-width:620px;}
+.s-ask .aq-head .eyebrow{margin:0;color:#BDB2F0;}
+.s-ask .aq-head .h2{margin:12px 0 12px;color:#fff;}
+.s-ask .aq-head .lead{margin:0;color:rgba(255,255,255,.58);}
+.s-ask .aq-claim{display:inline-flex;align-items:center;gap:10px;margin:0 0 6px;
+  padding:8px 16px 8px 12px;border-radius:999px;font-size:12.5px;font-weight:500;
+  border:1px solid rgba(140,127,214,.42);background:rgba(140,127,214,.14);color:#DED8FA;}
+.s-ask .aq-claim i{position:relative;flex:0 0 7px;width:7px;height:7px;border-radius:50%;
+  background:var(--aq-vio-2);text-decoration:none;}
+.s-ask .aq-claim i::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  border:1px solid rgba(196,186,247,.55);animation:ask-ring 2.8s var(--aq-e) infinite;}
+@keyframes ask-ring{0%{transform:scale(.6);opacity:0}30%{opacity:.9}100%{transform:scale(2.1);opacity:0}}
+
+/* ── stage: rail · sheet · rail ── */
+.s-ask .aq-stage{position:relative;display:grid;align-items:center;gap:var(--aq-gap);
+  grid-template-columns:minmax(0,196px) minmax(0,1fr) minmax(0,196px);}
+.s-ask .aq-rail{display:flex;flex-direction:column;gap:11px;min-width:0;}
+.s-ask .aq-rail-cap{margin:0 0 2px;font-family:var(--mono);font-size:9.5px;font-weight:600;
+  letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.34);}
+.s-ask .aq-rail-in{align-self:start;}
+.s-ask .aq-rail-out{align-self:end;text-align:right;}
+.s-ask .aq-sat{position:relative;padding:11px 13px;border-radius:16px;
+  border:1px solid var(--dark-line);background:rgba(255,255,255,.035);
+  transition:border-color .5s var(--aq-e),background .5s var(--aq-e),
+    transform .5s var(--aq-e),box-shadow .5s var(--aq-e);}
+.s-ask .aq-sat[data-on]{border-color:rgba(140,127,214,.6);background:rgba(140,127,214,.14);
+  box-shadow:0 16px 38px -20px rgba(140,127,214,.95);transform:translateY(-2px);}
+.s-ask .aq-sat-h{display:flex;align-items:center;gap:9px;}
+.s-ask .aq-rail-out .aq-sat-h{flex-direction:row-reverse;}
+.s-ask .aq-sat-ico{flex:0 0 26px;display:grid;place-items:center;width:26px;height:26px;
+  border-radius:9px;background:rgba(255,255,255,.07);color:rgba(255,255,255,.62);
+  transition:background .5s var(--aq-e),color .5s var(--aq-e);}
+.s-ask .aq-sat[data-on] .aq-sat-ico{background:rgba(140,127,214,.28);color:#EDE8FE;}
+.s-ask .aq-sat-t{min-width:0;font-size:12.5px;font-weight:600;color:#EDEDEA;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.s-ask .aq-sat-m{margin-top:7px;font-family:var(--mono);font-size:10px;line-height:1.5;
+  color:rgba(255,255,255,.40);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  transition:color .5s var(--aq-e);}
+.s-ask .aq-sat[data-on] .aq-sat-m{color:rgba(222,216,250,.82);}
+.s-ask .aq-sat-m u{text-decoration:none;color:var(--green);}
+.s-ask .aq-sat-m del{text-decoration:none;color:var(--red);}
+
+/* ── wires into the hub ── */
+.s-ask .aq-wire{position:absolute;top:50%;width:var(--aq-gap);height:2px;margin-top:-1px;}
+.s-ask .aq-rail-in .aq-wire{left:100%;}
+.s-ask .aq-rail-out .aq-wire{right:100%;}
+.s-ask .aq-wire::before{content:"";position:absolute;inset:0;opacity:.5;
+  background:repeating-linear-gradient(90deg,rgba(255,255,255,.30) 0 3px,transparent 3px 8px);
+  transition:opacity .5s var(--aq-e),background .5s var(--aq-e);}
+.s-ask .aq-sat[data-on] .aq-wire::before{opacity:1;
+  background:repeating-linear-gradient(90deg,rgba(196,186,247,.9) 0 3px,transparent 3px 8px);}
+.s-ask .aq-wire b{position:absolute;top:-2px;left:0;width:6px;height:6px;border-radius:50%;
+  background:var(--aq-vio-2);box-shadow:0 0 12px rgba(196,186,247,.95);opacity:0;
+  animation:ask-spark 1.7s linear infinite;transition:opacity .4s var(--aq-e);}
+.s-ask .aq-sat[data-on] .aq-wire b{opacity:1;}
+.s-ask .aq-sat:nth-child(3) .aq-wire b{animation-delay:.55s;}
+.s-ask .aq-sat:nth-child(4) .aq-wire b{animation-delay:1.1s;}
+@keyframes ask-spark{0%{transform:translateX(-6px)}100%{transform:translateX(var(--aq-gap))}}
+
+/* ── the Ask sheet ── */
+.s-ask .aq-sheetwrap{position:relative;min-width:0;}
+.s-ask .aq-sheet{position:relative;display:flex;flex-direction:column;overflow:hidden;
+  width:100%;max-width:624px;margin:0 auto;text-align:left;color:var(--ink);
+  background:var(--sheet);border:1px solid var(--line-2);border-radius:var(--r-card);
+  box-shadow:0 36px 84px -30px rgba(0,0,0,.66),0 3px 12px rgba(0,0,0,.28);}
+.s-ask .aq-sh-head{display:flex;align-items:center;gap:10px;flex:0 0 auto;
+  padding:12px 12px 12px 15px;border-bottom:1px solid var(--line);}
+.s-ask .aq-mark{flex:0 0 22px;width:22px;height:22px;border-radius:50%;}
+.s-ask .aq-sh-title{font-size:13px;font-weight:600;color:var(--ink);}
+.s-ask .aq-sp{flex:1 1 auto;}
+.s-ask .aq-ico{display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:9px;color:var(--ink-2);}
+.s-ask .aq-scroll{position:relative;flex:1 1 auto;display:flex;flex-direction:column;padding:16px 18px 10px;}
+.s-ask .aq-stage.is-live .aq-scroll{height:408px;overflow:hidden;}
+.s-ask .aq-track{display:flex;flex-direction:column;margin-top:auto;transition:opacity .45s ease;}
+.s-ask .aq-stage.is-reset .aq-track{opacity:0;}
+.s-ask .aq-msg{display:flex;flex-direction:column;}
+.s-ask .aq-grow{display:grid;grid-template-rows:1fr;
+  transition:grid-template-rows .44s var(--aq-e);}
+.s-ask .aq-gi{display:flex;flex-direction:column;min-height:0;overflow:hidden;
+  padding-top:var(--aq-sp,15px);}
+.s-ask .aq-stage.is-live .aq-grow{grid-template-rows:0fr;}
+.s-ask .aq-stage.is-live .aq-grow[data-on]{grid-template-rows:1fr;}
+.s-ask .aq-bubble{align-self:flex-end;max-width:80%;padding:10px 14px;
+  border-radius:16px 16px 4px 16px;background:var(--field);
+  font-size:13.5px;line-height:1.6;color:var(--ink);}
+.s-ask .aq-past{opacity:.5;}
+
+/* ── activity rail: tools + sub-agents (real .ask-activity) ── */
+.s-ask .aq-act{--aq-sp:7px;display:flex;flex-direction:column;
+  border-left:1.5px solid var(--line);padding:2px 0 2px 14px;}
+.s-ask .aq-act-head{display:flex;align-items:center;gap:9px;min-width:0;}
+.s-ask .aq-dot{flex:0 0 6px;width:6px;height:6px;border-radius:50%;
+  background:var(--aq-seq);transition:background .5s var(--aq-e);}
+.s-ask .aq-dot-run{background:var(--violet);animation:ask-pulse 1.6s ease-in-out infinite;}
+.s-ask .aq-dot-done{background:var(--green);}
+@keyframes ask-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+.s-ask .aq-stage.is-live .aq-act-head .aq-dot{background:var(--green);animation:none;}
+.s-ask .aq-stage.is-live[data-n="6"] .aq-act-head .aq-dot{background:var(--aq-seq);}
+.s-ask .aq-el{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.s-ask .aq-meter-a{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;}
+.s-ask .aq-stage.is-live .aq-el,.s-ask .aq-stage.is-live .aq-meter-a{opacity:0;
+  transition:opacity .5s var(--aq-e);}
+.s-ask .aq-stage.is-live .aq-el[data-on],.s-ask .aq-stage.is-live .aq-meter-a[data-on]{opacity:1;}
+.s-ask .aq-tool{display:flex;align-items:center;gap:9px;min-width:0;}
+.s-ask .aq-op{flex:0 0 46px;width:46px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.s-ask .aq-tgt{min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-ask .aq-note{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--aq-seq);}
+.s-ask .aq-agents{display:flex;flex-direction:column;}
+.s-ask .aq-agents-cap{display:flex;align-items:center;gap:8px;padding:2px 0 3px;
+  font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--aq-seq);}
+.s-ask .aq-agents-count{padding:1px 6px;border-radius:999px;background:var(--field);
+  color:var(--ink-3);font-family:var(--mono);font-weight:400;font-size:9.5px;letter-spacing:0;}
+.s-ask .aq-agent{display:flex;align-items:center;gap:9px;padding:5px 7px;border-radius:9px;min-width:0;}
+.s-ask .aq-agent-n{min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.s-ask .aq-agent-x{flex:0 0 auto;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.s-ask .aq-agent-s{flex:0 0 auto;margin-left:auto;font-size:10.5px;font-weight:500;color:var(--green-ink);}
+.s-ask .aq-agent-s.run{color:var(--ink-3);}
+
+/* ── the live turn: orb + shimmering label (real .ask-thinking) ── */
+.s-ask .aq-think{display:flex;align-items:center;gap:12px;min-width:0;padding:2px 0 0;}
+.s-ask .aq-orb{flex:0 0 30px;width:30px;height:30px;line-height:0;display:inline-block;}
+.s-ask .aq-orb canvas{display:block;}
+.s-ask .aq-lbl{position:relative;min-width:0;}
+@keyframes ask-shim{from{background-position:180% 0}to{background-position:-60% 0}}
+.s-ask .aq-lbl span{position:absolute;left:0;top:0;opacity:0;font-size:12.5px;font-weight:500;
+  white-space:nowrap;transition:opacity .3s var(--aq-e);
+  background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:ask-shim 2.4s linear infinite;}
+.s-ask .aq-lbl span:first-child{position:static;}
+.s-ask .aq-stage.is-live .aq-lbl span[data-on]{opacity:1;}
+.s-ask .aq-stage:not(.is-live) [data-until]{display:none;}
+.s-ask .aq-think-m{font-family:var(--mono);font-size:11px;color:var(--aq-seq);white-space:nowrap;}
+
+/* ── the answer, streaming in (real .ask-md) ── */
+.s-ask .aq-ans{--aq-sp:0;max-width:94%;font-size:13.5px;line-height:1.72;color:var(--ink);}
+.s-ask .aq-ans>*{margin:6px 0;}
+.s-ask .aq-ans code{font-family:var(--mono);font-size:11.5px;background:var(--field);
+  border-radius:4px;padding:1px 4px;}
+.s-ask .aq-pre{padding:9px 12px;background:var(--field);border:1px solid var(--line);
+  border-radius:10px;overflow-x:auto;font-family:var(--mono);font-size:11px;
+  line-height:1.65;color:var(--ink-2);white-space:pre;}
+.s-ask .aq-pre em{font-style:normal;color:var(--red-ink);}
+.s-ask .aq-notice{font-size:12.5px;color:var(--ink-3);}
+.s-ask .aq-notice a{color:var(--blue-ink);text-decoration:none;}
+.s-ask .aq-caret{display:inline-block;width:7px;height:14px;margin-left:2px;
+  vertical-align:-2px;background:var(--ink);animation:ask-blink 1s steps(1,end) infinite;}
+@keyframes ask-blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+.s-ask .aq-stage.is-live .aq-caret{opacity:0;}
+.s-ask .aq-stage.is-live .aq-caret[data-on]{opacity:1;}
+.s-ask .aq-stage.is-live .aq-ans>*{clip-path:inset(0 101% 0 -4px);
+  transition:clip-path .5s steps(16,end);}
+.s-ask .aq-stage.is-live .aq-grow[data-on] .aq-ans>*{clip-path:inset(0 -4px 0 -4px);}
+.s-ask .aq-ans>*:nth-child(2){transition-delay:.34s;}
+.s-ask .aq-ans>*:nth-child(3){transition-delay:.7s;}
+.s-ask .aq-ans>*:nth-child(4){transition-delay:1.02s;}
+.s-ask .aq-ans>*:nth-child(5){transition-delay:1.3s;}
+
+/* ── the run-proposal card (real .ask-card) ── */
+.s-ask .aq-card{display:flex;flex-direction:column;gap:9px;padding:13px 15px;
+  border:1.5px solid var(--line);border-radius:16px;background:var(--sheet);}
+.s-ask .aq-stage.is-live .aq-card{opacity:0;transform:translateY(9px) scale(.985);
+  transition:opacity .5s var(--aq-e) .08s,transform .5s var(--aq-e) .08s;}
+.s-ask .aq-stage.is-live .aq-grow[data-on] .aq-card{opacity:1;transform:none;
+  animation:ask-pop 2s var(--aq-e) .2s both;}
+@keyframes ask-pop{0%{box-shadow:0 0 0 0 rgba(140,127,214,.5);border-color:var(--violet)}
+  40%{box-shadow:0 0 0 7px rgba(140,127,214,.14)}
+  100%{box-shadow:0 0 0 12px rgba(140,127,214,0);border-color:var(--line)}}
+.s-ask .aq-card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.s-ask .aq-card-t{font-size:12.5px;font-weight:600;color:var(--ink);}
+.s-ask .aq-tag{margin-left:auto;padding:2px 9px;border-radius:999px;background:var(--violet-bg);
+  color:var(--violet-ink);font-size:10px;font-weight:600;white-space:nowrap;}
+.s-ask .aq-seg{display:flex;gap:4px;}
+.s-ask .aq-seg span{padding:5px 12px;border:1px solid var(--line-2);border-radius:999px;
+  font-size:11px;font-weight:600;color:var(--ink-2);}
+.s-ask .aq-seg span.on{background:var(--ink);border-color:var(--ink);color:var(--sheet);}
+.s-ask .aq-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px 10px;}
+.s-ask .aq-f{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.s-ask .aq-lab{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
+.s-ask .aq-ctl{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:10px;
+  border:1.5px solid transparent;background:var(--field);font-size:12.5px;color:var(--ink);}
+.s-ask .aq-ctl span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.s-ask .aq-ctl svg{flex:0 0 auto;margin-left:auto;color:var(--ink-3);}
+.s-ask .aq-ctl.aq-brief{align-items:flex-start;line-height:1.5;white-space:normal;}
+.s-ask .aq-steps{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.s-ask .aq-step{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;
+  background:var(--violet-bg);color:var(--violet-ink);font-size:10px;font-weight:600;}
+.s-ask .aq-step i{font-family:var(--mono);font-style:normal;font-weight:400;opacity:.72;}
+.s-ask .aq-arrow{color:var(--ink-3);font-size:10px;}
+.s-ask .aq-acts{display:flex;align-items:center;gap:8px;margin-top:1px;}
+.s-ask .aq-np{font-size:11.5px;color:var(--blue-ink);}
+.s-ask .aq-notnow{margin-left:auto;padding:8px 13px;border-radius:999px;
+  font-size:12px;font-weight:600;color:var(--ink-2);}
+.s-ask .aq-start{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:999px;
+  background:var(--ink);color:var(--sheet);font-size:12px;font-weight:600;}
+.s-ask .aq-stage.is-live .aq-grow[data-on] .aq-start{animation:ask-cta 2.6s var(--aq-e) 1s infinite;}
+@keyframes ask-cta{0%,72%,100%{transform:translateY(0)}80%{transform:translateY(-2px)}88%{transform:translateY(0)}}
+
+/* ── composer (real .ask-composer) ── */
+.s-ask .aq-comp{flex:0 0 auto;display:flex;flex-direction:column;gap:4px;
+  padding:10px 12px 11px;border-top:1px solid var(--line);}
+.s-ask .aq-input{padding:6px 6px 8px;font-size:13.5px;line-height:1.6;color:var(--ink-3);}
+.s-ask .aq-crow{display:flex;align-items:center;gap:8px;}
+.s-ask .aq-meter{display:flex;align-items:center;gap:7px;margin-left:auto;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.s-ask .aq-meter i{font-style:normal;color:var(--line-2);}
+.s-ask .aq-meter b{font-weight:400;color:var(--ink-2);}
+.s-ask .aq-pbtn{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;
+  font-size:11.5px;color:var(--ink-2);white-space:nowrap;}
+.s-ask .aq-mbtn{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:9px;
+  font-size:11.5px;color:var(--ink);white-space:nowrap;}
+.s-ask .aq-mbtn i{font-style:normal;font-weight:500;color:var(--ink-3);}
+.s-ask .aq-send{flex:0 0 31px;display:inline-flex;align-items:center;justify-content:center;
+  width:31px;height:31px;border-radius:50%;background:var(--ink);color:var(--sheet);}
+
+/* ── responsive ── */
+@media (max-width:1040px){
+  .s-ask .aq-stage{grid-template-columns:minmax(0,1fr);gap:26px;}
+  .s-ask .aq-sheetwrap{order:-1;}
+  .s-ask .aq-rail{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
+  .s-ask .aq-rail-in,.s-ask .aq-rail-out{align-self:stretch;}
+  .s-ask .aq-rail-cap{grid-column:1/-1;margin:0;}
+  .s-ask .aq-rail-out{text-align:left;}
+  .s-ask .aq-rail-out .aq-sat-h{flex-direction:row;}
+  .s-ask .aq-wire{display:none;}
+}
+@media (max-width:620px){
+  .s-ask .aq-meter,.s-ask .aq-agent-x,.s-ask .aq-think-m{display:none;}
+  .s-ask .aq-fields{grid-template-columns:minmax(0,1fr);}
+  .s-ask .aq-rail{grid-template-columns:minmax(0,1fr);}
+  .s-ask .aq-stage.is-live .aq-scroll{height:326px;}
+  .s-ask .aq-scroll{padding:14px 14px 8px;}
+  .s-ask .aq-tag{margin-left:0;}
+  .s-ask .aq-acts{flex-wrap:wrap;}
+  .s-ask .aq-np{flex:1 0 100%;}
+}
+@media (max-width:430px){
+  .s-ask .aq-pbtn{display:none;}
+  .s-ask .aq-claim{font-size:11.5px;}
+}
+@media (prefers-reduced-motion: reduce){
+  .s-ask .aq-lbl span{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
+  .s-ask .aq-wire b,.s-ask .aq-claim i::after{animation:none;}
+  .s-ask .aq-grow{transition:none;}
+  .s-ask .aq-caret{animation:none;opacity:.45;}
+}
+</style>
+
+<section class="sec s-ask" id="ask">
+  <div class="wrap">
+    <div class="aq-panel" data-rv>
+      <div class="aq-aura" aria-hidden="true"></div>
+      <div class="aq-mesh" aria-hidden="true"></div>
+
+      <div class="aq-head">
+        <div class="aq-head-l">
+          <p class="eyebrow">The glue</p>
+          <h2 class="h2">Ask Worca</h2>
+          <p class="lead">It knows your repos, runs, diffs and reviews — and it starts the next pipeline for you.</p>
+        </div>
+        <p class="aq-claim"><i></i>Turns the comments you left on a diff into a run</p>
+      </div>
+
+      <div class="aq-stage viz" id="ask-stage">
+        <div class="aq-rail aq-rail-in">
+          <p class="aq-rail-cap">Reads</p>
+          <div class="aq-sat" data-key="stats">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-7M12 20V5M19 20v-4"/></svg></span>
+              <span class="aq-sat-t">Statistics</span>
+            </div>
+            <div class="aq-sat-m">$0.91 · 84.2k ctx · 1m 12s</div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+          <div class="aq-sat" data-key="runs">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.4v4.2h4.2M12 7.6V12l3.1 1.9"/></svg></span>
+              <span class="aq-sat-t">Run history</span>
+            </div>
+            <div class="aq-sat-m">a1b2c3d4 · <u>+3918</u> <del>−146</del></div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+          <div class="aq-sat" data-key="comments">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.2a2.4 2.4 0 0 1-2.4 2.4H8.6L4.4 20V6.4A2.4 2.4 0 0 1 6.8 4h10.8A2.4 2.4 0 0 1 20 6.4z"/></svg></span>
+              <span class="aq-sat-t">Diff comments</span>
+            </div>
+            <div class="aq-sat-m">3 unresolved · yours</div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+        </div>
+
+        <div class="aq-sheetwrap">
+          <div class="aq-sheet">
+            <div class="aq-sh-head">
+              <svg class="aq-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#19191B"/><path d="M12 5.4l1.5 3.9 3.9 1.5-3.9 1.5L12 16.2l-1.5-3.9L6.6 10.8l3.9-1.5z" fill="#fff"/><circle cx="16.9" cy="16.4" r="1.5" fill="#8C7FD6"/></svg>
+              <div class="aq-sh-title">Ask Worca</div>
+              <span class="aq-sp"></span>
+              <span class="aq-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h9"/></svg></span>
+              <span class="aq-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
+              <span class="aq-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+            </div>
+
+            <div class="aq-scroll" id="ask-scroll">
+              <div class="aq-track">
+
+                <div class="aq-grow" data-step="0"><div class="aq-gi">
+                  <div class="aq-bubble aq-past">Which runs touched the auth middleware?</div>
+                </div></div>
+                <div class="aq-grow" data-step="0"><div class="aq-gi">
+                  <div class="aq-ans aq-past"><div>Three this week. The newest is <code>a1b2c3d4</code> — Review, done.</div></div>
+                </div></div>
+
+                <div class="aq-grow" data-step="1"><div class="aq-gi">
+                  <div class="aq-bubble">Why did the review flag the auth middleware?</div>
+                </div></div>
+
+                <div class="aq-grow" data-step="2"><div class="aq-gi">
+                  <div class="aq-act">
+                    <div class="aq-act-head">
+                      <span class="aq-dot"></span>
+                      <span class="aq-el" data-step="6">1m 12s</span>
+                      <span class="aq-sp"></span>
+                      <span class="aq-meter-a" data-step="6">84.2k ctx · $0.91</span>
+                    </div>
+                    <div class="aq-grow" data-step="2"><div class="aq-gi"><div class="aq-tool">
+                      <span class="aq-op">list</span>
+                      <span class="aq-tgt">runs · {"projectKey":"worca","status":"done"}</span>
+                      <span class="aq-note">1.4s</span>
+                    </div></div></div>
+                    <div class="aq-grow" data-step="3"><div class="aq-gi"><div class="aq-tool">
+                      <span class="aq-op">get</span>
+                      <span class="aq-tgt">run diff · {"id":"a1b2c3d4","path":"src/server/auth.mjs"}</span>
+                      <span class="aq-note">2.6s</span>
+                    </div></div></div>
+                    <div class="aq-grow" data-step="3"><div class="aq-gi"><div class="aq-tool">
+                      <span class="aq-op">list</span>
+                      <span class="aq-tgt">diff comments · {"id":"a1b2c3d4","status":"unresolved"}</span>
+                      <span class="aq-note">0.9s</span>
+                    </div></div></div>
+                    <div class="aq-grow" data-step="3"><div class="aq-gi"><div class="aq-agents">
+                      <div class="aq-agents-cap"><span>Sub-agents</span><span class="aq-agents-count">2</span></div>
+                      <div class="aq-agent">
+                        <span class="aq-dot aq-dot-done"></span>
+                        <span class="aq-agent-n">diff-reviewer</span>
+                        <span class="aq-agent-x">claude-opus-5</span>
+                        <span class="aq-agent-x">48.2k ctx</span>
+                        <span class="aq-agent-s">done</span>
+                      </div>
+                      <div class="aq-agent">
+                        <span class="aq-dot aq-dot-run"></span>
+                        <span class="aq-agent-n">test-scout</span>
+                        <span class="aq-agent-x">claude-sonnet-4-6</span>
+                        <span class="aq-agent-x">12.6k ctx</span>
+                        <span class="aq-agent-s run">running</span>
+                      </div>
+                    </div></div></div>
+                    <div class="aq-grow" data-step="5"><div class="aq-gi"><div class="aq-tool">
+                      <span class="aq-op">propose</span>
+                      <span class="aq-tgt">run · {"workflowId":"wf_default","commentIds":["dc_7f1","dc_7f4"]}</span>
+                      <span class="aq-note">0.3s</span>
+                    </div></div></div>
+                  </div>
+                </div></div>
+
+                <div class="aq-grow" data-step="4"><div class="aq-gi">
+                  <div class="aq-ans">
+                    <div>The Review step flagged <code>verifyToken()</code> in <code>src/server/auth.mjs:41</code> — the cached branch returns before the audience check, so a token minted for another service still passes.</div>
+                    <div class="aq-pre">if (cached) return cached.claims;   <em>// aud never checked</em>
+return verify(token, key, { aud: API_AUD });</div>
+                    <div class="aq-notice">Linked run a1b2c3d4 · Review · 8/23/2026 <a href="#ask">open</a></div>
+                    <div>Two of the three comments you left on that file say the same thing.<i class="aq-caret" data-step="4" data-until="5"></i></div>
+                  </div>
+                </div></div>
+
+                <div class="aq-grow" data-step="5"><div class="aq-gi">
+                  <div class="aq-card">
+                    <div class="aq-card-h">
+                      <span class="aq-card-t">Fix the audience check in verifyToken</span>
+                      <span class="aq-tag">2 comments attached</span>
+                    </div>
+                    <div class="aq-seg"><span class="on">Project</span><span>Workspace</span></div>
+                    <div class="aq-fields">
+                      <div class="aq-f"><span class="aq-lab">Project</span><div class="aq-ctl"><span>worca</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div>
+                      <div class="aq-f"><span class="aq-lab">Workflow</span><div class="aq-ctl"><span>Default</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div>
+                      <div class="aq-f"><span class="aq-lab">Guardrails</span><div class="aq-ctl"><span>Normal</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></div></div>
+                      <div class="aq-f"><span class="aq-lab">Feature branch</span><div class="aq-ctl"><span>worca/auth-aud-check</span></div></div>
+                    </div>
+                    <div class="aq-steps">
+                      <span class="aq-step">Plan<i>opus-5</i></span><span class="aq-arrow">→</span>
+                      <span class="aq-step">Refine<i>opus-5</i></span><span class="aq-arrow">→</span>
+                      <span class="aq-step">Implement<i>opus-5</i></span><span class="aq-arrow">→</span>
+                      <span class="aq-step">Review<i>sonnet-4.6</i></span>
+                    </div>
+                    <div class="aq-f"><span class="aq-lab">Task brief</span><div class="aq-ctl aq-brief">verifyToken() returns cached claims before validating aud. Check the audience on every path, add a regression test, resolve dc_7f1 and dc_7f4.</div></div>
+                    <div class="aq-acts">
+                      <span class="aq-np">Open in New Pipeline</span>
+                      <span class="aq-notnow">Not now</span>
+                      <span class="aq-start">Start</span>
+                    </div>
+                  </div>
+                </div></div>
+
+                <div class="aq-grow" data-step="2" data-until="6"><div class="aq-gi">
+                  <div class="aq-think">
+                    <span class="aq-orb" id="ask-orb" aria-hidden="true"></span>
+                    <span class="aq-lbl"><span data-step="3" data-until="4">Reading comments on a1b2c3d4…</span><span data-step="2" data-until="3">Finding runs…</span><span data-step="4" data-until="5">Writing…</span><span data-step="5" data-until="6">Preparing a run…</span></span>
+                    <span class="aq-think-m">1m 04s · 71.8k ctx · $0.74</span>
+                  </div>
+                </div></div>
+
+              </div>
+            </div>
+
+            <div class="aq-comp">
+              <div class="aq-input">Ask about any run, agent, or project…</div>
+              <div class="aq-crow">
+                <span class="aq-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
+                <span class="aq-meter"><span>84.2k ctx</span><i>|</i><b>$0.91</b><i>|</i></span>
+                <span class="aq-pbtn">2 agents<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></span>
+                <span class="aq-mbtn">claude-opus-5<i>high</i><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+                <span class="aq-send"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="aq-rail aq-rail-out">
+          <p class="aq-rail-cap">Acts on</p>
+          <div class="aq-sat" data-key="workflows">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 4.5h5v4h-5zM14.5 15.5h5v4h-5zM7 8.5v3.5a2 2 0 0 0 2 2h5.5"/></svg></span>
+              <span class="aq-sat-t">Workflows</span>
+            </div>
+            <div class="aq-sat-m">wf_default · 4 steps</div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+          <div class="aq-sat" data-key="agents">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6zM4.4 20.6c0-3.9 3.4-6.3 7.6-6.3s7.6 2.4 7.6 6.3"/></svg></span>
+              <span class="aq-sat-t">Agents &amp; models</span>
+            </div>
+            <div class="aq-sat-m">claude-opus-5 · high</div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+          <div class="aq-sat" data-key="guards">
+            <div class="aq-sat-h">
+              <span class="aq-sat-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2l7 2.9v5.3c0 4.2-2.8 7.6-7 9.4-4.2-1.8-7-5.2-7-9.4V6.1zM9.2 12l2 2 3.6-3.8"/></svg></span>
+              <span class="aq-sat-t">Guardrails</span>
+            </div>
+            <div class="aq-sat-m">Normal</div>
+            <i class="aq-wire" aria-hidden="true"><b></b></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+  var root = document.querySelector('.s-ask');
+  if (!root) return;
+  var stage = root.querySelector('#ask-stage');
+  var scroll = root.querySelector('#ask-scroll');
+  var orbHost = root.querySelector('#ask-orb');
+  if (!stage || !scroll) return;
+  var raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : null;
+  var caf = window.cancelAnimationFrame ? window.cancelAnimationFrame.bind(window) : null;
+  var reduce = false;
+  try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { reduce = false; }
+  /* reduced motion / no rAF: the finished turn is painted once, below — never a loop */
+  var now = function(){ return (window.performance && window.performance.now) ? window.performance.now() : Date.now(); };
+
+  /* ---- the thinking orb: the app's own Fibonacci sphere (thinking-orb.mjs) ---- */
+  function makeOrb(host){
+    if (!host) return null;
+    var size = 30, N = 46, TILT = 0.38, SPEED = 0.17;
+    var ctx = null, cv = document.createElement('canvas');
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
+    cv.style.cssText = 'width:' + size + 'px;height:' + size + 'px;display:block;pointer-events:none';
+    try { ctx = cv.getContext('2d'); } catch (e) { ctx = null; }
+    if (!ctx) return null;
+    host.appendChild(cv);
+    ctx.scale(dpr, dpr);
+    var pts = [], i;
+    for (i = 0; i < N; i++) {
+      var y = 1 - ((i + 0.5) / N) * 2;
+      var r = Math.sqrt(Math.max(1 - y * y, 0));
+      var th = i * Math.PI * (3 - Math.sqrt(5));
+      pts.push([Math.cos(th) * r, y, Math.sin(th) * r]);
+    }
+    var R = size * 0.40, c = size / 2, t0 = now(), h = null, live = false;
+    function draw(){
+      h = raf(draw);
+      if (!live || document.hidden) return;
+      var t = (now() - t0) / 1000, a = t * SPEED * Math.PI * 2;
+      var ca = Math.cos(a), sa = Math.sin(a), cT = Math.cos(TILT), sT = Math.sin(TILT), out = [], k;
+      for (k = 0; k < pts.length; k++) {
+        var p = pts[k], x = p[0] * ca + p[2] * sa, z0 = p[2] * ca - p[0] * sa;
+        out.push([x, p[1] * cT - z0 * sT, z0 * cT + p[1] * sT]);
+      }
+      out.sort(function(m, n){ return m[2] - n[2]; });
+      ctx.clearRect(0, 0, size, size);
+      for (k = 0; k < out.length; k++) {
+        var d = (out[k][2] + 1) / 2;
+        ctx.beginPath();
+        ctx.arc(c + out[k][0] * R, c - out[k][1] * R, 0.5 + d * 1.05, 0, 6.2832);
+        ctx.fillStyle = 'rgba(25,25,27,' + (0.08 + d * 0.82).toFixed(3) + ')';
+        ctx.fill();
+      }
+    }
+    return {
+      start: function(){ live = true; if (h === null) h = raf(draw); },
+      stop: function(){ live = false; if (h !== null && caf) { caf(h); h = null; } }
+    };
+  }
+  var orb = (reduce || !raf) ? null : makeOrb(orbHost);
+
+  /* ---- stage machine ---- */
+  var nodes = stage.querySelectorAll('[data-step]');
+  var sats = stage.querySelectorAll('.aq-sat');
+  var LIT = { stats: 2, runs: 2, comments: 3, workflows: 5, agents: 5, guards: 5 };
+  function apply(n){
+    stage.setAttribute('data-n', String(n));
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var from = parseInt(el.getAttribute('data-step'), 10) || 0;
+      var u = el.getAttribute('data-until');
+      var until = (u === null) ? Infinity : (parseInt(u, 10) || 0);
+      if (n >= from && n < until) el.setAttribute('data-on', '');
+      else el.removeAttribute('data-on');
+    }
+    for (var j = 0; j < sats.length; j++) {
+      var need = LIT[sats[j].getAttribute('data-key')];
+      if (need && n >= need) sats[j].setAttribute('data-on', '');
+      else sats[j].removeAttribute('data-on');
+    }
+  }
+
+  /* ---- keep the transcript pinned to the bottom while a block grows ---- */
+  var pinTill = 0, pinning = false;
+  function pinLoop(){
+    scroll.scrollTop = scroll.scrollHeight;
+    if (Date.now() < pinTill) raf(pinLoop); else pinning = false;
+  }
+  function pin(ms){
+    pinTill = Date.now() + ms;
+    if (!pinning) { pinning = true; raf(pinLoop); }
+  }
+
+  var SEQ = [
+    { at: 0,     n: 1 }, { at: 900,  n: 2 }, { at: 2050, n: 3 },
+    { at: 3600,  n: 4 }, { at: 6300, n: 5 }, { at: 8300, n: 6 },
+    { at: 11200, fade: 1 }, { at: 11750, n: 0 }, { at: 12250, show: 1 }, { at: 12450, loop: 1 }
+  ];
+  var timers = [], running = false;
+  function clearTimers(){ for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]); timers = []; }
+  function cycle(){
+    clearTimers();
+    for (var i = 0; i < SEQ.length; i++) {
+      (function(s){
+        timers.push(setTimeout(function(){
+          if (s.fade) { stage.classList.add('is-reset'); return; }
+          if (s.show) { stage.classList.remove('is-reset'); return; }
+          if (s.loop) { cycle(); return; }
+          apply(s.n);
+          pin(s.n === 0 ? 80 : 820);
+        }, s.at));
+      })(SEQ[i]);
+    }
+  }
+  function start(){
+    if (running) return;
+    running = true;
+    stage.classList.remove('is-reset');
+    apply(0);
+    if (orb) orb.start();
+    timers.push(setTimeout(cycle, 260));
+  }
+  function stop(){
+    if (!running) return;
+    running = false;
+    clearTimers();
+    if (orb) orb.stop();
+  }
+
+  if (reduce || !raf) {
+    stage.classList.add('is-live');
+    apply(6);
+    try { scroll.scrollTop = scroll.scrollHeight; } catch (e) { /* detached */ }
+    return;
+  }
+
+  var onScreen = false;
+  stage.classList.add('is-live');
+  apply(0);
+  if (window.IntersectionObserver) {
+    var io = new IntersectionObserver(function(entries){
+      for (var i = 0; i < entries.length; i++) {
+        onScreen = entries[i].isIntersecting;
+        if (onScreen) start(); else stop();
+      }
+    }, { threshold: 0.2 });
+    io.observe(stage);
+  } else {
+    onScreen = true;
+    start();
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) stop();
+    else if (onScreen) start();
+  });
+})();
+</script>

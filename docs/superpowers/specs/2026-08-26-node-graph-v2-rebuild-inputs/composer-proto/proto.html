@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>worca composer — canvas engine prototype</title>
+<style>
+/* Tokens copied from dev ui/public/style.css:10-48 (values verbatim). --t-fast does NOT exist on dev;
+   it is declared here with the old branch's fallback value so a later CSS plan can add it once. */
+:root{--bg:#F1F1EF;--panel:#FFFFFF;--ink:#19191B;--ink-2:#5C5C63;--ink-3:#9A9AA1;--line:#ECECEA;--line-2:#E3E3E0;
+  --field:#F6F6F4;--seq:#B7B7BC;--green:#5BAE5B;--red:#E76A5A;--red-bg:#FBE3E0;--red-ink:#C5483A;--blue:#5BA6CC;
+  --violet-bg:#EAE6F8;--violet-ink:#6353B8;--amber:#E6962A;--amber-bg:#FCE8C8;--amber-ink:#A66510;
+  --shadow:0 6px 28px rgba(25,25,27,.05),0 1px 2px rgba(25,25,27,.04);--shadow-soft:0 2px 12px rgba(25,25,27,.04);
+  --sans:'Poppins',system-ui,-apple-system,sans-serif;--mono:'JetBrains Mono',ui-monospace,Menlo,monospace;--t-fast:120ms;}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);}
+/* Header bar = sibling ABOVE the canvas host. Nothing in here can ever be swallowed by stage pointer capture. */
+.gv-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line-2);}
+.gv-head h1{font-size:15px;margin:0 auto 0 0;font-weight:600;}
+.gv-head .st{font:11px var(--mono);color:var(--ink-3);}
+.gv-head button{font:600 12.5px var(--sans);padding:8px 14px;border-radius:999px;border:1.5px solid var(--line-2);background:#fff;color:var(--ink);cursor:pointer;}
+.gv-head button:hover{background:var(--field);}
+/* Canvas host: dot grid (dev style.css:1077 recipe), constant height, clips the world. NO controls inside. */
+.gv-canvas{position:relative;height:560px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;
+  background:#FBFBF9 radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
+/* Stage = the ONE pointer target (captures). Coincides with the host box, so stage-local px == host-local px. */
+.gv-stage{position:absolute;inset:0;outline:none;}
+.gv-stage.panning{cursor:grabbing;}
+.gv-stage.space{cursor:grab;}
+.gv-world{position:absolute;left:0;top:0;width:0;height:0;transform-origin:0 0;will-change:transform;}
+.gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
+/* THE rule that makes the PR #359 blob impossible: every path in the layer — ghost included — is fill:none. */
+.gv-wires path{fill:none;stroke:var(--seq);stroke-width:2;stroke-linecap:round;}
+.gv-wires path.loop{stroke:var(--amber);}
+.gv-wires path.sel{stroke:var(--ink);stroke-width:2.5;}
+.gv-wires path.ghost{stroke:var(--ink-3);stroke-dasharray:5 4;visibility:hidden;}
+.gv-wires path.ghost.on{visibility:visible;}
+.gv-wires path.ghost.legal{stroke:var(--green);stroke-dasharray:none;}
+.gv-wires path.ghost.illegal{stroke:var(--red);}
+/* Cards: every box-model number comes from the --gv-* custom properties the geometry module injects at mount. */
+.node{position:absolute;left:0;top:0;z-index:2;width:var(--gv-node-w);background:#fff;border:var(--gv-border) solid var(--line-2);
+  border-radius:16px;box-shadow:var(--shadow-soft);cursor:grab;transition:box-shadow var(--t-fast);}
+.node:hover{box-shadow:var(--shadow);}
+.node.sel{outline:2px solid var(--ink);outline-offset:2px;}
+.node.dragging{cursor:grabbing;transition:none;}
+.nhead{height:var(--gv-head-h);display:flex;align-items:center;gap:8px;padding:0 11px;border-radius:14.5px 14.5px 0 0;
+  font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.h-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.h-flow{background:var(--ink);color:#fff;}
+.nbody{padding:var(--gv-pad-t) 0 var(--gv-pad-b);}
+.prow{position:relative;height:var(--gv-row-h);display:flex;align-items:center;gap:7px;padding:0 13px;}
+.prow.out{justify-content:flex-end;}
+.prow .pn{font-size:12.5px;font-weight:500;}
+.prow .pt{font:10px/1.3 var(--mono);color:var(--ink-3);}
+.prow .pt.cond{color:var(--amber-ink);}
+.psep{height:var(--gv-sep-h);position:relative;}
+.psep::after{content:"";position:absolute;left:13px;right:13px;top:4px;height:1px;background:var(--line);}
+/* dot centre = row centre: top = (ROW_H - DOT)/2 = 7; x overhang = DOT/2 + BORDER = 6.5 → centre lands on node.x exactly. */
+.dot,.gdot{position:absolute;top:calc((var(--gv-row-h) - var(--gv-dot)) / 2);width:var(--gv-dot);height:var(--gv-dot);border-radius:50%;}
+.prow.in .dot,.prow.in .gdot{left:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.prow.out .dot{right:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.dot.md{background:var(--ink);} .dot.json{background:var(--blue);}
+.dot.void{background:#fff;border:2px solid var(--ink-3);} .dot.any{background:#fff;border:2px solid var(--ink);}
+/* conditional output: 8px amber diamond; right = 4 + BORDER = 5.5 → centre on node.x + NODE_W. */
+.dia{position:absolute;top:8px;right:calc(-1 * (4px + var(--gv-border)));width:8px;height:8px;background:var(--amber);border-radius:1.5px;transform:rotate(45deg);}
+.gdot{background:var(--field);border:2px dashed var(--seq);}
+.prow.gate .pn,.prow.gate .pt{color:var(--ink-3);}
+.prow.gate.wired .gdot{background:#fff;border-color:var(--ink);}
+.prow.gate.wired .pn{color:var(--ink);}
+.gv-chip{position:absolute;z-index:6;pointer-events:none;background:var(--red-bg);color:var(--red-ink);border:1px solid var(--red);
+  border-radius:8px;padding:4px 9px;font-size:11px;font-weight:600;white-space:nowrap;}
+.gv-chip[hidden]{display:none;}
+.note{margin:10px 16px;font-size:12px;color:var(--ink-2);}
+@media (prefers-reduced-motion:reduce){*{transition:none !important;}}
+</style>
+</head>
+<body>
+<div class="gv-head">
+  <h1>worca composer — canvas engine prototype</h1>
+  <span class="st" id="st"></span>
+  <button type="button" id="btn-layout">Auto-layout</button>
+  <button type="button" id="btn-save">Save</button>
+</div>
+<div class="gv-canvas" id="canvas">
+  <div class="gv-stage" id="stage" tabindex="0" aria-label="pipeline canvas">
+    <div class="gv-world" id="world"><svg class="gv-wires" id="wires" width="1" height="1"></svg></div>
+  </div>
+  <div class="gv-chip" id="chip" hidden></div>
+</div>
+<p class="note">drag cards · drag from any dot (ghost cord; green = legal, red = illegal) · wheel = pan · ⌘/ctrl+wheel = zoom about cursor · space+drag / middle-drag / empty-drag = pan · Esc cancels · header buttons must always click.</p>
+<script>
+// ============================================================ geometry (single source of truth)
+// In the app this is graph-geometry.mjs; every number below is injected into CSS as --gv-* at mount,
+// so the stylesheet can never disagree with nodeSize/portAnchor.
+const G = { NODE_W: 220, HEAD_H: 34, ROW_H: 24, SEP_H: 9, PAD_T: 8.5, PAD_B: 8, BORDER: 1.5, DOT: 10,
+            FOOT_H: 26, EXEC_ROW_H: 22, SNAP: 11, PORT_HIT_R: 14, ZOOM_MIN: 0.4, ZOOM_MAX: 1.6, ZOOM_K: 0.002 };
+const CSS_VARS = { NODE_W: 'node-w', HEAD_H: 'head-h', ROW_H: 'row-h', SEP_H: 'sep-h', PAD_T: 'pad-t', PAD_B: 'pad-b',
+                   BORDER: 'border', DOT: 'dot', FOOT_H: 'foot-h', EXEC_ROW_H: 'exec-row-h' };
+function injectGeometry(el) { for (const [k, name] of Object.entries(CSS_VARS)) el.style.setProperty(`--gv-${name}`, `${G[k]}px`); }
+// First row centre, from the top of the card: BORDER + HEAD_H + PAD_T + ROW_H/2 = 1.5 + 34 + 8.5 + 12 = 56.
+const ROW0 = G.BORDER + G.HEAD_H + G.PAD_T + G.ROW_H / 2;
+
+// ------------------------------------------------------------ model (3 cards, 2 wires)
+const CAPTION = { task: 'prompt + attached files', end: 'pipeline result' };
+const PORTS = { // in the app: portsFn(node) from agent sidecar meta; `await` is synthesized for kind 'agent' only
+  task:  { inputs: [], outputs: [{ id: 'task', type: 'md' }], await: false },
+  agent: { inputs: [{ id: 'task', type: 'md' }, { id: 'fix', type: 'md' }],
+           outputs: [{ id: 'plan', type: 'md' }, { id: 'review', type: 'json', when: 'blocking' }], await: true },
+  end:   { inputs: [{ id: 'result', type: 'any' }], outputs: [], await: false },
+};
+const NODES = [
+  { id: 'n_task',  kind: 'task',  x: 60,  y: 143 },
+  { id: 'n_agent', kind: 'agent', key: 'planner', x: 400, y: 80 },
+  { id: 'n_end',   kind: 'end',   x: 760, y: 143 },
+];
+const WIRES = [
+  { id: 'w1', from: { node: 'n_task',  port: 'task' }, to: { node: 'n_agent', port: 'task' } },
+  { id: 'w2', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_end',   port: 'result' } },
+];
+const byId = (id) => NODES.find((n) => n.id === id);
+const portsOf = (node) => PORTS[node.kind];
+
+// Zones, top to bottom: inputs → outputs → await gate (agents) → caption (task/end/or). A zone is emitted only when
+// non-empty and a 9px separator sits only BETWEEN emitted zones — this reproduces the spec closed forms
+// (input i: y+56+24i; output j: y+65+24·nIn+24j; await: y+74+24·(nIn+nOut)) and degrades sanely for 0-input cards.
+function zones(node) {
+  const p = portsOf(node), z = [];
+  if (p.inputs.length) z.push({ kind: 'in', n: p.inputs.length });
+  if (p.outputs.length) z.push({ kind: 'out', n: p.outputs.length });
+  if (p.await) z.push({ kind: 'await', n: 1 });
+  if (CAPTION[node.kind]) z.push({ kind: 'cap', n: 1 });
+  return z;
+}
+function zoneTop(node, kind) { // y offset of the zone's first row centre
+  let y = ROW0;
+  for (const z of zones(node)) { if (z.kind === kind) return y; y += z.n * G.ROW_H + G.SEP_H; }
+  return null;
+}
+// Card box. footerRows: 0 none · 1 collapsed executions strip (FOOT_H) · >1 strip + (rows-1) expanded EXEC_ROW_H rows.
+// The footer sits BELOW every zone, so anchors never depend on it (only height + hit box + fit bounds do).
+//   agent(2 in, 2 out, await): 3 + 34 + 8.5 + 5·24 + 2·9 + 8 = 191.5  (= spec 95.5 + 24·4)
+//   task(0 in, 1 out, caption) and end(1 in, 0 out, caption): 3 + 34 + 8.5 + 2·24 + 9 + 8 = 110.5
+function nodeSize(node, { footerRows = 0 } = {}) {
+  const zs = zones(node);
+  const rows = zs.reduce((s, z) => s + z.n, 0), seps = Math.max(0, zs.length - 1);
+  const footer = footerRows ? G.FOOT_H + (footerRows - 1) * G.EXEC_ROW_H : 0;
+  return { w: G.NODE_W, h: 2 * G.BORDER + G.HEAD_H + G.PAD_T + rows * G.ROW_H + seps * G.SEP_H + G.PAD_B + footer };
+}
+// Anchors: inputs + await on the LEFT edge (x), outputs on the RIGHT edge (x + NODE_W).
+//   n_agent: task (400, 136) fix (400, 160) · plan (620, 193) review (620, 217) · await (400, 250)
+//   n_task: task out (280, 199) · n_end: result in (760, 199)
+function portAnchor(node, portId, dir) {
+  const p = portsOf(node);
+  if (dir === 'in' && portId === 'await') return { x: node.x, y: node.y + zoneTop(node, 'await') };
+  if (dir === 'in') return { x: node.x, y: node.y + zoneTop(node, 'in') + p.inputs.findIndex((q) => q.id === portId) * G.ROW_H };
+  return { x: node.x + G.NODE_W, y: node.y + zoneTop(node, 'out') + p.outputs.findIndex((q) => q.id === portId) * G.ROW_H };
+}
+function allPorts(node) {
+  const p = portsOf(node), list = [];
+  for (const q of p.inputs) list.push({ node, port: q.id, dir: 'in', type: q.type });
+  if (p.await) list.push({ node, port: 'await', dir: 'in', type: 'any' });
+  for (const q of p.outputs) list.push({ node, port: q.id, dir: 'out', type: q.type });
+  return list;
+}
+// ONE cubic. dx = clamp(48, 160, 0.45·|Δx|). Forward (a = output, b = input): c1 = (a.x+dx, a.y), c2 = (b.x−dx, b.y).
+// mirror (drag STARTED on an input, cord leaves leftward): c1 = (a.x−dx, a.y), c2 = (b.x+dx, b.y).
+// loop: both control points dropped by bow = 56 + 0.2·|Δy| so the wire bows underneath.
+function bezierD(a, b, { mirror = false, loop = false } = {}) {
+  const dx = Math.max(48, Math.min(160, Math.abs(b.x - a.x) * 0.45)), s = mirror ? -1 : 1;
+  const bow = loop ? 56 + Math.abs(a.y - b.y) * 0.2 : 0;
+  return `M ${a.x} ${a.y} C ${a.x + s * dx} ${a.y + bow}, ${b.x - s * dx} ${b.y + bow}, ${b.x} ${b.y}`;
+}
+const snap = (v) => Math.round(v / G.SNAP) * G.SNAP;
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const hitNode = (node, pt) => { const s = nodeSize(node); return pt.x >= node.x && pt.x <= node.x + s.w && pt.y >= node.y && pt.y <= node.y + s.h; };
+function hitPortAt(pt, exclude) { // nearest port within PORT_HIT_R, model-driven (no elementFromPoint, no rects)
+  let best = null, bd = G.PORT_HIT_R;
+  for (const node of NODES) for (const q of allPorts(node)) {
+    if (exclude && exclude.node === node && exclude.port === q.port && exclude.dir === q.dir) continue;
+    const a = portAnchor(node, q.port, q.dir), d = Math.hypot(pt.x - a.x, pt.y - a.y);
+    if (d <= bd) { bd = d; best = { ...q, anchor: a }; }
+  }
+  return best;
+}
+function modelBounds(pad) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of NODES) { const s = nodeSize(n); x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + s.w); y1 = Math.max(y1, n.y + s.h); }
+  return NODES.length ? { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad } : null;
+}
+</script>
+<script>
+// ============================================================ view (keyed DOM cards + ONE svg layer)
+const stage = document.getElementById('stage'), world = document.getElementById('world'), wiresEl = document.getElementById('wires');
+const canvasEl = document.getElementById('canvas'), chip = document.getElementById('chip');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const stats = { ghostUpdates: 0, frames: 0, rectReads: 0, pointerMoves: 0, wireDUpdates: 0, headerClicks: 0 };
+injectGeometry(stage);
+const nodeEls = new Map(), wireEls = new Map(), dCache = new Map(), incident = new Map(); // nodeId -> Set(wireId)
+const wiredInputs = () => new Set(WIRES.map((w) => `${w.to.node}.${w.to.port}`));
+function h(tag, cls, text) { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; }
+function portRow(q, dir) {
+  const row = h('div', `prow ${dir}`); row.dataset.port = q.id; row.dataset.dir = dir; row.dataset.type = q.type;
+  const cond = dir === 'out' && (q.when === 'blocking' || q.when === 'clean');
+  const glyph = cond ? h('i', 'dia') : h('i', `dot ${q.type}`);
+  const name = h('span', 'pn', q.id), cap = h('span', cond ? 'pt cond' : 'pt', cond ? `on ${q.when}` : q.type);
+  if (dir === 'in') row.append(glyph, name, cap); else row.append(cap, name, glyph);
+  return row;
+}
+function buildCard(node) {
+  const el = h('div', `node node-${node.kind}`); el.dataset.nodeId = node.id;
+  const head = h('div', `nhead ${node.kind === 'agent' ? 'h-violet' : 'h-flow'}`, node.kind === 'agent' ? node.key : node.kind.toUpperCase());
+  const body = h('div', 'nbody'); const p = portsOf(node); let first = true;
+  const sep = () => { if (!first) body.appendChild(h('div', 'psep')); first = false; };
+  if (p.inputs.length) { sep(); for (const q of p.inputs) body.appendChild(portRow(q, 'in')); }
+  if (p.outputs.length) { sep(); for (const q of p.outputs) body.appendChild(portRow(q, 'out')); }
+  if (p.await) { sep(); const g = h('div', 'prow in gate'); g.dataset.port = 'await'; g.dataset.dir = 'in'; g.dataset.type = 'any';
+    g.append(h('i', 'gdot'), h('span', 'pn', 'await'), h('span', 'pt', 'any')); body.appendChild(g); }
+  if (CAPTION[node.kind]) { sep(); const c = h('div', 'prow cap'); c.appendChild(h('span', 'pt', CAPTION[node.kind])); body.appendChild(c); }
+  el.append(head, body);
+  el.style.height = `${nodeSize(node).h}px`;   // explicit px from nodeSize → the CSS box model cannot drift
+  return el;
+}
+// Position = transform (no layout, compositor-friendly). Hit-testing never reads it back — the model is the truth.
+function placeCard(node) { nodeEls.get(node.id).style.transform = `translate(${node.x}px, ${node.y}px)`; }
+function paintGate(node) {
+  const el = nodeEls.get(node.id), g = el && el.querySelector('.prow.gate');
+  if (g) g.classList.toggle('wired', wiredInputs().has(`${node.id}.await`));
+}
+function anchorOf(end, dir) { return portAnchor(byId(end.node), end.port, dir); }
+function paintWire(w) {  // d cache keyed by wire id: identical geometry ⇒ no attribute write
+  const d = bezierD(anchorOf(w.from, 'out'), anchorOf(w.to, 'in'));
+  if (dCache.get(w.id) === d) return;
+  dCache.set(w.id, d); wireEls.get(w.id).setAttribute('d', d); stats.wireDUpdates += 1;
+}
+function link(w) { for (const id of [w.from.node, w.to.node]) { if (!incident.has(id)) incident.set(id, new Set()); incident.get(id).add(w.id); } }
+// Ghost lives in the SAME layer as the wires (last child ⇒ on top); the layer rule gives it fill:none for free.
+const ghost = document.createElementNS(SVG_NS, 'path'); ghost.setAttribute('class', 'wire ghost'); ghost.dataset.ghost = '1';
+function setGhost(d, cls) {
+  if (ghost.getAttribute('d') !== d) { ghost.setAttribute('d', d); stats.ghostUpdates += 1; }
+  ghost.setAttribute('class', `wire ghost on${cls ? ` ${cls}` : ''}`);
+}
+function hideGhost() { ghost.setAttribute('class', 'wire ghost'); }
+function render() { // full keyed diff — used on load and on committed mutations only, NEVER on the pointer path
+  const seen = new Set();
+  for (const n of NODES) { seen.add(n.id); if (!nodeEls.has(n.id)) { const el = buildCard(n); nodeEls.set(n.id, el); world.appendChild(el); } placeCard(n); paintGate(n); }
+  for (const [id, el] of [...nodeEls]) if (!seen.has(id)) { el.remove(); nodeEls.delete(id); }
+  const seenW = new Set(); incident.clear();
+  for (const w of WIRES) {
+    seenW.add(w.id); link(w);
+    if (!wireEls.has(w.id)) { const p = document.createElementNS(SVG_NS, 'path'); p.setAttribute('class', 'wire'); p.dataset.wireId = w.id; wireEls.set(w.id, p); wiresEl.insertBefore(p, ghost); }
+    paintWire(w);
+  }
+  for (const [id, el] of [...wireEls]) if (!seenW.has(id)) { el.remove(); wireEls.delete(id); dCache.delete(id); }
+}
+wiresEl.appendChild(ghost);
+// ------------------------------------------------------------ transform: screen = world·z + t  (t in stage px)
+const T = { x: 0, y: 0, z: 1 };
+function applyT() { world.style.transform = `translate(${T.x}px, ${T.y}px) scale(${T.z})`; }
+function selectNode(id) { for (const [nid, el] of nodeEls) el.classList.toggle('sel', nid === id); }
+</script>
+<script>
+// ============================================================ pointer pipeline
+// Stage rect is CACHED: read at mount, on ResizeObserver / window resize / any scroll (capture), and ONCE at
+// gesture start. Never on a move. toWorld/toScreen are pure functions of (R, T).
+let R = { left: 0, top: 0, width: 0, height: 0 };
+function readRect() { const r = stage.getBoundingClientRect(); R = { left: r.left, top: r.top, width: r.width, height: r.height }; stats.rectReads += 1; }
+const toWorld = (cx, cy) => ({ x: (cx - R.left - T.x) / T.z, y: (cy - R.top - T.y) / T.z });
+const toScreen = (wx, wy) => ({ x: wx * T.z + T.x, y: wy * T.z + T.y });   // stage-local px
+if (typeof ResizeObserver === 'function') new ResizeObserver(readRect).observe(stage);
+window.addEventListener('resize', readRect);
+document.addEventListener('scroll', readRect, { capture: true, passive: true });
+
+let gesture = null, pend = null, raf = 0, space = false;
+function showChip(text, pt) { const s = toScreen(pt.x, pt.y); chip.textContent = text; chip.style.left = `${s.x + 14}px`; chip.style.top = `${s.y + 14}px`; chip.hidden = false; }
+function hideChip() { chip.hidden = true; }
+// Legality (proto subset of canWire): opposite directions, different nodes, type match or `any` target, single-wire inputs (V7).
+function legality(origin, target) {
+  if (origin.dir === target.dir) return { ok: false, reason: origin.dir === 'in' ? 'input → input' : 'output → output' };
+  if (origin.node === target.node) return { ok: false, reason: 'same node' };
+  const out = origin.dir === 'out' ? origin : target, inp = origin.dir === 'in' ? origin : target;
+  if (wiredInputs().has(`${inp.node.id}.${inp.port}`)) return { ok: false, reason: 'already connected' };
+  if (inp.type !== 'any' && inp.type !== out.type) return { ok: false, reason: `${out.type} → ${inp.type} type mismatch` };
+  return { ok: true, from: { node: out.node.id, port: out.port }, to: { node: inp.node.id, port: inp.port } };
+}
+function onDown(ev) {
+  if (gesture || (ev.button !== 0 && ev.button !== 1)) return;
+  readRect();                                             // the ONE rect read of this gesture
+  const pt = toWorld(ev.clientX, ev.clientY);
+  let g = null;
+  if (ev.button === 1 || space) g = { type: 'pan' };
+  else {
+    const port = hitPortAt(pt);
+    const node = port ? null : [...NODES].reverse().find((n) => hitNode(n, pt));
+    if (port) { g = { type: 'wire', origin: port, anchor: port.anchor, mirror: port.dir === 'in' };
+      setGhost(bezierD(g.anchor, pt, { mirror: g.mirror }), ''); }
+    else if (node) { g = { type: 'node', id: node.id, grab: { dx: pt.x - node.x, dy: pt.y - node.y }, start: { x: node.x, y: node.y }, moved: false };
+      selectNode(node.id); nodeEls.get(node.id).classList.add('dragging'); }
+    else { g = { type: 'pan' }; selectNode(null); }
+  }
+  if (g.type === 'pan') { Object.assign(g, { sx: ev.clientX, sy: ev.clientY, ox: T.x, oy: T.y }); stage.classList.add('panning'); }
+  g.pointerId = ev.pointerId; gesture = g;
+  // jsdom has no pointer capture (optional call); Chrome throws NotFoundError for a SYNTHETIC pointerId it does not
+  // own (dispatchEvent bursts in tests) — the gesture must survive either way, capture is a bonus, not a precondition.
+  try { stage.setPointerCapture?.(ev.pointerId); } catch (_) { /* synthetic pointer */ }
+  ev.preventDefault();
+}
+function onMove(ev) {                                     // store + schedule; ZERO DOM work here
+  if (!gesture) return;
+  stats.pointerMoves += 1; pend = { x: ev.clientX, y: ev.clientY };
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+function frame() {                                        // exactly ONE DOM pass per animation frame
+  raf = 0; const g = gesture, p = pend; if (!g || !p) return;
+  stats.frames += 1;
+  if (g.type === 'pan') { T.x = g.ox + (p.x - g.sx); T.y = g.oy + (p.y - g.sy); applyT(); return; }
+  const pt = toWorld(p.x, p.y);
+  if (g.type === 'node') {
+    const n = byId(g.id), nx = snap(pt.x - g.grab.dx), ny = snap(pt.y - g.grab.dy);
+    if (nx === n.x && ny === n.y) return;
+    n.x = nx; n.y = ny; g.moved = true; placeCard(n);
+    for (const wid of incident.get(n.id) || []) paintWire(WIRES.find((w) => w.id === wid));   // incident wires ONLY
+    return;
+  }
+  const target = hitPortAt(pt, g.origin), v = target ? legality(g.origin, target) : null;
+  setGhost(bezierD(g.anchor, v && v.ok ? target.anchor : pt, { mirror: g.mirror }), v ? (v.ok ? 'legal' : 'illegal') : '');
+  if (v && !v.ok) showChip(v.reason, pt); else hideChip();
+}
+function finish(g) {
+  gesture = null; pend = null; if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  hideGhost(); hideChip(); stage.classList.remove('panning');
+  if (g.type === 'node') nodeEls.get(g.id)?.classList.remove('dragging');
+  try { if (stage.hasPointerCapture?.(g.pointerId)) stage.releasePointerCapture(g.pointerId); } catch (_) { /* pointer already gone */ }
+}
+function onUp(ev) {
+  const g = gesture; if (!g || ev.pointerId !== g.pointerId) return;
+  pend = { x: ev.clientX, y: ev.clientY }; if (raf) cancelAnimationFrame(raf); raf = 0; frame();   // settle the last position deterministically
+  if (g.type === 'wire') {
+    const pt = toWorld(ev.clientX, ev.clientY), target = hitPortAt(pt, g.origin), v = target && legality(g.origin, target);
+    if (v && v.ok) { WIRES.push({ id: `w${Date.now().toString(36)}`, from: v.from, to: v.to }); finish(g); render(); return; }
+  }
+  finish(g);
+}
+function cancelGesture() {                                // pointercancel · lostpointercapture · window blur · Escape
+  const g = gesture; if (!g) return;
+  if (g.type === 'node' && g.moved) { const n = byId(g.id); n.x = g.start.x; n.y = g.start.y; placeCard(n);
+    for (const wid of incident.get(n.id) || []) paintWire(WIRES.find((w) => w.id === wid)); }
+  finish(g);
+}
+stage.addEventListener('pointerdown', onDown);
+stage.addEventListener('pointermove', onMove);
+stage.addEventListener('pointerup', onUp);
+stage.addEventListener('pointercancel', cancelGesture);
+stage.addEventListener('lostpointercapture', () => { if (gesture) cancelGesture(); });   // capture stolen mid-gesture
+window.addEventListener('blur', () => { space = false; stage.classList.remove('space'); cancelGesture(); });
+</script>
+<script>
+// ============================================================ wheel · zoom · pan · fit · keyboard · boot
+// Zoom about a stage-local point s: w = (s − t)/z is invariant  ⇒  t' = s − w·z'  (⇔ t' = s − (s − t)·z'/z).
+function zoomAbout(zNext, sx, sy) {
+  const z2 = clamp(zNext, G.ZOOM_MIN, G.ZOOM_MAX);
+  const wx = (sx - T.x) / T.z, wy = (sy - T.y) / T.z;
+  T.x = sx - wx * z2; T.y = sy - wy * z2; T.z = z2; applyT();
+}
+function onWheel(ev) {                                    // passive:false so the page never scrolls under the canvas
+  ev.preventDefault();
+  const m = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? (R.height || 560) : 1;   // lines / pages → px
+  const dX = ev.deltaX * m, dY = ev.deltaY * m;
+  if (ev.ctrlKey || ev.metaKey) { zoomAbout(T.z * Math.exp(-dY * G.ZOOM_K), ev.clientX - R.left, ev.clientY - R.top); return; }
+  T.x -= dX; T.y -= dY; applyT();                         // plain wheel / two-finger trackpad = pan (natural direction)
+}
+stage.addEventListener('wheel', onWheel, { passive: false });
+// Auto-fit: from MODEL bounds (no DOM measure), centred in the band left of the floating inspector (insetRight).
+// Fit zoom is capped at 1 (a two-card graph must not be blown up to 160%); the user zoom range stays 0.4–1.6.
+//   default model: cards span x 60..980, y 80..271.5 ⇒ padded bounds (0, 20, 1040, 311.5); z = min(vw/1040, 560/311.5) ≤ 1.
+//   e.g. vw = 1280: z = 1, t = ((1280−1040)/2, (560−311.5)/2 − 20) = (120, 104.25) → cards at screen x 180..1100 (centred).
+function fit({ insetRight = 0, pad = 60 } = {}) {
+  readRect(); const b = modelBounds(pad); if (!b) return;
+  const vw = Math.max(1, (R.width || 960) - insetRight), vh = Math.max(1, R.height || 560);
+  const z = clamp(Math.min(vw / b.w, vh / b.h), G.ZOOM_MIN, 1);
+  T.z = z; T.x = (vw - b.w * z) / 2 - b.x * z; T.y = (vh - b.h * z) / 2 - b.y * z; applyT();
+}
+const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+function onKeyDown(ev) {
+  if (isTyping(ev.target)) return;                        // guard FIRST (old branch set spaceDown before this check)
+  if (ev.key === ' ') { if (!space) { space = true; stage.classList.add('space'); } ev.preventDefault(); return; }
+  if (ev.key === 'Escape') { cancelGesture(); selectNode(null); }
+}
+function onKeyUp(ev) { if (ev.key === ' ') { space = false; stage.classList.remove('space'); } }
+// Bound at view mount, unbound at view exit (destroy) — never left on document across views.
+document.addEventListener('keydown', onKeyDown);
+document.addEventListener('keyup', onKeyUp);
+// Header-bar buttons: OUTSIDE the stage, so capture can never retarget their clicks.
+for (const id of ['btn-layout', 'btn-save']) document.getElementById(id).addEventListener('click', () => { stats.headerClicks += 1; paintStats(); });
+const stEl = document.getElementById('st');
+function paintStats() { stEl.textContent = `frames ${stats.frames} · ghost ${stats.ghostUpdates} · moves ${stats.pointerMoves} · rects ${stats.rectReads} · clicks ${stats.headerClicks}`; }
+stage.addEventListener('pointerup', paintStats);
+
+render();
+fit();                                                    // auto-fit on open; NEVER re-run on edits
+paintStats();
+
+window.__proto = {
+  stats, nodes: NODES, wires: WIRES, G,
+  world: () => world, stage: () => stage,
+  transform: () => ({ ...T }),
+  toWorld, toScreen, rect: () => ({ ...R }),
+  anchor: (nodeId, port, dir) => portAnchor(byId(nodeId), port, dir),
+  size: (nodeId, opts) => nodeSize(byId(nodeId), opts),
+  bezier: bezierD, ghost: () => ghost, ghostD: () => ghost.getAttribute('d'),
+  fit, render, gesture: () => gesture,
+  destroy() { document.removeEventListener('keydown', onKeyDown); document.removeEventListener('keyup', onKeyUp); stage.removeEventListener('wheel', onWheel); },
+};
+</script>
+<!--END-->
+</body>
+</html>

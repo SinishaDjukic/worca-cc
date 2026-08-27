@@ -1,0 +1,118 @@
+{
+  "id": "wf_quick-fix",
+  "name": "Quick Fix",
+  "version": 2,
+  "domain": "coding",
+  "createdAt": "2026-08-09T14:40:59.262Z",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 60,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_plan",
+      "kind": "agent",
+      "key": "planner",
+      "x": 360,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_impl",
+      "kind": "agent",
+      "key": "implementer",
+      "x": 660,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_review",
+      "kind": "agent",
+      "key": "reviewer",
+      "x": 960,
+      "y": 198,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 1260,
+      "y": 198,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_plan",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_plan",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_impl",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_plan",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_impl",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "done"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_review",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_impl",
+        "port": "fix"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_review",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

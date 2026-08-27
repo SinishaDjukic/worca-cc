@@ -1,0 +1,83 @@
+{
+  "issues": [
+    {
+      "severity": "major",
+      "title": "Task 6 breaks two existing tests it claims are unaffected",
+      "detail": "The Interfaces block asserts 'ui/server.mjs:1189 and diff-comments-store.test.mjs:134 are unaffected'. That is false, and reproduced with the plan's exact stampSentRunId body: test/diff-comments-store.test.mjs:131-139 and test/ask-diff-comment-launch.test.mjs:65-71 both stamp against 'abcd1234', which is not a row in `pipelines`, so the new SELECT ... FROM pipelines WHERE id = ? returns undefined and the function returns 0 without writing ('null !== abcd1234', 'unknown and malformed ids are ignored'). The second file is not mentioned in Task 6 at all even though Steps 1-2 edit it and Step 7 runs it. This collides with the plan's own Global Constraint ('every later task must leave the suite green') and Task 15 Step 1 ('do not adjust a test to match'), and makes every expected count from 3546 onward wrong. The production path is fine: test/ask-api-cards.test.mjs:204 exercises the real propose -> launch -> first-state-event chain and passes under the new scoping, so the pipelines row does exist by stamp time. Fix: add an explicit step re-pointing both fixtures at a real seeded run in the same project (seedPipeline -> stamp target.id), turn the 'abcd1234' case into the new 'an unknown run stamps nothing' assertion, correct the 'unaffected' claim, and re-derive the counts.",
+      "location": "Task 6 — 'Interfaces' block and Step 7; test/diff-comments-store.test.mjs:131-139; test/ask-diff-comment-launch.test.mjs:65-71"
+    },
+    {
+      "severity": "major",
+      "title": "Task 11 Step 6 ships an untested query change plus an option with no caller",
+      "detail": "For a finding whose whole content is 'the counts endpoint has no limit', Step 6 adds an exported UNRESOLVED_COUNTS_MAX that nothing imports, an optional { limit } parameter that no caller passes (ui/server.mjs:1972 and test/diff-comments-store.test.mjs:141 both call unresolvedCounts()), an unreachable -1 'unlimited' sentinel branch, and a changed SQL shape (max(rowid) AS last + ORDER BY last DESC LIMIT ?) — with no test at all. Task 11's two new tests cover only the coalescer and the hello replay; Step 7 runs diff-comments-store.test.mjs but the plan adds nothing to it, so the new ordering and cap ship unexercised. This violates the plan's own failing-test-first discipline and the brief's 'not over-engineered' requirement in the same edit. Fix: collapse Step 6 to a hardcoded ORDER BY max(rowid) DESC LIMIT 5000 with the rationale in the existing doc comment (no export, no parameter, no sentinel), or keep the parameter and add the failing test that justifies it (seed N+1 commented runs, assert the cap drops the oldest-commented run).",
+      "location": "Task 11, Step 6 — src/core/diff-comments.mjs unresolvedCounts"
+    },
+    {
+      "severity": "minor",
+      "title": "Task 1 stages outside _buildResults' try, contradicting the doc line above it",
+      "detail": "Step 4's snippet places `if (stage) await this._stageWorkingTree({ ignoreAbort: true });` before `try {`, two lines under '* Best-effort: never throws into run().' On the stopped path _buildResults() is called from inside run()'s catch (orchestrator.mjs:753), so anything escaping would reject run() rather than being swallowed. _stageWorkingTree cannot throw in practice (only _git, which always resolves, and _log), so this is theoretical — but it weakens a stated invariant for no gain. Fix: move the call inside the try, or add one sentence explaining why outside is deliberate.",
+      "location": "Task 1, Step 4 — src/core/orchestrator.mjs:3449"
+    },
+    {
+      "severity": "minor",
+      "title": "Task 9's deletion of the old `const guarded` is implicit; missing it is a hard SyntaxError",
+      "detail": "Step 4 says 'Replace :86-94. The guarded/blocked definitions move above section; the existing guarded(...) throw stays where it is.' The replacement block re-declares `const guarded`, but the edit range :86-94 does not include the original declaration at :101. Leaving it yields 'SyntaxError: Identifier guarded has already been declared', which fails the import of diff-anchor.mjs and therefore diff-comments.mjs and ui/server.mjs — every DB and route test at once. I hit this applying the task; with :101 deleted, 14/14 pass. Fix: state it explicitly — 'delete the now-duplicate `const guarded = …` line at :101; only the `if (guarded(...)) throw` stays.'",
+      "location": "Task 9, Step 4 — src/core/diff-anchor.mjs:86-104"
+    },
+    {
+      "severity": "minor",
+      "title": "app.js / ui/server.mjs line anchors in the later tasks are pre-edit and will have drifted",
+      "detail": "Every app.js citation is measured against the Task-0 tree, but Task 10 (Steps 5-6) and Task 11 (Step 3 inserts ~25 lines at :9816) both edit app.js before Tasks 12/13/14 run, so :11871-11881 (Task 12), :11848-11854 (Task 13) and :14923-14924 / :14891-14894 (Task 14) will all be off by roughly +30 by then; ui/server.mjs drifts the same way across Tasks 1, 8 and 10. Separately, the ui/public/file-tree.mjs anchors are wrong today: the options destructure is at :176 (plan says :172), the dir initial state at :245-253 (plan says :244-252), the toggle at :261-267 (plan says :260-266). Fix: add one line to Global Constraints — 'line numbers are as of the Task 0 commit; locate by the quoted anchor text, not by number' — and correct the three file-tree numbers.",
+      "location": "Tasks 12, 13, 14 (ui/public/app.js) and Task 13 (ui/public/file-tree.mjs)"
+    },
+    {
+      "severity": "minor",
+      "title": "Task 10 declares cstate.collapsed for Task 13, so Task 10's commit ships an unused field",
+      "detail": "Step 5 adds `collapsed: new Set()` to cstate with the note '(collapsed is Task 13's; declaring it here keeps cstate in one edit)'. Task 10's commit then introduces state nothing reads, and Task 13's commit introduces a consumer for state it does not declare — so neither commit is independently reviewable, which the plan's own decomposition standard requires. Fix: declare `collapsed` in Task 13 next to its only consumer; a two-line cstate edit is not worth the cross-task coupling.",
+      "location": "Task 10, Step 5 (ui/public/app.js:11714) and Task 13"
+    },
+    {
+      "severity": "minor",
+      "title": "Task 14's m13 half is declined in full and its only code change is untested defensive code",
+      "detail": "The plan proves askPanel is never nulled (app.js:15033; destroy() never called from app.js), so the null-panel branch is unreachable — then adds a console.warn for it anyway ('a tripwire for a future regression, not a live path'), with no test. The lineText half is deliberately declined (soundly: the composer already carries the comment id and list_diff_comments returns line_text). Net: m13 produces no tested behaviour change while adding exactly the no-caller defensive code the brief asks to avoid. Fix: either drop the warn and record m13 as consciously declined with the reasoning already written, or keep it and add the one-line test that exercises it via a stubbed appendToComposer returning false.",
+      "location": "Task 14, Step 4 — ui/public/app.js:14891-14894"
+    },
+    {
+      "severity": "minor",
+      "title": "Task 7's key assertion tests the implementation, and the filter is applied twice",
+      "detail": "`assert.equal(typeof opts.keep, 'function', 'the guard reaches the bundle…')` spies on the dep call rather than asserting behaviour, and Step 4 keeps `raw.filter((c) => !commentBlocked(c))` in tools.mjs on top of the new `keep` predicate — the same rows filtered twice. For a finding that is purely about ordering and cost, the honest behavioural assertion is the one already in the second half of the test (a dropped row never gets a `context`). Fix: drop the `typeof opts.keep` assertion or replace it with a hunkContext call counter, and either drop the now-redundant tools.mjs filter or state in one line why belt-and-braces is wanted here specifically.",
+      "location": "Task 7, Steps 1 and 4 — test/ask-diff-comment-tools.test.mjs and src/core/ask/tools.mjs:547"
+    },
+    {
+      "severity": "minor",
+      "title": "Three edit instructions leave their replacement text unspecified",
+      "detail": "In an otherwise byte-exact plan: (1) Task 10 Step 4's parenthetical 'if the fixture patch does not contain a .env section, extend the suite's PATCH constant' — it does; test/diff-comments-api.test.mjs:57 writes PATCH + SECRET_PATCH and SECRET_PATCH is a .env section, so the conditional should simply be resolved; (2) Task 10 Step 6's 'Update the now-wrong comment at :11729-11733' gives no replacement text for a comment the fix makes actively false; (3) Task 7 Step 4's 'Add one line to the comment above it saying so' gives no text. Fix: resolve the first and write out the two comment replacements the way every other doc edit in this plan is written out.",
+      "location": "Task 10 Steps 4 and 6; Task 7 Step 4"
+    },
+    {
+      "severity": "minor",
+      "title": "Two unremarked side effects of Task 10",
+      "detail": "(1) The .hd-diff-guarded chip is appended to .hd-diff-pane-head, which is `display:flex; justify-content:space-between` (style.css:1886); a third child re-spaces the existing path/counts pair, and the plan supplies a chip rule but no layout note or margin-left:auto anchor. (2) Adding armCommentGutter(body, lastMeta) to repaintCards() arms the gutter on the two early-return bodies (select() :12037 and :12051, the '(no textual diff for this file)' notes) that select() deliberately never arms — harmless, since there is no .hd-dl-row to hover, but it is a real behaviour change the plan does not mention. Fix: one sentence each, or gate the repaintCards re-arm on the body actually having rows.",
+      "location": "Task 10, Steps 6 (ui/public/app.js repaintCards, select) and ui/public/style.css"
+    },
+    {
+      "severity": "suggestion",
+      "title": "Task 10 is the one task big enough to split",
+      "detail": "Four production files, a new exported function, a new API response field, a new UI element with CSS, and 5 tests, for two findings whose only shared surface is armCommentGutter. m9 (the re-arm, ~4 lines) and m16 (the server-computed key list + chip) would each be a small, independently reviewable commit. The task is coherent as written, but it is the outlier against the plan's own 'independently reviewable' standard.",
+      "location": "Task 10"
+    },
+    {
+      "severity": "suggestion",
+      "title": "pokeCommentCounts() in onHello is partly redundant",
+      "detail": "onHello already reaches loadHistoryView() at app.js:801 whenever currentView() === 'history', and that path calls refreshCommentCounts(). The added call is only load-bearing on other views. Worth one clause in the comment so a future reader does not delete it as a duplicate.",
+      "location": "Task 11, Step 5 — ui/public/app.js:794"
+    },
+    {
+      "severity": "suggestion",
+      "title": "stampSentRunId reads back a store_key it has already pinned",
+      "detail": "The `UPDATE … WHERE id = ? AND store_key = ?` guarantees r.store_key === storeKey, so the read-back `SELECT store_key, pipeline_id` and the composite `${r.store_key}/${r.pipeline_id}` Map key are one field wider than needed. `SELECT pipeline_id` keyed on pipelineId alone is the same behaviour with fewer moving parts.",
+      "location": "Task 6, Step 4 — src/core/diff-comments.mjs stampSentRunId"
+    }
+  ],
+  "summary": "Unusually well-grounded plan: I applied nine of its fourteen tasks verbatim to a copy of the tree and they reproduce exactly as written (Task 1 3-fail-then-9/9 and full suite 3539; Task 2 11/11; Task 3 heals stamps 19/20/21; Tasks 4/5/7/9 green; Task 11's coalescer green with all 5 pre-existing poke tests intact), and it correctly corrects its own source review in three places. Two blocking issues: Task 6's new store scoping breaks two existing stampSentRunId fixtures the plan explicitly claims are unaffected (reproduced), and Task 11 Step 6 ships an untested SQL change plus an exported constant and optional parameter that nothing calls. Eight minors are polish — anchor drift, an implicit deletion that would be a SyntaxError, and a few instances of defensive or implementation-shaped code the 'not over-engineered' brief argues against."
+}

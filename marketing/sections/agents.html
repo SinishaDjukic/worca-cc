@@ -1,0 +1,390 @@
+<style>
+/* ===================== agents — mix models inside one run ===================== */
+.s-agents{background:var(--sheet);}
+
+/* ---- heading block ---- */
+.s-agents .ag-head{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,.9fr);
+  gap:clamp(14px,3vw,54px);align-items:end;margin-bottom:clamp(22px,2.8vw,36px);}
+.s-agents .ag-h{margin:13px 0 0;}
+.s-agents .ag-lead{margin:0;}
+.s-agents .ag-badge{margin-top:13px;}
+@media(max-width:880px){
+  .s-agents .ag-head{grid-template-columns:minmax(0,1fr);align-items:start;}
+  .s-agents .ag-badge{margin-top:12px;}
+}
+
+/* ---- stage + the dark product screen ---- */
+.s-agents .ag-stage{position:relative;}
+.s-agents .ag-screen{position:relative;background:var(--dark);border-radius:32px;
+  padding:20px 20px 82px;color:#fff;box-shadow:0 30px 72px rgba(15,15,18,.26);}
+.s-agents .ag-screen::after{content:"";position:absolute;left:8%;right:8%;bottom:0;height:180px;
+  border-radius:50%;background:radial-gradient(60% 100% at 50% 100%,rgba(140,127,214,.16),transparent 70%);
+  pointer-events:none;}
+
+.s-agents .ag-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+.s-agents .ag-dots{display:flex;gap:6px;}
+.s-agents .ag-dots i{width:9px;height:9px;border-radius:50%;background:#35353B;display:block;}
+.s-agents .ag-title{font-family:var(--mono);font-size:11.5px;color:#8B8B95;letter-spacing:.01em;}
+.s-agents .ag-legend{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;}
+.s-agents .ag-key{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;
+  font-size:10.5px;font-weight:500;padding:5px 11px;border-radius:999px;border:1px solid transparent;}
+.s-agents .ag-key i{width:7px;height:7px;border-radius:50%;flex:0 0 auto;}
+.s-agents .ag-key.v{color:#C4B9F7;background:rgba(140,127,214,.14);border-color:rgba(140,127,214,.34);}
+.s-agents .ag-key.v i{background:#9C8FE4;}
+.s-agents .ag-key.g{color:#9BE0AC;background:rgba(91,174,91,.13);border-color:rgba(91,174,91,.32);}
+.s-agents .ag-key.g i{background:#5BAE5B;}
+
+/* ---- the track: four stops, three handoffs ---- */
+.s-agents .ag-scroll{overflow:auto hidden;padding:6px 0 10px;
+  scrollbar-width:thin;scrollbar-color:#3A3A43 transparent;}
+.s-agents .ag-scroll::-webkit-scrollbar{height:6px;}
+.s-agents .ag-scroll::-webkit-scrollbar-thumb{background:#33333A;border-radius:99px;}
+.s-agents .ag-scroll::-webkit-scrollbar-track{background:transparent;}
+.s-agents .ag-track{display:flex;align-items:stretch;min-width:704px;}
+.s-agents .ag-stop{flex:1 1 0;min-width:0;display:flex;}
+
+.s-agents .ag-wire{flex:0 0 clamp(30px,3.6vw,52px);position:relative;align-self:center;height:2px;
+  border-radius:2px;background:repeating-linear-gradient(90deg,#34343C 0 5px,transparent 5px 10px);}
+.s-agents .ag-fill{position:absolute;inset:0;border-radius:2px;transform:scaleX(0);transform-origin:left;}
+.s-agents .w1 .ag-fill{background:linear-gradient(90deg,#8C7FD6,#5BAE5B);}
+.s-agents .w2 .ag-fill{background:linear-gradient(90deg,#5BAE5B,#66B96D);}
+.s-agents .w3 .ag-fill{background:linear-gradient(90deg,#5BAE5B,#8C7FD6);}
+.s-agents .w1 .ag-fill{animation:agents-f1 12s linear infinite;}
+.s-agents .w2 .ag-fill{animation:agents-f2 12s linear infinite;}
+.s-agents .w3 .ag-fill{animation:agents-f3 12s linear infinite;}
+
+/* the payload chip that rides from one stop to the next */
+.s-agents .ag-pkt{position:absolute;top:50%;left:50%;z-index:5;opacity:0;
+  font-family:var(--mono);font-size:9.5px;line-height:1;color:#E7E7EE;white-space:nowrap;
+  background:#26262C;border:1px solid #3E3E48;border-radius:8px;padding:5px 8px;
+  box-shadow:0 6px 18px rgba(0,0,0,.42);transform:translate(-50%,-50%) scale(.8);
+  animation:agents-pkt 12s cubic-bezier(.2,.8,.2,1) infinite;}
+.s-agents .w2 .ag-pkt{animation-delay:2.88s;}
+.s-agents .w3 .ag-pkt{animation-delay:5.76s;}
+@keyframes agents-pkt{
+  0%,22%{opacity:0;transform:translate(calc(-50% - 58px),-50%) scale(.7);}
+  24.5%{opacity:1;transform:translate(calc(-50% - 26px),-50%) scale(1);}
+  29%{opacity:1;transform:translate(calc(-50% + 26px),-50%) scale(1);}
+  32%,100%{opacity:0;transform:translate(calc(-50% + 58px),-50%) scale(.8);}
+}
+@keyframes agents-f1{0%,24%{transform:scaleX(0);opacity:1;}30%,96%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+@keyframes agents-f2{0%,48%{transform:scaleX(0);opacity:1;}54%,96%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+@keyframes agents-f3{0%,72%{transform:scaleX(0);opacity:1;}78%,96%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+
+/* ---- one stop on the track ---- */
+.s-agents .ag-card{position:relative;flex:1 1 auto;min-width:0;border-radius:16px;
+  padding:12px 14px 15px;background:var(--dark-2);border:1px solid var(--dark-line);overflow:hidden;}
+.s-agents .ag-glow{position:absolute;inset:0;border-radius:15px;opacity:0;pointer-events:none;z-index:0;}
+.s-agents .ag-stop.v .ag-glow{color:#BFB4F5;background:rgba(140,127,214,.15);
+  box-shadow:inset 0 0 0 1px rgba(167,152,240,.55),0 0 30px rgba(140,127,214,.22);}
+.s-agents .ag-stop.g .ag-glow{color:#8FDCA0;background:rgba(91,174,91,.14);
+  box-shadow:inset 0 0 0 1px rgba(122,209,140,.5),0 0 30px rgba(91,174,91,.2);}
+.s-agents .ag-glow::after{content:"";position:absolute;top:12px;right:13px;width:7px;height:7px;
+  border-radius:50%;background:currentColor;animation:agents-blip 1.5s ease-in-out infinite;}
+.s-agents .s1 .ag-glow{animation:agents-g1 12s linear infinite;}
+.s-agents .s2 .ag-glow{animation:agents-g2 12s linear infinite;}
+.s-agents .s3 .ag-glow{animation:agents-g3 12s linear infinite;}
+.s-agents .s4 .ag-glow{animation:agents-g4 12s linear infinite;}
+
+.s-agents .ag-ix,.s-agents .ag-role,.s-agents .ag-agent,
+.s-agents .ag-model,.s-agents .ag-prov{position:relative;z-index:1;}
+.s-agents .ag-ix{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:#6E6E78;}
+.s-agents .ag-role{display:block;font-size:15.5px;font-weight:600;letter-spacing:-.018em;margin-top:5px;}
+.s-agents .ag-agent{display:block;font-family:var(--mono);font-size:10px;color:#7C7C87;margin-top:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-agents .ag-model{display:flex;align-items:center;gap:7px;margin-top:11px;padding:6px 9px;
+  border-radius:10px;font-size:11.5px;font-weight:500;letter-spacing:-.005em;overflow:hidden;}
+.s-agents .ag-model span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.s-agents .ag-model i{width:6px;height:6px;border-radius:50%;flex:0 0 auto;}
+.s-agents .ag-stop.v .ag-model{background:rgba(140,127,214,.17);color:#CFC6FA;}
+.s-agents .ag-stop.v .ag-model i{background:#9C8FE4;}
+.s-agents .ag-stop.g .ag-model{background:rgba(91,174,91,.16);color:#A9E6B7;}
+.s-agents .ag-stop.g .ag-model i{background:#5BAE5B;}
+.s-agents .ag-prov{display:block;margin-top:7px;font-size:9.5px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-agents .ag-stop.v .ag-prov{color:#8C81C9;}
+.s-agents .ag-stop.g .ag-prov{color:#6FA97A;}
+.s-agents .ag-pbar{position:absolute;left:0;right:0;bottom:0;height:3px;z-index:2;
+  background:rgba(255,255,255,.06);}
+.s-agents .ag-pbar i{display:block;height:100%;border-radius:0 3px 3px 0;
+  transform:scaleX(0);transform-origin:left;}
+.s-agents .ag-stop.v .ag-pbar i{background:#8C7FD6;}
+.s-agents .ag-stop.g .ag-pbar i{background:#5BAE5B;}
+.s-agents .s1 .ag-pbar i{animation:agents-b1 12s linear infinite;}
+.s-agents .s2 .ag-pbar i{animation:agents-b2 12s linear infinite;}
+.s-agents .s3 .ag-pbar i{animation:agents-b3 12s linear infinite;}
+.s-agents .s4 .ag-pbar i{animation:agents-b4 12s linear infinite;}
+
+@keyframes agents-blip{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.28;transform:scale(.72);}}
+@keyframes agents-g1{0%,2%{opacity:0;}5%,24%{opacity:1;}29%,95%{opacity:.34;}100%{opacity:0;}}
+@keyframes agents-g2{0%,27%{opacity:0;}30%,48%{opacity:1;}53%,95%{opacity:.34;}100%{opacity:0;}}
+@keyframes agents-g3{0%,51%{opacity:0;}54%,72%{opacity:1;}77%,95%{opacity:.34;}100%{opacity:0;}}
+@keyframes agents-g4{0%,75%{opacity:0;}78%,96%{opacity:1;}100%{opacity:0;}}
+@keyframes agents-b1{0%,3%{transform:scaleX(0);opacity:1;}24%,95%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+@keyframes agents-b2{0%,28%{transform:scaleX(0);opacity:1;}48%,95%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+@keyframes agents-b3{0%,52%{transform:scaleX(0);opacity:1;}72%,95%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+@keyframes agents-b4{0%,76%{transform:scaleX(0);opacity:1;}96%{transform:scaleX(1);opacity:1;}100%{transform:scaleX(1);opacity:0;}}
+
+/* ---- the two cards floating over the screen's lower edge ---- */
+.s-agents .ag-floats{position:relative;z-index:3;display:flex;align-items:flex-start;
+  justify-content:space-between;gap:clamp(16px,2.4vw,34px);margin-top:-88px;
+  padding:0 clamp(4px,1.6vw,22px) 20px;}
+
+/* routing env — how an open-source endpoint plugs in (Models view, env editor) */
+.s-agents .ag-envcol{flex:0 0 auto;width:min(342px,46%);margin-top:clamp(14px,2.4vw,32px);}
+.s-agents .ag-env{background:var(--green-bg);border-radius:24px;padding:17px 19px 15px;
+  box-shadow:0 20px 46px rgba(25,25,27,.15);color:var(--green-ink);}
+.s-agents .ag-env-h{display:flex;align-items:center;gap:9px;margin-bottom:12px;}
+.s-agents .ag-env-t{font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
+.s-agents .ag-env-id{margin-left:auto;font-family:var(--mono);font-size:10.5px;padding:3px 8px;
+  border-radius:7px;background:rgba(47,122,56,.13);}
+.s-agents .ag-env-r{display:flex;align-items:baseline;gap:10px;font-family:var(--mono);font-size:10.5px;
+  padding:6px 0;border-top:1px solid rgba(47,122,56,.14);}
+.s-agents .ag-env-r .k{flex:0 0 auto;opacity:.72;}
+.s-agents .ag-env-r .val{margin-left:auto;text-align:right;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-weight:500;}
+.s-agents .ag-env-s{margin-top:9px;font-size:11px;opacity:.78;}
+.s-agents .ag-cap{display:block;margin:11px 4px 0;font-size:12px;color:var(--ink-3);}
+.s-agents .ag-cat{margin:22px 0 0;}
+.s-agents .ag-cat-t{display:block;font-size:10.5px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:9px;}
+.s-agents .ag-brow{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:7px;
+  border:1px solid var(--line-2);border-radius:10px;background:#fff;}
+.s-agents .ag-brow b{font-size:12.5px;letter-spacing:-.01em;flex:0 0 auto;}
+.s-agents .ag-brow small{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--ink-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* agents list + an open model picker (New Pipeline · agent rows) */
+.s-agents .ag-picker{position:relative;flex:0 0 auto;width:min(410px,52%);background:#fff;
+  border:1px solid var(--line-2);border-radius:22px;padding:0 0 10px;box-shadow:var(--shadow-lift);}
+.s-agents .ag-pill{position:absolute;top:-13px;right:22px;z-index:2;font-size:10.5px;font-weight:600;
+  letter-spacing:.01em;padding:6px 13px;border-radius:999px;color:var(--violet-ink);
+  background:var(--violet-bg);border:1px solid rgba(140,127,214,.34);box-shadow:0 6px 16px rgba(99,83,184,.14);}
+.s-agents .ag-ptop{display:flex;align-items:center;gap:9px;padding:14px 16px 10px;
+  border-bottom:1px solid var(--line);}
+.s-agents .ag-ptop b{font-size:13.5px;letter-spacing:-.01em;}
+.s-agents .ag-ptop .wf{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.s-agents .ag-ptop .mod{margin-left:auto;font-size:11px;color:var(--violet-ink);}
+
+.s-agents .ag-row{display:flex;align-items:center;gap:9px;padding:8px 14px;
+  border-top:1px solid var(--line);}
+.s-agents .ag-ptop + .ag-row{border-top:none;}
+.s-agents .ag-row.on{background:var(--field);}
+.s-agents .ag-chev{flex:0 0 auto;width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;}
+.s-agents .ag-row.on .ag-chev{transform:rotate(90deg);}
+.s-agents .ag-acc{flex:0 0 auto;width:8px;height:20px;border-radius:4px;}
+.s-agents .ag-acc.v{background:var(--violet);}
+.s-agents .ag-acc.g{background:var(--green);}
+.s-agents .ag-nm{font-size:13px;font-weight:600;letter-spacing:-.01em;}
+.s-agents .ag-st{font-size:10.5px;color:var(--ink-3);flex:0 0 auto;}
+.s-agents .ag-sum{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+  color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-agents .ag-sum i{width:6px;height:6px;border-radius:50%;flex:0 0 auto;}
+.s-agents .ag-sum i.v{background:var(--violet);}
+.s-agents .ag-sum i.g{background:var(--green);}
+
+.s-agents .ag-body{position:relative;padding:2px 14px 10px 36px;background:var(--field);}
+.s-agents .ag-bdesc{display:block;font-size:11.5px;color:var(--ink-3);line-height:1.45;margin-bottom:8px;}
+.s-agents .ag-picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.s-agents .ag-sel{position:relative;display:inline-flex;align-items:center;font-size:12px;
+  background:#fff;border:1px solid var(--line-2);border-radius:11px;padding:8px 30px 8px 11px;}
+.s-agents .ag-sel::after{content:"";position:absolute;right:11px;top:calc(50% - 3px);width:7px;height:7px;
+  border-right:1.6px solid var(--ink-3);border-bottom:1.6px solid var(--ink-3);
+  transform:translateY(-30%) rotate(45deg);}
+.s-agents .ag-sel.wide{min-width:132px;}
+.s-agents .ag-sel.act{border-color:var(--green);box-shadow:0 0 0 3px rgba(91,174,91,.18);}
+.s-agents .ag-tog{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);}
+.s-agents .ag-tog i{width:13px;height:13px;border-radius:4px;border:1.5px solid var(--line-2);background:#fff;}
+
+/* the open model dropdown — Anthropic entries and self-hosted ones, one list */
+.s-agents .ag-menu{position:absolute;left:36px;top:100%;margin-top:5px;width:min(244px,86%);z-index:8;
+  background:#fff;border:1px solid var(--line-2);border-radius:14px;padding:6px 0;
+  box-shadow:0 24px 54px rgba(25,25,27,.22);}
+.s-agents .ag-hi{position:absolute;left:5px;right:5px;top:0;height:19px;border-radius:7px;
+  background:rgba(91,174,91,.2);transform:translateY(44px);
+  animation:agents-hi 7.2s cubic-bezier(.2,.8,.2,1) infinite;}
+@keyframes agents-hi{
+  0%,26%{transform:translateY(44px);background:rgba(91,174,91,.2);}
+  40%,70%{transform:translateY(101px);background:rgba(140,127,214,.18);}
+  86%,100%{transform:translateY(44px);background:rgba(91,174,91,.2);}
+}
+.s-agents .ag-o,.s-agents .ag-og{position:relative;z-index:1;height:19px;display:flex;align-items:center;
+  gap:7px;padding:0 11px;font-size:11.5px;white-space:nowrap;}
+.s-agents .ag-og{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);}
+.s-agents .ag-o i{width:6px;height:6px;border-radius:50%;flex:0 0 auto;}
+.s-agents .ag-o i.v{background:var(--violet);}
+.s-agents .ag-o i.g{background:var(--green);}
+.s-agents .ag-o.mut{color:var(--ink-3);padding-left:24px;}
+.s-agents .ag-o.add{color:var(--violet-ink);font-weight:600;padding-left:24px;}
+.s-agents .ag-tick{width:11px;height:11px;margin-left:auto;fill:none;stroke:var(--green-ink);
+  stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
+
+/* ---- narrow: cards stack under the screen, the menu drops into flow ---- */
+@media(max-width:1000px){
+  .s-agents .ag-screen{padding-bottom:22px;}
+  .s-agents .ag-floats{flex-direction:column;margin-top:18px;padding:0 0 0;gap:18px;}
+  .s-agents .ag-envcol,.s-agents .ag-picker{width:100%;margin-top:0;}
+  .s-agents .ag-envcol{max-width:440px;}
+  .s-agents .ag-menu{position:relative;left:auto;top:auto;width:auto;max-width:300px;
+    margin:8px 0 2px;box-shadow:none;}
+}
+@media(max-width:560px){
+  .s-agents .ag-screen{border-radius:26px;padding:16px 14px 18px;}
+  .s-agents .ag-legend{margin-left:0;width:100%;}
+  .s-agents .ag-picker{border-radius:18px;}
+  .s-agents .ag-body{padding-left:14px;}
+  .s-agents .ag-st{display:none;}
+  .s-agents .ag-cat{display:none;}
+}
+</style>
+
+<section class="sec s-agents" id="agents">
+  <div class="wrap">
+
+    <div class="ag-head">
+      <div data-rv>
+        <div><span class="eyebrow">Agents &amp; models</span></div>
+        <h2 class="h2 ag-h">Mix models inside one run.</h2>
+      </div>
+      <div data-rv>
+        <p class="lead ag-lead">Every agent picks its own model — Anthropic, or an open-source model
+          served from your own endpoint.</p>
+        <div class="ag-badge"><span class="pill-tag"><span class="dot"></span>Only in Worca</span></div>
+      </div>
+    </div>
+
+    <div class="ag-stage viz" data-rv>
+      <div class="ag-screen">
+
+        <div class="ag-bar">
+          <span class="ag-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="ag-title">run · wf_default · 4 agents</span>
+          <span class="ag-legend">
+            <span class="ag-key v"><i></i>Anthropic</span>
+            <span class="ag-key g"><i></i>open-source · self-hosted</span>
+          </span>
+        </div>
+
+        <div class="ag-scroll">
+          <div class="ag-track">
+
+            <div class="ag-stop v s1">
+              <div class="ag-card">
+                <span class="ag-glow" aria-hidden="true"></span>
+                <span class="ag-ix">step 1</span>
+                <span class="ag-role">Plan</span>
+                <span class="ag-agent">worca-planner</span>
+                <span class="ag-model"><i></i><span>Fable 5 (1M) · max</span></span>
+                <span class="ag-prov">Anthropic</span>
+                <span class="ag-pbar" aria-hidden="true"><i></i></span>
+              </div>
+            </div>
+
+            <div class="ag-wire w1"><span class="ag-fill"></span><span class="ag-pkt">plan.md</span></div>
+
+            <div class="ag-stop g s2">
+              <div class="ag-card">
+                <span class="ag-glow" aria-hidden="true"></span>
+                <span class="ag-ix">step 2</span>
+                <span class="ag-role">Refine</span>
+                <span class="ag-agent">worca-plan-refiner</span>
+                <span class="ag-model"><i></i><span>GLM 4.7 (proxy) · high</span></span>
+                <span class="ag-prov">Open-source</span>
+                <span class="ag-pbar" aria-hidden="true"><i></i></span>
+              </div>
+            </div>
+
+            <div class="ag-wire w2"><span class="ag-fill"></span><span class="ag-pkt">plan-v2.md</span></div>
+
+            <div class="ag-stop g s3">
+              <div class="ag-card">
+                <span class="ag-glow" aria-hidden="true"></span>
+                <span class="ag-ix">step 3</span>
+                <span class="ag-role">Implement</span>
+                <span class="ag-agent">worca-implementer</span>
+                <span class="ag-model"><i></i><span>Worca OSS · high</span></span>
+                <span class="ag-prov">Open-source</span>
+                <span class="ag-pbar" aria-hidden="true"><i></i></span>
+              </div>
+            </div>
+
+            <div class="ag-wire w3"><span class="ag-fill"></span><span class="ag-pkt">git diff</span></div>
+
+            <div class="ag-stop v s4">
+              <div class="ag-card">
+                <span class="ag-glow" aria-hidden="true"></span>
+                <span class="ag-ix">step 4</span>
+                <span class="ag-role">Review</span>
+                <span class="ag-agent">worca-code-reviewer</span>
+                <span class="ag-model"><i></i><span>Opus 5 · max</span></span>
+                <span class="ag-prov">Anthropic</span>
+                <span class="ag-pbar" aria-hidden="true"><i></i></span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="ag-floats">
+
+        <div class="ag-envcol">
+          <div class="ag-env">
+            <div class="ag-env-h">
+              <span class="ag-env-t">Routing env</span>
+              <span class="ag-env-id">worca-oss</span>
+            </div>
+            <div class="ag-env-r"><span class="k">ANTHROPIC_BASE_URL</span><span class="val">https://oss.internal/v1</span></div>
+            <div class="ag-env-r"><span class="k">ANTHROPIC_AUTH_TOKEN</span><span class="val">•••…f3a</span></div>
+            <div class="ag-env-s">2 env vars · routes via base URL</div>
+          </div>
+          <small class="ag-cap">Open-source models, your endpoint</small>
+          <div class="ag-cat">
+            <span class="ag-cat-t">Built-in models</span>
+            <div class="ag-brow"><b>Opus 5</b><small>claude-opus-5 — all efforts</small></div>
+            <div class="ag-brow"><b>Fable 5 (1M)</b><small>claude-fable-5 — all efforts</small></div>
+            <div class="ag-brow"><b>Haiku 4.5</b><small>claude-haiku-4-5 — medium · high</small></div>
+          </div>
+        </div>
+
+        <div class="ag-picker">
+          <span class="ag-pill">mix providers in one run</span>
+          <div class="ag-ptop"><b>Agents</b><span class="wf">wf_default</span><span class="mod">2 modified</span></div>
+
+          <div class="ag-row"><span class="ag-chev" aria-hidden="true"></span><span class="ag-acc v" aria-hidden="true"></span><span class="ag-nm">Plan</span><span class="ag-st">step 1</span><span class="ag-sum"><i class="v"></i>Fable 5 (1M) · max</span></div>
+
+          <div class="ag-row on"><span class="ag-chev" aria-hidden="true"></span><span class="ag-acc g" aria-hidden="true"></span><span class="ag-nm">Refine</span><span class="ag-st">step 2</span><span class="ag-sum"><i class="g"></i>GLM 4.7 (proxy) · high</span></div>
+          <div class="ag-body">
+            <small class="ag-bdesc">Rewrites the latest plan into a tighter version</small>
+            <div class="ag-picks">
+              <span class="ag-sel wide act">GLM 4.7 (proxy)</span>
+              <span class="ag-sel">high</span>
+              <span class="ag-tog"><i aria-hidden="true"></i>Fan-out</span>
+            </div>
+            <div class="ag-menu">
+              <span class="ag-hi" aria-hidden="true"></span>
+              <div class="ag-o mut">(default model)</div>
+              <div class="ag-og">Your models</div>
+              <div class="ag-o"><i class="g"></i>GLM 4.7 (proxy)<svg class="ag-tick" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6.3 4.7 8.7 9.6 3.3"/></svg></div>
+              <div class="ag-o"><i class="g"></i>Worca OSS (self-hosted)</div>
+              <div class="ag-og">Built-in</div>
+              <div class="ag-o"><i class="v"></i>Opus 5</div>
+              <div class="ag-o"><i class="v"></i>Fable 5 (1M)</div>
+              <div class="ag-o"><i class="v"></i>Sonnet 4.6</div>
+              <div class="ag-o"><i class="v"></i>Haiku 4.5</div>
+              <div class="ag-o add">+ Add model…</div>
+            </div>
+          </div>
+
+          <div class="ag-row"><span class="ag-chev" aria-hidden="true"></span><span class="ag-acc g" aria-hidden="true"></span><span class="ag-nm">Implement</span><span class="ag-st">step 3</span><span class="ag-sum"><i class="g"></i>Worca OSS · high</span></div>
+          <div class="ag-row"><span class="ag-chev" aria-hidden="true"></span><span class="ag-acc v" aria-hidden="true"></span><span class="ag-nm">Review</span><span class="ag-st">step 4</span><span class="ag-sum"><i class="v"></i>Opus 5 · max</span></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>

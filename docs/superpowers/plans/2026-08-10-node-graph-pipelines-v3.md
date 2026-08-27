@@ -1,0 +1,910 @@
+# Node-Graph Pipelines v2 Implementation Plan — v3 (refined)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the linear steps+feedbacks pipeline (engine, composer, agent metadata) with a typed-port node graph: wires (one wire per input — Amendment f as revised; fan-out is free — one output feeds many inputs; fan-IN happens through OR cards), conditional outputs, literal loop cycles, AND/OR/Combine flow cards, a universal engine-synthesized await gate port on every agent node, an explicit Task source node, a mandatory End sink node, free-form canvas, executions collapsible under one block. Two hard product constraints govern every task:
+
+1. **Fully generic engine.** Zero engine/UI code keyed on a specific agent key. Every capability an agent can have — interactive clarification, decompose fan-out, verdicts, loop inputs, workspace behavior, mock behavior, prompt directives — is declared in sidecar meta v2. The 11 builtins become plain data; a user- or plugin-defined agent can do anything a builtin can. (User decision 2026-08-10.)
+2. **Pipeline parity.** All 7 saved templates (Full, No Clarify, Provided Plan, FULL-NO-Decompose, Quick Fix, Clarify→Implement, Clarify→Quick Fix) plus wf_default are **re-seeded as v2 graphs in the V17 migration** (same ids/names, per-project overlays migrated) and must behave EXACTLY as today: same agent executions in the same order, same files with the same names, same loop budgets and gates; the appended End execution is a $0 engine event after the last agent execution and does not perturb the trace. Proven by a dual-engine trace analysis (2026-08-10 parity adjudication, 8/8 pipelines × 6 verdict scripts) under spec amendments A1–A4 below. (User decision 2026-08-10 — supersedes the earlier "drop v1 rows, no re-create" reading of the clean break; the "no generic converter" decision stands: the 7 graphs are hand-written constants.)
+
+**Architecture:** New pure graph core (`src/core/graph/`: fixtures, ports, validate, scheduler, executor, builtin-workflows, seed-templates) driven by a rewritten orchestrator dispatch; agent sidecars v2 declare `inputs[]/outputs[]` ports + capability flags; UI gets a vanilla free-form node editor (`ui/public/graph/`) shared by composer and run monitor. Clean break: template v2 in a new `workflows.graph` column, the 7 known v1 rows re-seeded as v2, all other v1 rows dropped (V17), single engine, single authoring model.
+
+**Tech Stack:** Node >= 22.13 ESM (`.mjs`), `node --test`, jsdom (dev), express + ws (only runtime deps — no new dependencies), SQLite via existing `db.mjs`, vanilla ES-module UI, no build step.
+
+**Spec:** `docs/superpowers/specs/2026-08-10-node-graph-pipelines-design.md` (authoritative for schemas, firing rule, validation rules V1–V21 + the restored V7, port table, visual spec) **including Amendments d, e and f (2026-08-10, appended to the spec in lockstep with this plan; f revised in place the same day — the single-wire correction)**. Read both before starting any task.
+
+## Spec Amendment f — single-wire revision (summary — the spec carries the authoritative text)
+
+User course correction 2026-08-10 (locked, same session; the spec's Amendment f is REVISED IN PLACE — this section summarizes the revision): **"multiple connections to the input of the agents should not be possible" — ONE wire per input, uniformly** (agent inputs, and/or/combine `inK`, End's `result`, the synthesized `await`). Amendment e's multi-wire half is REVERSED: **V7 is restored as the universal input-cardinality ERROR** (V22, the await-only cap, is retired — subsumed by the restored V7; number reserved); the §3 freshest-binds multi-wire rule, isReady's any-wire clause, V18's wire-level clause, and the composer drop-ADDS rule all die (dropping on a wired input is REJECTED with reason `already connected`). Fan-out is untouched. **The OR card becomes the payload-forwarding fan-in valve** (Amendment b's Merge semantics under the OR name): fires on ANY fresh input, binds + re-emits the FRESHEST fresh input's payload with a new seq; several fresh in one drain ⇒ ONE emission (older tokens spent — the former multi-wire collapse, relocated into the node); its in/out types RESOLVE FROM WIRING — inbound source types must be homogeneous (V8's resolution clause, referenced by V12), chained or→or resolution with a seen-set via the new `resolveOrOutType` (ports.mjs; the await-NODE resolution machinery stays dead — this is a scoped return). AND stays a STATIC void pure gate; Combine unchanged. **Double review loops fan through an OR**: `reviewer.review → or.in1`, `webui.review → or.in2`, `or.out → implementer.fix`; loop budgets and gates sit on the wires INTO the OR (blocking-source in-SCC wires keep `maxCycles`); `or.out → fix` is a plain always-source wire inside the cycle (never carries maxCycles). On a gate 'continue', the held blocking token on the in-wire is discarded and the SOURCE's clean outputs force-fire (A4) — the OR never emits for that held token. `End.result` is single-wire like everything else; multi-terminal graphs put an OR before End. Parity lineage: the Amendment-b adjudication verified these exact valve semantics with the Merge node; Amendment e argued direct-wire equivalence to remove it; the revision restores the valve as the OR card, so the b-era verification applies DIRECTLY.
+
+## Spec Amendment f — original summary (rule numbers and OR/End clauses superseded by the revision above)
+
+User decisions 2026-08-10 (approved in-session): **(1) Universal await gate port** — every agent node gets an implicit, engine-synthesized input `await` (reserved id, never stored in meta): type-agnostic (`any`), payload discarded, pure gate — no directive, no `as`, no mode effect; **max ONE inbound wire** (new error V22 — single-wire revision: subsumed by the restored universal V7, EVERY input takes one wire; V22 retired); optional — wired ⇒ the first execution requires a delivered await token, and a fresh await token re-fires the node per standard freshness (identical to the former checklist `start`); **exempt from V18 counting**; **counts as a wired non-loop input for awaitAll**. **(2) AND + OR flow cards** (kinds `and`/`or`) REPLACE the Await node (removed, like Merge in Amendment e): `config.arity ≥ 2`; inputs `in1..inN` type `any`; one output `out` type `void`, `when:'always'`; AND fires when ALL inputs are fresh, every execution; OR fires on ANY fresh input (several fresh in one drain ⇒ ONE emission); engine-instant, $0 (the single-wire revision upgrades OR to the payload-forwarding valve with wiring-resolved types; AND alone stays static void). All await-out type-resolution machinery dies: `resolveAwaitOutType`, the V8 resolution clause, the chained-await seen-set. Combine unchanged. **(3) `start` ports removed** from implementer + manualTestsChecklist meta; seeds rewire `reviewer.pass → checklist.await`; `reviewer.done` (as `worktree`) stays. start ≡ await (single wire, same readiness algebra) — the dual-engine parity adjudication carries over. **(4) End node** — kind `end`, pinned like Task, exactly one per template (V21, mirroring V20), one input `result` type `any` (single-wire per the revision — multi-terminal graphs put an OR before End), zero outputs. A token reaching End completes the run exactly like today's natural completion: stop launching, in-flight completes and publishes, run `'done'`, End payload = the pipeline result in the run monitor. Quiescence without an End token ⇒ `'done'` + warning `finished at quiescence — End not reached`. Agent error ⇒ fail-fast `'error'` (unchanged). End emits $0 instant exec events and publishes no tokens. ALL 8 graphs (7 seeds + wf_default) gain an End wired from their terminal (`webui.pass` where webui exists, else `reviewer.pass` — the last agent in v1 linear order); new canvases preload Task + End. **(5)** awaitAll toggle unchanged; palette Flow group = **Task · End · AND · OR · Combine** (Task/End pills disabled once placed). Rule numbers V21 (one End) and V22 (await single-wire) are assigned by the spec amendment; and/or/combine arity lives in the rewritten V12.
+
+## Spec Amendment e (summary — the spec carries the authoritative text)
+
+User decision 2026-08-10 (after reviewing the Full-pipeline graph): **inputs accept MULTIPLE wires** — an input is a native OR fan-in that binds its FRESHEST inbound token; loop budgets sit per wire. The **Merge node is REMOVED** everywhere (palette, engine, validator, seeds, mockup). Merge was a pure forward-the-freshest valve, so direct multi-wire binding is trace-equivalent and the parity verification carries over — the Full template's two review loops now wire `reviewer.review → implementer.fix` and `webui.review → implementer.fix` directly. Consequences: V7 (input cardinality) DROPPED (number reserved); V12 loses its merge clauses; the ⟨d⟩ V8 merge-resolution clause is superseded (await chains only; that machinery is itself removed by Amendment f); V18 gains a wire-level clause (≥2 always-source wires on one non-loop input warns); V19's merge exemption is gone; the merge same-drain note becomes the §3 multi-wire binding rule; Await remained the AND-join until Amendment f replaced it with AND/OR cards + the universal await port (awaitAll toggle survives). Composer: dropping a wire on a wired input ADDS a wire (duplicate (from,to) still rejected); remove by deleting the old wire. The f single-wire revision (2026-08-10, same session) REVERSES the multi-wire half: inputs are back to one wire each (V7 restored), V18's wire-level clause and the drop-ADDS composer rule die, and the forward-the-freshest valve returns as the OR card (payload-forwarding, wiring-resolved types). The Merge REMOVAL stands — no node named Merge returns — and the b-era parity verification transfers to the OR shape.
+
+## Spec Amendment d (summary — the spec carries the authoritative text)
+
+Empirically-driven corrections; the parity simulator and the executed Phase-1 dry-run both fail without them:
+
+- **A1 — Loop budget arithmetic (parity-mandatory).** `config.maxCycles` caps TOTAL source firings around the loop, matching v1 (`orchestrator.mjs:1856`): the wire's delivery allowance is `maxCycles − 1`; the gate fires when a blocking verdict would trigger delivery number `maxCycles`. "another" → allowance += 1. (Spec-as-written ran one extra iteration vs today: measured 4-vs-3 refiner executions, 7-vs-6 under the user's overlay-6.)
+- **A2 — Task node `config.planStoreSeed: true` (parity-mandatory for wf_provided-plan).** The task execution ALSO writes its rendered document to `planPath(projectDir, baseName, 1, datePrefix, workspaceKey)`; the emitted token's path IS that file; the run's plan-version counter starts consumed at 1 (next plan-store write = `-v2`). Reproduces v1 entry seeding of the `plan` channel into the plans store.
+- **A3 — Fresh-trigger mode selection (parity-mandatory, latent).** implementer fix / planner+refiner revise / decomposed mode select on a FRESH (triggering) token this execution — never on a latched loop-input token. Token-model equivalent of v1's publish-clears-review (`channels.mjs:150`); without it a later plan re-fire binds a stale fix and flips modes.
+- **A4 — Forced-token payload.** When a gate "continue" force-fires the clean side, the forced token reuses the held blocking token's payload (path/value) when the port types match (refiner: plan/revise share one file — matches v1, where downstream read the file the refiner last wrote); else the clean port's latched payload; else null. `forced: true` + `meta.issues` carry the open issues either way.
+- **V3 kind set** includes `task` (`agent | task | await | combine` — merge later removed by Amendment e; Amendment f later replaces await with and/or and adds end — final set {agent, task, and, or, combine, end}); Amendment-c staleness; as written every legal template failed V3.
+- **V8 await-out resolution.** Await outputs resolve to in1's inbound source type (seen-set for chained awaits) before V8 compares. (The original ⟨d⟩ merge-resolution clause is superseded by Amendment e — no Merge node.) (REMOVED by Amendment f — AND/OR outs are plain void, nothing resolves.)
+- **V18 exemptions.** Two: inputs wired FROM the task node (fires exactly once by construction — without this wf_default itself ships with a permanent warning), and VOID-typed inputs (pure sequencing, no payload to double-bind — without this the `X.plan + implementer.done` idiom in wf_quick-fix / wf_clarify-quick-fix warns, and awaitAll would break their fix loops).
+- **Multi-wire binding rule (was the merge same-drain note).** A multi-wire input binds the freshest inbound token; two wires fresh in one drain ⇒ one execution binds the freshest, the older token is spent. Loops that fire in different iterations — the only shape the seeds use — are unaffected. (REVERSED by the f single-wire revision — the freshest-binds/same-drain rule now lives INSIDE the OR card; inputs are single-wire.)
+- **§5 plugin templates** validate with the FULL kind set `{agent, task, await, combine}` (pre-d "agent/await/combine" contradicted V20; merge removed by Amendment e) — Amendment f: {agent, task, and, or, combine, end}.
+- **Clarifier executor** is selected by `runnerType: 'clarifier'`, never by agent key; §3's executor list reads `agent / clarifier / task / await / combine` — Amendment f: agent / clarifier / task / and / or / end / combine.
+- **Meta v2 capability fields** (§5 schema): input-port `as`, `directive`; output-port `artifactKind`; agent-level `wantsRequest`, `workspaceFanOut`, `workspaceStrategy`, `workspaceVariantOf`, `placeable`; `mockRole` validated against the exported writer-role set. Semantics in Tasks 6–8.
+- **§6 refresh:** legend gains the `⤫N = fan-out` entry; palette pill line 2 uses lowercase port ids (`in plan · out plan, revise`); card anatomy: loop inputs carry an amber `loop` chip; port rows are STACKED (all inputs, 9px separator, all outputs) — geometry in Task 15.
+
+## Global Constraints
+
+- No new npm dependencies; no build step; UI stays vanilla ES modules.
+- All new engine files under `src/core/graph/`; all new UI files under `ui/public/graph/`.
+- Tests: `npm test` (`WORCA_HOME=.worca-cc-test node --test test/*.mjs`). Baseline verified 2026-08-10: 2201 tests, exactly 4 pre-existing imagegen-skill failures allowed; nothing else may fail. Full run ~55s.
+- NEVER `git commit` anything under `docs/superpowers/` (plans/specs stay untracked).
+- Types are exactly `md | json | void` (+ engine-internal `any`, appearing ONLY on AND card inputs, OR card inputs (declared `any`, RESOLVED to their homogeneous inbound type by resolveOrOutType), the synthesized `await` input, and End's `result` input — Combine inputs are `md`; never declarable in meta. AND's out is static `void`; OR's out is the RESOLVED payload type — the only type-resolution machinery in the system (Amendment f as revised); the await-node machinery stays dead). Blocking = `critical|major` via existing `protocol.mjs` `hasBlocking` — do not reimplement severity logic.
+- **Genericity charter (hard rule for every task):** no engine, executor, scheduler, validator, server, or UI code path may branch on a builtin agent key. Capabilities come from meta v2 fields; executors are selected by `node.kind` + `meta.runnerType`; mock behavior by the Task 8 resolution chain; workspace behavior by `workspaceVariantOf`/`workspaceFanOut`/`workspaceStrategy`; placement by `placeable`. The ONLY sanctioned key literals are: (a) data files (sidecars, seed-templates, fixtures), (b) the temporary Task 6 v1-compat shim (deleted in Task 25), (c) the legacy v1 HISTORY renderer (Task 19, confined to its module). Task 25's grep gate enforces this.
+- **Test-assertion style for validator/mutation tests:** assert membership (`errors.some(e => e.code === 'V12')`) plus targeted absence, never exact error-list equality — mutations produce legitimate companion errors (empirically: V10 construction also fires V13 via the orphaned `maxCycles`; and/or arity-1 also fires V5; flow-input unwiring fires V9+V12; task-node deletion cascades V5/V9/V15; End-node deletion cascades V5 on its result wire; adding a second wire to any input fires V7 (never W18 — the wire-level warning is gone)).
+- **Amendment-f rule numbers:** V21 (exactly one End node) is assigned by spec Amendment f; the single-wire revision RESTORES the universal input-cardinality error as V7 (V22 — the await-only cap — is retired, subsumed by the restored V7; number reserved so V-rule references stay stable); and/or/combine arity + the OR-homogeneity clause live in the rewritten V12 (mechanism in V8's or-resolution clause). Wherever this plan cites V21/V7/V12 for Amendment-f behavior, the spec amendment's text is authoritative.
+- Phase 3 (Tasks 11–20) lands as ONE atomic PR: engine swap + server + UI + V17 together. Phases 1, 2, 4 are separate PRs.
+- Commit messages: conventional style as in repo history (`worca: <summary>` also seen); end with the session trailer per harness rules.
+- After Phases 2, 3: re-run plan refinement (Fable max reviewers) on the NEXT phase's tasks before executing them — later tasks here pin interfaces and key code, and must be re-grounded against the then-current tree.
+
+---
+
+## Phase 1 — Graph core (pure modules, zero callers) [PR1]
+
+### Task 1: Canonical fixtures module
+
+**Files:**
+- Create: `src/core/graph/fixtures.mjs`
+- Test: `test/graph-fixtures.test.mjs`
+
+**Interfaces:**
+- Produces: `FIXTURE_DEFAULT` (wf_default as template v2), `FIXTURE_FLOW` (flow-card graph: payload-forwarding OR card + static AND card + synthesized await-port wire + End node), `FIXTURE_PORTS` (static port map for both fixtures, keyed by agent key), `portsFnFor(fixturePorts)` → `(node) => {inputs, outputs, verdict?, sideEffect?, ...}` — synthesizes the universal agent `await` input and the task/and/or/combine/end flow ports; exports `AWAIT_PORT` (the frozen synthesized-port constant) so Task 12's resolveGraph and Task 15's client graph-model reuse ONE definition.
+- These fixtures are the shared contract stub for ALL graph tests (engine and UI). UI tests import the same file via relative path.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// test/graph-fixtures.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { FIXTURE_DEFAULT, FIXTURE_FLOW, FIXTURE_PORTS, portsFnFor } from '../src/core/graph/fixtures.mjs';
+
+test('FIXTURE_DEFAULT is a version-2 template: 1 task + 5 agent + 1 end nodes, 10 wires', () => {
+  assert.equal(FIXTURE_DEFAULT.version, 2);
+  assert.equal(FIXTURE_DEFAULT.nodes.length, 7);
+  assert.equal(FIXTURE_DEFAULT.wires.length, 10);
+  assert.equal(FIXTURE_DEFAULT.nodes.filter((n) => n.kind === 'task').length, 1);
+  assert.equal(FIXTURE_DEFAULT.nodes.filter((n) => n.kind === 'agent').length, 5);
+  assert.equal(FIXTURE_DEFAULT.nodes.filter((n) => n.kind === 'end').length, 1);
+  assert.ok(FIXTURE_DEFAULT.nodes.every((n) => typeof n.x === 'number'));
+});
+
+test('portsFnFor synthesizes the agent await port and and/or/end flow ports', () => {
+  const ports = portsFnFor(FIXTURE_PORTS);
+  const reviewer = FIXTURE_DEFAULT.nodes.find((n) => n.key === 'reviewer');
+  const p = ports(reviewer);
+  assert.deepEqual(p.inputs.map((i) => i.id), ['plan', 'done', 'await']);   // synthesized last
+  assert.deepEqual(p.inputs.at(-1), { id: 'await', type: 'any', required: false, synthetic: true });
+  assert.deepEqual(p.outputs.map((o) => [o.id, o.when]), [['review', 'blocking'], ['pass', 'clean']]);
+  const impl = FIXTURE_DEFAULT.nodes.find((n) => n.key === 'implementer');
+  assert.deepEqual(ports(impl).inputs.map((i) => i.id), ['plan', 'fix', 'task', 'await']); // no 'start'
+  const andNode = FIXTURE_FLOW.nodes.find((n) => n.kind === 'and');
+  const ap = ports(andNode);
+  assert.equal(ap.inputs.length, andNode.config.arity);
+  assert.equal(ap.inputs[0].type, 'any');
+  assert.deepEqual(ap.outputs.map((o) => [o.id, o.type, o.when]), [['out', 'void', 'always']]);
+  const orNode = FIXTURE_FLOW.nodes.find((n) => n.kind === 'or');           // the fixture's real or node
+  const orP = ports(orNode);
+  assert.equal(orP.inputs.length, orNode.config.arity);
+  assert.equal(orP.inputs[0].type, 'any');
+  assert.deepEqual(orP.outputs.map((o) => [o.id, o.type, o.when]), [['out', 'any', 'always']]);
+  // DECLARED or.out type is 'any' — resolution to the wired type happens in ports.mjs/validate
+  // (resolveOrOutType, Task 2), never in the static port table; AND stays 'void'.
+  const taskP = ports(FIXTURE_DEFAULT.nodes.find((n) => n.kind === 'task'));
+  assert.deepEqual(taskP, { inputs: [], outputs: [{ id: 'task', type: 'md', when: 'always' }] });
+  const comb = ports({ kind: 'combine', config: { arity: 2 } });            // literal combine — all six kinds covered
+  assert.deepEqual(comb.inputs.map((i) => [i.id, i.type]), [['in1', 'md'], ['in2', 'md']]);
+  assert.deepEqual(comb.outputs, [{ id: 'out', type: 'md', when: 'always' }]);
+  const endNode = FIXTURE_FLOW.nodes.find((n) => n.kind === 'end');
+  const ep = ports(endNode);
+  assert.deepEqual(ep.inputs, [{ id: 'result', type: 'any', required: true }]);
+  assert.deepEqual(ep.outputs, []);
+});
+
+test('FIXTURE_FLOW is a version-2 template: 1 task + 5 agent + 1 or + 1 and + 1 end nodes, 14 wires', () => {
+  assert.equal(FIXTURE_FLOW.nodes.length, 9);
+  assert.equal(FIXTURE_FLOW.wires.length, 14);
+  assert.equal(FIXTURE_FLOW.nodes.filter((n) => n.kind === 'agent').length, 5);
+  for (const k of ['task', 'or', 'and', 'end']) {
+    assert.equal(FIXTURE_FLOW.nodes.filter((n) => n.kind === k).length, 1);
+  }
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `WORCA_HOME=.worca-cc-test node --test test/graph-fixtures.test.mjs`
+Expected: FAIL — cannot find module `../src/core/graph/fixtures.mjs`. (Empirically verified: `ERR_MODULE_NOT_FOUND` — v2 dry-run; the module-not-found failure mode is unchanged by Amendment f.)
+
+- [ ] **Step 3: Write the module**
+
+`FIXTURE_DEFAULT` = the wf_default v2 JSON from spec §1 (as amended by f) verbatim: nodes n_task/n_clarify/n_plan/n_refine/n_impl/n_review/n_end; wires w1–w10 — w1/w2 = task fan-out to clarify.task/planner.task; w5 (refine self-loop) and w9 (review→fix) carry `config: { maxCycles: 3 }`; w10 = n_review.pass → n_end.result. Complete v3 constant (spec §1 spacing = 280px):
+
+```json
+{ "id": "wf_default", "name": "Default", "version": 2, "domain": "coding",
+  "nodes": [
+    { "id": "n_task",    "kind": "task",                        "x": 40,   "y": 200, "config": {} },
+    { "id": "n_clarify", "kind": "agent", "key": "clarify",     "x": 320,  "y": 200, "config": {} },
+    { "id": "n_plan",    "kind": "agent", "key": "planner",     "x": 600,  "y": 200, "config": {} },
+    { "id": "n_refine",  "kind": "agent", "key": "refiner",     "x": 880,  "y": 200, "config": {} },
+    { "id": "n_impl",    "kind": "agent", "key": "implementer", "x": 1160, "y": 200, "config": {} },
+    { "id": "n_review",  "kind": "agent", "key": "reviewer",    "x": 1440, "y": 200, "config": {} },
+    { "id": "n_end",     "kind": "end",                         "x": 1720, "y": 200, "config": {} }
+  ],
+  "wires": [
+    { "id": "w1", "from": {"node":"n_task","port":"task"},       "to": {"node":"n_clarify","port":"task"} },
+    { "id": "w2", "from": {"node":"n_task","port":"task"},       "to": {"node":"n_plan","port":"task"} },
+    { "id": "w3", "from": {"node":"n_clarify","port":"answers"}, "to": {"node":"n_plan","port":"answers"} },
+    { "id": "w4", "from": {"node":"n_plan","port":"plan"},       "to": {"node":"n_refine","port":"plan"} },
+    { "id": "w5", "from": {"node":"n_refine","port":"revise"},   "to": {"node":"n_refine","port":"revise"}, "config": { "maxCycles": 3 } },
+    { "id": "w6", "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_impl","port":"plan"} },
+    { "id": "w7", "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_review","port":"plan"} },
+    { "id": "w8", "from": {"node":"n_impl","port":"done"},       "to": {"node":"n_review","port":"done"} },
+    { "id": "w9", "from": {"node":"n_review","port":"review"},   "to": {"node":"n_impl","port":"fix"},     "config": { "maxCycles": 3 } },
+    { "id": "w10","from": {"node":"n_review","port":"pass"},     "to": {"node":"n_end","port":"result"} }
+  ] }
+```
+`FIXTURE_PORTS` = the spec §5 port table as data, for all 11 builtin keys. **Canonical normalized shape: EVERY port materializes `required` (true default), `when: 'always'`, `store: 'run'`, `as: 'file'` on NON-VOID inputs (void inputs get no default `as`; the only `as` on a void input is an explicit 'worktree' — reviewer.done), and `artifactKind: <port id>` on non-void outputs** — this exact materialization is what Task 6's `normalizeMeta` produces, so the Task 7 drift guard compares like with like. The synthesized `await` port is NOT stored in FIXTURE_PORTS (or any sidecar) — portsFnFor appends it at resolution. `loop`/`expands`/`directive` appear only where set. No `seed` field exists (Amendment c). Example entries:
+
+```js
+export const FIXTURE_PORTS = {
+  clarify: {
+    runnerType: 'clarifier',
+    inputs: [{ id: 'task', type: 'md', required: true, as: 'file' }],
+    outputs: [{ id: 'answers', type: 'json', when: 'always', filename: 'clarify.json', store: 'run', artifactKind: 'clarify' }],
+  },
+  planner: {
+    wantsRequest: false, workspaceFanOut: true, workspaceStrategy: 'explore',
+    inputs: [
+      { id: 'task', type: 'md', required: true, as: 'file' },
+      { id: 'answers', type: 'json', required: false, as: 'answers' },
+      { id: 'revise', type: 'md', required: false, loop: true, as: 'file',
+        directive: '<verbatim REVISE block copied from phases.mjs runPlannerPlan before deletion>' },
+    ],
+    outputs: [{ id: 'plan', type: 'md', when: 'always', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' }],
+  },
+  refiner: {
+    wantsRequest: true, workspaceFanOut: true, workspaceStrategy: 'explore',
+    verdict: { filename: 'refine-review-cycle{cycle}.json' },
+    inputs: [
+      { id: 'plan', type: 'md', required: true, as: 'file' },
+      { id: 'revise', type: 'md', required: false, loop: true, as: 'file' },
+    ],
+    outputs: [
+      { id: 'plan', type: 'md', when: 'clean', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' },
+      { id: 'revise', type: 'md', when: 'blocking', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' },
+    ],
+  },
+  implementer: {
+    sideEffect: 'code', workspaceFanOut: true, workspaceStrategy: 'task',
+    inputs: [
+      { id: 'plan', type: 'md', required: true, as: 'file' },
+      { id: 'fix', type: 'md', required: false, loop: true, as: 'fix-review',
+        directive: '<verbatim fix-mode block copied from phases.mjs implementerBody before deletion>' },
+      { id: 'task', type: 'json', required: false, expands: true, as: 'file',
+        directive: '<verbatim decomposed-slice block copied from phases.mjs implementerBody before deletion>' },
+    ],
+    outputs: [{ id: 'done', type: 'void', when: 'always' }],
+  },
+  reviewer: {
+    wantsRequest: true, workspaceFanOut: true, workspaceStrategy: 'review',
+    verdict: { filename: 'impl-review-cycle{cycle}.json' },
+    inputs: [
+      { id: 'plan', type: 'md', required: true, as: 'file' },
+      { id: 'done', type: 'void', required: false, as: 'worktree' },
+    ],
+    outputs: [
+      { id: 'review', type: 'md', when: 'blocking', filename: '{base}-impl-review.md', store: 'project', artifactKind: 'review' },
+      { id: 'pass', type: 'void', when: 'clean' },
+    ],
+  },
+  // ...planReviewer (wantsRequest, workspaceStrategy 'explore', workspaceFanOut), decomposer,
+  // manualTestsChecklist (inputs: plan only — start removed by Amendment f),
+  // manualWebUiTesting (webui md output: artifactKind 'webui'),
+  // workspaceReviewer (workspaceVariantOf: 'reviewer', workspaceFanOut, workspaceStrategy 'review'),
+  // workspaceScanner (placeable: false) — copy exactly from spec §5 table + Amendment d/f fields.
+};
+
+export const AWAIT_PORT = Object.freeze({ id: 'await', type: 'any', required: false, synthetic: true });
+
+export function portsFnFor(fixturePorts) {
+  return (node) => {
+    if (node.kind === 'agent') {
+      const m = fixturePorts[node.key];
+      if (!m) return m;                      // unknown key — V4's problem; keep the dangling-meta no-crash contract
+      return { ...m, inputs: [...m.inputs, AWAIT_PORT] };
+    }
+    if (node.kind === 'task') {
+      return { inputs: [], outputs: [{ id: 'task', type: 'md', when: 'always' }] };
+    }
+    if (node.kind === 'end') {
+      return { inputs: [{ id: 'result', type: 'any', required: true }], outputs: [] };
+    }
+    if (node.kind === 'and' || node.kind === 'or' || node.kind === 'combine') {
+      const arity = node.config?.arity ?? 2;
+      const ins = Array.from({ length: arity }, (_, i) => ({
+        id: `in${i + 1}`, type: node.kind === 'combine' ? 'md' : 'any', required: true,
+      }));
+      const out = {   // combine md · or 'any' (resolved later by resolveOrOutType) · and void
+        id: 'out', type: node.kind === 'combine' ? 'md' : node.kind === 'or' ? 'any' : 'void', when: 'always',
+      };
+      return { inputs: ins, outputs: [out] };
+    }
+    return undefined;                        // unknown kind — V3's problem
+  };
+}
+```
+
+CRITICAL details: v2 returned `fixturePorts[node.key]` directly, so `undefined` flowed for unknown keys — the new spread MUST keep the `if (!m) return m;` guard or Task 2's no-crash test breaks. AND's `out` is **void**; OR's `out` is DECLARED **'any'** and resolved from wiring (resolveOrOutType, Task 2) — do not conflate the two: a static-void OR silently drops payloads and breaks the seeds' fix loops, while an 'any' AND resurrects the dead await-node resolution problem.
+
+The two `directive` placeholder strings are filled with the EXACT current prompt-builder text in Task 7 (copied from `phases.mjs` before Phase 3 deletes it); in Phase 1 any stable non-empty string is fine — the fixtures only need shape, and Task 7's drift guard forces the real bytes.
+
+`FIXTURE_FLOW` (complete, verbatim — Task 4 case 4, Task 23, and Task 26 depend on it; exercises the payload-forwarding OR card, the static AND card, the synthesized await port, and the End node):
+
+```json
+{ "id": "wf_flow_fixture", "name": "Flow", "version": 2, "domain": "coding",
+  "nodes": [
+    { "id": "n_task2",  "kind": "task",  "x": -220, "y": 160, "config": {} },
+    { "id": "n_plan",   "kind": "agent", "key": "planner",              "x": 40,   "y": 160, "config": {} },
+    { "id": "n_refine", "kind": "agent", "key": "refiner",              "x": 320,  "y": 140, "config": {} },
+    { "id": "n_impl",   "kind": "agent", "key": "implementer",          "x": 320,  "y": 420, "config": {} },
+    { "id": "n_review", "kind": "agent", "key": "reviewer",             "x": 640,  "y": 420, "config": {} },
+    { "id": "n_or",     "kind": "or",    "x": 640,  "y": 40,            "config": { "arity": 2 } },
+    { "id": "n_and",    "kind": "and",   "x": 900,  "y": 200,           "config": { "arity": 2 } },
+    { "id": "n_check",  "kind": "agent", "key": "manualTestsChecklist", "x": 1160, "y": 260, "config": {} },
+    { "id": "n_end",    "kind": "end",   "x": 1420, "y": 260,           "config": {} }
+  ],
+  "wires": [
+    { "id": "w1",  "from": {"node":"n_task2","port":"task"},      "to": {"node":"n_plan","port":"task"} },
+    { "id": "w2",  "from": {"node":"n_plan","port":"plan"},       "to": {"node":"n_refine","port":"plan"} },
+    { "id": "w3",  "from": {"node":"n_refine","port":"revise"},   "to": {"node":"n_refine","port":"revise"}, "config": { "maxCycles": 3 } },
+    { "id": "w4",  "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_impl","port":"plan"} },
+    { "id": "w5",  "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_review","port":"plan"} },
+    { "id": "w6",  "from": {"node":"n_impl","port":"done"},       "to": {"node":"n_review","port":"done"} },
+    { "id": "w7",  "from": {"node":"n_review","port":"review"},   "to": {"node":"n_impl","port":"fix"},     "config": { "maxCycles": 3 } },
+    { "id": "w8",  "from": {"node":"n_plan","port":"plan"},       "to": {"node":"n_or","port":"in1"} },
+    { "id": "w9",  "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_or","port":"in2"} },
+    { "id": "w10", "from": {"node":"n_or","port":"out"},          "to": {"node":"n_check","port":"plan"} },
+    { "id": "w11", "from": {"node":"n_refine","port":"plan"},     "to": {"node":"n_and","port":"in1"} },
+    { "id": "w12", "from": {"node":"n_review","port":"pass"},     "to": {"node":"n_and","port":"in2"} },
+    { "id": "w13", "from": {"node":"n_and","port":"out"},         "to": {"node":"n_check","port":"await"} },
+    { "id": "w14", "from": {"node":"n_check","port":"checklist"}, "to": {"node":"n_end","port":"result"} }
+  ] }
+```
+
+9 nodes (1 task, 5 agent, 1 or, 1 and, 1 end), 14 wires; every input carries exactly ONE wire (V7). Design rationale: n_check.plan is fed through the payload-forwarding OR (w8 planner draft, w9 refined plan — homogeneous md, resolveOrOutType ⇒ 'md'); the OR fires on the planner's draft and AGAIN on the refiner's clean plan, superseding the payload (re-emission + freshest-forwarding exercised); the static AND (w11/w12/w13) gates n_check through its synthesized await port exactly as before. Validation self-check: loopWires {w3, w7} (or/and join no SCC here); zero errors, zero warnings (n_check's always-sourced inputs: only or.out (always) — one, no V18 pair; the OR is a flow card — outside V18 entirely; await V18-exempt).
+
+(The task node + w1 are Amendment c's entry — without them FIXTURE_FLOW fails V20 and V9. The await-NODE resolver (resolveAwaitOutType) stays dead; the ONLY resolution machinery is the revision's or-scoped resolveOrOutType (Task 2), exercised here by w8/w9/w10 — and.out is declared void and w13 lands on the any-typed synthesized await port; w14's md lands on End's any-typed result.)
+
+- [ ] **Step 4: Run test to verify it passes** — same command, expected PASS. (The v2 dry-run verified the assertion pattern against the spec table; v3 counts and the flow fixture differ — expect green only against the amended spec §5/§1.)
+- [ ] **Step 5: Commit** — `git add src/core/graph/fixtures.mjs test/graph-fixtures.test.mjs && git commit -m "feat(graph): canonical v2 template fixtures"`
+
+---
+
+### Task 2: ports.mjs — tokens, loop classification, conditional routing, readiness
+
+**Files:**
+- Create: `src/core/graph/ports.mjs`
+- Test: `test/graph-ports.test.mjs`
+
+**Interfaces (produced, later tasks depend on these exact names):**
+
+```js
+export function makeToken({ seq, type, path = null, value = null, meta = null, sourceExecutionId, forced = false })
+export function classifyLoops(template, portsFn)
+// -> { loopWires: Set<wireId>, loopInputs: Set<'nodeId.port'>, sccs: string[][], order: string[] }
+//    order = deterministic launch order: condensation topo order, ties by nodeId.
+export function firedOutputs(outputs, verdict /* normalized review or null */)
+// -> outputs where when==='always', plus (hasBlocking ? blocking : clean) side. Import hasBlocking from ../protocol.mjs.
+export function resolveOrOutType(node, template, portsFn) // -> 'md'|'json'|'void'|null
+// Single-wire revision — the or card's payload type, resolved from its inbound wires' source
+// output types. Inbound types must be homogeneous (V12 owns the error, mechanism in V8's or
+// clause); resolves through CHAINED or cards (seen-set guarded); returns null when unresolvable
+// (unwired ins are V9's problem; V8 skips null). Scoped return of resolution machinery — the
+// await-NODE resolver stays dead.
+export function isReady(node, ctx)
+// ctx = { portsFn, wiredIn: Map<port, wireId>, loopInputs, tokens: Map<'nodeId.port', Token>,
+//         consumed: Map<port, seq>, everRan: boolean, awaitAll: boolean, isFlow: boolean }
+// Implements spec §3 firing rule exactly (first-run barrier over wired non-loop inputs — every
+// input has at most ONE wire (V7); it has a token when its wire's source latched one; re-run:
+// any fresh, or awaitAll => all wired non-loop fresh OR fresh loop token; flow nodes: and/combine
+// fire when ALL inputs are fresh (unconsumed), or fires on ANY fresh input, end fires on a fresh
+// result token; task ready iff never ran). The OR card is the only fan-in: any-fresh fires it;
+// the SCHEDULER binds the freshest fresh input and re-emits its payload (Task 4).
+// The synthesized await input is an ORDINARY wired non-loop input: it participates in the
+// first-run barrier when wired, a fresh await token re-fires per standard freshness
+// (start-parity), and it counts toward awaitAll; its single-wire cap is V7's (the
+// validator's — uniform for every input) problem, not isReady's.
+```
+
+- [ ] **Step 1: Write the failing tests** (one file, these cases minimum)
+
+```js
+// test/graph-ports.test.mjs — import from fixtures; assert:
+// classifyLoops(FIXTURE_DEFAULT): loopWires == {w5, w9}; loopInputs == {'n_refine.revise','n_impl.fix','n_plan.revise'} (meta-derived — planner.revise is loop:true even though unwired here);
+//   sccs contain ['n_refine'] (self) and a 2-node SCC {n_impl,n_review}; w8 (impl.done -> review.done, when 'always', inside the SCC) NOT a loop wire.
+// classifyLoops(FIXTURE_FLOW): loopWires == {w3, w7} (the re-renumbered flow fixture; n_or/n_and/n_end join no SCC).
+// classifyLoops or-fanned loop (synthetic — protects the seeds' new shape): consumer.done→verifierA/B feeds,
+//   A.review→or.in1, B.review→or.in2, or.out→consumer.fix (all in one SCC) ⇒ loopWires = the two
+//   blocking in-wires ONLY; or.out→fix (always-source) is NOT a loop wire — budgets/gates sit on the in-wires.
+// classifyLoops NO-CRASH: unknown agent key on a node INSIDE a cycle (n_refine.key = 'nope' + self-wire)
+//   returns without throwing (V4 reports it; the dangling-meta guard below is load-bearing — empirically
+//   the unguarded snippet threw TypeError exactly here).
+// firedOutputs(reviewer.outputs, {issues:[{severity:'major',...}]}) -> ['review']
+// firedOutputs(reviewer.outputs, {issues:[{severity:'minor',...}]}) -> ['pass']
+// firedOutputs(planner.outputs, null) -> ['plan']   (hasBlocking(null) === false makes this safe)
+// resolveOrOutType(n_or of FIXTURE_FLOW) -> 'md'; chained or→or resolves through with a seen-set
+//   (synthetic; a cyclic or→or chain must not hang); all-void inbound -> 'void'; unwired ins -> null.
+// isReady(and node of FIXTURE_FLOW): in1 token latched-unconsumed, in2 absent -> false; both present-unconsumed -> true
+// isReady(or node): single fresh input -> true (no all-wired barrier); BOTH fresh -> true (one emission — scheduler collapses)
+// isReady(end node): fresh result token -> true; consumed -> false
+// isReady first-run: implementer with plan token present, fix loop-input absent -> true
+// isReady first-run: reviewer with plan token but no done token (done wired) -> false
+// isReady re-run: reviewer everRan, fresh done token (seq > consumed) -> true
+// isReady re-run awaitAll: node with 2 wired non-loop inputs, only one fresh -> false; both fresh -> true;
+//   fresh loop token alone -> true even with awaitAll.
+// isReady await-port first-run: checklist with plan token, await wired but no await token -> false; await token delivered -> true
+// isReady await-port re-run: everRan checklist, fresh await token (seq > consumed) -> true (start-parity re-fire)
+// isReady await-port awaitAll: wired await counts as a wired non-loop input (awaitAll node with fresh plan but stale await -> false)
+// isReady: task node (zero inputs) is ready iff never ran; agent node with an unwired REQUIRED input is never ready (validation V9 prevents this at save — assert defensive behavior anyway).
+// order: n_task first, then n_clarify, n_plan, n_refine, then n_impl/n_review, then n_end.
+//   (n_clarify precedes n_plan via w3, not a tie-break; the tie-break path is exercised in SCC flattening: n_impl < n_review.)
+```
+
+Write them as real `test()` blocks with `assert.deepEqual`/`assert.equal` — copy the fixture wiring facts above into assertions. (The v2 dry-run ran 19 tests green; v3 adds the await/flow-readiness cases and drops the await-resolver case — the count will differ; the single-wire revision adds the resolveOrOutType and or-loop-classification cases.)
+
+- [ ] **Step 2: Run to verify FAIL** — module not found.
+- [ ] **Step 3: Implement.** Tarjan iteratively (explicit stack — graphs are small but avoid recursion limits by habit):
+
+```js
+export function classifyLoops(template, portsFn) {
+  const nodeById = new Map(template.nodes.map((n) => [n.id, n]));
+  const wires = template.wires.filter((w) => nodeById.has(w.from.node) && nodeById.has(w.to.node));
+  // dangling endpoints are V5's problem — never crash here (validator collects all errors)
+  const adj = new Map(template.nodes.map((n) => [n.id, []]));
+  for (const w of wires) adj.get(w.from.node).push(w.to.node);
+  const sccs = tarjan(adj); // standard; ties broken by sorted nodeId iteration
+  const sccOf = new Map();
+  sccs.forEach((scc, i) => scc.forEach((id) => sccOf.set(id, i)));
+  const nontrivial = new Set(
+    sccs.map((scc, i) => (scc.length > 1 ? i : -1)).filter((i) => i >= 0),
+  );
+  const selfWired = new Set(template.wires.filter((w) => w.from.node === w.to.node).map((w) => w.from.node));
+  const loopWires = new Set();
+  for (const w of wires) {
+    const sameScc = sccOf.get(w.from.node) === sccOf.get(w.to.node) &&
+      (nontrivial.has(sccOf.get(w.from.node)) || selfWired.has(w.from.node));
+    if (!sameScc) continue;
+    // Unknown agent keys resolve to no meta — guard, don't crash (V4 owns the error).
+    // Empirically load-bearing: the unguarded form threw for an unknown-key node inside a cycle.
+    const out = (portsFn(nodeById.get(w.from.node))?.outputs || []).find((o) => o.id === w.from.port);
+    if (out && out.when === 'blocking') loopWires.add(w.id); // blocking-source rule (spec amendment b)
+  }
+  // loop INPUTS come from meta `loop: true`, not from wiring — wiring-independent (any wire count)
+  const loopInputs = new Set();
+  for (const n of template.nodes) {
+    for (const inp of (portsFn(n)?.inputs || [])) {
+      if (inp.loop) loopInputs.add(`${n.id}.${inp.id}`);
+    }
+  }
+  const order = condensationTopo(sccs, adj); // Kahn on condensation, ties by min nodeId, flatten sorted
+  return { loopWires, loopInputs, sccs, order };
+}
+```
+
+classifyLoops is UNCHANGED by the single-wire revision — the SCC + blocking-source logic never counted wires per input; in the OR-fanned seeds the OR simply joins the SCC and the blocking in-wires classify as the loop wires (the synthetic case above pins it). `isReady` implements the spec rule literally; `resolveOrOutType` walks inbound wires with a seen-set (mirror the dead await-resolver's shape, scoped to or); `firedOutputs` uses `hasBlocking` from `src/core/protocol.mjs` (import path `../protocol.mjs` — export verified present at protocol.mjs:244).
+
+- [ ] **Step 4: Run to verify PASS.**
+- [ ] **Step 5: Commit** — `feat(graph): ports, loop classification, readiness`
+
+---
+
+### Task 3: validate.mjs — rules V1–V21 + restored V7
+
+**Files:**
+- Create: `src/core/graph/validate.mjs`
+- Test: `test/graph-validate.test.mjs`
+
+**Interfaces:**
+- Produces: `validateGraph(template, portsFn) -> { errors: [{code, msg, nodeId?, wireId?}], warnings: [...] }`. Codes are `'V1'..'V21'` exactly as spec §2, V22 retired — subsumed by the restored V7, number reserved (+ Amendment d/e/f edits, f as revised: V3 kind set {agent, task, and, or, combine, end} — 'await' and 'merge' are NOT kinds; V4 is meta-driven via `placeable:false`; **V7 RESTORED (single-wire revision, reversing e's drop) — the UNIVERSAL input-cardinality error: every input (agent ports, and/or/combine inK, end.result, the synthesized await) accepts at most ONE wire; error names the 2nd+ wireId**; V8 plain type equality per wire, with `any` inputs accepting every source — PLUS the or-resolution clause: or.out's outbound wires compare against resolveOrOutType's result (null ⇒ skip), and NO await-node resolution exists; V12 rewritten: integer arity ≥ 2 + every inK wired for and/or/combine (Combine's all md) + or-homogeneity — all inbound source types of an or must resolve equal (error names the mismatched wires; seen-set for chains; mechanism shared with V8's clause); V18 node-level pair count only — the wire-level clause DIES with multi-wire — applying to AGENT nodes only (flow cards have defined join semantics: AND/Combine all-fresh, OR any-fresh BY DESIGN), with the task-source/void/await exemptions; V19 exempts and/or `inK`, `end.result`, and agent `await` targets (or `inK` is now THE canonical loop-valve terminal — load-bearing for the zero-warning seed guard; Combine inputs still warn); V21: exactly one end node, zero outputs, its result wired — one wire like every input, per V7). Consumed by: server save route (Task 14), plugin import (Task 24), UI adapter (Task 16), orchestrator run-time check (Task 13), seed drift guard (Task 5).
+
+- [ ] **Step 1: Failing tests.** One test per rule, built by mutating `structuredClone` of FIXTURE_DEFAULT (FIXTURE_FLOW for the or/and/end/await constructions) (structuredClone of a frozen object is fully mutable — verified empirically). **Assert membership, not exact lists** (Global Constraints; companion-error expectations noted inline):
+  - Baseline: `validateGraph(FIXTURE_DEFAULT, portsFn).errors` AND `validateGraph(FIXTURE_FLOW, portsFn).errors` are both `[]`, and BOTH warning lists are `[]` (the V18 task-source exemption is what keeps FIXTURE_DEFAULT warning-free — n_plan's task+answers pair would otherwise W18).
+  - V1–V4: version 1 rejected; duplicate node id; bad id chars; `kind:'agent'` without key; unknown agent key (test BOTH an acyclic node AND a node inside a cycle — the cyclic case exercises the Task 2 no-crash guard); a node whose meta declares `placeable: false` (mutated portsFn) → V4 error naming the flag; `kind:'task'` ACCEPTED by V3; kinds 'and'/'or'/'end' ACCEPTED by V3; kind 'await' REJECTED by V3 (removed kind); kind 'merge' still rejected.
+  - V5: wire to a nonexistent node AND to a nonexistent port → errors, NO crash.
+  - V6: duplicate wire id; duplicate (from,to) pair.
+  - **V7 (RESTORED — single-wire revision)**: add a second wire into `n_impl.plan` (from `n_plan.plan`) → ERROR naming the second wireId; second wire into `n_impl.fix` (the old Full direct fan-in) → ERROR; second wire into `n_end.result` → ERROR (multi-terminal graphs put an OR before End); second wire into an or card's in1 → ERROR (fan-in grows via arity, not wire-stacking); TWO wires into one node's await port → ERROR (was V22 — same behavior, one rule); one wire each → clean; any output TYPE may feed await (md plan → await OK, void pass → await OK, json answers → await OK — no V8 error). A duplicate (from,to) pair still ALSO fires V6 (distinct codes — assert membership of both).
+  - V8: wire `n_clarify.answers` (json) → `n_refine.plan` (md) → type error. `any`-typed inputs accept every source: md → and.in1 OK; void → and.in2 OK; md → end.result OK; and → and chains OK. and.out is plain void: wire and.out → an md input (e.g. n_check.plan) → `void -> md` type error (proves the AND side has NO resolution). OR-resolution cases (single-wire revision): md-homogeneous or (FIXTURE_FLOW n_or) → or.out→check.plan (md→md) OK; mutate check's portsFn so plan is json → or.out(md)→json input errors naming w10; chained or→or resolves through (synthetic; seen-set — a cyclic or→or chain must not hang); all-void or → or.out(void)→md input errors `void -> md`; or with unwired ins → resolution null → V8 SKIPS (V9 owns the unwired error).
+  - V9: delete wire w6 (refiner.plan→implementer.plan) → error "required input implementer.plan unwired"; unwired OPTIONAL input (n_plan.revise) → NO error; V11 must NOT false-fire on this mutation (n_review stays satisfiable — verified).
+  - V20: delete the n_task node → error (+ V5/V9/V15 cascade, membership-assert); add a second task node → error; task node's `task` output with zero wires → error. V21 mirror cases — delete n_end → error (+ V5 cascade on its result wire, membership-assert); add a second end node → error; end.result with zero wires → error; an end node with a declared output is impossible by construction (portsFn) — no test needed.
+  - V10: replace w9's from-port `review` with a cloned always-output → "cycle without blocking-source edge" error naming the cycle's wires. NOTE: also delete `w9.config` in the mutation or additionally expect the V13 companion (maxCycles now sits on a non-loop wire).
+  - V11 (corrected construction — the v1 plan's version yields `errors: []`, empirically): rewire BOTH SCC members' plan feeds from inside the SCC — `w7.from = {node:'n_review',port:'review'}` AND `w6.from = {node:'n_review',port:'review'}` (md→md keeps V8 quiet; w9 stays the blocking loop wire so V10 passes) → deadlock error fires. Expect V15 + V19 companions; membership-assert.
+  - V12: `and` arity 1 → error (+ V5 companion: the in2 wire dangles); `or` arity 1 → same; non-integer arity → error; combine with unwired in2 → error (+ V9: flow inputs are required); and with in1 unwired → V9 error (flow inputs required — the old await-in1 resolution clause is gone). or-HOMOGENEITY (single-wire revision): planner.plan (md) → or.in1 + clarify.answers (json) → or.in2 → V12 error naming both wires; homogeneous md → clean; the clause resolves through chained or cards (seen-set). (Merge clauses gone — Amendment e; and/or arity + or-homogeneity in the rewritten V12 — Amendment f as revised.)
+  - V13: `maxCycles` on non-loop wire w2 → error; maxCycles on the or.out→fix wire (always-source, in-SCC — the seeds' valve shape) → error (budgets belong on the blocking in-wires into the OR); `when:'sometimes'` in portsFn → error.
+  - V14: `expands` on an md input (mutated portsFn) → error.
+  - V15: node with no path from any entry → warning. V16: awaitAll with 1 wired input → warning — the mutation must leave the node's await port UNWIRED (a wired await counts as a second wired non-loop input and would kill the warning); ADD the converse: awaitAll + 1 normal wired input + wired await port → NO V16 warning. V17: unknown `config` key → warning. V18: two always-sourced NON-VOID inputs (neither task-node-sourced), no awaitAll → warning; the same pair with one input wired from the task node → NO warning; **`planner.plan→reviewer.plan` + `implementer.done→reviewer.done`, no awaitAll → NO warning (void exemption — done is void)**; a node with two always-sourced md inputs still warns when its await port is ALSO wired (await never enters the pair count — exemption proof); an or card whose in1/in2 are BOTH always-sourced → NO V18 warning (any-fresh multi-fire is the card's purpose — the pair count is agent-only, single-wire revision; the wire-level clause is GONE with multi-wire, its constructions now V7 errors). V19: blocking output wired into an input without `loop:true` (e.g. reviewer.review → checklist.plan) → warning; ONE blocking output into a `loop:true` input (wf_default w9 shape) → NO warning; blocking → or.inK → NO warning (⟨f⟩ exemption — now THE loop-fan-in idiom); or.out (always) → a `loop:true` input → NO warning (V19 is blocking-source only — the new seed shape, pinned as an explicit negative); a blocking output wired into `n_end.result` → NO warning; a blocking output wired into an agent's `await` port → NO warning; a blocking output into `combine.in1` → warning (Combine is not exempt).
+  Assert `code`, and that errors block (`errors.length`) vs warnings don't.
+  V8 is plain per-wire equality with `any` accepting all, plus the or-resolution clause; with V7 there is at most one wire per input to check.
+- [ ] **Step 2: FAIL run.** — module not found.
+- [ ] **Step 3: Implement** — straight-line checks in rule order; reuse `classifyLoops` for V10/V11; keep each rule a small named function so error text lives beside its check. Deadlock V11: for each nontrivial SCC, require ≥1 node whose required inputs are all (wired-from-outside-SCC | optional | loop input). V4: `placeable === false` in the resolved meta ⇒ error naming the flag (no key literals). V18: pair count runs on `kind === 'agent'` nodes ONLY (no wire-level clause exists); collect the node's wired non-loop, **non-void** inputs whose source output is `when:'always'`, EXCLUDING wires whose source node is the task node, EXCLUDING the synthesized await input (id 'await', synthetic — it is any-typed, not void, so the void exemption alone does not cover it); warn when ≥2 and `!config.awaitAll`. V7: count inbound wires per (node, input); ≥2 ⇒ error on the 2nd+ wireId — uniform, no per-kind carve-outs. V21: count `kind === 'end'` nodes (≠1 ⇒ error), require result wired. V12: integer arity ≥ 2 for and/or/combine + or-homogeneity via a resolveOrOutType-style walk (share the seen-set helper); V8's or clause calls resolveOrOutType and skips null. (Void inputs are pure sequencing — they cannot double-bind a payload; without this exemption the `X.plan + implementer.done` idiom every seed uses — wf_quick-fix and wf_clarify-quick-fix reviewers in particular, whose plan comes from the planner's unconditional output — would warn, and Task 5's zero-warning seed guard could not pass. `awaitAll` is NOT a legal alternative there: it would stop fix-cycle re-fires.)
+- [ ] **Step 4: PASS run.** (The v2 dry-run ran 25 tests green with the v2 constructions; v3 restores V7, retires V22, and rewrites V8 (or-resolution)/V12 (homogeneity)/V16/V18 (no wire clause, agent-only)/V19 — counts will differ.)
+- [ ] **Step 5: Commit** — `feat(graph): validator v2 (V1-V21 + restored V7)`
+
+---
+
+### Task 4: scheduler.mjs — token store, firing loop, gates, quiescence, snapshot
+
+**Files:**
+- Create: `src/core/graph/scheduler.mjs`
+- Test: `test/graph-scheduler.test.mjs`
+
+**Interfaces:**
+
+```js
+export function createScheduler({
+  template, portsFn,
+  execute,            // async ({node, executionId, ordinal, bindings, trigger}) -> {verdict?, outputs?:{[port]:{path?,value?}}, error?}
+                      // trigger = { wireIds: string[], freshPorts: string[] } — freshPorts feeds A3 mode selection downstream
+  taskArtifact,       // { path } — pre-rendered task document; forwarded on the execute() call for the
+                      // kind:'task' node (Task 8's runTaskExecution decides the emitted token — A2
+                      // planStoreSeed may redirect it to the plans store)
+  onEvent,            // (name, payload) => void  — 'exec' | 'token' | 'gate'
+  ask,                // async ({kind:'gate', wireId, issues}) -> 'another' | 'continue'
+  maxParallel = 4,
+  snapshot = null,    // resume-v2 object to restore from
+  onSnapshot,         // (snapshotObject) => void — called after every publish
+})
+// -> { run(): Promise<'done'|'error'>, pause(), abort(), getState(): {active, executions, tokens,
+//      ended: null | { nodeId, executionId, seq, result: {type, path?, value?} }} }   // spec §3 snapshot field
+```
+
+Consumed by Task 13 (orchestrator binds execute/ask/onEvent/onSnapshot to real machinery).
+
+**Execution ownership (normative):** the scheduler routes EVERY node's execution through the injected `execute` — flow kinds (task/and/or/end/combine) synchronously and OUTSIDE the semaphore, agent kinds under it; `taskArtifact` is forwarded on the `execute` call for the `kind:'task'` node. Task 8's `runTaskExecution`/`runAndExecution`/`runOrExecution`/`runEndExecution` are therefore the LIVE implementations once Task 13 binds the executor table — never dead code (A2's planStoreSeed arm runs in the live path) — and the Task-4 fake `execute` answers flow-node calls too.
+
+**End completion (Amendment f):** a token delivered to the end node runs an instant $0 end execution (normal 'exec' events; its `done` exec event carries `result: {type, path?, value?}`) that records the bound result token, then flips the scheduler into COMPLETING mode: no further launches (ready nodes stay unlaunched), in-flight executions run to completion AND publish their tokens (recorded, not routed — nothing downstream fires), loop-wire delivery accounting and gates are SKIPPED during this drain (an in-flight blocking verdict publishing past its wire's allowance raises no gate ask), held/pending gate asks on other branches are abandoned (never re-asked), then run() resolves 'done'. An agent error DURING the drain still errors the run — fail-fast beats the pending 'done'. Quiescence without an End token still resolves 'done' with `ended === null` — the ORCHESTRATOR (Task 13) owns the warning string. The final snapshot and every getState() carry the `ended` field (`null | { nodeId, executionId, seq, result: {type, path?, value?} }` — spec §3 snapshot), and a scheduler restored from a snapshot with `ended` set launches NOTHING: it only re-attaches in-flight executions and finishes the drain. (Scheduler-test fixtures skip validation — synthetic fixtures without an End node are legal in tests and simply quiesce with `ended` null; tests that don't care about End must not accidentally assert on it.)
+
+**Loop-budget arithmetic is Amendment A1 (parity-mandatory):** wire allowance = `maxCycles − 1` deliveries; the gate fires when a blocking verdict would trigger delivery number `maxCycles`; "another" → allowance += 1. maxCycles caps TOTAL source firings, exactly like v1's `st.cycle < fb.maxCycles` (`orchestrator.mjs:1856`).
+
+**Forced-token payload is Amendment A4:** on gate "continue", the held blocking token is discarded and each clean output force-fires a token whose payload reuses the held token's path/value when the types match, else the clean port's latched payload, else null; `forced: true`, `meta.issues` = the held verdict's open issues.
+
+**Single-wire inputs + the OR valve (Amendment f as revised):** every input carries at most one wire (V7) — binding is wire→input, no freshest-selection at inputs. The OR card is the ONLY fan-in: on any fresh input it binds the FRESHEST fresh input's token and re-emits that payload with a new seq (out type = resolveOrOutType); several inputs fresh within one drain ⇒ ONE emission binding the freshest, the older fresh tokens are spent at that bind (the former multi-wire collapse, now inside the node). Loop budgets/gates count deliveries on the wires INTO the OR (blocking-source in-SCC); `or.out → fix` is plain (never budgeted). On gate 'continue' the held blocking token on the in-wire is discarded and the SOURCE's clean outputs force-fire per A4 — the OR never emits for the held token. The seeds' two review loops fan through an OR and fire in different iterations.
+
+- [ ] **Step 1: Failing tests** with a scripted fake `execute` (records calls, returns canned verdicts):
+  1. **Default-graph happy path with loop**: verdict script — refiner c1 blocking, c2 clean; reviewer c1 blocking, c2 clean. Assert execution sequence exactly: `task c1, clarify c1, planner c1, refiner c1, refiner c2, implementer c1, reviewer c1, implementer c2, reviewer c2, end c1` and run resolves `'done'`. Assert `getState().ended` is non-null with `ended.nodeId` = n_end, `ended.result.type === 'void'` (void payload ⇒ no path), and `ended.seq` = the seq of reviewer c2's pass token (whose `sourceExecutionId` is reviewer c2's publish — provenance pinned). Assert reviewer.pass token exists after c2, and the review token is superseded — pinned as: implementer's `consumed['fix']` equals the review token's seq and no node is ready at quiescence. (The v2 dry-run reproduced the agent sequence byte-exact: clarify fires before planner BECAUSE the first-run barrier covers wired optional inputs — planner.answers is wired via w3; quiescence correctly treats latched-but-consumed tokens as spent. The `end c1` tail is new Amendment-f surface.)
+  2. **maxCycles gate (A1 arithmetic)**: script refiner always-blocking with w5 maxCycles 2; `ask` resolves 'continue' → assert refiner ran EXACTLY **2** executions (1 allowed delivery + the held 2nd firing), gate asked ONCE naming w5 + the held issues, held token discarded, `plan` (clean side) force-fired with `forced:true`, `meta.issues`, AND the held token's path (A4), downstream implementer ran; the script also gains `reviewer: clean at c1` so the terminal fires — assert reviewer ran once, end fired, run 'done' with `ended` set. (Without a reviewer script the run now ends at quiescence with `ended` null — "implementer ran, run 'done'" alone under-specifies.)
+  3. **Gate 'another'**: same but 'another' once → one extra refine cycle then clean → … → reviewer clean, end fired, run 'done' with `ended` set (same tail edits as case 2).
+  4. **OR/AND/await drain (FIXTURE_FLOW)**: script refiner c1 blocking→c2 clean, reviewer c1 blocking→c2 clean. Expected exec sequence: `task c1, planner c1, refiner c1, or c1, refiner c2, implementer c1, or c2, reviewer c1, implementer c2, reviewer c2, and c1, checklist c1, end c1` — the instant or/and rows slot per the deterministic launch order (refine's SCC precedes n_or via the w9 edge; the {n_impl,n_review} SCC precedes n_or by nodeId tie-break) and case 5 pins the interleaving. Assert: the OR fired TWICE — or c1 forwards the PLANNER's plan (md, path preserved), or c2 forwards the REFINER's plan (freshest), superseding n_check.plan's latched token; n_check c1 binds the REFINER's plan path (payload-correctness through the valve); the AND emits VOID (no path — static gate); n_check's first execution waits for its await port (`pass.seq < andOut.seq <` check's bind); checklist md reaches n_end → run 'done', `ended.result` = the checklist token's `{type:'md', path}`.
+  5. **Determinism**: two runs with same script produce identical exec event sequences (now also pins the or-row interleaving of case 4).
+  6. **Snapshot/restore**: kill after reviewer c1 (script `execute` throws a sentinel pause), createScheduler with snapshot → run completes with implementer c2 next; no re-run of finished executions; the snapshot shape includes the `ended` field (null pre-End) and the restored run completes through `end c1`. ADD **case 6b (drain resume)**: snapshot captured AFTER End fired while a scripted slow node is still in-flight — a scheduler restored from it launches NOTHING new (`ended` set ⇒ no launches), the in-flight publish lands (recorded, not routed), run 'done'.
+  7. **Fail-fast**: execute error on implementer → run 'error', no further launches.
+  8. **maxParallel cap**: fixture with one task node fanning to 3 independent agent nodes, maxParallel 2 → never more than 2 concurrent agent `execute`s (count via in-flight tracker in the fake; flow nodes (task/and/or/end/combine) bypass the cap).
+  9. **pause()/resume via public API**: pause mid-run → run resolves 'paused'-equivalent, snapshot handed to onSnapshot; new scheduler from that snapshot completes with no re-run of finished executions.
+  10. **abort()**: mid-flight abort → in-flight signal fired, no further launches.
+  11. **OR-card loop fan-in** (single-wire revision — the seeds' double-review shape; replaces the multi-wire case): synthetic — verifiers A and B; A.review → or.in1 (maxCycles 3), B.review → or.in2 (maxCycles 3), or.out → consumer's `loop:true` input `fix` (no config); all in one SCC with the consumer's done-style feeds so classifyLoops marks the two in-wires (and only them) loop wires. Script A and B blocking in DIFFERENT iterations → each blocking emission delivers on ITS in-wire (per-wire counters advance independently), the OR re-emits the review payload, the consumer re-fires in fix mode binding that review path (trigger.wireIds for the consumer names or.out→fix; the OR's exec trigger names the single fresh in-wire), no deadlock. ALSO script both blocking in the SAME iteration → the OR emits ONCE binding the freshest review (older spent) → ONE consumer re-fire. Lineage: this is Amendment b's Merge-valve construction, which the b-era dual-engine adjudication verified and the v2 dry-run ran green in Merge shape — binding math identical, so risk is LOW; re-verify.
+  12. **End drain**: any fixture — on End arrival assert an 'exec' event for the end node (instant, $0; its `done` exec event carries `result`), NO further launches, run 'done', `getState().ended.result` carries the payload (path preserved for md sources).
+  13. **End early-finish with in-flight**: synthetic — task fans to A (fast, wired A.out → end.result) and B (slow, wired B.out → C.in); script A to finish and End to fire while B is mid-execute → assert B COMPLETES and its token PUBLISHES, but C never launches (no new launches after End); run 'done'.
+  14. **Quiescence without End**: synthetic — verifiers A and B; A.pass → and.in1, B.pass → and.in2, and.out → end.result; script A clean, but script B's pass to never fire (B blocking with its review side wired to a terminal loop-less consumer is enough — scheduler tests skip validation) → and never fires → run resolves 'done' with `ended === null`. (The warning STRING is asserted in Task 13, not here.)
+  15. **OR re-emission + payload collapse**: synthetic — md producers P1, P2 → or.in1/in2, or.out → consumer's md input: P1 fires, drain completes, P2 fires later → the OR emits TWICE, each time FORWARDING the arriving payload (assert the consumer's two bindings carry P1's then P2's path); re-script both fresh within ONE drain → the OR emits ONCE forwarding the FRESHEST payload (the older token spent — the relocated same-drain collapse).
+  16. **Drain accounting + error-during-drain**: case-13 shape, but B is a verifier whose blocking output rides a loop wire already AT its allowance; End fires while B is mid-execute; B publishes blocking → NO gate ask and no delivery counted (accounting and gates are skipped during the drain), token recorded, run 'done'. Variant script: B THROWS during the drain → run 'error' (fail-fast survives COMPLETING mode).
+  17. **OR-loop gate — 'continue' escapes via the source's clean side (A4 through the valve)**: case-11 shape with A.review→or.in1 at maxCycles 2 (allowance 1); script A always-blocking → second blocking delivery on the in-wire is HELD, gate asked ONCE naming the IN-wire (A.review→or.in1 — never or.out→fix) with the held issues; 'continue' → held token discarded, A's clean output (pass:void) force-fires with forced:true + meta.issues (payload null — types differ, A4 fallback), the OR never emits for the held token, the consumer's fix does NOT re-fire from A's side, and B's in-wire budget is untouched. This is the wf_full trace: reviewer exhausts w12 → continue → reviewer.pass proceeds to checklist.await → webui → End, exactly as v1 and the pre-revision direct-wire shape.
+  (AND all-fresh firing is covered by the case-4 replacement — no separate case needed.)
+  Write each as concrete `test()` with an event-collector array asserted via `assert.deepEqual`. Cases 1, 2, 5 were dry-run-verified on the v2 semantics and change only at the End tail; case 11 is REWRITTEN to the OR-card shape — it matches the b-era Merge-shaped construction that ran empirically green (low risk, re-verify); cases 4 and 15 are REWRITTEN for the payload OR and cases 12–17 are new/unverified surface of Amendment f as revised — implement those, plus 3 and 6–10 (snapshot/restore especially), with extra care.
+- [ ] **Step 2: FAIL run.**
+- [ ] **Step 3: Implement** per spec §3 algorithm (single-owner loop; global seq; `consumed` recorded at bind; wire `{deliveries, allowance}` with allowance = maxCycles − 1 (A1); held-gate queue; `rerunPending` coalescing; launch order from `classifyLoops(...).order`; flow-node executions routed through execute() synchronously, no semaphore slot (Execution ownership note above) — and/combine fire all-fresh, or fires any-fresh, binds the freshest fresh input, and RE-EMITS ITS PAYLOAD (out type = resolveOrOutType) with same-drain collapse to ONE emission, end records the result and enters COMPLETING mode per the interface note; the launch loop checks the completing flag before every launch; `onSnapshot` after every publish with the exact resume-v2 shape from spec §3; execute() receives `trigger.freshPorts` so the executor can apply A3).
+- [ ] **Step 4: PASS run.**
+- [ ] **Step 5: Commit** — `feat(graph): dataflow scheduler with loops, gates, snapshots`
+
+---
+
+### Task 5: builtin-workflows.mjs + seed-templates.mjs
+
+**Files:**
+- Create: `src/core/graph/builtin-workflows.mjs`, `src/core/graph/seed-templates.mjs`
+- Test: `test/graph-builtin-workflows.test.mjs`, `test/graph-seed-templates.test.mjs`
+
+**Interfaces:**
+- `GRAPH_DEFAULT_WORKFLOW` (deep-frozen, id `wf_default`, version 2 — same object shape as FIXTURE_DEFAULT but the shipping constant; fixtures import from HERE after this task to avoid drift: refactor fixtures.mjs to `export { GRAPH_DEFAULT_WORKFLOW as FIXTURE_DEFAULT }`). **Deep-freeze (recursive), not `Object.freeze`** — empirically a shallow freeze passes `isFrozen` while `nodes[0].x = 999` mutates silently.
+- `SEED_TEMPLATES` — array of the 7 hand-written v2 re-expressions of the user's saved templates (wf_full, wf_no-clarify, wf_provided-plan, wf_full-no-decompose, wf_quick-fix, wf_clarify-implement, wf_clarify-quick-fix), each `{ id, name, version: 2, domain, graph: {nodes, wires} }`, deep-frozen. **The complete verbatim JSONs live in `docs/superpowers/plans/2026-08-10-seed-templates/wf_*.v2.json` — copy them into the module unchanged** (topologies from the 2026-08-10 parity adjudication, trace-verified against the v1 engine under 6 verdict scripts each; the JSONs are updated in lockstep with Amendment f and its single-wire revision — start→await retargets, End nodes, and OR fan-ins — with the per-file deltas pinned below; parity holds because start ≡ await (same wire ids, same readiness), End appends one $0 engine execution after the last agent, and the OR valve is the b-era Merge under a new name (in-wires keep their ids and maxCycles — budgets/gates count identically); the counts pinned below double-check the copy). Shape rules the graphs follow: every template gets a Task source node; every template carries exactly ONE End node wired from its terminal — `webui.pass` where webui exists (wf_full, wf_no-clarify, wf_provided-plan, wf_full-no-decompose), else `reviewer.pass` (wf_quick-fix, wf_clarify-implement, wf_clarify-quick-fix); sequencing wires `implementer.done → reviewer.done` and `reviewer.pass → manualTestsChecklist.await` and `checklist.checklist → webui.checklist` reproduce v1's linear order; refine self-loops and review loops carry `config.maxCycles: 3` (template default — user overlays migrate separately in Task 11); templates with BOTH reviewer and webui loops (wf_full, wf_provided-plan, wf_full-no-decompose) fan them through an OR card (single-wire revision): `reviewer.review → n_or.in1` and `webui.review → n_or.in2` — each in-wire keeps its own `config.maxCycles: 3` (these are the loop wires and gate sites) — and `n_or.out → implementer.fix` carries NO config (plain always-source wire; maxCycles on it would fail V13); the b-era Merge valve under the OR name, homogeneous md, resolveOrOutType ⇒ 'md'; `wf_provided-plan`'s task node carries `config: { planStoreSeed: true }` (Amendment A2 — reproduces v1's plan-store entry seeding).
+
+  **Per-seed deltas, round 1 (Amendment f: End nodes + start→await retargets) — APPLIED; the files already match (verified 2026-08-10).** For the record: wf_full w13 start→await + n_end + w16; wf_no-clarify w11 + n_end + w13; wf_provided-plan w10 + n_end + w13; wf_full-no-decompose w11 + n_end + w14; wf_quick-fix n_end + w6; wf_clarify-implement n_end + w10; wf_clarify-quick-fix n_end + w8 (every n_end at the file's own 300px x-spacing, y 198, `config: {}`).
+
+  **Per-seed deltas, round 2 (single-wire revision: OR fan-ins) — ALSO APPLIED (wire ids and counts verified against the files 2026-08-10; this table is the copy-check):**
+
+  | file | pre-round-2 | retargets (single-wire revision) | add node | add wire | final counts |
+  |---|---|---|---|---|---|
+  | `wf_full.v2.json` | 10 / 16 | **w12** `to` → `{node:'n_or', port:'in1'}` (keep `maxCycles: 3`); **w15** `to` → `{node:'n_or', port:'in2'}` (keep `maxCycles: 3`) | `n_or` kind `or`, `config: {arity: 2}`, x 2010 y 430 | **w17** n_or.out → n_impl.fix (NO config) | **11 / 17** |
+  | `wf_provided-plan.v2.json` | 8 / 13 | **w9** `to` → n_or.in1 (keep maxCycles); **w12** `to` → n_or.in2 (keep maxCycles) | `n_or` arity 2, x 1410 y 430 | **w14** n_or.out → n_impl.fix (no config) | **9 / 14** |
+  | `wf_full-no-decompose.v2.json` | 9 / 14 | **w10** `to` → n_or.in1 (keep maxCycles); **w13** `to` → n_or.in2 (keep maxCycles) | `n_or` arity 2, x 1710 y 430 | **w15** n_or.out → n_impl.fix (no config) | **10 / 15** |
+  | `wf_no-clarify.v2.json` | 9 / 13 | **NONE — verified against the file: only w10 (reviewer.review→impl.fix) targets fix; webui.review is UNWIRED (no webui loop in this template, matching its two-feedback v1 row). No n_or.** | — | — | 9 / 13 |
+  | `wf_quick-fix.v2.json` (5/6), `wf_clarify-implement.v2.json` (7/10), `wf_clarify-quick-fix.v2.json` (6/8) | — | **NONE** (single review loop each — w5/w9/w7; verified single-wire throughout) | — | — | unchanged |
+
+  n_or placement rationale (any deterministic spot is fine; these sit BELOW the main row on the loop corridor, roughly midway between n_impl and the far source): wf_full 2010 = midpoint(1560, 2460); wf_provided-plan 1410 = midpoint(960, 1860); wf_full-no-decompose 1710 = midpoint(1260, 2160); y 430 for all three. Parity note: the retargeted wires KEEP their ids and their maxCycles — source firings, per-wire delivery counts, and gate sites are identical to the direct-wire shape; the OR adds one $0 instant exec row per loop emission and forwards the identical review path to `fix`.
+
+  `overlay-maps.json`: **NO CHANGE** — verified unaffected by Amendment f: NODE_ID_MAP maps old step ids (s0_0…, s_clarify) onto EXISTING node ids only (n_end has no v1 counterpart, so no row); FB_WIRE_MAP maps fb ids onto loop-wire ids only (wf_full w5/w12/w15, wf_no-clarify w3/w10, wf_provided-plan w2/w9/w12, wf_full-no-decompose w5/w10/w13, wf_quick-fix w5, wf_clarify-implement w9/w5, wf_clarify-quick-fix w7, wf_default w5/w9) — none of which is a retargeted pass wire, and no wire id changes. Re-verified for the single-wire revision: FB_WIRE_MAP rides wire IDS (wf_full fb→w12/w15, wf_provided-plan fb→w9/w12, wf_full-no-decompose fb→w10/w13), and those wires keep their ids as the OR in-wires — which is EXACTLY where budgets/gates now count, so the user's migrated max_cycles-style overlays land correctly by construction (the parity-critical fact of the round).
+
+- `NODE_ID_MAP` / `FB_WIRE_MAP` — the static overlay-migration mappings (old step id → node id; old fb id → wire id) for all 7 templates AND wf_default, exported for Task 11. **Verbatim data in `docs/superpowers/plans/2026-08-10-seed-templates/overlay-maps.json` — copy unchanged.** Notable rows: wf_no-clarify fb_0→refine self-wire, fb_1→review loop wire (the user's max_cycles=6 overlays ride these); wf_clarify-implement's fb order is swapped in the DB (fb_0 = reviewer loop, fb_1 = refine self).
+
+- [ ] Steps:
+  - Failing tests: `Object.isFrozen(GRAPH_DEFAULT_WORKFLOW)` AND `Object.isFrozen(GRAPH_DEFAULT_WORKFLOW.nodes[0])` (deep) + literal shape (id `wf_default`, version 2, 7 nodes incl. one `task` + one `end`, 10 wires, w5/w9 `config.maxCycles === 3`) — NOT deepEqual against FIXTURE_DEFAULT (after the re-export that would be a tautology; the re-export itself is the drift guard).
+  - Seed drift guard: every SEED_TEMPLATES graph passes `validateGraph(graph, portsFnFor(FIXTURE_PORTS))` with zero errors AND zero warnings (the V18 void-input exemption is what keeps wf_quick-fix and wf_clarify-quick-fix warning-free — their reviewers pair an always plan with a void done; the retargeted checklist gate wires additionally rely on the V18 await-port exemption — await is any-typed, exempt by its own clause; the three OR-fanned seeds additionally rely on V19's or-inK exemption — blocking → or.inK is the canonical loop shape, no warning); per-template structural pins for the parity-critical wires (concurrency parity depends on them — dropping any re-orders execution): every template wires `implementer.done → reviewer.done`; templates with checklist wire `reviewer.pass → checklist.await`; every template has exactly one `kind:'end'` node and its terminal wire (`webui.pass` or `reviewer.pass` → `n_end.result`) — ids per the delta table above; templates with clarify wire `clarify.answers → planner.answers`; double-loop templates fan `reviewer.review → n_or.in1` and `webui.review → n_or.in2` (each with maxCycles 3 — the loop wires) and wire `n_or.out → implementer.fix` with NO config; no input anywhere carries two wires (the zero-errors guard enforces V7 structurally — assert it anyway as an explicit per-template scan); `wf_provided-plan` has `task.planStoreSeed === true` and its task wires to `refiner.plan`; loop-wire maxCycles all 3. Pin counts: wf_full = 11 nodes/17 wires, wf_no-clarify = 9/13, wf_provided-plan = 9/14, wf_full-no-decompose = 10/15, wf_quick-fix = 5/6, wf_clarify-implement = 7/10, wf_clarify-quick-fix = 6/8.
+  - Implement; PASS; commit `feat(graph): builtin default workflow v2 + saved-template seeds`. Run FULL suite (`npm test`) — Phase 1 adds no callers, nothing else may break.
+
+---
+
+## Phase 2 — Agent meta v2, sidecars, executor, prompt pinning [PR2]
+
+### Task 6: agent-registry meta v2
+
+**Files:**
+- Modify: `src/core/agent-registry.mjs` (normalizeMeta :179; DEFAULT_SPEC :40-55 stays for now — see shim; description-derivation :326-332)
+- Modify: `src/core/claude-runner.mjs` — export `MOCK_WRITER_ROLES` = the writer switch's case-string set (no behavior change; needed HERE because this task's mockRole validation consumes it — Task 8 then reuses the export)
+- Test: `test/agent-registry-v2.test.mjs`
+
+**Interfaces:**
+- Produces: registry entries expose `inputs`, `outputs`, `verdict`, `sideEffect`, `mockRole`, `metaVersion:2`, `portSummary` (derived text — do NOT reuse the name `descriptionDerived`: today that is a BOOLEAN "description came from frontmatter" flag with a live test, `test/agent-derived-description.test.mjs`, which stays green), **plus the Amendment-d capability fields**:
+  - Input ports: `as?: 'file'|'answers'|'fix-review'|'worktree'` (default `'file'`; validation: `answers` ⇒ type json, `fix-review` ⇒ type md, `worktree` ⇒ type void), `directive?: string` (markdown block appended to the task prompt only when the port is bound FRESH; supports `{path}` substitution).
+  - Output ports: `artifactKind?: string` (default = the port id; the `artifact` event label — lets builtins pin today's v1 kinds).
+  - Agent level: `wantsRequest?: boolean` (default false — adds the `## Original request` block to the task prompt even off the entry path), `workspaceFanOut?: boolean` (default false — workspace runs force `fanOut` on; replaces the v1 FANOUT_ELIGIBLE key set at orchestrator.mjs:135/:463), `workspaceStrategy?: 'explore'|'task'|'review'` (absent ⇒ no workspace fan-out prompt block; selects the `workspaceFanOutDirective` arm the dying bespoke runners hardcoded), `workspaceVariantOf?: '<agentKey>'` (declares this agent the workspace substitute for the named key; must be `scope:'workspace-only'`; self-reference rejected), `placeable?: boolean` (default true; `false` = never a graph node — drives V4, resolveGraph, palette filtering), `mockRole` validated against `MOCK_WRITER_ROLES` exported by claude-runner (unknown ⇒ warning + field dropped so the mock fallback chain applies — the writer switch's no-op default is unreachable from sidecars). NEW validation rule (Amendment f): port id `await` is RESERVED on both sides (the engine-synthesized gate port) — sidecars declaring it are rejected (400 text names the reservation); `any` remains undeclarable (already implied by the closed type set).
+- Normalization MATERIALIZES all port defaults (`required:true`, `when:'always'`, `store:'run'`, **`as:'file'` on NON-VOID inputs only** (void inputs carry no renderer), `artifactKind:<port id>` on non-void outputs; no `seed` field — Amendment c) — this canonical shape is what FIXTURE_PORTS (Task 1) stores, same rule stated there. `loop: true` coerces `required: false`. normalizeMeta NEVER adds the await port — registry entries expose meta ports only; synthesis happens in the graph ports layer (Task 1 portsFnFor / Task 12 resolveGraph / Task 15 client mirror), so the Task 7 drift guard and the v1-compat shim never see it.
+- v1 sidecars (no `metaVersion:2`) are SKIPPED with `console.warn` containing the exact string `requires metaVersion 2`. `loopSource` dies (subsumed by `when`). Validation rules from spec §5 (+ Amendment d fields) enforced in `normalizeMeta` (load: skip+warn) and exported as `validateMetaV2(meta) -> {errors:[string]}` for agent-store 400s.
+- A v2 sidecar whose `agentFile` body is missing/empty is skipped at load with a warning (FALLBACK_PROMPTS dies in Phase 3 — a portless generic line in buildSystemPrompt is the only remaining net).
+- **v1-COMPAT SHIM (critical — keeps the live v1 engine green until Phase 3):** normalizeMeta v2 additionally DERIVES the v1 fields the running engine still reads (`workflows.mjs:315-318`, `channels.mjs:116/:132/:259`, `workflow-validator.mjs:121-181`, `orchestrator.mjs:448/:884`): `consumes` = required non-void input ids mapped to v1 channel names, `optionalConsumes` = optional ones, `produces` = non-void output channel names, `connectsTo: '*'`, `channelDefs` from output filenames, `uiPhase` from the existing key map. **Port-id → v1-channel map (shim-internal, sanctioned key-mapped DATA — the v1 engine binds channels by exact name, so this table is load-bearing):** inputs `task`(md)→`userPrompt`, `answers`→`clarify`, `fix`→`review`, `revise`→`review`, `task`(json/expands)→`decomposition`, `done`→`code`, `checklist`→`checklist`, `plan`→`plan`, `workspace`→`workspace`; void inputs with no v1 channel are DROPPED (none exist among the builtins after Amendment f removed `start`; the rule stays for custom v2 sidecars — shim output for every builtin is byte-identical); outputs map identically with void outputs (`done`, `pass`) dropped and duplicate channel names deduped (refiner's plan+revise → `produces: ['plan']`). `DEFAULT_SPEC` deletion and shim removal happen in Task 25, NOT here. Between PR2 and PR3, `npm test` and `npm run smoke` stay green on the v1 engine. (The shim is the ONLY sanctioned key-mapped code outside data files, and it is temporary.)
+- Consumes: nothing from Phase 1 (independent).
+
+- [ ] **Step 1: Failing tests**: v2 sidecar loads with ports; v1 sidecar (fixture with `consumes`) skipped + warn; each §5 rule rejects (bad port id, void with filename, verifier without verdict, `loop` on a required input → coerced optional with warning, `expands` on md input, 9-port side, duplicate output ids, `when:'clean'` without verdict…); Amendment-d rules reject (`as:'answers'` on an md input; `as:'worktree'` on a json input; `workspaceVariantOf` self-reference; `workspaceVariantOf` on a non-workspace-only agent; unknown `mockRole` → warn + dropped; `workspaceStrategy:'bogus'` rejected; sidecar declaring an input or output with id 'await' → rejected with rule text naming the reserved id); defaults materialize (`as:'file'`, `artifactKind` = port id); `portSummary` equals `Reads plan, fix; produces done.`-style text for implementer fixture; empty-agentFile v2 sidecar skipped + warn; SHIM test: v2 reviewer sidecar yields `consumes:['plan']`, `optionalConsumes:['code']`-equivalent per the channel mapping, `produces:['review']`, `connectsTo:'*'`.
+- [ ] **Step 2: FAIL.** **Step 3: implement.** **Step 4: PASS.**
+- [ ] **Step 5:** Update `test/agent-registry-schema-v2.test.mjs` expectations — run, fix, commit `feat(agents): sidecar metaVersion 2 with typed ports + capability flags (+v1 engine shim)`.
+
+### Task 7: Rewrite the 11 builtin sidecars + .md `## Ports` sections
+
+**Files:**
+- Modify: all `agents/*.meta.json` (11 files) — content = spec §5 table + Amendment d/f fields verbatim — the f delta being: **implementer.meta.json loses its `start` input; manualTestsChecklist.meta.json loses its `start` input** (camelCase — the shipped sidecar filename; only the .md is kebab-case) (spec §5 table rows updated by Amendment f: implementer = plan/fix/task; checklist = plan) — (same shape as Task 1 FIXTURE_PORTS, plus the retained v1 fields: displayName/color/icon/agentFile/runnerType/scope/domain/order/fanOut/questions trio/promptHints/mockRole). NOTE: `promptHints` exists in the v1 schema but NO builtin sidecar sets it today — adding one is new content; only do it where a dying bespoke builder's "What to do" text needs a home, and Task 9 pins the assembled result.
+- Capability-field assignments (from the genericity adjudication — copy exactly):
+  - `workspaceFanOut: true` on planner, refiner, implementer, planReviewer, workspaceReviewer.
+  - `workspaceStrategy`: planner/refiner/planReviewer = `explore`; implementer = `task`; reviewer + workspaceReviewer = `review`. (Absent on clarify/decomposer/checklist/webui/scanner — they get no workspace block, as today.)
+  - `workspaceVariantOf: "reviewer"` on workspaceReviewer. `placeable: false` on workspaceScanner.
+  - `wantsRequest: true` on refiner, reviewer, planReviewer (reproduces phases.mjs:450's key test byte-for-byte).
+  - `as`: planner.answers = `answers`; implementer.fix = `fix-review`; reviewer.done + workspaceReviewer.done = `worktree`; everything else defaults `file`. manualTestsChecklist's diff-instruction wording moves into its `promptHints` (it is unconditional today, not input-gated).
+  - `directive` (copy the strings VERBATIM from phases.mjs BEFORE Phase 3 deletes them): implementer.fix = the fix-mode body; implementer.task = the decomposed-slice body (the parallel-siblings warning stays ENGINE-generated — do not copy it); planner.revise = the REVISE block.
+  - `artifactKind` pins where the port id ≠ today's v1 artifact-event kind: clarify.answers → `"clarify"`; manualWebUiTesting.review (md) → `"webui"`. All others keep the default (= port id, which already equals today's kinds: plan/checklist/review).
+- Modify: all `agents/worca-cc-*.md` — add the `## Ports` section per spec §5 skeleton: REPLACE the existing `## Inputs (from the task prompt)` heading where present (7 files: code-reviewer, manual-tests-checklist, manual-web-ui-testing, plan-refiner, plan-reviewer, workspace-reviewer, workspace-scanner); INSERT it after the role section in the 4 files that lack the heading (planner, clarify, implementer, decomposer). The implementer and manual-tests-checklist `## Ports` sections must NOT document a start port (removed by Amendment f); NO sidecar or .md documents `await` (universal, engine-owned — spec §5's amended skeleton carries one generic sentence about the synthesized gate; the .md files stay meta-port-only). Verdict/clarify JSON contract sections stay byte-identical; remove filename-convention sentences.
+- Test: `test/agents-sidecars-v2.test.mjs`
+
+**Interfaces:**
+- Produces: `loadAgentRegistry(DEFAULT_AGENTS_DIR)` returns 11 v2 entries whose normalized ports + capability fields deep-equal `FIXTURE_PORTS` (single test importing both — THE drift guard between fixtures and shipped data; it is also what forces the fixtures' `directive` placeholders to become the real copied bytes). Both sides of the deep-equal are meta-only — no await port on either side (synthesis happens above the registry, Task 6 note) — so the guard is unaffected by Amendment f's synthesis.
+- `mockRole` values pin today's writer table — EXACT case strings from the `claude-runner.mjs:645-693` switch: planner→`planner-plan`, refiner→`refiner`, decomposer→`decomposer`, implementer→`implementer`, reviewer→`reviewer`, planReviewer→`plan-review`, workspaceReviewer→`workspace-reviewer`, manualWebUiTesting→`manual-web-ui-testing`, manualTestsChecklist→`manual-tests-checklist`, clarify→`clarify`, workspaceScanner→`workspace-scan`. (Also in the switch, unused by sidecars: `agent-gen`, `generic-producer`, `generic-verifier`.)
+
+- [ ] Steps: write drift-guard test (FAIL), rewrite sidecars + md bodies, PASS, full `npm test` — the Task 6 compat shim keeps engine/channel/composer suites green; expected remaining fallout only in tests asserting raw sidecar file contents (e.g. `test/connects-to.test.mjs` if it reads files directly) — update, each change justified in the commit body. Commit `feat(agents): port-based sidecars v2 + Ports sections`.
+
+### Task 8: executor.mjs — port binding, allocation, verdict routing, flow executors
+
+**Files:**
+- Create: `src/core/graph/executor.mjs`
+- Consumes: the `MOCK_WRITER_ROLES` export added in Task 6 (claude-runner.mjs)
+- Test: `test/graph-executor.test.mjs`
+
+**Interfaces:**
+
+```js
+export function allocateOutputs({ node, ports, executionId, ordinal, runCtx })
+// runCtx = { pipelineDir, projectDir, baseName, datePrefix, workspaceKey, planVersion(), duplicateKey }
+// -> { [portId]: { path, store } } ; filename tokens {cycle}->ordinal, {vsuffix}->planVersion(), {base}->baseName
+// store 'project' resolves via artifacts.mjs planPath/reviewPath helpers (import, don't duplicate).
+// DUPLICATE-KEY RULE (generic): when >=2 agent nodes in the resolved graph share one agent key,
+// every store:'run' output and the verdict allocation for those nodes is prefixed '<nodeId>-'
+// (deterministic, resolve-time; single-instance graphs — every builtin/seed template — are
+// byte-identical to today). Duplicate keys are LEGAL; this prevents impl-review-cycle1.json clobber.
+export function portIoBlock({ node, ports, bindings, outputs })  // -> markdown '## Ports (this run)' block
+export async function runAgentExecution(ctx)      // generalizes phases.mjs runGenericProducer/Verifier :1185/:1218
+export async function runClarifierExecution(ctx)  // selected by meta.runnerType === 'clarifier' — NEVER by key
+export function runAndExecution({ node })  // -> { outputs: { out: {} } }  (void token; instant, $0)
+export function runOrExecution({ node, bindings })
+// -> { outputs: { out: passthrough of the freshest bound input } }  (payload-forwarding valve —
+//    single-wire revision, b-era Merge semantics; the scheduler owns any-fresh triggering,
+//    freshest selection, and same-drain single emission; the out token's type = the resolved
+//    or type, path/value preserved)
+export function runEndExecution({ node, bindings })
+// -> { result: { path?, value?, type } } — records the bound result token as the run result; NO outputs.
+//    The scheduler stores it as the snapshot's `ended.result`; instant, $0.
+export function runTaskExecution({ node, taskArtifact, runCtx })
+// -> { outputs: { task: { path } } } (source node, fires once). Amendment A2: when
+// node.config.planStoreSeed === true, ALSO write the rendered document to
+// planPath(projectDir, baseName, 1, datePrefix, workspaceKey), emit THAT path as the token,
+// and start the run's planVersion counter consumed at 1 (next plan-store write = '-v2').
+export async function runCombineExecution({ node, bindings, allocatedPath })  // concat with '## From <name>' headings
+export function readVerdict(verdictPath)          // -> normalized review via protocol.readReview
+```
+
+The executor table is keyed by `node.kind` + `meta.runnerType` — `{ task, and, or, end, combine, agent, clarifier }` (no merge, no await executor — Amendments e/f; the OR's freshest-selection lives in the scheduler, the payload passthrough here). No agent-key branch anywhere in this module (genericity charter).
+
+**Clarifier contract (generic — any agent with `runnerType:'clarifier'`):** the FIRST json output port is the answers port (meta validation guarantees ≥1 json output). Execution: spawn the agent → it writes questions JSON to that port's allocated path (`protocol.normalizeClarify` shape; malformed/empty tolerated ⇒ no gate, empty answers — today's behavior) → if questions exist, the engine gates via `ask({ id: 'clarify-<nodeId>-<ordinal>', kind: 'clarify', nodeId, agent: displayName, questions })` (nodeId-scoped ids — v1's `clarify-<cycle>` would collide with multiple clarifiers) → the engine REWRITES the output file to `{questions, answers}` (idempotent full-file write; snapshot lands only after publish, so a mid-gate resume re-runs the gate from the questions half) → publishes the token (self-contained + resume-safe for any consumer). Persistence: `writeStepQuestions(pipelineId, stepKey, round, { agentKey, nodeId, questions, answers })` (the REAL export, artifacts.mjs:165 — pass the executionId as `stepKey`) + upsert of the legacy pipeline-level clarify row (last-writer-wins; per-node truth lives in step-questions). Any number of clarifier nodes per graph is legal.
+
+**A3 (fresh-trigger mode selection):** `runAgentExecution` receives `trigger.freshPorts` from the scheduler; an input's `directive` renders (and its mode applies) ONLY when that port is in `freshPorts` — a latched loop-input token never selects fix/revise/decomposed mode. First executions list every bound port as fresh.
+
+**MOCK_ROLE resolution chain (generic — replaces "fallback by verdict presence"):**
+1. `meta.mockRole` when it names a member of `MOCK_WRITER_ROLES` (Task 6 validation guarantees this);
+2. else `runnerType === 'clarifier'` ⇒ `'clarify'` (markers: `MOCK_OUT` = answers-port path, `MOCK_CYCLE` = ordinal, `MOCK_PRIOR` = count of this node's previously answered questions — terminates clarifier loops offline);
+3. else the node has an output port wired into an `expands` input (graph-derived, resolve-time) ⇒ `'decomposer'` (markers: `MOCK_OUT` = that port's path, `MOCK_TASKS_DIR` = `<pipelineDir>/tasks`) — a VALID decomposition so the downstream composite runs offline;
+4. else `meta.verdict` present ⇒ `'generic-verifier'` (md to `MOCK_OUT`, cycle-decreasing verdict json to `MOCK_JSON`);
+5. else `'generic-producer'`.
+`MOCK_CYCLE` = execution ordinal ALWAYS. `MOCK_JSON` = the verdict path whenever `meta.verdict` exists, regardless of runnerType. Flow nodes (task/and/or/end/combine) never spawn a process in any mode. Task 9 pins builtin markers; Task 23 audits the chain.
+
+`runAgentExecution` builds prompts from `taskHeader` + `meta.promptHints` + `portIoBlock` + `directive` blocks (fresh-bound ports only) + `questionsPromptBlock` + `mockMarkers` and calls the existing `runOpts`/`runClaude` path (`phases.mjs:396`, `claude-runner.mjs:213`) — reuse, don't fork. NOTE: `runOpts` and `mockMarkers` are currently module-PRIVATE in phases.mjs — first step of implementation is exporting them (no behavior change). The request/attachments gate in taskHeader becomes: `(some bound input's token originates from a kind:'task' node) || meta.wantsRequest === true` — replacing phases.mjs:450's `key === 'refiner' || key === 'reviewer' || key === 'planReviewer'` test (the three sidecars carry `wantsRequest: true`). Workspace: `runAgentExecution` appends `workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, ...)` when `workspaceStrategy` is set (the per-runner hardcodes die with the runners). portIoBlock's per-port renderer = `meta.as` (default `file`) — never inferred from key or port id. The synthesized await binding is INVISIBLE to the prompt layer — the scheduler consumes the await token for freshness bookkeeping but never places it in `bindings`; portIoBlock therefore never lists it, no directive/as/mode logic can touch it, and 'await' may appear in trigger.freshPorts without effect (a pure-await re-fire renders the base implement-mode prompt — exactly the old checklist start behavior). Combine output allocates `combine-<nodeId>-c<ordinal>.md` in pipelineDir.
+
+**Conditional outputs still allocate + render every execution (parity D7):** `when` gates token ROUTING only; the Ports block always lists every output's absolute path, so a passing reviewer still writes its review md + verdict json exactly as today.
+
+- [ ] **Step 1: Failing tests**: allocation (implementer done:void → no path; reviewer verdict path `impl-review-cycle2.json` at ordinal 2; planner `{base}.md` then `{base}-v2.md` via planVersion counter; store:'project' lands under store dirs — use `useTempHome` helper); DUPLICATE-KEY: two nodes sharing one verifier key allocate disjoint `<nodeId>-`-prefixed run-store + verdict paths, single-instance byte-identical to today; portIoBlock lists every bound input as `- **plan** (md) -> /abs/path` and outputs as `Write ... to: /abs/path` INCLUDING conditional outputs on every execution (D7); RENDERER SELECTION: renderer = meta.as (a custom md input with `as:'fix-review'` renders the fix arm; same input without `as` renders as file — proves no port-id inference); MODE SELECTION (A3): `fix` in freshPorts renders the fix directive + announces fix mode; `fix` bound-but-latched (not in freshPorts) with fresh `plan` renders NO fix directive (implement mode); `task` fresh renders the slice arm; planner `revise` fresh renders the REVISE arm; A2: `runTaskExecution` with `planStoreSeed` writes the plans-store file, emits its path, planVersion starts at 1 (next = -v2); without the flag emits the pipelineDir doc (byte-identical to renderPromptArtifact's output — same title/prompt/extras block); CLARIFIER: custom clarifier fixture (runnerType clarifier, one json output `qa`) runs the clarifier executor, gates with a nodeId-scoped ask id, engine rewrites the file to `{questions, answers}`, publishes the token; zero-questions clarifier skips the gate and still emits an answers token; combine concatenation order + headings + its `combine-<nodeId>-c<ordinal>.md` path; the and executor emits a void `out` token (no path, no payload); the or executor re-emits the freshest bound input's payload — assert path AND type preserved for an md binding (the valve must not drop payloads); end executor records the bound result (path preserved for an md source; null for void) and emits NO outputs; portIoBlock omits the await port even when the node's await is wired (bindings never contain it); MOCK chain: custom clarifier resolves role `clarify`; custom producer wired into an expands input resolves `decomposer`; custom verifier resolves `generic-verifier`; unknown mockRole in a raw meta was already dropped by Task 6 (assert the chain never yields a non-MOCK_WRITER_ROLES value).
+- [ ] **Step 2: FAIL. Step 3: implement. Step 4: PASS.**
+- [ ] **Step 5: Commit** — `feat(graph): generic execution layer (binding, allocation, clarifier, flow nodes, mock chain)`
+
+### Task 9: Prompt snapshot pinning
+
+**Files:**
+- Create: `test/graph-prompt-parity.test.mjs`
+
+For each of the 11 builtins: assemble the v2 task prompt via `runAgentExecution`'s builder in mock ctx, and assert it CONTAINS every load-bearing line of today's bespoke prompts: absolute output path lines, `MOCK_ROLE`/`MOCK_OUT`/`MOCK_JSON`/`MOCK_CYCLE` markers, verdict-contract reminder line, fan-out directive when enabled, RESUME_HEADER on resumed ctx, PLUS one load-bearing line each from today's implementer FIX-mode prompt and planner REVISE prompt (both sourced from sidecar `directive` fields after Task 7 — this test proves the moved bytes still assemble identically), PLUS the request-policy pins (v1 `phases.mjs:442-489` semantics): `## Original request` present for task-node-wired agents AND for refiner/reviewer/planReviewer (via `wantsRequest`), `## Upstream input` otherwise; attachments block only for task-sourced bindings. Build the expected-line lists by READING the current builders in `src/core/phases.mjs` (:442 taskHeader; contract-line copies at :872-874 reviewer, :908-910 planReviewer, :681-683 refiner, **:952-955 workspaceReviewer — FOUR lines; the 4th (":955 collapse one), sorted by projectKey…") is load-bearing for the workspace UNION rule**, :1118-1120 webui, :1243-1245 generic verifier) BEFORE they are deleted in Phase 3/4 — copy the exact strings into the test.
+
+- [ ] Steps: write test against v2 builder (FAIL if builder incomplete), fix builder until PASS, commit `test(graph): pin load-bearing prompt lines for builtins`.
+
+### Task 10: agent-gen v2 + agent-store validation
+
+**Files:**
+- Modify: `src/core/agent-gen.mjs` (`_metaSchemaBlock` :125-142; `_neighborBlock`)
+- Modify: `src/core/agent-store.mjs` (save path → `validateMetaV2`, HTTP 400 with rule text)
+- Test: `test/agent-gen-v2.test.mjs`, extend `test/agent-store.test.mjs`
+
+"Define whatever agents you want" requires the generator to KNOW the full surface: `_metaSchemaBlock` rewritten to enumerate ALL of meta v2 — `metaVersion: 2`, `runnerType: producer|verifier|clarifier`, `verdict:{filename}`, `sideEffect:'code'`, `inputs[{id,type,label,required,loop,expands,as,directive}]`, `outputs[{id,type,when,filename,store,artifactKind}]`, `scope`, `domain`, `order`, fanOut/questions trio, `requiresSkills`, `promptHints`, `wantsRequest`, `workspaceFanOut`, `workspaceStrategy`, `workspaceVariantOf`, `placeable`, and `mockRole` ("omit unless mimicking a builtin writer; unknown values are dropped"); one more enumerated line: port id `await` is reserved (engine gate port — never declare it). `_neighborBlock` switches from produces/consumes to port lists (ids + types + when). The channel-vocabulary block dies.
+
+Known mid-branch gap (accepted): between this task and Task 16, the LIVE v1 Agents-view form (app.js:5242+) posts v1-shaped meta which validateMetaV2 rejects with a 400 — agent saving through the UI is broken on the branch until the Task 16 port editor replaces the form. `npm test`/`npm run smoke` are the green bar; do NOT add a dual-accept path.
+
+- [ ] Steps: failing tests (schema block mentions `metaVersion: 2`, `inputs`, `outputs`, closed type set, `loop`, `expands`, `when`, `store`, `verdict`, `clarifier`, and no longer mentions `consumes`/`connectsTo`; generated-meta fixture with 0 outputs rejected; generated CLARIFIER draft with zero json outputs rejected; schema block mentions the reserved 'await' id (a draft declaring an await port is rejected via Task 6's validateMetaV2 — one assertion suffices); store 400 message equals validateMetaV2 error text), implement, pass, commit `feat(agents): generator + store on meta v2`. Full `npm test`.
+
+---
+
+## Phase 3 — THE BREAK: engine swap + persistence + server + UI [PR3, atomic]
+
+> Re-ground this phase (Fable plan refinement) after Phase 2 lands. Interfaces below are binding; line anchors are as of 2026-08-10 (fact-checked against the working tree that day) and must be re-verified.
+
+### Task 11: DB migration V17 — graph column, RE-SEED, overlay migration
+
+**Files:**
+- Modify: `src/core/db.mjs` (SCHEMA_VERSION 16→17 at :54; ladder :742-782; INCREMENTAL_COLUMNS map declared :555 — `pipeline_steps` row :560, `workflows` row :562)
+- Test: `test/migrate-v17.test.mjs` (pattern-copy `test/migrate-v16.test.mjs`)
+
+Migration body (spec §8 + re-seed decision), IN THIS ORDER:
+1. `ALTER TABLE workflows ADD COLUMN graph TEXT;` · `ALTER TABLE pipeline_steps ADD COLUMN execution_id TEXT;` · `CREATE TABLE config_workflow_wires (workflow_id TEXT, project_key TEXT, wire_id TEXT, max_cycles INTEGER, PRIMARY KEY (workflow_id, project_key, wire_id));`
+2. **Re-seed** (import `SEED_TEMPLATES` from `src/core/graph/seed-templates.mjs` — the constants now carry End nodes, await retargets, and the single-wire revision's OR fan-ins per Task 5; no migration-code impact): per template present as a version-1 row, `UPDATE workflows SET version = 2, graph = <json>, steps = '[]', feedbacks = '[]', updated_at = <now> WHERE id = ? AND version = 1` — preserves `created_at`/`origin`; ids absent from the DB are skipped (no insert). One audit line per re-seeded row.
+3. **Overlay migration** (import `NODE_ID_MAP` / `FB_WIRE_MAP` — cover the 7 templates AND wf_default): `UPDATE config_workflow_nodes SET node_id = <new> WHERE workflow_id = ? AND node_id = <old>` per mapping row; then per feedback mapping `INSERT OR REPLACE INTO config_workflow_wires (workflow_id, project_key, wire_id, max_cycles) SELECT workflow_id, project_key, '<wireId>', max_cycles FROM config_workflow_feedbacks WHERE workflow_id = ? AND fb_id = ?`. Unmapped `config_workflow_nodes` rows stay orphaned (resolveGraph ignores unknown node ids); `config_workflow_feedbacks` becomes unread legacy.
+4. `DELETE FROM workflows WHERE version = 1;` — now deletes only NON-reseeded rows (e.g. `wfp_*` plugin imports); log one audit line per deleted row: id + name.
+5. **INCREMENTAL_COLUMNS registration (required by db.mjs's healing contract, comments :567-:585)**: add `execution_id` to the `pipeline_steps` row (:560), `graph` to the `workflows` row (:562), and `config_workflow_wires` to the new-table gap detection — omitting these silently breaks `reconcileSchema`'s divergent-ladder healing.
+
+- [ ] Steps: failing test — seed a v16 DB with all 7 v1 workflow rows (real steps/feedbacks JSON), the user's overlay shapes (`config_workflow_nodes` rows keyed s0_0-style incl. a wf_default row; `config_workflow_feedbacks` wf_no-clarify fb_0/fb_1 max_cycles 6), one `wfp_*` v1 row, and steps rows; migrate; assert: user_version 17; all 7 rows version=2 with parseable `graph` that passes `validateGraph` (portsFn from FIXTURE_PORTS — passing now implies the V21/V7 rules too: a seed missing its End node OR still carrying a direct double fix fan-in would fail here, so the drift guard bites); `created_at` preserved; `wfp_*` row deleted; `config_workflow_nodes` node_ids rewritten (spot-check wf_full s4_0→n_impl and the wf_default map — verified against overlay-maps.json, which Amendment f does not touch); `config_workflow_wires` holds wf_no-clarify's two wires at max_cycles 6; columns exist; reopen idempotent (second migrate is a no-op). Implement, pass, commit `feat(db): V17 graph column, re-seed saved templates as v2, overlay migration`.
+
+### Task 12: workflows.mjs v2 (store + resolve + manifest)
+
+**Files:**
+- Modify: `src/core/workflows.mjs` — writeWorkflow/readWorkflow/listWorkflows to graph column + version 2 (reject version≠2); DELETE `DEFAULT_WORKFLOW` and `rewriteStepperForDecomposition` (:395), import `GRAPH_DEFAULT_WORKFLOW`; `resolveWorkflow` → `resolveGraph(projectDir, workflowId, registry, agentsDir, {isWorkspace})` returning `{ template, ports, nodeCtx }` — the returned `ports` fn synthesizes the universal await input and the and/or/end/task/combine flow ports EXACTLY as Task 1's portsFnFor — import/reuse the ONE shared synthesis (AWAIT_PORT + kind table) rather than re-implementing; every validateGraph caller (server save route T14, plugin import T24, orchestrator run-time T13, seed drift guard T5) must go through a synthesizing portsFn or the seeds' pass→checklist.await wires fail V5 — with per-node model/effort overlay (node > role > global, keep `config.mjs` resolveStepModels inputs) AND per-wire maxCycles overlay merged from the new `config_workflow_wires` table (overlay > template `wire.config.maxCycles` > default 3 — without this merge the Task 11 overlay is write-only), **generic workspace substitution: for each agent node, if a registry entry declares `workspaceVariantOf === node.key`, substitute it (constraints enforced here: variant is scope workspace-only; port signatures — input/output ids, types, required/loop/expands/when flags, verdict presence — deep-equal the target's (META signatures; await is synthesized above this layer and never compared), asserted at resolve time for EVERY declared variant; multiple variants for one target: deterministic winner by layer builtin > user > plugin then `order`, console.warn on losers)**; duplicate-key detection feeding Task 8's allocation prefix (`runCtx.duplicateKey`); `placeable:false` agents rejected as nodes at resolve too (defense in depth with V4); `buildStepperManifest` → `buildGraphManifest(resolved)` returning spec §8 manifest v2 (nodes with ports/loop flags/label/color/model/effort; wires with `loop`; bookends) — manifest node ports INCLUDE the synthesized await input and the and/or/end nodes with their ports: the run monitor must anchor the await wires and render the flow cards from the manifest alone; or-card ports carry their RESOLVED payload type (resolveOrOutType at resolve time) so the run monitor and composer preview render md/json/void dots without re-deriving.
+- Modify: `src/core/agent-store.mjs` — `deleteAgent`'s referenced-workflow guard (:134) currently walks `wf.steps[][]`; after V17 that guards NOTHING. Port it to walk v2 `graph.nodes[]` (`kind === 'agent' && node.key === key`), including `workspaceVariantOf` references. Test it.
+- Delete: `src/core/workflow-validator.mjs` (validate.mjs replaces it; update importers: `ui/server.mjs`, `src/core/plugin-workflows.mjs`, AND `src/core/orchestrator.mjs:84`; scrub the stale COMMENT references at `channels.mjs:247` and `guardrail-store.mjs:17` — comments only, no import breakage).
+- Test: rewrite `test/workflows.test.mjs` (roundtrip v2, resolveGraph model/effort precedence, wire maxCycles precedence overlay>template>3, GENERIC substitution: a custom pair `myReviewer` + `myWsReviewer{workspaceVariantOf:'myReviewer'}` substitutes on isWorkspace resolve, mismatched-port variant throws, layer-precedence winner, manifest shape), delete `test/workflow-validator.test.mjs` in favor of Task 3 suite. **`test/saved-pipeline-parity.test.mjs` is REWRITTEN against the seeds, not deleted** — in THIS task it asserts the mock-mode execution traces of `wf_quick-fix` and `wf_clarify-implement` (non-expands seeds) match the v1-parity sequences (the dual-engine adjudication's S3-style scripts) plus a trailing `end` execution ($0) after the final reviewer pass — the AGENT execution sequences are byte-identical to the v1-parity scripts; flow rows ($0 task/end — and, in OR-fanned seeds, or) are excluded from the agent-sequence comparison (explicit pin, wording the Task 21 wf_full case reuses; for these two OR-less seeds the $0 task head and End tail are the only deltas). The `wf_full` trace (S2, needs composite fan-out) CANNOT run inside PR3 — the Task 13 expands guard blocks it; that case lands in Task 21 with the guard removal. Known fallout to update in this task: `test/workflows-db.test.mjs`, `test/workflows-questions.test.mjs`.
+
+- [ ] Steps: failing tests → implement → pass → commit `feat(core): workflows store/resolve/manifest v2 + generic workspace substitution`.
+
+### Task 13: Orchestrator swap
+
+**Files:**
+- Modify: `src/core/orchestrator.mjs` — surgery on the :1722-:2512 span (NOT :2519 — the span ends at `_reviewOf`'s close :2512; :2513+ is the question/gate-plumbing banner and `_ask`, which SURVIVES as the scheduler's ask binding). The span holds 28 methods; account for EVERY one (a bare "delete the block except three" destroys kept machinery's dependencies):
+  **DELETE (v1 dispatch + channel plumbing, 12):** `_dispatch` :1722, `_buildResumePoint` :1902, `_runStep` :1937, `_runDecomposedImplement` :2006, `_runDecomposedTask` :2069, `_runNode` :2093, `_runClarifyNode` :2391, `_bindNodeIo` :2413, `_workspaceChannel` :2439, `_publishNodeIo` :2474, `_loopFired` :2494, `_reviewOf` :2506.
+  **KEEP (re-bound to executionId keying, 15):** `_runNodeAttempts` :2125, `_runOnce` :2155, `_primeQuestions` :2176 (its :2181-2183 prior-answer filter is the nodeId-scoped behavior pinned below), `_questionsPath` :2189, `_questionsLoop` :2204 (calls `_enqueueAsk` :2225), `_pauseForLimit` :2259, `_checkCostLimits` :2269, `_pauseForCost` :2297, `_recover` :2311, `_enqueueRecoveryPrompt` :2337, `_enqueueAsk` :2350, `_backoff` :2359, `_recoveryNonce` :2377, `_reposCtx` :2460, plus everything from :2513 (`_ask` :2521 etc.). Matches spec §10's keep-list (attempts/questions/recover/ask, cost).
+  **`_persistDecomposition` :1989: DELETE here, recreate in Task 21** as part of the composite executor's status plumbing (stamping executionIds, not `s_impl_*` ids). `run()` pre-renders the task artifact (`renderPromptArtifact` text moves here from channels — prompt + extras section), calls `validateGraph(template, portsFn)` after resolveGraph and ABORTS with a clean error on E-rules (templates can go invalid when agent metas change after save), then `createScheduler({ template, portsFn, execute, taskArtifact, onEvent, ask: this._ask, onSnapshot, maxParallel: Number(process.env.WORCA_MAX_PARALLEL) || 4 })` (the env var is NEW — spec §3 names it; this binding is its only reader); `execute` binds the Task 8 executor table (selected by node.kind + runnerType — the genericity charter forbids key branches here) with `_runNodeAttempts/_runOnce/_questionsLoop` machinery re-keyed by executionId (the executionId IS the stepKey: `x:<nodeId>:<ordinal>[:p<P>t<T>]`, stored in `pipeline_steps.execution_id`); **`_questionsLoop`/`readStepQuestions` prior-answer filtering stays nodeId-scoped (v1 semantics at :2181-2183) — keying purely by executionId would re-ask answered questions on every fix cycle**; clarify ask ids become `clarify-<nodeId>-<ordinal>` (Task 8); **workspace fanOut forcing: `if (isWorkspace && meta.workspaceFanOut) node.fanOut = true` — the FANOUT_ELIGIBLE key set (:135/:463) dies**; verdict persistence keeps the reviews table authoritative — the v1 `reviewKindOf`/BESPOKE_BASE mapping is replaced by the generic derivation **kind = verdict filename template stem with `-review-cycle{cycle}.json` stripped** (yields refine/impl/plan/ws/webui exactly; fallback = agent key); `resume()` v2-only + startup sweep marking paused v1 rows interrupted with reason `paused before the graph engine rework — not resumable`; events per spec §3 (`exec`, `token`, state.active[], `question` gains `wireId?` on gates, resolved runtime `graph` included in the FIRST state event); `artifact` events carry `{nodeId, executionId, port}` and their kind = the output port's `artifactKind` (meta default = port id; builtins pin clarify/webui — byte-parity with today's kinds); worktree staging hook on `sideEffect:'code'` before publish; TEMPORARY guard until Task 21: a RUN-TIME check in orchestrator `run()` ONLY, applied AFTER validateGraph passes — errors the run on a WIRED `expands` input ("decomposer fan-out arrives with composite executions — not yet supported on the graph engine"), removed in Task 21. NEVER in validate.mjs or resolveGraph — Tasks 5 and 11 assert the seed templates validate clean, and three seeds (wf_full, wf_no-clarify, wf_provided-plan) wire the decomposer. Workspace runs stay FUNCTIONAL in PR3: run() keeps the workspace setup (worktrees, runroot, substitution via Task 12); Task 22 is verification/test-porting, not enablement. **Amendment-f additions to run()/events:** (1) completion — run 'done' fires either on End arrival (scheduler completing mode — Task 4) or at quiescence; when the final scheduler state has `ended === null`, log a run-level WARNING with the exact string `finished at quiescence — End not reached` and surface it in the run monitor (Task 17). (2) events/state — state events additionally carry `result` (End's bound `{type, path?, value?}`, or null) and `endReached: boolean` once the run resolves (spec §3 events delta; `endReached === false` drives the §7 banner); End's `done` exec event carries `result`; the exec stream includes and/or/end executions ($0, instant); EVENT_NAMES is unchanged — End arrival is an ordinary 'exec', no new event name. (3) run result — the End payload (the scheduler's `ended.result`, surfaced as state `result`) is the pipeline result; it persists like any execution record (the end execution's pipeline_steps row carries execution_id `x:<endNodeId>:1`), so history renders it without new columns. (4) the validateGraph run-time check now enforces the V21/V7 rules too (a saved template whose End was deleted by hand aborts cleanly). (5) gate/ask interplay — on End arrival, pending gate asks on other branches are abandoned (run is done); seeds never hit this (linear terminals) — an accepted edge.
+- phases.mjs shrinks to the prompt library: taskHeader (request gate = task-source-binding ∪ `wantsRequest` — the :450 key test dies), buildSystemPrompt (**FALLBACK_PROMPTS :239 DELETED — deviation from plan v1: a v2 sidecar with a missing/empty agentFile body is already skipped at registry load (Task 6); buildSystemPrompt keeps ONE generic last-resort line `You are the "<displayName>" agent. <description> <portSummary>` with no role lookup**), questionsPromptBlock, mock markers, workspace blocks (`workspaceFanOutDirective` selected by `meta.workspaceStrategy` — the per-runner hardcodes die), RESUME_HEADER.
+- Delete: `src/core/channels.mjs`, `src/core/runners.mjs`.
+- Modify: `ui/server.mjs` EVENT_NAMES (:154): replace `'phase'` with `'exec'`, add `'token'`.
+- Test: rewrite `test/dispatcher.test.mjs` → `test/orchestrator-graph.test.mjs` (mock-mode end-to-end on GRAPH_DEFAULT_WORKFLOW: exec sequence — now with the trailing `end` execution, loop fix cycle, resume mid-run, gate continue, run-time validateGraph abort when a saved template references a renamed port; ADD quiescence-without-End warning case: template with End.result wired from reviewer.REVIEW (blocking; V19 does NOT warn — End.result is an exempt target ⟨f⟩) and reviewer scripted CLEAN → review never fires → run 'done' + the warning string logged); update `test/orchestrator-resume.test.mjs`, `test/persist-roundtrip.test.mjs`, `test/spawn-args.test.mjs` expectations.
+
+- [ ] Steps: failing end-to-end mock test first (asserts the Task 4 case-1 sequence through the REAL orchestrator with WORCA_MOCK=1) → swap → pass → chase suite fallout with justification per deletion — known list (fact-checked 2026-08-10): `test/channels*.test.mjs` (**5 files**: channels, channels-clarify, channels-custom, channels-decomposition, channels-workspace) plus the channel-importing `test/workspace-channel.test.mjs` and `test/entry-prompt-seed.test.mjs`; `test/runners*.test.mjs` (2 files) plus `test/runner-decomposer.test.mjs` and `test/workspace-runners.test.mjs`; `test/phases-*.test.mjs` (5 files, ported to executor tests); `test/server-event-names.test.mjs` ('phase'→'exec'); `test/ui-server-stepper-seed.test.mjs`; `test/api-agents-domain.test.mjs` (asserts v1 registry fields — port to v2); remaining `test/orchestrator-*.test.mjs` ports. **`test/graph-build.test.mjs` is the GRAPHIFY worktree-graph suite (`_buildWorktreeGraph`, orchestrator :1290 — OUTSIDE the delete range)** — fallout only via its end-to-end runs; it collides by NAME with the new `graph-*` namespace, leave its name alone and note it in the commit body → commit `feat(core)!: graph dataflow orchestrator (v1 engine removed)`.
+
+### Task 14: Server routes v2
+
+**Files:**
+- Modify: `ui/server.mjs` — `/api/workflows` GET returns `{ workflows: [GRAPH_DEFAULT_WORKFLOW, ...listWorkflows()] }` (v2 only); POST validates via `validateGraph` + the SYNTHESIZING portsFn adapter (Task 12) so await/end wires resolve, 422 with `{errors, warnings}`; `/api/agents` returns v2 entries with META ports only — no synthesized await; the client mirrors the synthesis (Task 15) — (ports + capability fields included; `placeable:false` entries flagged so the palette can filter) **plus `mockWriterRoles: [...MOCK_WRITER_ROLES]` — the Task 16 port editor's select needs it and ui/public cannot import src/core (no build step)**; run wiring passes new event names; `/api/config` wire-maxCycles overlay endpoints (config_workflow_wires).
+- Test: `test/api-workflows.test.mjs` rewrite; CREATE `test/api-agents.test.mjs` (no server-side /api/agents ROUTE test exists today — `test/api-agents-domain.test.mjs` calls listAgents() directly and is ported separately in Task 13); update `test/api-workflows-warnings.test.mjs` (validator v2 warning shapes).
+
+- [ ] Steps: failing route tests → implement → pass → commit `feat(server): graph workflow + agent APIs`.
+
+### Task 15: UI graph core (pure modules)
+
+**Files:**
+- Create: `ui/public/graph/graph-model.mjs`, `graph-geometry.mjs`, `graph-layout.mjs`, `thumbnail.mjs`, `agents-meta.mjs`
+- Test: `test/ui-graph-model.test.mjs`, `test/ui-graph-geometry.test.mjs`, `test/ui-graph-layout.test.mjs`, `test/ui-graph-thumbnail.test.mjs`
+
+**Geometry — STACKED port rows (supersedes plan v1's side-by-side rows; adjudicated against the approved Full-pipeline mockup, whose convention wins: conditional-output rows need full-row width for "on blocking/on clean" captions, and separate in/out zones prevent mis-drops when wiring).** All inputs stack first, then a 9px separator, then all outputs. Amendment f: every AGENT card additionally renders a bottom `await` gate row — a dedicated gate zone below the output zone, after a SECOND 9px separator, dot on the LEFT edge; implementer/checklist lose their start row (input counts drop by one). Flow cards carry NO await row. Task and End render a 24px CAPTION row after their separator (`prompt + attached files` / `pipeline result`) — the mockup's flow-card convention, which WINS: H = **110.5** for both 1-port cards. The Task card's single output renders FIRST (0 inputs ⇒ no input zone) and anchors at Y+56; End's `result` input anchors at Y+56 via the standard input formula. and/or/combine use the standard formulas; the OR card additionally renders the 24px caption row 'forwards freshest input' after a second separator (mockup convention; arity-2 OR H = 167.5). The single-wire revision changes NO geometry — the OR card (now the payload valve) is a standard flow card under the same formulas. Pin in tests:
+
+```js
+export const NODE_W = 220, HEADER_H = 34, PORT_ROW_H = 24, PORT_SEP = 9,
+             PAD_T = 8.5, PAD_B = 8, BORDER = 1.5, FOOTER_H = 26, EXEC_ROW_H = 22, SNAP = 11;
+export function nodeSize(ports, { footerRows = 0, caption = false } = {}) {
+  // footerRows: 0 = none; 1 = AWAIT chip / collapsed executions strip (FOOTER_H);
+  // >1 = collapsed strip + (footerRows-1) expanded execution rows (run monitor).
+  // caption: true for task/end cards — they render a 24px caption row after the separator
+  // ('prompt + attached files' / 'pipeline result'; the mockup's flow-card convention).
+  const footer = footerRows === 0 ? 0 : FOOTER_H + (footerRows - 1) * EXEC_ROW_H;
+  const metaIns = ports.inputs.filter((p) => !p.synthetic);          // await row measured separately
+  const hasAwait = ports.inputs.some((p) => p.synthetic);            // kind 'agent' only — flow cards carry no await row
+  const rows = metaIns.length * PORT_ROW_H + PORT_SEP + ports.outputs.length * PORT_ROW_H
+             + (hasAwait ? PORT_SEP + PORT_ROW_H : 0)                // second 9px separator + the bottom await gate row
+             + (caption ? PORT_ROW_H : 0);                           // task/end caption row
+  return { w: NODE_W, h: HEADER_H + PAD_T + rows + PAD_B + 2 * BORDER + footer };
+  // Task card: 0 inputs — its single output row fills the input-zone slot, then separator + caption.
+  // End card: result row, separator, caption, 0 outputs, no await term.
+  // Both 1-port flow cards: H = 34 + 8.5 + (24 + 9 + 24) + 8 + 3 = 110.5 (mockup-exact).
+  // Agent card H = 95.5 + 24*(nInMeta + nOut).
+}
+export function portAnchor(node, ports, portId, dir /* 'in'|'out' */) {
+  // Amendment-f geometry. Agent terms arithmetic-verified against the mockup; task/end terms
+  // from the mockup's flow-card PORT MATH (the mockup WINS on flow-card geometry):
+  // meta-input i at y + 56 + 24*i ;
+  // output j at y + 65 + 24*nInMeta + 24*j (nInMeta EXCLUDES the synthesized await) — EXCEPT
+  // on a 0-input card (Task): outputs render first, in the input zone, at y + 56 + 24*j ;
+  // await anchor on the LEFT edge at y + 74 + 24*(nInMeta + nOut) — the bottom gate zone
+  // (56 = BORDER + HEADER_H + PAD_T + PORT_ROW_H/2 ; 65 = 56 + PORT_SEP ; 74 = 65 + PORT_SEP).
+  const metaIns = ports.inputs.filter((p) => !p.synthetic);
+  const nInMeta = metaIns.length;
+  if (dir === 'in' && portId === 'await') {
+    return { x: node.x, y: node.y + 74 + PORT_ROW_H * (nInMeta + ports.outputs.length) };
+  }
+  if (dir === 'in') {
+    const i = metaIns.findIndex((p) => p.id === portId);
+    return { x: node.x, y: node.y + 56 + PORT_ROW_H * i };
+  }
+  const j = ports.outputs.findIndex((p) => p.id === portId);
+  if (nInMeta === 0) {                                    // Task card: out first, no input zone
+    return { x: node.x + NODE_W, y: node.y + 56 + PORT_ROW_H * j };
+  }
+  return { x: node.x + NODE_W, y: node.y + 65 + PORT_ROW_H * nInMeta + PORT_ROW_H * j };
+}
+export function bezierPath(a, b, { loop = false } = {}) {
+  const dx = Math.max(48, Math.min(160, Math.abs(b.x - a.x) * 0.45));
+  if (!loop) return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+  const bow = 56 + Math.abs(a.y - b.y) * 0.2;   // loop wires bow underneath
+  return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y + bow}, ${b.x - dx} ${b.y + bow}, ${b.x} ${b.y}`;
+}
+```
+
+Renderer wires are single cubics + loop bows ONLY — the mockup's hand-authored corridor routes are aspirational; users drag nodes to declutter (known, accepted visual delta; no waypoint routing — YAGNI). SNAP (11 = half the 22px grid) applies on DRAG interactions only — loaded templates (seeds, mockup-era coords) render at their authored positions unsnapped.
+
+`graph-model.mjs` wraps Task-1-style serialization + client legality (`canWire(fromPort, toPort, existingWiresIntoInput)` → `{ok, reason}` — UNIFORM cardinality (single-wire revision): ANY input with an existing wire rejects with reason `already connected` (one string for every input, chip copy pinned by the revised spec §6 — the await-specific 'await takes one wire' chip dies with V22; remove-then-rewire is the flow); and-card ins/end.result/await accept every source type; or-card ins accept any type UNTIL one in-wire exists, then the client mirrors homogeneity — a mismatched drop rejects with reason `or inputs must match: md` (resolved-type string)) + SCC/loop detect (duplicate the small pure functions client-side; keep the implementation copies byte-identical and covered by the same fixture assertions — server remains authoritative via /api validation); graph-model also re-exports/mirrors `AWAIT_PORT` + the flow-port synthesis byte-identically to the engine, and mirrors `resolveOrOutType` the same way (same duplicate-pure-function policy as the SCC copy) — the composer needs live resolved types for or dots and legality. `graph-layout.mjs`: longest-path ranks excluding loop wires, `x = 60 + rank*300`, barycenter y-ordering, snap. (The former Merge fan-in rank rule is gone with the node — Amendment e; no seed contains a node fed only by loop wires. End ranks last naturally — it is the sink.) `agents-meta.mjs`: EMBEDDED_AGENTS regenerated with v2 ports (copy from Task 7 sidecars — WITHOUT start rows) — **builtins only, by design: the offline palette degrades to builtins when /api/agents is unreachable; user/plugin agents require the live registry** (document in the module header); mergePalette/groupPaletteByDomain ports (moved from composer-core.mjs before deleting it); palette entries carry `placeable` so the Flow/agent pills can filter (workspaceScanner never appears); the pinned Flow group = Task · End · AND · OR · Combine, with the Task AND End pills disabled once placed (placeable:false filtering unchanged).
+
+- [ ] Steps: failing tests (anchor math incl. the stacked formulas above and footerRows height deltas — pin the await-row anchor `y + 74 + 24*(nInMeta + nOut)`, the agent-card `95.5 + 24*(nInMeta + nOut)` height, the Task/End caption-card height `110.5`, and the Task card's 0-input output anchor at `y + 56`, bezier endpoints equal anchors, layout determinism + no-overlap + a loop-fed rank case (a node whose only non-loop feed is rank N ranks N+1 — loop wires excluded from ranking), thumbnail returns `<svg` string with node count rects, legality matrix md→md ok / json→md reject / second wire into ANY wired input REJECTED with `already connected` (uniform single-wire — covers agent inputs, or.inK, end.result, and the await port alike) / duplicate (from,to) rejected / md→any (and.in1) ok / void→any ok / and.out(void)→md input rejected / or-card legality: md source onto empty or.in1 ok, json source onto or.in2 when in1 resolves md → rejected `or inputs must match: md`, or.out dot renders the RESOLVED type (md ink dot when wired homogeneous md; neutral any-style when unresolved), template `canvas {x,y,zoom}` survives normalize/serialize round-trip, groupPaletteByDomain pins the Flow group (Task, End, AND, OR, Combine) present and ordered last, Task AND End pills disabled when placed, placeable:false filtered) → implement → pass → commit `feat(ui): graph core modules`.
+
+### Task 16: graph-view + composer-editor + inspector + save-dialog + CSS
+
+**Files:**
+- Create: `ui/public/graph/graph-view.mjs`, `composer-editor.mjs`, `inspector.mjs`, `save-dialog.mjs`
+- Modify: `ui/public/index.html` (composer section replaced: palette rail + canvas host + inspector host + save dialog), `ui/public/style.css` (delete :744-**880** composer block incl. the `.ro-flow .node` read-only-preview rule at :879 — the New-Pipeline fanout toggle at :882 STAYS; add ~450-line graph block per spec §6 visual spec), `ui/public/app.js` (initComposer → new editor; delete column composer :1669-:2350 ONLY — `modelById`/`option` helpers at :2352-:2361 are used by the run view and new-pipeline view and STAY; palette fetch stays). ALSO in scope: the Agents-view PORT EDITOR — **full v2 surface, matching Task 10's generator (anything less forces JSON hand-editing and fails the pluggability requirement)**: port rows id/type/required/loop/expands/when/filename/store + per-port `as` select + `directive` textarea (collapsed by default); agent-level panel: runnerType (producer/verifier/clarifier), verdict filename, `sideEffect:'code'` toggle, `mockRole` select (populated from MOCK_WRITER_ROLES + blank = auto), `wantsRequest`, `workspaceFanOut`, `workspaceStrategy`, `workspaceVariantOf` (datalist of registry keys), `placeable` (with a "not placeable" badge on the agent card when false — discoverability guard); save surfaces the agent-store 400 rule text verbatim. The old Agents-form channel vocabulary block (app.js:5211, inside `agentFormFill`) dies with the v1 form. New canvas preloads one Task node AND one End node; empty-state copy: "Wire agents from the Task node to the End node — outputs → inputs" (spec §6 as amended by f). The palette rail renders the five Flow pills (Task · End · AND · OR · Combine) with the Task/End disable states from Task 15. Card anatomy (Amendment f): every agent card renders the bottom `await` gate row per Task 15 geometry — below the outputs after a second 9px separator, dashed-ring `any` dot on the left edge, subdued until wired; and/or/end headers use the flow ink treatment (spec §4: dark-ink "system" look, deliberately not an agent color); the End card gets the pinned styling like Task. Node header icons: `meta.icon` for builtin/plugin origins, the existing origin-trust gate (app.js:1138 `USER_AGENT_ICON` for `origin==='user'`) ports into graph-view; header tint = `meta.color` (normalizeMeta default). Inspector capability rows are gated by meta booleans exactly as `renderStepConfigs` gates today (questions row hidden when `!asksQuestions`, locked handling, fanOut row per meta) — meta-driven, no key lists. Inspector (Amendment f): the agent node panel is unchanged — the awaitAll toggle SURVIVES (decision 5); ADD a flow-card panel: and/or/combine arity editor (integer ≥ 2, re-synthesizes the in-ports), End panel read-only (nothing configurable); the OR panel additionally shows a read-only resolved-type line ("forwards: md" — from the mirrored resolveOrOutType; "unresolved" when ins are unwired). The Agents-view port editor's id field surfaces the reserved-`await` 400 text (comes free from Task 6; one test line).
+- Delete: `ui/public/composer-core.mjs` (after moving survivors in Task 15).
+- Test: `test/ui-graph-view.test.mjs`, `test/ui-composer-editor.test.mjs` (jsdom PointerEvents: spawn node from palette, drag node persists snapped x/y, wire drag legal/illegal, drop on an already-wired input REJECTED with the `already connected` reason chip (single-wire revision — same string as Task 15's canWire; applies to agent inputs, or.inK, end.result, await alike); rewiring = delete the old wire first (assert Del + redrop succeeds), spawn AND card from palette and wire md output → and.in1 (legal), spawn an OR card, wire two md blocking outputs into it and its out into a loop input — legal, no warning; a json drop onto its second in → `or inputs must match: md` chip, End pill disabled once placed, deleting the End node disables Save with the V21 error chip, new-canvas serialization contains task + end nodes, undo/redo restores serialization, Del deletes, save dialog posts template v2 including `canvas`), `test/ui-agent-port-editor.test.mjs` (edit port row → save → 400 text rendered; capability fields round-trip), port `test/ui-composer-palette-desc/filter` to ports summary. jsdom caveats (verified empirically 2026-08-10): `HTMLElement.prototype.setPointerCapture` does not exist — editor must call `el.setPointerCapture?.(e.pointerId)` guarded; `new window.PointerEvent(...)` IS constructible — tests dispatch it directly.
+
+Visual spec source: spec §6 + Amendments d and f (card anatomy px values with STACKED port zones per Task 15 incl. the await gate row, dot colors by type, amber loop wires + `≤3` pill, amber `loop` chip on loop inputs, AWAIT chip, selected outline, legend text `grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out` (NORMATIVE string — the mockup's legend wording/order is illustrative only; follow the spec), palette pill line 2 in lowercase port ids `in plan · out plan, revise` — META ports only, the universal await gate is not repeated on every pill, zoom cluster, empty state copy). Implement exactly.
+
+- [ ] Steps: failing jsdom tests → implement (graph-view renders from model only — zero getBoundingClientRect; single `#world` transform) → pass → kill dead ui tests per spec §9 list with justifications → commit `feat(ui)!: free-form node composer + full-surface agent port editor`.
+
+### Task 17: Run monitor v2 (run-decor + executions UI)
+
+**Files:**
+- Create: `ui/public/graph/run-decor.mjs`
+- Modify: `ui/public/app.js` (buildRunGraph :859 / paintRunGraph :928 → graph-view static + run-decor; WS handlers: `exec`/`token`/state.active), `ui/public/log-filter.mjs` (the filter module: gains an executionId dimension, and a NEW artifactKind dimension for artifact rows — today's dimensions are source/level/step, app.js:1051), `ui/public/index.html` run-card template, `style.css` run block (**delete :966-:1112 — start at the :966 banner opener, not :967; the Agents-view block starts at :1114 and STAYS**; add states incl. `skipped`/`error`, executions footer styles; **the `wireFlow` marching-ants keyframes live at :1104-:1105 INSIDE the deleted range — RE-ADD them in the new graph run block**). Executions expand/collapse CHANGES node height (`footerRows` in nodeSize) — wires repaint on the height transition's `transitionend` and on toggle start; this is the chosen behavior (no overlay positioning). Amendment-f additions: run-decor maps the End node — `done` once fired, with a **result row/card** rendering the End payload (md path → artifact link; void → em-dash "completed"); when the run finished with `endReached === false` (the state-event field), End renders in the `skipped` treatment and the run header shows the warning banner `finished at quiescence — End not reached` (string from Task 13's state); post-End publishes are "recorded, not routed" (spec §7 drain legibility): an in-flight execution completing during the End drain renders `done` and its token event lands, but NO downstream wire animates; and/or/end exec ledger rows render as $0 instant engine rows — no cost pill rather than `$0.00` (visual call, flagged for the implementer to confirm against the run-ledger look). Loop badges (fired count ≤3 pill + N× amber) sit on the LOOP wires — in OR-fanned seeds those are the wires INTO the OR (reviewer.review→or.in1, webui.review→or.in2); or.out→fix renders as a plain grey wire; a fix re-fire's trigger.wireIds names or.out→fix (ants there), while the OR's own exec trigger names the single fresh in-wire (ants on the firing loop wire) — both animate in sequence as the loop turns.
+- Execution row labels are GENERIC (genericity charter): label = `cycle <ordinal>`, plus ` · <inputPortId>` when the triggering fresh binding hit a `loop:true` input (builtins render "cycle 2 · fix"; a custom loop input `redo` renders "cycle 2 · redo"; await is not `loop:true`, so a pure-await re-fire labels plainly `cycle N`); composite `kind:'task'` rows use the truncated task title. Never a key- or phase-keyed label map.
+- Test: `test/ui-run-decor.test.mjs` (exec ledger → node status map; executions rows text `cycle 2 · fix · 2m10s · $0.42` derived from trigger + loop-input meta, custom-loop-input case `cycle 2 · redo`; end result row (md payload path rendered); quiescence-warning banner case; a $0 flow-row case; an OR-fanned loop fixture: badge counts render on the in-wires, not on or.out→fix; cost/duration summed; collapsed strip `3 runs · $1.12`; legacy v1 stepper → chip-strip rows), update `test/ui-cost*/ui-duration*` assertions.
+
+- [ ] Steps: failing tests → implement (executions footer collapse/expand per spec §7; row click filters log; trigger.wireIds → ants) → pass → commit `feat(ui): live graph run monitor with collapsible executions`.
+
+### Task 18: New-pipeline view rewire + Settings de-keying
+
+**Files:**
+- Modify: `ui/public/app.js` (buildNodeConfigRows :2373 → collapsed "Per-run overrides" topo rows — AGENT nodes only: flow nodes (task/end/and/or/combine) never appear; entry prompt textarea copy: "feeds the Task node"; read-only mini-graph of the selected template rendered via graph-view static mode — it renders End for free via graph-view), `index.html` new-pipeline section.
+- **Settings view de-keying (gap found in the genericity audit — these sit OUTSIDE every other task's delete range and would survive as a hardcoded 5-builtin config UI):** delete the per-role model/effort rows in `index.html` (`data-role` rows for clarify/planner/refiner/implementer/reviewer, ~:269-307), `STEP_ROLES` (app.js:49), and `renderStepConfigs` (app.js:2571-2608). Per-node defaults live in the composer inspector; per-run overrides in the run-setup disclosure. The legacy `config.steps[<key>]` DATA stays readable — resolveGraph's node > role > global precedence still consumes it (per-key user data is generic; only the hardcoded UI dies).
+- Test: update `test/newpipeline-config.test.mjs`.
+
+- [ ] Steps: failing test → implement → pass → commit `feat(ui): run setup on graph templates; retire per-role settings rows`.
+
+### Task 19: History + legacy rendering + resume sweep UX
+
+**Files:**
+- Modify: `ui/public/app.js` history views (stepper.version 1 or missing → chip strip from run-decor), `ui/server.mjs` boot sweep call.
+- The legacy chip strip may keep `PHASE_LABEL`/uiPhase maps — it renders FROZEN v1 data only; confine those maps to the legacy renderer (the genericity charter's sanctioned exception (c)).
+- Test: `test/ui-history-legacy.test.mjs`.
+
+- [ ] Steps: failing test (v1 manifest fixture renders N chips, no crash) → implement → pass → commit `feat(ui): legacy run rendering + v1 pause sweep`.
+
+### Task 20: Phase-3 gate
+
+- [ ] Full `npm test` green (minus imagegen baseline). `npm run smoke` (mock CLI run) passes on the graph engine. Manual: `npm start`, compose default graph from palette (wiring the terminal into the preloaded End node), save, run mock, watch executions collapse/expand, gate 'continue' path, **open each re-seeded template in the composer (loads, validates clean, thumbnails render)**; the run monitor shows the End result card on a completed mock run and NO quiescence warning on any re-seeded template; each re-seeded template opens with its End node + checklist await wires rendered; the three OR-fanned templates (wf_full, wf_provided-plan, wf_full-no-decompose) open with their OR card + both budgeted in-wires rendered; wf_no-clarify opens with its single direct review loop (no OR). Commit any fixups; PR3 assembled.
+
+---
+
+## Phase 4 — Fan-out, workspace, plugins, kill list [PR4]
+
+### Task 21: Composite decompose execution (generic)
+
+**Files:** Modify `src/core/graph/executor.mjs` + `scheduler.mjs` (expands-input branch per spec §3), orchestrator task/phase status plumbing; REMOVE the Task 13 temporary wired-expands E-guard.
+
+Generic mechanics (the v1 code this replaces was key-coupled — `orchestrator.mjs:1943` `key==='implementer'` (guard opens :1942), `:157` `decomposedTaskNode` hardcoding `key:'implementer'` — none of that returns). Recreate `_persistDecomposition`'s status plumbing here (deleted in Task 13), stamping executionIds:
+- **Decomposition contract** (document in executor.mjs header — any producer may emit it, any node with an `expands` input may consume it): `{ phases: [ { ordinal: int, tasks: [ { id: string, title?: string, file: string } ] } ] }`, `file` pipelineDir-relative markdown. Tolerant parse (readDecomposition semantics). `phases.length === 0` (incl. malformed) ⇒ the consumer runs ONE normal execution with the expands input left unbound + a warning (reproduces v1's `:1944` guard).
+- A fresh token on an `expands` input (and no fresh loop trigger — A3) runs ONE **composite execution**: phases sequential; task sub-executions parallel under the semaphore; each sub-execution clones the CONSUMER node (`{...node}`, same key/meta/ports) with the expands input bound to the individual task FILE and the slice `directive` rendered; recorded `{ executionId, nodeId, kind:'task', ordinal, phase, taskId }` under the SAME node; sibling-failure abort kept; worktree staged after the last phase (when `sideEffect:'code'`); the node's outputs fire ONCE at the end. `updatePhaseStatus`/`updateTaskStatus` records stamp executionIds — never `s_impl_*` ids. A later fix-cycle re-fire runs a single normal execution on the combined diff (today's semantics).
+- Test: `test/graph-decompose.test.mjs` (mock decomposition 2 phases × 2 tasks → exec events kind:'task' under n_impl, phases sequential, tasks parallel, outputs fire once; fix re-fire runs single cycle execution; guard removal: the seeded decomposer templates now validate + run clean; **custom×custom: a custom producer's json output wired into a custom consumer's expands input runs a 2×2 composite under the custom node** — proves zero builtin coupling). ALSO extend `test/saved-pipeline-parity.test.mjs` with the deferred `wf_full` S2 trace case (full pipeline incl. phased sub-executions — the Task 12 note; the trace gains the trailing `end` execution after webui's pass AND now interleaves $0 `or` executions, one per review-loop emission — the AGENT sequence, incl. phased sub-executions, stays byte-identical to the adjudication script; flow rows (task/or/end) are excluded from the agent-sequence comparison per the Task 12 wording; fix re-fires bind the review path FORWARDED THROUGH the OR — assert the bound path equals the emitting reviewer's/webui's review file), AND a `wf_provided-plan` S-script case (decomposer-gated too, so it lands here; also a double-loop seed — the same or-interleaving caveat applies): assert the task token's PATH is the plans-store file (`planPath(projectDir, baseName, 1, …)` — not the pipelineDir doc) and the next plan-store write is `-v2` (planVersion starts consumed at 1) — this pins A2 end-to-end through the live scheduler→execute path; Task 8's executor unit test alone stays green even if `runTaskExecution` were dead code. Cite the b-era Merge adjudication directly: the dual-engine verification of the double-review valve was performed WITH a Merge node (Amendment b); the single-wire revision's OR is that valve under a new name, so the adjudication applies without re-derivation — Amendment e's direct-wire equivalence argument is now historical.
+- [ ] Steps: failing → implement → pass → commit `feat(graph): composite fan-out executions (generic expands)`.
+
+### Task 22: Workspace parity
+
+**Files:** Modify orchestrator/resolveGraph workspace path as needed; Test: port `test/orchestrator-workspace.test.mjs` to graph engine (substitution via `workspaceVariantOf`, per-project worktrees, ws-review filenames, `workspaceFanOut` forcing replaces FANOUT_ELIGIBLE — assert a custom agent WITHOUT the flag is not forced, and the five flagged builtins are). Any asserted execution sequences gain the `end` tail; if a ported test asserts a double-loop template's sequence, the $0 `or` rows interleave — the Task 12/21 agent-sequence exclusion wording covers them; the `workspaceVariantOf` port-signature deep-equal is meta-level and unaffected by await synthesis (mirrors Task 12).
+- [ ] Steps: failing → implement → pass → `npm run smoke:workspace` → commit `feat(graph): workspace runs on graph engine`.
+
+### Task 23: Mock v2 completeness (audit)
+
+**Files:** The MOCK chain lands in Task 8 (roles from meta/runnerType/graph-shape + ordinal, pinned by Task 9) — this task is the AUDIT + coverage only: verify `claude-runner.mjs`'s writer switch needs NO new case strings for the 11 builtins (Task 7 pinned exact names); verify `MOCK_WRITER_ROLES` export matches the switch; confirm the chain end-to-end. Test: `test/mock-graph.test.mjs` — offline default + flow fixtures terminate with cycle-decreasing severities; **an ALL-CUSTOM graph (custom clarifier → custom producer → custom expands-consumer → custom verifier loop → End; the End node is mandatory per V21) completes with `endReached === true` (state-event field; the scheduler's `ended` non-null) under WORCA_MOCK=1** (the clarifier gates once then `{questions:[]}` via MOCK_PRIOR; the expands-producer emits a parseable decomposition; the verifier's severities decrease by ordinal so the loop terminates); a custom v2 agent with verdict mocks as generic-verifier; flow-node executions (task/and/or/end/combine) spawn nothing (`inferRole`'s prompt-sniffing fallback is now unreachable — Task 25 grep-verifies).
+- [ ] Steps: failing → implement (expected: little or no claude-runner change beyond the Task 8 export) → pass → commit `test(mock): graph-engine mock coverage incl. all-custom graphs`.
+
+### Task 24: Plugin API v2
+
+**Files:** Modify `src/core/plugin-api.mjs` (WORCA_PLUGIN_API = 2), `plugin-manifest.mjs` (sidecar v2 hard errors — full validateMetaV2, all capability fields available to plugins; the "agent keys ⊆ plugin's own" isolation rule at :281 stays DELIBERATELY — plugin templates cannot reference builtin/user agents; document in the commit body), `plugin-workflows.mjs` (import v2 graphs via validateGraph with the FULL kind set `{agent, task, and, or, combine, end}` — Amendment d fixed spec §5's stale "agent/await/combine" line which contradicted V20, Amendment e removed merge, Amendment f replaced await with and/or and added end; reject v1 with warning; **`referencedPluginAgents` (:150) parses `row.steps` — after V17 that is a silent no-op; port it to walk `graph.nodes[]`**, with an uninstall-guard test), `ui/public/plugins-view.mjs` (api-mismatch message per spec §5). Update `test/fixtures/plugins/mock-source/` to v2 (sidecar + `workflows/mock-flow.json` as a graph **including a task node AND an end node** — V20 and V21 apply to plugin templates too). Plugin sidecar validation inherits the reserved-`await` port id rule via validateMetaV2 (no extra work; one test line optional); the plugin validator likewise inherits V7/or-homogeneity through validateGraph automatically (mock-flow.json is single-wire — verified). Tests: `test/plugin*.test.mjs` updates.
+- [ ] Steps: failing → implement → pass → `npm run smoke:plugin` → commit `feat(plugins)!: worca-cc-api 2 (graph templates, port sidecars)`.
+
+### Task 25: Kill list + docs
+
+**Files:** Delete every remaining spec §9 item INCLUDING the Task 6 v1-compat shim in `agent-registry.mjs` and `DEFAULT_SPEC` (:40-55) — nothing reads the derived v1 fields once the engine/UI are on ports. ALSO on the kill list (genericity audit): `STEP_ROLES` remnants, `LEGACY_LABELS` / `registryToSteps` (agent-registry.mjs:91/:405), `AGENT_STEPS` (config.mjs:34) — the Task 18 Settings deletion removed their last UI consumer; `FANOUT_ELIGIBLE`; `BESPOKE_BASE` + `REVIEW_KIND` (died with channels.mjs — verify); `inferRole` prompt-sniffing (claude-runner) if now unreachable. Amendment f adds NO new deletions here: the Await node, `resolveAwaitOutType`, `runAwaitExecution`, and the `start` ports are never CREATED in v3 — nothing to kill; the grep lines below are insurance against an implementer following stale v2/spec text. The single-wire revision likewise adds none — multi-wire never shipped (v3 was never implemented); `resolveOrOutType` and `runOrExecution`'s passthrough are LIVE surface, never grep-gated. Grep gate (the genericity charter's enforcement — zero hits outside data files, the legacy history renderer, and comments quoting history):
+`grep -rn "legacyFields\|BESPOKE_BASE\|connectsTo\|entrySeedChannels\|CHANNEL_IDS\|composer-core\|DEFAULT_SPEC\|optionalConsumes\|FANOUT_ELIGIBLE\|STEP_ROLES\|AGENT_STEPS\|registryToSteps\|LEGACY_LABELS\|uiPhase\|collectChannelDefs\|channelDefs\|resolveAwaitOutType\|runAwaitExecution" src ui test`
+plus the Amendment-f sweeps: `grep -rn "kind === 'await'\|kind: 'await'\|'merge'" src/core/graph ui/public/graph` → zero hits; and `grep -rn "'start'" agents src/core/graph` → zero hits outside comments (the start port must not resurface);
+plus the key-literal sweep: `grep -rn "'implementer'\|'reviewer'\|'planner'\|'refiner'\|'clarify'\|'decomposer'\|'workspaceReviewer'\|'workspaceScanner'\|'manualTestsChecklist'\|'manualWebUiTesting'\|'planReviewer'" src/core/graph src/core/orchestrator.mjs src/core/phases.mjs src/core/workflows.mjs ui/public/graph ui/server.mjs ui/public/app.js` — every hit must be in a data file (seed-templates, fixtures, EMBEDDED_AGENTS), a test, or the sanctioned legacy-history renderer (Task 19).
+Fix `skills/worca/SKILL.md` stale flags; add freeze note atop `.claude/skills/orchestrate/SKILL.md`; README pipeline section rewrite (graph model, Task/End/AND/OR/Combine flow cards, the universal await gate port, OR-card fan-in (single-wire inputs), custom-agent capabilities, run parameters).
+- [ ] Steps: delete → grep clean → full `npm test` → commit `chore: remove v1 pipeline remnants; docs`.
+
+### Task 26: End-to-end acceptance
+
+- [ ] `npm test` green (imagegen baseline only — 4 failures in skills-bundle/skills-gate-wiring). `npm run smoke` + `smoke:workspace` + `smoke:plugin` green.
+- [ ] Manual UI pass: compose the flow-fixture graph (planner→refiner self-loop→implementer⇄reviewer; planner.plan+refiner.plan→OR→checklist.plan; refiner.plan+reviewer.pass→AND→checklist.await→End — the FIXTURE_FLOW shape), save, mock-run, verify: conditional skip state on untaken branch, loop badge counts, executions collapse, gate flow, resume after pause mid-loop, End result card populated, no quiescence warning, the OR forwards the refined plan (checklist's plan binding shows the refiner's file).
+- [ ] **Seed parity pass:** mock-run the re-seeded `wf_full` and `wf_quick-fix` end-to-end; execution sequences match the v1 traces pinned in `test/saved-pipeline-parity.test.mjs` plus the trailing $0 end execution; wf_full's ledger shows the $0 or rows on each review-loop turn — agent sequence unchanged; per-project overlays visible (wf_no-clarify loop budgets show 6).
+- [ ] **Custom-agent pass:** create a custom verifier via the Agents view port editor (loop input + verdict + conditional outputs), drop it into a graph from the palette, wire a loop, then route the loop through an OR (wire the custom verifier's blocking output → or.in1, any md blocking source → or.in2, or.out → the loop input — the fan-in acceptance shape), wire the terminal into End, mock-run to termination — the pluggability acceptance test.
+- [ ] Real (non-mock) short run on a scratch project (note: `examples/` contains no checked-in sandbox — `npm run smoke` materializes its own; create a throwaway project for the real run).
+- [ ] Release notes: template v1 removal EXCEPT the 7 re-seeded pipelines (now v2 graphs, overlays migrated); plugin API 2; v1 paused runs unresumable; every pipeline now terminates in an End node (its payload is the run result in the monitor; a run that quiesces without reaching End completes with a warning); the Await flow node is replaced by AND/OR cards plus a universal await gate port on every agent (the old checklist start port is the await port now); templates hand-edited to remove their End node fail validation (V21); inputs take exactly one wire — fan-in goes through the OR card (which forwards the freshest payload; the old two-loops-into-fix templates are re-seeded with an OR); V22 retired — subsumed by the restored V7 (single-wire inputs) per the spec amendment; interleaved-loop cycle filenames now monotonic per node (v1 reused cycle numbers when a second loop rewound through already-cycled steps and silently OVERWROTE `impl-review-cycle2.json` + the cycle-2 reviews row — v2 ordinals append `cycle4`, `cycle5`… instead; parity divergence D3, accepted as an improvement).
+
+---
+
+## Self-review notes (kept honest)
+
+- Spec coverage: §1→T5/T12, §2→T2/T3 (+run-time validation T13), §3→T4/T8/T13/T21/T23, §4→T2/T4/T8 (+A2 planStoreSeed T8), §5→T6/T7/T10/T16 (port editor)/T24, §6→T15/T16/T18, §7→T17/T19, §8→T11/T12/T13 (executionId keying), §9→T25, §10 phasing→PR structure, §11 risks→T9 (prompt pinning), T3-V18, T19 (sweep), T11 (audit log), T6 shim (green main between PRs). Amendment d→T3 (V3/V8/V18), T4 (A1/A4), T8 (A2/A3/clarifier/mock chain/as/directive), T6-T7 (capability fields), T24 (plugin kinds). Amendment e→T3 (V7 drop/V18 wire clause), T4 (multi-wire binding, case 11), T5 (seed rewiring), T8 (no merge executor), T15/T16 (palette, add-on-drop) (multi-wire half REVERSED by the f single-wire revision). Amendment f→T1 (fixtures + AWAIT_PORT synthesis), T2 (readiness), T3 (V21/V7 rules + V8/V12/V18 edits), T4 (and/or/end scheduling, End completion), T5 (seed End + await rewire), T6 (reserved id), T7 (start removal), T8 (and/or/end executors, prompt-invisible await), T12 (synthesizing portsFn + manifest), T13 (completion + warning), T15/T16 (await-row geometry, palette, preload Task+End), T17 (End result card), T23/T24 (kind sets), T26 (release notes). f single-wire revision→T1 (or-bearing FIXTURE_FLOW, or.out declared any), T2 (resolveOrOutType, single-wire isReady, or-loop classification), T3 (V7 restored/V22 retired, V8 or-resolution, V12 homogeneity, V18 wire-clause death + agent-only, V19 rewrite), T4 (single-wire+valve para, cases 4/11/15 rewritten, case 17 gate-through-valve), T5 (3 seeds gain n_or; budgets on in-wires; overlay maps re-verified NO change), T8 (payload runOrExecution), T12 (resolved or types in manifest), T15/T16 ('already connected' uniform, homogeneity chip, resolved-type display), T17 (badges on in-wires), T21 (b-era lineage, or-interleaved traces), T26 (mockup/release notes).
+- Later-phase tasks carry interfaces + key code, not full diffs — by design; the Global Constraints section mandates per-phase Fable re-grounding before execution.
+- Amendment 2026-08-10-b (`loop:true`, blocking-source rule) and 2026-08-10-c (explicit Task node) carried over from plan v1; **Amendment 2026-08-10-e (user decision, post-review): multi-wire inputs replace the Merge node** — V7 dropped, seeds/mockup/palette/executor updated, trace-equivalence argued from Merge's forward-the-freshest semantics; spec updated in lockstep throughout. **Amendment 2026-08-10-f (user decisions, this session): universal await gate port; AND/OR cards replace the Await node; start ports removed (seeds retarget to await); mandatory End node with natural-completion semantics** — spec updated in lockstep; rule numbers V21/V22 substituted from the amendment (arity under the rewritten V12). **Amendment-f single-wire revision (user course correction, same session): one wire per input, uniformly (V7 restored, V22 retired); the OR card becomes the payload-forwarding fan-in valve (b-era Merge semantics, wiring-resolved types via resolveOrOutType); double review loops re-seeded through an OR with budgets on the in-wires; End.result single-wire** — spec revised in place; Amendment e's multi-wire half reversed, its Merge-removal half stands.
+- **v2 refinement (this document), 2026-08-10:** five Fable max reviewers + one Opus baseline runner, all findings applied:
+  - *Anchor fact-check* (112 claims: 109 OK, 3 drifted): dispatch delete range corrected to :1722-:2512 (`_ask` survives); channels-test fallout corrected to 5 files + 2 unlisted channel importers + 2 unlisted runner importers + `api-agents-domain`; workspaceReviewer contract = 4 lines (:952-:955); `wireFlow` keyframes must be re-added (T17); style.css run-block delete starts :966; V17 must register INCREMENTAL_COLUMNS entries; V-rule numbering unified V1–V20; `graph-build.test.mjs` is the graphify suite (name collision noted, T13); promptHints unset in today's sidecars (T7 note); no checked-in examples/sandbox (T26).
+  - *Pipeline-parity adjudication* (dual-engine simulator, 8 pipelines × 6 verdict scripts, ALL MATCH under A1–A3): spec amendments A1 (loop-budget off-by-one — measured 4-vs-3), A2 (planStoreSeed), A3 (fresh-trigger modes), A4 (forced-token payload); re-seed payload = 7 hand-written graphs + NODE_ID_MAP/FB_WIRE_MAP overlay migration (incl. wf_default and the swapped fb order in wf_clarify-implement); parity-critical wires pinned (T5); D3 filename divergence accepted + release-noted; nodeId-scoped question filtering (T13); saved-pipeline-parity rewritten not deleted (T12).
+  - *Genericity adjudication* (10 key-coupling sites + 3 latent bugs): capability fields `as`/`directive`/`artifactKind`/`wantsRequest`/`workspaceFanOut`/`workspaceStrategy`/`workspaceVariantOf`/`placeable`/validated `mockRole`; clarifier executor by runnerType; 5-step mock chain; FALLBACK_PROMPTS deleted; duplicate-key allocation prefix; verdict-kind stem derivation; Settings per-role rows deleted (T18); plugin uninstall guard + agent-delete guard ported to graph walks (T24/T12); plugin kind-set contradiction fixed; grep gate expanded (T25).
+  - *Empirical TDD dry-run* (Phase 1 executed for real: 56/56 green; scheduler cases 1, 2, 4, 5 (determinism, lite) and 11 byte-exact; cases 3, 6–10 not exercised): V11 test construction corrected (v1 plan's version yields zero errors); `classifyLoops` dangling-meta guard (unguarded snippet threw on unknown-key cyclic nodes); V8 merge-out resolution added (spec's own merge→fix pattern failed without it); V3 kind set + `task`; V18 task-source exemption (wf_default warned out of the box); companion-error assertion style; FIXTURE_PORTS store-materialization contradiction resolved (materialize everything); deep-freeze (shallow freeze demonstrated mutable); merge same-drain collapse documented; forced-token payload rule (A4). Remaining unverified surface: scheduler cases 3, 6–10 (gate 'another', snapshot/restore, fail-fast, maxParallel, pause, abort) — implement with extra care.
+  - *Mockup audit* (16/16 wires of the Full graph verified correct): STACKED port geometry adopted (T15 rewrite — the v1 plan's side-by-side `portAnchor` contradicted the approved mockup); layout fan-in rank rule (T15); legend/pill/loop-chip spec refresh (Amendment d); mockup itself refined separately per the audit's change-list.
+  - *Baseline run*: 2201 tests / 4 imagegen-only failures / 55s — clean tree, no drift.
+  - *Fresh-eyes final review* (zero-context Fable max, post-assembly): READY-WITH-FIXES → all 20 findings applied — V18 void-input exemption (the two quick-fix seeds' plan+done reviewers), Task 13's :1722-:2512 span fully enumerated (12 delete / 15 keep / 1 move-to-T21), wf_full parity trace deferred to Task 21 (expands guard blocks it in PR3; guard confined to run(), never validate/resolveGraph), MOCK_WRITER_ROLES export moved to Task 6, the shim's port→channel table written out, spec's stale allowance/FALLBACK_PROMPTS/step-key/mock-chain/port-editor/seed lines fixed, `as` materialization scoped to non-void inputs, real writeStepQuestions signature, /api/agents ships mockWriterRoles, PR2→PR3 Agents-form gap documented, grep gate widened (collectChannelDefs/channelDefs + ui/server.mjs + app.js scope), CSS delete :744-880, log-filter.mjs listed, :1944 anchor, WORCA_MAX_PARALLEL binding assigned to Task 13.
+- **v3 (this document), 2026-08-10:** Amendment-f surgery per the 2026-08-10 edit manifest — universal await port synthesis (single-sourced via AWAIT_PORT), AND/OR/End cards, start-port removal, V21/V22 (V22 since retired — see the round-2 bullet) + rewritten V8/V12/V16/V18/V19, End-drain scheduling, seed End nodes + await retargets (JSONs updated in lockstep; counts re-pinned), await-row geometry from the approved mockup. The v2 dry-run/parity provenance above predates f — shapes verified, but fixture counts and scheduler case 4 are superseded (see Task 4); every "empirically verified" claim touched by f is annotated at its site so v3 never cites executed evidence for changed constructions.
+- **v3, round-2 revision (2026-08-10, same day):** single-wire correction per the round-2 edit manifest — V7 restored as the uniform input-cardinality error (V22 retired), OR upgraded to the payload valve + resolveOrOutType, seeds wf_full/wf_provided-plan/wf_full-no-decompose re-fanned through n_or (in-wire budgets; overlay maps verified unaffected), FIXTURE_FLOW reshaped with an md OR (9 nodes/14 wires), scheduler cases 4/11/15 rewritten + case 17 added. Provenance: case 11's OR shape matches the b-era Merge construction that ran green; the e-era multi-wire dry-run evidence no longer applies anywhere (the machinery is gone).
+
+
+
