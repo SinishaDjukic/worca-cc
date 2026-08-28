@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
@@ -580,4 +581,15 @@ test('a v2 template may reference ONLY the plugin\'s own agent keys', () => {
   assert.deepEqual(errs(validatePluginDir(dir)), [
     'workflows/foreign.json: references agent key "planner" which this plugin does not ship',
   ]);
+});
+
+test('the in-tree mock-source fixture is a valid API-3 plugin (strict)', () => {
+  // scripts/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
+  // so without this pin the fixture could silently rot back to the v1 contract
+  // and nothing in the suite would notice.
+  const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugins', 'mock-source');
+  const v = validatePluginDir(fixture, { strict: true });
+  assert.deepEqual(v.problems, [], 'the shipped fixture must validate clean');
+  assert.equal(v.ok, true);
+  assert.equal(v.manifest.engines.worcaApi, '>=3 <4');
 });

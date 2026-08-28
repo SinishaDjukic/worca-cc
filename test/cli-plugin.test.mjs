@@ -61,6 +61,23 @@ test('plugin init scaffolds a plugin that validates cleanly (strict)', async () 
   const manifest = JSON.parse(await readFile(join(dir, 'worca-cc-plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'demo-plugin');
   assert.equal(manifest.taskSources[0].id, 'main');
+  assert.equal(manifest.engines['worca-cc-api'], '>=3 <4', 'scaffolds the current plugin API');
+  const sidecar = JSON.parse(await readFile(join(dir, 'agents', 'demoPluginHelper.meta.json'), 'utf8'));
+  assert.equal(sidecar.metaVersion, 2);
+  assert.deepEqual(sidecar.inputs, [{ id: 'task', type: 'md', required: true }]);
+  assert.deepEqual(sidecar.outputs, [{ id: 'notes', type: 'md', filename: 'notes.md', store: 'run' }]);
+  assert.equal(sidecar.consumes, undefined, 'no channel vocabulary in an API-3 scaffold');
+  const flow = JSON.parse(await readFile(join(dir, 'workflows', 'example-flow.json'), 'utf8'));
+  assert.equal(flow.version, 2);
+  assert.deepEqual(flow.nodes.map((n) => n.kind), ['task', 'agent', 'end']);
+  assert.equal(flow.nodes[1].key, 'demoPluginHelper');
+  assert.equal(flow.wires.length, 2);
+  // Product-name rule: user-facing scaffold prose says "worca", never "worca-cc"
+  // (the worca-cc-plugin.json filename and the worca-cc-api key are identifiers).
+  const agentMd = await readFile(join(dir, 'agents', 'demoPluginHelper.md'), 'utf8');
+  assert.match(agentMd, /worca plugin\./);
+  assert.doesNotMatch(agentMd, /worca-cc/);
+  assert.doesNotMatch(manifest.description, /worca-cc/);
   assert.equal(manifest.taskSources[0].inputs.filter((i) => i.type === 'task-browser').length, 1);
   const cliValidate = await run(['plugin', 'validate', dir, '--strict'], { home });
   assert.equal(cliValidate.code, 0, cliValidate.stderr);
