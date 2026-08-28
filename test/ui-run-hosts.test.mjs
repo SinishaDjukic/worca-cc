@@ -497,3 +497,147 @@ test('destroy() re-arms bind(): a re-mounted host delegates clicks again', () =>
   host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   assert.equal(host.querySelectorAll('.xrow').length, 1, 'the delegated accordion listener was re-bound');
 });
+
+// ── app.js: version arms ────────────────────────────────────────────────────
+// jsdom boot idiom copied from test/ui-subagent-cycle-split.test.mjs (`boot()`).
+async function bootApp() {
+  const htmlPath2 = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
+  const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+  const dom = new JSDOM(readFileSync(htmlPath2, 'utf8'), { url: 'http://localhost:4317/' });
+  const { window } = dom;
+  window.Element.prototype.scrollIntoView = function () {};
+  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  window.fetch = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], projects: [] }) });
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+  }
+  globalThis.window = window; globalThis.document = window.document;
+  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await new Promise((r) => setTimeout(r, 0));
+  return window;
+}
+// A v2 manifest WITH the v1 shim cells a real buildGraphManifest emits (P4–P7),
+// so the v1-only helpers (manifestSig, manifestFor) see what they see live.
+const WITH_SHIM = { ...MANIFEST, steps: [
+  { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+  { kind: 'agents', nodes: [{ id: 'n_a', key: 'planner', uiPhase: 'plan', label: 'Planner', color: 'violet' }] },
+  { kind: 'agents', nodes: [{ id: 'n_end', key: null, uiPhase: 'end', label: 'End' }] },
+  { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] }], feedbacks: [] };
+
+test('v2 runs take the graph arm of every label helper; v1 runs are untouched', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }],
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' }],
+    endReached: false, result: null, warnings: [], wireDeliveries: {}, gate: null });
+  assert.equal(np.isGraphRun(r), true);
+  assert.deepEqual(np.activeNodes(r).map((a) => a.nodeId), ['n_a']);
+  assert.equal(np.statusPill(r).text, 'Planner');
+  assert.equal(np.runDotClass(r), 'violet');
+  const label = np.runStepLabel(r);
+  assert.deepEqual([label.n, label.m, label.name], [0, 1, 'Planner'], 'n/m are DONE agent nodes over agent nodes');
+  // `active` reaches a run model ONLY through onState (app.js's single writer),
+  // which bumps the decor generation — activeNodes reads the memoised reducer
+  // output, so poking r.active directly would still show the last generation.
+  np.onState(r, { status: 'running', stepper: MANIFEST,
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }, { nodeId: 'n_a2', executionId: 'x:n_a2:1' }],
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' }] });
+  assert.equal(np.statusPill(r).text, '2 agents running');
+  assert.equal(np.rdStateCopy(r, 'Planner'), '2 agents running.');
+  // v1 run: the phaseKey switch still rules.
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  v1.phaseKey = 'implement';
+  assert.equal(np.isGraphRun(v1), false);
+  assert.equal(np.statusPill(v1).text, 'Implementing');
+  assert.equal(np.runDotClass(v1), 'blue');
+});
+
+test('isGraphRun is false for a REAL v1 stepper object, not just for a null one', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const v1 = np.makeRun({ runId: 'r9', title: 't', projectDir: '/p', status: 'running' });
+  assert.equal(np.isGraphRun(v1), false, 'a null stepper is not a graph run');
+  // A truthiness check (`!!r.stepper`) passes the null case and fails THIS one.
+  np.onState(v1, { status: 'running', stepper: { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan' }] }], feedbacks: [] } });
+  assert.ok(v1.stepper, 'the v1 manifest was adopted');
+  assert.equal(np.isGraphRun(v1), false, 'stepper.version 1 is NOT a graph run');
+  v1.phaseKey = 'implement';
+  assert.equal(np.statusPill(v1).text, 'Implementing', 'and it keeps the v1 phaseKey switch');
+});
+
+test('activeNodes orders in-flight executions newest-first, by executionId-only rows, a composite parent by its slices', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r8', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST,
+    steps: [
+      { key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' },
+      // a composite parent's slice: the parent x:n_end:1 has NO row of its own
+      { key: 'x:n_end:1:p1t1', executionId: 'x:n_end:1:p1t1', nodeId: 'n_end', kind: 'task', parentExecutionId: 'x:n_end:1', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:09Z' },
+      { key: 'preflight', phase: 'preflight', cycle: 0, status: 'done', startedAt: '2026-08-26T10:00:20Z' },   // no executionId: never a row
+    ],
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }, { nodeId: 'n_end', executionId: 'x:n_end:1' }],
+    endReached: false, warnings: [], wireDeliveries: {}, gate: null });
+  assert.deepEqual(np.activeNodes(r).map((a) => a.nodeId), ['n_end', 'n_a'], 'newest first, NOT state.active order');
+});
+
+test('runDotClass on a v2 run uses the PULSING dot families only', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const green = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: [{ ...MANIFEST.graph.nodes[0], color: 'green' }, MANIFEST.graph.nodes[1]] } };
+  const r = np.makeRun({ runId: 'r7', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: green, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }], steps: [] });
+  assert.equal(np.statusPill(r).family, 'green', 'the pill may be green');
+  assert.equal(np.runDotClass(r), 'grey-pulse', '.child-dot.green is the STATIC done dot — a live run never wears it');
+  np.onState(r, { status: 'running', stepper: green, active: [], steps: [] });
+  assert.equal(np.runDotClass(r), 'peach', 'nothing in flight → the Running family');
+});
+
+test('runDecorFor is memoised per state generation and per mode: ONE reducer pass, one bag per host', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r6', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  const d1 = np.runDecorFor(r, 'static');
+  assert.equal(np.runDecorFor(r, 'static'), d1, 'the SAME object for the same mode until the next event');
+  assert.equal(d1.mode, 'static');
+  assert.equal(d1.run, r);
+  assert.equal(d1.runId, 'r6');
+  // Each mode gets its OWN shallow copy: the detail's paint must not flip the
+  // card's bag to mode 'monitor' (every mounted host holds the bag it was given).
+  const dm = np.runDecorFor(r, 'monitor');
+  assert.notEqual(dm, d1);
+  assert.equal(dm.mode, 'monitor');
+  assert.equal(d1.mode, 'static', 'and the static bag is untouched by it');
+  assert.equal(np.runDecorFor(r).mode, 'monitor', 'a mode-less caller defaults, never writes mode: undefined');
+  assert.equal(dm.footers, d1.footers, 'both copies share ONE reducer pass');
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  const d2 = np.runDecorFor(r, 'static');
+  assert.notEqual(d2, d1, 'a state event invalidates the bag');
+  np.onSubagent(r, { id: 's1', transition: 'spawn', nodeId: 'n_a', stepKey: 'x:n_a:1', status: 'running' });
+  assert.notEqual(np.runDecorFor(r, 'static'), d2, 'a subagent delta invalidates it too');
+  // finishRun is a generation too: isLive(r) reads _finished/status, and the
+  // memoised bag caches live:true (marching ants, pulsing leds).
+  const d3 = np.runDecorFor(r, 'monitor');
+  assert.equal(d3.live, true);
+  np.finishRun(r, 'error');
+  const d4 = np.runDecorFor(r, 'monitor');
+  assert.notEqual(d4, d3, 'a terminal transition invalidates the bag');
+  assert.equal(d4.resolved, true);
+  assert.deepEqual(d4.liveWireIds, [], 'nothing marches on a finished run');
+});
+
+test('nodeLabelLookup and agentNodeIdSet read a v2 manifest\'s graph.nodes (labels; agent ids only)', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const label = np.nodeLabelLookup(MANIFEST);
+  assert.equal(label('n_a'), 'Planner');
+  assert.equal(label('n_end'), 'End');
+  assert.equal(label('nope'), 'nope', 'unknown ids fall back to the id');
+  assert.deepEqual([...np.agentNodeIdSet(MANIFEST)], ['n_a'], 'flow nodes are never Agents-dropdown groups');
+  // v1 manifests keep today's shim-cell readers.
+  const v1 = { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan' }] }], feedbacks: [] };
+  assert.equal(np.nodeLabelLookup(v1)('s0_0'), 'Plan');
+  assert.deepEqual([...np.agentNodeIdSet(v1)], ['s0_0']);
+});

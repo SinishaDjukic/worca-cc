@@ -51,6 +51,8 @@ const state = {
 
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
+import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
+import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
@@ -1377,6 +1379,8 @@ function makeRun({
                        // recovery-patch link (addRecoveryPatchLink).
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
+    // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
+    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
   };
@@ -1446,6 +1450,7 @@ function onQuestionResolved(r, msg) {
   if (!r.pendingQuestion) return;
   if (msg && msg.id && r.pendingQuestion.id !== msg.id) return;
   dropPendingQuestion(r);
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads pendingQuestion
   paintRunCard(r);
 }
 
@@ -1637,6 +1642,9 @@ function subsByNodeCycleArrays(subAgents) {
 // preflight/done bookends so they never appear as Agents-dropdown groups. Driven by
 // the run's stepper (manifestFor falls back to CLIENT_DEFAULT_STEPPER when absent).
 function agentNodeIdSet(stepper) {
+  // v2: agent nodes only — flow nodes (task/or/end…) DO write ledger rows but
+  // are never Agents-dropdown groups.
+  if (isGraphManifest(stepper)) return new Set(stepper.graph.nodes.filter((n) => n && n.kind === 'agent').map((n) => n.id));
   const m = manifestFor(stepper);
   const set = new Set();
   m.steps.forEach((cell) => {
@@ -1807,7 +1815,9 @@ function onState(r, msg) {
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
   if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
     r.stepper = msg.stepper;
-    if (r.el) rebuildStepperDom(r);
+    // A v2 manifest never takes the v1 column painter: paintGraphFor mounts the
+    // graph renderer into the same host on the next paint.
+    if (r.el && !isGraphManifest(r.stepper)) rebuildStepperDom(r);
   }
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
@@ -1820,6 +1830,12 @@ function onState(r, msg) {
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
+  // v2 run-level outcome fields (ignored by v1 runs, which never send them).
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate']) {
+    if (msg[k] !== undefined) r[k] = msg[k];
+  }
+  // Every state event is a new decor generation (runDecorFor memoises on it).
+  r._decorSeq = (r._decorSeq || 0) + 1;
   if (msg.title && msg.title !== r.title) r.title = msg.title;
   if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
@@ -1880,6 +1896,7 @@ function onSubagent(r, msg) {
     rec.finishedAt = msg.finishedAt !== undefined ? msg.finishedAt
       : (msg.ts != null ? new Date(msg.ts).toISOString() : new Date().toISOString());
   }
+  r._decorSeq = (r._decorSeq || 0) + 1;   // the footer fan strip reads sub-agents
   paintRunCard(r);
 }
 
@@ -2618,6 +2635,13 @@ if (typeof window !== 'undefined') {
     stepGraphifyFromSteps,
     nodeLabelLookup,
     statusPill,
+    runDotClass,
+    rdStateCopy,
+    isGraphRun,
+    activeNodes,
+    activeCopy,
+    runDecorFor,
+    finishRun,
     runStatusMeta,
     paintRunStatusIcon,
     renderRunMeta,
@@ -3892,6 +3916,7 @@ function appendLog({ source, level, text }) {
 // ---------------------------------------------------------------------------
 function onQuestion(r, msg) {
   r.pendingQuestion = msg;
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads pendingQuestion
   // A new question supersedes any half-finished answer attempt.
   r._answering = false;
   if (r.el) renderQpanel(r);
@@ -4355,6 +4380,7 @@ function clearQpanel(r) {
 function finishRun(r, status) {
   if (r._finished) return;
   r._finished = true;
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
   r.status = status;
   r.pendingQuestion = null;
   r._answering = false;
@@ -13005,6 +13031,7 @@ function rdStateCopy(r, stepName) {
       : '';
     return `${runStatusMeta(r).word}.${at}`;
   }
+  if (isGraphRun(r)) return `${activeCopy(r).text}.`;
   const cyc = Number(r.cycle) || 0;
   return `${step} is running${cyc > 1 ? ` · cycle ${cyc}` : ''}.`;
 }
@@ -13640,6 +13667,59 @@ function cmpTabRuns(a, b) {
   return (b.orderKey || 0) - (a.orderKey || 0);
 }
 
+// ── v2 (graph-engine) runs: the version arms the v1 label helpers branch on ────
+/** A v2 (graph-engine) run — the ONE predicate every branch below reads. */
+function isGraphRun(r) { return isGraphManifest(r && r.stepper); }
+
+/** In-flight nodes, most recently started FIRST. [] on a v1 run. The stale-active
+ *  filter, the executionId-only row lookup, the composite-parent fallback (a
+ *  parent has no row of its own, so its `parentExecutionId` slices stand in for
+ *  its start time) and the newest-first order all live in the ONE reducer
+ *  (`decorFromState` → `decor.activeNodes`) — this adds only the two fields the
+ *  RUNNING surfaces show and History never may (D5): model + effort. */
+function activeNodes(r) {
+  if (!isGraphRun(r)) return [];
+  const byId = new Map(r.stepper.graph.nodes.filter(Boolean).map((n) => [n.id, n]));
+  return runDecorFor(r).activeNodes.map((a) => {
+    const n = byId.get(a.nodeId);
+    return { ...a, model: (n && n.model) || '', effort: (n && n.effort) || '' };
+  });
+}
+
+const PILL_FAMILIES = new Set(['violet', 'blue', 'peach', 'green', 'red', 'amber']);
+/** `.child-dot` families that PULSE (style.css); green/red are the static
+ *  done/failed dots and `paused` is static amber — a live run never wears them. */
+const DOT_FAMILIES = new Set(['peach', 'blue', 'violet', 'amber']);
+/** The pill family + word for a LIVE v2 run: the newest agent, or the count. */
+function activeCopy(r) {
+  const list = activeNodes(r);
+  if (list.length >= 2) return { family: 'peach', text: `${list.length} agents running` };
+  if (list.length === 1) return { family: PILL_FAMILIES.has(list[0].color) ? list[0].color : 'peach', text: list[0].label };
+  return { family: 'peach', text: 'Running' };
+}
+
+/** The decor bag for a run, memoised per state generation: onState / onSubagent /
+ *  onQuestion / onQuestionResolved / finishRun bump `r._decorSeq`, and every caller
+ *  in between (the card, the detail, the pill, the progress chip) shares ONE
+ *  reducer pass. `decorFromState` is pure, and the cached bag is treated as
+ *  IMMUTABLE: each MODE gets its own shallow copy carrying `run` / `runId` /
+ *  `mode`. Stamping the shared object instead would let the detail's paint flip
+ *  the card's bag to `mode: 'monitor'` — and a mode-less caller (progressText,
+ *  runStepLabel) would write `mode: undefined` onto the object every mounted host
+ *  is holding. The per-mode copy is memoised too, so run-hosts' `nextDecor ===
+ *  decor` skip still recognises an unchanged generation and no repaint is added. */
+function runDecorFor(r, mode = 'monitor') {
+  const seq = r._decorSeq || 0;
+  if (!r._decorCache || r._decorCache.seq !== seq) {
+    r._decorCache = { seq, views: new Map(),
+      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id) }) };
+  }
+  const cache = r._decorCache;
+  let bag = cache.views.get(mode);
+  if (!bag) { bag = { ...cache.decor, run: r, runId: r.runId, mode }; cache.views.set(mode, bag); }
+  return bag;
+}
+
 // Status dot family for a child row (left edge). Reuses existing color tokens.
 // For a LIVE run the dot matches the color of the current agent/phase (same
 // mapping as the status pill), so the dot reads as "who's running now". The
@@ -13652,6 +13732,8 @@ function runDotClass(r) {
   // because a paused run is _finished.
   if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
+  // v2: the newest active agent's family, PULSING families only (F-24).
+  if (isGraphRun(r)) { const f = activeCopy(r).family; return DOT_FAMILIES.has(f) ? f : 'grey-pulse'; }
   // running → color by current phase/agent (mirrors statusPill families)
   switch (r.phaseKey) {
     case 'plan': return 'violet';
@@ -13699,6 +13781,7 @@ function statusPill(r) {
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
+  if (isGraphRun(r)) return activeCopy(r);
   // running
   switch (r.phaseKey) {
     case 'plan': return { family: 'violet', text: 'Planning' };
@@ -13946,6 +14029,13 @@ function graphifyCountPillHtml(n) {
 // not a pre-normalized manifest — avoids a redundant double manifestFor). Falls
 // back to the raw id for unknown nodes.
 function nodeLabelLookup(stepper) {
+  // v2 (graph) manifests carry their labels on graph.nodes; the v1 shim cells a
+  // v2 manifest also exposes do NOT survive P8 — read the graph.
+  if (isGraphManifest(stepper)) {
+    const g = {};
+    for (const n of stepper.graph.nodes) { if (n && n.id) g[n.id] = n.label || n.id; }
+    return (id) => g[id] || id;
+  }
   const m = manifestFor(stepper);
   const map = {};
   m.steps.forEach((cell) => cell.nodes.forEach((n) => { map[n.id] = n.label || n.id; }));
@@ -14020,6 +14110,13 @@ function currentNodeCycles(r) {
 // A settled or not-yet-started cell falls back to its first node, so the row
 // still names WHERE the run is instead of blanking.
 function runStepLabel(r) {
+  if (isGraphRun(r)) {
+    // n/m = DONE agent nodes over agent nodes (D15: a number, never a bar).
+    const d = runDecorFor(r);
+    const a = activeNodes(r)[0] || null;
+    return { n: d.progress.done, m: d.progress.total, name: activeCopy(r).text,
+      model: a && (a.model || a.effort) ? `${a.model || 'default'}${a.effort ? ` · ${a.effort}` : ''}` : '' };
+  }
   const manifest = manifestFor(r && r.stepper);
   const ids = runGraphNodeIds(manifest);
   const maxIdx = r && Number.isInteger(r.maxCellIdx) ? r.maxCellIdx : -1;
