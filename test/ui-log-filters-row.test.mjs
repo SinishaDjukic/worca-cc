@@ -63,7 +63,7 @@ test('run-card template keeps every control as a sibling in one .log-filters bar
   const pills = [...bar.children].map((el) => el.className);
   assert.deepEqual(pills, [
     'log-f log-f-source', 'log-f log-f-level', 'log-f log-f-step', 'log-f log-f-cycle',
-    'log-f log-search', 'log-f log-copy',
+    'log-f log-f-exec', 'log-f log-search', 'log-f log-copy',
   ]);
 });
 
@@ -85,4 +85,27 @@ test('the cycle separator is a styled rule, not a log line', () => {
   const body = ruleBody('.log-sep');
   assert.ok(body, '.log-sep rule must exist');
   assert.match(body, /display:\s*flex/, 'the label sits between two rules');
+});
+
+// ---------- P6b: the node select + the execution chip ----------
+
+test('the ONE filter markup carries the node select and the execution chip', () => {
+  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'));
+  const bar = dom.window.document.querySelector('#run-card-tpl').content.querySelector('.log-filters');
+  const sel = bar.querySelector('.log-f-step');
+  assert.ok(sel, 'the step select is re-purposed, never duplicated');
+  assert.equal(bar.querySelectorAll('select.log-f').length, 4, 'still four selects (source, level, step/node, cycle)');
+  const chip = bar.querySelector('.log-f-exec');
+  assert.ok(chip && chip.hasAttribute('hidden'), 'the execution chip ships hidden');
+  assert.equal(chip.tagName, 'BUTTON');
+  assert.equal(chip.getAttribute('type'), 'button', 'must not submit an enclosing form');
+  assert.ok(chip.querySelector('.lfe-text') && chip.querySelector('.lfe-x'), 'text + clear affordance');
+});
+
+test('the execution chip is styled under .log-filters so it out-ranks the .log-f pill rule', () => {
+  const body = ruleBody('.log-filters .log-f-exec');
+  assert.ok(body, '.log-filters .log-f-exec rule must exist (an unscoped .log-f-exec loses to .log-filters .log-f)');
+  assert.match(body, /border-radius:\s*999px/, 'the chip is a pill');
+  const hidden = ruleBody('.log-filters .log-f-exec[hidden]');
+  assert.ok(hidden && /display:\s*none/.test(hidden), 'display:inline-flex must not defeat the hidden attribute');
 });

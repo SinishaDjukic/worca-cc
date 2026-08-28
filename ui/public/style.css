@@ -718,6 +718,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .log-filters .log-search{flex:1 1 160px;max-width:340px;}
 .log-filters .log-copy{flex:0 0 auto;margin-left:auto;cursor:pointer;}
 .log-filters .log-copy:hover{background:var(--line);}
+/* execution chip (P6b): hidden until a footer-row click narrows the log to ONE
+   execution; any click on it clears that axis. Scoped under .log-filters so it
+   out-ranks the .log-f pill rule above (an unscoped .log-f-exec would lose). */
+.log-filters .log-f-exec{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);background:var(--field);font-size:11px;font-weight:600;color:var(--ink-2);cursor:pointer;}
+.log-filters .log-f-exec[hidden]{display:none;}
+.log-filters .log-f-exec .lfe-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.log-filters .log-f-exec .lfe-x{color:var(--ink-3);font-weight:800;}
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
 .run-log-head .log-filters{order:1;flex-basis:100%;}

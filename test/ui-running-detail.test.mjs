@@ -670,7 +670,7 @@ test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared
   assert.ok(bar, 'the detail carries the shared filter bar');
   assert.deepEqual(
     [...bar.querySelectorAll('.log-f')].map((n) => n.classList[1]),
-    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-search', 'log-copy']);
+    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-f-exec', 'log-search', 'log-copy']);
   assert.ok(sec.querySelector('.switch.autoscroll'), 'the auto-scroll switch rides along');
   // Lines come from r.logLines, not from a fetch: no /log request was made.
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/log')).length, 0);

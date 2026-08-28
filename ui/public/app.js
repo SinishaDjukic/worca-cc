@@ -1371,7 +1371,7 @@ function makeRun({
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
-    logFilter: { source: '', level: '', step: '', cycle: '', search: '' }, // '' === all; render-time only (logLines keeps everything)
+    logFilter: { source: '', level: '', step: '', node: '', execution: '', cycle: '', search: '' }, // '' === all; render-time only (logLines keeps everything)
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     artifacts: [],     // Array<{kind, path}> — what the run has written so far.
@@ -2646,6 +2646,12 @@ if (typeof window !== 'undefined') {
     destroyGraphMounts,
     applyRunLogFilter,
     focusLogExecution,
+    paintLogFilters,
+    readLogFilterFrom,
+    repaintFilteredLog,
+    executionChipText,
+    paintExecChip,
+    wireExecChip,
     openRunArtifact,
     paintQuiescenceBanner,
     progressText,
@@ -3745,6 +3751,7 @@ function onLog(r, msg) {
   const rec = {
     ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub,
     ...(msg.nodeId != null ? { nodeId: msg.nodeId } : {}),
+    ...(msg.executionId != null ? { executionId: msg.executionId } : {}),
     ...(msg.stepIndex != null ? { stepIndex: msg.stepIndex } : {}),
     ...(msg.cycle != null ? { cycle: msg.cycle } : {}),
     ...(msg.stream ? { stream: msg.stream } : {}),
@@ -3805,7 +3812,31 @@ function paintLogFilters(r, root = r.el) {
   const selCycle = root.querySelector('.log-f-cycle');
   fillFilterSelect(selSource, 'all sources', facets.sources, r.logFilter.source);
   fillFilterSelect(selLevel, 'all levels', facets.levels, r.logFilter.level);
-  fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  // The step select is RE-PURPOSED as the node select once the run logged node
+  // ids (v2 graph runs): data-axis tells readLogFilterFrom which axis it holds.
+  // v1 records (stepIndex, no nodeId) keep today's `step N` options.
+  const labelOf = nodeLabelLookup(r.stepper);
+  // P6a seam: a footer-row click (applyRunLogFilter / focusLogExecution) can name
+  // a node BEFORE that node has logged a line — the graph host is painted from the
+  // ledger, the facets only from `r.logLines`. Keep the node axis live for such a
+  // pick and offer the node as its own option, so the model's value is
+  // representable in the DOM; otherwise the reconcile below reads `node: ''` back
+  // out of a step-axis select and silently wipes the pick on the very next paint.
+  // This is exactly the honesty loadLiveLogs' __setLogFilter gives the History bar.
+  const wantNode = String(r.logFilter.node || '');
+  const nodeFacets = facets.nodes || [];
+  if (nodeFacets.length || wantNode) {
+    selStep.dataset.axis = 'node';
+    selStep.title = 'Filter by node'; selStep.setAttribute('aria-label', 'Filter by node');
+    const nodeValues = wantNode && !nodeFacets.some((n) => String(n) === wantNode)
+      ? [...nodeFacets, wantNode] : nodeFacets;
+    fillFilterSelect(selStep, 'all nodes', nodeValues, wantNode, (id) => labelOf(id));
+  } else {
+    selStep.dataset.axis = 'step';
+    selStep.title = 'Filter by step'; selStep.setAttribute('aria-label', 'Filter by step');
+    fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  }
+  paintExecChip(r, root);
   // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
   // shifted for display.
   fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
@@ -3820,12 +3851,61 @@ function paintLogFilters(r, root = r.el) {
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
     || String(effective.step) !== String(r.logFilter.step)
+    // `|| ''` on BOTH sides: a filter object built before the node key existed
+    // (undefined) must read as "all", not force a repaint on every paint. The
+    // EXECUTION axis is deliberately not compared: paintExecChip above writes the
+    // chip's dataset from r.logFilter.execution, so readLogFilterFrom can only
+    // read that same value back — and a chip has no facets to fall out of.
+    || String(effective.node || '') !== String(r.logFilter.node || '')
     || String(effective.cycle) !== String(r.logFilter.cycle)) {
     r.logFilter = effective;
     repaintFilteredLog(r, root);
     return true;
   }
   return false;
+}
+
+/** `Planner #2` / `Implementer #2 · Add schema` for the execution chip. The row
+ *  is matched by executionId ONLY (never `|| s.key`): today's bookend rows are
+ *  key-only, and a v1 row's key is a phase name. Unknown -> the raw id. */
+function executionChipText(r, executionId) {
+  const row = (Array.isArray(r.steps) ? r.steps : []).find((s) => s && s.executionId === executionId);
+  if (!row) return String(executionId || '');
+  const head = `${nodeLabelLookup(r.stepper)(row.nodeId)} #${row.ordinal ?? row.cycle ?? 1}`;
+  return row.kind === 'task' ? `${head} · ${row.title || 'task'}` : head;
+}
+
+/** Mirror r.logFilter.execution into the chip on one bar (`r` is any holder of
+ *  {logFilter, steps, stepper} — the History panel passes a saved state). */
+function paintExecChip(r, root) {
+  const chip = root && root.querySelector('.log-f-exec');
+  if (!chip) return;
+  const id = r.logFilter.execution || '';
+  chip.hidden = !id;
+  chip.dataset.executionId = id;
+  if (id) chip.querySelector('.lfe-text').textContent = executionChipText(r, id);
+}
+
+/** The execution chip's two rules, bound ONCE per bar (the card's, the Running
+ *  detail's, History's). `read()` returns the owner's filter object; `write(patch)`
+ *  applies a patch to it and repaints every bar that shows it.
+ *  - a click on the chip clears the execution axis;
+ *  - a MANUAL node/step or cycle pick clears it too (adj-d §4): the chip narrows
+ *    to one execution and a broader pick must not stay hidden behind it. The
+ *    patch carries the bar's fresh DOM values because the owner's own change
+ *    handler may run AFTER this one (the card's is delegated on #run-list) and
+ *    would otherwise find its select re-filled from the stale model. */
+function wireExecChip(bar, { read, write }) {
+  bar.addEventListener('click', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-exec'))) return;
+    e.stopPropagation();
+    write({ execution: '' });
+  });
+  bar.addEventListener('change', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-step, .log-f-cycle'))) return;
+    if (!read().execution) return;
+    write({ ...readLogFilterFrom(bar, read().search), execution: '' });
+  });
 }
 
 // Cheap incremental check for onLog: only rebuild the dropdowns when `rec`
@@ -3836,6 +3916,7 @@ function facetKeys(facets) {
     ...facets.levels.map((l) => `l:${l}`),
     ...facets.steps.map((i) => `t:${i}`),
     ...facets.cycles.map((c) => `c:${c}`),
+    ...(facets.nodes || []).map((n) => `n:${n}`),
   ]);
 }
 // Returns paintLogFilters' repaint flag (true when the pane was fully
@@ -9209,10 +9290,18 @@ function buildLogFilterBar() {
 // the stored value; `prevSearch` only applies when the box is absent.
 function readLogFilterFrom(root, prevSearch = '') {
   const searchEl = root.querySelector('.log-search');
+  // ONE select carries either the step axis (v1 records) or the node axis (v2
+  // records); data-axis says which, so the other axis reads as "all".
+  const stepSel = root.querySelector('.log-f-step');
+  const nodeAxis = stepSel && stepSel.dataset.axis === 'node';
+  const stepVal = stepSel ? stepSel.value : '';
+  const chip = root.querySelector('.log-f-exec');
   return {
     source: root.querySelector('.log-f-source')?.value || '',
     level: root.querySelector('.log-f-level')?.value || '',
-    step: root.querySelector('.log-f-step')?.value || '',
+    step: nodeAxis ? '' : stepVal,
+    node: nodeAxis ? stepVal : '',
+    execution: chip ? (chip.dataset.executionId || '') : '',
     cycle: root.querySelector('.log-f-cycle')?.value || '',
     search: searchEl ? searchEl.value : prevSearch,
   };
@@ -10238,7 +10327,7 @@ function issueList(rows) {
 // Fetch the persisted NDJSON and render each line with the SAME buildLogLine() the
 // live panel uses, so persisted logs look identical to live ones — including the
 // same source/level/step filter bar as the live card.
-async function loadLiveLogs(panel, logUrl) {
+async function loadLiveLogs(panel, logUrl, st = null) {
   const bar = buildLogFilterBar();
   const box = document.createElement('div');
   box.className = 'log';
@@ -10256,7 +10345,7 @@ async function loadLiveLogs(panel, logUrl) {
       try { rec = JSON.parse(t); } catch { continue; } // skip a torn final line
       recs.push(projectLogRecord(rec));
     }
-    const filter = { source: '', level: '', step: '', cycle: '', search: '' };
+    const filter = { source: '', level: '', step: '', node: '', execution: '', cycle: '', search: '' };
     const paint = () => {
       box.innerHTML = '';
       const visible = compileLogFilter(filter);
@@ -10279,7 +10368,18 @@ async function loadLiveLogs(panel, logUrl) {
     const facets = logFacets(recs);
     fillFilterSelect(bar.querySelector('.log-f-source'), 'all sources', facets.sources, '');
     fillFilterSelect(bar.querySelector('.log-f-level'), 'all levels', facets.levels, '');
-    fillFilterSelect(bar.querySelector('.log-f-step'), 'all steps', facets.steps, '', (i) => `step ${i + 1}`);
+    // Same node/step re-purposing as paintLogFilters (the card): labels come
+    // from the saved manifest (`st` = the detail's state; null on a legacy row).
+    const hStepSel = bar.querySelector('.log-f-step');
+    const hLabelOf = nodeLabelLookup(st && st.stepper);
+    if (facets.nodes && facets.nodes.length) {
+      hStepSel.dataset.axis = 'node';
+      hStepSel.title = 'Filter by node'; hStepSel.setAttribute('aria-label', 'Filter by node');
+      fillFilterSelect(hStepSel, 'all nodes', facets.nodes, '', (id) => hLabelOf(id));
+    } else {
+      hStepSel.dataset.axis = 'step';
+      fillFilterSelect(hStepSel, 'all steps', facets.steps, '', (i) => `step ${i + 1}`);
+    }
     fillFilterSelect(bar.querySelector('.log-f-cycle'), 'all cycles', facets.cycles, '', (c) => `cycle ${c}`);
     // The search box also carries `log-f`, so the guard is select-only: a
     // keystroke must not take the change path's undebounced repaint.
@@ -10334,6 +10434,29 @@ async function loadLiveLogs(panel, logUrl) {
       filter.source = pick;
       paint();
     };
+    // The node and execution axes' twin of __setLogSource: a v2 graph-card click
+    // (node) and a footer-row click (execution + node) land here, and so does the
+    // chip's own clear. A patch may carry ANY filter key (wireExecChip sends the
+    // bar's fresh values with the execution cleared). A node the run never logged
+    // under is injected as an option — idempotently — for the same honesty as
+    // __setLogSource: the dropdown names the pick and the pane says no line matched.
+    const hist = { logFilter: filter, steps: (st && Array.isArray(st.steps)) ? st.steps : [], stepper: st && st.stepper };
+    panel.__setLogFilter = (patch) => {
+      Object.assign(filter, patch || {});
+      if (patch && patch.node !== undefined && hStepSel.dataset.axis === 'node') {
+        const want = String(patch.node || '');
+        if (want && ![...hStepSel.options].some((o) => o.value === want)) {
+          const opt = document.createElement('option');
+          opt.value = want;
+          opt.textContent = hLabelOf(want);
+          hStepSel.appendChild(opt);
+        }
+        hStepSel.value = want;
+      }
+      paintExecChip(hist, bar);
+      paint();
+    };
+    wireExecChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
 
     paint();
 
@@ -10347,6 +10470,11 @@ async function loadLiveLogs(panel, logUrl) {
     if (pending) {
       panel.__pendingLogSource = null;
       panel.__setLogSource(pending);
+    }
+    const pendingFilter = panel.__pendingLogFilter;
+    if (pendingFilter) {
+      panel.__pendingLogFilter = null;
+      panel.__setLogFilter(pendingFilter);
     }
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;
@@ -11506,16 +11634,29 @@ function wireHdGraphLogLinks(screen) {
   // writes are host.dataset.wiresSig/ns on .run-flow itself, app.js:1025/1032) —
   // and nothing here re-runs buildRunGraph's structural rebuild. If that ever
   // changes, this pass has to move with it; the listeners would not.
-  for (const el of graph.querySelectorAll('.run-node[data-log-source]')) {
+  // v1 cards carry data-log-source and title in `.nmeta b`; v2 (graph) cards carry
+  // data-node-id and title in `.nhead .tt` (the shared renderer's head).
+  for (const el of graph.querySelectorAll('.run-node[data-log-source], .node[data-node-id]')) {
     el.setAttribute('role', 'link');
     el.tabIndex = 0;
-    const label = el.querySelector('.nmeta b');
-    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : el.dataset.logSource}`);
+    const label = el.querySelector('.nmeta b, .nhead .tt');
+    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)}`);
   }
 
   const open = (node) => {
     const cell = tabs.cells.get('logs');
     if (!cell) return;
+    if (node.dataset.nodeId) {
+      // A v2 graph card drives the NODE axis (v2 lines carry nodeId, and one
+      // agent key may back several nodes). Same park-or-apply contract as the
+      // source path below; the drain lives beside __pendingLogSource's.
+      const patch = { node: node.dataset.nodeId };
+      if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
+      else cell.sec.__pendingLogFilter = patch;
+      tabs.activate('logs');
+      cell.sec.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     const list = logSourceCandidates(node.dataset.logSource);
     // Park the intent when the panel has not fetched yet (loadLiveLogs drains it
     // after its first paint); apply it directly when it has. Setting it BEFORE
@@ -11532,13 +11673,13 @@ function wireHdGraphLogLinks(screen) {
   // changes, app.js:913) could not orphan the handler. The Done bookend carries
   // no data-log-source, so the selector skips it.
   graph.addEventListener('click', (e) => {
-    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source], .node[data-node-id]');
     if (node && graph.contains(node)) open(node);
   });
 
   graph.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source], .node[data-node-id]');
     if (!node || !graph.contains(node)) return;
     e.preventDefault();   // Space would otherwise scroll the detail body too
     open(node);
@@ -12789,7 +12930,7 @@ function buildHdClarify(sec, record, data) {
 // Logs tab: no fork of the log stack. loadLiveLogs owns the markup (the filter bar
 // cloned from #run-card-tpl + the .log box), the fetch, the facets, the filter and
 // the cycle separators, so the detail gets exactly the Running view's behavior.
-function buildHdLogs(sec, record, _data) {
+function buildHdLogs(sec, record, data) {
   sec.classList.add('hd-sec-logs');
   // Safe to call on a section initHdTabs has already stamped: loadLiveLogs has no
   // dataset.loaded guard of its own (its callers own that), and its error
@@ -12800,7 +12941,9 @@ function buildHdLogs(sec, record, _data) {
   // and its first statements (buildLogFilterBar(), panel.innerHTML = '') sit OUTSIDE
   // its own try. An unhandled rejection fails the entire node --test file and
   // misattributes it to another test.
-  loadLiveLogs(sec, historyLogUrl(record.id, record)).catch(() => {});
+  // `data.state` feeds the node select's labels (manifest) and the execution
+  // chip's text (ledger) — a legacy row without a saved state degrades to ids.
+  loadLiveLogs(sec, historyLogUrl(record.id, record), (data && data.state) || null).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -12969,6 +13112,10 @@ function rdMaybePaintLogFilters(sec, r, rec) {
 
 // The four control listeners, bound once per section element (see buildRdLogs).
 function rdWireLogControls(sec, r) {
+  // The execution chip on THIS bar: same two rules as the card's, same setter
+  // (applyRunLogFilter repaints both bars), bound on the bar so it fires before
+  // the section-level change handler below re-reads the (then consistent) DOM.
+  wireExecChip(sec.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   // The filter OBJECT is shared (it is `r.logFilter`), but the two DOMs are not:
   // the card's four selects and its own pane still show the pre-change state until
   // something repaints them. Mirror the change onto the card so hopping back to
@@ -14030,6 +14177,11 @@ function buildRunCard(r) {
   if (searchBox) searchBox.value = r.logFilter.search || '';
   repaintFilteredLog(r, node);
   paintLogFilters(r, node);
+  // The execution chip's rules are bound on the CARD's bar, not on the delegated
+  // #run-list listeners: the chip is card-local markup, and the card exists (and
+  // is exercised) before it is ever appended to the list. applyRunLogFilter
+  // repaints this bar AND the open Running-detail bar (shared filter object).
+  wireExecChip(node.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
 
   // The switch is cloned ON from the template; mirror the run's persisted choice so
   // a rebuild (finish/resume/reconcile) never silently re-enables auto-scroll.
