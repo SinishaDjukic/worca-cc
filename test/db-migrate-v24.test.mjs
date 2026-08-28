@@ -4,6 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { buildResidueDb } from './helpers/db-residue-v22.mjs';
 import { getDb, SCHEMA_VERSION, sweepV1Runs } from '../src/core/db.mjs';
@@ -152,6 +153,26 @@ test('sweepV1Runs also runs on a DIVERGENTLY-stamped DB (boot path) and is idemp
   assert.deepEqual(sweepV1Runs(db), ['run-p1']);
   assert.equal(db.prepare("SELECT status FROM pipelines WHERE id = 'run-p1'").get().status, 'interrupted');
   assert.deepEqual(sweepV1Runs(db), [], 'idempotent: a second sweep finds nothing');
+
+  // Both schema probes, each on a handle where ONLY IT applies. Measured: on the
+  // hand-seeded ladder fixtures (migrate-v20, db-migrate-v23) both conditions
+  // hold at once, so the probes SHADOW each other and either one can be deleted
+  // with the suite still green. These two scratch handles separate them.
+  const noCols = new DatabaseSync(':memory:');
+  try {
+    noCols.exec('CREATE TABLE pipelines (id TEXT PRIMARY KEY);'
+      + 'CREATE TABLE pipeline_events (id INTEGER PRIMARY KEY, pipeline_id TEXT, ts TEXT, text TEXT);');
+    assert.deepEqual(sweepV1Runs(noCols), [], 'a pipelines table with no status/resume_point is skipped');
+  } finally { noCols.close(); }
+
+  const noEvents = new DatabaseSync(':memory:');
+  try {
+    noEvents.exec("CREATE TABLE pipelines (id TEXT PRIMARY KEY, status TEXT, resume_point TEXT);"
+      + "INSERT INTO pipelines VALUES ('x', 'paused', '{\"version\":1}');");
+    assert.deepEqual(sweepV1Runs(noEvents), [], 'no pipeline_events table: nothing to record, nothing swept');
+    assert.equal(noEvents.prepare("SELECT status FROM pipelines WHERE id = 'x'").get().status, 'paused',
+      'and the row is left alone rather than half-swept');
+  } finally { noEvents.close(); }
 });
 
 // Nothing else covers the json_valid guard, and without it a corrupt blob makes
