@@ -135,6 +135,41 @@
   section.is-active .bar:nth-of-type(5){animation-delay:.4s}
   .caret{animation:blink 1s step-end infinite;}
 
+  /* ── composer canvas (slide 4) — recreated from ui/public/style.css .canvas-wrap/.col/.node ── */
+  .viz.composer{--line-2:#E3E3E0;}
+  .ccanvas{position:absolute; inset:48px 0 0 0; background-color:#FBFBF9; background-image:radial-gradient(circle, var(--line-2) 1.4px, transparent 1.4px); background-size:28px 28px;}
+  .ccanvas .wires{position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none;}
+  .ctag{position:absolute; font-size:13px; font-weight:700; letter-spacing:.07em; color:var(--ink-3); text-transform:uppercase; white-space:nowrap;}
+  .ctag em{font-style:normal; color:var(--blue-ink);}
+  .cnode{position:absolute; width:176px; height:78px; box-sizing:border-box; background:#fff; border:1.5px solid var(--line-2); border-radius:20px; box-shadow:var(--shadow-soft); padding:0 12px 0 20px; display:flex; align-items:center; gap:12px; z-index:2;}
+  .cnode::before{content:''; position:absolute; left:0; top:14px; bottom:14px; width:6px; border-radius:0 6px 6px 0; background:var(--c,#ccc);}
+  .cnode .nic{width:40px; height:40px; border-radius:13px; display:grid; place-items:center; flex:0 0 auto; background:var(--cbg); color:var(--c);}
+  .cnode .nic svg{width:22px; height:22px; stroke-width:1.85; fill:none; stroke:currentColor;}
+  .cnode .nmeta{min-width:0; flex:1;}
+  .cnode .nmeta b{display:block; font-weight:600; font-size:16px; line-height:1.15; letter-spacing:-.01em;}
+  .cnode .nmeta small{display:block; color:var(--ink-3); font-size:12.5px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .cnode.task{z-index:3; border-color:var(--peach); box-shadow:0 0 0 4px var(--peach-bg), var(--shadow-soft);}
+  .cnode .badge{position:absolute; top:-13px; right:-10px; font-family:var(--mono); font-size:11.5px; font-weight:700; color:var(--green-ink); background:var(--green-bg); border:1.5px solid #fff; border-radius:999px; padding:4px 9px; z-index:4;}
+  .clegend{position:absolute; left:26px; bottom:22px; display:flex; gap:18px; font-size:13px; color:var(--ink-3); font-weight:500;}
+  .clegend i{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; vertical-align:-1px;}
+  .cpill{position:absolute; right:26px; bottom:16px; font-family:var(--mono); font-size:15px; font-weight:500; color:var(--ink-2); background:#fff; border:1.5px solid var(--line-2); border-radius:999px; padding:9px 16px; box-shadow:var(--shadow-soft);}
+  .cpill b{color:var(--green-ink); font-weight:700;}
+
+  /* ── the sealed run (slide 8) ─────────────────────────────────────────── */
+  .pbox{position:absolute; left:30px; top:96px; width:760px; height:440px; box-sizing:border-box; border-radius:36px; border:2px dashed var(--line-2); background:#fff;}
+  .pbox.sealed{border:3px solid var(--green); box-shadow:0 0 0 8px var(--green-bg);}
+  .pbox .lbl{position:absolute; left:30px; top:-16px; background:#fff; padding:0 12px; font-family:var(--mono); font-size:19px; font-weight:700; color:var(--ink-3);}
+  .pseal{position:absolute; left:50%; top:-50px; transform:translateX(-50%); width:100px; height:100px; border-radius:50%; background:var(--green); display:grid; place-items:center; box-shadow:var(--shadow); border:5px solid #fff;}
+  .pseal svg{width:48px; height:48px; stroke:#fff; stroke-width:2; fill:none;}
+  .pseal b{position:absolute; top:106px; font-family:var(--mono); font-size:21px; font-weight:700; color:var(--green-ink); white-space:nowrap;}
+  .pag{position:absolute; width:124px; height:124px; border-radius:32px; background:var(--cbg); display:grid; place-items:center; color:var(--c);}
+  .pag > svg{width:56px; height:56px; stroke:currentColor; stroke-width:1.7; fill:none;}
+  .pag i{position:absolute; top:-12px; right:-12px; width:36px; height:36px; border-radius:50%; background:var(--green); border:3px solid #fff; display:grid; place-items:center;}
+  .pag i svg{width:19px; height:19px; stroke:#fff; stroke-width:2.4; fill:none;}
+  .pag u{position:absolute; bottom:-34px; font-size:19px; font-weight:600; color:var(--ink-2); text-decoration:none;}
+  .pout{position:absolute; width:300px; height:70px; box-sizing:border-box; border-radius:18px; background:var(--card-2); border:1.5px solid var(--line-2); display:flex; align-items:center; justify-content:center; gap:10px; font-family:var(--mono); font-size:18px; color:var(--ink-2); white-space:nowrap;}
+  .pout .no{color:var(--red-ink); font-weight:700;} .pout .add{color:var(--green-ink); font-weight:700;}
+
   /* chat bubbles (slide 7) */
   .chat{display:flex; flex-direction:column; gap:22px; height:100%; justify-content:center;}
   .bubble{max-width:82%; padding:24px 30px; border-radius:var(--r-md); font-size:26px; line-height:1.4; background:var(--card-2); border:1px solid var(--line);}
@@ -285,46 +320,84 @@
         </svg>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 4 · 02 Dynamic Workflows & Graph Engineering ───────────────────── -->
-  <section data-label="02 · Graph" data-speaker-notes="Pipelines are explicit graphs. Agents can grow them at runtime; the engine keeps them deterministic and replayable.">
+  <section data-label="02 · Graph" data-speaker-notes="Pipelines are explicit graphs you compose, loop and version. At runtime a Decompose step rewrites Implement into one implementer per task (tasks parallel, phases sequential); the engine keeps it deterministic and replayable.">
     <div class="frame">
       <span class="kicker"><span class="dot"></span>02 · Graph engineering</span>
       <h2>Prompt engineering<br><span class="dim">→ graph engineering.</span></h2>
       <p class="lead" data-step="1">The work has a <b>shape</b> you can see, edit and version.</p>
-      <p class="lead" data-step="2">Agents <b>grow the graph</b> at runtime.</p>
+      <p class="lead" data-step="2">The graph <b>grows at runtime</b> — one agent per task.</p>
       <div data-step="3"><span class="tag">deterministic</span><span class="tag">replayable</span><span class="tag">reusable</span></div>
     </div>
-    <div class="viz"><div class="chrome"><i></i><i></i><i></i><span>worca — workflow composer</span></div><div class="body">
-        <svg viewBox="0 0 724 624">
-          <line class="edge" x1="130" y1="312" x2="240" y2="312"/>
-          <line class="edge" x1="420" y1="312" x2="530" y2="312"/>
-          <rect class="node done" x="10" y="272" width="120" height="80" rx="20"/>
-          <text x="70" y="320" text-anchor="middle">plan</text>
-          <rect class="node violet" x="240" y="272" width="180" height="80" rx="20"/>
-          <text x="330" y="320" text-anchor="middle">implement</text>
-          <rect class="node" x="530" y="272" width="140" height="80" rx="20"/>
-          <text x="600" y="320" text-anchor="middle">review</text>
-          <!-- growth -->
-          <g data-step="2" data-tip="The implement agent decided it needs a research branch and a second reviewer — new nodes, same engine.">
-            <path class="edge dash" d="M330 272 V140"/>
-            <rect class="node violet" x="250" y="60" width="160" height="80" rx="20"/>
-            <text x="330" y="108" text-anchor="middle">research</text>
-            <path class="edge dash" d="M420 312 C480 312, 480 500, 520 500"/>
-            <rect class="node violet" x="520" y="460" width="190" height="80" rx="20"/>
-            <text x="615" y="508" text-anchor="middle">2nd reviewer</text>
-            <path class="edge dash" d="M330 352 V460"/>
-            <rect class="node violet" x="230" y="460" width="200" height="80" rx="20"/>
-            <text x="330" y="508" text-anchor="middle">fan-out ×3</text>
-          </g>
-          <g data-step="3">
-            <rect x="10" y="560" width="640" height="54" rx="27" fill="var(--field)"/>
-            <text class="mono" x="330" y="595" text-anchor="middle">workflow.v3 · run #142 · replay ▶</text>
+    <div class="viz composer"><div class="chrome"><i></i><i></i><i></i><span>worca — workflow composer</span></div>
+      <div class="ccanvas">
+
+        <svg class="wires" viewBox="0 0 820 692" aria-hidden="true">
+          <defs>
+            <marker id="arrSeq" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#B7B7BC"/></marker>
+            <marker id="arrFb"  markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#E6962A"/></marker>
+          </defs>
+          <!-- sequential edges between the four columns (a column's nodes share its edge) -->
+          <path d="M190 300 L219 300" fill="none" stroke="#B7B7BC" stroke-width="2.5" stroke-dasharray="7 8" marker-end="url(#arrSeq)"/>
+          <path d="M395 300 L424 300" fill="none" stroke="#B7B7BC" stroke-width="2.5" stroke-dasharray="7 8" marker-end="url(#arrSeq)"/>
+          <path d="M600 300 L629 300" fill="none" stroke="#B7B7BC" stroke-width="2.5" stroke-dasharray="7 8" marker-end="url(#arrSeq)"/>
+          <!-- step 1: feedback loop review → implement, drawn in the composer (✕ = editable) -->
+          <g data-step="1" data-tip="Loops are drawn in the composer: Review hands blocking findings back to Implement until clean. The ✕ is the edit handle — the shape is yours to change and version.">
+            <path d="M766 261 C766 196, 546 196, 546 261" fill="none" stroke="#E6962A" stroke-width="2.5" stroke-dasharray="3 9" stroke-linecap="round" marker-end="url(#arrFb)"/>
+            <circle cx="656" cy="212" r="12" fill="#fff" stroke="#E6962A" stroke-width="1.8"/>
+            <path d="M652 208L660 216M660 208L652 216" stroke="#E6962A" stroke-width="2" stroke-linecap="round"/>
           </g>
         </svg>
+
+        <!-- column tags -->
+        <div class="ctag" style="left:24px;  top:236px">Step 1</div>
+        <div class="ctag" style="left:229px; top:236px">Step 2</div>
+        <div class="ctag" style="left:434px; top:236px">Step 3</div>
+        <div class="ctag" style="left:639px; top:236px">Step 4</div>
+        <div class="ctag" data-step="2" style="left:434px; top:582px"><em>phase 1 · 3 tasks · parallel</em></div>
+
+        <!-- the composed workflow: plan → decompose → implement → review -->
+        <div class="cnode" style="left:14px; top:261px; --c:#8C7FD6; --cbg:#EAE6F8">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/></svg></div>
+          <div class="nmeta"><b>Plan</b></div>
+        </div>
+        <div class="cnode" style="left:219px; top:261px; --c:#5BA6CC; --cbg:#DEEFF7">
+          <div class="nic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+          <div class="nmeta"><b>Decompose</b></div>
+          <div class="badge" data-step="2">3 tasks</div>
+        </div>
+        <div class="cnode" style="left:424px; top:261px; --c:#EFA63C; --cbg:#FCEEDA">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="nmeta"><b>Implement</b></div>
+        </div>
+        <div class="cnode" style="left:629px; top:261px; --c:#5BAE5B; --cbg:#E2F3DF">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="nmeta"><b>Review</b></div>
+        </div>
+
+        <!-- step 2 · at runtime the engine REWRITES the implement step: one implementer per task,
+             tasks parallel (stacked in the column), phases sequential. Count decided by the run. -->
+        <div class="cnode task" data-step="2" data-tip="At runtime a Decompose step splits the approved plan into phases and tasks; the engine rewrites the single Implement node into one implementer per task — tasks parallel, phases sequential, the count decided by the run. On a workspace run, plan, implement and review fan out once per member project the same way." style="left:424px; top:261px; --c:#EFA63C; --cbg:#FCEEDA">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="nmeta"><b>Implement</b><small>task: schema</small></div>
+        </div>
+        <div class="cnode task" data-step="2" style="left:424px; top:375px; --c:#EFA63C; --cbg:#FCEEDA">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="nmeta"><b>Implement</b><small>task: API</small></div>
+        </div>
+        <div class="cnode task" data-step="2" style="left:424px; top:489px; --c:#EFA63C; --cbg:#FCEEDA">
+          <div class="nic"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="nmeta"><b>Implement</b><small>task: UI</small></div>
+        </div>
+
+        <div class="clegend"><span><i style="background:#B7B7BC"></i>sequential</span><span><i style="background:#E6962A"></i>feedback loop</span><span><i style="background:#EFA63C"></i>rewritten at runtime</span></div>
+        <div class="cpill" data-step="3" data-tip="The workflow is a versioned artifact; each run records which version ran and can be replayed step by step."><b>workflow.v3</b> · run #142 · replay ▶</div>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 5 · 03 Auditable Costs & Per-Run Statistics ───────────────────── -->
@@ -360,11 +433,16 @@
             <text class="mono" x="365" y="360" text-anchor="middle">$0.88</text>
             <text class="mono" x="505" y="390" text-anchor="middle">$0.51</text>
             <text class="mono" x="645" y="460" text-anchor="middle">$0.19</text>
-            <text class="small" x="85"  y="595" text-anchor="middle">opus</text>
-            <text class="small" x="225" y="595" text-anchor="middle">sonnet</text>
-            <text class="small" x="365" y="595" text-anchor="middle">opus</text>
-            <text class="small" x="505" y="595" text-anchor="middle">haiku</text>
-            <text class="small" x="645" y="595" text-anchor="middle">local</text>
+            <rect x="41" y="577" width="88" height="30" rx="15" fill="var(--violet-bg)"/>
+            <text class="mono" x="85" y="598" text-anchor="middle" fill="var(--violet-ink)" style="font-size:17px">opus</text>
+            <rect x="181" y="577" width="88" height="30" rx="15" fill="var(--blue-bg)"/>
+            <text class="mono" x="225" y="598" text-anchor="middle" fill="var(--blue-ink)" style="font-size:17px">sonnet</text>
+            <rect x="321" y="577" width="88" height="30" rx="15" fill="var(--violet-bg)"/>
+            <text class="mono" x="365" y="598" text-anchor="middle" fill="var(--violet-ink)" style="font-size:17px">opus</text>
+            <rect x="461" y="577" width="88" height="30" rx="15" fill="var(--green-bg)"/>
+            <text class="mono" x="505" y="598" text-anchor="middle" fill="var(--green-ink)" style="font-size:17px">haiku</text>
+            <rect x="601" y="577" width="88" height="30" rx="15" fill="var(--field)"/>
+            <text class="mono" x="645" y="598" text-anchor="middle" fill="var(--ink-2)" style="font-size:17px">local</text>
           </g>
           <g data-step="2" data-tip="One step, 61% of the run. Swap its model, split it, or cache — and compare on the next run.">
             <rect x="180" y="170" width="90" height="350" rx="12" fill="var(--amber)"/>
@@ -379,6 +457,7 @@
         </svg>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 6 · 04 Mixed Models & Providers ───────────────────────────────── -->
@@ -427,6 +506,7 @@
         </svg>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 7 · 05 Pipeline Chat Integration ──────────────────────────────── -->
@@ -447,65 +527,45 @@
         </div>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 8 · 06 Project-Level Guardrails ───────────────────────────────── -->
-  <section data-label="06 · Guardrails" data-speaker-notes="Named guardrail sets (Permissive/Normal/Strict/own), picked per run. Injected into every agent spawn as one --settings payload + scrubbed env. Repo settings can add, never remove. Set id recorded on the run.">
+  <section data-label="06 · Guardrails" data-speaker-notes="Named guardrail sets (Permissive/Normal/Strict/own), picked per run — the seal on the run. Injected into every agent spawn as one --settings payload + scrubbed env. Repo/user settings can add rules, never remove. Set id recorded on the run.">
     <div class="frame">
       <span class="kicker"><span class="dot r"></span>06 · Guardrails</span>
       <h2>Policy travels<br>with the run.<br><span class="dim">Not with the developer.</span></h2>
       <p class="lead" data-step="1">Pick a guardrail set when you start — <b>Normal, Strict, or your own.</b></p>
       <p class="lead" data-step="2">Every agent the run spawns gets <b>the same rules</b> — denies + scrubbed env.</p>
-      <p class="lead" data-step="3">Repo settings <b>can't undo it.</b> The set is on the run's record.</p>
+      <p class="lead" data-step="3">Lower scopes can <b>add rules, never remove them.</b> The set is on the run's record.</p>
     </div>
-    <div class="viz"><div class="chrome"><i></i><i></i><i></i><span>worca — new pipeline</span></div><div class="body">
-        <svg viewBox="0 0 724 624">
-          <!-- step 1 · the picker -->
-          <g data-step="1" data-tip="Five fields per set: honor project settings, env scrub, env allowlist, protected paths, deny rules. Built-ins are Permissive, Normal, Strict.">
-            <rect x="0" y="0" width="724" height="200" rx="24" fill="var(--field)" stroke="var(--line-2)" stroke-width="2"/>
-            <text class="mono" x="30" y="44" fill="var(--ink-3)">new pipeline</text>
-            <text class="mono" x="30" y="84">workflow:   <tspan fill="var(--ink)">feature</tspan></text>
-            <text class="mono" x="30" y="120">guardrails: <tspan fill="var(--green-ink)" font-weight="500">Strict ▾</tspan></text>
-            <rect x="30" y="144" width="236" height="36" rx="18" fill="var(--red-bg)"/>
-            <text class="mono" x="148" y="168" text-anchor="middle" fill="var(--red-ink)" style="font-size:18px">protect .env* *.pem</text>
-            <rect x="278" y="144" width="246" height="36" rx="18" fill="var(--red-bg)"/>
-            <text class="mono" x="401" y="168" text-anchor="middle" fill="var(--red-ink)" style="font-size:18px">deny git push · curl</text>
-            <rect x="536" y="144" width="158" height="36" rx="18" fill="var(--amber-bg)"/>
-            <text class="mono" x="615" y="168" text-anchor="middle" fill="var(--amber-ink)" style="font-size:18px">env: scrubbed</text>
-          </g>
-          <!-- step 2 · fan-out to every agent -->
-          <g data-step="2" data-tip="One --settings payload (permissions.deny) plus a minimal environment on every spawn — the same for the planner, implementer, reviewer and fixer.">
-            <path class="edge flow" d="M362 200 V240 H80 V280"/>
-            <path class="edge flow" d="M362 240 H268 V280"/>
-            <path class="edge flow" d="M362 240 H456 V280"/>
-            <path class="edge flow" d="M362 240 H644 V280"/>
-            <text class="mono" x="380" y="232" fill="var(--ink-3)" style="font-size:18px">--settings</text>
-            <rect class="node done" x="10"  y="280" width="140" height="90" rx="20"/>
-            <rect class="node done" x="198" y="280" width="140" height="90" rx="20"/>
-            <rect class="node done" x="386" y="280" width="140" height="90" rx="20"/>
-            <rect class="node done" x="574" y="280" width="140" height="90" rx="20"/>
-            <text x="80"  y="316" text-anchor="middle">plan</text>
-            <text x="268" y="316" text-anchor="middle">implement</text>
-            <text x="456" y="316" text-anchor="middle">review</text>
-            <text x="644" y="316" text-anchor="middle">fix</text>
-            <text class="mono" x="80"  y="350" text-anchor="middle" fill="var(--green-ink)" style="font-size:18px">🛡 Strict</text>
-            <text class="mono" x="268" y="350" text-anchor="middle" fill="var(--green-ink)" style="font-size:18px">🛡 Strict</text>
-            <text class="mono" x="456" y="350" text-anchor="middle" fill="var(--green-ink)" style="font-size:18px">🛡 Strict</text>
-            <text class="mono" x="644" y="350" text-anchor="middle" fill="var(--green-ink)" style="font-size:18px">🛡 Strict</text>
-            <text class="small" x="362" y="410" text-anchor="middle">same rules · whoever pressed start</text>
-          </g>
-          <!-- step 3 · can't be undone, on the record -->
-          <g data-step="3" data-tip="Deny rules merge across scopes: a repo's .claude/settings.json can add restrictions, never remove Worca's. The set id is written to run.json and History.">
-            <rect x="0" y="460" width="350" height="110" rx="20" fill="var(--panel)" stroke="var(--line-2)" stroke-width="2"/>
-            <text class="mono" x="24" y="500" fill="var(--ink-3)" style="font-size:19px">repo .claude/settings.json</text>
-            <text class="mono" x="24" y="540" style="font-size:18px"><tspan fill="var(--green-ink)">+ add</tspan> rules   <tspan fill="var(--red-ink)">✕ never remove</tspan></text>
-            <rect x="374" y="460" width="350" height="110" rx="20" fill="var(--panel)" stroke="var(--green)" stroke-width="2"/>
-            <text class="mono" x="398" y="500" fill="var(--ink-3)" style="font-size:19px">run #142 · run.json</text>
-            <text class="mono" x="398" y="540" style="font-size:18px">guardrails: <tspan fill="var(--green-ink)">strict</tspan> · recorded</text>
+    <div class="viz composer"><div class="chrome"><i></i><i></i><i></i><span>worca — run #142</span></div>
+      <div class="ccanvas">
+        <div class="pbox"><span class="lbl">run #142</span></div>
+        <!-- step 1 · picking a set seals the run -->
+        <div class="pbox sealed" data-step="1" data-tip="Picked when you start the pipeline: Permissive, Normal, Strict, or a set your team defined — protected paths, denied commands, environment scrub."><span class="lbl">run #142</span>
+          <div class="pseal"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>guardrails: strict</b></div>
+        </div>
+        <!-- step 2 · every agent the run spawns lives inside the seal -->
+        <div class="pag" data-step="2" data-tip="Each spawn gets the same --settings payload (permissions.deny, protected paths) and a scrubbed environment — planner, implementer, reviewer and fixer alike." style="left:110px; top:236px; --c:#8C7FD6; --cbg:#EAE6F8"><svg viewBox="0 0 24 24"><path d="M8 6h11M8 12h11M8 18h8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.1"/><circle cx="4" cy="12" r="1.1"/><circle cx="4" cy="18" r="1.1"/></svg><i><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></i><u>plan</u></div>
+        <div class="pag" data-step="2" style="left:270px; top:236px; --c:#EFA63C; --cbg:#FCEEDA"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg><i><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></i><u>implement</u></div>
+        <div class="pag" data-step="2" style="left:430px; top:236px; --c:#5BA6CC; --cbg:#DEEFF7"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg><i><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></i><u>review</u></div>
+        <div class="pag" data-step="2" style="left:590px; top:236px; --c:#E76A5A; --cbg:#FBE3E0"><svg viewBox="0 0 24 24"><path d="M14 4l6 6-9 9H5v-6l9-9Z" stroke-linejoin="round"/><path d="M12 6l6 6" stroke-linecap="round"/></svg><i><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></i><u>fix</u></div>
+        <div class="ctag" data-step="2" style="left:50%; transform:translateX(-50%); top:452px; font-size:18px; color:var(--green-ink)">every spawn · same seal</div>
+        <!-- step 3 · outside the seal: lower scopes can add rules, never remove one -->
+        <svg class="wires" viewBox="0 0 820 692" aria-hidden="true">
+          <g data-step="3">
+            <path d="M210 596 L210 540" fill="none" stroke="#5BAE5B" stroke-width="2.5" stroke-dasharray="7 8"/>
+            <path d="M610 596 L610 540" fill="none" stroke="#E76A5A" stroke-width="2.5" stroke-dasharray="7 8"/>
+            <line x1="594" y1="552" x2="626" y2="584" stroke="#E76A5A" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="626" y1="552" x2="594" y2="584" stroke="#E76A5A" stroke-width="3.5" stroke-linecap="round"/>
           </g>
         </svg>
+        <div class="pout" data-step="3" data-tip="Deny rules merge across scopes: a repo's .claude/settings.json can add restrictions to the run — never remove Worca's." style="left:60px; top:596px"><span class="add">+ add</span> repo settings</div>
+        <div class="pout" data-step="3" data-tip="Nothing lower in the stack — repo or user settings — can lift a rule the set injected. The set id is written to run.json and shown in History." style="left:460px; top:596px"><span class="no">✕ remove</span> ~/.claude</div>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 9 · 07 Contained Operation ────────────────────────────────────── -->
@@ -547,6 +607,7 @@
         </svg>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 10 · 08 Ask Worca ─────────────────────────────────────────────── -->
@@ -567,6 +628,7 @@
         </div>
       </div>
     </div>
+    <img class="logo-sm" src="worca-logo.png" alt="">
   </section>
 
   <!-- ── 11 · Close ────────────────────────────────────────────────────── -->

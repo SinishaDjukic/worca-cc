@@ -23,9 +23,10 @@ ready-to-merge work.
 
 Pipelines in Worca are explicit node graphs, not a hidden loop inside a chat
 window — you can see, edit, version and reuse the shape of the work itself.
-Agents can extend that graph at runtime, spawning new steps or sub-agents
-when a task turns out to need a research branch, a second reviewer or a
-parallel fan-out, while the engine keeps the whole thing deterministic and
+The graph can grow at runtime: a Decompose step splits the approved plan
+into phases and tasks, and the engine rewrites the implement step into one
+implementer per task — tasks in parallel, phases in sequence, the count
+decided by the run itself — while keeping the whole thing deterministic and
 replayable. This turns "prompt engineering" into graph engineering: teams
 improve the process, not just the wording, and the improvement survives
 across runs and projects.
@@ -72,7 +73,7 @@ allowlist) when you start a pipeline, and that policy travels with the run.
 Worca injects the set into every agent the run spawns as a single settings
 payload plus a minimal environment, so the planner, the implementer, the
 reviewer and the fixer all run under exactly the same rules whether a senior
-engineer, an intern or a scheduler pressed start. Lower scopes cannot undo
+engineer, an intern or a scheduler pressed start. Lower scopes cannot loosen
 it — a repository's own settings can add restrictions but never remove
 Worca's — and the set is recorded on the run, so an audit can say exactly
 which policy was in force. See [guardrails.md](guardrails.md).

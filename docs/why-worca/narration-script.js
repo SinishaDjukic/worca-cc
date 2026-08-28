@@ -37,7 +37,7 @@ window.__NARRATION = {
     { lines: [
       "Number two. From prompt engineering to graph engineering.",
       "Pipelines in Worca are explicit node graphs, not a hidden loop inside a chat window. You can see, edit, version and reuse the shape of the work itself.",
-      "Agents can extend that graph at runtime: a research branch, a second reviewer, a parallel fan-out, whenever the task turns out to need one. The engine keeps the whole thing deterministic and replayable.",
+      "The graph can grow at runtime. A Decompose step splits the approved plan into tasks, and the engine rewrites the implement step into one implementer per task: tasks in parallel, phases in sequence, the count decided by the run itself. Deterministic and replayable throughout.",
       "So teams improve the process, not just the wording. And the improvement survives across runs and across projects."
     ] },
 
@@ -70,7 +70,7 @@ window.__NARRATION = {
       "Number six. Policy travels with the run, not with the developer.",
       "In a plain harness, permissions belong to whoever is at the keyboard: their settings file, their machine, their answer to the allow prompt. In Worca you pick a named guardrail set when you start a pipeline: Permissive, Normal, Strict, or one your team defined. Which files are protected, which commands are denied, whether the environment is scrubbed.",
       "Worca injects that set into every agent the run spawns, as a single settings payload plus a minimal environment. The planner, the implementer, the reviewer and the fixer all run under exactly the same rules, whether a senior engineer, an intern or a scheduler pressed start.",
-      "Lower scopes cannot undo it: a repo's own settings can add restrictions, but never remove Worca's. And the set is recorded on the run, so an audit can say exactly which policy was in force."
+      "Lower scopes cannot loosen it: a repo's own settings can add restrictions, but never remove Worca's. And the set is recorded on the run, so an audit can say exactly which policy was in force."
     ] },
 
     // ── 9 · 07 Contained ─────────────────────────────────────────────────
@@ -83,7 +83,7 @@ window.__NARRATION = {
 
     // ── 10 · 08 Ask Worca ────────────────────────────────────────────────
     { lines: [
-      "Number eight. Ask Worca. It was there.",
+      "Number eight. Ask Worca: your own agent for your runs, pipelines and results — it was there for all of it.",
       "Ask Worca is a conversational layer over everything Worca knows: your runs, their logs, their costs, their diffs, and the pipeline definitions themselves.",
       "Instead of digging through artifacts, you ask why the review step rejected the plan, and get an answer grounded in the actual run data, with the file and the line it came from.",
       "It turns the audit trail from something you could inspect into something you actually use. That closes the loop between autonomy and understanding."
