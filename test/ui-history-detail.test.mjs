@@ -1931,6 +1931,48 @@ test('Agents group header carries the rolled-up status and meta', async () => {
   assert.match(heads[0].textContent, /\$1\.5/);
 });
 
+// P6b Task 14 (C3): the History Agents tab's own call site passes st.steps, so a
+// v2 group is named from the ledger row its key's tail points at. Without the 4th
+// argument every head here reads a bare "Implementer".
+const AG_V2_DETAIL = {
+  ...DETAIL,
+  state: {
+    ...DETAIL.state,
+    stepper: {
+      version: 2,
+      template: { id: 'wf', name: 'WF' },
+      graph: {
+        nodes: [
+          { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, ports: { inputs: [], outputs: [], await: true } },
+          { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
+        ],
+        wires: [],
+      },
+    },
+    steps: [
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+      { key: 'x:n_impl:1:p1t3', executionId: 'x:n_impl:1:p1t3', nodeId: 'n_impl', ordinal: 1, kind: 'task', title: 'Add schema', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+      { key: 'x:n_or:1', executionId: 'x:n_or:1', nodeId: 'n_or', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+    ],
+    subAgents: [
+      { id: 't1', label: 'Slice worker', nodeId: 'n_impl', cycle: 1, stepKey: 'x:n_impl:1:p1t3',
+        status: 'finished', durationMs: 2000, costUsd: 0.5, skills: [], subagentType: null, graphifyCount: null },
+    ],
+  },
+};
+
+test('Agents tab names a v2 group from the ledger (buildHdAgents passes st.steps)', async () => {
+  const ctx = await bootDetail({ detail: AG_V2_DETAIL });
+  const sec = await openTab(ctx, 'agents');
+  const heads = [...sec.querySelectorAll('.hd-ag-group .hd-ag-head b')].map((b) => b.textContent);
+  // The OR node wrote a ledger row too and must not become an Agents group.
+  assert.deepEqual(heads, ['Implementer #1', 'Implementer #1 · Add schema'],
+    'the 4th argument (st.steps) reaches cycleAwareLabel');
+  const groups = [...sec.querySelectorAll('.hd-ag-group')];
+  assert.equal(groups[1].querySelector('.hd-ag-row .hd-ag-name').textContent, 'Slice worker',
+    'the sub-agent row landed in the SLICE group, keyed by its v2 stepKey');
+});
+
 test('Agents tab empty state', async () => {
   const ctx = await bootDetail();                    // DETAIL: subAgents [] + steps []
   const sec = await openTab(ctx, 'agents');

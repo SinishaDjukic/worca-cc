@@ -1108,3 +1108,49 @@ test('an unresolvable projectKey hides the link instead of guessing one', async 
   await settle(window, 6);
   assert.equal(window.document.querySelector('#run-detail .rd-history-link').hidden, true);
 });
+// --- P6b Task 14: the Agents tab names v2 groups from the ledger -------------
+// C3: cycleAwareLabel's 4th parameter is only reachable through rdAgentsBody's
+// call site — a unit test that passes the ledger directly leaves the app arm
+// dead. This drives the REAL path: WS frames -> run model -> detail -> tab.
+
+const V2_MANIFEST = {
+  version: 2,
+  template: { id: 'wf', name: 'WF' },
+  graph: {
+    nodes: [
+      { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, ports: { inputs: [], outputs: [], await: true } },
+      { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
+    ],
+    wires: [],
+  },
+};
+
+const V2_STEPS = () => ([
+  { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1000, costUsd: 0.1 },
+  { key: 'x:n_impl:1:p1t3', executionId: 'x:n_impl:1:p1t3', nodeId: 'n_impl', ordinal: 1, kind: 'task', title: 'Add schema', cycle: 1, status: 'done', activeMs: 2000, costUsd: 0.2 },
+  { key: 'x:n_impl:2', executionId: 'x:n_impl:2', nodeId: 'n_impl', ordinal: 2, kind: 'cycle', cycle: 2, status: 'start', activeMs: 500, costUsd: 0.05 },
+  { key: 'x:n_or:1', executionId: 'x:n_or:1', nodeId: 'n_or', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1, costUsd: 0 },
+]);
+
+const V2_SUBS = () => ([
+  { id: 'v1', label: 'Slice worker', nodeId: 'n_impl', cycle: 1, stepKey: 'x:n_impl:1:p1t3', status: 'finished', durationMs: 2000, costUsd: 0.2 },
+]);
+
+test('Agents: a v2 run names its groups from the ledger (rdAgentsBody passes r.steps)', async () => {
+  const ctx = await bootRunning();
+  await openRun(ctx, { stepper: V2_MANIFEST, steps: V2_STEPS(), subAgents: V2_SUBS() });
+  const { window } = ctx;
+  click(window, tabOf(window, 'agents'));
+  await settle(window);
+  const sec = secOf(window, 'agents');
+
+  const heads = [...sec.querySelectorAll('.rd-ag-group .rd-ag-head b')].map((b) => b.textContent);
+  // The OR node writes a ledger row too and must NOT become an Agents group
+  // (agentNodeIdSet's v2 arm); every surviving group wears its ledger label.
+  assert.deepEqual(heads, ['Implementer #1', 'Implementer #1 · Add schema', 'Implementer #2'],
+    'the 4th argument (r.steps) reaches cycleAwareLabel — without it every head reads a bare "Implementer"');
+  // The slice's sub-agent row landed in the slice group, not the cycle group.
+  const groups = [...sec.querySelectorAll('.rd-ag-group')];
+  assert.equal(groups[1].querySelectorAll('.rd-ag-row').length, 1);
+  assert.equal(groups[1].querySelector('.rd-ag-label').textContent, 'Slice worker');
+});

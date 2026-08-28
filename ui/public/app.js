@@ -1624,6 +1624,27 @@ function subsByNodeArrays(subAgents) {
 // in a nodeId (alphanumerics + underscore) or an integer, so split is unambiguous.
 const CYCLE_KEY_SEP = '|';
 
+/** v2 execution ids are `x:<nodeId>:<ordinal>[:<taskId>]` (spec §5.3). v1 step
+ *  keys (`plan#2`, `1:n_plan`) and v1 sub-agent stepKeys never start with `x:`,
+ *  so the prefix is the ONE discriminator between the two engines' records. */
+const EXEC_ID_RE = /^x:/;
+
+/** The execution a record is attributed to: an explicit executionId, else a v2
+ *  stepKey (the harness stamps stepKey = executionId on v2 rows — `subagent`,
+ *  `stepskills` and `stepgraphify` payloads carry stepKey, never executionId),
+ *  else null (a v1 record). */
+function execIdOf(rec) {
+  if (rec && rec.executionId) return rec.executionId;
+  const k = rec && rec.stepKey;
+  return typeof k === 'string' && EXEC_ID_RE.test(k) ? k : null;
+}
+
+/** The ONE group key for a node's execution: `nodeId|executionId` on v2 rows,
+ *  `nodeId|cycle` on v1 rows. `|` occurs in neither half, so split() is exact. */
+function execKey(nodeId, executionId, cycle) {
+  return `${nodeId}${CYCLE_KEY_SEP}${executionId || (cycle ?? 0)}`;
+}
+
 // {`${nodeId}|${cycle}`: Array<sub>} — like subsByNodeArrays but split per
 // cycle so refine/review loops show one dropdown group per cycle (records carry
 // `cycle`). Insertion order = encounter order (already (started_at,id)-sorted from
@@ -1632,7 +1653,7 @@ function subsByNodeCycleArrays(subAgents) {
   const out = {};
   for (const s of Array.isArray(subAgents) ? subAgents : []) {
     if (!s || s.nodeId == null) continue;
-    const key = `${s.nodeId}${CYCLE_KEY_SEP}${s.cycle ?? 0}`;
+    const key = execKey(s.nodeId, execIdOf(s), s.cycle);
     (out[key] ||= []).push(s);
   }
   return out;
@@ -1665,7 +1686,7 @@ function subsGroupsForRender(subAgents, steps, stepper) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
-    const key = `${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`;
+    const key = execKey(st.nodeId, st.executionId, st.cycle);
     if (!(key in out)) out[key] = subsByKey[key] || [];
   }
   for (const key of Object.keys(subsByKey)) {
@@ -1692,7 +1713,7 @@ function stepStatusByKey(steps, stepper) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = stepGroupStatus(st.status);
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = stepGroupStatus(st.status);
   }
   return out;
 }
@@ -1707,7 +1728,7 @@ function stepSkillsFromSteps(steps) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !Array.isArray(st.skills) || !st.skills.length) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.skills;
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = st.skills;
   }
   return out;
 }
@@ -1720,7 +1741,7 @@ function stepGraphifyFromSteps(steps) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !(st.graphifyCount > 0)) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.graphifyCount;
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = st.graphifyCount;
   }
   return out;
 }
@@ -1758,7 +1779,12 @@ function cyclesFromKeys(keys) {
   return m;
 }
 
-function cycleAwareLabel(stepper, subAgents, groupKeys) {
+function cycleAwareLabel(stepper, subAgents, groupKeys, steps = []) {
+  // v2 groups are named from the ledger row the key's tail (an executionId)
+  // points at: `<label> #<ordinal>`, plus ` · <title>` for a task slice. Rows
+  // are matched by executionId ONLY (a v1 row's key is a phase name).
+  const byExec = new Map((Array.isArray(steps) ? steps : []).filter((s) => s && s.executionId)
+    .map((s) => [s.executionId, s]));
   const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
   const m = manifestFor(stepper);
   const phaseToLabel = {};                            // uiPhase -> label
@@ -1777,6 +1803,11 @@ function cycleAwareLabel(stepper, subAgents, groupKeys) {
     const i = String(key).indexOf(CYCLE_KEY_SEP);
     const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
     const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
+    const row = i >= 0 ? byExec.get(String(key).slice(i + 1)) : undefined;
+    if (row) {
+      const head = `${byId(nodeId)} #${row.ordinal ?? row.cycle ?? 1}`;
+      return row.kind === 'task' ? `${head} · ${row.title || 'task'}` : head;
+    }
     let label = byId(nodeId);
     if (label === nodeId && idToPhase[nodeId] && phaseToLabel[idToPhase[nodeId]]) {
       label = phaseToLabel[idToPhase[nodeId]];
@@ -1906,7 +1937,7 @@ function onSubagent(r, msg) {
 function onStepSkills(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepSkills) r.stepSkills = {};
-  r.stepSkills[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Array.isArray(msg.skills) ? msg.skills : [];
+  r.stepSkills[execKey(msg.nodeId, execIdOf(msg), msg.cycle)] = Array.isArray(msg.skills) ? msg.skills : [];
   paintRunCard(r);
 }
 
@@ -1916,7 +1947,7 @@ function onStepSkills(r, msg) {
 function onStepGraphify(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepGraphify) r.stepGraphify = {};
-  r.stepGraphify[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Number(msg.graphifyCount) || 0;
+  r.stepGraphify[execKey(msg.nodeId, execIdOf(msg), msg.cycle)] = Number(msg.graphifyCount) || 0;
   paintRunCard(r);
 }
 
@@ -2605,6 +2636,8 @@ if (typeof window !== 'undefined') {
     subsByNode,
     subsByNodeArrays,
     subsByNodeCycleArrays,
+    execIdOf,
+    execKey,
     subsGroupsForRender,
     agentNodeIdSet,
     stepStatusByKey,
@@ -12818,7 +12851,7 @@ function buildHdAgents(sec, record, data) {
     sec.appendChild(empty);
     return;
   }
-  const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys);
+  const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys, st.steps);
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
@@ -13380,7 +13413,7 @@ function rdAgentsBody(sec, r) {
     sec.appendChild(empty);
     return;
   }
-  const labelOf = cycleAwareLabel(r.stepper, r.subAgents, keys);
+  const labelOf = cycleAwareLabel(r.stepper, r.subAgents, keys, r.steps);
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
