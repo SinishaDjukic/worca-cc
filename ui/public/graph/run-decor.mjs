@@ -341,3 +341,43 @@ function decorateExecutions(decor, ctx) {
     if (nodeId) decor.gate = { nodeId, wireId: g.wireId, askId: g.askId || null };
   }
 }
+
+/**
+ * Lay the decor over an already-rendered view. Idempotent and self-clearing:
+ * every ornament is rebuilt from the bag, so a repaint after the run settles
+ * cannot strand an ant, a badge or a gate pip. NEVER writes a card height —
+ * `view.setFooter` re-runs `nodeSize` for the band count it was handed.
+ * Band order inside a footer, top → bottom: fan → strip → exec×N (only for the
+ * ONE expanded node) → result.
+ */
+export function applyDecor(view, decor) {
+  if (!view || !decor) return;
+  const expanded = decor.expanded || null;
+  for (const nodeId of decor.nodeIds || []) {
+    view.setStatus(nodeId, decor.status[nodeId] || 'pending');
+    view.setNodeChrome(nodeId, {
+      color: decor.colors[nodeId] || '',
+      gate: decor.gate && decor.gate.nodeId === nodeId
+        ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate — open the question panel' } : null,
+      totals: decor.totals[nodeId] || null,
+    });
+    const foot = decor.footers[nodeId] || null;
+    const bands = [];
+    if (foot && foot.fan) bands.push({ kind: 'fan', leds: foot.fan.leds, count: foot.fan.count });
+    if (foot && foot.rows.length) {
+      bands.push({ kind: 'strip', leds: foot.leds, summary: foot.summary, expanded: expanded === nodeId });
+      if (expanded === nodeId) {
+        for (const r of foot.rows) {
+          bands.push({ kind: 'exec', executionId: r.executionId, led: r.led, label: r.label,
+            right: [r.dur, r.cost].filter(Boolean).join(' · ') });
+        }
+      }
+    }
+    if (decor.endResult && decor.endResult.nodeId === nodeId) {
+      bands.push({ kind: 'result', text: decor.endResult.text, path: decor.endResult.path });
+    }
+    view.setFooter(nodeId, bands);
+  }
+  for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, decor.loopBadges[wireId] || null);
+  view.setWireLive(decor.liveWireIds || []);
+}

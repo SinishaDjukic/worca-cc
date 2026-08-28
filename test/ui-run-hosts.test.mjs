@@ -121,3 +121,87 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   // Spelled WITHOUT the space, so the ask-dock arm stays the LAST with-space block (test/ui-ask-style.test.mjs).
   assert.ok(css.lastIndexOf('@media (prefers-reduced-motion:reduce)') > css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
 });
+
+// ── applyDecor: the ONE DOM pass ─────────────────────────────────────────────
+import { decorFromState, applyDecor } from '../ui/public/graph/run-decor.mjs';
+
+const RUN = (over = {}) => ({ stepper: MANIFEST, status: 'running', steps: [], active: [],
+  endReached: false, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null, ...over });
+
+test('applyDecor paints statuses, the collapsed strip, ants and badges; expanding one node lists its rows', () => {
+  const { view, host } = mountView();
+  const st = RUN({
+    steps: [
+      { key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 63000, costUsd: 0.12, trigger: { wireIds: [], freshPorts: ['task'] } },
+      { key: 'x:n_a:2', executionId: 'x:n_a:2', nodeId: 'n_a', ordinal: 2, kind: 'cycle', status: 'start', activeMs: 4000, costUsd: 0, trigger: { wireIds: ['w1'], freshPorts: [] } },
+    ],
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:2' }],
+    wireDeliveries: { w1: 2 },
+    gate: { wireId: 'w1', fromNode: 'n_a', toNode: 'n_end', askId: 'gate-w1-3' },
+  });
+  const decor = decorFromState(st);
+  applyDecor(view, decor);
+  const card = host.querySelector('[data-node-id="n_a"]');
+  assert.ok(card.classList.contains('is-active'));
+  assert.equal(host.querySelector('[data-node-id="n_end"]').classList.contains('is-pending'), true);
+  assert.equal(card.querySelector('.xsum').textContent, '2 runs · $0.12');
+  assert.equal(card.querySelectorAll('.xrow').length, 0, 'collapsed by default');
+  assert.equal(card.querySelector('.ngate').dataset.wireId, 'w1');
+  assert.equal(card.querySelector('.nrun .dur').textContent, '1m 7s');
+  assert.equal(host.querySelector('.wbadge[data-wire-id="w1"] .wfired').textContent, '2×');
+  assert.equal(host.querySelector('path[data-wire-id="w1"]').classList.contains('wire-live'), true);
+
+  applyDecor(view, { ...decor, expanded: 'n_a' });
+  assert.deepEqual([...card.querySelectorAll('.xrow')].map((r) => r.dataset.executionId), ['x:n_a:1', 'x:n_a:2']);
+  assert.equal(card.querySelector('.xtoggle').getAttribute('aria-expanded'), 'true');
+});
+
+test('applyDecor is self-clearing: a settled repaint strands no ant, badge or pip', () => {
+  const { view, host } = mountView();
+  applyDecor(view, decorFromState(RUN({ wireDeliveries: { w1: 1 }, gate: { wireId: 'w1', fromNode: 'n_a' },
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, trigger: { wireIds: ['w1'] } }],
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }] })));
+  applyDecor(view, decorFromState(RUN({ status: 'done', endReached: true, result: { type: 'md', path: '/tmp/p/plan.md' },
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 10 },
+      { key: 'x:n_end:1', executionId: 'x:n_end:1', nodeId: 'n_end', ordinal: 1, status: 'done' }] })));
+  assert.equal(host.querySelector('.ngate'), null, 'the gate pip is gone');
+  assert.equal(host.querySelector('.wfired'), null, 'the badge is gone');
+  assert.equal(host.querySelector('path.wire-live'), null, 'nothing marches on a resolved run');
+  const endCard = host.querySelector('[data-node-id="n_end"]');
+  assert.equal(endCard.querySelector('.xresult a').textContent, 'plan.md');
+  assert.equal(endCard.querySelector('.xresult a').dataset.path, '/tmp/p/plan.md');
+});
+
+test('a run that finished at quiescence renders End as skipped with no result row', () => {
+  const { view, host } = mountView();
+  const decor = decorFromState(RUN({ status: 'done', endReached: false }));
+  applyDecor(view, decor);
+  assert.equal(host.querySelector('[data-node-id="n_end"]').classList.contains('is-skipped'), true);
+  assert.equal(host.querySelector('.xresult'), null);
+  assert.equal(decor.warnings[0], 'finished at quiescence — End not reached');
+});
+
+test('applyDecor: band ORDER is fan → strip → exec → result; the pip and the result land on ONE card each', () => {
+  const { view, host } = mountView();
+  const st = RUN({
+    status: 'done', endReached: true, result: { type: 'md', path: '/tmp/p/plan.md' },
+    steps: [
+      { key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 63000, costUsd: 0.12 },
+      { key: 'x:n_end:1', executionId: 'x:n_end:1', nodeId: 'n_end', ordinal: 1, status: 'done' },
+    ],
+    gate: { wireId: 'w1', fromNode: 'n_a', toNode: 'n_end', askId: 'g' },
+  });
+  const decor = decorFromState(st, { subsOf: (id) => (id === 'n_a' ? [{ status: 'running' }, { status: 'finished' }] : []) });
+  applyDecor(view, { ...decor, expanded: 'n_a' });
+  const a = host.querySelector('[data-node-id="n_a"]');
+  const e = host.querySelector('[data-node-id="n_end"]');
+  assert.deepEqual([...a.querySelectorAll('.xfoot > *')].map((n) => n.className.split(' ')[0]), ['fan', 'xtoggle', 'xrow']);
+  assert.equal(a.querySelector('.fan .fl').textContent, '×2', 'the sub-agent fan rides the footer');
+  assert.equal(a.querySelector('.xrow .xr').textContent, '1m 3s · $0.12', 'the exec row\'s right column is dur · cost');
+  assert.equal(a.querySelector('.xresult'), null, 'the result band is End-only');
+  assert.deepEqual([...e.querySelectorAll('.xfoot > *')].map((n) => n.className.split(' ')[0]), ['xtoggle', 'xresult'], 'the result band is LAST');
+  assert.equal(e.querySelector('.xresult a').textContent, 'plan.md');
+  assert.equal(e.querySelector('.ngate'), null, 'the gate pip is FROM-node-only');
+  assert.equal(a.querySelector('.ngate').dataset.wireId, 'w1');
+  assert.equal(e.querySelector('.nrun'), null, 'a flow card has no header dur · cost');
+});
