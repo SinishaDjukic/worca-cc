@@ -110,13 +110,10 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       x: Number(node.x) || 0,
       y: Number(node.y) || 0,
       label: node.kind === 'agent' ? (meta?.displayName || node.key) : (FLOW_LABEL[node.kind] || node.kind),
-      // A custom sidecar's v1 `uiPhase` still buckets its stepper cell —
-      // UI_PHASE only knows the 11 builtins, and `resolveWorkflow` honours the
-      // field (`workflows.mjs:418`), so dropping it would strand every custom
-      // agent in a bucket named after its key.
-      uiPhase: node.kind === 'agent'
-        ? (UI_PHASE[node.key] || (typeof meta?.uiPhase === 'string' && meta.uiPhase) || node.key)
-        : node.kind,
+      // The v1 stepper bucket. UI_PHASE knows the 11 builtins; a custom agent
+      // buckets under its own key (the sidecar's `uiPhase` died with the v1
+      // vocabulary). The whole field goes with the phase shim in Task 16.
+      uiPhase: node.kind === 'agent' ? (UI_PHASE[node.key] || node.key) : node.kind,
       // The AUTHORED config, verbatim and complete (unknown keys included —
       // V17's "preserved and ignored" promise). The manifest is the ONLY
       // persisted copy of the topology: P4 rebuilds the template from it on a

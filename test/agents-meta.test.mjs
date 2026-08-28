@@ -62,7 +62,7 @@ test('every meta has the required fields and a runnable runnerType', async () =>
       assert.ok(meta[field] != null && meta[field] !== '', `${file}: missing "${field}"`);
     }
     assert.ok(RUNNER_TYPES.has(meta.runnerType), `${file}: runnerType "${meta.runnerType}" must be producer|verifier|clarifier`);
-    assert.equal(typeof meta.loopSource, 'boolean', `${file}: loopSource must be a boolean`);
+    assert.equal(meta.metaVersion, 2, `${file}: must be a meta v2 sidecar`);
     assert.equal(typeof meta.order, 'number', `${file}: order must be a number`);
   }
 });
@@ -78,13 +78,15 @@ test('loadAgentRegistry returns the 6 shipped agents keyed by key, sorted by ord
   assert.deepEqual(orders, sorted, 'loadAgentRegistry must return entries sorted by .order');
 });
 
-test('every sidecar declares produces/consumes/connectsTo explicitly', async () => {
+test('every sidecar declares its typed ports, and NO v1 wiring field', async () => {
   const files = (await readdir(AGENTS_DIR)).filter((x) => x.endsWith('.meta.json'));
   for (const f of files) {
     const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
-    assert.ok(Array.isArray(m.produces), `${f} produces`);
-    assert.ok(Array.isArray(m.consumes), `${f} consumes`);
-    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `${f} connectsTo`);
+    assert.ok(Array.isArray(m.inputs), `${f} inputs`);
+    assert.ok(Array.isArray(m.outputs), `${f} outputs`);
+    for (const k of ['consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource', 'uiPhase', 'channelDefs']) {
+      assert.ok(!(k in m), `${f}: the v1 wiring field "${k}" must be gone`);
+    }
   }
 });
 

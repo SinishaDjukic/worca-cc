@@ -21,8 +21,7 @@ function writeUserAgent(key) {
   writeFileSync(join(dir, `${key}.md`), `# ${key}\n`);
   writeFileSync(join(dir, `${key}.meta.json`), JSON.stringify({
     key, displayName: 'Spec Writer', description: 'writes specs', color: 'green',
-    icon: '<path d="M0 0"/>', agentFile: `${key}.md`, runnerType: 'producer',
-    loopSource: false, produces: ['plan'], consumes: ['userPrompt'], connectsTo: '*', order: 42,
+    icon: '<path d="M0 0"/>', agentFile: `${key}.md`, runnerType: 'producer', order: 42,
   }));
 }
 

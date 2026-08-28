@@ -32,23 +32,21 @@ test('every original project agent stays scope:"project" (coercion default)', ()
   }
 });
 
-test('CANARY: workspaceScanner.produces === ["workspace"] (channel-id list in sync)', () => {
-  // §6.9 highest-risk hazard: if "workspace" were missing from CHANNEL_IDS when the
-  // sidecar loads, channelList silently drops it and produces collapses to []. This
-  // canary is what catches that channel-id/sidecar desync.
+test('CANARY: the workspaceScanner sidecar declares its typed ports', () => {
+  // The v1 channel-id list is gone; the ports ARE the wiring vocabulary now, and
+  // an un-ported sidecar is refused outright by resolveGraph.
   const reg = loadAgentRegistry();
-  assert.deepEqual(reg.workspaceScanner.produces, ['workspace']);
-  assert.deepEqual(reg.workspaceScanner.consumes, ['userPrompt']);
-  assert.deepEqual(reg.workspaceScanner.connectsTo, []);
+  assert.equal(reg.workspaceScanner.metaVersion, 2);
+  assert.deepEqual(reg.workspaceScanner.inputs.map((p) => p.id), ['task']);
+  assert.deepEqual(reg.workspaceScanner.outputs.map((p) => p.id), ['workspace']);
+  assert.equal(reg.workspaceScanner.placeable, false, 'off-pipeline: never placeable on a canvas');
 });
 
 test('workspaceReviewer mirrors reviewer wiring (code->review->implementer loop)', () => {
   const reg = loadAgentRegistry();
   assert.equal(reg.workspaceReviewer.runnerType, 'verifier');
-  assert.equal(reg.workspaceReviewer.loopSource, true);
-  assert.deepEqual(reg.workspaceReviewer.produces, ['review']);
-  assert.deepEqual(reg.workspaceReviewer.consumes, ['plan', 'code']);
-  assert.ok(reg.workspaceReviewer.connectsTo.includes('implementer'));
+  assert.deepEqual(reg.workspaceReviewer.outputs.map((p) => p.id), reg.reviewer.outputs.map((p) => p.id));
+  assert.deepEqual(reg.workspaceReviewer.inputs.map((p) => p.id), reg.reviewer.inputs.map((p) => p.id));
   assert.equal(reg.workspaceReviewer.fanOut, true);
 });
 

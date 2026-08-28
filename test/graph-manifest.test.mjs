@@ -53,12 +53,14 @@ test('manifest head and node cells', () => {
   assert.deepEqual(plan.config, { model: 'claude-sonnet-5', awaitAll: true });
   assert.deepEqual(m.graph.nodes.find((n) => n.id === 'n_task').config, { planStoreSeed: true });
   assert.deepEqual(m.graph.nodes.find((n) => n.id === 'n_or').config, { arity: 2 });
-  // uiPhase: the builtin map wins; a custom sidecar's own v1 `uiPhase` is the
-  // fallback; the key is the last resort.
+  // uiPhase: the builtin map wins; the key is the fallback. (The v1 sidecar
+  // `uiPhase` field died with the rest of the v1 wiring vocabulary — a custom
+  // agent buckets under its own key.)
   const custom = buildGraphManifest(
     { ...TPL, nodes: TPL.nodes.map((n) => (n.id === 'n_plan' ? { ...n, key: 'custom' } : n)) },
     { ...AGENTS, custom: { ...AGENTS.planner, key: 'custom', displayName: 'Custom', uiPhase: 'review' } });
-  assert.equal(custom.graph.nodes.find((n) => n.id === 'n_plan').uiPhase, 'review');
+  assert.equal(custom.graph.nodes.find((n) => n.id === 'n_plan').uiPhase, 'custom',
+    'a sidecar can no longer name its own bucket');
   assert.equal(plan.uiPhase, 'plan', 'UI_PHASE still wins for a builtin key');
 });
 

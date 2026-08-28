@@ -6647,14 +6647,6 @@ const AGENT_OWN_KEYS = [
   'workspaceVariantOf', 'placeable', 'requiresSkills', 'promptHints', 'metaVersion',
   // Computed by the registry, never authored back into a sidecar.
   'origin', 'agentPath', 'agentFile', 'descriptionDerived', 'portSummary',
-  // DROP LIST: the v1 wiring normalizeMeta still derives on EVERY meta (even a
-  // pure-v2 sidecar gets consumes/produces from the runnerType fallback). The
-  // form must neither show nor re-emit them; agent-store's merge keeps whatever
-  // is already on disk until P8 deletes the fields outright. P8 must delete
-  // these eight entries in the same commit that removes the fields, or its
-  // kill-list grep guard flags this file.
-  'consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource',
-  'uiPhase', 'version', 'channelDefs',
 ];
 /**
  * The port type each non-default `as` renderer requires — a byte-for-byte copy

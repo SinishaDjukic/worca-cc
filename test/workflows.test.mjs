@@ -162,15 +162,6 @@ test('writeWorkflow still works and ids round-trip (guard does not break valid i
   assert.equal(await deleteWorkflow(saved.id), true);
 });
 
-// Inline fake registry mirroring Phase 1's AgentMeta shape. agentFile values are
-// the REAL agent prompt files on disk so prompt + tools load is exercised.
-const REGISTRY = {
-  clarify: { key: 'clarify', runnerType: 'clarifier', agentFile: 'worca-cc-clarify.md', loopSource: false },
-  planner: { key: 'planner', runnerType: 'producer', agentFile: 'worca-cc-planner.md', loopSource: false },
-  refiner: { key: 'refiner', runnerType: 'producer', agentFile: 'worca-cc-plan-refiner.md', loopSource: false },
-  implementer: { key: 'implementer', runnerType: 'producer', agentFile: 'worca-cc-implementer.md', loopSource: false },
-  reviewer: { key: 'reviewer', runnerType: 'verifier', agentFile: 'worca-cc-code-reviewer.md', loopSource: true },
-};
 
 
 test('wf_default IS the graph default; the v1 topology and its alias are gone', async () => {

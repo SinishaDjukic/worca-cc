@@ -67,21 +67,19 @@ test('render → read round-trips a v2 sidecar byte-for-byte (extras included)',
   void window;
 });
 
-test('render → read: the v1 wiring the REGISTRY synthesizes never leaves the form', async () => {
+test('render → read: the fields the REGISTRY computes never leave the form', async () => {
   const { host, api } = await boot();
-  // What GET /api/agents/:key really returns: the v2 sidecar PLUS the v1 fields
-  // normalizeMeta always derives, plus the registry's computed fields. None of
-  // them may be authored back into a sidecar.
+  // What GET /api/agents/:key really returns: the v2 sidecar PLUS the registry's
+  // COMPUTED fields. None of them may be authored back into a sidecar. (The v1
+  // wiring fields normalizeMeta used to derive are gone with the v1 engine, so
+  // there is nothing left for the form's DROP list to drop.)
   const REGISTRY_META = { ...META,
-    consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*',
-    loopSource: false, uiPhase: null, version: '1', channelDefs: [],
     origin: 'user', agentPath: '/tmp/x/docsWriter.md', agentFile: 'docsWriter.md',
     portSummary: 'Reads plan, fix; produces review.' };
   api.agentFormRender(host, REGISTRY_META, { markdown: '# body\n', mockWriterRoles: MOCK_ROLES });
   const { meta } = api.agentFormRead(host);
   assert.deepEqual(meta, META, 'exactly the v2 sidecar comes back — no more, no less');
-  for (const k of ['consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource',
-    'uiPhase', 'version', 'channelDefs', 'origin', 'agentPath', 'agentFile', 'portSummary']) {
+  for (const k of ['origin', 'agentPath', 'agentFile', 'portSummary']) {
     assert.equal(k in meta, false, `${k} must never be authored back into a sidecar`);
   }
   assert.equal(meta.outputs[0].artifactKind, 'docs', 'an unsurfaced PORT key still rides through');

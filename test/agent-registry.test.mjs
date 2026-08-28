@@ -57,8 +57,8 @@ test('each entry is a well-formed AgentMeta', () => {
     assert.equal(typeof m.icon, 'string');
     assert.ok(m.icon.length > 0);
     assert.ok(['producer', 'verifier', 'clarifier'].includes(m.runnerType));
-    assert.equal(typeof m.loopSource, 'boolean');
-    assert.ok(m.connectsTo === '*' || Array.isArray(m.connectsTo), `connectsTo for ${key}: ${JSON.stringify(m.connectsTo)}`);
+    assert.equal(m.metaVersion, 2, `${key} must be a meta v2 sidecar`);
+    assert.ok(Array.isArray(m.inputs) && Array.isArray(m.outputs), `${key} declares typed ports`);
     assert.equal(typeof m.order, 'number');
   }
 });
@@ -142,33 +142,40 @@ test('original four agentFiles match the orchestrator AGENT_FILES map', () => {
   }
 });
 
-test('exactly the verifiers are loopSources; producers are not', () => {
+test('exactly the loop sources carry a verdict, and each declares both arms', () => {
+  // `loopSource` was the v1 way of saying "this agent can send work back". The v2
+  // vocabulary is the VERDICT: whoever declares one also declares a
+  // when:'blocking' output (the loop arm) and a when:'clean' output (the exit).
+  // The refiner is a PRODUCER that loops on itself, which is exactly the case the
+  // v1 `runnerType === 'verifier' => loopSource` rule could not express.
   const reg = loadAgentRegistry();
-  const loopSources = Object.values(reg).filter((m) => m.loopSource).map((m) => m.key).sort();
-  // workspaceReviewer is the workspace-run review loop source (mirrors reviewer).
-  assert.deepEqual(loopSources, ['manualWebUiTesting', 'planReviewer', 'reviewer', 'workspaceReviewer']);
+  const withVerdict = Object.values(reg).filter((m) => m.verdict).map((m) => m.key).sort();
+  assert.deepEqual(withVerdict, ['manualWebUiTesting', 'planReviewer', 'refiner', 'reviewer', 'workspaceReviewer']);
   for (const m of Object.values(reg)) {
-    if (m.runnerType === 'producer') assert.equal(m.loopSource, false, `${m.key} producer must not loop`);
+    if (m.runnerType === 'verifier') assert.ok(m.verdict, `${m.key} verifier declares a verdict`);
+    if (!m.verdict) continue;
+    assert.ok(m.outputs.some((p) => p.when === 'blocking'), `${m.key} declares its blocking output`);
+    assert.ok(m.outputs.some((p) => p.when === 'clean'), `${m.key} declares its clean output`);
   }
 });
 
-test('registry stamps default channel spec for the six built-ins', () => {
+test('the built-ins declare the typed ports the shipped graphs wire', () => {
+  // The v1 channel spec (consumes/optionalConsumes/produces/connectsTo) is gone:
+  // the sidecar's PORTS are the wiring vocabulary, and a wire is legal because
+  // the two port TYPES match — not because a connectsTo list allows it.
   const reg = loadAgentRegistry(); // real agents/ dir
-  assert.deepEqual(reg.planner.consumes, ['userPrompt', 'clarify', 'review']);
-  assert.deepEqual(reg.planner.optionalConsumes, ['clarify', 'review']);
-  assert.deepEqual(reg.planner.produces, ['plan']);
-  assert.deepEqual(reg.refiner.produces, ['plan', 'review']);
-  assert.deepEqual(reg.implementer.consumes, ['plan', 'review']);
-  assert.deepEqual(reg.implementer.optionalConsumes, ['review']);
-  assert.deepEqual(reg.implementer.produces, ['code']);
-  assert.deepEqual(reg.reviewer.consumes, ['plan', 'code']);
-  assert.deepEqual(reg.reviewer.produces, ['review']);
-  // connectsTo superset keeps shipped pipelines legal
-  assert.ok(reg.reviewer.connectsTo.includes('implementer'));
-  assert.ok(reg.reviewer.connectsTo.includes('manualTestsChecklist'));
-  assert.ok(reg.refiner.connectsTo.includes('refiner')); // self-loop legal
-  assert.deepEqual(reg.planReviewer.consumes, ['plan']);
-  assert.deepEqual(reg.planReviewer.produces, ['review']);
-  assert.ok(reg.planReviewer.connectsTo.includes('planner'));
-  assert.ok(reg.planner.connectsTo.includes('planReviewer'));
+  const ids = (list) => list.map((p) => p.id);
+  assert.deepEqual(ids(reg.planner.inputs), ['task', 'answers', 'revise']);
+  assert.deepEqual(ids(reg.planner.outputs), ['plan']);
+  assert.deepEqual(ids(reg.refiner.outputs), ['plan', 'revise']);
+  assert.deepEqual(ids(reg.implementer.inputs), ['fix', 'task', 'plan']);
+  assert.deepEqual(ids(reg.implementer.outputs), ['done']);
+  assert.deepEqual(ids(reg.reviewer.inputs), ['plan', 'done']);
+  assert.deepEqual(ids(reg.reviewer.outputs), ['review', 'pass']);
+  assert.deepEqual(ids(reg.planReviewer.inputs), ['plan']);
+  assert.deepEqual(ids(reg.planReviewer.outputs), ['review', 'pass']);
+  // A loop wire is a type match: the reviewer's blocking `review` (md) feeds the
+  // implementer's `fix` (md) — the v2 replacement for connectsTo.
+  assert.equal(reg.reviewer.outputs.find((p) => p.id === 'review').type,
+    reg.implementer.inputs.find((p) => p.id === 'fix').type);
 });

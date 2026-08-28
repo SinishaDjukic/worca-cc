@@ -12,11 +12,7 @@
   "icon": "<path d=\"M4 7h16M4 12h10M4 17h7\" stroke-linecap=\"round\"/><circle cx=\"18\" cy=\"15\" r=\"3\"/><path d=\"M20.2 17.2L22 19\" stroke-linecap=\"round\"/>",
   "agentFile": "worca-cc-workspace-scanner.md",
   "runnerType": "producer",
-  "loopSource": false,
   "fanOut": true,
-  "produces": ["workspace"],
-  "consumes": ["userPrompt"],
-  "connectsTo": [],
   "asksQuestions": false,
   "order": 0.5,
   "scope": "workspace-only"
