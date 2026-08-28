@@ -23,6 +23,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
+import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -179,7 +180,7 @@ function budgetRefusalDetail(b) {
     + `resets ${when} (in ${days}d ${hours}h)`;
 }
 
-const HELP = `worca — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
+const HELP = `worca — node-graph multi-agent pipelines
 
 Usage:
   worca <subcommand> [args]
@@ -210,7 +211,7 @@ Options:
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
-  --workflow <id>          Saved workflow id to run (default: wf_default)
+  --workflow <id>          Saved pipeline template to run (default: wf_default)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
@@ -315,9 +316,10 @@ async function askClarify(rl, questions) {
  * Ask a loop gate interactively. Shows the open blocking issues and the two choices.
  * Returns { decision: "continue" | "another" }.
  */
-async function askGate(rl, issues) {
+async function askGate(rl, issues, header) {
   out('');
-  out(c('yellow', c('bold', 'Loop gate — maximum cycles reached.')));
+  // A graph run names the wire and its budget (`? Loop gate · Reviewer → Implementer  3/3 cycles used`).
+  out(c('yellow', c('bold', header || 'Loop gate — maximum cycles reached.')));
   out(c('yellow', 'Open critical/major issues:'));
   if (!issues || issues.length === 0) {
     out('  (none reported)');
@@ -372,8 +374,37 @@ async function attachAndDrive(orch, flags, start) {
   let answering = false; // serialize interactive prompts vs. log rendering
 
   // ── event wiring ──────────────────────────────────────────────────────────────
-  orch.on('phase', ({ phase, cycle, status }) => {
+  // v2 runs render their `exec` stream; the derived `phase` shim they ALSO emit
+  // would double every line, so the v1 renderer is gated on the manifest. The
+  // shim's phase events carry the node they derive from; the preflight/done
+  // BOOKENDS (RunHarness._bookend -> a bare `phase`, no nodeId) do not — they
+  // pass through, so both engines print the same three bracket lines.
+  const graphRun = () => !!(orch.state && orch.state.stepper && orch.state.stepper.version === 2);
+  orch.on('phase', ({ phase, cycle, status, nodeId }) => {
+    if (graphRun() && nodeId != null) return;
     out(`${statusMark(status)} ${c('bold', phaseLabel(phase, cycle))} ${c('gray', status)}`);
+  });
+  orch.on('exec', (ev) => {
+    // A user STOP surfaces as `exec error 'aborted'` on the in-flight execution
+    // while its ledger row is 'stopped'; the harness prints the stop line itself.
+    if (ev.status === 'error' && orch.state && orch.state.status === 'stopped') return;
+    // The exec payload carries no durationMs (spec §5.7) — the ledger rows do,
+    // and they are final by the time a terminal exec arrives. A composite
+    // parent has no row of its own: its slices (parentExecutionId) are summed,
+    // time and spend alike; a slice's own event keeps its own cost.
+    let e = ev;
+    if (ev.status !== 'start') {
+      const rows = Array.isArray(orch.state && orch.state.steps) ? orch.state.steps : [];
+      // By `executionId`, never by `key` — Task 14's rule for step rows: today's
+      // bookends are key-only, and a v1 row's key is a phase name.
+      const mine = rows.filter((s) => s && (s.executionId === ev.executionId || s.parentExecutionId === ev.executionId));
+      if (mine.length) {
+        e = { ...ev, durationMs: mine.reduce((a, s) => a + (s.activeMs || 0), 0) };
+        if (ev.kind !== 'task') e.costUsd = mine.reduce((a, s) => a + (s.costUsd || 0), 0);
+      }
+    }
+    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c });
+    if (line) out(line);
   });
 
   orch.on('log', ({ source, level, text }) => {
@@ -390,16 +421,20 @@ async function attachAndDrive(orch, flags, start) {
     process.stderr.write(c('red', `Error: ${message}`) + '\n');
   });
 
-  orch.on('question', async ({ id, kind, questions, issues, recovery, agent }) => {
+  // The WHOLE payload is kept: a graph run's gate question carries `wireId`,
+  // which the header formatter resolves against the manifest.
+  orch.on('question', async (payload) => {
+    const { id, kind, questions, issues, recovery, agent } = payload;
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     try {
       if (kind === 'clarify') {
-        const payload = await askClarify(rl, questions || []);
-        orch.answer(id, payload);
+        const answer = await askClarify(rl, questions || []);
+        orch.answer(id, answer);
       } else if (kind === 'gate') {
-        const payload = await askGate(rl, issues || []);
-        orch.answer(id, payload);
+        const answer = await askGate(rl, issues || [],
+          graphRun() ? formatGateHeader(payload, orch.state && orch.state.stepper) : undefined);
+        orch.answer(id, answer);
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);
         orch.answer(id, payload);
@@ -449,6 +484,13 @@ async function attachAndDrive(orch, flags, start) {
   out('');
   if (result?.status === 'done') {
     out(c('green', c('bold', 'Pipeline complete.')));
+    // v2 runs: `Result: <path|value>` (or the amber quiescence line), then
+    // `N executions · <active> active · $<cost>`; [] on a v1 run.
+    const summary = formatRunSummary(orch.state);
+    if (summary.length) {
+      out(summary[0].startsWith('Finished at quiescence') ? c('yellow', summary[0]) : summary[0]);
+      for (const line of summary.slice(1)) out(line);
+    }
   } else if (result?.status === 'paused') {
     out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
     out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);

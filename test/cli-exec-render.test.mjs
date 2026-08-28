@@ -139,3 +139,52 @@ test('formatRunSummary: v1 renders nothing; v2 counts executions without the boo
     formatRunSummary({ stepper: { version: 2 }, steps: [], status: 'stopped', endReached: false, totalActiveMs: 0, totalCostUsd: 0 }),
     ['Result: completed', '0 executions · 0s active · $0.00']);
 });
+
+// ── the CLI wiring ──────────────────────────────────────────────────────────
+// Source pins: attachAndDrive is not exported and a CLI run needs a claude mock
+// plus a git repo, so the BEHAVIOUR is pinned on the pure helpers above and the
+// wiring on the source. `assert.ok(re.test(src), msg)` on purpose — assert.match
+// would print the whole 55 KB file on a failure.
+
+test('the CLI renders exec lines, lets bookends through by nodeId, drops stop noise, prints the pure summary, and names node-graph pipelines', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const src = readFileSync(fileURLToPath(new URL('../src/cli/worca-cc.mjs', import.meta.url)), 'utf8');
+  assert.ok(/import \{ formatExecLine, formatGateHeader, formatRunSummary \} from '\.\/render\.mjs';/.test(src), 'the CLI imports the pure renderer');
+  assert.ok(/orch\.on\('exec'/.test(src), 'exec lines replace the phase renderer on v2 runs');
+  assert.ok(/if \(graphRun\(\) && nodeId != null\) return;/.test(src), 'the phase shim is gated by nodeId — the bookends carry none and pass on both engines');
+  assert.ok(/ev\.status === 'error' && orch\.state && orch\.state\.status === 'stopped'/.test(src), "a user stop's `aborted` exec error is not rendered");
+  assert.ok(/s\.executionId === ev\.executionId \|\| s\.parentExecutionId === ev\.executionId/.test(src), 'a terminal exec is enriched from its own ledger row (by executionId, never by key), a composite parent from its slices');
+  assert.ok(/askGate\(rl, issues \|\| \[\],\s*graphRun\(\) \? formatGateHeader\(payload, /.test(src), 'the gate header is built from the WHOLE question payload (wireId)');
+  assert.ok(/formatRunSummary\(orch\.state\)/.test(src), 'the summary is the pure helper');
+  assert.ok(/worca — node-graph multi-agent pipelines/.test(src), 'the HELP headline is updated');
+  assert.ok(/--workflow <id>\s+Saved pipeline template to run \(default: wf_default\)/.test(src), 'the --workflow HELP line names a pipeline template');
+  assert.ok(/assertRunnableWorkflow/.test(src), 'the CLI validates --workflow through the shared guard');
+});
+
+// Pins the SHARED guard the CLI relies on (cmdRun already calls assertRunnableWorkflow
+// and passes the returned row on as createOrchestratorFor's `template`).
+test('the shared guard the CLI relies on refuses an archived workflow with the v2-upgrade message', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = await mkdtemp(join(tmpdir(), 'worca-p6-cli-'));
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  const { _resetForTests, getDb } = await import('../src/core/db.mjs');
+  _resetForTests();
+  try {
+    const { assertRunnableWorkflow, writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+    await writeGraphWorkflow({ id: 'wf_old', name: 'Old', domain: 'dev', nodes: [], wires: [] });
+    getDb().prepare("UPDATE workflows SET version = 1, archived_at = '2026-08-26T00:00:00Z' WHERE id = 'wf_old'").run();
+    await assert.rejects(() => assertRunnableWorkflow('wf_old'), (e) => {
+      assert.equal(e.code, 'ARCHIVED');
+      assert.equal(e.message, 'workflow "wf_old" was archived by the v2 upgrade (v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Composer');
+      return true;
+    });
+  } finally {
+    _resetForTests();
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+    await rm(home, { recursive: true, force: true });
+  }
+});
