@@ -205,3 +205,295 @@ test('applyDecor: band ORDER is fan → strip → exec → result; the pip and t
   assert.equal(a.querySelector('.ngate').dataset.wireId, 'w1');
   assert.equal(e.querySelector('.nrun'), null, 'a flow card has no header dur · cost');
 });
+
+// ── the host adapters ─────────────────────────────────────────────────────────
+import { mountRunGraph, STATIC_HOST_H, HINT_TEXT } from '../ui/public/graph/run-hosts.mjs';
+
+function mountHost(mode, w = 800) {
+  const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+  const { window } = dom;
+  const wrap = window.document.querySelector('.run-flow-wrap');
+  const host = window.document.querySelector('.run-flow');
+  const m = mountRunGraph(host, { mode, doc: window.document, raf: (fn) => { fn(); return 1; },
+    // `viewport` is a FUNCTION, handed verbatim to createGraphView (view.readRect() calls it).
+    viewport: () => ({ left: 0, top: 0, width: w, height: mode === 'static' ? STATIC_HOST_H : 520 }),
+    onRowClick: (...a) => calls.push(['row', ...a]),
+    onGateClick: (...a) => calls.push(['gate', ...a]),
+    onResultClick: (...a) => calls.push(['result', ...a]) });
+  return { window, wrap, host, m };
+}
+let calls = [];
+
+// The world's inline transform is the ONE observable the view is guaranteed to
+// write (`translate(x, y) scale(z)`); read it rather than assuming a getter.
+const xform = (world) => {
+  const m = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/.exec(world.style.transform || '');
+  return m ? { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) } : null;
+};
+const zoomOf = (world) => (xform(world) || { z: NaN }).z;
+const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} ≠ ${b}`);
+// A graph 2652px wide (nodes at x 0 and 2400 + NODE_W 220 + 2×16 pad) in an 800px card.
+const WIDE = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 2400 }], wires: MANIFEST.graph.wires } };
+// A vertically stacked graph: the HEIGHT (not the width) decides the fit.
+const TALL = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 0, y: 500 }], wires: MANIFEST.graph.wires } };
+
+test('the static host centres a graph that fits (width−32 × 300−32) at ≤ 1×, stamps its classes, reads the manifest for its headers and binds no listeners', () => {
+  calls = [];
+  const { m, host, wrap, window } = mountHost('static');
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  const world = host.querySelector('.gv-world');
+  assert.ok(world, 'the world is rendered');
+  // bounds(16) = 652×175.5 into 768×268 → z = min(1.178, 1.527) clamped to 1; centred, then inset by 16.
+  const t = xform(world);
+  assert.equal(t.z, 1, 'fit never magnifies past 1×');
+  near(t.x, 90, 'x = 16 + (768 − 652)/2 + 16');
+  near(t.y, 78.25, 'y = 16 + (268 − 175.5)/2 + 16');
+  assert.equal(host.style.width, '', 'a graph that fits leaves the host at the wrap width');
+  assert.equal(host.classList.contains('gv-host'), true, 'the host drops the v1 flex box (style.css .run-flow.gv-host)');
+  assert.deepEqual([...wrap.classList], ['run-flow-wrap', 'gv-wrap', 'gv-wrap-static']);
+  assert.equal(wrap.querySelector('.rg-hint'), null, 'no hint chip on a static host');
+  // Headers come from the MANIFEST (History renders with the registry absent).
+  const head = host.querySelector('[data-node-id="n_a"] .nhead');
+  assert.equal(head.className, 'nhead h-violet');
+  assert.equal(head.querySelector('.tt').textContent, 'Planner');
+  const before = world.style.transform;
+  host.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 10, clientY: 10, bubbles: true }));
+  assert.equal(world.style.transform, before, 'static mode never reacts to pointers');
+});
+
+test('a graph wider than the card at the 0.3 floor is LEFT-aligned and widens the host so the wrap scrolls natively', () => {
+  calls = [];
+  const { m, host } = mountHost('static');
+  m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
+  const t = xform(host.querySelector('.gv-world'));
+  near(t.z, 0.3, 'the floor');
+  // sw = 2652 × 0.3 = 795.6 > 768 → host width = ceil(795.6 + 32); x = 16 − b.x·z = 16 + 16×0.3.
+  assert.equal(host.style.width, '828px');
+  near(t.x, 20.8, 'left-aligned at the 16px inset, not centred');
+});
+
+test('the static fit is capped by STATIC_HOST_H, not just by the width', () => {
+  calls = [];
+  const { m, host } = mountHost('static');
+  m.update('run1', TALL, decorFromState(RUN({ stepper: TALL })));
+  const z = zoomOf(host.querySelector('.gv-world'));
+  assert.ok(z < 0.5, `a 500px-tall graph must shrink to fit 300−32px, got ${z}`);
+});
+
+test('the RENDERED footers feed the fit: each extra band on the bottom card shrinks the static zoom', () => {
+  const base = { stepper: TALL, status: 'running', steps: [], active: [], endReached: false,
+    result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null };
+  const zoomFor = (decor) => {
+    calls = [];
+    const { m, host } = mountHost('static');
+    m.update('run1', TALL, decor);
+    return zoomOf(host.querySelector('.gv-world'));
+  };
+  const endRow = { key: 'x:n_end:1', executionId: 'x:n_end:1', nodeId: 'n_end', ordinal: 1, status: 'done' };
+  const bare = zoomFor(decorFromState(base));
+  const strip = zoomFor(decorFromState({ ...base, steps: [endRow] }));
+  const stripResult = zoomFor(decorFromState({ ...base, status: 'done', endReached: true,
+    result: { type: 'md', path: '/p/plan.md' }, steps: [endRow] }));
+  const fanned = zoomFor(decorFromState({ ...base, status: 'done', endReached: true,
+    result: { type: 'md', path: '/p/plan.md' }, steps: [endRow] },
+  { subsOf: (id) => (id === 'n_end' ? [{ status: 'done' }] : []) }));
+  assert.ok(strip < bare, `strip band must grow the card (${strip} < ${bare})`);
+  assert.ok(stripResult < strip, `result band must grow the card (${stripResult} < ${strip})`);
+  assert.ok(fanned < stripResult, `fan band must grow the card (${fanned} < ${stripResult})`);
+});
+
+test('the monitor host sizes itself clamp(360, fitted + 48, 600) through --run-host-h, shows the hint chip and stamps its classes', () => {
+  calls = [];
+  const { m, wrap, host } = mountHost('monitor');
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  // bounds(24).h = 191.5, zw = 1 → round(191.5) = 192 → floor 360.
+  assert.equal(wrap.style.getPropertyValue('--run-host-h'), '360px');
+  assert.equal(wrap.querySelector('.rg-hint').textContent, HINT_TEXT);
+  assert.equal(wrap.classList.contains('rg-engaged'), false);
+  assert.equal(host.classList.contains('gv-host'), true);
+  assert.deepEqual([...wrap.classList], ['run-flow-wrap', 'gv-wrap', 'gv-wrap-monitor']);
+  assert.equal(host.querySelector('[data-node-id="n_a"] .nhead .tt').textContent, 'Planner');
+  // A tall graph hits the 600px ceiling: bounds(24).h = 658.5 → round(658.5) → 600.
+  const tall = mountHost('monitor');
+  tall.m.update('run1', TALL, decorFromState(RUN({ stepper: TALL })));
+  assert.equal(tall.wrap.style.getPropertyValue('--run-host-h'), '600px');
+  assert.ok(zoomOf(tall.host.querySelector('.gv-world')) < 1, 'and fits both axes into (800, 600)');
+});
+
+test('engagement: pointerdown or focus on the STAGE engages; Escape and an outside pointerdown disengage', () => {
+  const { m, wrap, host, window } = mountHost('monitor');
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  // P5's nav binds `pointerdown` + `focus` on view.stage (`.gv-stage`), which fills
+  // the wrap; an event on the WRAP is on an ancestor and never reaches the stage.
+  const stage = m.view.stage;
+  assert.ok(host.contains(stage), 'the stage is the engagement surface');
+  const down = (id, target) => target.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: id, button: 0, bubbles: true }));
+  down(1, stage);
+  assert.equal(wrap.classList.contains('rg-engaged'), true);
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(wrap.classList.contains('rg-engaged'), false);
+  stage.dispatchEvent(new window.FocusEvent('focus'));
+  assert.equal(wrap.classList.contains('rg-engaged'), true, 'Tab onto the stage engages too');
+  down(3, window.document.body);
+  assert.equal(wrap.classList.contains('rg-engaged'), false, 'an outside pointerdown disengages');
+});
+
+test('the footer accordion opens ONE node; row / gate / result clicks report out; the result link never navigates', () => {
+  calls = [];
+  const { m, host, window } = mountHost('monitor');
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }],
+    status: 'done', endReached: true, result: { type: 'md', path: '/tmp/p/plan.md' },
+    gate: { wireId: 'w1', fromNode: 'n_a', toNode: 'n_end', askId: 'g' } });
+  m.update('run1', MANIFEST, decorFromState(st));
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 1, 'expanded');
+  host.querySelector('.xrow').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  host.querySelector('.ngate').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  host.querySelector('.xresult a').dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true, 'the chip is an <a href="#">: without preventDefault the click changes the route');
+  assert.deepEqual(calls, [['row', 'x:n_a:1', 'n_a'], ['gate', 'w1'], ['result', '/tmp/p/plan.md']]);
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 0, 'a second click collapses');
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 1, 'open again');
+  m.update('run2', MANIFEST, decorFromState(st));
+  assert.equal(host.querySelectorAll('.xrow').length, 0, 'a different run collapses an OPEN accordion');
+});
+
+test('a user pan/zoom survives a strip toggle and a decor update; the accordion re-fits only while untouched', () => {
+  calls = [];
+  const { m, host, window } = mountHost('monitor');
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
+  m.update('run1', MANIFEST, decorFromState(st));
+  const world = host.querySelector('.gv-world');
+  const fitted = world.style.transform;
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.notEqual(world.style.transform, fitted, 'untouched → the taller card re-fits');
+  m.view.setTransform({ x: 5, y: 5, z: 1 });
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(xform(world), { x: 5, y: 5, z: 1 }, 'touched → a toggle leaves the transform alone');
+  m.update('run1', MANIFEST, decorFromState({ ...st, status: 'done' }));
+  assert.deepEqual(xform(world), { x: 5, y: 5, z: 1 }, 'a decor update never re-fits');
+  m.update('run2', MANIFEST, decorFromState(st));
+  assert.notDeepEqual(xform(world), { x: 5, y: 5, z: 1 }, 'a NEW run is a new build: it fits again');
+});
+
+test('update() re-renders only on a structural change and re-applies the decor only for a NEW bag', () => {
+  calls = [];
+  const { m, host } = mountHost('monitor');
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
+  const bag = decorFromState(st);
+  m.update('run1', MANIFEST, bag);
+  const view = m.view;
+  const writes = view.stats.wireDUpdates;
+  const sum = host.querySelector('.xsum');
+  sum.textContent = 'poke';
+  m.update('run1', MANIFEST, bag);
+  assert.equal(host.querySelector('.xsum').textContent, 'poke', 'the SAME bag is not re-applied');
+  assert.equal(view.stats.wireDUpdates, writes, 'and nothing re-renders');
+  m.update('run1', MANIFEST, decorFromState(st));
+  assert.equal(host.querySelector('.xsum').textContent, '1 run · $0.10', 'a new bag repaints the footer');
+  assert.equal(view.stats.wireDUpdates, writes, 'still no render: statuses and footers are fast paths');
+  // A node-set change is structural: the view is rebuilt for the new manifest.
+  const THREE = { ...MANIFEST, graph: { nodes: [...MANIFEST.graph.nodes, { ...MANIFEST.graph.nodes[0], id: 'n_b', key: 'reviewer', label: 'Reviewer', x: 0, y: 300 }], wires: MANIFEST.graph.wires } };
+  m.update('run1', THREE, decorFromState(RUN({ stepper: THREE })));
+  assert.equal(host.querySelectorAll('.gv-world .node').length, 3, 'the new node is rendered');
+  assert.notEqual(m.view, view, 'a fresh view: its portsFn and headers read the NEW manifest');
+});
+
+test('destroy() unbinds everything and gives the host and the wrap back untouched', () => {
+  calls = [];
+  const { m, host, wrap, window } = mountHost('static');
+  m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
+  assert.equal(host.style.width, '828px');
+  m.destroy();
+  assert.equal(host.querySelector('.gv-world'), null, 'the view is torn down');
+  assert.equal(host.style.width, '', 'the inline width is cleared');
+  assert.deepEqual([...host.classList], ['run-flow']);
+  assert.deepEqual([...wrap.classList], ['run-flow-wrap']);
+  const mon = mountHost('monitor');
+  mon.m.update('run1', MANIFEST, decorFromState(RUN()));
+  const stage = mon.m.view.stage;
+  mon.m.destroy();
+  assert.equal(mon.wrap.querySelector('.rg-hint'), null, 'the hint chip is gone');
+  assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), '', 'the host height is released');
+  assert.deepEqual([...mon.wrap.classList], ['run-flow-wrap']);
+  stage.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 9, button: 0, bubbles: true }));
+  assert.equal(mon.wrap.classList.contains('rg-engaged'), false, 'the nav listeners are gone');
+});
+
+// A host whose measured width TRACKS the inline width the static fit writes —
+// what a browser really does (`.gv-stage` is `inset:0` inside `.run-flow.gv-host`,
+// so view.readRect() returns the host's own box). The constant viewport above
+// cannot see the oscillation this pins.
+function mountLiveWidthHost(w = 800) {
+  const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+  const { window } = dom;
+  const host = window.document.querySelector('.run-flow');
+  const m = mountRunGraph(host, { mode: 'static', doc: window.document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: parseFloat(host.style.width) || w, height: STATIC_HOST_H }) });
+  return { window, host, m };
+}
+
+test('the static fit is idempotent: it clears its own inline width BEFORE measuring', () => {
+  calls = [];
+  const { m, host } = mountLiveWidthHost();
+  m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
+  const w1 = host.style.width;
+  assert.equal(w1, '828px', 'the wide fixture overflows the card, so the host is widened inline');
+  const t1 = xform(host.querySelector('.gv-world'));
+  m.fit();
+  assert.equal(host.style.width, w1, 'a second fit measures the CARD, not the width it just wrote');
+  assert.deepEqual(xform(host.querySelector('.gv-world')), t1, 'so the transform is stable too');
+  m.fit();
+  assert.equal(host.style.width, w1, 'and a third');
+});
+
+test('a hidden host (0×0) is never fitted — on EITHER host — and the first paint that sees a box re-fits it', () => {
+  calls = [];
+  // `display:none` (compact density, a closed detail screen) measures 0×0 in
+  // every engine; jsdom's injected viewport says the same.
+  const hidden = (mode) => {
+    const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+    const { window } = dom;
+    const wrap = window.document.querySelector('.run-flow-wrap');
+    const host = window.document.querySelector('.run-flow');
+    const box = { width: 0 };
+    const m = mountRunGraph(host, { mode, doc: window.document, raf: (fn) => { fn(); return 1; },
+      viewport: () => ({ left: 0, top: 0, width: box.width,
+        height: box.width ? (mode === 'static' ? STATIC_HOST_H : 520) : 0 }) });
+    return { window, wrap, host, m, box };
+  };
+
+  const mon = hidden('monitor');
+  mon.m.update('run1', MANIFEST, decorFromState(RUN()));
+  assert.deepEqual(xform(mon.host.querySelector('.gv-world')), { x: 0, y: 0, z: 1 },
+    "a 0-width monitor host keeps the view's identity transform: no fit ran");
+  assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), '', 'and its height is not pinned to the 360px floor');
+  mon.box.width = 800;
+  // NOT structural (same run, same node set) and the bag is new: only the
+  // zero→non-zero transition may re-fit here.
+  mon.m.update('run1', MANIFEST, decorFromState(RUN()));
+  assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), '360px', 'the reveal re-fits the host');
+  assert.equal(zoomOf(mon.host.querySelector('.gv-world')), 1, 'and lays the graph out for the real box');
+
+  const stat = hidden('static');
+  stat.m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
+  assert.deepEqual(xform(stat.host.querySelector('.gv-world')), { x: 0, y: 0, z: 1 }, 'the static fitter bails on 0×0 too');
+  assert.equal(stat.host.style.width, '', 'and writes no inline width off a 0-width measurement');
+  stat.box.width = 800;
+  stat.m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
+  assert.equal(stat.host.style.width, '828px', 'the reveal fits the card');
+});
+test('destroy() re-arms bind(): a re-mounted host delegates clicks again', () => {
+  calls = [];
+  const { m, host, wrap, window } = mountHost('monitor');
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
+  m.update('run1', MANIFEST, decorFromState(st));
+  m.destroy();
+  m.update('run1', MANIFEST, decorFromState(st));
+  assert.equal(wrap.querySelector('.rg-hint').textContent, HINT_TEXT, 'the hint chip is back');
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 1, 'the delegated accordion listener was re-bound');
+});
