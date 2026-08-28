@@ -243,18 +243,7 @@ function out(s) {
   process.stdout.write(s + '\n');
 }
 
-function phaseLabel(phase, cycle) {
-  if (cycle && (phase === 'refine' || phase === 'review' || phase === 'implement' || phase === 'clarify')) {
-    return `${phase} #${cycle}`;
-  }
-  return phase;
-}
 
-function statusMark(status) {
-  if (status === 'done') return c('green', '✓');
-  if (status === 'start') return c('cyan', '▶');
-  return c('gray', '•');
-}
 
 const LEVEL_COLOR = { info: 'reset', debug: 'gray', warn: 'yellow', error: 'red' };
 
@@ -374,16 +363,9 @@ async function attachAndDrive(orch, flags, start) {
   let answering = false; // serialize interactive prompts vs. log rendering
 
   // ── event wiring ──────────────────────────────────────────────────────────────
-  // v2 runs render their `exec` stream; the derived `phase` shim they ALSO emit
-  // would double every line, so the v1 renderer is gated on the manifest. The
-  // shim's phase events carry the node they derive from; the preflight/done
-  // BOOKENDS (RunHarness._bookend -> a bare `phase`, no nodeId) do not — they
-  // pass through, so both engines print the same three bracket lines.
-  const graphRun = () => !!(orch.state && orch.state.stepper && orch.state.stepper.version === 2);
-  orch.on('phase', ({ phase, cycle, status, nodeId }) => {
-    if (graphRun() && nodeId != null) return;
-    out(`${statusMark(status)} ${c('bold', phaseLabel(phase, cycle))} ${c('gray', status)}`);
-  });
+  // The run renders its `exec` stream and nothing else: the v1 `phase` event and
+  // its renderer died with the v1 engine, and the preflight/done BOOKENDS are
+  // exec rows now (x:preflight:1 / x:done:1) that render nothing.
   orch.on('exec', (ev) => {
     // A user STOP surfaces as `exec error 'aborted'` on the in-flight execution
     // while its ledger row is 'stopped'; the harness prints the stop line itself.
@@ -432,8 +414,12 @@ async function attachAndDrive(orch, flags, start) {
         const answer = await askClarify(rl, questions || []);
         orch.answer(id, answer);
       } else if (kind === 'gate') {
+        // One engine: every gate question is a graph question, so the header is
+        // built unconditionally. (The `graphRun()` gate that used to guard this
+        // died with the phase listener — leaving the call was a ReferenceError
+        // waiting for the first interactive gate.)
         const answer = await askGate(rl, issues || [],
-          graphRun() ? formatGateHeader(payload, orch.state && orch.state.stepper) : undefined);
+          formatGateHeader(payload, orch.state && orch.state.stepper));
         orch.answer(id, answer);
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);

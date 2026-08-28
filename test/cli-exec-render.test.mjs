@@ -146,16 +146,27 @@ test('formatRunSummary: v1 renders nothing; v2 counts executions without the boo
 // wiring on the source. `assert.ok(re.test(src), msg)` on purpose — assert.match
 // would print the whole 55 KB file on a failure.
 
-test('the CLI renders exec lines, lets bookends through by nodeId, drops stop noise, prints the pure summary, and names node-graph pipelines', async () => {
+/** Blank out JS comments so a source grep cannot be satisfied — or defeated —
+ *  by prose that merely names a symbol. */
+function stripJsComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:"'`\\])\/\/[^\n]*/g, '$1');
+}
+
+test('the CLI renders exec lines ONLY, drops stop noise, prints the pure summary, and names node-graph pipelines', async () => {
   const { readFileSync } = await import('node:fs');
   const { fileURLToPath } = await import('node:url');
   const src = readFileSync(fileURLToPath(new URL('../src/cli/worca-cc.mjs', import.meta.url)), 'utf8');
   assert.ok(/import \{ formatExecLine, formatGateHeader, formatRunSummary \} from '\.\/render\.mjs';/.test(src), 'the CLI imports the pure renderer');
-  assert.ok(/orch\.on\('exec'/.test(src), 'exec lines replace the phase renderer on v2 runs');
-  assert.ok(/if \(graphRun\(\) && nodeId != null\) return;/.test(src), 'the phase shim is gated by nodeId — the bookends carry none and pass on both engines');
+  assert.ok(/orch\.on\('exec'/.test(src), 'exec lines are the CLI renderer');
+  assert.equal(/orch\.on\('phase'/.test(src), false, 'the v1 phase listener is gone');
+  assert.equal(/function (phaseLabel|statusMark)\(/.test(src), false, 'and so are its two renderers');
+  // ...and nothing still CALLS the deleted phase-shim gate. `graphRun()` survived
+  // the listener's deletion in one spot (the interactive gate header) where only a
+  // real gate question would have thrown ReferenceError, which no test drives.
+  assert.equal(/\bgraphRun\(\)/.test(stripJsComments(src)), false, 'no dangling graphRun() call');
   assert.ok(/ev\.status === 'error' && orch\.state && orch\.state\.status === 'stopped'/.test(src), "a user stop's `aborted` exec error is not rendered");
   assert.ok(/s\.executionId === ev\.executionId \|\| s\.parentExecutionId === ev\.executionId/.test(src), 'a terminal exec is enriched from its own ledger row (by executionId, never by key), a composite parent from its slices');
-  assert.ok(/askGate\(rl, issues \|\| \[\],\s*graphRun\(\) \? formatGateHeader\(payload, /.test(src), 'the gate header is built from the WHOLE question payload (wireId)');
+  assert.ok(/formatGateHeader\(payload, /.test(src), 'the gate header is built from the WHOLE question payload (wireId)');
   assert.ok(/formatRunSummary\(orch\.state\)/.test(src), 'the summary is the pure helper');
   assert.ok(/worca — node-graph multi-agent pipelines/.test(src), 'the HELP headline is updated');
   assert.ok(/--workflow <id>\s+Saved pipeline template to run \(default: wf_default — the built-in graph\)/.test(src), 'the --workflow HELP line names the built-in graph');

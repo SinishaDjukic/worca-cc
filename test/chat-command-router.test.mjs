@@ -27,7 +27,21 @@ function fixture(overrideActions = {}) {
       { id: 'pipe-cccc3333', title: 'Paused run', status: 'paused', totalCostUsd: 1, pauseReason: 'cost_pipeline' },
     ],
     pending: {},
-    states: { 'run-aaaa1111': { phase: 'implement', totalCostUsd: 0.42, steps: [{ status: 'done' }, { status: 'running' }] } },
+    states: { 'run-aaaa1111': {
+      totalCostUsd: 0.42,
+      // The two BOOKEND rows must not be counted: `x:` cannot be the filter,
+      // because every v2 executionId starts with it.
+      steps: [
+        { key: 'x:preflight:1', status: 'done' },
+        { key: 'x:n_plan:1', status: 'done' },
+        { key: 'x:n_impl:1', status: 'running' },
+        { key: 'x:done:1', status: 'done' },
+      ],
+      active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+      stepper: { version: 2, graph: { nodes: [
+        { id: 'n_plan', label: 'Plan' }, { id: 'n_impl', label: 'Implementation' },
+      ], wires: [] } },
+    } },
   };
   const actions = {
     listRuns: () => state.live,
@@ -95,7 +109,10 @@ test('/status: no-arg single-active default, wildcard suffix, history fallback, 
   const { send, state } = fixture();
   const noArg = text(await send('/status'));
   assert.match(noArg, /Fix login/);
-  assert.match(noArg, /\*\*Steps:\*\* 1\/2 done · \*\*Phase:\*\* implement/);
+  // The v1 `**Phase:**` scalar is gone: the line counts EXECUTIONS (bookends
+  // excluded by name — every v2 executionId starts `x:`) and names the ACTIVE
+  // node from the manifest.
+  assert.match(noArg, /\*\*Executions:\*\* 1\/2 done · \*\*Active:\*\* Implementation/);
   assert.match(noArg, /\$0\.42/);
 
   const hist = text(await send('/status *2222'));

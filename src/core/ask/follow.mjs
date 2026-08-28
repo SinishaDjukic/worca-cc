@@ -57,8 +57,10 @@ export function attachRunFollower(orch, {
       if (p.status) patch.status = p.status;
       updateStatus(patch);
     }),
-    phase: guard((p) => {
-      updateStatus({ phase: p.phase ?? null, status: 'running' });
+    exec: guard((p) => {
+      // The graph engine has no linear phase: report the agent that just started.
+      if (p.status !== 'start') return;
+      updateStatus({ phase: p.agentKey || p.nodeId || null, status: 'running' });
     }),
     question: guard((p) => {
       const qid = String(p.id ?? 'q');
