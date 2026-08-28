@@ -18,8 +18,8 @@ const MINIMAL_SEED = `
 
 test('V23 is the current schema version and a fresh DB carries every new column', () => {
   const db = getDb();
-  assert.equal(SCHEMA_VERSION, 23);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 23);
+  assert.ok(SCHEMA_VERSION >= 23, 'the v23 step is in the ladder');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   for (const c of ['graph', 'archived_at']) assert.ok(cols(db, 'workflows').includes(c), `workflows.${c}`);
   for (const c of ['execution_id', 'exec_kind', 'agent_key', 'ended_at', 'exec_trigger', 'exec_result', 'exec_meta']) {
     assert.ok(cols(db, 'pipeline_steps').includes(c), `pipeline_steps.${c}`);
@@ -34,7 +34,7 @@ test('ladder: a v22 DB is stamped 23 and gets the columns + the wires table', ()
   db.exec(MINIMAL_SEED);
   db.exec('PRAGMA user_version = 22');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 23);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.ok(cols(db, 'workflows').includes('archived_at'));
   assert.ok(cols(db, 'pipeline_steps').includes('exec_meta'));
   assert.ok(tableNames(db).includes('config_workflow_wires'));
@@ -60,7 +60,7 @@ test('gap-heal: old-branch residue migrates cleanly and is left byte-alone', () 
     .run('proj', 'wf_no-clarify', 'w3', 6);
   db.exec('PRAGMA user_version = 22');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 23);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.deepEqual(pkOrder(db, 'config_workflow_wires'), ['workflow_id', 'project_key', 'wire_id'],
     'the residue table is NOT rewritten — every statement names its columns');
   assert.equal(db.prepare('SELECT max_cycles FROM config_workflow_wires WHERE wire_id = ?').get('w3').max_cycles, 6);
@@ -69,10 +69,10 @@ test('gap-heal: old-branch residue migrates cleanly and is left byte-alone', () 
   for (const c of ['exec_kind', 'agent_key', 'ended_at', 'exec_meta']) assert.ok(stepCols.includes(c), c);
   assert.ok(cols(db, 'workflows').includes('archived_at'));
   migrate(db);                                   // idempotent: second pass is a clean no-op
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 23);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
 
-test('self-heal: a DB stamped 23 but missing a v23 column is repaired without a re-stamp', () => {
+test('self-heal: a DB stamped current but missing a v23 column is repaired without a re-stamp', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
   db.exec('PRAGMA user_version = 22');
@@ -80,7 +80,7 @@ test('self-heal: a DB stamped 23 but missing a v23 column is repaired without a 
   db.exec('ALTER TABLE pipelines DROP COLUMN outcome');
   db.exec('DROP TABLE config_workflow_wires');
   migrate(db);                                   // fast path -> reconcileSchema
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 23, 'stamp untouched');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'stamp untouched');
   assert.ok(cols(db, 'pipelines').includes('outcome'), 'column healed');
   assert.ok(tableNames(db).includes('config_workflow_wires'), 'table healed');
 });

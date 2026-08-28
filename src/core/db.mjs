@@ -17,10 +17,11 @@
 // would make getDb() async and break the synchronous data layer.
 
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -53,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1042,6 +1043,181 @@ function applySchemaV23(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** Audit channel for V24 (dev convention: one console.warn per decision). */
+const auditV24 = (msg) => console.warn(`[worca] V24: ${msg}`);
+
+/** The pipeline_events line + stderr audit a swept v1 run gets. VERBATIM. */
+export const V1_RUN_RETIRED = 'paused on the v1 engine before the graph rework — not resumable';
+
+/** Absolute path of the OPEN handle's main database file ('' for :memory:). */
+function mainDbFile(db) {
+  try {
+    const row = db.prepare('PRAGMA database_list').all().find((r) => r.name === 'main');
+    return row && typeof row.file === 'string' ? row.file : '';
+  } catch { return ''; }
+}
+
+/** A .pre-v24.bak we would actually restore from: opens as SQLite and is stamped
+ *  BEFORE the break (a partial file fails to open, a 0-byte file reads 0).
+ *  databaseSyncCtor() is db.mjs's own lazy accessor — node:sqlite is deliberately
+ *  NOT imported at module-link time (see the file header), so never write
+ *  `new DatabaseSync(...)` here. */
+function usableBackup(bak) {
+  if (!existsSync(bak)) return false;
+  let probe = null;
+  try {
+    probe = new (databaseSyncCtor())(bak, { readOnly: true });
+    const v = probe.prepare('PRAGMA user_version').get().user_version;
+    return v > 0 && v < 24;
+  } catch { return false; }
+  finally { try { if (probe) probe.close(); } catch { /* ignore */ } }
+}
+
+/**
+ * V24 is the ONLY ladder step that rewrites user data, so an existing DB is
+ * snapshotted BEFORE the transaction opens (`VACUUM INTO` cannot run inside one
+ * — measured: "cannot VACUUM from within a transaction"). Skipped for a fresh
+ * file (nothing to lose) and for `:memory:` (PRAGMA database_list gives file '').
+ * A throw here is FATAL on purpose: no backup, no break.
+ *
+ * Two hazards the naive `existsSync` guard misses, both measured on node 25:
+ *  - a CONCURRENT migrator (CLI + UI first launch) can win the race and leave us
+ *    with `output file already exists` (errcode 1) — NOT a busy-shaped error, so
+ *    getDb()'s retry loop would rethrow and kill this process. A backup someone
+ *    else just took is a SUCCESS, so re-check and return.
+ *  - a 0-byte / half-written .bak from a crashed attempt would be read as "done".
+ *    VACUUM INTO overwrites an empty file happily, so re-take unless the file is
+ *    a readable SQLite DB carrying the pre-break user_version.
+ */
+function backupBeforeV24(db) {
+  const current = db.prepare('PRAGMA user_version').get().user_version;
+  if (current <= 0 || current >= 24) return;
+  const file = mainDbFile(db);
+  if (!file) return;                       // :memory:
+  const bak = `${file}.pre-v24.bak`;
+  if (usableBackup(bak)) return;
+  try {
+    db.exec(`VACUUM INTO '${bak.replace(/'/g, "''")}'`);
+  } catch (err) {
+    // Someone else took it while we were deciding — that is the point of the file.
+    if (usableBackup(bak)) return;
+    throw new Error(`worca cannot take the pre-v24 database backup at ${bak}: `
+      + `${err && err.message ? err.message : err}. The v2 upgrade rewrites saved `
+      + 'pipelines, so it refuses to run without one — free disk space or make '
+      + `${file.replace(/\/[^/]*$/, '')} writable and start worca again.`, { cause: err });
+  }
+}
+
+/** v24: the break. Runs INSIDE the ladder transaction. */
+function applySchemaV24(db, { existing }) {
+  repairSchemaGaps(db, schemaGaps(db));       // heal a divergent stamp first
+  const report = reconcileV1Workflows(db, { seed: existing });
+  report.sweptRuns = sweepV1Runs(db);
+  // Minimal hand-seeded ladders (migrate-v20, db-migrate-v23) have no store_meta
+  // table: there is nothing to audit and the INSERT would abort the ladder tx.
+  if (!hasSqliteTable(db, 'store_meta')) return;
+  // INSERT OR IGNORE, deliberately: this row records THE BREAK. A later
+  // reconcile pass (fs-import, a divergent re-stamp) must not overwrite the
+  // account of what the upgrade actually did — it writes its own key instead.
+  db.prepare('INSERT OR IGNORE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+    .run('migration:v24', 'migration', JSON.stringify(report));
+}
+
+/** Does this handle carry a table with that name? (Hand-seeded ladder fixtures build a
+ *  two-column `pipelines` and nothing else, so every V24 pass probes first.) */
+function hasSqliteTable(db, name) {
+  return !!db.prepare("SELECT 1 AS n FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+}
+
+/**
+ * Archive every LIVE v1 template row (D7: kept, hidden, never converted, never
+ * deleted), insert the 7 seed graphs on an EXISTING DB, fold the coexistence
+ * alias, re-attach the static overlay maps and reset an archived active
+ * workflow. Fully idempotent: a second run changes nothing.
+ * @param {DatabaseSync} db
+ * @param {{seed?:boolean}} [opts] seed=true only for a DB that existed before V24
+ * @returns {{at:string, archived:string[], seeded:string[], seedsSkipped:string[],
+ *            overlayNodes:number, overlayWires:number, aliasRemapped:number,
+ *            overlaysDisplaced:number, activeReset:string[], sweptRuns:string[]}}
+ */
+export function reconcileV1Workflows(db, { seed = false } = {}) {
+  const report = { at: new Date().toISOString(), archived: [], seeded: [], seedsSkipped: [],
+    overlayNodes: 0, overlayWires: 0, aliasRemapped: 0, overlaysDisplaced: 0,
+    activeReset: [], sweptRuns: [] };
+  const cols = new Set(db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name));
+  for (const need of ['version', 'steps', 'feedbacks', 'created_at', 'updated_at', 'graph', 'archived_at']) {
+    if (!cols.has(need)) return report;      // minimal hand-seeded test schema: nothing to do
+  }
+  const now = new Date().toISOString();
+
+  // 1) Archive — the WHERE makes it idempotent and keeps an already-archived row's stamp.
+  const live = db.prepare('SELECT id, name FROM workflows WHERE version = 1 AND archived_at IS NULL').all();
+  const archive = db.prepare('UPDATE workflows SET archived_at = ? WHERE id = ? AND version = 1 AND archived_at IS NULL');
+  for (const row of live) {
+    archive.run(now, row.id);
+    report.archived.push(row.id);
+    auditV24(`archived v1 workflow ${row.id} (${row.name}) — v1 templates are not runnable on the graph engine`);
+  }
+
+  // 2) Seeds — EXISTING DBs only (fresh installs keep Default only, decision D7).
+  if (seed) {
+    const find = db.prepare('SELECT id, archived_at FROM workflows WHERE id = ?');
+    const insert = db.prepare(`INSERT OR IGNORE INTO workflows
+      (id, name, version, domain, origin, steps, feedbacks, graph, created_at, updated_at, archived_at)
+      VALUES (?, ?, 2, ?, NULL, '[]', '[]', ?, ?, ?, NULL)`);
+    for (const t of SEED_TEMPLATES) {
+      const row = find.get(t.id);
+      if (row) {
+        if (row.archived_at) {
+          report.seedsSkipped.push(t.id);
+          auditV24(`seed ${t.id} skipped — id held by an archived template`);
+        }
+        continue;                            // a LIVE v2 row with that id is the user's own
+      }
+      insert.run(t.id, t.name, t.domain, JSON.stringify({ nodes: t.nodes, wires: t.wires }), t.createdAt, now);
+      report.seeded.push(t.id);
+    }
+  }
+  return report;                             // passes 3–6 land in Task 4
+}
+
+/**
+ * Retire every run that can only be resumed by the v1 engine: paused OR
+ * interrupted with a resume point that is not `version: 2`. The row keeps its
+ * honest status trail — status becomes 'interrupted', the resume point is
+ * NULLed (so History hides Resume and removePluginWorkflows can never be
+ * stranded on it) and a pipeline_events line records why. `json_valid` guards a
+ * corrupt blob: it is swept too, and json_extract never throws on it (the spec's
+ * predicate is `!= 2` alone; the guard is this plan's addition so a corrupt blob
+ * cannot abort the migration transaction).
+ * Exported and callable without an argument so boot/reconcile paths can run it
+ * on a DB that a divergent ladder stamped past 24.
+ * @param {DatabaseSync} [db]
+ * @returns {string[]} the ids swept
+ */
+export function sweepV1Runs(db = getDb()) {
+  // Minimal hand-seeded test schemas (migrate-v20, db-migrate-v23 build a
+  // `pipelines (id TEXT PRIMARY KEY)` table and run the whole ladder on it) have
+  // neither the columns nor pipeline_events: nothing to sweep, and the SELECT
+  // below would throw "no such column: status" INSIDE the ladder transaction.
+  const cols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  if (!cols.has('status') || !cols.has('resume_point')) return [];
+  if (!hasSqliteTable(db, 'pipeline_events')) return [];
+  const rows = db.prepare(`SELECT id FROM pipelines
+    WHERE status IN ('paused', 'interrupted') AND resume_point IS NOT NULL
+      AND (json_valid(resume_point) = 0 OR json_extract(resume_point, '$.version') != 2)`).all();
+  if (!rows.length) return [];
+  const clear = db.prepare("UPDATE pipelines SET status = 'interrupted', resume_point = NULL WHERE id = ?");
+  const event = db.prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  for (const r of rows) {
+    clear.run(r.id);
+    event.run(r.id, now, V1_RUN_RETIRED);
+    auditV24(`run ${r.id}: ${V1_RUN_RETIRED}`);
+  }
+  return rows.map((r) => r.id);
+}
+
 /**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
@@ -1070,6 +1246,9 @@ export function migrate(db) {
   // up front (a deferred BEGIN would not lock until the first write, letting two
   // migrators both pass the gate and double-apply SCHEMA_V1 → "table projects already
   // exists"). Under the lock we re-read user_version and no-op if the winner stamped it.
+  // V24 rewrites data (archive + seed + sweep): snapshot the file first. Outside
+  // the tx by necessity — VACUUM cannot run inside one — and fatal on throw.
+  backupBeforeV24(db);
   db.exec('BEGIN IMMEDIATE');
   try {
     const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
@@ -1099,6 +1278,7 @@ export function migrate(db) {
     if (current < 21) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
     if (current < 22) applySchemaV22(db);            // tables + the ask_run_links column
     if (current < 23) applySchemaV23(db);            // graph columns + config_workflow_wires
+    if (current < 24) applySchemaV24(db, { existing: current >= 1 });  // the v2 break
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

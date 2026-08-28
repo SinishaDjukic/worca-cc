@@ -341,6 +341,14 @@ function tableCounts(db) {
     'pipeline_steps', 'pipeline_events', 'clarify', 'reviews', 'store_meta', 'artifacts'];
   const out = {};
   for (const t of tables) out[t] = db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n;
+  // migrate() writes store_meta rows of its own — the V24 break's audit report,
+  // and (Task 6) the fs-import pass's own `migration:v24:fs-import` key — before
+  // and around the import transaction. That is schema bookkeeping, not imported
+  // data, so neither may read as a leftover row here. Match the PREFIX: a
+  // `<> 'migration:v24'` recount misses the second key and the test fails again
+  // the moment Task 6 lands.
+  out.store_meta = db.prepare(
+    "SELECT count(*) AS n FROM store_meta WHERE key NOT LIKE 'migration:v24%'").get().n;
   return out;
 }
 
