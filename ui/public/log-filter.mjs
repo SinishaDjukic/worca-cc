@@ -4,8 +4,8 @@
 // History "Live logs" panel. Extracted so the narrowing semantics are
 // unit-testable without booting app.js (mirrors log-line.mjs).
 //
-// A filter is { source, level, step, cycle, search } where '' / undefined means
-// "all". Every axis composes with AND.
+// A filter is { source, level, step, node, execution, cycle, search } where '' /
+// undefined means "all". Every axis composes with AND.
 // - level: exact match; a record with no level counts as 'info' (the same
 //   default logLineClass applies when rendering).
 // - source: matches the role itself AND its fanned-out sub-agents — a child
@@ -13,6 +13,10 @@
 //   "planner ▸ research auth" but not "plannerX".
 // - step: matches String(rec.stepIndex). Lines with no step attribution
 //   (preflight, orchestrator, ui notices) only show when no step is chosen.
+// - node: matches String(rec.nodeId) — the v2 graph node the line was attributed
+//   to; attribution-less lines only show when no node is chosen.
+// - execution: matches String(rec.executionId) — ONE execution of one node
+//   (x:<nodeId>:<ordinal>), so a loop's second cycle can be read alone.
 // - cycle: matches String(rec.cycle) — the feedback-loop rewind counter, which is
 //   orthogonal to step (a re-run keeps its stepIndex and bumps its cycle). Same
 //   attribution rule as step: cycle-less lines only show when no cycle is chosen.
@@ -31,6 +35,10 @@ export function compileLogFilter(filter) {
   const source = filter.source || '';
   const hasStep = filter.step !== undefined && filter.step !== '';
   const step = hasStep ? String(filter.step) : '';
+  const hasNode = filter.node !== undefined && filter.node !== '';
+  const node = hasNode ? String(filter.node) : '';
+  const hasExec = filter.execution !== undefined && filter.execution !== '';
+  const execution = hasExec ? String(filter.execution) : '';
   const hasCycle = filter.cycle !== undefined && filter.cycle !== '';
   const cycle = hasCycle ? String(filter.cycle) : '';
   const term = filter.search ? String(filter.search).toLowerCase() : '';
@@ -41,6 +49,8 @@ export function compileLogFilter(filter) {
       if (src !== source && !src.startsWith(source + SUB_SEP)) return false;
     }
     if (hasStep && (rec.stepIndex == null || String(rec.stepIndex) !== step)) return false;
+    if (hasNode && (rec.nodeId == null || String(rec.nodeId) !== node)) return false;
+    if (hasExec && (rec.executionId == null || String(rec.executionId) !== execution)) return false;
     if (hasCycle && (rec.cycle == null || String(rec.cycle) !== cycle)) return false;
     if (term && !String(rec.text || '').toLowerCase().includes(term)) return false;
     return true;
@@ -54,13 +64,17 @@ export function logLineVisible(rec, filter) {
 // Distinct facet values the filter dropdowns offer, from the lines seen so far:
 // sources collapsed to their parent role (sub-agents fold into the role they
 // belong to), levels defaulted to 'info', steps = the stepIndex values present,
-// cycles = the cycle values present. All sorted (steps/cycles numerically) for
-// stable dropdowns. `search` is free text and has no facet.
+// cycles = the cycle values present, nodes = the v2 nodeId values present,
+// executions = the v2 executionId values present. All sorted (steps/cycles
+// numerically, ids lexically) for stable dropdowns. `search` is free text and
+// has no facet.
 export function logFacets(lines) {
   const sources = new Set();
   const levels = new Set();
   const steps = new Set();
   const cycles = new Set();
+  const nodes = new Set();
+  const executions = new Set();
   for (const rec of lines || []) {
     if (!rec) continue;
     const src = rec.source || '';
@@ -71,11 +85,15 @@ export function logFacets(lines) {
     levels.add(rec.level || 'info');
     if (rec.stepIndex != null) steps.add(rec.stepIndex);
     if (rec.cycle != null) cycles.add(rec.cycle);
+    if (rec.nodeId != null) nodes.add(rec.nodeId);
+    if (rec.executionId != null) executions.add(rec.executionId);
   }
   return {
     sources: [...sources].sort(),
     levels: [...levels].sort(),
     steps: [...steps].sort((a, b) => a - b),
     cycles: [...cycles].sort((a, b) => a - b),
+    nodes: [...nodes].sort(),
+    executions: [...executions].sort(),
   };
 }

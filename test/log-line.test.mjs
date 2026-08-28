@@ -111,14 +111,14 @@ test('cycleSeparatorBefore compares as strings so 2 and "2" agree', () => {
 
 // ── NDJSON projection ───────────────────────────────────────────────────────
 
-test('projectLogRecord keeps cycle and stream — the axes the pickers/separators need', () => {
+test('projectLogRecord keeps cycle, stream, nodeId and executionId — the axes the pickers/separators need', () => {
   const rec = projectLogRecord({
     source: 'implementer', level: 'warn', text: '429, retrying', ts: TS,
-    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1',
+    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1', executionId: 'x:n1:2', extra: 'dropped',
   });
   assert.deepEqual(rec, {
     source: 'implementer', level: 'warn', text: '429, retrying', ts: TS,
-    sub: false, stepIndex: 3, cycle: 2, stream: 'err',
+    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1', executionId: 'x:n1:2',
   });
 });
 

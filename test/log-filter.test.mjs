@@ -55,7 +55,7 @@ test('logFacets collects distinct levels, parent-role sources, and sorted steps'
 });
 
 test('logFacets is safe on empty/malformed input', () => {
-  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [], cycles: [] });
+  assert.deepEqual(logFacets([]), { sources: [], levels: [], steps: [], cycles: [], nodes: [], executions: [] });
   const facets = logFacets([{ text: 'no source or level' }]);
   assert.deepEqual(facets.sources, []);
   assert.deepEqual(facets.levels, ['info']);
@@ -139,4 +139,34 @@ test('compileLogFilter lowercases the term once, at compile time', () => {
   pred(L({ text: 'building the graph' }));
   pred(L({ text: 'no match here' }));
   assert.equal(reads, before, 'the filter object is not re-read per record');
+});
+
+// ── node / execution (v2 graph attribution) ─────────────────────────────────
+
+test('node axis matches rec.nodeId; attribution-less lines only show under all', () => {
+  assert.equal(logLineVisible(L({ nodeId: 'n_impl' }), { node: 'n_impl' }), true);
+  assert.equal(logLineVisible(L({ nodeId: 'n_plan' }), { node: 'n_impl' }), false);
+  assert.equal(logLineVisible(L(), { node: 'n_impl' }), false, 'no nodeId → hidden when a node is chosen');
+  assert.equal(logLineVisible(L(), { node: '' }), true);
+  // The `== null` half of the guard is what keeps the literal ids 'null' /
+  // 'undefined' from matching an unattributed line (String(null) === 'null').
+  assert.equal(logLineVisible(L({ nodeId: null }), { node: 'null' }), false, 'a null nodeId never matches the literal "null"');
+  assert.equal(logLineVisible(L(), { node: 'undefined' }), false, 'a missing nodeId never matches the literal "undefined"');
+});
+
+test('execution axis matches rec.executionId and composes with the others', () => {
+  const rec = L({ nodeId: 'n_impl', executionId: 'x:n_impl:2', level: 'debug', cycle: 2 });
+  assert.equal(logLineVisible(rec, { execution: 'x:n_impl:2' }), true);
+  assert.equal(logLineVisible(rec, { execution: 'x:n_impl:1' }), false);
+  assert.equal(logLineVisible(rec, { execution: 'x:n_impl:2', level: 'debug', cycle: '2' }), true);
+  assert.equal(logLineVisible(rec, { execution: 'x:n_impl:2', level: 'info' }), false);
+  assert.equal(logLineVisible(L(), { execution: 'x:n_impl:2' }), false);
+  assert.equal(logLineVisible(L({ executionId: null }), { execution: 'null' }), false, 'a null executionId never matches the literal "null"');
+  assert.equal(logLineVisible(L(), { execution: 'undefined' }), false, 'a missing executionId never matches the literal "undefined"');
+});
+
+test('facets offer the node and execution values seen so far', () => {
+  const f = logFacets([L({ nodeId: 'n_b', executionId: 'x:n_b:1' }), L({ nodeId: 'n_a', executionId: 'x:n_a:1' }), L()]);
+  assert.deepEqual(f.nodes, ['n_a', 'n_b']);
+  assert.deepEqual(f.executions, ['x:n_a:1', 'x:n_b:1']);
 });

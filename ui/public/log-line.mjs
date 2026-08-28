@@ -52,13 +52,16 @@ export function serializeLog(recs) {
  *  and the History replay must agree on which fields survive, or an axis works
  *  in one pane while silently dead in the other (`cycle` was dropped by one of
  *  three hand-rolled copies of this projection). `cycle` drives the cycle
- *  picker AND the "── Cycle N ──" separators; `stream` is stderr provenance.
- *  Absent attribution stays ABSENT (the filters test `!= null`). */
+ *  picker AND the "── Cycle N ──" separators; `stream` is stderr provenance;
+ *  `nodeId` / `executionId` (v2 graph runs) drive the node select and the
+ *  execution chip. Absent attribution stays ABSENT (the filters test `!= null`). */
 export function projectLogRecord(rec) {
   return {
     source: rec.source, level: rec.level, text: rec.text, ts: rec.ts, sub: !!rec.sub,
     ...(rec.stepIndex != null ? { stepIndex: rec.stepIndex } : {}),
     ...(rec.cycle != null ? { cycle: rec.cycle } : {}),
+    ...(rec.nodeId != null ? { nodeId: rec.nodeId } : {}),
+    ...(rec.executionId != null ? { executionId: rec.executionId } : {}),
     ...(rec.stream ? { stream: rec.stream } : {}),
   };
 }
