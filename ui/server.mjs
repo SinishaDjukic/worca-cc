@@ -71,7 +71,7 @@ import {
 } from '../src/core/ask/worktrees.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
-import { mockEnabled } from '../src/core/claude-runner.mjs';
+import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
@@ -4038,7 +4038,11 @@ app.get('/api/agents', async (req, res) => {
     // §6.6: workspace-only agents stay out of the Composer palette by default;
     // the Agents management view passes ?all=1 to see them too.
     const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents, channels: collectChannelIds(all) });
+    // mockWriterRoles drives ONE select in the agent form. It is a CLOSED list
+    // (the mock switch in claude-runner.mjs), unlike the open channel vocabulary
+    // it replaces in Task 12: an unknown mockRole is dropped by the registry
+    // with a warning, never rejected.
+    res.json({ agents, channels: collectChannelIds(all), mockWriterRoles: [...MOCK_WRITER_ROLES] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

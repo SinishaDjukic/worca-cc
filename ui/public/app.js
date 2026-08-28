@@ -23,7 +23,8 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
-  channelIds: [], // known channel ids from /api/agents (drives the agent editor)
+  channelIds: [], // known channel ids from /api/agents (drives the v1 agent editor; retired in Task 12)
+  mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
@@ -6452,6 +6453,7 @@ async function loadAgentsList() {
     const data = await safeJson(res);
     state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
     if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
+    if (res.ok && Array.isArray(data.mockWriterRoles)) state.mockWriterRoles = data.mockWriterRoles;
   } catch { state.agentsList = []; }
   return state.agentsList;
 }
