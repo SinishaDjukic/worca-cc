@@ -17,7 +17,7 @@ import { readRunLogText } from '../src/core/artifacts.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeSeedGraph } from './helpers/graph-templates.mjs';
 
 const homes = [];
 beforeEach(async () => {
@@ -374,10 +374,10 @@ test('a mock run indexes plan + checklist + review markdown in the artifacts tab
   // produces plan (planner/refiner), code (implementer), review md (reviewer:
   // impl-review), and checklist (manualTestsChecklist). prompt is indexed by
   // createPipeline.
-  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer'], ['manualTestsChecklist']]
-    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
-  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']].map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
-  const tpl = await writeWorkflow({ name: 'art-index', steps, feedbacks });
+  // wf_full-no-decompose: planner -> refiner -> implementer -> reviewer ->
+  // manualTestsChecklist -> manualWebUiTesting, so the run produces plan, code,
+  // a review md and a checklist md — the four kinds this test indexes.
+  const tpl = await writeSeedGraph('wf_full-no-decompose', 'wf_art-index');
   const orch = createOrchestrator({ projectDir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id });
   const res = await orch.run();
   assert.equal(res.status, 'done', 'pipeline converges');

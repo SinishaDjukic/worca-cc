@@ -11,26 +11,11 @@ import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { graphResumePoint } from './helpers/graph-templates.mjs';
 
 let homeDir, srv, base, prevHome, doneId, pausedNoWtId, app, runs, _testing;
 let resumableId, liveWt;
 
-/** A REAL v2 resume point. The v1 engine is retired, so `resumeRun` refuses any
- *  point that is not `version: 2`; the graph engine's _engineRehydrate then
- *  refuses a v2 point with no manifest. `snapshot: null` replays the graph from
- *  scratch, which is all a guard-level fixture needs to get PAST both checks. */
-async function v2ResumePoint(pipelineDir) {
-  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
-  const { resolveGraph } = await import('../src/core/workflows.mjs');
-  const { buildGraphManifest } = await import('../src/shared/graph/manifest.mjs');
-  const resolved = await resolveGraph(pipelineDir, 'wf_default', loadAgentRegistry());
-  const manifest = buildGraphManifest(resolved.template, resolved.agentsByKey,
-    { overlays: { nodes: resolved.nodes, wires: resolved.wires } });
-  return { version: 2, snapshot: null, manifest, nodes: [], planVersion: 0,
-    stepModels: null, workflowId: 'wf_default', guardrailsId: null, checkpointRef: null,
-    checkpointRefs: {}, workspace: null, pauseReason: null, toolInstruction: '',
-    pipelineDir, pausedAt: '2026-06-09T00:00:00Z' };
-}
 
 
 before(async () => {
@@ -61,7 +46,7 @@ before(async () => {
   ({ id: resumableId } = await seedPipeline(projC, {
     title: 'resumable run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: liveWt, reusedExisting: false },
-    resumePoint: await v2ResumePoint(projC),
+    resumePoint: graphResumePoint({ pipelineDir: projC }),
   }));
 
   const mod = await import('../ui/server.mjs');
@@ -161,7 +146,7 @@ test('resumeRun re-attaches the Ask follower of a linked paused run: link moves 
   const { id } = await seedPipeline(projD, {
     title: 'linked paused run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: wtD, reusedExisting: false },
-    resumePoint: await v2ResumePoint(projD),
+    resumePoint: graphResumePoint({ pipelineDir: projD }),
   });
   const t = createThread();
   linkRun(t.id, { runId: 'dead-lineage-uuid', cardId: null, pipelineId: id, status: 'paused' });

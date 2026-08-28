@@ -2,33 +2,20 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestratorFor, selectEngine } from '../src/core/engine-select.mjs';
-import { GraphOrchestrator } from '../src/core/graph/orchestrator.mjs';
+import { createOrchestratorFor, EngineRetiredError } from '../src/core/engine-select.mjs';
+import { GraphOrchestrator } from '../src/core/orchestrator.mjs';
 
 useTempHome(after);
 
-test('selectEngine prefers the resume point, then the template version', () => {
-  assert.equal(selectEngine({ templateVersion: 1, resumePointVersion: 2 }), 'graph');
-  assert.equal(selectEngine({ templateVersion: 2, resumePointVersion: 1 }), 'v1');
-  assert.equal(selectEngine({ templateVersion: 2 }), 'graph');
-  assert.equal(selectEngine({ templateVersion: 1 }), 'v1');
-  assert.equal(selectEngine({}), 'v1', 'unknown => the live engine');
-});
-
-test('createOrchestratorFor dispatches a v2 workflow id to the graph engine', async () => {
+test('every workflow id dispatches to the graph engine', async () => {
   const graph = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default', claude: { mock: true } });
   assert.ok(graph instanceof GraphOrchestrator, 'wf_default => GraphOrchestrator');
   assert.equal(graph.getState().engine, 2);
   assert.equal(graph.engine, 'graph');
   assert.equal(graph.workflowId, 'wf_default');
-
-  const v1 = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default_v1', claude: { mock: true } });
-  assert.ok(!(v1 instanceof GraphOrchestrator), 'wf_default_v1 => the retired v1 Orchestrator');
-  assert.equal(v1.getState().engine, undefined);
-  assert.equal(v1.engine, 'v1');
 });
 
-test('createOrchestratorFor dispatches a v2 resume point to the graph engine, and honours an already-read template', async () => {
+test('a v2 resume point dispatches to the graph engine, and an already-read template is a hint only', async () => {
   const o = await createOrchestratorFor({
     projectDir: process.cwd(), claude: { mock: true },
     resume: { row: { id: 'p', status: 'paused' }, resumePoint: { version: 2 }, steps: [] },
@@ -37,4 +24,14 @@ test('createOrchestratorFor dispatches a v2 resume point to the graph engine, an
   const hinted = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_whatever', template: { id: 'wf_whatever', version: 2, nodes: [], wires: [] }, claude: { mock: true } });
   assert.ok(hinted instanceof GraphOrchestrator, 'the template hint skips the row read');
   assert.equal(hinted.opts.template, undefined, 'the hint is not an orchestrator option');
+});
+
+test('a v1 resume point is refused with a 409, not silently re-run on the graph engine', async () => {
+  await assert.rejects(
+    () => createOrchestratorFor({
+      projectDir: process.cwd(), claude: { mock: true },
+      resume: { row: { id: 'p', status: 'paused' }, resumePoint: { version: 1, kind: 'node' }, steps: [] },
+    }),
+    EngineRetiredError,
+  );
 });

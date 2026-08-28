@@ -193,12 +193,13 @@ test('crash -> reconcile -> resume continues from saved boundary to done', async
   const pDir = orch.state.pipelineDir;
 
   // Forge a "crash": flip the finished row back to running with a dead PID and a
-  // synthetic boundary point at step 0 (re-run from step 0 is safe for a mock runner).
+  // synthetic v2 point carrying the run's own frozen manifest and an EMPTY
+  // scheduler snapshot, so the resume replays the graph from the start (safe for
+  // a mock runner). The manifest is what the graph engine rehydrates from.
   const point = {
-    version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-    bus: null, stepModels: null, workflowId: 'wf_default_v1', plan: null,
-    nodes: [], gate: null, toolInstruction: '', pipelineDir: pDir,
-    pausedAt: new Date().toISOString(),
+    version: 2, snapshot: null, manifest: orch.getState().stepper,
+    nodes: [], planVersion: 0, stepModels: null, workflowId: 'wf_default',
+    checkpointRef: null, pipelineDir: pDir, pausedAt: new Date().toISOString(),
   };
   // Re-create the worktree dir so resume()'s existsSync check passes: in a real crash
   // the worktree was never torn down, but our test ran to completion (teardown ran).
@@ -216,7 +217,8 @@ test('crash -> reconcile -> resume continues from saved boundary to done', async
   const after = readPipelineForResume(id);
   assert.equal(after.row.status, 'interrupted');
   assert.ok(after.resumePoint, 'resume_point preserved across reclassify');
-  assert.equal(after.resumePoint.kind, 'boundary');
+  assert.equal(after.resumePoint.version, 2);
+  assert.equal(after.resumePoint.manifest.version, 2, 'the frozen manifest survived the reclassify');
 
   // Resume (requires Feature 6 widening to accept 'interrupted').
   const orch2 = createOrchestrator({

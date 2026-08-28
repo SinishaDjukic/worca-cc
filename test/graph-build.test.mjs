@@ -258,7 +258,7 @@ test('_buildWorktreeGraph: success is fail-safe even when the audit write fails'
 
 // ── §5.2 step 6: the two graph-build paths must NOT be unified ────────────────
 // _buildWorktreeGraph (single) is the ONLY writer of the scalar this.toolInstruction
-// that every node consumes via _nodeCtx.toolInstruction -> buildSystemPrompt.
+// that every execution consumes via _execCtx.toolInstruction -> buildSystemPrompt.
 // _buildWorktreeGraphAll (workspace) fills only the toolInstructions MAP. Collapsing
 // single mode into the workspace helper would silently strip in-worktree graphify
 // grounding from every single-project prompt — this is the regression guard for the
@@ -290,10 +290,14 @@ test('a single-project run\'s node ctx still carries worktreeGraphInstruction() 
       }
       assert.equal(orch.toolInstruction, worktreeGraphInstruction(),
         `[${mode}] the scalar instruction is set by the single-project graph build`);
-      // The value a dispatched node actually receives.
-      const ctx = orch._nodeCtx({ nodeId: 'n1', key: 'implementer' }, { stepIndex: 0, cycle: 1 });
+      // The value a dispatched execution actually receives. _execCtx reads
+      // this.resolved.ports(node) and allocates the node's outputs, so the
+      // minimum stub is a port-less node.
+      orch.resolved = { ports: () => ({ inputs: [], outputs: [] }) };
+      const node = { id: 'n1', kind: 'agent', key: 'implementer', config: {} };
+      const ctx = orch._execCtx(node, { key: 'implementer' }, { executionId: 'x:n1:1', ordinal: 1 });
       assert.equal(ctx.toolInstruction, worktreeGraphInstruction(),
-        `[${mode}] the node ctx carries it`);
+        `[${mode}] the execution ctx carries it`);
       assert.equal(ctx.projectDir, orch.runCwd, `[${mode}] and cwd is the run cwd`);
       assert.ok(existsSync(join(orch.runCwd, 'graphify-out')),
         `[${mode}] the graph was built INSIDE the worktree the node runs in`);

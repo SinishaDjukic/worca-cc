@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 
@@ -25,12 +26,13 @@ test('mock pipeline pauses at a boundary and resumes to done', async () => {
   // loop's _checkPause fires before the next step spawns. (Mock nodes are fast, so
   // by the time pause() lands the in-flight step has usually finished -> 'boundary';
   // if the abort catches the next node's start it is a 'node' pause — both valid.)
-  // The `nodeId` guard is required: _phase() PHASE-level marks (preflight) also emit
-  // status 'done' (without nodeId) BEFORE any node runs; only _nodeStep's per-node
-  // emission carries nodeId, so this triggers exactly at the first node's completion.
+  // The bookend guard is required: the preflight/done BOOKENDS are executions
+  // too (executionId x:preflight:1 / x:done:1) and they also mark 'done'; only a
+  // real graph node's execution must trigger the pause.
   let pausedOnce = false;
-  orch1.on('phase', ({ status, nodeId }) => {
-    if (!pausedOnce && status === 'done' && nodeId && orch1.state.status === 'running') {
+  orch1.on('exec', ({ status, nodeId, executionId }) => {
+    if (!pausedOnce && status === 'done' && nodeId && !BOOKEND_EXECUTION_IDS.includes(executionId)
+        && orch1.state.status === 'running') {
       pausedOnce = true;
       orch1.pause();
     }
@@ -40,8 +42,10 @@ test('mock pipeline pauses at a boundary and resumes to done', async () => {
   const id = orch1.state.id;
 
   const saved = readPipelineForResume(id);
-  assert.ok(['node', 'boundary'].includes(saved.resumePoint.kind), `kind is node|boundary (got ${saved.resumePoint.kind})`);
-  assert.equal(saved.resumePoint.workflowId, 'wf_default_v1');
+  assert.equal(saved.resumePoint.version, 2, 'a graph resume point');
+  assert.equal(saved.resumePoint.manifest.version, 2, 'the frozen manifest is the topology');
+  assert.ok(Array.isArray(saved.resumePoint.nodes), 'the per-execution session map is frozen');
+  assert.equal(saved.resumePoint.workflowId, 'wf_default');
 
   const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, resume: saved });
   const r2 = await orch2.resume();

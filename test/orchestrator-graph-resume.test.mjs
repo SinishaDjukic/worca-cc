@@ -2,7 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createGraphOrchestrator, resolvedFromManifest } from '../src/core/graph/orchestrator.mjs';
+import { createOrchestrator, resolvedFromManifest } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
@@ -43,7 +43,7 @@ test('a v2 run pauses mid-execution and resumes from the frozen snapshot', { tim
   const dir = gitDir('gresume');
   const seen = { resumed: [] };
   let orch;
-  orch = createGraphOrchestrator({
+  orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: pausingOnce(() => orch, seen), verifier: okVerifier, clarifier: okClarifier },
   });
@@ -67,7 +67,7 @@ test('a v2 run pauses mid-execution and resumes from the frozen snapshot', { tim
 
   // A stale row must not be consulted: point the resume at a bogus workflow id.
   let orch2;
-  orch2 = createGraphOrchestrator({
+  orch2 = createOrchestrator({
     projectDir: dir, workflowId: 'nope_does_not_exist', auto: true, claude: { mock: true },
     resume: saved,
     runners: { producer: pausingOnce(() => orch2, seen), verifier: okVerifier, clarifier: okClarifier },
@@ -83,7 +83,7 @@ test('a v2 run pauses mid-execution and resumes from the frozen snapshot', { tim
 
 test('resume refuses a v1 resume point', async () => {
   const dir = gitDir('gresume-v1');
-  const orch = createGraphOrchestrator({
+  const orch = createOrchestrator({
     projectDir: dir, claude: { mock: true },
     resume: { row: { id: 'p1', status: 'paused', archived_at: null, branch: null, workspace_meta: null }, resumePoint: { version: 1 }, steps: [] },
   });

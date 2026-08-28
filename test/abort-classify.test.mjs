@@ -5,7 +5,7 @@
 // line, no recovery, wrong decomposed abort-on-first-failure detection).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAbort } from '../src/core/orchestrator.mjs';
+import { isAbort } from '../src/core/run-harness.mjs';
 
 test('an AbortError-named error is an abort', () => {
   const e = new Error('aborted');

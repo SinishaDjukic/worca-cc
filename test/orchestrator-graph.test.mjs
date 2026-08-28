@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
-import { createGraphOrchestrator } from '../src/core/graph/orchestrator.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
 useTempHome(after);
 
@@ -54,7 +54,7 @@ function outsOf(ctx) {
 
 test('the graph default runs end to end under mock and reaches the End card', { timeout: 120000 }, async () => {
   const dir = gitDir();
-  const orch = createGraphOrchestrator({
+  const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_default', prompt: 'demo task',
     claude: { mock: true }, auto: true,
   });
@@ -89,7 +89,7 @@ test('every seed graph completes offline under mock; all but the quiescent one b
   assert.equal(GRAPH_IDS.length, 8, 'seven seeds + the graph default alias');
   for (const workflowId of GRAPH_IDS) {
     const dir = gitDir('seed');
-    const orch = createGraphOrchestrator({
+    const orch = createOrchestrator({
       projectDir: dir, workflowId, prompt: 'demo task', claude: { mock: true }, auto: true,
     });
     const res = await orch.run();
@@ -110,7 +110,7 @@ test('every seed graph completes offline under mock; all but the quiescent one b
 test('the ledger is one row per execution, and every loop closes at ordinal 2', { timeout: 120000 }, async () => {
   await seedGraphs();
   const dir = gitDir('ledger');
-  const orch = createGraphOrchestrator({
+  const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_full', prompt: 'demo', claude: { mock: true }, auto: true,
   });
   await orch.run();
@@ -149,7 +149,7 @@ test('a loop gate asks with the POST /api/answer shape and "another" buys one mo
   const tpl = SEED_TEMPLATES.find((t) => t.id === 'wf_quick-fix');
   const wires = tpl.wires.map((w) => (w.config?.maxCycles ? { ...w, config: { ...w.config, maxCycles: 1 } } : w));
   await writeGraphWorkflow({ id: 'wf_gate_probe', name: 'Gate probe', domain: tpl.domain, nodes: tpl.nodes, wires });
-  const orch = createGraphOrchestrator({
+  const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_gate_probe', prompt: 'demo', claude: { mock: true }, auto: false,
   });
   const gates = [];
@@ -178,7 +178,7 @@ test('stop mid-run keeps the partial diff and leaves no resume point', { timeout
   await seedGraphs();
   const dir = gitDir('gstop');
   let orch;
-  orch = createGraphOrchestrator({
+  orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
     runners: {
       producer: async (ctx) => {
@@ -209,7 +209,7 @@ test('stop mid-run keeps the partial diff and leaves no resume point', { timeout
 test('the End-bound result is recorded as an artifact', { timeout: 120000 }, async () => {
   await seedGraphs();
   const dir = gitDir('gend');
-  const orch = createGraphOrchestrator({
+  const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_default', prompt: 'demo', claude: { mock: true }, auto: true,
   });
   const arts = [];
@@ -236,7 +236,7 @@ test('the pipeline cost cap is enforced at EVERY agent launch, not per step', { 
   try {
     let launches = 0;
     const spend = (ctx) => ctx.onEvent({ type: 'result', costUsd: 0.04, raw: { type: 'result', total_cost_usd: 0.04 } });
-    const orch = createGraphOrchestrator({
+    const orch = createOrchestrator({
       projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
       runners: {
         producer: async (ctx) => { launches += 1; spend(ctx); return { outputs: outsOf(ctx), verdict: null }; },

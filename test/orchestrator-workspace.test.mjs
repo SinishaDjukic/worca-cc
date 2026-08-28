@@ -330,31 +330,36 @@ test('fan-out forcing: a workspace run forces fanOut=true on eligible nodes only
   const b = await freshRepo();
   const ws = workspaceOpts([a, b]);
   const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
-  // Capture the resolved plan the dispatcher runs by spying on _dispatch.
-  const origDispatch = orch._dispatch.bind(orch);
-  let seenPlan = null;
-  orch._dispatch = async (plan, runArgs) => { seenPlan = plan; return origDispatch(plan, runArgs); };
+  // Capture the resolved graph the scheduler runs. resolveGraph stamps fanOut on
+  // every nodeCtx up front, so the resolved bag IS the v1 plan's replacement.
+  let seenNodes = null;
+  const origResolve = orch._resolveTopology.bind(orch);
+  orch._resolveTopology = async (...a) => { const r = await origResolve(...a); seenNodes = Object.values(orch.resolved.nodeCtx); return r; };
   await orch.run();
-  assert.ok(seenPlan, 'dispatch ran');
-  const FANOUT_ELIGIBLE = new Set(['clarify', 'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer']);
-  for (const group of seenPlan.steps) {
-    for (const node of group) {
-      if (FANOUT_ELIGIBLE.has(node.key)) {
-        assert.equal(node.fanOut, true, `eligible node ${node.key} is forced fanOut`);
-      } else {
-        // Any non-eligible node must NOT be forced (clarify IS eligible — a fan-out research node).
-        assert.equal(node.fanOut, false, `ineligible node ${node.key} is NOT forced`);
-      }
+  assert.ok(seenNodes, 'the graph resolved');
+  // meta.workspaceFanOut is the v2 replacement for the v1 FANOUT_ELIGIBLE list
+  // (workflows.mjs:579), so the expectation is read from the registry, not hard-coded.
+  const agents = seenNodes.filter((n) => n.kind === 'agent');
+  assert.ok(agents.length >= 3, `several agent nodes resolved: ${agents.map((n) => n.key).join(',')}`);
+  for (const node of agents) {
+    if (node.meta && node.meta.workspaceFanOut) {
+      assert.equal(node.fanOut, true, `eligible node ${node.key} is FORCED fanOut`);
+    } else {
+      // Not eligible => not forced: it keeps whatever its own sidecar default says.
+      assert.equal(node.fanOut, !!(node.meta && node.meta.fanOut),
+        `ineligible node ${node.key} is NOT forced (keeps its sidecar default)`);
     }
   }
+  // The eligible set is non-empty — otherwise the loop above is vacuous.
+  assert.ok(agents.some((n) => n.meta && n.meta.workspaceFanOut), 'at least one node IS forced fanOut');
   // M4: the review node is substituted reviewer -> workspaceReviewer (workflows.mjs),
-  // so the resolved workspace plan carries a fanned-out workspaceReviewer and NO
+  // so the resolved workspace graph carries a fanned-out workspaceReviewer and NO
   // single-project reviewer node.
-  const keys = seenPlan.steps.flat().map((n) => n.key);
-  const wsReviewer = seenPlan.steps.flat().find((n) => n.key === 'workspaceReviewer');
+  const keys = agents.map((n) => n.key);
+  const wsReviewer = agents.find((n) => n.key === 'workspaceReviewer');
   assert.ok(wsReviewer, 'workspace plan contains a workspaceReviewer node');
   assert.equal(wsReviewer.fanOut, true, 'the workspaceReviewer node is forced fanOut');
-  assert.ok(!keys.includes('reviewer'), 'no single-project reviewer node in a workspace plan');
+  assert.ok(!keys.includes('reviewer'), 'no single-project reviewer node in a workspace graph');
 });
 
 // ── history walker discovers the workspace run ────────────────────────────────
@@ -481,14 +486,14 @@ test('detached: the workspace mode pin is stamped on state and the run cwd is th
 });
 
 // ── Phase 4: per-node cwd + the §8.21 sub-agent preflight warning ─────────────
-// Every node's cwd is `ctx.projectDir` (phases.mjs runOpts maps it straight to
-// runClaude's `cwd`), so spying on _nodeCtx is the per-node cwd assertion.
+// Every execution's cwd is `ctx.projectDir` (phases.mjs runOpts maps it straight
+// to runClaude's `cwd`), so spying on _execCtx is the per-node cwd assertion.
 function spyNodeCtxs(orch) {
   const seen = [];
-  const orig = orch._nodeCtx.bind(orch);
-  orch._nodeCtx = (node, pos) => {
-    const ctx = orig(node, pos);
-    seen.push({ key: node.key, cwd: ctx.projectDir, runRoot: ctx.runRoot, workspace: !!ctx.workspace });
+  const orig = orch._execCtx.bind(orch);
+  orch._execCtx = (node, nc, args) => {
+    const ctx = orig(node, nc, args);
+    seen.push({ key: nc.key, cwd: ctx.projectDir, runRoot: ctx.runRoot, workspace: !!ctx.workspace });
     return ctx;
   };
   return seen;

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createGraphOrchestrator } from '../../src/core/graph/orchestrator.mjs';
+import { createOrchestrator } from '../../src/core/orchestrator.mjs';
 
 /** Wrap a v1-shaped stub so the graph executor contract is satisfied: every
  *  declared non-void output gets a real file at its ALLOCATED path (downstream
@@ -41,7 +41,7 @@ export const ENGINES = [
   {
     id: 'graph',
     workflowId: 'wf_default',
-    create: (opts) => createGraphOrchestrator({
+    create: (opts) => createOrchestrator({
       ...opts,
       runners: Object.fromEntries(Object.entries(opts.runners || {}).map(([k, fn]) => [k, adaptRunner(fn)])),
     }),

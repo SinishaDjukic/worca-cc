@@ -361,13 +361,20 @@ test('rejected proposal (no valid target in context) → notice, no card', async
   assert.match(notice.text, /^Proposal rejected: /);
 });
 
-test('preflight failure after 200 {runId}: "Run failed: Preflight failed:" notice + card failed (B-8)', async () => {
+test('preflight failure after 200 {runId}: "Run failed: unknown agent" notice + card failed (B-8)', async () => {
   // POST /api/workflows VALIDATES agent keys against the registry, so the ghost
-  // workflow is written through the STORE (writeWorkflow only stamps id/dates;
-  // key resolution happens at run preflight — orchestrator.mjs:1859-1890).
-  const { writeWorkflow } = await import('../src/core/workflows.mjs');
-  const ghost = await writeWorkflow({
-    name: 'Ghost', steps: [[{ id: 's0_0', key: 'ghost-agent-zz' }]], feedbacks: [],
+  // graph is written through the STORE; key resolution happens at run time
+  // (resolveGraph, workflows.mjs:547 — the graph engine rejects the key before
+  // the harness's _preflightAgentKeys gate can add its "removed plugin?" hint).
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const ghost = await writeGraphWorkflow({
+    id: 'wf_ghost-card', name: 'Ghost',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_ghost', kind: 'agent', key: 'ghost-agent-zz', x: 240, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 480, y: 0, config: {} },
+    ],
+    wires: [],
   });
   const { thread, card } = await proposeCard({ projectKey }, 'propose a doomed run');
   const w = openWs();
@@ -379,12 +386,12 @@ test('preflight failure after 200 {runId}: "Run failed: Preflight failed:" notic
   });
   assert.equal(start.status, 200, 'preflight runs AFTER the 200 — the link must already exist');
   const failed = await waitFor(() => frames(w.msgs, thread.id, 'ask-message')
-    .find((m) => /^Run failed: Preflight failed:/.test(m.message.text)));
+    .find((m) => /^Run failed: unknown agent "ghost-agent-zz"/.test(m.message.text)));
   assert.ok(failed, 'the follower attached before orch.run() was scheduled');
   const snap = await snapshot(thread.id);
   const block = snap.messages.flatMap((m) => m.blocks || []).find((b) => b.kind === 'card' && b.id === card.id);
   assert.equal(block.state, 'failed');
-  assert.match(block.error, /Preflight failed/);
+  assert.match(block.error, /unknown agent "ghost-agent-zz"/);
   assert.equal(snap.runLinks[0].status, 'error');
   w.ws.close();
 });

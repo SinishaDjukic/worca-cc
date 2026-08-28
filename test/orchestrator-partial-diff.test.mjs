@@ -16,7 +16,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { ENGINES } from './helpers/engines.mjs';
 import { listArtifacts, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 
 useTempHome(after);
 
@@ -277,7 +277,18 @@ test('a done run with NO file changes still persists results.json (no 0-byte dif
   const repo = await freshRepo();
   // A review-only workflow: the mock reviewer writes no project files, so the
   // checkpoint diff is genuinely empty.
-  const wf = await writeWorkflow({ name: 'Review only', steps: [[{ id: 's0', key: 'reviewer' }]], feedbacks: [] });
+  const wf = await writeGraphWorkflow({
+    id: 'wf_review-only', name: 'Review only',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_review', kind: 'agent', key: 'reviewer', x: 240, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 480, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_review', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
   const orch = createOrchestrator({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' }, workflowId: wf.id,
   });

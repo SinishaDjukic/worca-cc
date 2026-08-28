@@ -3399,3 +3399,7 @@ export class RunHarness extends EventEmitter {
    *  the exact position the assignment had. */
   _initRunners(_opts) { /* base: no runner registry */ }
 }
+
+/** TEST-ONLY: the skill-label helpers `test/skill-capture.test.mjs` pins. They
+ *  are harness code, so they outlive the v1 engine that used to re-export them. */
+export const _testing = { SKILLS_MAX, skillLabel, mergeSkills };

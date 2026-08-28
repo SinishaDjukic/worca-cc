@@ -1,7 +1,8 @@
 // test/skill-capture.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOrchestrator, _testing } from '../src/core/orchestrator.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { _testing } from '../src/core/run-harness.mjs';
 
 const { mergeSkills, SKILLS_MAX } = _testing;
 // n distinct MCP-tool labels' worth of tool_use blocks (one server, n tools).

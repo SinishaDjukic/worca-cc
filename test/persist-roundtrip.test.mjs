@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeSeedGraph } from './helpers/graph-templates.mjs';
 import { readPipeline, listArtifacts } from '../src/core/artifacts.mjs';
 import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -43,11 +43,9 @@ async function runMockToDone() {
   const prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = home;
   _resetForTests();                                    // fresh DB singleton at this home
-  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer']]
-    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
-  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']]
-    .map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
-  const tpl = await writeWorkflow({ name: 'roundtrip', steps, feedbacks });
+  // wf_clarify-implement: clarify -> planner -> refiner -> implementer ->
+  // reviewer, with the refine self-loop and the review->implement loop.
+  const tpl = await writeSeedGraph('wf_clarify-implement', 'wf_roundtrip');
   const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-persist-proj-'));
   const orch = createOrchestrator({
     projectDir, prompt: PROMPT, auto: true, claude: { mock: true }, workflowId: tpl.id,

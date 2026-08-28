@@ -1,949 +1,534 @@
 // src/core/orchestrator.mjs
-// The deterministic state machine that sequences the whole pipeline:
 //
-//   preflight
-//     -> ensure git repo + checkpoint
-//     -> planner clarify       (single round; ask up to four questions, or none)
-//     -> planner plan
-//     -> refine loop           (refiner; stop when no blocking; gate past max)
-//     -> implementer (implement)
-//     -> review loop           (reviewer; fix; stop when no blocking; gate past max)
-//     -> done
+// The graph engine's orchestrator. It is NOT a second harness: everything that
+// is engine-agnostic (run/resume shells, worktrees, guardrails, results, cost,
+// clocks, questions plumbing, sub-agent telemetry, heartbeat) lives in
+// RunHarness. This class supplies the hooks plus ONE adapter, `_execute`,
+// which the scheduler calls per execution.
 //
-// It is an EventEmitter. Consumers (CLI, UI) subscribe to events and drive
-// interaction via answer()/stop(). Pending questions are modeled as promises
-// that resolve when answer(id, payload) is called (or immediately when auto).
-
-import { join, resolve, dirname, basename } from 'node:path';
-import { writeFile, mkdir, rm } from 'node:fs/promises';
+// Vocabulary: an EXECUTION (not a step) is the unit. `x:<nodeId>:<ordinal>` for
+// an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
+// state.steps[] IS the execution ledger: one row per execution, key ===
+// executionId. There is no separate executions[] array.
+import { join, isAbsolute } from 'node:path';
+import { rm } from 'node:fs/promises';
 
 import {
-  appendAudit, planPath, today, writeReview, reviewKindOf,
-  writeDecomposition, updateTaskStatus, updatePhaseStatus,
-  writeStepQuestions, readStepQuestions,
-} from './artifacts.mjs';
-import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
-import { runClarify } from './phases.mjs';
-import { runners as defaultRunners } from './runners.mjs';
-import { classifyError } from './recoverable-error.mjs';
-import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition, LEGACY_DEFAULT_ID } from './workflows.mjs';
-import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
-import { collectChannelDefs } from './agent-registry.mjs';
-import { validateWorkflow } from './workflow-validator.mjs';
-import {
-  RunHarness, ERR_STREAM, errStreamAttr, isAbort, isPause, pauseErr, sumStepActive, firstLine,
-  numOr, jsonClone, clipMiddle, normalizeClarifyAnswer, SKILLS_MAX, skillLabel, mergeSkills,
+  RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
+  clipMiddle, sumStepActive, normalizeClarifyAnswer,
 } from './run-harness.mjs';
+import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW } from './workflows.mjs';
+import { classifyLoops } from '../shared/graph/loops.mjs';
+import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
+import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
+import { registryPortsFn } from './graph/registry-ports.mjs';
+import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
+import { renderPromptArtifact } from './channels.mjs';
+import {
+  appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
+  updatePhaseStatus, writeStepQuestions, readStepQuestions,
+} from './artifacts.mjs';
+import { readQuestionsFile } from './protocol.mjs';
+import { classifyError } from './recoverable-error.mjs';
 
-export { isAbort, errStreamAttr }; // public surface kept (test/abort-classify, test/log-provenance)
-
-/** The distinct agent keys of a resolved v1 plan, in first-seen order — the
- *  shape the harness's preflight and skills gates take. */
-function planAgentKeys(plan) {
-  const keys = new Set();
-  for (const group of plan?.steps || []) for (const node of group) keys.add(node?.key);
-  return keys;
-}
-
-/**
- * Node keys that fan out across member projects on a workspace run (§5.6 / C4).
- * The orchestrator forces `node.fanOut=true` on these when isWorkspace, unlocking
- * the Task/Agent tool via effectiveAllowedTools. NOTE the set lists
- * `workspaceReviewer`, NOT `reviewer`: on a workspace run the review node is
- * substituted to `workspaceReviewer` (the synthesizer) at resolve time
- * (workflows.mjs, gated on isWorkspace), so it IS in this set and gets
- * fanOut=true here. `reviewer` never appears in a workspace plan — it is the
- * single-project review node only.
- */
-const FANOUT_ELIGIBLE = new Set([
-  'planner', 'refiner', 'implementer', 'planReviewer', 'workspaceReviewer',
-]);
-
-/** Max ask-then-resume question rounds per node run (spec 2026-07-11 §5). */
+/** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
 
-/**
- * Build the synthetic implementer node for one decomposed task. Pure (exported for
- * tests). `siblings` carries the OTHER tasks of the same phase so the implementer
- * prompt can warn about the shared working tree (see implementerBody).
- * @param {{model?:string,effort?:string,tools?:string[],fanOut?:boolean}} implNode the original implementer node
- * @param {{id:string,nodeId:string,title?:string,file?:string}} task
- * @param {Array<{id:string,title?:string,file?:string}>} phaseTasks all tasks of the task's phase
- * @param {string} pipelineDir
- */
-export function decomposedTaskNode(implNode, task, phaseTasks, pipelineDir) {
-  return {
-    nodeId: task.nodeId,
-    key: 'implementer',
-    uiPhase: 'implement',
-    runnerType: 'producer',
-    decomposedTask: true,
-    model: implNode.model,
-    effort: implNode.effort,
-    tools: implNode.tools,
-    fanOut: implNode.fanOut, // inherit so each per-task implementer fans out when the run does
-    askQuestions: false,     // parallel task shards never gate the user (spec §5)
-    taskPath: join(pipelineDir, task.file || ''),
-    siblings: (Array.isArray(phaseTasks) ? phaseTasks : [])
-      .filter((t) => t && t !== task)
-      .map((t) => ({ id: t.id, title: t.title, file: t.file })),
-    produces: ['code'],
-    consumes: ['plan'],
-  };
+function abortError(msg = 'aborted') {
+  const e = new Error(msg);
+  e.name = 'AbortError';
+  return e;
 }
 
-/**
- * Create an orchestrator instance.
- *
- * @param {object} opts
- * @param {string} opts.projectDir
- * @param {string} [opts.prompt]
- * @param {string} [opts.promptFile]
- * @param {object} [opts.source]  task-source descriptor (sources.mjs#resolveTaskInput):
- *                                { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
- *                                | { type:'plugin', plugin, sourceId, taskId }. Absent => legacy prompt/promptFile.
- * @param {string[]} [opts.extras]
- * @param {string} [opts.title]
- * @param {object} [opts.claude]  { bin?, permissionMode="acceptEdits", model?, mock? }
- * @param {string} [opts.agentsDir]
- * @param {string} [opts.pipelineId]
- * @param {boolean} [opts.auto]   non-interactive: clarify->first option, gate->continue
- * @returns {Orchestrator}
- */
 export function createOrchestrator(opts = {}) {
-  return new Orchestrator(opts);
+  return new GraphOrchestrator(opts);
 }
 
-class Orchestrator extends RunHarness {
-  // The v1 engine's default template. `wf_default` is the GRAPH after the v2
-  // break, so the retired v1 topology is reachable only under its reserved id
-  // (the graph orchestrator carries the mirror of this line).
-  constructor(opts = {}) {
+export class GraphOrchestrator extends RunHarness {
+  constructor(opts) {
     super(opts);
-    if (!opts.workflowId) this.workflowId = LEGACY_DEFAULT_ID;
+    // The graph default. createOrchestratorFor always passes an explicit id.
+    if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
+    // (this._runners is assigned by the _initRunners hook the base constructor calls.)
+    this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
+    this._scheduler = null;
+    this._graphSnapshot = null;  // last CLEAN scheduler snapshot
+    this._resumeSnapshot = null; // the snapshot a resume restores from
+    this._resumeSessions = null; // Map executionId -> sessionId (one-shot)
+    this._graphError = null;     // first genuine execution error (identity preserved)
+    this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
+    this._taskArtifact = null;   // the pre-rendered task document
+    this.extrasFiles = [];
+    Object.assign(this.state, {
+      engine: 2,
+      active: [],                // [{nodeId, executionId}]
+      endReached: false,
+      result: null,              // {type, path?, value?} | null
+      warnings: [],
+      wireDeliveries: {},        // {[wireId]: n}
+      tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
+      gate: null,                // {wireId, fromNode, toNode, askId} | null
+    });
   }
 
-  // ── public control ─────────────────────────────────────────────────────────
+  // ── hook 6: the runner registry (constructor seam, P1) ─────────────────────
+  /** The test seam (§5.4). NO defaultRunners and NO bound clarifier: selection
+   *  is P3's runExecution (node.kind, then meta.runnerType), never an agent key. */
+  _initRunners(opts) {
+    this._runners = { ...((opts && opts.runners) || {}) };
+  }
 
-  // ── main run ─────────────────────────────────────────────────────────────────
-
-  // ── run-root / worktree setup ────────────────────────────────────────────────
-
-  // ── phase helpers ─────────────────────────────────────────────────────────────
-
-  // ── data-driven dispatcher ─────────────────────────────────────────────────
+  // ── hook 1: topology ───────────────────────────────────────────────────────
+  /**
+   * Resolve the workflow row into a runnable graph and build the manifest. The
+   * base validates the returned bag, calls _preflightAgentKeys(agentKeys), then
+   * stamps state.stepper BEFORE the first `state` emit (run-harness.mjs:475-482),
+   * and later collectRequiredSkills(registry, agentKeys).
+   * @param {Record<string,object>} registry loadAgentRegistry() output
+   * @returns {Promise<{manifest:object, agentKeys:Set<string>, workflow:{id:string,name:string}}>}
+   */
+  async _resolveTopology(registry) {
+    const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+      isWorkspace: this.isWorkspace,
+    });
+    this._adoptResolvedGraph(resolved);
+    // The manifest is built from the RESOLVED template, the resolver's registry
+    // slice and its EFFECTIVE per-node/per-wire values (P2 contract): the run
+    // monitor shows exactly what the engine will run.
+    const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+    });
+    return {
+      manifest,
+      agentKeys: new Set(this.resolved.agentKeys),
+      workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
+    };
+  }
 
   /**
-   * Walk the resolved plan's steps in order. A single-node step runs directly; a
-   * multi-node step runs concurrently (Promise.all). After each step completes,
-   * check active feedback loops whose `from` step just ran: if the loop's `from`
-   * node returned blocking issues and the loop's cycle < maxCycles, rewind the
-   * pointer to the loop's `to` step (incrementing the loop cycle) and re-run
-   * forward. When a loop's cycles are exhausted, gate the user (continue/stop)
-   * exactly as the legacy _reviewLoop did.
-   *
-   * Per-loop state lives in `loopState[fb.id] = { cycle }`; the per-step run cycle
-   * passed to nodes is bumped while a loop is replaying through that step (so a
-   * node's artifacts/keys are unique per re-run), defaulting to 1.
-   * @param {object} plan ExecutablePlan
-   * @param {{answers?:Array}} runArgs
+   * Adopt a resolveGraph result (P2 contract: { template, ports, loops, nodes,
+   * wires, agentsByKey, agentKeys }). The resolver has ALREADY applied the
+   * workspace substitution AND the workspaceFanOut forcing (spec §5.10 — a META
+   * flag, never a key set) and classified the loops ONCE. This class names the
+   * per-node table `nodeCtx`; nothing is re-derived and no template node is
+   * mutated here.
    */
-  async _dispatch(plan, runArgs = {}) {
-    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
-    const feedbacks = Array.isArray(plan?.feedbacks) ? plan.feedbacks : [];
-    const resume = runArgs.resume || null;
+  _adoptResolvedGraph(resolved) {
+    this.resolved = { ...resolved, nodeCtx: resolved.nodes };
+  }
 
-    // D4: surface channel-reachability / governance warnings where they matter — a
-    // saved-then-illegalized pipeline runs anyway, but the operator sees why a (e.g.)
-    // reviewer with no upstream code reviewed an empty diff. Non-fatal. The resolved
-    // node carries .nodeId; reconstruct the {id,key} template the validator expects.
-    try {
-      const tpl = { steps: steps.map((g) => g.map((n) => ({ id: n.nodeId, key: n.key }))), feedbacks };
-      const v = validateWorkflow(tpl, this.registry || {});
-      for (const w of v.warnings || []) await appendAudit(this.pipeline.dir, `Workflow warning: ${w}`);
-    } catch { /* validation is best-effort at run time */ }
-
-    // Map: source step index -> feedbacks originating there. `from` resolves to the
-    // index of the step containing the from-node; `to` is a step index (tolerate a
-    // node id or a numeric index).
-    const nodeStepIndex = new Map();
-    steps.forEach((group, i) => group.forEach((n) => nodeStepIndex.set(n.nodeId, i)));
-    const toIndex = (ref) =>
-      typeof ref === 'number' ? ref : (nodeStepIndex.has(ref) ? nodeStepIndex.get(ref) : Number(ref) || 0);
-    const fbByFrom = new Map();
-    for (const fb of feedbacks) {
-      const fromIdx = toIndex(fb.from);
-      if (!fbByFrom.has(fromIdx)) fbByFrom.set(fromIdx, []);
-      fbByFrom.get(fromIdx).push({ ...fb, fromIdx, toIdx: toIndex(fb.to), maxCycles: numOr(fb.maxCycles, 1) });
-    }
-    const loopState = resume?.loopState ? JSON.parse(JSON.stringify(resume.loopState)) : {}; // fb.id -> { cycle }
-    // The active run cycle per step index while a loop is replaying through it.
-    const stepCycle = resume?.stepCycle?.length === steps.length
-      ? [...resume.stepCycle]
-      : new Array(steps.length).fill(1);
-
-    // Typed channel bus (replaces the old `io` bag). plan/checklist are pre-seeded
-    // with their default destinations (as today); code is the standing worktree
-    // channel; review starts empty; userPrompt carries the prompt + clarify answers.
-    // NOTE (V3-F): userPrompt.text and code.dir/baseRef are informational — no
-    // legacyFields arm reads them (the planner reads only .answers; the reviewer
-    // diffs ctx.checkpointRef, not code.baseRef). Tolerate undefined gracefully.
-    const bus = {
-      userPrompt: { kind: 'value', text: this.pipeline.promptText, answers: [] },
-      clarify: null,
-      decomposition: null,
-      // planPath routes to the workspace store when workspaceKey is set (byte-
-      // identical to today's path otherwise).
-      plan: { kind: 'artifact', path: planPath(this.projectDir, this.baseName, 1, this.planDatePrefix, this.workspaceKey || undefined) },
-      review: null,
-      checklist: { kind: 'artifact', path: join(this.pipeline.dir, 'manual-tests-checklist.md') },
-      // A detached WORKSPACE run has no single code dir: cwd is the run root and
-      // every member's checkout is a `repos/<key>` subtree, so the channel carries
-      // the roster instead of a meaningless scalar. Under `legacy` (and for single
-      // runs in either mode) the channel keeps today's exact shape — this.runRoot is
-      // null there, so the `runroot` kind can never be emitted.
-      code: (this.runRootMode === 'detached' && this.isWorkspace)
-        ? { kind: 'runroot', dir: this.runRoot, repos: this._reposCtx() }
-        : { kind: 'worktree', dir: this.runCwd || this.workDir, baseRef: this.checkpointRef },
-      // Read-only metadata channel: the frozen workspace description + member set
-      // (worktree dir, checkpoint ref, per-project graph instruction). Seeded ONCE
-      // here, never re-published (CONV-6). null on a single-project run.
-      workspace: this.isWorkspace ? this._workspaceChannel() : null,
+  /**
+   * The template the SCHEDULER runs: the resolved template with every loop wire's
+   * EFFECTIVE budget folded into `wire.config.maxCycles`. The scheduler reads
+   * budgets from the template's wire config only (scheduler.mjs:148-152), so an
+   * overlay from config_workflow_wires would be silently ignored without this.
+   * The manifest (above) carries the same effective values, so Running, the
+   * resume point and the engine agree.
+   */
+  _schedulerTemplate() {
+    const tpl = this.resolved.template;
+    const budgets = this.resolved.wires || {};
+    return {
+      ...tpl,
+      wires: (tpl.wires || []).map((w) => (budgets[w.id]
+        ? { ...w, config: { ...(w.config || {}), maxCycles: budgets[w.id].maxCycles } }
+        : w)),
     };
-    if (resume?.bus) {
-      // Restore the paused run's channel state verbatim (paths/text/answers/dirs
-      // are plain JSON). The fresh literal above only provides defaults for any
-      // channel a future schema adds after the pause.
-      for (const [k, v] of Object.entries(resume.bus)) bus[k] = jsonClone(v);
-    }
+  }
 
-    // Prompt-as-entry-artifact: fill any materializable channel the topology requires
-    // before any step produces it (a pipeline that starts mid-stream — implementer or
-    // refiner first). The user prompt + attached files stand in for the missing
-    // artifact, written to the channel's seeded path so EVERY consumer (the first
-    // agent AND any downstream one, e.g. a later reviewer) binds it via the normal bus.
-    // Disk-only: we write the file at bus[c].path; the handle (and its path) is
-    // unchanged, so the frozen per-step snapshots already point at the now-existing
-    // file. A real producer later overwrites the file (latest-writer-wins), as today.
+  // ── hook 3: the pre-dispatch pause point ───────────────────────────────────
+  /** Paused before the scheduler ever ran (preflight/worktree setup): a v2 point
+   *  with a null snapshot, which resume() replays as "start from scratch". */
+  _enginePrePausePoint() {
+    return this._buildResumePoint(null);
+  }
+
+  // ── hook 2: run the graph ──────────────────────────────────────────────────
+  /**
+   * The scheduler owns readiness, loop budgets, gates and End; this method owns
+   * the process side: the resume-time restoration (Task 6), the pre-rendered
+   * task document, the executor binding, the event fan-out and the resume-v2
+   * snapshot. Returns 'done' | 'paused'; a genuine execution failure is re-thrown
+   * VERBATIM (AbortError/pause identity intact) so the base run()/resume() catch
+   * classifies it exactly as v1 does.
+   * @param {{resume?:object|null, rehydrated?:object|null}} [o] the base passes
+   *   `{ resume: rp, rehydrated }` on a resume and `{ resume: null }` on a fresh run.
+   * @returns {Promise<'done'|'paused'>}
+   */
+  async _engineRun({ resume = null } = {}) {
+    if (resume) await this._restoreFromResumePoint(resume);   // Task 6 (hook-4 companion)
+    const { ports, loops } = this.resolved;
     this.extrasFiles = await this._collectExtras();
-    if (!resume) {
-      for (const c of entrySeedChannels(steps)) {
-        const handle = bus[c];
-        if (!handle?.path) continue;
-        await mkdir(dirname(handle.path), { recursive: true }); // plans/ dir is lazy
-        await writeFile(handle.path, renderPromptArtifact(this.pipeline.promptText, this.extrasFiles), 'utf8');
-        await appendAudit(this.pipeline.dir, `Seeded "${c}" from the user prompt (no upstream producer).`);
-      }
+    // The task document is pre-rendered ONCE: the Task card publishes it and
+    // every entry agent binds that same file. Byte-identical to v1's seeded task
+    // file (the same renderer), so the Task card's document matches what v1
+    // handed its entry node.
+    this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) };
+
+    const sched = createScheduler({
+      template: this._schedulerTemplate(),
+      portsFn: ports,
+      loops,
+      execute: this._execute.bind(this),
+      onEvent: (name, payload) => this._onSchedulerEvent(name, payload),
+      onSnapshot: (snap) => {
+        // Freeze at the last CLEAN completion once a pause is requested: the
+        // executions this pause kills must stay NON-TERMINAL in the persisted
+        // point so the scheduler re-invokes them on resume.
+        if (this.pauseRequested) return;
+        this._graphSnapshot = snap;
+        // Keep a resumable point on the row at all times: a crash-reconciled
+        // ('interrupted') v2 run is then resumable from its last clean snapshot.
+        // The base clears it on done and on stop. (No extra _persist — the next
+        // _execStep writes it.)
+        this.state.resumePoint = this._buildResumePoint(snap);
+      },
+      // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
+      // askId} | null); onAsk is the ONE ask channel (gates today).
+      onGate: (g) => { this.state.gate = g ? { ...g } : null; this._emit('state', this.getState()); },
+      onAsk: (q) => this._schedulerAsk(q),
+      // The scheduler's log is ONE-ARG (`log(QUIESCENCE_WARNING)`, scheduler.mjs:936).
+      log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
+    });
+    this._scheduler = sched;
+    if (resume && this._resumeSnapshot) {
+      this._graphSnapshot = this._resumeSnapshot;
+      sched.reattach(this._resumeSnapshot);
     }
 
-    let i = resume ? Math.min(Math.max(0, resume.stepIndex | 0), steps.length) : 0;
-    // One-shot session re-attach map: only the interrupted step's nodes resume their
-    // captured claude sessions; every later step starts fresh.
-    this._resumeNodeSessions = resume?.kind === 'node'
-      ? new Map((resume.nodes || []).filter((n) => n.sessionId).map((n) => [n.nodeId, n.sessionId]))
-      : null;
-    let pendingGate = resume?.kind === 'gate' && resume.gate ? { ...resume.gate } : null;
+    let outcome;
     try {
-      while (i < steps.length) {
-        if (pendingGate) {
-          // Re-enter exactly at the interrupted gate: no step re-run.
-          const fb = (fbByFrom.get(i) || []).find((f) => f.id === pendingGate.fbId);
-          const g = pendingGate;
-          pendingGate = null;
-          if (fb) {
-            const st = (loopState[fb.id] ||= { cycle: g.cycle || 1 });
-            this._pauseGate = { ...g };
-            const decision = await this._gate(fb.id, g.cycle, g.issues || []);
-            this._pauseGate = null;
-            this._checkAbort();
-            if (decision === 'another') {
-              st.cycle = (g.cycle || 1) + 1;
-              for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
-              await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${g.cycle}: user approved another cycle.`);
-              i = fb.toIdx;
-              continue;
-            }
-            await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${g.cycle}: user chose to continue with open issue(s).`);
-          }
-          i += 1;
-          continue;
-        }
-        this._checkAbort();
-        this._checkPause();
-        this._checkCostLimits();   // step-boundary budget gate (spec §6.5)
-        const cycle = stepCycle[i];
-        const results = await this._runStep(steps[i], i, cycle, bus);
-        this._resumeNodeSessions = null; // one-shot: only the interrupted step re-attaches
+      outcome = await sched.run();
+    } finally {
+      this._scheduler = null;
+      this.state.active = [];
+      this._syncSchedulerState(sched);
+    }
 
-        // Did any feedback originating in THIS step fire?
-        const loops = fbByFrom.get(i) || [];
-        let rewound = false;
-        for (const fb of loops) {
-          const fired = this._loopFired(fb, results); // CONV-3: gate off the loop's `from` node
-          if (!fired) continue;
-          const st = (loopState[fb.id] ||= { cycle: 1 });
-          if (st.cycle < fb.maxCycles) {
-            st.cycle += 1;
-            for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle; // re-runs bump cycle
-            await appendAudit(
-              this.pipeline.dir,
-              `Loop ${fb.id}: blocking issues at step ${i}; rewind to step ${fb.toIdx} (cycle ${st.cycle}).`,
-            );
-            i = fb.toIdx;
-            rewound = true;
-            break;
-          }
-          // Cycles exhausted -> gate the user exactly like the old review loop.
-          // Snapshot the gate context so a pause that lands while _gate awaits the
-          // user can serialize kind:'gate'.
-          const gateIssues = blockingIssues(this._reviewOf(results, fb.from));
-          this._pauseGate = { fbId: fb.id, toIdx: fb.toIdx, cycle: st.cycle, issues: gateIssues };
-          const decision = await this._gate(fb.id, st.cycle, gateIssues);
-          this._pauseGate = null;
-          this._checkAbort();
-          if (decision === 'another') {
-            st.cycle += 1;
-            for (let k = fb.toIdx; k <= i; k++) stepCycle[k] = st.cycle;
-            await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle - 1}: user approved another cycle.`);
-            i = fb.toIdx;
-            rewound = true;
-            break;
-          }
-          await appendAudit(this.pipeline.dir, `Loop ${fb.id} gate at cycle ${st.cycle}: user chose to continue with open issue(s).`);
-        }
-        if (!rewound) i += 1;
-        // Crash-recovery trail: every completed step boundary persists a boundary resume
-        // point for the NEXT step. A hard stop now leaves a valid recovery position.
-        this.state.resumePoint = this._buildResumePoint({ plan, stepIndex: i, stepCycle, loopState, bus });
-        await this._persist();
-      }
-    } catch (err) {
-      if (isPause(err)) {
-        this.state.resumePoint = this._buildResumePoint({ plan, stepIndex: i, stepCycle, loopState, bus });
-        return 'paused';
-      }
-      throw err;
+    if (outcome === 'error') {
+      // The first genuine failure keeps its identity (AbortError on stop, the
+      // agent's error otherwise). A scheduler abort with nothing recorded yet is a stop.
+      throw this._graphError || (this.abort.signal.aborted ? abortError('stopped') : new Error('a graph execution failed'));
+    }
+    if (outcome === 'paused') {
+      this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
+      return 'paused';
+    }
+    if (!this.state.endReached && this.pipeline) {
+      // state.warnings + the run log already carry the scheduler's text (log +
+      // _syncSchedulerState); this is the audit trail for it.
+      await appendAudit(this.pipeline.dir, `Run **${QUIESCENCE_WARNING}**.`).catch(() => {});
     }
     return 'done';
   }
 
-  /** Serialize the dispatch position into a JSON-safe resume point. */
-  _buildResumePoint({ plan, stepIndex, stepCycle, loopState, bus }) {
-    const cyc = Array.isArray(stepCycle) ? [...stepCycle] : [];
-    const curCycle = cyc[stepIndex] || 1;
-    const cur = (this.state.steps || []).filter(
-      (s) => s.stepIndex === stepIndex && (s.cycle || 1) === curCycle && s.nodeId,
-    );
-    const kind = this._pauseGate ? 'gate' : (cur.some((s) => s.status === 'paused') ? 'node' : 'boundary');
+  /**
+   * Serialize the run position into a JSON-safe resume-v2 point. The scheduler
+   * snapshot IS the position; the manifest freezes the topology (resume never
+   * re-reads the workflow row); everything else is the run identity a fresh
+   * instance cannot rebuild from the pipelines row alone.
+   */
+  _buildResumePoint(snapshot) {
     return {
-      version: 1,
-      kind,
-      stepIndex,
-      stepCycle: cyc,
-      loopState: JSON.parse(JSON.stringify(loopState || {})),
-      bus: jsonClone(bus),
+      version: 2,
+      snapshot: snapshot ? jsonClone(snapshot) : null,
+      manifest: this.state.stepper ? jsonClone(this.state.stepper) : null,
+      // Observability + the resume audit line; the AUTHORITATIVE session map is
+      // rebuilt from the persisted step rows (readPipelineForResume). The LEDGER
+      // is the source here too, not the snapshot: the frozen snapshot is the last
+      // CLEAN one, taken at a completion, so an execution the pause killed may not
+      // be in it at all (it started after that completion), and the scheduler's
+      // paused rows carry no sessionId (a paused execute returns { paused: true })
+      // while the row does (_onAgentEvent stamps it).
+      nodes: this.state.steps.filter((s) => s.executionId).map((s) => ({
+        nodeId: s.nodeId,
+        executionId: s.executionId,
+        sessionId: s.sessionId ?? null,
+        completed: s.status === 'done',
+      })),
+      planVersion: this._planVersion,
       stepModels: this.stepModels,
       workflowId: this.workflowId,
       guardrailsId: this.guardrailsId,
-      plan: jsonClone({ id: plan.id, name: plan.name, steps: plan.steps, feedbacks: plan.feedbacks }),
-      nodes: cur.map((s) => ({
-        nodeId: s.nodeId, key: s.phase, sessionId: s.sessionId || null, completed: s.status === 'done',
-      })),
-      gate: this._pauseGate ? { ...this._pauseGate } : null,
+      checkpointRef: this.checkpointRef || null,
+      checkpointRefs: { ...this.checkpointRefs },
+      workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
       pauseReason: this.pauseReason || null,
-      // The EFFECTIVE instruction at dispatch time (post in-worktree graph build),
-      // not the detect-time tools.instruction — resume() restores it verbatim.
+      // The EFFECTIVE instruction at dispatch time (post in-worktree graph
+      // build), not the detect-time tools.instruction.
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
     };
   }
 
-  /**
-   * Run one step. Single node -> direct; >1 node -> Promise.all (PARALLEL).
-   * Returns an array of { node, result } in node order.
-   */
-  async _runStep(group, stepIndex, cycle, bus) {
-    // Decomposed implement: a single implementer step (and not an already-synthetic
-    // task node) + a decomposition on the bus + NOT a fix cycle => fan out one
-    // implementer per task, phases sequential, tasks parallel. A fix-cycle rewind
-    // (bus.review present) runs the normal single implementer on the combined diff.
-    if (
-      group.length === 1 && group[0].key === 'implementer' && !group[0].decomposedTask &&
-      bus.decomposition && Array.isArray(bus.decomposition.phases) && bus.decomposition.phases.length &&
-      !bus.review
-    ) {
-      return this._runDecomposedImplement(group[0], stepIndex, cycle, bus);
-    }
-    // CONV-6: each node reads a FROZEN snapshot of the inbound bus; nodes never
-    // mutate shared state concurrently. Results merge back in node order after all
-    // nodes settle, so the outcome is independent of completion timing.
-    const snapshot = Object.freeze({ ...bus });
-    const results = group.length === 1
-      ? [await this._runNode(group[0], stepIndex, cycle, snapshot)]
-      : await Promise.all(group.map((node) => this._runNode(node, stepIndex, cycle, snapshot)));
-    let stageNeeded = false;
-    for (const { node, result, ctx } of results) {
-      this._publishNodeIo(node, result, ctx.outputs, bus); // deterministic, node order
-      // M1: the reviews table is the AUTHORITATIVE per-cycle verdict store. Persist
-      // synchronously (awaited) before the step returns so the History UI and any
-      // post-run reader see every cycle's verdict. writeReview keeps an inner catch, so
-      // it stays best-effort under WAL contention (a transient lock must not abort a long
-      // pipeline) — the await is for ordering/visibility, NOT error propagation. The live
-      // refine/review->fix loop still gates on result.review in-memory (_loopFired),
-      // which the runner parsed from the agent's scratch json — the FS json stays a
-      // transient subprocess artifact swept with the run dir.
-      if (this.pipeline && ctx.outputs?.review?.reviewKind && result?.review) {
-        await writeReview(this.pipeline.id, reviewKindOf(ctx.outputs.review.reviewKind), cycle, result.review);
+  /** Per-member worktree facts the v1 point kept under rp.bus.workspace. */
+  _workspaceProjects() {
+    return this.members.map((m) => ({
+      projectKey: m.projectKey,
+      projectDir: m.projectDir,
+      projectName: m.projectName,
+      worktreeDir: this.workDirs.get(m.projectKey) || null,
+      graphInstruction: this.toolInstructions.get(m.projectKey) || '',
+    }));
+  }
+
+  /** Mirror the scheduler's derived counters onto state (the scheduler is the
+   *  authority for deliveries/latches/gate; state is the transport). Defensive:
+   *  a partially-built scheduler state degrades to the previous values. */
+  _syncSchedulerState(sched = this._scheduler) {
+    const s = sched ? sched.getState() : null;
+    if (!s) return;
+    // P3's getState(): { active, executions, tokens, wireDeliveries, ended,
+    // endReached, result, warnings, gate, settled }.
+    if (Array.isArray(s.active)) this.state.active = s.active.map((a) => ({ nodeId: a.nodeId, executionId: a.executionId }));
+    if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
+    if (Array.isArray(s.warnings)) this.state.warnings = [...s.warnings];
+    if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
+    if (s.tokens) {
+      const t = {};
+      for (const [slot, tok] of Object.entries(s.tokens)) {
+        if (!tok) continue;
+        t[slot] = { seq: tok.seq, type: tok.type, path: tok.path ?? null, firedAt: tok.firedAt ?? null };
       }
-      // Decomposer node: persist the phases + tasks (stamped with the deterministic
-      // implementer node ids) so the records exist even if the implement stage aborts.
-      if (this.pipeline && node.key === 'decomposer' && Array.isArray(result?.decomposition?.phases)) {
-        await this._persistDecomposition(result.decomposition.phases);
-      }
-      if ((node.produces || []).includes('code')) stageNeeded = true;
+      this.state.tokens = t;
     }
-    // CONV-6: stage ONCE, AWAITED, after the step's producers — so a following
-    // reviewer's `git diff` sees newly-written files (legacy _reviewLoop staged
-    // after every implement pass).
-    if (stageNeeded) await this._stageWorkingTree();
-    return results;
+    // s.gate is already the §5.7 shape ({wireId, fromNode, toNode, askId} | null).
+    this.state.gate = s.gate ? { ...s.gate } : null;
   }
 
   /**
-   * Persist the decomposer's phases/tasks, stamping each task with the deterministic
-   * implementer node id `s_impl_p<ordinal>_t<index+1>` used by the manifest rewrite +
-   * runtime fan-out. Best-effort (writeDecomposition swallows WAL errors).
+   * Fan the scheduler's events onto the orchestrator's event surface.
+   * `exec` replaces v1's `phase` (an execution, not a step) and `token` is new;
+   * `gate` is audit-only — the human-facing half is the `question` the ask
+   * plumbing already emits (§5.7). (Task 5 appends the derived `phase` shim.)
    */
-  async _persistDecomposition(phases) {
-    for (const ph of phases) {
-      const tasks = Array.isArray(ph?.tasks) ? ph.tasks : [];
-      tasks.forEach((t, i) => { t.nodeId = `s_impl_p${ph.ordinal}_t${i + 1}`; });
+  _onSchedulerEvent(name, payload) {
+    if (name === 'token') {
+      this._syncSchedulerState();
+      this._emit('token', payload);
+      return;
     }
-    writeDecomposition(this.pipeline.id, phases);
-    await appendAudit(this.pipeline.dir, `Decomposed plan into ${phases.length} phase(s).`);
-  }
-
-  /**
-   * Run the decomposed implement stage. Rewrite + persist the UI stepper into per-phase
-   * / per-task cells, then run each phase IN ORDER (tasks within a phase in PARALLEL,
-   * shared working tree). The FIRST genuine task failure aborts the phase IMMEDIATELY:
-   * a per-task rejection observer fires the phase-local AbortController while siblings
-   * are still running (allSettled alone reports failures only after every sibling has
-   * finished), and the thrown phase error is that first failure — never a cancelled
-   * sibling's AbortError. Stages the combined tree itself (the guard returns early from
-   * _runStep, skipping its tail stage). Returns the dispatcher's [{node,result,ctx}]
-   * shape with ONE synthetic implementer result so the reviewer step sees a settled
-   * 'code' producer.
-   */
-  async _runDecomposedImplement(implNode, stepIndex, cycle, bus) {
-    const phases = bus.decomposition.phases;
-    // 1) Rewrite + persist the UI manifest so the live/history view stacks per task.
-    this.state.stepper = rewriteStepperForDecomposition(this.state.stepper, phases);
-    await this._persist();
-    this._emit('state', this.getState());
-
-    const snapshot = Object.freeze({ ...bus });
-
-    // 2) Run each phase in order.
-    for (const ph of phases) {
-      const tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
-      updatePhaseStatus(this.pipeline.id, ph.ordinal, 'running', new Date().toISOString());
-      await appendAudit(this.pipeline.dir, `Phase ${ph.ordinal}: ${tasks.length} task(s) starting.`);
-
-      // Abort-immediately on the FIRST genuine (non-abort, non-pause) failure.
-      // The per-task rejection observer below fires phaseAbort WHILE siblings are
-      // still running — before Promise.allSettled resolves — so one failed task
-      // cancels its in-flight siblings (SIGTERM via ctx.signal) instead of letting
-      // them burn their full runtime under a doomed phase. AbortErrors (this very
-      // cancel cascade, or stop()) and PauseErrors never trigger it: the first
-      // cancellation must not mask the real cause, and pause keeps its own unwind
-      // below. A sibling parked on an interactive recovery prompt is not
-      // signal-reachable (_ask settles only via answer()/pause()/stop()), so the
-      // trigger also rejects an open recovery prompt exactly the way pause() does —
-      // the phase is failing and must not wait on a now-meaningless human answer.
-      const phaseAbort = new AbortController();
-      let firstError = null;
-      const noteFailure = (task, reason) => {
-        if (firstError || isAbort(reason) || isPause(reason)) return;
-        firstError = { task, reason };
-        phaseAbort.abort();
-        if (this.pendingQuestion?.kind === 'recovery') {
-          const pq = this.pendingQuestion;
-          this.pendingQuestion = null;
-          const e = new Error('aborted');
-          e.name = 'AbortError';
-          pq.reject(e);
-        }
-      };
-      const settled = await Promise.allSettled(tasks.map((task) => {
-        const taskNode = decomposedTaskNode(implNode, task, tasks, this.pipeline.dir);
-        const p = this._runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort);
-        // Side observer only: the raw promise still flows into allSettled (which
-        // attaches its own handlers, so no unhandled-rejection either way), and
-        // the .catch derivative resolves after noteFailure swallows the reason.
-        p.catch((reason) => noteFailure(task, reason));
-        return p;
-      }));
-
-      // Pause lands between decomposed phases (coarse but safe): aborted tasks of
-      // this phase re-run on resume as part of the whole decomposed step. Pause
-      // outranks a recorded failure, exactly as before the observer existed.
-      if (this.pauseRequested) throw pauseErr();
-
-      // Selection: noteFailure recorded the FIRST genuine failure in settle order
-      // (its handler runs before allSettled's own for the same promise), so a
-      // cancelled sibling's AbortError can never become the phase error. The scan
-      // is a pure backstop preserving the old task-order selection if the observer
-      // somehow saw nothing genuine.
-      if (!firstError) {
-        settled.forEach((r, k) => {
-          if (r.status === 'rejected' && !isAbort(r.reason) && !isPause(r.reason) && !firstError) {
-            firstError = { task: tasks[k], reason: r.reason };
-          }
+    if (name === 'gate') {
+      this._syncSchedulerState();
+      if (payload.status !== 'held' && this.pipeline) {
+        appendAudit(
+          this.pipeline.dir,
+          `Loop gate on wire ${payload.wireId} (${payload.nodeId}): the user chose **${payload.status}**.`,
+        ).catch(() => {});
+      }
+      return;
+    }
+    if (name !== 'exec') return;
+    // NOTE: the `start` event lands BEFORE _execute creates the row, so `step` is
+    // undefined for it (costUsd 0); every later marker finds the row.
+    const step = this.state.steps.find((s) => s.key === payload.executionId);
+    this._syncSchedulerState();
+    // The bound End payload is exec-only, and the step row IS the durable ledger
+    // — without this History has no result to anchor the End card on.
+    if (step && payload.result !== undefined) step.result = payload.result;
+    if (payload.status === 'done' && payload.result !== undefined) {
+      this.state.result = payload.result;
+      this.state.endReached = true;
+      // End arrival withdraws every pending gate in the scheduler; the QUEUED
+      // question is the orchestrator's to dismiss, or the run blocks on an
+      // answer nobody can give any more.
+      this._dismissPendingAsk();
+      // The End-bound path is a first-class artifact (the History artifact route
+      // in P6 serves exactly what listArtifacts() carries).
+      if (payload.result?.path) {
+        this._artifact('result', payload.result.path, {
+          nodeId: payload.nodeId, executionId: payload.executionId, port: null,
         });
       }
-      if (firstError) {
-        updatePhaseStatus(this.pipeline.id, ph.ordinal, 'error', new Date().toISOString());
-        await appendAudit(this.pipeline.dir,
-          `Phase ${ph.ordinal}: task "${firstError.task.title || firstError.task.id}" failed — aborting run.`);
-        throw new Error(`Decomposed implement failed in phase ${ph.ordinal}: task "${firstError.task.title || firstError.task.id}": ${firstError.reason?.message || firstError.reason}`);
-      }
-      updatePhaseStatus(this.pipeline.id, ph.ordinal, 'done', new Date().toISOString());
     }
-
-    // 3) Stage the combined tree so the reviewer's diff sees every task's files.
-    await this._stageWorkingTree();
-
-    // 4) Synthetic dispatcher result (one settled 'code' producer). NOT published via
-    //    _publishNodeIo (the guard returned early); bus.code is the standing worktree
-    //    channel the reviewer already binds, so the staged tree is all it needs.
-    return [{
-      node: { ...implNode, produces: ['code'], consumes: ['plan'] },
-      result: { status: 'ok', summary: `Decomposed implementation complete (${phases.length} phase(s)).` },
-      ctx: { outputs: {} },
-    }];
+    this._emit('exec', { ...payload, costUsd: step ? (step.costUsd || 0) : 0 });
+    // ── coexistence shim (P4–P7, deleted in P8) ──
+    // Every unported v1 consumer drives off `phase`. Derived, never authored:
+    // the vocabulary is the manifest node's uiPhase (UI_PHASE[key] || key for
+    // agents, the kind for flow cards), the cycle is the ordinal, and a task
+    // slice reports its PARENT node/ordinal (the exec payload already does).
+    // `skipped` has no v1 counterpart, so it emits nothing.
+    if (payload.status !== 'skipped') {
+      this._emit('phase', {
+        phase: this._uiPhaseOf(payload.nodeId),
+        cycle: payload.ordinal,
+        status: payload.status,
+        nodeId: payload.nodeId,
+      });
+    }
   }
 
   /**
-   * Run one decomposed task through the standard node machinery: _nodeStep records its
-   * own pipeline step (distinct nodeId), _nodeCtx wires its own onEvent (so sub-agents
-   * are attributed to this task), and the standard attempt loop (`_runNodeAttempts`:
-   * recovery + usage-limit pause) runs the implementer with the self-contained TASK
-   * file authoritative (ctx.node.taskPath). The phase-local abort is folded with the
-   * run-wide signals into ctx.signal; _runDecomposedImplement's rejection observer
-   * fires it on the first genuine sibling failure, killing this task's runner
-   * mid-flight (it then settles as an AbortError — recorded 'error', logged silently,
-   * same as stop()). updateTaskStatus tracks running/done/error/paused. Errors propagate.
+   * The scheduler's ask channel (P3 `onAsk`). A gate ask arrives as
+   * `{ id:'gate-<wireId>-<deliveryNo>', kind:'gate', wireId, nodeId, executionId, issues }`
+   * and is answered 'another' | 'continue'. It rides the SAME serialized ask
+   * queue as recovery prompts and step questions, so only ONE prompt is ever
+   * open, and answers arrive through the unchanged POST /api/answer {id} path
+   * (the harness's _ask resolves a gate with `{decision}`).
+   *
+   * A pause() or stop() while the prompt is open REJECTS the pending question
+   * (run-harness.mjs:416-421, 440-444). The scheduler treats a rejected onAsk as
+   * 'continue' (scheduler.mjs:676) — which would force-clean the loop and lose
+   * the hold. So on pause the scheduler is halted and the promise is left
+   * PENDING: run() then resolves 'paused' with the hold still in the snapshot,
+   * and reattach() re-asks it on resume. On stop the scheduler is aborted.
    */
-  async _runDecomposedTask(taskNode, task, stepIndex, cycle, snapshot, phaseAbort) {
-    this._nodeStep(taskNode, stepIndex, cycle, 'start');
-    updateTaskStatus(this.pipeline.id, task.id, 'running', new Date().toISOString());
-    const ctx = this._nodeCtx(taskNode, { stepIndex, cycle });
-    Object.assign(ctx, this._bindNodeIo(taskNode, cycle, snapshot));
-    ctx.signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal, phaseAbort.signal]); // sibling-failure/pause cancel
-    let status = 'done';
+  _schedulerAsk(q) {
+    return this._enqueueAsk(() => this._ask(q)).then(
+      (payload) => {
+        if (q.kind === 'gate') return payload?.decision === 'another' ? 'another' : 'continue';
+        return payload;
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});   // never settles: the hold survives (see above)
+      },
+    );
+  }
+
+  /** Resolve the queued question, if any, without an answer. Used on End arrival:
+   *  a gate ask resolves to `continue` (a no-op — the scheduler already withdrew
+   *  it), and a clarify/questions ask resolves to EMPTY answers, which the
+   *  clarifier's malformed/empty tolerance turns into a normal publish. */
+  _dismissPendingAsk() {
+    const pq = this.pendingQuestion;
+    if (!pq) return false;
+    this.pendingQuestion = null;
+    this._log('orchestrator', 'info', `End reached — withdrawing pending ${pq.kind} "${pq.id}"`);
+    pq.resolve(pq.kind === 'gate' ? { decision: 'continue' } : { answers: [] });
+    return true;
+  }
+
+  // ── execution ──────────────────────────────────────────────────────────────
+  /**
+   * The scheduler's `execute`. Selection is P3's runExecution: node.kind, then
+   * meta.runnerType for agents — never an agent key. Flow cards are instant, $0
+   * and spawn nothing; agent cards go through the full attempt/recovery/questions
+   * machinery, all of it keyed by executionId.
+   */
+  async _execute(args) {
+    const node = args.node;
+    const nc = (this.resolved.nodeCtx || {})[node.id] || { nodeId: node.id, kind: node.kind, key: null };
+    // The composite protocol: these three modes are the process side of a
+    // fan-out — they spawn nothing, record no ledger row and allocate nothing,
+    // so a composite shell never burns a plan version.
+    if (args.composite === 'expand') return await this._expandDecomposition(node, args);
+    if (args.composite === 'phase') return this._compositePhase(args);
+    if (args.composite === 'finish') return await this._finishComposite(nc, args);
+
+    const ctx = this._execCtx(node, nc, args);
+    this._execStep(ctx, 'start');
+    if (ctx.slice) updateTaskStatus(this.pipeline.id, ctx.slice.id, 'running', new Date().toISOString());
+    let endMark = 'done';
     try {
-      // Through _runNodeAttempts, not a bare runner call: a decomposed task gets
-      // the SAME recovery/usage-limit treatment as a normal node (the bare call
-      // also bypassed the terminal error line entirely — a failed decomposed run
-      // used to produce zero error-level lines).
-      await this._runNodeAttempts(taskNode, stepIndex, cycle, ctx);
+      // Exactly what v1's dispatcher loop does at every step boundary
+      // (orchestrator.mjs:259-261): a stop or pause requested while nothing was
+      // in flight (e.g. between executions, or during a flow card) must land
+      // here, not on the next spawn.
+      this._checkAbort();
+      this._checkPause();
+      if (node.kind !== 'agent') return await this._runFlow(ctx);
+      this._checkCostLimits();                  // budget gate at EVERY agent launch (throws pauseErr)
+      this._primeQuestions(nc, ctx);
+      let result = await this._runNodeAttempts(nc, ctx);
+      result = await this._questionsLoop(nc, ctx, result);
+      await this._afterExecution(nc, ctx, result);
+      return result;
     } catch (err) {
-      // Same conversion _runNode applies (2317-2319): a usage-limit/user pause
-      // unwinds through _runNodeAttempts as a pause, and a pause is NOT this
-      // task's failure — without it the finally stamps the task row and the
-      // stepper cell 'error' on a merely paused, resumable run, and
-      // _buildResumePoint sees no 'paused' step.
-      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
-        status = 'paused';
-        throw pauseErr();
+      if (isPause(err) || (this.pauseRequested && (isAbort(err) || this.pauseAbort.signal.aborted))) {
+        // Settle QUIETLY: the persisted snapshot was frozen the moment pause()
+        // was requested, so nothing this publishes can reach it, and the
+        // scheduler is already halted — no downstream node can fire off it.
+        // P3 protocol: a paused execution answers { paused: true } — the scheduler
+        // keeps its row NON-TERMINAL (nothing publishes) and reattach() re-invokes
+        // it on resume. `{ outputs: {} }` would COMPLETE it and strand the resume.
+        endMark = 'paused';
+        return { paused: true };
       }
-      status = 'error';
-      this._logStepFailure(taskNode, stepIndex, cycle, err);
+      endMark = (isAbort(err) && this.abort.signal.aborted) ? 'stopped' : 'error';
+      this._graphError ||= err;                 // preserve identity for the base catch
+      this._logStepFailure(nc, ctx, err);
+      // A sibling slice parked on an interactive recovery prompt is not
+      // signal-reachable (_ask settles only via answer()/pause()/stop()), so a
+      // genuine slice failure rejects that prompt exactly as v1's noteFailure
+      // does — the phase is failing and must not wait on a now-meaningless answer.
+      if (ctx.slice && this.pendingQuestion?.kind === 'recovery') {
+        const pq = this.pendingQuestion;
+        this.pendingQuestion = null;
+        pq.reject(abortError());
+      }
       throw err;
     } finally {
-      updateTaskStatus(this.pipeline.id, task.id, status, new Date().toISOString());
-      this._nodeStep(taskNode, stepIndex, cycle, status);
+      this._execStep(ctx, endMark);
+      // A PAUSED slice stays 'running': the resume re-runs the whole composite,
+      // and a task that never finished must not read as done.
+      if (ctx.slice && endMark !== 'paused') {
+        updateTaskStatus(this.pipeline.id, ctx.slice.id, endMark === 'stopped' ? 'error' : endMark, new Date().toISOString());
+      }
     }
   }
 
-  /**
-   * The ONE `error`-level line for a terminally failed node or decomposed task.
-   * A pause/abort is not a failure, and a recoverable error that retried logged
-   * its own `warn` in _recover — both stay silent. `err.stream` is set by the
-   * runner only when the detail actually came from the CLI's stderr. Clipped
-   * head+tail: the runner's exit detail is already tail-capped (the cause sits
-   * at the END), and every stderr line was streamed as its own warn — this line
-   * is the verdict, not the transcript.
-   */
-  _logStepFailure(node, stepIndex, cycle, err) {
-    if (isAbort(err) || isPause(err)) return;
-    this._log(node.key, 'error', `step failed: ${clipMiddle(err?.message || err, 500)}`, {
-      nodeId: node.nodeId, stepIndex, cycle, stepKey: this._stepKeyFor(node, stepIndex, cycle),
-      ...(err?.stream ? { stream: err.stream } : {}),
+  /** The five flow cards through P3's dispatcher. Engine-owned: instant, $0, no
+   *  semaphore slot, no spawn. runExecution reads ctx.taskArtifact (Task card),
+   *  ctx.allocatedPath (Combine) and derives Combine's headings from ctx.template. */
+  async _runFlow(ctx) {
+    return await runExecution({
+      ...ctx,
+      taskArtifact: this._taskArtifact,
+      allocatedPath: ctx.outputs?.out?.path,
     });
   }
 
   /**
-   * Execute a single plan node through its runnerType, binding the frozen bus
-   * snapshot into ctx and returning the node result + ctx (publish happens in
-   * _runStep). Records the node step (parallel-safe) and tags all emits.
+   * The per-execution context. This is the ONE ctx: it carries the phases.mjs
+   * prompt fields (projectDir-as-cwd, workspace, toolInstruction, agentPrompts,
+   * claudeOpts) AND the graph fields the executors read (ports, meta, bindings,
+   * trigger, the allocated outputs/verdict). Allocation happens HERE, once per
+   * execution, so a questions resume or a recovery retry never burns a second
+   * plan version. It mirrors test/helpers/graph-run.mjs (P3's offline runner).
    */
-  async _runNode(node, stepIndex, cycle, snapshot) {
-    this._nodeStep(node, stepIndex, cycle, 'start');
-    // Per-cycle artifact paths so loop re-runs never clobber prior outputs.
-    const ctx = this._nodeCtx(node, { stepIndex, cycle });
-    Object.assign(ctx, this._bindNodeIo(node, cycle, snapshot));
-    if (this._resumeNodeSessions?.has(node.nodeId)) {
-      ctx.resumeSessionId = this._resumeNodeSessions.get(node.nodeId);
-    }
-    this._primeQuestions(node, ctx);
-    let result;
-    let endMark = 'done';
-    try {
-      result = await this._runNodeAttempts(node, stepIndex, cycle, ctx);
-      result = await this._questionsLoop(node, stepIndex, cycle, ctx, result);
-    } catch (err) {
-      if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
-        endMark = 'paused';
-        throw pauseErr();
-      }
-      // Terminal node failure — see _logStepFailure.
-      this._logStepFailure(node, stepIndex, cycle, err);
-      throw err;
-    } finally {
-      this._nodeStep(node, stepIndex, cycle, endMark);
-    }
-    // CONV-6: no shared-bus mutation here — _runStep merges results in node order.
-    return { node, result, ctx };
-  }
-
-  /** The recoverable-error retry loop around one node execution. Extracted from
-   *  _runNode verbatim so the questions-resume runs (spec 2026-07-11) get the
-   *  SAME usage-limit/recovery treatment as the initial attempt. The pause
-   *  paths throw pauseErr() with pauseRequested already set (_pauseForLimit
-   *  calls this.pause()), so _runNode's catch reproduces the 'paused' mark. */
-  async _runNodeAttempts(node, stepIndex, cycle, ctx) {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await this._runOnce(node, ctx);
-      } catch (err) {
-        // Pause/stop always win over a recoverable error.
-        if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) {
-          throw pauseErr();
-        }
-        if (isAbort(err) || isPause(err)) throw err;
-        const cls = classifyError(err);
-        if (!cls) throw err;                    // not recoverable -> today's path
-        if (cls === 'usage_limit') {
-          // A session/usage cap that only clears after a multi-hour reset.
-          // _pauseForLimit pauses the whole run (sets pauseRequested); throwing
-          // pauseErr() unwinds this node as a pause.
-          this._pauseForLimit(node, err);
-          throw pauseErr();
-        }
-        const decision = await this._recover({ node, cls, err, attempt });
-        if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
-        this._nodeStep(node, stepIndex, cycle, 'start'); // node back to running for the retry
-        // loop -> re-run the node fresh
-      }
-    }
-  }
-
-  /** Run a node's runner once, with the spec §7 vanished-session fresh re-run
-   *  fallback (a dead `--resume` session must not fail the run). Extracted from
-   *  _runNode verbatim so the recovery loop wraps a single clean call. */
-  async _runOnce(node, ctx) {
-    const runner = this._runners[node.runnerType];
-    if (typeof runner !== 'function') throw new Error(`no runner for type "${node.runnerType}"`);
-    try {
-      return await runner(ctx);
-    } catch (err) {
-      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
-        this._log(node.key, 'warn', `session resume failed (${err?.message || err}); re-running the step fresh`,
-          err?.stream ? ERR_STREAM : null);
-        await appendAudit(this.pipeline.dir, `Resume fallback: node ${node.nodeId} re-ran fresh (session resume failed).`).catch(() => {});
-        ctx.resumeSessionId = undefined;
-        return await runner(ctx);
-      }
-      throw err;
-    }
-  }
-
-  /** Seed the ask-then-resume ctx fields (spec 2026-07-11) for one node run.
-   *  Disabled for clarifier nodes (they have their own gate), decomposed task
-   *  shards, and auto mode (the directive would be auto-answered noise).
-   *  Persisted answers from EVERY prior round/cycle of this node are re-injected
-   *  so a fix-cycle or crash-resumed re-run never re-asks. */
-  _primeQuestions(node, ctx) {
-    const enabled = !!node.askQuestions && node.runnerType !== 'clarifier'
-      && !node.decomposedTask && !this.auto;
-    ctx.questionsEnabled = enabled;
-    if (!enabled) return;
-    ctx.questionsAnswered = readStepQuestions(this.pipeline.id)
-      .filter((r) => r.nodeId === node.nodeId)
-      .flatMap((r) => r.answers);
-    ctx.questionsFile = this._questionsPath(node, ctx.stepIndex, ctx.cycle, 1);
-  }
-
-  /** Absolute per-round questions file path inside the pipeline dir. The node
-   *  id is sanitized so a hand-authored workflow id can never escape the dir. */
-  _questionsPath(node, stepIndex, cycle, round) {
-    const safe = String(node.nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
-    return join(this.pipeline.dir, `questions-${stepIndex}-${safe}-c${cycle}-r${round}.json`);
-  }
-
-  /**
-   * Ask-then-resume rounds (spec 2026-07-11 §5). After a successful run: if the
-   * agent wrote this round's questions file, persist the questions, gate the
-   * user (serialized — single pendingQuestion slot), persist the answers
-   * (BEFORE the resume spawns — crash-safe), then resume the SAME session with
-   * the answers injected via questionsPromptBlock. The resume goes through
-   * _runNodeAttempts, so recovery + the vanished-session fresh re-run apply
-   * unchanged. Caps at MAX_QUESTION_ROUNDS; the final resume carries no
-   * next-round file so the agent proceeds on assumptions.
-   */
-  async _questionsLoop(node, stepIndex, cycle, ctx, firstResult) {
-    let result = firstResult;
-    if (!ctx.questionsEnabled) return result;
-    const stepKey = this._stepKeyFor(node, stepIndex, cycle);
-    const agentLabel = ((this.registry || {})[node.key] || {}).displayName || node.key;
-    for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
-      const qPath = ctx.questionsFile;
-      if (!qPath) break;
-      const { questions, malformed } = await readQuestionsFile(qPath);
-      if (!questions.length) {
-        if (malformed) {
-          await appendAudit(this.pipeline.dir, `${agentLabel}: questions file was malformed — proceeding without asking (round ${round}).`).catch(() => {});
-        }
-        break;
-      }
-      this._checkAbort();
-      await writeStepQuestions(this.pipeline.id, stepKey, round, {
-        agentKey: node.key, nodeId: node.nodeId, questions: { questions },
-      });
-      this._artifact('questions', qPath);
-      await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
-      const payload = await this._enqueueAsk(() => this._ask({
-        id: `questions-${stepKey}-r${round}`,
-        kind: 'questions',
-        questions,
-        agent: agentLabel,
-        nodeId: node.nodeId,
-      }));
-      this._checkAbort();
-      const answers = normalizeClarifyAnswer(payload, questions);
-      const byId = new Map(questions.map((q) => [q.id, q]));
-      const enriched = answers.map((a) => ({ id: a.id, question: byId.get(a.id)?.question || '', choice: a.choice }));
-      await writeStepQuestions(this.pipeline.id, stepKey, round, {
-        agentKey: node.key, nodeId: node.nodeId, answers: { answers: enriched },
-      });
-      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`).catch(() => {});
-      // Consume the processed round file: the DB row is authoritative, and a
-      // surviving file would re-gate the user on a crash/pause-resumed re-run.
-      await rm(qPath, { force: true }).catch(() => {});
-      const step = this.state.steps.find((s) => s.key === stepKey);
-      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
-      ctx.questionsAnswered = [...(ctx.questionsAnswered || []), ...enriched];
-      ctx.questionsFile = round < MAX_QUESTION_ROUNDS
-        ? this._questionsPath(node, stepIndex, cycle, round + 1)
-        : null;
-      result = await this._runNodeAttempts(node, stepIndex, cycle, ctx);
-    }
-    return result;
-  }
-
-  /** Pause the whole run because a node hit a session/usage cap that only clears
-   *  after a long reset. Records the cap message (surfaced on the paused row /
-   *  audit) and signals a graceful pause; the caller throws pauseErr() to unwind
-   *  this node, and pause() aborts the in-flight siblings. Idempotent: the first
-   *  limit-hit among parallel siblings wins, the rest no-op. */
-  _pauseForLimit(node, err) {
-    const reason = firstLine(err?.message || String(err));
-    if (!this.pauseReason) this.pauseReason = reason;
-    this._log(node.key, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`);
-    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${node.key} — ${reason}. Resume after the reset.`).catch(() => {});
-    this.pause();
-  }
-
-  /**
-   * Interactive clarify runner (runnerType 'clarifier'). Runs the clarify agent
-   * (writes clarify.json + the DB clarify questions row), then pauses for the user's
-   * answers via the same _ask the feedback-loop gate uses, persists them to the
-   * clarify row, and returns { questions, answers } so _publishNodeIo folds them onto
-   * the `clarify` channel (read by the planner as inputs.clarify.answers). With no
-   * questions it skips the gate and returns empty sets. `ctx` is the node ctx built by
-   * _runNode (carries node, cycle, agentPrompts.clarify, outputs.clarify, pipelineDir,
-   * pipelineId).
-   */
-  async _runClarifyNode(ctx) {
-    const cycle = ctx.cycle || 1;
-    const clarifyPath = ctx.outputs?.clarify?.path || join(this.pipeline.dir, 'clarify.json');
-    const { questions } = await runClarify(ctx, { round: cycle, priorAnswers: [] });
-    this._checkAbort();
-    if (!Array.isArray(questions) || questions.length === 0) {
-      await appendAudit(this.pipeline.dir, `Clarify: no questions; proceeding to plan.`);
-      return { questions: [], answers: [] };
-    }
-    this._artifact('clarify', clarifyPath);
-    const answer = await this._ask({ id: `clarify-${cycle}`, kind: 'clarify', questions });
-    this._checkAbort();
-    const answers = normalizeClarifyAnswer(answer, questions);
-    const enriched = await this._writeClarifyAnswers(questions, answers);
-    await appendAudit(this.pipeline.dir, `Clarify: answered ${answers.length} question(s).`);
-    return { questions, answers: enriched };
-  }
-
-  /** Bind a node's typed inputs from the (frozen) bus snapshot + allocate its
-   *  outputs, then flatten to the runner ABI the phases.mjs runners read. Replaces
-   *  the role switch. `node` carries consumes/produces/optionalConsumes from
-   *  resolveWorkflow (Step 4). */
-  _bindNodeIo(node, cycle, snapshot) {
-    const consumes = node.consumes || [];
-    const produces = node.produces || [];
-    const optional = node.optionalConsumes || [];
-    const ctx = {
-      projectDir: this.projectDir, pipelineDir: this.pipeline.dir,
-      baseName: this.baseName, datePrefix: this.planDatePrefix, cycle, key: node.key,
-      // allocate() forwards workspaceKey into planPath/reviewPath so a workspace
-      // run's unified plan/review route to the workspace store; null otherwise.
-      workspaceKey: this.workspaceKey,
-      // Registry-collected custom channel definitions (kind/filename) so allocate()'s
-      // generic default branch can mint <pipelineDir>/<filename>[-cycleN].<ext>.
-      channelDefs: this.channelDefs || {},
-    };
-    const inputs = bindInputs(consumes, optional, snapshot);
-    const outputs = {};
-    for (const c of produces) outputs[c] = allocate(c, ctx);
-    return { inputs, outputs, ...legacyFields(node, inputs, outputs, cycle, this.baseName) };
-  }
-
-  /** Publish a node's produced channels back onto the bus (node order). Emits the
-   *  same 'artifact' events as before for plan/checklist. Clearing `review` on code
-   *  publish fixes the sticky fix-mode latent bug. */
-  _publishNodeIo(node, result, outputs, bus) {
-    if (!result) return;
-    const beforePlan = bus.plan, beforeChecklist = bus.checklist;
-    publish(node.produces || [], result, outputs || {}, bus);
-    if (bus.plan && bus.plan !== beforePlan) this._artifact('plan', bus.plan.path);
-    if (bus.checklist && bus.checklist !== beforeChecklist) this._artifact('checklist', bus.checklist.path);
-    // A16(5): index a published review's md path so the Task-3.13 index-based deleter
-    // can remove the shared reviews/<date>-<base>-(impl|plan|ws)-review.md. publish()
-    // only folds reviews that carry an md (refiner's md-less verdict is private), so
-    // the md is on result.reviewMdPath / outputs.review.mdPath. webui-review md is
-    // pipeline-dir-local -> index it under kind 'webui'; all other review md is the
-    // shared store-rooted file -> kind 'review'. (_artifact computes the rel_path.)
-    const reviewMd = result.reviewMdPath ?? outputs?.review?.mdPath;
-    if (reviewMd) {
-      const reviewKind = outputs?.review?.reviewKind === 'webui-review' ? 'webui' : 'review';
-      this._artifact(reviewKind, reviewMd);
-    }
-  }
-
-  /** True if the loop's `from` node returned a blocking verdict (CONV-3). */
-  _loopFired(fb, results) {
-    const review = this._reviewOf(results, fb.from);
-    return review ? hasBlocking(review) : false;
-  }
-
-  /**
-   * CONV-3: the verdict of the loop's ORIGINATING node, resolved by `nodeId`,
-   * REGARDLESS of runnerType — so a producer self-loop (the refiner `s1_0->s1_0`)
-   * gates on its own review, reproducing the legacy `_refineLoop`. `loopSource` is
-   * a validation/UI hint, not the runtime gate selector. Falls back to synthesizing
-   * a review from a blocked status when the node exposed issues but no full review.
-   */
-  _reviewOf(results, fromNodeId) {
-    const r = results.find((x) => x.node.nodeId === fromNodeId);
-    if (!r) return null;
-    return r.result?.review || (r.result?.status === 'blocked'
-      ? { issues: (r.result.issues || []).map((i) => ({ severity: i.severity || 'major' })), summary: r.result.summary || '' }
-      : null);
-  }
-
-  // ── question / gate plumbing ───────────────────────────────────────────────
-
-  /**
-   * Emit a gate question for a loop and resolve to "continue" | "another".
-   */
-  async _gate(loop, cycle, issues) {
-    const id = `gate-${loop}-${cycle}`;
-    const payload = await this._ask({ id, kind: 'gate', issues });
-    const decision = payload?.decision === 'another' ? 'another' : 'continue';
-    return decision;
-  }
-
-  // ── context passed to phase runners ────────────────────────────────────────
-
-  _phaseCtx(role, { fanOut = false } = {}) {
-    // resolveStepModels already folded in the global fallback, so step.model is
-    // the effective model; the `|| this.claude.model` is a defensive belt-and-
-    // braces for the (guarded) case where stepModels is null.
-    const step = (this.stepModels && this.stepModels[role]) || {};
-    return {
-      // The field name is kept to bound blast radius — it is consumed as `cwd`.
-      projectDir: this.runCwd || this.workDir,
-      runRoot: this.runRoot,
-      repos: this._reposCtx(),
+  _execCtx(node, nc, args) {
+    const executionId = args.executionId;
+    const ordinal = args.ordinal || 1;
+    const slice = args.slice || null;
+    const ports = this.resolved.ports(node) || {};
+    const runCtx = {
       pipelineDir: this.pipeline.dir,
-      pipelineId: this.pipeline.id,
-      taskPrompt: this.pipeline.promptText,
-      toolInstruction: this.toolInstruction,
-      agentPrompts: this.agentPrompts,
-      fanOut,
-      checkpointRef: this.checkpointRef,
-      // Workspace metadata for prompt injection (undefined on a single-project run,
-      // so buildSystemPrompt/taskHeader emit the byte-identical single-project text).
-      workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
-      onEvent: (e) => this._onAgentEvent(role, e),
-      signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
-      claudeOpts: {
-        bin: this.claude.bin,
-        permissionMode: this.claude.permissionMode,
-        model: step.model || this.claude.model, // per-role, falling back to global
-        effort: step.effort,                     // per-role effort (undefined when unset)
-        permissionRules: this.guardrailPermissionRules || undefined,
-        envScrub: this.guardrails?.envScrub || undefined,
-        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
-        mock: this.claude.mock,
-      },
+      projectDir: this.projectDir,
+      baseName: this.baseName,
+      datePrefix: this.planDatePrefix,
+      workspaceKey: this.workspaceKey || undefined,
+      duplicateKey: !!nc.duplicateKey,
+      // Composite slices share their parent's ordinal, so their run-store outputs
+      // and verdict are additionally slice-prefixed (the executor's dupPrefix
+      // reads runCtx.slice as a STRING).
+      slice: slice ? slice.id : undefined,
+      planVersion: () => (this._planVersion += 1),
     };
-  }
-
-  /**
-   * Stable step key for a node occurrence. Parallel nodes in the same step share
-   * stepIndex but differ by nodeId; loop re-runs differ by cycle. Format keeps the
-   * legacy `phase#cycle` readability while staying unique per node:
-   *   "<stepIndex>:<nodeId>#<cycle>"  (cycle omitted when 1 and not a loop re-run)
-   */
-  _stepKeyFor(node, stepIndex, cycle) {
-    const c = Number(cycle) > 1 ? `#${cycle}` : '';
-    return `${stepIndex}:${node.nodeId}${c}`;
-  }
-
-  /**
-   * Node execution context. Extends the legacy _phaseCtx shape but is keyed by the
-   * node (model/effort come from the resolved plan node, not a role lookup) and
-   * tags every emit + cost with { nodeId, stepIndex, cycle } so parallel/looped
-   * emits are attributable. `node.agentKeyForPrompt` lets a node reuse an existing
-   * agent's prompt body (the default-workflow nodes set this to their role).
-   * @param {object} node    plan Node { nodeId, key, runnerType, model, effort, ... }
-   * @param {{stepIndex:number, cycle:number}} pos
-   */
-  _nodeCtx(node, pos = {}) {
-    const stepIndex = Number(pos.stepIndex) || 0;
-    const cycle = Number(pos.cycle) > 0 ? Number(pos.cycle) : 1;
-    const stepKey = this._stepKeyFor(node, stepIndex, cycle);
+    const outputs = allocateOutputs({ node, ports, executionId, ordinal, runCtx });
+    const verdict = allocateVerdict({ node, ports, ordinal, runCtx });
+    // attr.stepKey IS the executionId: that single substitution is what re-keys
+    // the whole inherited telemetry block (sub_agents.step_key, step skills,
+    // graphify counts, cost) onto executions. stepIndex is null — a graph has
+    // executions, not step indexes.
+    const attr = {
+      nodeId: node.id,
+      executionId,
+      stepKey: executionId,
+      stepIndex: null,
+      cycle: ordinal,
+      uiPhase: this._uiPhaseOf(node.id),
+      model: nc.model || this.claude.model,
+    };
     return {
-      // The field name is kept to bound blast radius — it is consumed as `cwd`
-      // at phases.mjs. runCwd is the run root on a detached workspace run, the
-      // member worktree on a detached single run, and today's workDir under legacy.
+      // Consumed as `cwd` by phases.mjs (runOpts). runCwd is the run root on a
+      // detached workspace run, the member worktree on a detached single run,
+      // today's workDir under legacy.
       projectDir: this.runCwd || this.workDir,
       runRoot: this.runRoot,
-      // §5.5/§5.3: the generated merged MCP config + one grant per merged server.
-      // null/[] under legacy, so phases.mjs -> runClaude -> buildClaudeArgs adds
-      // neither flag and every legacy argv stays byte-identical.
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,
       repos: this._reposCtx(),
@@ -953,26 +538,51 @@ class Orchestrator extends RunHarness {
       toolInstruction: this.toolInstruction,
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
-      // Workspace metadata for prompt injection — reaches EVERY dispatched runner
-      // (it does not depend on a node declaring `workspace` in consumes). undefined
-      // on a single-project run, preserving byte-identical prompts. _bindNodeIo's
-      // legacyFields would surface the same handle if the node consumed the channel.
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
-      signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
-      node,
-      nodeId: node.nodeId,
-      stepIndex,
-      cycle,
-      isEntry: stepIndex === 0,
+      // A composite slice ALSO honors the scheduler's signal, which folds in its
+      // phase-local controller: a sibling's failure cancels it (v1's third
+      // signal). An ordinary execution keeps today's two, so the fail-fast blast
+      // radius is unchanged.
+      signal: slice && args.signal
+        ? AbortSignal.any([this.abort.signal, this.pauseAbort.signal, args.signal])
+        : AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       extras: this.extrasFiles || [],
-      // `model` rides along so the result-event handler can attribute cost
-      // reliability (§4.6) to the DISPATCHED model without re-resolving it.
-      onEvent: (e) => this._onAgentEvent(node.key, e, { nodeId: node.nodeId, stepIndex, cycle, stepKey, uiPhase: node.uiPhase || node.key, model: node.model || this.claude.model }),
+      // ── graph ──
+      node: {
+        ...node,
+        key: nc.key,
+        fanOut: !!nc.fanOut,
+        agentPrompt: nc.agentPrompt,
+        tools: nc.tools,               // frontmatter grants MUST be stamped
+        promptHints: nc.promptHints || '',
+      },
+      nodeId: node.id,
+      executionId,
+      ordinal,
+      cycle: ordinal,
+      slice,
+      parentExecutionId: args.parentExecutionId ?? null,
+      taskIndex: args.taskIndex ?? null,
+      taskTotal: args.taskTotal ?? null,
+      uiPhase: attr.uiPhase,
+      bindings: args.bindings || {},
+      trigger: args.trigger || { wireIds: [], freshPorts: [] },
+      template: this.resolved.template,   // runExecution derives expandsPort + Combine names from these two
+      portsFn: this.resolved.ports,
+      ports,
+      meta: nc.meta || {},
+      outputs,
+      verdict,
+      runCtx,
+      runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
+      resumeSessionId: this._takeResumeSession(executionId),
+      ask: (q) => this._enqueueAsk(() => this._ask(q)),
+      onEvent: (e) => this._onAgentEvent(nc.key || node.kind, e, attr),
       claudeOpts: {
         bin: this.claude.bin,
         permissionMode: this.claude.permissionMode,
-        model: node.model || this.claude.model, // per-node, falling back to global
-        effort: node.effort,                     // per-node effort (undefined when unset)
+        model: nc.model || this.claude.model,  // per-node, falling back to global
+        effort: nc.effort,                     // per-node effort (undefined when unset)
         permissionRules: this.guardrailPermissionRules || undefined,
         envScrub: this.guardrails?.envScrub || undefined,
         envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
@@ -981,45 +591,84 @@ class Orchestrator extends RunHarness {
     };
   }
 
+  /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
+   *  asked for, so a recovery retry or a fix cycle never re-attaches a stale
+   *  session. Composite slices re-run whole and are never in the map. */
+  _takeResumeSession(executionId) {
+    if (!this._resumeSessions?.has(executionId)) return undefined;
+    const id = this._resumeSessions.get(executionId);
+    this._resumeSessions.delete(executionId);
+    return id;
+  }
+
+  /** The manifest node's uiPhase (the shim's phase vocabulary, and the label the
+   *  sub-agent records carry). Flow cards report their kind. */
+  _uiPhaseOf(nodeId) {
+    const n = (this.state.stepper?.graph?.nodes || []).find((x) => x.id === nodeId);
+    if (n?.uiPhase) return n.uiPhase;
+    const nc = (this.resolved?.nodeCtx || {})[nodeId];
+    return nc?.key || nc?.kind || nodeId;
+  }
+
   /**
-   * Record/transition a node's step (parallel-safe analogue of _recordStep). The
-   * key is the node-derived stepKey so concurrent nodes never collide. On 'start'
-   * it does NOT pause sibling clocks (parallel nodes run simultaneously); on a
-   * terminal marker it folds just this node's clock.
+   * Record/transition ONE execution's ledger row. state.steps[] IS the ledger:
+   * key === executionId, phase = agentKey (the legacy column), cycle = ordinal.
+   * On 'start' it does NOT pause sibling clocks (concurrent executions are
+   * normal); on a terminal marker it folds just this execution's clock.
    */
-  _nodeStep(node, stepIndex, cycle, status) {
-    const key = this._stepKeyFor(node, stepIndex, cycle);
+  _execStep(ctx, status) {
+    const key = ctx.executionId;
     const now = new Date().toISOString();
+    const terminal = status === 'done' || status === 'error' || status === 'stopped' || status === 'paused';
     let step = this.state.steps.find((s) => s.key === key);
     if (!step) {
       step = {
-        key, phase: node.key, nodeId: node.nodeId, stepIndex, cycle,
-        status, startedAt: now, updatedAt: now, activeMs: 0, runningSince: null,
+        key,
+        executionId: key,
+        nodeId: ctx.nodeId,
+        kind: ctx.slice ? 'task' : 'cycle',
+        ordinal: ctx.ordinal,
+        cycle: ctx.ordinal,                 // legacy alias the whole UI reads
+        agentKey: ctx.node?.key ?? null,
+        phase: ctx.node?.key ?? ctx.uiPhase, // legacy column
+        stepIndex: null,                    // a graph has executions, not step indexes
+        status,
+        startedAt: now,
+        updatedAt: now,
+        endedAt: null,
+        activeMs: 0,
+        runningSince: null,
+        // The firing trigger, taken from the execute args rather than the exec
+        // 'start' event: the scheduler emits that event BEFORE it invokes, so the
+        // row does not exist yet when the event lands. History labels a loop
+        // re-fire `cycle 2 · fix` off this.
+        trigger: ctx.trigger || { wireIds: [], freshPorts: [] },
+        ...(ctx.slice
+          ? { taskId: ctx.slice.id, parentExecutionId: ctx.parentExecutionId ?? null, title: ctx.slice.title ?? null,
+              phaseOrdinal: ctx.slice.phase ?? null, taskIndex: ctx.taskIndex ?? null, taskTotal: ctx.taskTotal ?? null }
+          : {}),
       };
       this.state.steps.push(step);
     } else {
+      // A resumed (re-invoked) or retried execution re-enters its own row.
       step.status = status;
       step.updatedAt = now;
+      if (status === 'start') step.endedAt = null;
     }
+    if (terminal) step.endedAt = now;
     if (status === 'start') this._clockResume(key);
     else this._clockPause(key);
     this.state.totalActiveMs = sumStepActive(this.state.steps);
-    // CONV-4: drive the live-UI stepper. Mirror the legacy `_phase` emit
-    // (orchestrator.mjs:710-719) but WITHOUT its `_recordStep` call (this method
-    // already records the step). `node.uiPhase` is stamped by resolveWorkflow
-    // (Phase 2 Task 6); on a parallel step the last-started node wins the scalar
-    // phase (per-node attribution lives in state.steps[]). Confirm the 'phase'
-    // payload against app.js `onPhase` (:308) before landing.
-    this.state.phase = node.uiPhase || node.key;
-    this.state.cycle = cycle;
+    // Coexistence shim: the scalars mirror the LAST-STARTED execution so every
+    // unported v1 consumer keeps working. They die in P8.
+    if (status === 'start') {
+      this.state.phase = ctx.uiPhase;
+      this.state.cycle = ctx.ordinal;
+    }
     this.state.updatedAt = now;
-    this._emit('phase', { phase: this.state.phase, cycle, status, nodeId: node.nodeId });
-    // Backstop (§5.2): when a step reaches its terminal marker, force-close any
-    // sub-agent still 'running' for THIS step so the UI never shows a stuck-active
-    // square if a tool_result finish was missed. 'start' never closes anything;
-    // the close status is 'stopped' when the run was stopped or is pausing (pause
-    // SIGTERMs in-flight children too), else 'finished'.
-    if (status === 'done' || status === 'error' || status === 'stopped' || status === 'paused') {
+    // Backstop: on a terminal marker force-close any sub-agent still 'running'
+    // for THIS execution so the UI never shows a stuck-active square.
+    if (terminal) {
       const closeTo = (this.state.status === 'stopped' || this.state.status === 'pausing') ? 'stopped' : 'finished';
       for (const rec of this.state.subAgents) {
         if (rec.stepKey !== key || rec.status !== 'running') continue;
@@ -1033,95 +682,404 @@ class Orchestrator extends RunHarness {
     this._persist().catch(() => {});
   }
 
-
-  // ── engine hooks (v1) ────────────────────────────────────────────────────────
-
-  _initRunners(opts) {
-    // Clarify needs orchestrator state (this._ask / this._writeClarifyAnswers), so it is a
-    // bound runner rather than a pure runners.mjs entry. Put it first so opts.runners may
-    // still override it in tests.
-    this._runners = { clarifier: (ctx) => this._runClarifyNode(ctx), ...(opts.runners || defaultRunners) };
-  }
-
-  async _resolveTopology(registry) {
-    this.channelDefs = collectChannelDefs(registry); // custom-channel kind/filename for allocate()
-    // [C5/M4] On a workspace run, resolveWorkflow substitutes the review node's key
-    // reviewer -> workspaceReviewer (the fan-out synthesizer). Single-project runs
-    // pass isWorkspace:false, so the resolved plan is byte-identical to today.
-    const plan = await resolveWorkflow(this.projectDir, this.workflowId, registry, undefined, {
-      isWorkspace: this.isWorkspace,
-    });
-    // Workspace fan-out forcing (§5.5, C4): the ONLY in-orchestrator topology change a
-    // workspace run makes — force fanOut=true on the eligible nodes so they fan out
-    // across member projects. Applied right after resolveWorkflow; absent isWorkspace
-    // the plan is untouched. workspaceReviewer is now the resolved review node key
-    // (substituted in workflows.mjs above), so the review fan-out is forced here.
-    if (this.isWorkspace) {
-      for (const group of plan.steps) {
-        for (const node of group) {
-          if (FANOUT_ELIGIBLE.has(node.key)) node.fanOut = true;
-        }
+  /** The recoverable-error retry loop around ONE execution. The pause paths throw
+   *  pauseErr() with pauseRequested already set (_pauseForLimit calls pause()),
+   *  so _execute's catch reproduces the 'paused' mark. */
+  async _runNodeAttempts(nc, ctx) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this._runOnce(nc, ctx);
+      } catch (err) {
+        if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) throw pauseErr();
+        if (isAbort(err) || isPause(err)) throw err;
+        const cls = classifyError(err);
+        if (!cls) throw err;                    // not recoverable -> today's path
+        if (cls === 'usage_limit') { this._pauseForLimit(nc, ctx, err); throw pauseErr(); }
+        const decision = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
+        if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
+        this._execStep(ctx, 'start');           // back to running for the retry
       }
     }
-    this._plan = plan; // v1-only: the dispatcher's input, handed back by _engineRun
-    return {
-      manifest: buildStepperManifest(plan, registry),
-      agentKeys: planAgentKeys(plan),
-      workflow: { id: plan.id, name: plan.name },
-    };
   }
 
-  async _engineRun({ resume = null, rehydrated = null } = {}) {
-    if (!resume) return await this._dispatch(this._plan);
-    // The v1 bus (channels.mjs) is v1-only state; on a fresh run _resolveTopology
-    // fills it, on a resume it is rebuilt here. Nothing between the old site and
-    // dispatch reads this.channelDefs — the only reader is _bindNodeIo, inside
-    // _dispatch.
-    this.channelDefs = collectChannelDefs(this.registry);
-    // plan: frozen at pause time; a pre-dispatch boundary pause re-resolves.
-    let plan = rehydrated?.plan ?? null;
-    if (!plan) {
-      plan = await resolveWorkflow(this.projectDir, this.workflowId, this.registry, undefined, {
-        isWorkspace: this.isWorkspace,
+  /** One invocation of this execution's executor (P3's runExecution, with the
+   *  injected runners as the seam), plus the vanished-session fresh re-run
+   *  fallback (a dead `--resume` session must not fail the run). */
+  async _runOnce(nc, ctx) {
+    try {
+      return await runExecution(ctx, { runners: this._runners });
+    } catch (err) {
+      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+        this._log(nc.key || ctx.nodeId, 'warn',
+          `session resume failed (${err?.message || err}); re-running the execution fresh`,
+          { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
+        await appendAudit(this.pipeline.dir, `Resume fallback: ${ctx.executionId} re-ran fresh (session resume failed).`).catch(() => {});
+        ctx.resumeSessionId = undefined;
+        return await runExecution(ctx, { runners: this._runners });
+      }
+      throw err;
+    }
+  }
+
+  /** The ONE `error`-level line for a terminally failed execution. A pause/abort
+   *  is not a failure, and a recoverable error that retried logged its own warn. */
+  _logStepFailure(nc, ctx, err) {
+    if (isAbort(err) || isPause(err)) return;
+    this._log(nc.key || ctx.nodeId, 'error', `execution failed: ${clipMiddle(err?.message || err, 500)}`, {
+      nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal,
+      ...(err?.stream ? { stream: err.stream } : {}),
+    });
+  }
+
+  /** A session/usage cap that only clears after a multi-hour reset: pause the run
+   *  (v1's _pauseForLimit, orchestrator.mjs:756, re-keyed by execution). */
+  _pauseForLimit(nc, ctx, err) {
+    const label = nc.key || ctx.nodeId;
+    const reason = firstLine(err?.message || String(err));
+    if (!this.pauseReason) this.pauseReason = reason;
+    this._log(label, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`,
+      { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${label} — ${reason}. Resume after the reset.`).catch(() => {});
+    this.pause();
+  }
+
+  /**
+   * Everything between an agent returning and the scheduler publishing its tokens:
+   *  - the verdict lands in the AUTHORITATIVE reviews table, keyed by the generic
+   *    filename-derived kind;
+   *  - ONE `artifact` per DISTINCT allocated output path (the refiner's plan and
+   *    revise ports resolve to the same file — that is one artifact, not two);
+   *  - a `sideEffect: 'code'` node stages its working tree so the next node's
+   *    `git diff` sees newly created files. A composite SLICE skips that: its
+   *    phase-mates edit the same tree in parallel and the composite stages once
+   *    after the last phase (_finishComposite).
+   */
+  async _afterExecution(nc, ctx, result) {
+    if (this.pipeline && ctx.verdict?.path && result?.verdict) {
+      await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
+    }
+    const seen = new Set();
+    for (const port of ctx.ports?.outputs || []) {
+      const path = ctx.outputs?.[port?.id]?.path;
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      this._artifact(port.artifactKind || port.id, path, {
+        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
       });
     }
-    // §9.4: the frozen (or re-resolved) plan must still resolve every agent
-    // key — the providing plugin may have been disabled or uninstalled while
-    // this run sat paused. Same gate, same messages as run().
-    this._preflightAgentKeys(planAgentKeys(plan));
-    return await this._dispatch(plan, { resume });
+    if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
   }
 
-  _enginePrePausePoint() {
-    // Paused outside _dispatch (preflight/worktree): boundary point at step 0.
-    return {
-      version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-      bus: null, stepModels: this.stepModels, workflowId: this.workflowId,
-      guardrailsId: this.guardrailsId, plan: null,
-      nodes: [], gate: null, pauseReason: this.pauseReason || null,
-      toolInstruction: this.toolInstruction ?? '',
-      pipelineDir: this.pipeline.dir, pausedAt: new Date().toISOString(),
-    };
+  /** reviews.kind, derived from the verdict FILENAME minus `-cycle{cycle}.json`
+   *  and mapped through artifacts.reviewKindOf (a table: `impl-review`→`impl`,
+   *  `plan-review`→`plan`, `refine-review`→`refine`, `ws-review`→`ws`,
+   *  `webui-review`→`webui`; an unknown stem passes through unchanged). Zero
+   *  agent-key coupling. */
+  _verdictKind(nc, ctx) {
+    const file = String(ctx.verdict?.path || '').split(/[\\/]/).pop() || '';
+    const stem = file.replace(`-cycle${ctx.ordinal}.json`, '').replace(/\.json$/, '');
+    return (stem && reviewKindOf(stem)) || nc.key || ctx.nodeId;
   }
 
-  _engineRehydrate(rp) {
-    if (rp.version !== 1) throw new Error(`resume(): unsupported resume point version ${rp.version}`);
-    return {
-      checkpointRef: rp.bus?.code?.baseRef || null,
-      memberWorktrees: (rp.bus?.workspace?.projects || []).map((p) => ({
-        projectKey: p?.projectKey, worktreeDir: p?.worktreeDir, graphInstruction: p?.graphInstruction || '',
+  /**
+   * Prime the ask-then-resume state for ONE execution. The prior-answer filter
+   * stays NODE-scoped: keying it by executionId would re-ask every answered
+   * question on the next fix cycle, because that cycle is a new execution.
+   * Composite slices never gate the user (several run at once, so a question
+   * from one would block its phase-mates behind a prompt nobody can attribute);
+   * clarifier nodes have their own gate; auto mode would answer noise.
+   */
+  _primeQuestions(nc, ctx) {
+    const enabled = !!nc.askQuestions && nc.runnerType !== 'clarifier' && !this.auto && !ctx.slice;
+    ctx.questionsEnabled = enabled;
+    if (!enabled) return;
+    ctx.questionsAnswered = readStepQuestions(this.pipeline.id)
+      .filter((r) => r.nodeId === ctx.nodeId)
+      .flatMap((r) => r.answers);
+    ctx.questionsFile = this._questionsPath(ctx.nodeId, ctx.ordinal, 1);
+  }
+
+  /**
+   * Absolute per-round questions file inside the pipeline dir:
+   *   questions-x-<nodeIdSafe>-c<ordinal>-r<round>.json
+   * `nodeIdSafe` = the node id with every character outside [A-Za-z0-9_-]
+   * replaced by `_`, so a hand-authored template id can never escape the dir.
+   * (v1's name is questions-<stepIndex>-<nodeIdSafe>-c<cycle>-r<round>.json;
+   * test/orchestrator-questions reads the path off ctx.questionsFile, never a literal.)
+   */
+  _questionsPath(nodeId, ordinal, round) {
+    const nodeIdSafe = String(nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
+    return join(this.pipeline.dir, `questions-x-${nodeIdSafe}-c${ordinal}-r${round}.json`);
+  }
+
+  /**
+   * Ask-then-resume rounds. After a successful execution: if the agent wrote this
+   * round's questions file, persist the questions, gate the user (serialized —
+   * single pendingQuestion slot), persist the answers BEFORE the resume spawns
+   * (crash-safe), then resume the SAME session with the answers injected. The
+   * resume goes through _runNodeAttempts, so recovery + the vanished-session
+   * fresh re-run apply unchanged. Caps at MAX_QUESTION_ROUNDS; the final resume
+   * carries no next-round file so the agent proceeds on assumptions.
+   */
+  async _questionsLoop(nc, ctx, firstResult) {
+    let result = firstResult;
+    if (!ctx.questionsEnabled) return result;
+    const stepKey = ctx.executionId;           // step_questions.step_key = executionId
+    const agentLabel = nc.meta?.displayName || nc.key || ctx.nodeId;
+    const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
+    for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
+      const qPath = ctx.questionsFile;
+      if (!qPath) break;
+      const { questions, malformed } = await readQuestionsFile(qPath);
+      if (!questions.length) {
+        if (malformed) {
+          await appendAudit(this.pipeline.dir, `${agentLabel}: questions file was malformed — proceeding without asking (round ${round}).`).catch(() => {});
+        }
+        break;
+      }
+      this._checkAbort();
+      await writeStepQuestions(this.pipeline.id, stepKey, round, {
+        agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
+      });
+      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null });
+      await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
+      const payload = await this._enqueueAsk(() => this._ask({
+        id: `questions-${stepKey}-r${round}`,
+        kind: 'questions',
+        questions,
+        agent: agentLabel,
+        nodeId: ctx.nodeId,
+        executionId: ctx.executionId,
+      }));
+      this._checkAbort();
+      const answers = normalizeClarifyAnswer(payload, questions);
+      const byId = new Map(questions.map((q) => [q.id, q]));
+      const enriched = answers.map((a) => ({ id: a.id, question: byId.get(a.id)?.question || '', choice: a.choice }));
+      await writeStepQuestions(this.pipeline.id, stepKey, round, {
+        agentKey: nc.key, nodeId: ctx.nodeId, answers: { answers: enriched },
+      });
+      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`).catch(() => {});
+      // Consume the processed round file: the DB row is authoritative, and a
+      // surviving file would re-gate the user on a crash/pause-resumed re-run.
+      await rm(qPath, { force: true }).catch(() => {});
+      const step = this.state.steps.find((s) => s.key === stepKey);
+      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      ctx.questionsAnswered = [...(ctx.questionsAnswered || []), ...enriched];
+      ctx.questionsFile = round < MAX_QUESTION_ROUNDS
+        ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)
+        : null;
+      this._log(agentLabel, 'debug', `resuming with ${enriched.length} answer(s) (round ${round})`, attr);
+      result = await this._runNodeAttempts(nc, ctx);
+    }
+    return result;
+  }
+
+  /**
+   * Composite mode `expand`: read the decomposition the bound token points at,
+   * through the tolerant parse, and persist phases + tasks BEFORE any slice runs
+   * — so the records exist even if the fan-out aborts mid-phase. Each task row is
+   * stamped with the sub-EXECUTION id that will run it.
+   *
+   * readDecomposition emits tasks as { id, title, file } (pipelineDir-relative);
+   * the scheduler binds each slice to `task.path`, so the absolute path is added
+   * HERE (P3 contract gap the adapter owns). An empty or malformed document is
+   * not an error: it warns and hands back zero phases, which the scheduler turns
+   * into one ordinary unexpanded execution.
+   */
+  async _expandDecomposition(node, args) {
+    const token = (args.bindings || {})[args.expandsPort];
+    const { phases } = await readDecomposition(token?.path);
+    const attr = { nodeId: node.id, executionId: args.executionId, cycle: args.ordinal || 1 };
+    if (!phases.length) {
+      this._log(node.id, 'warn',
+        `no runnable phases in the decomposition bound to "${args.expandsPort}"`
+        + `${token?.path ? ` (${token.path})` : ''} — running one normal execution instead`, attr);
+      await appendAudit(this.pipeline.dir,
+        `${node.id}: the decomposition on \`${args.expandsPort}\` carried no runnable phases — `
+        + 'running one normal execution with that input unbound.').catch(() => {});
+      return { phases: [] };
+    }
+    const resolved = phases.map((ph) => ({
+      ordinal: ph.ordinal,
+      tasks: ph.tasks.map((t) => ({
+        ...t,
+        nodeId: sliceExecutionId(args.executionId, t.id),
+        path: isAbsolute(t.file || '') ? t.file : join(this.pipeline.dir, t.file || ''),
       })),
-      plan: rp.plan || null,
-      audit: `Pipeline **resumed** (from ${rp.kind} at step ${rp.stepIndex}).`,
+    }));
+    writeDecomposition(this.pipeline.id, resolved);
+    const count = resolved.reduce((n, ph) => n + ph.tasks.length, 0);
+    await appendAudit(this.pipeline.dir,
+      `${node.id}: expanded into ${resolved.length} phase(s), ${count} task(s).`).catch(() => {});
+    return { phases: resolved };
+  }
+
+  /** Composite mode `phase`: the per-phase status plumbing plus its audit line. */
+  _compositePhase(args) {
+    updatePhaseStatus(this.pipeline.id, args.phase, args.phaseStatus, new Date().toISOString());
+    if (args.phaseStatus === 'running') {
+      appendAudit(this.pipeline.dir, `Phase ${args.phase}: task(s) starting.`).catch(() => {});
+    } else if (args.phaseStatus === 'error') {
+      appendAudit(this.pipeline.dir, `Phase ${args.phase}: a task failed — aborting the run.`).catch(() => {});
+    }
+    return {};
+  }
+
+  /**
+   * Composite mode `finish`: the ONE publish. A `sideEffect: 'code'` consumer
+   * stages its worktree HERE — after the last phase, never per slice — so the
+   * next node's `git diff` sees every task's files at once and no two parallel
+   * slices race for the git index lock.
+   *
+   * The returned outputs are deliberately EMPTY: a composite wrote no node-level
+   * artifact (each slice wrote its own under slice-prefixed paths), so the node's
+   * ports fire as pure sequencing tokens (the scheduler fires every `always`
+   * output with a null payload when `outputs` lacks it). For a void output — the
+   * live case, `implementer.done` — that is byte-identical to an ordinary execution.
+   */
+  async _finishComposite(nc, args) {
+    if (nc.meta?.sideEffect === 'code') await this._stageWorkingTree();
+    const label = nc.meta?.displayName || nc.key || args.node.id;
+    const n = Array.isArray(args.phases) ? args.phases.length : 0;
+    return { summary: `${label}: composite execution complete (${n} phase(s)).`, outputs: {}, verdict: null };
+  }
+  // ── hook 4: rehydrate (PURE — runs before the shell restores anything) ────
+  /**
+   * Decide whether this resume point is ours and hand the shell the fields it
+   * rehydrates from. NOTHING else: this.registry / state.steps / pipeline are
+   * not restored yet (run-harness.mjs:784-790). The engine-side restoration is
+   * _restoreFromResumePoint, which _engineRun({resume}) awaits first.
+   * @param {object} rp the parsed resume_point
+   * @returns {{checkpointRef:string|null, memberWorktrees:Array, plan:null, audit:string}}
+   */
+  _engineRehydrate(rp) {
+    if (!rp || rp.version !== 2) throw new Error(`resume(): unsupported resume point version ${rp?.version}`);
+    if (!rp.manifest || rp.manifest.version !== 2) throw new Error('resume(): the v2 resume point carries no manifest');
+    return {
+      checkpointRef: rp.checkpointRef ?? null,
+      memberWorktrees: (rp.workspace?.projects || []).map((p) => ({
+        projectKey: p.projectKey,
+        worktreeDir: p.worktreeDir,
+        graphInstruction: p.graphInstruction || '',
+      })),
+      plan: null,   // v2 has no frozen ExecutablePlan; the manifest is the topology
+      // The base writes this line (P1 hook-4 contract); v1's is "from <kind> at step <n>".
+      audit: `Pipeline **resumed** (graph snapshot at seq ${rp.snapshot?.seq ?? 0}).`,
     };
+  }
+
+  /**
+   * Restore the v2 run position — called by _engineRun({resume}) INSIDE the
+   * shell's try, after state.*, pipeline, registry and agentPrompts are back.
+   * The snapshot is authoritative and the workflow ROW is never read: the frozen
+   * manifest supplies the topology, ports and effective budgets, the live
+   * registry only the executor-side meta. Overlays are NOT refreshed — re-reading
+   * them would let a config edit made while the run sat paused change the model
+   * of an execution that is mid-flight in the snapshot.
+   */
+  async _restoreFromResumePoint(rp) {
+    this._resumeSnapshot = rp.snapshot || null;
+    this._graphSnapshot = rp.snapshot || null;
+    this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
+    this.pauseReason = null;
+    const manifest = rp.manifest || this.state.stepper;
+    this.state.stepper = manifest;
+    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry));
+    // §9.4, unchanged messages: the providing plugin may have been disabled or
+    // uninstalled while this run sat paused. (Same place v1 re-preflights.)
+    this._preflightAgentKeys(this.resolved.agentKeys);
+    // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
+    const cache = new Map();
+    for (const nc of Object.values(this.resolved.nodeCtx)) {
+      if (nc.kind !== 'agent') continue;
+      const meta = nc.meta || {};
+      const ck = meta.agentPath || meta.agentFile || nc.key;
+      if (!cache.has(ck)) cache.set(ck, await loadAgentFile(this.agentsDir, meta.agentFile ?? null, meta.agentPath ?? null));
+      const { prompt, tools } = cache.get(ck);
+      nc.agentPrompt = prompt;
+      nc.tools = tools;
+    }
+    // One-shot session re-attach: only executions the pause left PAUSED. The map
+    // is consumed entry-by-entry in _execCtx, so a fix cycle (a NEW executionId)
+    // never re-attaches, and a composite slice re-runs whole.
+    this._resumeSessions = new Map(
+      (this.resumeOpts?.steps || [])
+        .filter((s) => s.status === 'paused' && s.sessionId)
+        .map((s) => [s.key, s.sessionId]),
+    );
   }
 }
 
-
-// ── Test-only surface ────────────────────────────────────────────────────────
-// The R4 pill helpers are pure, module-private, and carry NORMATIVE semantics
-// (§7.1's sentinel algebra). Most of it is reachable through _onAgentEvent, but
-// the snapshot-rebuild shape — a sentinel arriving in `incoming` — has no live
-// call site, so it is only assertable directly. Exported for tests ONLY; no
-// production code imports this bag.
-export const _testing = { SKILLS_MAX, skillLabel, mergeSkills };
+/**
+ * Rebuild a resolveGraph-shaped result from a PERSISTED manifest + the live
+ * registry. The manifest is authoritative for topology, port identity (ids/
+ * types/loop/expands/when), per-node model/effort/askQuestions/awaitAll/fanOut/
+ * config and per-wire maxCycles; the registry supplies only what a manifest
+ * deliberately omits (runnerType, prompt body, frontmatter tools, per-port
+ * as/directive/filename/store/artifactKind, the verdict filename, sideEffect,
+ * mockRole, displayName).
+ * @param {object} manifest a manifest v2
+ * @param {Record<string,object>} registry loadAgentRegistry() output
+ * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>}}
+ */
+export function resolvedFromManifest(manifest, registry) {
+  const reg = registry && typeof registry === 'object' ? registry : {};
+  const template = manifestTemplate(manifest);   // restores node.config + loop wire config.maxCycles verbatim
+  const manPorts = manifestPortsFn(manifest);
+  const regPorts = registryPortsFn(reg);
+  const ports = (node) => {
+    const snap = manPorts(node);
+    const live = regPorts(node) || { inputs: [], outputs: [] };
+    if (!snap) return live;                       // a node the manifest does not know (never, defensively)
+    const merge = (side) => (snap[side] || []).map((p) => {
+      const l = (live[side] || []).find((x) => x.id === p.id);
+      return l ? { ...l, ...p } : p;              // snapshot identity wins; live rendering fields ride along
+    });
+    return {
+      ...live, ...snap,
+      inputs: merge('inputs'), outputs: merge('outputs'),
+      // manifestPortsFn stubs `verdict: { filename: '' }`; the FILENAME is live-only.
+      verdict: live.verdict ?? undefined,
+    };
+  };
+  const nodeCtx = {};
+  const keyCounts = new Map();
+  for (const mn of manifest.graph?.nodes || []) {
+    if (mn.kind !== 'agent') {
+      nodeCtx[mn.id] = { nodeId: mn.id, kind: mn.kind, key: null, config: { ...(mn.config || {}) } };
+      continue;
+    }
+    const meta = reg[mn.key] || {};
+    keyCounts.set(mn.key, (keyCounts.get(mn.key) || 0) + 1);
+    nodeCtx[mn.id] = {
+      nodeId: mn.id, kind: 'agent', key: mn.key, authoredKey: mn.key, meta,
+      runnerType: meta.runnerType || 'producer',
+      agentFile: meta.agentFile ?? null,
+      agentPrompt: '',        // filled by _restoreFromResumePoint
+      promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
+      tools: [],              // filled by _restoreFromResumePoint
+      config: { ...(mn.config || {}) },
+      model: mn.model || undefined,
+      effort: mn.effort || undefined,
+      fanOut: !!mn.fanOut,
+      askQuestions: !!mn.askQuestions,
+      awaitAll: !!mn.awaitAll,
+      duplicateKey: false,
+    };
+  }
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind === 'agent') nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
+  }
+  const wires = {};
+  for (const w of manifest.graph?.wires || []) {
+    if (w.loop) wires[w.id] = { maxCycles: Number.isInteger(w.maxCycles) && w.maxCycles >= 1 ? w.maxCycles : DEFAULT_MAX_CYCLES };
+  }
+  const agentsByKey = {};
+  const agentKeys = new Set();
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind !== 'agent') continue;
+    agentsByKey[nc.key] = nc.meta;
+    agentKeys.add(nc.key);
+  }
+  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys };
+}
