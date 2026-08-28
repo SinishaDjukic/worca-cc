@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveWorkflow, writeWorkflow } from '../src/core/workflows.mjs';
 import { setStep, setNodeModel } from '../src/core/config.mjs';
-import { decomposedTaskNode } from '../src/core/orchestrator.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 const homes = [];
@@ -72,10 +71,4 @@ test('legacy per-role config applies on wf_default only, below node config', asy
   const plan = await resolveWorkflow(p, 'wf_default_v1', REG, await tmp());
   const planner = plan.steps.flat().find((n) => n.key === 'planner');
   assert.equal(planner.askQuestions, true);
-});
-
-test('decomposedTaskNode never asks', () => {
-  const impl = { model: undefined, effort: undefined, tools: [], fanOut: false, askQuestions: true };
-  const node = decomposedTaskNode(impl, { id: 't1', nodeId: 's_impl_p1_t1' }, [], '/tmp/p');
-  assert.equal(node.askQuestions, false);
 });

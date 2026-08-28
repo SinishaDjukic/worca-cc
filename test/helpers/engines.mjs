@@ -1,11 +1,11 @@
 // test/helpers/engines.mjs
-// One test body, two engines. The v1 stub-runner ABI ({status, issues, review,
-// summary}) is adapted to the v2 executor ABI ({outputs, verdict, summary}) so a
-// suite's runners do not have to be written twice.
+// One test body, one engine (the v1 arm died with the v1 engine). The v1-shaped
+// stub-runner ABI ({status, issues, review, summary}) the suites are written in
+// is still adapted to the v2 executor ABI ({outputs, verdict, summary}), so the
+// suites themselves did not have to be rewritten.
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createOrchestrator } from '../../src/core/orchestrator.mjs';
 import { createGraphOrchestrator } from '../../src/core/graph/orchestrator.mjs';
 
 /** Wrap a v1-shaped stub so the graph executor contract is satisfied: every
@@ -34,34 +34,15 @@ export function adaptRunner(fn) {
   };
 }
 
-/** The two engines, in the shape a suite loops over. */
+/** The ONE engine, still in the shape a suite loops over: the dual-engine
+ *  parametrization collapsed with the v1 engine, and keeping the array keeps
+ *  every consumer's `for (const engine of ENGINES)` body byte-identical. */
 export const ENGINES = [
-  {
-    id: 'v1',
-    // `wf_default` IS the graph after the v2 break; the retired v1 topology is
-    // reachable only under its reserved id (workflows.mjs#LEGACY_DEFAULT_ID).
-    workflowId: 'wf_default_v1',
-    create: (opts) => createOrchestrator(opts),
-    /** Spy on the per-node ctx builder: v1's _nodeCtx(node, pos). */
-    spyCtx: (orch, seen) => {
-      const orig = orch._nodeCtx.bind(orch);
-      orch._nodeCtx = (node, pos) => { const ctx = orig(node, pos); seen.push({ key: node.key, claudeOpts: ctx.claudeOpts || {} }); return ctx; };
-    },
-    /** The engine's resume-point shape (test/orchestrator-pause pins it). */
-    expectResumePoint: (rp, { sessionId }) => {
-      assert.equal(rp.version, 1);
-      assert.equal(rp.kind, 'node');
-      assert.ok(Array.isArray(rp.plan?.steps) && rp.plan.steps.length > 0, 'frozen plan stored');
-      assert.ok(rp.bus && typeof rp.bus === 'object', 'bus snapshot stored');
-      assert.ok(rp.nodes.some((n) => n.sessionId === sessionId), 'interrupted node session recorded');
-    },
-  },
   {
     id: 'graph',
     workflowId: 'wf_default',
     create: (opts) => createGraphOrchestrator({
       ...opts,
-      workflowId: opts.workflowId || 'wf_default',
       runners: Object.fromEntries(Object.entries(opts.runners || {}).map(([k, fn]) => [k, adaptRunner(fn)])),
     }),
     /** Spy on the per-execution ctx builder: the graph engine's _execCtx(node, nc, args). */

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildClarifyPrompt, runClarify } from '../src/core/phases.mjs';
+import { buildClarifyPrompt } from '../src/core/phases.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeClarify, readClarifyRow } from '../src/core/artifacts.mjs';
@@ -51,17 +51,6 @@ test('buildClarifyPrompt omits the answered section on the first round', () => {
   const prompt = buildClarifyPrompt(fakeCtx('/p'), { round: 1, priorAnswers: [] });
   assert.doesNotMatch(prompt, /DO NOT ask these again/);
   assert.match(prompt, /MOCK_PRIOR: 0/);
-});
-
-test('clarify converges once answers are fed back (mock)', async () => {
-  const ctx = fakeCtx(await makeTmpDir());
-  const r1 = await runClarify(ctx, { round: 1, priorAnswers: [] });
-  assert.ok(r1.questions.length > 0, 'round 1 asks at least one question');
-  const r2 = await runClarify(ctx, {
-    round: 2,
-    priorAnswers: [{ id: 'q1', question: 'How handle invalid input?', choice: 'Fail fast' }],
-  });
-  assert.equal(r2.questions.length, 0, 'round 2 with answers asks nothing');
 });
 
 test('orchestrator no longer exposes a clarify round cap', () => {
@@ -154,29 +143,6 @@ test('writeClarify upserts questions then answers into the clarify row', () => {
   row = readClarifyRow('q1id0000');
   assert.equal(row.questions.questions[0].question, 'Which DB?', 'questions preserved on the answers upsert');
   assert.equal(row.answers.answers[0].choice, 'a');
-});
-
-// ── M1.2 — runClarify ingests the agent's clarify into the DB row ─────────
-import { _resetForTests as _resetDb2 } from '../src/core/db.mjs';
-
-test('runClarify persists questions to the clarify row and returns them from the DB', async () => {
-  _resetDb2();
-  const dir = await makeTmpDir();
-  // A pipelines row must exist for the clarify FK (seedPipelineRow inserts it).
-  seedPipelineRow({ id: 'clrf0001', projectKey: 'proj-00000001', status: 'running' });
-  const ctx = { ...fakeCtx(dir), pipelineId: 'clrf0001' };
-  const r = await runClarify(ctx, { round: 1, priorAnswers: [] });
-  assert.ok(r.questions.length > 0, 'returns questions');
-  // Authoritative source: the DB row, written by the runner itself.
-  const row = readClarifyRow('clrf0001');
-  assert.ok(row.questions, 'clarify row populated by runClarify');
-  assert.equal(row.questions.questions[0].id, r.questions[0].id, 'returned questions match the DB row');
-});
-
-test('runClarify still works (FS fallback) when ctx has no pipelineId', async () => {
-  const ctx = fakeCtx(await makeTmpDir()); // no pipelineId
-  const r = await runClarify(ctx, { round: 1, priorAnswers: [] });
-  assert.ok(r.questions.length > 0, 'falls back to the FS-parsed clarify when no pipelineId');
 });
 
 test('protocol no longer exports writeClarifyAnswers (dead FS write removed)', async () => {
