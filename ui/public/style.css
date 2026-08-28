@@ -3635,3 +3635,67 @@ input.gv-name:focus-visible{outline:none;}
   /* The rotations stay — they are the icons' STATE, not motion; only the tween goes. */
   .gv-ins-toggle svg,.pal-grp .chev{transition:none;}
 }
+
+/* ========================================================================== */
+/* Run monitor v2 — hosts + decor over the shared renderer (P6).              */
+/* Appended at the END of the file — a deliberate deviation from the spec's   */
+/* "after the v1 run-flow block" (A32): the v1 run-flow rules are 3–4-class    */
+/* selectors that TIE P5's `.gv-world` block on specificity, so only source   */
+/* order can decide; here every rule wins its tie, and the block survives      */
+/* P8's deletion of the v1 block. P5's `.xfoot/.xtoggle/.xrow/.xresult/.ngate/  */
+/* .nrun/.fan/.wfired` STRUCTURE rules are the base and are NOT re-declared —  */
+/* only the states, neutralisers and ornaments P5 lacks live here.            */
+/* ========================================================================== */
+/* Host: the v1 flex column becomes an absolute box the .gv-stage (inset:0)
+   fills, so the stage rect === the wrap's padding box. A static host may be
+   widened inline (native horizontal scroll, D5); monitor wraps never scroll. */
+.run-flow.gv-host{position:absolute;top:0;left:0;bottom:0;width:auto;min-width:100%;padding:0;margin:0;display:block;gap:0;}
+.run-flow-wrap.gv-wrap{user-select:none;-webkit-user-select:none;}
+.run-flow-wrap.gv-wrap-monitor{overflow:hidden;height:var(--run-host-h,360px);}
+.rc-detailed .run-flow-wrap.gv-wrap-static{height:300px;overflow-x:auto;overflow-y:hidden;}   /* additive (Running D17) */
+.run-flow.gv-host .gv-world .node{cursor:default;}
+/* v1 descendant rules that out-rank P5's .gv-world block (3-4 classes) — one neutraliser each */
+.run-flow.gv-host .gv-world .xfoot>.fan{flex:none;flex-wrap:nowrap;margin:0;border-top:0;}
+.run-flow.gv-host .gv-world .xfoot .fl{margin-left:auto;font:700 10px/1.4 var(--mono);color:var(--ink-3);}
+.run-flow.gv-host .gv-world .nrun{margin-top:0;}
+/* two states the v1 block has no vocabulary for */
+.run-flow.gv-host .gv-world .node.is-error{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
+.run-flow.gv-host .gv-world .node.is-skipped{opacity:.35;border-style:dashed;}
+/* settled pips (v1's .nstat, as pseudo-elements: the view creates no pip DOM) */
+.run-flow.gv-host .gv-world .node.is-done::after,.run-flow.gv-host .gv-world .node.is-paused::after,.run-flow.gv-host .gv-world .node.is-stopped::after,.run-flow.gv-host .gv-world .node.is-error::after{content:"";position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;box-shadow:var(--shadow-soft);z-index:3;color:#fff;font:800 12px/21px var(--sans);text-align:center;}
+.run-flow.gv-host .gv-world .node.is-done::after{content:"✓";background:var(--green);}
+.run-flow.gv-host .gv-world .node.is-paused::after{content:"❚❚";font-size:8px;background:var(--amber);}
+.run-flow.gv-host .gv-world .node.is-stopped::after,.run-flow.gv-host .gv-world .node.is-error::after{content:"×";background:var(--red);}
+.run-flow.gv-host .gv-world .node:has(> .ngate)::after{content:none;}   /* the gate pip owns the corner */
+.run-flow.gv-host .gv-world .ngate{cursor:pointer;animation:dotpulse 1.3s ease-in-out infinite;}
+/* footer leds: paused/stopped colours + the pulse P5 leaves to the run block.
+   `xqPulse` has sqPulse's body; sqPulse itself may attach ONLY to the v1 fan
+   square (test/ui-run-flow-css.test.mjs pins that), so the v2 leds get their own. */
+@keyframes xqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
+.run-flow.gv-host .gv-world .xfoot .xq.is-paused,.run-flow.gv-host .gv-world .xfoot .xrow.is-paused .led{background:var(--amber);}
+.run-flow.gv-host .gv-world .xfoot .xq.is-stopped,.run-flow.gv-host .gv-world .xfoot .xrow.is-stopped .led{background:var(--red);}
+.run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:xqPulse 1.5s ease-in-out infinite;}
+.run-flow.gv-host .gv-world .xrow,.run-flow.gv-host .gv-world .xresult a{cursor:pointer;}
+.run-flow.gv-host .gv-world .xrow:hover,.run-flow.gv-host .gv-world .xtoggle:hover{background:var(--field);}
+.run-flow.gv-host .gv-world .xresult a{color:var(--blue-ink);text-decoration:none;}
+.run-flow.gv-host .gv-world .xresult a:hover{text-decoration:underline;}
+/* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash) */
+.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireFlow .9s linear infinite;}
+.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;}
+/* the composer's ≤N budget pill is REPLACED by the N× delivery count in run mode (§8) */
+.run-flow.gv-host .wbadge{font-size:0;line-height:0;padding:0;border:0;background:none;}
+.run-flow.gv-host .wbadge:not(:has(> .wfired)){display:none;}
+.run-flow.gv-host .wbadge .wfired{display:inline-block;margin:0;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);border:1px solid var(--amber);font:700 10px/1.4 var(--mono);}
+/* History: node click drives the Logs tab */
+.hd-graph.linked .gv-world .node[data-node-id]{cursor:pointer;}
+/* quiescence banner (.rd-banners / .hd-banners / History Overview note) */
+.run-warn{margin:0;padding:11px 15px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;font-weight:600;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);align-self:stretch;}
+.run-warn[hidden]{display:none;}
+/* engaged-wheel hint chip (D8) */
+.rg-hint{position:absolute;right:12px;bottom:10px;padding:4px 9px;border-radius:999px;background:color-mix(in srgb, var(--ink) 72%, transparent);color:#fff;font-size:10.5px;font-weight:600;pointer-events:none;opacity:0;transition:opacity .15s;z-index:5;}
+.run-flow-wrap.gv-wrap-monitor:hover > .rg-hint{opacity:1;}
+.run-flow-wrap.rg-engaged > .rg-hint{opacity:0;}
+@media (prefers-reduced-motion:reduce){
+  .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
+  .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
+}
