@@ -194,14 +194,26 @@ test('maybeMigrateFromFs imports the full legacy tree into every table', () => {
   assert.equal(pa.path, fx.projA);
   assert.ok(pa.created_at, 'created_at synthesized');
 
-  // workflows (DEFAULT excluded; the saved one present)
+  // workflows: the fs import runs AFTER migrate(), so the V24 reconcile fires at
+  // the end of the import — the v1 row lands archived (kept, never deleted) and
+  // its overlays are remapped onto the seed graph's node ids.
   const wf = db.prepare('SELECT * FROM workflows WHERE id = ?').get('wf_quick-fix');
   assert.equal(wf.name, 'Quick Fix');
   assert.deepEqual(JSON.parse(wf.steps)[0], [{ id: 's0_0', key: 'planner' }]);
+  assert.ok(wf.archived_at, 'v1 template archived by the v2 upgrade');
 
-  // project_config + normalized rows + extra
+  // The fs-import reconcile writes its OWN report key, so the ladder's
+  // WRITE-ONCE `migration:v24` row still describes the pass that took the backup.
+  // (Without this pair the "own key" behaviour is vacuous — measured.)
+  const fsReport = JSON.parse(db.prepare(
+    "SELECT data FROM store_meta WHERE key = 'migration:v24:fs-import'").get().data);
+  assert.deepEqual(fsReport.archived, ['wf_quick-fix'], 'the import path archived the row it just created');
+  const ladderReport = JSON.parse(db.prepare(
+    "SELECT data FROM store_meta WHERE key = 'migration:v24'").get().data);
+  assert.deepEqual(ladderReport.archived, [], 'the ladder report is untouched — it ran on an empty DB');
+
   const cfg = db.prepare('SELECT * FROM project_config WHERE project_key = ?').get(fx.keyA);
-  assert.equal(cfg.active_workflow_id, 'wf_quick-fix');
+  assert.equal(cfg.active_workflow_id, 'wf_default', 'an archived active workflow falls back to the graph default');
   assert.deepEqual(JSON.parse(cfg.steps).planner, { model: 'claude-opus-4-8', effort: 'max' });
   assert.deepEqual(JSON.parse(cfg.custom_models), [{ id: 'my-model', label: 'My Model' }]);
   assert.deepEqual(JSON.parse(cfg.extra), { webUiTesting: { enabled: true } });
@@ -209,9 +221,10 @@ test('maybeMigrateFromFs imports the full legacy tree into every table', () => {
     'SELECT * FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? ORDER BY node_id'
   ).all(fx.keyA, 'wf_quick-fix');
   assert.equal(nodeRows.length, 2);
-  assert.equal(nodeRows[0].node_id, 's0_0');
-  assert.equal(nodeRows[0].fan_out, null, 's0_0 had no fanOut → NULL');
-  assert.equal(nodeRows[1].fan_out, 0, 's1_0 fanOut:false → 0');
+  assert.equal(nodeRows[0].node_id, 'n_impl');            // s1_0 → n_impl
+  assert.equal(nodeRows[0].fan_out, 0, 's1_0 fanOut:false → 0');
+  assert.equal(nodeRows[1].node_id, 'n_plan');            // s0_0 → n_plan
+  assert.equal(nodeRows[1].fan_out, null, 's0_0 had no fanOut → NULL');
   const fbRows = db.prepare(
     'SELECT * FROM config_workflow_feedbacks WHERE project_key = ?'
   ).all(fx.keyA);

@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { buildResidueDb } from './helpers/db-residue-v22.mjs';
-import { getDb, SCHEMA_VERSION, sweepV1Runs } from '../src/core/db.mjs';
+import { getDb, SCHEMA_VERSION, sweepV1Runs, _resetForTests } from '../src/core/db.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 
 useTempHome(after);
@@ -184,4 +184,28 @@ test('a CORRUPT resume-point blob is swept too (json_valid guard), never thrown 
     .run('{not json');
   assert.deepEqual(sweepV1Runs(db), ['run-p2']);
   assert.equal(db.prepare("SELECT resume_point FROM pipelines WHERE id = 'run-p2'").get().resume_point, null);
+});
+
+// The snapshot V24 must reproduce byte-for-byte on a second run.
+function snapshot(db) {
+  return JSON.stringify({
+    workflows: db.prepare('SELECT id, name, version, domain, origin, steps, feedbacks, graph, created_at, updated_at, archived_at FROM workflows ORDER BY id').all(),
+    nodes: db.prepare('SELECT * FROM config_workflow_nodes ORDER BY project_key, workflow_id, node_id').all(),
+    wires: db.prepare('SELECT project_key, workflow_id, wire_id, max_cycles FROM config_workflow_wires ORDER BY project_key, workflow_id, wire_id').all(),
+    feedbacks: db.prepare('SELECT * FROM config_workflow_feedbacks ORDER BY project_key, workflow_id, fb_id').all(),
+    config: db.prepare('SELECT project_key, active_workflow_id FROM project_config ORDER BY project_key').all(),
+    runs: db.prepare('SELECT id, status, resume_point FROM pipelines ORDER BY id').all(),
+    // scoped to the break's own key: the fs-import pass writes its own row
+    meta: db.prepare("SELECT data FROM store_meta WHERE key = 'migration:v24'").all(),
+  });
+}
+
+test('V24 is idempotent: re-running it leaves a byte-identical snapshot', () => {
+  buildResidueDb();
+  const first = snapshot(getDb());
+  const db = getDb();
+  db.exec('PRAGMA user_version = 23');          // force the ladder to replay V24
+  _resetForTests();
+  const second = snapshot(getDb());
+  assert.equal(second, first, 'the second V24 pass changed nothing');
 });

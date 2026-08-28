@@ -73,6 +73,7 @@ export function getDb() {
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
   const db = _openConfiguredMigrated();  // open + pragmas + migrate, retried on BUSY
   maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
+  reconcileAfterFsImport(db);  // V24: archive v1 templates that import just created
   _db = db;                  // publish only after the DB is fully ready
   return _db;
 }
@@ -883,6 +884,29 @@ function reconcileSchema(db) {
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+}
+
+/**
+ * The fs→db import runs after migrate(), so v1 templates it brings in miss the
+ * V24 archive pass. Cheap probe first (hand-seeded upgrade fixtures reach getDb()
+ * with a partial `workflows` table — without the column probe this throws
+ * "no such column: version" and takes the whole open down), then one idempotent
+ * reconcile in its own transaction. No seeding on this path — the seeds, if any,
+ * landed during the ladder. Its own report key keeps the break's account intact.
+ */
+function reconcileAfterFsImport(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name));
+  if (!cols.has('version') || !cols.has('archived_at')) return;
+  const hit = db.prepare('SELECT 1 AS n FROM workflows WHERE version = 1 AND archived_at IS NULL LIMIT 1').get();
+  if (!hit) return;
+  db.exec('BEGIN IMMEDIATE');
+  let report;
+  try { report = reconcileV1Workflows(db, { seed: false }); db.exec('COMMIT'); }
+  catch (err) { db.exec('ROLLBACK'); throw err; }
+  if (hasSqliteTable(db, 'store_meta')) {
+    db.prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+      .run('migration:v24:fs-import', 'migration', JSON.stringify(report));
   }
 }
 
