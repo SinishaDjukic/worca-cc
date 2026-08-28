@@ -24,6 +24,8 @@ import {
   worktreeHead,
   runGitCapture,
   ASK_GIT_ENV,
+  fetchBranch,
+  isValidBranchName,
 } from '../src/core/worktree.mjs';
 
 const created = [];
@@ -419,4 +421,110 @@ test('createDetachedWorktree: prunes a stale registration first, throws on git f
   await assert.rejects(
     () => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'wt_0000000b'), ref: 'main', signal: ac.signal }),
     (err) => { assert.equal(err.name, 'AbortError'); return true; });
+});
+
+// ── attach to an existing branch (task-source checkout hint) ─────────────────
+const git = (dir, args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+const tipOf = (dir, ref) => git(dir, ['rev-parse', ref]).stdout.trim();
+
+/** origin has main + Feature/Flux (one commit ahead of main); repo tracks origin and has only main. */
+async function originWithBranch(branch = 'Feature/Flux') {
+  const origin = await freshRepo();                       // acts as the remote
+  git(origin, ['checkout', '-q', '-b', branch]);
+  await writeFile(join(origin, 'flux.txt'), 'flux\n'); git(origin, ['add', '-A']); git(origin, ['commit', '-qm', 'flux']);
+  git(origin, ['checkout', '-q', 'main']);
+  const repo = await freshRepo();
+  git(repo, ['remote', 'add', 'origin', origin]);
+  return { origin, repo };
+}
+/** One more commit on origin's Feature/Flux (the PR moved). */
+async function advanceOrigin(origin, name = 'more') {
+  git(origin, ['checkout', '-q', 'Feature/Flux']);
+  await writeFile(join(origin, `${name}.txt`), `${name}\n`); git(origin, ['add', '-A']); git(origin, ['commit', '-qm', name]);
+  git(origin, ['checkout', '-q', 'main']);
+}
+
+test('isValidBranchName: git grammar, verbatim case', async () => {
+  const repo = await freshRepo();
+  assert.equal(await isValidBranchName(repo, 'Feature/Flux'), true);
+  for (const bad of ['-q', '', 'a b', 'x..y', 'x.lock', 'a/', '@{1}']) assert.equal(await isValidBranchName(repo, bad), false, bad);
+});
+
+test('fetchBranch + createWorktree({attachBranch}): creates the local branch at origin\'s tip and attaches verbatim (no sanitize)', async () => {
+  const { origin, repo } = await originWithBranch();
+  const r = await fetchBranch(repo, 'Feature/Flux');
+  assert.deepEqual(r, { fetched: true, ahead: 0, localTip: tipOf(origin, 'Feature/Flux'), remoteTip: tipOf(origin, 'Feature/Flux') });
+  assert.ok((await listLocalBranches(repo)).includes('Feature/Flux'));
+  const info = await createWorktree({ projectDir: repo, pipelineId: 'p1', attachBranch: 'Feature/Flux' });
+  assert.equal(info.branch, 'Feature/Flux');             // case preserved
+  assert.equal(info.sourceBranch, 'Feature/Flux');
+  assert.equal(info.reusedExisting, true);
+  assert.equal(info.attached, true);
+  assert.equal(git(info.worktreeDir, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim(), 'Feature/Flux');
+  assert.equal(tipOf(info.worktreeDir, 'HEAD'), tipOf(origin, 'Feature/Flux'), 'at the remote tip');
+});
+
+test('fetchBranch: an existing local branch that is behind origin is fast-forwarded', async () => {
+  const { origin, repo } = await originWithBranch();
+  await fetchBranch(repo, 'Feature/Flux');
+  await advanceOrigin(origin);
+  const r = await fetchBranch(repo, 'Feature/Flux');
+  assert.equal(r.fetched, true); assert.equal(r.ahead, 0);
+  assert.equal(tipOf(repo, 'Feature/Flux'), tipOf(origin, 'Feature/Flux'), 'fast-forwarded');
+});
+
+test('fetchBranch: a local branch AHEAD of origin (unpushed commits from an earlier run) is kept, ahead count reported', async () => {
+  const { origin, repo } = await originWithBranch();
+  await fetchBranch(repo, 'Feature/Flux');
+  git(repo, ['checkout', '-q', 'Feature/Flux']);
+  await writeFile(join(repo, 'run1.txt'), 'run 1\n'); git(repo, ['add', '-A']); git(repo, ['commit', '-qm', 'run 1']);
+  git(repo, ['checkout', '-q', 'main']);
+  const before = tipOf(repo, 'Feature/Flux');
+  const r = await fetchBranch(repo, 'Feature/Flux');
+  assert.deepEqual(r, { fetched: true, ahead: 1, localTip: before, remoteTip: tipOf(origin, 'Feature/Flux') });
+  assert.equal(tipOf(repo, 'Feature/Flux'), before, 'local commits preserved');
+  const info = await createWorktree({ projectDir: repo, pipelineId: 'p4', attachBranch: 'Feature/Flux' });
+  assert.equal(tipOf(info.worktreeDir, 'HEAD'), before, 'the worktree sits on the local tip');
+});
+
+test('fetchBranch: branch checked out in the main working tree and behind origin -> {fetched:false}; createWorktree then fails with the M2 message', async () => {
+  const { origin, repo } = await originWithBranch();
+  await fetchBranch(repo, 'Feature/Flux');
+  git(repo, ['checkout', '-q', 'Feature/Flux']);          // the user is working on the PR
+  await advanceOrigin(origin);
+  const r = await fetchBranch(repo, 'Feature/Flux');
+  assert.equal(r.fetched, false);
+  assert.notEqual(tipOf(repo, 'Feature/Flux'), tipOf(origin, 'Feature/Flux'), 'a checked-out branch is never moved');
+  await assert.rejects(() => createWorktree({ projectDir: repo, pipelineId: 'p3', attachBranch: 'Feature/Flux' }), /already checked out in worktree/);
+  // Up to date + checked out: the fetch is fine, the M2 check still refuses.
+  git(repo, ['checkout', '-q', 'main']); await fetchBranch(repo, 'Feature/Flux'); git(repo, ['checkout', '-q', 'Feature/Flux']);
+  assert.equal((await fetchBranch(repo, 'Feature/Flux')).fetched, true);
+  await assert.rejects(() => createWorktree({ projectDir: repo, pipelineId: 'p3', attachBranch: 'Feature/Flux' }), /already checked out in worktree/);
+});
+
+test('fetchBranch: a truly diverged local branch fails with a non-destructive hint and is left untouched', async () => {
+  const { origin, repo } = await originWithBranch();
+  await fetchBranch(repo, 'Feature/Flux');
+  git(repo, ['checkout', '-q', 'Feature/Flux']);
+  await writeFile(join(repo, 'local.txt'), 'local\n'); git(repo, ['add', '-A']); git(repo, ['commit', '-qm', 'local']);
+  git(repo, ['checkout', '-q', 'main']);
+  await advanceOrigin(origin);                            // both sides moved
+  const before = tipOf(repo, 'Feature/Flux');
+  // `is` flags: the message says "Push or rebase" (capital P) and spans one line — keep the assertion case-insensitive.
+  await assert.rejects(() => fetchBranch(repo, 'Feature/Flux'), /has diverged from origin\/Feature\/Flux.*push or rebase.*git branch -f/is);
+  assert.equal(tipOf(repo, 'Feature/Flux'), before, 'local branch left untouched');
+});
+
+test('fetchBranch: unknown remote branch, missing remote and option-injection names throw actionable errors', async () => {
+  const repo = await freshRepo();
+  await assert.rejects(() => fetchBranch(repo, '-q'), /invalid branch name/);
+  await assert.rejects(() => fetchBranch(repo, 'nope'), /no remote "origin"/);
+  const { repo: withOrigin } = await originWithBranch();
+  await assert.rejects(() => fetchBranch(withOrigin, 'nope'), /branch "nope" does not exist on origin/);
+});
+
+test('createWorktree({attachBranch}) requires the local branch to exist and rejects a bad name', async () => {
+  const repo = await freshRepo();
+  await assert.rejects(() => createWorktree({ projectDir: repo, pipelineId: 'p2', attachBranch: 'missing' }), /does not exist locally/);
+  await assert.rejects(() => createWorktree({ projectDir: repo, pipelineId: 'p2', attachBranch: '-q' }), /invalid branch name/);
 });

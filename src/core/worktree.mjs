@@ -218,10 +218,97 @@ export async function worktreePathForBranch(projectDir, branch) {
   return null;
 }
 
+/** git's own branch-name grammar, used verbatim for attach (sanitizeBranchName lowercases and would rename a PR head). */
+export async function isValidBranchName(projectDir, name) {
+  if (typeof name !== 'string' || !name || /^-/.test(name)) return false;
+  const r = await git(projectDir, ['check-ref-format', '--branch', name]);
+  return r.ok;
+}
+
+/** @returns {Promise<string|null>} full sha of a ref, or null when it does not resolve */
+async function revParse(projectDir, ref) {
+  const r = await git(projectDir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+  return r.ok ? r.stdout.trim() : null;
+}
+
+/**
+ * Make `branch` exist locally, in sync with the remote, WITHOUT ever discarding
+ * local commits (D10). Two steps:
+ *   1. `git fetch <remote> +refs/heads/<b>:refs/remotes/<remote>/<b>` — mirrors the
+ *      remote branch into its remote-tracking ref only; succeeds even while <b>
+ *      is checked out locally. Runs with the repo's non-interactive git env
+ *      (ASK_GIT_ENV: no terminal/askpass credential prompt) so a headless run
+ *      with no cached credential fails fast instead of hanging until the
+ *      SLOW_GIT_TIMEOUT_MS SIGKILL.
+ *   2. Reconcile the local branch against that ref:
+ *      absent      -> create it at the remote tip
+ *      equal       -> nothing to do
+ *      behind      -> fast-forward (`git branch -f`); git refuses when <b> is
+ *                     checked out in the main tree or any worktree -> {fetched:false},
+ *                     the branch stays put and createWorktree's M2 check names the worktree
+ *      ahead only  -> KEEP IT (unpushed commits of an earlier run), report `ahead`
+ *      diverged    -> throw; the advice is non-destructive first (push / rebase),
+ *                     the discard command last
+ * Throws on an invalid name, a missing remote, a branch the remote does not
+ * have, an auth failure or a divergence — the run must NOT silently continue
+ * on a different base.
+ * @returns {Promise<{fetched: boolean, ahead: number, localTip: string|null, remoteTip: string}>}
+ */
+export async function fetchBranch(projectDir, branch, { remote = 'origin', signal } = {}) {
+  if (!(await isValidBranchName(projectDir, branch))) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
+  const hasRemote = await git(projectDir, ['remote', 'get-url', remote]);
+  if (!hasRemote.ok) throw new Error(`no remote "${remote}" in ${projectDir} — cannot fetch branch "${branch}"`);
+
+  const tracking = `refs/remotes/${remote}/${branch}`;
+  const f = await git(projectDir, ['fetch', '--', remote, `+refs/heads/${branch}:${tracking}`],
+    { signal, timeout: SLOW_GIT_TIMEOUT_MS, env: ASK_GIT_ENV });
+  if (!f.ok) {
+    const stderr = f.stderr.trim();
+    if (/couldn't find remote ref/i.test(stderr)) {
+      throw new Error(`branch "${branch}" does not exist on ${remote} (was the PR branch deleted or renamed?)`);
+    }
+    if (/could not read Username|Authentication failed|Permission denied|terminal prompts disabled/i.test(stderr)) {
+      throw new Error(`could not fetch branch "${branch}" from ${remote}: no usable git credential in a non-interactive run (${stderr.split('\n').pop()})`);
+    }
+    throw new Error(`could not fetch branch "${branch}" from ${remote}: ${stderr || `exit ${f.code}`}`);
+  }
+  const remoteTip = await revParse(projectDir, tracking);
+  if (!remoteTip) throw new Error(`fetched ${tracking} but it does not resolve to a commit`);
+
+  const localTip = (await listLocalBranches(projectDir)).includes(branch) ? await revParse(projectDir, `refs/heads/${branch}`) : null;
+  if (!localTip) {
+    const b = await git(projectDir, ['branch', branch, tracking]);        // name validated above: no option injection
+    if (!b.ok) throw new Error(`could not create local branch "${branch}": ${b.stderr.trim()}`);
+    return { fetched: true, ahead: 0, localTip: remoteTip, remoteTip };
+  }
+  if (localTip === remoteTip) return { fetched: true, ahead: 0, localTip, remoteTip };
+
+  const behind = (await git(projectDir, ['merge-base', '--is-ancestor', localTip, remoteTip])).ok;
+  if (behind) {
+    const ff = await git(projectDir, ['branch', '-f', branch, remoteTip]);
+    if (ff.ok) return { fetched: true, ahead: 0, localTip: remoteTip, remoteTip };
+    // git ≥2.x: "cannot force update the branch 'x' used by worktree at '…'" / older: "checked out at '…'"
+    if (/cannot force update|used by worktree|checked out at/i.test(ff.stderr)) return { fetched: false, ahead: 0, localTip, remoteTip };
+    throw new Error(`could not fast-forward "${branch}" to ${remote}/${branch}: ${ff.stderr.trim()}`);
+  }
+  const aheadOnly = (await git(projectDir, ['merge-base', '--is-ancestor', remoteTip, localTip])).ok;
+  if (aheadOnly) {
+    const n = await git(projectDir, ['rev-list', '--count', `${remoteTip}..${localTip}`]);
+    return { fetched: true, ahead: Number(n.stdout.trim()) || 1, localTip, remoteTip };
+  }
+  throw new Error(`local branch "${branch}" has diverged from ${remote}/${branch} (both have commits the other lacks). `
+    + `Push or rebase it first (e.g. Create PR on the earlier run pushes it); to DISCARD the local commits instead: git branch -f ${branch} ${remote}/${branch}`);
+}
+
 /**
  * Create a worktree checking out a new branch <featureBranch> off <sourceBranch>.
  * When the branch already exists locally we attach to it instead of forking (resume
  * semantics) and set reusedExisting=true.
+ *
+ * `attachBranch` (task-source checkout hint, e.g. a PR head) replaces the
+ * sourceBranch/featureBranch pair: the EXISTING local branch is attached verbatim
+ * (no sanitize — it would lowercase and silently create a second branch) and the
+ * result carries `attached: true` with sourceBranch = the branch itself.
  *
  * Placement: `<baseDir>/<checkoutName>` when both are supplied (the detached run
  * root: `<worcaHome>/runs/<pipelineId>/repos/<projectKey>`), else the retained
@@ -232,23 +319,33 @@ export async function worktreePathForBranch(projectDir, branch) {
  * @param {object} args
  * @param {string} [args.baseDir]       parent dir for the checkout (default: legacy base)
  * @param {string} [args.checkoutName]  checkout dir name (default: pipelineId)
+ * @param {string} [args.attachBranch]  existing local branch to attach VERBATIM (see above)
  */
 export async function createWorktree({
-  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName,
+  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName, attachBranch,
 }) {
   if (!projectDir) throw new Error('projectDir required');
   if (!pipelineId) throw new Error('pipelineId required');
-  if (!sourceBranch) throw new Error('sourceBranch required');
+  const attach = typeof attachBranch === 'string' && attachBranch ? attachBranch : null;
+  if (!attach && !sourceBranch) throw new Error('sourceBranch required');
   // S2: pipelineId becomes a path segment and is later passed to a recursive
   // remove — reject anything that could escape the worktrees base.
   if (!/^[A-Za-z0-9._-]+$/.test(pipelineId) || pipelineId === '.' || pipelineId === '..') {
     throw new Error(`invalid pipelineId: ${JSON.stringify(pipelineId)}`);
   }
-  const branch = sanitizeBranchName(featureBranch);
-  if (!branch) throw new Error('featureBranch resolves to empty after sanitize');
-  // Compare sanitized forms so case/format variants of the same name don't slip past.
-  if (branch === sanitizeBranchName(sourceBranch)) {
-    throw new Error(`featureBranch and sourceBranch both resolve to "${branch}" — they must differ`);
+  let branch;
+  if (attach) {
+    // Task-source-driven attach (e.g. a PR head): the name is used VERBATIM —
+    // sanitizeBranchName lowercases and would silently create a second branch.
+    if (!(await isValidBranchName(projectDir, attach))) throw new Error(`invalid branch name: ${JSON.stringify(attach)}`);
+    branch = attach;
+  } else {
+    branch = sanitizeBranchName(featureBranch);
+    if (!branch) throw new Error('featureBranch resolves to empty after sanitize');
+    // Compare sanitized forms so case/format variants of the same name don't slip past.
+    if (branch === sanitizeBranchName(sourceBranch)) {
+      throw new Error(`featureBranch and sourceBranch both resolve to "${branch}" — they must differ`);
+    }
   }
 
   const base = baseDir
@@ -272,7 +369,10 @@ export async function createWorktree({
 
   const branches = await listLocalBranches(projectDir);
   const reusedExisting = branches.includes(branch);
+  if (attach && !reusedExisting) throw new Error(`branch "${branch}" does not exist locally — fetch it first (fetchBranch)`);
 
+  // attach always takes the reuse path (M2), so the -b path's isValidSourceRef
+  // check is never reached with sourceBranch undefined.
   let args;
   if (reusedExisting) {
     // M2: git forbids checking out one branch in two worktrees at once. Reap
@@ -304,7 +404,7 @@ export async function createWorktree({
     if (signal?.aborted) err.name = 'AbortError';
     throw err;
   }
-  return { worktreeDir, branch, sourceBranch, reusedExisting };
+  return { worktreeDir, branch, sourceBranch: attach ? branch : sourceBranch, reusedExisting, attached: !!attach };
 }
 
 /**

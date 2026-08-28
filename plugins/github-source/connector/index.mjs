@@ -3,7 +3,7 @@
 // zero dependencies. Task ids round-trip opaquely as "owner/repo#123".
 
 import { ghFetch } from './github-api.mjs';
-import { ghAuthToken } from './gh-cli.mjs';
+import { createGhClient, toBool } from './gh-client.mjs';
 
 const PER_PAGE = 30;
 
@@ -12,11 +12,6 @@ function parseId(id) {
   const m = /^([^\s#]+\/[^\s#]+)#(\d+)$/.exec(String(id || ''));
   if (!m) throw Object.assign(new Error(`bad GitHub task id "${id}" (expected owner/repo#123)`), { kind: 'plugin' });
   return { repo: m[1], number: Number(m[2]) };
-}
-
-/** configSchema `select` fields deliver strings; coerce yes/true -> boolean. */
-function toBool(v) {
-  return v === true || v === 'yes' || v === 'true';
 }
 
 /** `assignee:@me state:open label:x label:y` -> { assignee, state, labels[] }. */
@@ -46,38 +41,12 @@ function toSummary(repo, it) {
 }
 
 export default function createTaskSource(ctx, deps = {}) {
-  const resolveToken = deps.ghAuthToken || ghAuthToken;
-  // An explicit config token wins. With none, fall back to the gh CLI's
-  // logged-in account — the same identity worca uses for `gh pr create`.
-  // Lazy AND memoized: building the source must not spawn anything, and one op
-  // must not spawn gh once per request.
-  let token = String(ctx.config?.token || '') || null;
-  const gh = {
-    fetch: deps.fetch || globalThis.fetch,
-    get token() { return token ?? (token = resolveToken()); },
-  };
+  // Token/login/validateConfig are shared with the PR comments source (gh-client.mjs).
+  const { gh, login, validateConfig } = createGhClient(ctx, deps);
   const closeOnComplete = toBool(ctx.config?.closeOnComplete);
 
-  /** @me resolution: login cached in state by validateConfig; lazily fetched otherwise. */
-  async function login() {
-    const cached = await ctx.state.get('login');
-    if (cached) return cached;
-    const { json } = await ghFetch(gh, '/user');
-    await ctx.state.set('login', json.login);
-    return json.login;
-  }
-
   return {
-    async validateConfig() {
-      try {
-        const { json } = await ghFetch(gh, '/user');
-        await ctx.state.set('login', json.login);
-        return { ok: true, identity: json.login };
-      } catch (e) {
-        if (e.kind === 'auth') return { ok: false, errors: [{ field: 'token', message: e.message }] };
-        throw e; // network / rate-limit stay op errors -> protocol frame kinds
-      }
-    },
+    validateConfig,
 
     /** inputs[].optionsFrom: "listRepos" */
     async listRepos() {

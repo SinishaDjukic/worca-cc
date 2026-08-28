@@ -110,10 +110,16 @@ export default function createTaskSource(ctx) {
 |---|---|---|
 | `validateConfig` | `()` | `{ok:true, identity?}` \| `{ok:false, errors:[{field,message}]}` — gates the whole pane |
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
-| `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
+| `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta, checkout?}` |
 | `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
 | `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
 | custom | `(args)` | whatever the widget needs |
+
+`checkout: { branch, base?, repo?, sha? }` (optional on `getTask`) asks the host to fetch and
+work **on** that existing branch instead of forking a `worca-cc/…` branch (single-project runs
+only; the user's explicit feature branch wins; the diff base becomes the branch tip; local
+commits ahead of origin are kept; `base` becomes the recorded source branch; the branch is
+never deleted with the pipeline). The host pins the hint into `sourceMeta.checkout`.
 
 `ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 
@@ -200,16 +206,23 @@ Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end
 
 ## The example worth reading
 
-`plugins/github-source/` — a complete, zero-dependency GitHub Issues source:
-ETag revalidation via `ctx.state`, `remote-select` repo picker, a filter micro-syntax,
-`{"$env":"GH_TOKEN"}` token config, and write-back that comments and optionally closes the issue.
-Copy its shape for a plain HTTP-API source.
+`plugins/github-source/` — a complete, zero-dependency plugin with **two task sources**
+sharing one config bucket (`connector/gh-client.mjs` builds the token/login client for both):
+`github` (Issues, `connector/index.mjs`) — ETag revalidation via `ctx.state`, `remote-select`
+repo picker, a filter micro-syntax, `{"$env":"GH_TOKEN"}` token config, and write-back that
+comments and optionally closes the issue — and `github-pr-comments` (PR review threads,
+`connector/pr-comments.mjs`) — one **GraphQL** round-trip per listing via `ghGraphql`
+(`reviewThreads.isResolved` is GraphQL-only), one task per thread, a `checkout` hint so the
+run commits onto the PR head branch, and write-back that replies on the thread and optionally
+resolves it. Its `connector/gh-cli.mjs` is a minimal **external-CLI seam** (`gh auth token`
+fallback with error-kind mapping). Copy its shape for a plain HTTP-API source.
 
 Patterns it doesn't show, for connectors that need them: with `multiProfile`, key any
 self-managed on-disk storage by `ctx.profile`. When wrapping an **external CLI** as the
-backend, keep a single subprocess seam with error-kind mapping, detach anything interactive
-(e.g. a browser login) so it outlives the 30s op timeout, and pin the CLI's config via an
-env var so nothing depends on the server's cwd. For **per-run write-back**, add a
+whole backend (beyond a token fallback), keep a single subprocess seam with error-kind
+mapping, detach anything interactive (e.g. a browser login) so it outlives the 30s op
+timeout, and pin the CLI's config via an env var so nothing depends on the server's cwd.
+For **per-run write-back**, add a
 `writeBack` select to `inputs` (default `no`); the host pins the run's inputs on the row and
 passes them to `capabilities({inputs})` / `reportResult`, so only runs that opted in are
 reported. The key name `writeBack` is the host's reserved opt-out channel: when the

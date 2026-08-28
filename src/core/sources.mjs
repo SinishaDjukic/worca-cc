@@ -87,12 +87,45 @@ function taskPromptText(task) {
   return text;
 }
 
+/** git check-ref-format essentials, without spawning git: no leading '-', no whitespace/control
+ *  or ~^:?*[\ chars, no '..', '@{', trailing '/', '.', or '.lock'. */
+function isBranchNameShape(s) {
+  return typeof s === 'string' && s.length > 0 && s.length <= 250 && !/^-/.test(s)
+    && !/[\s~^:?*[\\\x00-\x1f\x7f]/.test(s) && !s.includes('..') && !s.includes('@{')
+    && !s.endsWith('/') && !s.endsWith('.') && !s.endsWith('.lock');
+}
+
+/**
+ * A task source may ask the run to work ON an existing branch (e.g. a PR head)
+ * by returning `checkout: { branch, base?, repo?, sha? }` from getTask. Validated
+ * here once (git-ref shape, no option injection) and pinned on the row; the
+ * orchestrator decides whether it can honour it (single-project runs only) and
+ * re-validates the name with git itself before any spawn (worktree.mjs).
+ * `base` is the branch the work will be merged into (a PR's base): it becomes
+ * `state.branch.source` so the Create-PR route has a base that differs from head.
+ * @returns {{branch:string, base:string|null, repo:string|null, sha:string|null}|null}
+ */
+export function normalizeCheckout(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const branch = typeof raw.branch === 'string' ? raw.branch.trim() : '';
+  if (!isBranchNameShape(branch)) return null;
+  const base = typeof raw.base === 'string' ? raw.base.trim() : '';
+  return {
+    branch,
+    base: isBranchNameShape(base) && base !== branch ? base : null,
+    repo: typeof raw.repo === 'string' && raw.repo ? raw.repo : null,
+    // Hex only (an abbreviated sha is fine: git accepts 4+ chars; it is only ever
+    // compared with startsWith for the drift warning).
+    sha: typeof raw.sha === 'string' && /^[0-9a-f]{4,40}$/i.test(raw.sha) ? raw.sha : null,
+  };
+}
+
 /**
  * Resolve a source descriptor to the pipeline's task input.
  *   { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
  * | { type:'plugin', plugin, sourceId, taskId, inputs?, profile? }
  * @returns {Promise<{promptText:string, promptFile:string|null,
- *   sourceMeta:{plugin,sourceId,taskId,profile,url,title}|null}>}
+ *   sourceMeta:{plugin,sourceId,taskId,profile,inputs,url,title,checkout}|null}>}
  */
 export async function resolveTaskInput(source, { projectDir } = {}) {
   const src = source && typeof source === 'object' ? source : { type: 'prompt', prompt: '' };
@@ -139,6 +172,8 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
         inputs: src.inputs && typeof src.inputs === 'object' ? src.inputs : null,
         url: task.url ?? null,
         title: task.title ?? null,
+        // A task-source-driven branch request (PR head etc.), see normalizeCheckout.
+        checkout: normalizeCheckout(task.checkout),
       },
     };
   }

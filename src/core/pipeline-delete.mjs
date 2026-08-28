@@ -203,7 +203,7 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
     for (const [pk, br] of Object.entries(branches)) {
       const repoDir = dirByKey.get(pk) || null;
-      const feature = br?.feature || null;
+      const feature = br?.feature && !br?.attached ? br.feature : null;   // attached = the user's own branch (PR head): never delete
       const wt = br?.worktreeDir || null;
       if (!repoDir || (!feature && !wt)) continue;
       const liveWt = wt && existsSync(wt) ? wt : null;
@@ -216,7 +216,8 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     }
   } else {
     const repoDir = state?.projectDir || projectDir || null;
-    const feature = state?.branch?.feature || null;
+    // attached = the user's own branch (PR head): never delete it, only the disposable checkout.
+    const feature = state?.branch?.feature && !state?.branch?.attached ? state.branch.feature : null;
     const wt = state?.branch?.worktreeDir || null;
     if (repoDir && (feature || wt)) {
       const liveWt = wt && existsSync(wt) ? wt : null;                 // skip already-removed worktrees

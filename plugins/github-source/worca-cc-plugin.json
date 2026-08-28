@@ -1,7 +1,7 @@
 {
   "name": "github-source",
-  "version": "0.2.0",
-  "description": "Pull tasks from GitHub Issues, write results back",
+  "version": "0.3.0",
+  "description": "Pull tasks from GitHub Issues or PR comment threads, write results back",
   "author": "Denislav Prinov",
   "homepage": "https://github.com/denislavprinov/maestro",
   "license": "MIT",
@@ -17,7 +17,7 @@
           "type": "text",
           "secret": true,
           "label": "GitHub token",
-          "help": "Optional. Fine-grained PAT (Issues R/W + Metadata R) or {\"$env\":\"GH_TOKEN\"}. Leave blank to use the account the `gh` CLI is logged in as — note that token's scopes are usually far broader than this plugin needs"
+          "help": "Optional, shared by both GitHub sources. Fine-grained PAT (Issues R/W + Metadata R; add Pull requests R/W for the PR comments source) or {\"$env\":\"GH_TOKEN\"}. Leave blank to use the account the `gh` CLI is logged in as — note that token's scopes are usually far broader than this plugin needs"
         },
         {
           "key": "closeOnComplete",
@@ -32,6 +32,33 @@
         { "key": "repo", "type": "remote-select", "label": "Repository", "optionsFrom": "listRepos" },
         { "key": "filter", "type": "text", "label": "Filter", "default": "assignee:@me state:open" },
         { "key": "task", "type": "task-browser", "label": "Issue" }
+      ]
+    },
+    {
+      "id": "github-pr-comments",
+      "displayName": "GitHub PR comments",
+      "module": "./connector/pr-comments.mjs",
+      "configSchema": [
+        {
+          "key": "token",
+          "type": "text",
+          "secret": true,
+          "label": "GitHub token",
+          "help": "Optional, shared with the GitHub Issues source. Fine-grained PAT with Pull requests: Read and write + Metadata: Read-only (replying and resolving threads needs write), or {\"$env\":\"GH_TOKEN\"}. Blank = the `gh` CLI's logged-in account"
+        },
+        {
+          "key": "resolveOnComplete",
+          "type": "select",
+          "label": "Resolve thread on completion",
+          "default": "no",
+          "options": ["yes", "no"],
+          "help": "yes = resolve the review thread (GraphQL resolveReviewThread) after replying, when a pipeline finishes successfully. Only diff-anchored review threads can be resolved"
+        }
+      ],
+      "inputs": [
+        { "key": "repo", "type": "remote-select", "label": "Repository", "optionsFrom": "listRepos" },
+        { "key": "filter", "type": "text", "label": "PR filter", "default": "state:open review-requested:@me" },
+        { "key": "task", "type": "task-browser", "label": "Comment thread" }
       ]
     }
   ]

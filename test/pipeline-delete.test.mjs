@@ -583,3 +583,25 @@ test('deleteWorkspace refuses while a member pipeline has retained uncommitted w
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }
 });
+
+test('pipeline delete keeps a branch the run was ATTACHED to (task-source checkout hint)', async () => {
+  const repo = await freshRepo();                        // has 'main'
+  spawnSync('git', ['-C', repo, 'branch', 'Feature/Flux']);
+  const { worktreeDir, branch } = await createWorktree({ projectDir: repo, pipelineId: 'att123', attachBranch: 'Feature/Flux' });
+  const prev = process.env.WORCA_HOME;
+  const { pdir } = await freshStore(repo, {
+    id: 'att123', base: 'fix-null-check', datePrefix: '08-28-26', status: 'done', title: 'Fix null check',
+    branch: { source: 'main', feature: branch, worktreeDir, reusedExisting: true, attached: true },
+  });
+  try {
+    const report = await deletePipeline({ key: 'proj-00000001', id: 'att123' });
+    assert.ok(report && report.ok);
+    assert.equal(existsSync(pdir), false, 'pipeline dir removed');
+    assert.equal(existsSync(worktreeDir), false, 'disposable checkout still removed');
+    assert.ok((await listLocalBranches(repo)).includes('Feature/Flux'), 'attached branch must survive pipeline delete');
+    assert.equal(report.branch, null, 'no branch was deleted');
+    assert.equal(report.worktree, worktreeDir);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});

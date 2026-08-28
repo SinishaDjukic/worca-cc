@@ -115,7 +115,7 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — plugins contribute task sources
-  (e.g. GitHub Issues), agents, skills, workflow templates, models, and chat
+  (e.g. GitHub Issues or PR review threads), agents, skills, workflow templates, models, and chat
   channels. Install from a marketplace with an explicit consent ceremony
   (what's installed, which secrets are required, which setup commands run);
   updates show a commit-level preview before you accept.

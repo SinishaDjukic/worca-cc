@@ -59,7 +59,7 @@ import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } 
 import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
-  isValidSourceRef, snapshotWorktreePatch,
+  isValidSourceRef, snapshotWorktreePatch, fetchBranch, worktreeHead,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 
@@ -609,6 +609,9 @@ export class RunHarness extends EventEmitter {
       source: (this.opts.branch && this.opts.branch.source) || null,
       feature: (this.opts.branch && this.opts.branch.feature) || null,
     };
+    // { branch, base, repo, sha } from sourceMeta.checkout (set in run(); resume
+    // needs none — the worktree already exists).
+    this.checkoutHint = null;
     this.branchInfo = null;
     // ── Run root (§5.2). All three are assigned in _setupRunRoot() (or rehydrated
     // by resume() from the RECORDED mode, never the live flag). Under `legacy`
@@ -825,6 +828,7 @@ export class RunHarness extends EventEmitter {
             ? { type: 'markdown', promptFile: this.opts.promptFile }
             : { type: 'prompt', prompt: '' });
       const input = await resolveTaskInput(source, { projectDir: this.projectDir });
+      this.checkoutHint = input.sourceMeta?.checkout || null;
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
@@ -1167,6 +1171,7 @@ export class RunHarness extends EventEmitter {
           branch: this.state.branch.feature,
           sourceBranch: this.state.branch.source,
           reusedExisting: true,
+          attached: !!this.state.branch.attached,
         };
         if (!this.isWorkspace) {
           // Unified shapes must hold on resume too: one workDirs entry + one
@@ -1340,6 +1345,17 @@ export class RunHarness extends EventEmitter {
    *  an invalid --source for the default branch, where createWorktree's M1 gate must
    *  keep failing loudly. */
   async _resolveSingleBranches() {
+    // A task-source checkout hint (PR head) short-circuits the derive path (D9):
+    // it overrides branch.source (the UI always sends the current branch as a
+    // default) but an explicit feature branch typed by the user wins over it.
+    if (this.checkoutHint?.branch) {
+      if (this.branchOpts.feature) {
+        this._log('worktree', 'warn',
+          `Task source asked to work on "${this.checkoutHint.branch}" but an explicit feature branch was given — using "${this.branchOpts.feature}".`);
+      } else {
+        return { attach: this.checkoutHint.branch, attachBase: this.checkoutHint.base || null };
+      }
+    }
     const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
     const featureRaw = this.branchOpts.feature
       ? sanitizeBranchName(this.branchOpts.feature)
@@ -1378,29 +1394,77 @@ export class RunHarness extends EventEmitter {
     const setupFailures = [];
     await mapWithCap(this.members, fanoutCap(), async (m) => {
       try {
-        const { source, featureRaw } = this.isWorkspace
+        const resolved = this.isWorkspace
           ? await this._resolveMemberBranches(m)          // unchanged (member-suffixed names)
-          : await this._resolveSingleBranches();          // single: today's exact semantics
-        const info = await createWorktree({
-          projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
-          pipelineId: this.pipeline.id,
-          // detached ⇒ <runRoot>/repos/<projectKey>, uniqueness from the run root.
-          // legacy   ⇒ both omitted, so worktree.mjs falls back to its retained
-          //            default <projectDir>/.worca-cc/worktrees/<pipelineId> (§10).
-          ...(detached ? { baseDir: reposBase, checkoutName: m.projectKey } : {}),
-          sourceBranch: source,
-          featureBranch: featureRaw,
-          signal: this.abort.signal,
-        });
+          : await this._resolveSingleBranches();          // single: today's exact semantics (+ attach, D8)
+        if (this.isWorkspace && this.checkoutHint?.branch && m === this.members[0]) {
+          // D8: a workspace run cannot map the hint to a member.
+          this._log('worktree', 'warn', `Task source checkout hint "${this.checkoutHint.branch}" ignored on a workspace run.`);
+        }
+        const projectDir = resolve(m.projectDir);         // the REAL dir: git runs here
+        let info;
+        if (resolved.attach) {
+          this._log('worktree', 'info', `Fetching origin/${resolved.attach} to work on it directly (task source request)…`);
+          const fetched = await fetchBranch(projectDir, resolved.attach, { signal: this.abort.signal });
+          if (fetched.ahead > 0) {
+            this._log('worktree', 'info', `"${resolved.attach}" has ${fetched.ahead} local commit(s) not on origin (an earlier run?) — working on top of them; push with Create PR when ready.`);
+          }
+          try {
+            info = await createWorktree({
+              projectDir, pipelineId: this.pipeline.id,
+              ...(detached ? { baseDir: reposBase, checkoutName: m.projectKey } : {}),
+              attachBranch: resolved.attach, signal: this.abort.signal,
+            });
+          } catch (err) {
+            if (/already checked out in worktree/.test(err?.message || '')) {
+              // D10: the common case — the user (or another pipeline) has the PR branch checked out. Say what to do.
+              const where = err.message.replace(/^.*checked out in worktree /, '');
+              throw new Error(`Cannot work on "${resolved.attach}": it is checked out in ${where}. `
+                + 'If that is your working tree, switch it to another branch and retry; if it belongs to another pipeline, finish or delete that pipeline first; '
+                + 'or type a feature branch in New Pipeline to fork instead of attaching.');
+            }
+            throw err;
+          }
+          // D14: the diff/review base is the attached tip, not the project HEAD captured by _ensureGitCheckpoint.
+          const tip = await worktreeHead(info.worktreeDir);
+          if (tip) {
+            this.checkpointRefs[m.projectKey] = tip;
+            this.checkpointRef = tip;
+            this.state.checkpointRef = tip;
+            this.state.checkpointRefs = { ...this.checkpointRefs };
+            await appendAudit(this.pipeline.dir, `Git checkpoint moved to \`${tip.slice(0, 10)}\` (tip of attached branch \`${info.branch}\`).`).catch(() => {});
+            const expected = this.checkoutHint?.sha;
+            if (expected && fetched.ahead === 0 && !tip.startsWith(expected) && !expected.startsWith(tip)) {
+              this._log('worktree', 'warn', `"${info.branch}" moved since the task was listed (expected ${expected.slice(0, 10)}, got ${tip.slice(0, 10)}) — working on the current tip.`);
+            }
+          }
+        } else {
+          info = await createWorktree({
+            projectDir,
+            pipelineId: this.pipeline.id,
+            // detached ⇒ <runRoot>/repos/<projectKey>, uniqueness from the run root.
+            // legacy   ⇒ both omitted, so worktree.mjs falls back to its retained
+            //            default <projectDir>/.worca-cc/worktrees/<pipelineId> (§10).
+            ...(detached ? { baseDir: reposBase, checkoutName: m.projectKey } : {}),
+            sourceBranch: resolved.source,
+            featureBranch: resolved.featureRaw,
+            signal: this.abort.signal,
+          });
+        }
         // Register EAGERLY (Map.set is synchronous) so teardown always sees it.
         this.workDirs.set(m.projectKey, info.worktreeDir);
         this.branchInfos.set(m.projectKey, info);
-        this.state.branches[m.projectKey] = { source: info.sourceBranch, feature: info.branch,
-                                              worktreeDir: info.worktreeDir,
-                                              reusedExisting: info.reusedExisting };
-        const reuseNote = info.reusedExisting ? ' (resumed existing branch)' : '';
+        this.state.branches[m.projectKey] = {
+          // attached: source = the PR base (Create PR needs base != head; the audit says "off main")
+          source: info.attached ? (resolved.attachBase || info.branch) : info.sourceBranch,
+          feature: info.branch, worktreeDir: info.worktreeDir,
+          reusedExisting: info.reusedExisting,
+          ...(info.attached ? { attached: true } : {}),
+        };
+        const reuseNote = info.attached ? ' (attached to existing branch — task source request)'
+          : info.reusedExisting ? ' (resumed existing branch)' : '';
         await appendAudit(this.pipeline.dir,
-          `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${info.sourceBranch}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
+          `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${this.state.branches[m.projectKey].source}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
         ).catch(() => {});                                // per-member audit
       } catch (err) {
         setupFailures.push(err);

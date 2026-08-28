@@ -72,7 +72,7 @@ test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceM
     assert.equal(input.promptFile, null);
     assert.deepEqual(input.sourceMeta, {
       plugin: 'gh', sourceId: 'issues', taskId: 'T-9', profile: null, inputs: null,
-      url: 'https://tracker.test/T-9', title: 'Fix login',
+      url: 'https://tracker.test/T-9', title: 'Fix login', checkout: null,
     });
 
     // A multi-profile source pins WHICH configuration the task came from, so
@@ -98,6 +98,27 @@ test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceM
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
   }
+});
+
+test('plugin source: a getTask `checkout` hint is validated and pinned into sourceMeta.checkout', async () => {
+  process.env.WORCA_MOCK = '1';
+  try {
+    const base = { id: 'T-9', title: 'T', state: 'open', updatedAt: 'x', body: 'b', meta: {} };
+    setMockSourceResponses({ getTask: { ...base, checkout: { branch: 'Feature/Flux', base: 'main', repo: 'acme/api', sha: 'abc123' } } });
+    const ok = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'prs', taskId: 'T-9' }, { projectDir: tmp() });
+    assert.deepEqual(ok.sourceMeta.checkout, { branch: 'Feature/Flux', base: 'main', repo: 'acme/api', sha: 'abc123' });
+    assert.ok(!ok.promptText.includes('checkout'), 'the hint is not part of the prompt');
+
+    setMockSourceResponses({ getTask: { ...base, checkout: { branch: 'fix/x', base: '-q' } } });
+    const noBase = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'prs', taskId: 'T-9' }, { projectDir: tmp() });
+    assert.deepEqual(noBase.sourceMeta.checkout, { branch: 'fix/x', base: null, repo: null, sha: null }, 'an invalid base is dropped, not the hint');
+
+    for (const bad of [undefined, null, 'main', { branch: '-q' }, { branch: 'a b' }, { branch: '' }, { branch: 'x..y' }, { branch: 'x.lock' }, { branch: '@{1}' }]) {
+      setMockSourceResponses({ getTask: { ...base, checkout: bad } });
+      const r = await resolveTaskInput({ type: 'plugin', plugin: 'gh', sourceId: 'prs', taskId: 'T-9' }, { projectDir: tmp() });
+      assert.equal(r.sourceMeta.checkout, null, `checkout ${JSON.stringify(bad)} must be dropped`);
+    }
+  } finally { delete process.env.WORCA_MOCK; setMockSourceResponses(null); }
 });
 
 // ── persistence through createPipeline ─────────────────────────────────────────

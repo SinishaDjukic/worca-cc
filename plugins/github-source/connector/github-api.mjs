@@ -1,8 +1,10 @@
 // plugins/github-source/connector/github-api.mjs
-// Minimal GitHub REST v3 fetch wrapper. No octokit, no GraphQL, no webhooks
-// (YAGNI). Every request goes through ghFetch so auth headers + error mapping
-// live in exactly one place. Errors carry a `kind` the shim child forwards
-// verbatim into the protocol frame: auth | rate-limit | network | plugin.
+// Minimal GitHub REST v3 fetch wrapper, plus GraphQL only where REST cannot:
+// reviewThreads.isResolved / resolveReviewThread (the PR comments source). No
+// octokit, no webhooks (YAGNI). Every request goes through ghFetch so auth
+// headers + error mapping live in exactly one place. Errors carry a `kind` the
+// shim child forwards verbatim into the protocol frame:
+// auth | rate-limit | network | plugin.
 
 const API = 'https://api.github.com';
 
@@ -56,4 +58,21 @@ export async function ghFetch(gh, path, init = {}) {
     throw err('plugin', `GitHub API ${res.status}${detail ? `: ${detail}` : ''} (${init.method || 'GET'} ${url})`);
   }
   return { status: res.status, headers: res.headers, json: await res.json() };
+}
+
+/**
+ * One GitHub GraphQL v4 request. Auth + transport errors are ghFetch's; a 200
+ * with an `errors` array is a query-level failure and maps to kind:'plugin'
+ * (NOT_FOUND for a PR the token cannot see is the common case).
+ * @returns {Promise<any>} the `data` object
+ */
+export async function ghGraphql(gh, query, variables = {}) {
+  const { json } = await ghFetch(gh, '/graphql', {
+    method: 'POST', body: { query, variables }, headers: { 'content-type': 'application/json' },
+  });
+  if (Array.isArray(json?.errors) && json.errors.length) {
+    const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ') || 'unknown GraphQL error';
+    throw err('plugin', `GitHub GraphQL: ${msg}`);
+  }
+  return json?.data ?? null;
 }
