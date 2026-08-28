@@ -115,4 +115,13 @@ test('the alias folds first and wins, overlays remap, budgets copy to wires, arc
     .get(fx.projectKeyLive).active_workflow_id, 'wf_quick-fix');
   const report = JSON.parse(db.prepare("SELECT data FROM store_meta WHERE key = 'migration:v24'").get().data);
   assert.deepEqual(report.activeReset, [fx.projectKey], 'only the stranded project is reset');
+  // The counters are the only place the `version = 2` filter on the json_set arm
+  // is observable: the run it must skip (`run-v1a`) is NULLed by sweepV1Runs a
+  // moment later either way, so the resume_point assertion above cannot see the
+  // difference. 3 = two folded wf_default overlay rows + the ONE v2 resume point;
+  // without the filter the v1 point is remapped too and this reads 4.
+  assert.equal(report.aliasRemapped, 3, 'the alias fold touches the v2 point only');
+  assert.equal(report.overlayNodes, 1, 'one clean NODE_ID_MAP rename (wf_quick-fix/s0_0)');
+  assert.equal(report.overlaysDisplaced, 1, 'one stale v1-keyed overlay dropped by the remap');
+  assert.equal(report.overlayWires, 2, 'both wf_no-clarify budgets copied onto wires');
 });
