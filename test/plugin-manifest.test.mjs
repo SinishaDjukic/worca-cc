@@ -7,6 +7,7 @@ import { join, dirname } from 'node:path';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
+  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2,
 } from '../src/core/plugin-manifest.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-manifest-'));
@@ -28,9 +29,48 @@ const SRC = (over = {}) => ({
   ...over,
 });
 
-test('WORCA_PLUGIN_API is the integer 2; host still speaks API 1', () => {
-  assert.equal(WORCA_PLUGIN_API, 2);
-  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2]);
+test('WORCA_PLUGIN_API is the integer 3; host still speaks APIs 1 and 2', () => {
+  assert.equal(WORCA_PLUGIN_API, 3);
+  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2, 3]);
+  // Set semantics: a connector-only API-1 plugin must keep negotiating 1.
+  assert.equal(negotiatedApi('>=1 <2'), 1);
+  assert.equal(negotiatedApi('>=2 <3'), 2);
+  assert.equal(negotiatedApi('>=3 <4'), 3);
+});
+
+test('declaredApi: the LOWEST integer a range accepts (null when unparseable)', () => {
+  assert.equal(declaredApi('>=1 <2'), 1);
+  assert.equal(declaredApi('1'), 1);
+  assert.equal(declaredApi('>=2 <3'), 2);
+  assert.equal(declaredApi('>=3 <4'), 3);
+  assert.equal(declaredApi(''), 0, 'an unconstrained range accepts everything, starting at 0');
+  assert.equal(declaredApi('not-a-range'), null);
+});
+
+test('dataContractIssues names the v1-shaped files, and apiMismatch counts them', () => {
+  const dir = mkPluginDir({
+    'agents/oldOne.meta.json': JSON.stringify({ key: 'oldOne', consumes: ['plan'], produces: ['review'] }),
+    'agents/oldOne.md': '# oldOne\n',
+    'agents/newOne.meta.json': JSON.stringify({ metaVersion: 2, key: 'newOne', inputs: [], outputs: [] }),
+    'agents/newOne.md': '# newOne\n',
+    'workflows/legacy.json': JSON.stringify({ version: 1, steps: [[{ id: 's0', key: 'oldOne' }]] }),
+    'workflows/graph.json': JSON.stringify({ version: 2, nodes: [], wires: [] }),
+  });
+  const issues = dataContractIssues(dir);
+  assert.deepEqual(issues.agentsV1, ['oldOne.meta.json']);
+  assert.deepEqual(issues.workflowsV1, ['legacy.json']);
+  const m = apiMismatch('>=1 <2', issues);
+  assert.equal(m.message, 'built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)');
+  assert.match(apiMismatch('', issues).message, /^built for plugin API an older version; /);
+  // `message` is part of the payload (one canonical text, stamped by apiMismatch),
+  // so the shape pin compares the counts WITHOUT it.
+  const { message, ...counts } = m;
+  assert.equal(typeof message, 'string');
+  assert.deepEqual(counts, { builtFor: 1, host: 3, agents: 1, workflows: 1 });
+  assert.equal(apiMismatch('>=3 <4', { agentsV1: [], workflowsV1: [] }), null,
+    'an API-3 plugin with clean data has no mismatch');
+  assert.equal(apiMismatch('>=1 <2', { agentsV1: [], workflowsV1: [] }), null,
+    'a connector-only API-1 plugin is NOT a mismatch \u2014 the bump is data-gated, not range-gated');
 });
 
 test('minimal { name } manifest normalizes with full defaults', () => {
@@ -61,8 +101,10 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   assert.equal(apiSatisfies('>=2'), true);       // satisfied by member 2
   assert.equal(apiSatisfies('>=2 <3'), true);
   assert.equal(apiSatisfies('2'), true);
+  assert.equal(apiSatisfies('>=3 <4'), true);    // API-3 plugins install on this host
+  assert.equal(apiSatisfies('3'), true);
   assert.equal(apiSatisfies('<1'), false);
-  assert.equal(apiSatisfies('>=3'), false);
+  assert.equal(apiSatisfies('>=4'), false);      // beyond the host API set
   assert.equal(apiSatisfies(''), true);          // unset -> unconstrained
   assert.equal(apiSatisfies('^1.0.0'), false);   // unsupported syntax fails CLOSED
   assert.equal(apiSatisfies('>=1.2.3'), true);   // minor/patch tolerated; integer compared
@@ -70,18 +112,19 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   const ok = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } });
   assert.equal(ok.ok, true);
   assert.equal(ok.manifest.engines.worcaApi, '>=1 <2');
-  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=3' } });
+  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=4' } });
   assert.equal(bad.ok, false);
-  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2\]/);
+  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2, 3\]/);
 });
 
 test('negotiatedApi: highest satisfying host API drives the child apiVersion', () => {
   assert.equal(negotiatedApi('>=1 <2'), 1);      // API-1 connector keeps receiving 1
   assert.equal(negotiatedApi('>=2 <3'), 2);
-  assert.equal(negotiatedApi('>=1'), 2);         // open range -> newest
-  assert.equal(negotiatedApi(''), 2);            // unconstrained -> newest
-  assert.equal(negotiatedApi(null), 2);
-  assert.equal(negotiatedApi('>=3'), null);      // unsatisfiable
+  assert.equal(negotiatedApi('>=3 <4'), 3);
+  assert.equal(negotiatedApi('>=1'), 3);         // open range -> newest
+  assert.equal(negotiatedApi(''), 3);            // unconstrained -> newest
+  assert.equal(negotiatedApi(null), 3);
+  assert.equal(negotiatedApi('>=4'), null);      // unsatisfiable
   assert.equal(negotiatedApi('garbage'), null);  // fail closed
 });
 

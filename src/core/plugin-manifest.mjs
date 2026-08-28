@@ -5,7 +5,7 @@
 
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
-import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
+import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
@@ -66,6 +66,86 @@ export function negotiatedApi(range, apis = WORCA_PLUGIN_APIS) {
     if (ok && (best === null || api > best)) best = api;
   }
   return best;
+}
+
+/** The ONE per-file sentence for each half of the data contract. `validatePluginDir`
+ *  prefixes `agents/<f>: ` / `workflows/<f>: `; `agent-registry.scanLayer` prefixes the
+ *  layer and appends ` — ignored`; `plugin-workflows` uses NOT_GRAPH_V2 verbatim as a
+ *  skip reason. Exported so those three sites can never drift apart — never re-word
+ *  either string in a second place. */
+export const NOT_META_V2 = 'not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars';
+export const NOT_GRAPH_V2 = 'not a version-2 graph template (nodes/wires) — port the "steps" pipeline';
+
+/** The host API a range was BUILT FOR: the lowest integer it accepts. ">=1 <2"
+ *  and "1" both answer 1; an unconstrained range answers 0; null when nothing
+ *  satisfies it (an unparseable range fails closed in apiSatisfies too).
+ *  @param {string} range  @returns {number|null} */
+export function declaredApi(range) {
+  for (let n = 0; n <= 99; n += 1) if (apiSatisfies(range, n)) return n;
+  return null;
+}
+
+/** Which files in a plugin dir are still on the API-2 data contract: sidecars
+ *  without metaVersion 2, templates without version 2. Pure fs read; an absent
+ *  or unreadable dir/file contributes nothing (validatePluginDir reports those
+ *  separately as parse errors). Basenames only — the caller prefixes them.
+ *  @param {string} absDir
+ *  @returns {{agentsV1: string[], workflowsV1: string[]}} */
+export function dataContractIssues(absDir) {
+  const agentsV1 = [];
+  const workflowsV1 = [];
+  const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
+  const agentsDir = join(absDir, 'agents');
+  if (existsSync(agentsDir)) {
+    for (const f of readdirSync(agentsDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      const raw = read(join(agentsDir, f));
+      if (raw && Number(raw.metaVersion) !== 2) agentsV1.push(f);
+    }
+  }
+  const wfDir = join(absDir, 'workflows');
+  if (existsSync(wfDir)) {
+    for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json')).sort()) {
+      const raw = read(join(wfDir, f));
+      if (raw && Number(raw.version) !== 2) workflowsV1.push(f);
+    }
+  }
+  return { agentsV1, workflowsV1 };
+}
+
+/**
+ * The Plugins-view / doctor payload for a plugin whose DATA is still on the old
+ * contract, or null when it has nothing the host would ignore. The bump is
+ * gated by CONTENT, not by the range: a connector-only plugin declaring
+ * ">=1 <2" ships no agents and no templates, so it is never "incompatible" —
+ * it simply keeps negotiating API 1.
+ * @param {string} range   engines['worca-cc-api']
+ * @param {{agentsV1: string[], workflowsV1: string[]}} issues
+ * @returns {{builtFor: number|null, host: number, agents: number, workflows: number, message: string}|null}
+ */
+export function apiMismatch(range, issues) {
+  const agents = (issues && issues.agentsV1 ? issues.agentsV1 : []).length;
+  const workflows = (issues && issues.workflowsV1 ? issues.workflowsV1 : []).length;
+  if (!agents && !workflows) return null;
+  // declaredApi('') is 0 (an unconstrained range accepts everything); report that
+  // as null so the message reads "built for an older version", never "API 0".
+  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows };
+  mismatch.message = apiMismatchMessage(mismatch);
+  return mismatch;
+}
+
+/**
+ * THE per-plugin sentence (spec §9 wording, "worca" is the product name) —
+ * rendered verbatim by the Plugins view (`p.apiMismatch.message`), the doctor's
+ * `agents-api` check and `worca plugin list`. An API-outdated plugin is NOT
+ * corrupt: it installed fine and its connector or chat channel still works —
+ * worca simply ignores the agents and pipeline templates it ships.
+ */
+export function apiMismatchMessage(mismatch) {
+  if (!mismatch) return '';
+  const { builtFor, agents, workflows } = mismatch;
+  return `built for plugin API ${builtFor ?? 'an older version'}; this version of worca requires `
+    + `plugin API ${WORCA_PLUGIN_API} for agents and pipeline templates — update or reinstall the plugin `
+    + `(${agents} agent(s), ${workflows} template(s) ignored)`;
 }
 
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
