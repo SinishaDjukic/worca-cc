@@ -115,7 +115,6 @@ import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
-import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
   setPluginEnabled, doctorPlugin,
@@ -4011,26 +4010,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
 // GET returns palette render order (.order ascending) with origin stamped; the
 // client builds draggable pills (colored dot + displayName + icon) from this.
 // ---------------------------------------------------------------------------
-// Channel vocabulary for the UI editor/wizard: built-in CHANNEL_IDS first, then
-// every CUSTOM id any registry agent references (produces/consumes/
-// optionalConsumes/channelDefs[].id), appended sorted + deduped. Channels are an
-// open vocabulary — a closed list would silently strip custom ids on edit.
-function collectChannelIds(agents) {
-  const customs = new Set();
-  for (const a of Array.isArray(agents) ? agents : []) {
-    if (!a) continue;
-    const ids = [
-      ...(Array.isArray(a.produces) ? a.produces : []),
-      ...(Array.isArray(a.consumes) ? a.consumes : []),
-      ...(Array.isArray(a.optionalConsumes) ? a.optionalConsumes : []),
-      ...(Array.isArray(a.channelDefs) ? a.channelDefs.map((d) => d && d.id) : []),
-    ];
-    for (const id of ids) {
-      if (typeof id === 'string' && id && !CHANNEL_IDS.includes(id)) customs.add(id);
-    }
-  }
-  return [...CHANNEL_IDS, ...[...customs].sort()];
-}
 
 app.get('/api/agents', async (req, res) => {
   try {
@@ -4042,7 +4021,7 @@ app.get('/api/agents', async (req, res) => {
     // (the mock switch in claude-runner.mjs), unlike the open channel vocabulary
     // it replaces in Task 12: an unknown mockRole is dropped by the registry
     // with a warning, never rejected.
-    res.json({ agents, channels: collectChannelIds(all), mockWriterRoles: [...MOCK_WRITER_ROLES] });
+    res.json({ agents, mockWriterRoles: [...MOCK_WRITER_ROLES] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

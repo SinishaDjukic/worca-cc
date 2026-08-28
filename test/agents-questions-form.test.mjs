@@ -39,10 +39,14 @@ test('builder prompt schema names the questions fields with guidance', () => {
   assert.match(src, /questionsDefault=true only for locked-on agents/);
 });
 
-test('both agent forms in index.html carry the three questions checkboxes', () => {
+test('both agent surfaces host the shared form, and it builds the three questions checkboxes', () => {
+  // P7: the form is DOM-built by agentFormRender, so index.html carries the two
+  // HOSTS and app.js carries the fields. Both halves are pinned here.
   const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
-  for (const cls of ['agent-f-questions"', 'agent-f-questions-locked', 'agent-f-questions-default']) {
-    const hits = html.split(cls).length - 1;
-    assert.ok(hits >= 2, `${cls} present in both the wizard and the edit pane (found ${hits})`);
+  assert.equal(html.split('class="agent-form"').length - 1, 2,
+    'the card edit pane and wizard Step 3 each host exactly one .agent-form');
+  const app = readFileSync(fileURLToPath(new URL('../ui/public/app.js', import.meta.url)), 'utf8');
+  for (const cls of ['agent-f-questions', 'agent-f-questions-locked', 'agent-f-questions-default']) {
+    assert.match(app, new RegExp(`fmCheck\\('${cls}'`), `${cls} is built by agentFormRender`);
   }
 });

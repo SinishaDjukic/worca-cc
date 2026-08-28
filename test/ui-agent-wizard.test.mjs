@@ -104,15 +104,18 @@ test('Generate POSTs the wizard body, shows Step 2, subscribes by genId; agentge
   assert.equal(doc.querySelector('#agw-status').textContent, 'drafting metadata…');
 
   const md = '# Docs Writer\n<img src=x onerror="boom()">\n';
-  ws().deliver({
-    type: 'agentgen-done', genId: 'agen_1',
-    draft: { meta: { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99, fanOut: false, loopSource: false }, markdown: md },
-  });
+  ws().deliver({ type: 'agentgen-done', genId: 'agen_1', draft: {
+    meta: { metaVersion: 2, key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs',
+      runnerType: 'producer', order: 99, inputs: [{ id: 'plan', type: 'md' }],
+      outputs: [{ id: 'review', type: 'md', filename: 'review-{cycle}.md' }] },
+    markdown: md,
+  } });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelector('#agw-step-3').classList.contains('hidden'), false);
-  const root = doc.querySelector('#agw-step-3');
-  assert.equal(root.querySelector('.agent-f-name').value, 'Docs Writer');
-  assert.equal(root.querySelector('.agent-f-md').value, md, 'markdown bound via .value (inert)');
+  const step3 = doc.querySelector('#agw-step-3');
+  assert.equal(step3.querySelector('.agent-f-name').value, 'Docs Writer');
+  assert.deepEqual([...step3.querySelectorAll('.agent-ports-in .pf-id')].map((i) => i.value), ['plan']);
+  assert.equal(step3.querySelector('.agent-f-md').value, md, 'markdown bound via .value (inert)');
 });
 
 test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the error verbatim', async () => {
@@ -140,12 +143,22 @@ test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the err
   doc.querySelector('#agw-purpose').dispatchEvent(new window.Event('input', { bubbles: true }));
   click(window, doc.querySelector('#agw-start'));
   await new Promise((r) => setTimeout(r, 0));
-  ws().deliver({ type: 'agentgen-done', genId: 'agen_2', draft: { meta: { key: 'docsWriter', displayName: 'Docs Writer', color: 'green', runnerType: 'producer', consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99 }, markdown: '# x' } });
+  ws().deliver({ type: 'agentgen-done', genId: 'agen_2', draft: {
+    meta: { metaVersion: 2, key: 'docsWriter', displayName: 'Docs Writer', color: 'green',
+      runnerType: 'producer', order: 99, inputs: [{ id: 'plan', type: 'md' }],
+      outputs: [{ id: 'review', type: 'md', filename: 'review-{cycle}.md' }] },
+    markdown: '# x' } });
   await new Promise((r) => setTimeout(r, 0));
   click(window, doc.querySelector('#agw-save'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(posts.length, 1);
   assert.equal(posts[0].meta.displayName, 'Docs Writer');
+  assert.equal(posts[0].meta.metaVersion, 2);
+  assert.equal(posts[0].meta.outputs[0].filename, 'review-{cycle}.md');
+  // The wizard derives the key from the FINAL display name (agent-store.mjs:56),
+  // so a Step-3 rename still renames the agent. The card editor is the only
+  // caller that PUTs a key.
+  assert.equal(posts[0].meta.key, undefined);
   assert.equal(doc.querySelector('#agw-step-3').classList.contains('hidden'), false, 'still on step 3');
   assert.match(doc.querySelector('#agw-msg').textContent, /already exists/);
   status = 201;

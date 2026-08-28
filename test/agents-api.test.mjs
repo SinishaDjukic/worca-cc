@@ -48,6 +48,7 @@ test('GET /api/agents carries origin + mockWriterRoles and EXCLUDES markdown', a
   assert.ok(data.agents.every((a) => !('markdown' in a)));
   // mockWriterRoles is a CLOSED list (the mock switch in claude-runner.mjs),
   // unlike the open channel vocabulary it will replace in Task 12.
+  assert.equal(data.channels, undefined, 'the channel vocabulary is gone from this payload');
   assert.ok(Array.isArray(data.mockWriterRoles));
   assert.ok(data.mockWriterRoles.includes('generic-verifier') && data.mockWriterRoles.includes('clarify'));
   assert.ok(!data.agents.some((a) => a.key === 'workspaceScanner'), 'workspace-only excluded by default');
@@ -109,18 +110,3 @@ test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a u
   assert.match((await r.json()).error, /Uses Docs/);
 });
 
-test('GET /api/agents channels is the open-vocabulary union: built-ins + custom ids from agents', async () => {
-  const meta = {
-    displayName: 'Spec Maker', description: 'emits a spec', color: 'blue', runnerType: 'producer',
-    consumes: ['plan'], produces: ['spec'], order: 50,
-    channelDefs: [{ id: 'spec', kind: 'json', filename: 'api-spec.json' }],
-  };
-  const c = await post('/api/agents', { meta, markdown: '# Agent: Spec Maker\n\nYou emit specs.\n' });
-  assert.equal(c.status, 201);
-  const data = await (await get('/api/agents')).json();
-  assert.ok(data.channels.includes('plan'), 'built-ins still present');
-  assert.ok(data.channels.includes('spec'), 'custom channel id surfaced');
-  assert.ok(data.channels.indexOf('spec') > data.channels.indexOf('decomposition'), 'customs appended after built-ins');
-  assert.equal(new Set(data.channels).size, data.channels.length, 'deduped');
-  await del('/api/agents/specMaker');
-});

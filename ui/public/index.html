@@ -841,41 +841,7 @@
               <div class="agent-detail" hidden>
                 <pre class="agent-md-view viewer"></pre>
                 <div class="agent-edit-pane" hidden>
-                  <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-                  <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-                  <div class="row-2">
-                    <div class="field"><label>Color</label>
-                      <div class="select-wrap"><select class="agent-f-color select">
-                        <option>green</option><option>peach</option><option>red</option>
-                        <option>blue</option><option>violet</option><option>amber</option>
-                      </select></div>
-                    </div>
-                    <div class="field"><label>Runner type</label>
-                      <div class="select-wrap"><select class="agent-f-runner select">
-                        <option>producer</option><option>verifier</option>
-                      </select></div>
-                    </div>
-                  </div>
-                  <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-                  <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-                  <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-                  <div class="field"><label>Connects to</label>
-                    <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                    <div class="agent-f-connects chip-select"></div>
-                  </div>
-                  <div class="row-2">
-                    <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                    <div class="field"><label>Flags</label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label>
-                    </div>
-                  </div>
-                  <div class="field"><label>System prompt (markdown)</label>
-                    <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea>
-                  </div>
+                  <div class="agent-form"></div>
                   <p class="agent-edit-msg form-msg" aria-live="polite"></p>
                   <div class="actions" style="justify-content:flex-end">
                     <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
@@ -1024,29 +990,7 @@
 
             <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
             <div class="wiz-step hidden" id="agw-step-3">
-              <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-              <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-              <div class="row-2">
-                <div class="field"><label>Color</label><div class="select-wrap"><select class="agent-f-color select"><option>green</option><option>peach</option><option>red</option><option>blue</option><option>violet</option><option>amber</option></select></div></div>
-                <div class="field"><label>Runner type</label><div class="select-wrap"><select class="agent-f-runner select"><option>producer</option><option>verifier</option></select></div></div>
-              </div>
-              <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-              <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-              <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-              <div class="field"><label>Connects to</label>
-                <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                <div class="agent-f-connects chip-select"></div></div>
-              <div class="row-2">
-                <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                <div class="field"><label>Flags</label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label></div>
-              </div>
-              <div class="field"><label>System prompt (markdown)</label>
-                <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea></div>
+              <div class="agent-form"></div>
               <p id="agw-msg" class="form-msg" aria-live="polite"></p>
               <div class="actions" style="justify-content:space-between">
                 <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>

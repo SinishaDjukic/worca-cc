@@ -9,12 +9,23 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const AGENTS = [
-  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*' },
-  { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42, origin: 'user', connectsTo: '*' },
+  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer',
+    metaVersion: 2, order: 1, origin: 'builtin', portSummary: 'Reads task; produces plan.',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md', store: 'project' }] },
+  { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'verifier',
+    metaVersion: 2, order: 42, origin: 'user', portSummary: 'Reads plan; produces review.',
+    verdict: { filename: 'docs-review.json' },
+    inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'docs-review.md' },
+              { id: 'pass', type: 'void', when: 'clean' }] },
   // Description resolved from the .md frontmatter, not authored in the sidecar.
-  { key: 'derivedDesc', displayName: 'Derived Desc', description: 'Came from the .md frontmatter.', descriptionDerived: true, color: 'blue', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 43, origin: 'user', connectsTo: '*' },
+  { key: 'derivedDesc', displayName: 'Derived Desc', description: 'Came from the .md frontmatter.',
+    descriptionDerived: true, color: 'blue', runnerType: 'producer', metaVersion: 2, order: 43, origin: 'user',
+    inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'review', type: 'md', filename: 'review.md' }] },
 ];
-const CHANNELS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+const MOCK_ROLES = ['clarify', 'planner-plan', 'generic-producer', 'generic-verifier'];
 
 class WSStub {
   constructor() { this.readyState = 1; this.sent = []; this._listeners = {}; WSStub.last = this; }
@@ -34,7 +45,13 @@ async function boot({ fetchHandler } = {}) {
   window.fetch = (url, opts) => {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, channels: CHANNELS }) });
+    // GET /api/agents/:key -> the full v2 pair the editor pane renders from.
+    const detail = u.match(/\/api\/agents\/([^/?]+)$/);
+    if (detail && (!opts || !opts.method || opts.method === 'GET')) {
+      const meta = AGENTS.find((a) => a.key === detail[1]);
+      if (meta) return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta, markdown: '# b\n' }) });
+    }
+    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: MOCK_ROLES }) });
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
@@ -82,9 +99,8 @@ test('Edit opens the pane, fills fields via .value (markup inert), and PUTs the 
   assert.equal(ta.value, MD_XSS, 'markdown bound via .value');
   assert.equal(ta.querySelector && ta.querySelector('img'), null, 'no element parsed (never innerHTML)');
   assert.equal(card.querySelector('.agent-f-name').value, 'Docs Writer');
-  // consumes chips: 'plan' checked, others not
-  const planCb = [...card.querySelectorAll('.agent-f-consumes input')].find((c) => c.value === 'plan');
-  assert.equal(planCb.checked, true);
+  // the typed INPUT ports render as editable rows, not channel chips
+  assert.deepEqual([...card.querySelectorAll('.agent-ports-in .port-row .pf-id')].map((i) => i.value), ['plan']);
 
   card.querySelector('.agent-f-name').value = 'Docs v2';
   ta.value = MD_XSS + 'edited\n';
@@ -92,36 +108,39 @@ test('Edit opens the pane, fills fields via .value (markup inert), and PUTs the 
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(puts.length, 1);
   assert.equal(puts[0].meta.displayName, 'Docs v2');
-  assert.deepEqual(puts[0].meta.consumes, ['plan']);
+  assert.deepEqual(puts[0].meta.inputs.map((p) => p.id), ['plan']);
+  assert.equal(puts[0].meta.consumes, undefined, 'no channel fields are ever PUT');
   assert.equal(puts[0].markdown, MD_XSS + 'edited\n');
 });
 
-test('editing an agent with a custom channel id keeps it: chip renders checked, save round-trips it', async () => {
+test('the pane renders typed ports and PUTs exactly what the form read back', async () => {
   const puts = [];
-  const metaWithCustom = { ...AGENTS[1], consumes: ['plan', 'spec'] }; // 'spec' NOT in the CHANNELS stub
-  const { window } = await boot({
-    fetchHandler: (u, opts) => {
-      if (u.endsWith('/api/agents/docsWriter') && (!opts.method || opts.method === 'GET')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: metaWithCustom, markdown: '# b' }) });
-      }
-      if (u.endsWith('/api/agents/docsWriter') && opts.method === 'PUT') {
-        puts.push(JSON.parse(opts.body));
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: metaWithCustom, markdown: '# b' }) });
-      }
-      return null;
-    },
-  });
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/agents/docsWriter') && opts && opts.method === 'PUT') {
+      puts.push(JSON.parse(opts.body));
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: { key: 'docsWriter' } }) });
+    }
+    return null;
+  } });
   await goAgents(window);
-  const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
+  const card = window.document.querySelectorAll('.agent-card')[1];
   click(window, card.querySelector('.agent-edit'));
   await new Promise((r) => setTimeout(r, 0));
-  const specCb = [...card.querySelectorAll('.agent-f-consumes input')].find((c) => c.value === 'spec');
-  assert.ok(specCb, 'custom channel renders a chip even though the channels list omits it');
-  assert.equal(specCb.checked, true, 'custom channel chip is checked');
-  click(window, card.querySelector('.agent-edit-save')); // save WITHOUT touching any chip
+  const pane = card.querySelector('.agent-edit-pane');
+  assert.equal(pane.hidden, false);
+  const form = pane.querySelector('.agent-form');
+  assert.ok(form, 'the pane hosts the shared form');
+  assert.deepEqual([...form.querySelectorAll('.agent-ports-out .port-row .pf-id')].map((i) => i.value), ['review', 'pass']);
+  // Add an input, then save.
+  click(window, form.querySelector('.pf-add-in'));
+  form.querySelector('.agent-ports-in .port-row:last-child .pf-id').value = 'extra';
+  click(window, pane.querySelector('.agent-edit-save'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(puts.length, 1);
-  assert.deepEqual(puts[0].meta.consumes, ['plan', 'spec'], 'custom id survives the edit round-trip');
+  assert.equal(puts[0].meta.metaVersion, 2);
+  assert.deepEqual(puts[0].meta.inputs.map((p) => p.id), ['plan', 'extra']);
+  assert.equal(puts[0].meta.consumes, undefined, 'no channel fields are ever PUT');
+  assert.equal('markdown' in puts[0], true);
 });
 
 test('a derived description is shown as a placeholder, never pre-filled, and never PUT back', async () => {
@@ -152,26 +171,19 @@ test('a derived description is shown as a placeholder, never pre-filled, and nev
   assert.equal(puts[0].meta.description, '', 'a no-op save cannot freeze the fallback into the sidecar');
 });
 
-test('a 400 on save keeps the pane open and surfaces the error in the form', async () => {
-  const { window } = await boot({
-    fetchHandler: (u, opts) => {
-      if (u.endsWith('/api/agents/docsWriter') && (!opts.method || opts.method === 'GET')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: AGENTS[1], markdown: '# b' }) });
-      }
-      if (u.endsWith('/api/agents/docsWriter') && opts.method === 'PUT') {
-        return Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'markdown body cannot be empty' }) });
-      }
-      return null;
-    },
-  });
+test('a 400 on save keeps the pane open and surfaces the store rule VERBATIM', async () => {
+  const rule = 'outputs.review: md outputs require a filename template';
+  const { window } = await boot({ fetchHandler: (u, opts) => (u.includes('/api/agents/docsWriter') && opts && opts.method === 'PUT'
+    ? Promise.resolve({ ok: false, status: 400, json: async () => ({ error: rule }) })
+    : null) });
   await goAgents(window);
-  const doc = window.document;
-  const card = doc.querySelector('.agent-card[data-agent-key="docsWriter"]');
+  const card = window.document.querySelectorAll('.agent-card')[1];
   click(window, card.querySelector('.agent-edit'));
   await new Promise((r) => setTimeout(r, 0));
-  card.querySelector('.agent-f-md').value = '';
-  click(window, card.querySelector('.agent-edit-save'));
+  const pane = card.querySelector('.agent-edit-pane');
+  click(window, pane.querySelector('.agent-edit-save'));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(card.querySelector('.agent-edit-pane').hidden, false, 'pane stays open');
-  assert.match(card.querySelector('.agent-edit-msg').textContent, /cannot be empty/);
+  assert.equal(pane.hidden, false, 'the pane stays open on a rejection');
+  assert.equal(pane.querySelector('.agent-edit-msg').textContent, rule, 'verbatim — never re-worded');
+  assert.ok(pane.querySelector('.agent-edit-msg').className.includes('err'));
 });

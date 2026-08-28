@@ -1301,6 +1301,27 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agent-not-placeable { background:var(--amber-bg); color:var(--amber-ink); }
 .agent-not-placeable[hidden] { display:none; }
 
+/* ---------- Agents-view port editor ---------- */
+.row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+.agent-ports{margin-bottom:16px;}
+.agent-ports-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.agent-ports-head b{font-size:12.5px;font-weight:600;letter-spacing:.06em;}
+.agent-ports-head .pf-count{margin-left:auto;font-size:11px;}
+.agent-ports-list{display:flex;flex-direction:column;gap:9px;}
+.port-row{border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;background:var(--panel);}
+.port-row-top{display:flex;align-items:flex-end;gap:9px;}
+.port-row-top .field{margin:0;flex:1 1 0;min-width:0;}
+.port-row-top .pf-f-type,.port-row-top .pf-f-as,.port-row-top .pf-f-when,.port-row-top .pf-f-store{flex:0 0 104px;}
+.port-row-top .field label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px;}
+.port-row-top .field[hidden]{display:none;}
+.port-row-flags{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:9px;}
+.pf-up,.pf-down,.pf-remove{flex:0 0 auto;font-size:13px;line-height:1;padding:8px 10px;}
+.pf-directive-wrap{margin-top:9px;}
+.pf-directive-wrap[hidden]{display:none;}
+.pf-hint,.pf-note{display:block;margin-top:6px;font-size:11px;}
+.pf-hint[hidden],.pf-note[hidden]{display:none;}
+.agent-caps,.agent-workspace{display:flex;flex-direction:column;gap:2px;}
+
 /* (2) space between the header pills and the expanded markdown body */
 .agent-detail { margin-top:14px; }
 .agent-origin.origin-user { background:#EAE6F8; }

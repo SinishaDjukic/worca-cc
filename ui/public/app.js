@@ -23,7 +23,6 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
-  channelIds: [], // known channel ids from /api/agents (drives the v1 agent editor; retired in Task 12)
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
@@ -75,6 +74,7 @@ import {
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
@@ -6452,7 +6452,6 @@ async function loadAgentsList() {
     const res = await fetch('/api/agents?all=1');
     const data = await safeJson(res);
     state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
-    if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
     if (res.ok && Array.isArray(data.mockWriterRoles)) state.mockWriterRoles = data.mockWriterRoles;
   } catch { state.agentsList = []; }
   return state.agentsList;
@@ -6621,82 +6620,575 @@ function buildChipChecks(host, options, selected) {
 }
 const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
 
-// The two questions sub-flags are meaningless (and normalizeMeta force-clears
-// them) when the agent cannot ask; mirror that in the form.
-function syncQuestionFlags(root) {
-  const asks = root.querySelector('.agent-f-questions');
-  const locked = root.querySelector('.agent-f-questions-locked');
-  const def = root.querySelector('.agent-f-questions-default');
-  if (!asks || !locked || !def) return;
-  locked.disabled = !asks.checked;
-  def.disabled = !asks.checked;
-  if (!asks.checked) { locked.checked = false; def.checked = false; }
+// ---- Shared agent metadata form (card editor AND wizard Step 3) --------------
+// The form emits a meta v2 SIDECAR and nothing else. It never blocks a save:
+// every rule below is a live .pf-hint mirroring the store's 400 text, and the
+// PUT/POST always goes out — the server owns the verdict (spec §9).
+// PORT_ID_RE, MAX_PORTS_PER_SIDE and PORT_TYPES are IMPORTED, never re-typed:
+// a second copy of PORT_ID_RE is exactly how the editor's hint and the store's
+// 400 start disagreeing. (They are imported at the top of this file.)
+const PORT_TYPE_OPTIONS = PORT_TYPES.filter((t) => t !== 'any'); // `any` is engine-only
+const OUTPUT_WHENS = ['always', 'blocking', 'clean'];
+const PORT_STORES = ['run', 'project'];
+const RUNNER_TYPES = ['producer', 'verifier', 'clarifier'];
+const AGENT_COLORS = ['green', 'peach', 'red', 'blue', 'violet', 'amber'];
+const AGENT_SCOPES = ['project', 'workspace-only'];
+const WORKSPACE_STRATEGIES = ['explore', 'task', 'review'];
+const PORT_OWN_KEYS = ['id', 'type', 'required', 'loop', 'expands', 'as', 'directive', 'when', 'filename', 'store'];
+/**
+ * Keys the form OWNS: it either surfaces them or deliberately drops them.
+ * Anything NOT listed here rides through dataset.extra untouched, so a newer
+ * worca's field survives an edit by an older one.
+ */
+const AGENT_OWN_KEYS = [
+  'key', 'displayName', 'description', 'color', 'runnerType', 'order', 'domain', 'scope', 'icon',
+  'fanOut', 'asksQuestions', 'questionsLocked', 'questionsDefault', 'inputs', 'outputs', 'verdict',
+  'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut', 'workspaceStrategy',
+  'workspaceVariantOf', 'placeable', 'requiresSkills', 'promptHints', 'metaVersion',
+  // Computed by the registry, never authored back into a sidecar.
+  'origin', 'agentPath', 'agentFile', 'descriptionDerived', 'portSummary',
+  // DROP LIST: the v1 wiring normalizeMeta still derives on EVERY meta (even a
+  // pure-v2 sidecar gets consumes/produces from the runnerType fallback). The
+  // form must neither show nor re-emit them; agent-store's merge keeps whatever
+  // is already on disk until P8 deletes the fields outright. P8 must delete
+  // these eight entries in the same commit that removes the fields, or its
+  // kill-list grep guard flags this file.
+  'consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource',
+  'uiPhase', 'version', 'channelDefs',
+];
+/**
+ * The port type each non-default `as` renderer requires — a byte-for-byte copy
+ * of AS_REQUIRES_TYPE in src/shared/graph/agent-meta.mjs. `file` is deliberately
+ * ABSENT: it is the default, is materialized on non-void inputs only, and its
+ * rule is therefore "non-void", not "md".
+ */
+const AS_REQUIRES_TYPE = { answers: 'json', 'fix-review': 'md', worktree: 'void' };
+const PORT_AS = ['file', 'answers', 'fix-review', 'worktree'];
+const FILENAME_TOKENS = ['cycle', 'vsuffix', 'base'];
+/** readVerdict/readOutputs reject a path or a `..` in any filename template. */
+const BASENAME_BAD = (f) => /[\\/]/.test(f) || f.includes('..');
+// AS_REQUIRES_TYPE and the ~10 rule strings in refreshAgentForm are the only
+// things this file still duplicates from src/shared/graph/agent-meta.mjs (that
+// module exports neither). The hint test pins every string against the wording
+// the store actually emits; P8 should export both and delete these copies.
+
+/** The `.agent-form` host inside a pane (or the pane itself when it IS one). */
+const formHost = (root) => root.querySelector('.agent-form') || root;
+/** dataset JSON never throws the form down: a hand-mangled attribute degrades to {}. */
+const readExtra = (el) => { try { return el.dataset.extra ? JSON.parse(el.dataset.extra) : {}; } catch { return {}; } };
+
+function fmField(labelText, control, cls) {
+  const wrap = document.createElement('div');
+  wrap.className = `field${cls ? ` ${cls}` : ''}`;
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  wrap.append(label, control);
+  return wrap;
+}
+function fmInput(cls, value, { type = 'text', placeholder = '' } = {}) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.className = `${cls} input`;
+  input.spellcheck = false;
+  input.value = value == null ? '' : String(value);
+  if (placeholder) input.placeholder = placeholder;
+  return input;
+}
+function fmSelect(cls, options, value) {
+  const sel = document.createElement('select');
+  sel.className = `${cls} select`;
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = typeof opt === 'string' ? opt : opt.value;
+    o.textContent = typeof opt === 'string' ? opt : opt.text;
+    sel.appendChild(o);
+  }
+  sel.value = value == null ? '' : String(value);
+  return sel;
+}
+function fmCheck(cls, labelText, checked) {
+  const label = document.createElement('label');
+  label.className = 'fanout-toggle';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = cls;
+  cb.checked = Boolean(checked);
+  const txt = document.createElement('span');
+  txt.textContent = labelText;
+  label.append(cb, txt);
+  return label;
+}
+/** A RULE the store would 400 on — red. */
+function fmHint(cls) {
+  const el = document.createElement('small');
+  el.className = `pf-hint hint err ${cls}`.trim();
+  el.hidden = true;
+  return el;
+}
+/** An explanation, not a rule — same slot, neutral colour (never `err`). */
+function fmNote(cls) {
+  const el = document.createElement('small');
+  el.className = `pf-note hint ${cls}`.trim();
+  el.hidden = true;
+  return el;
+}
+function fmMini(cls, text, title) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `${cls} btn-ghost btn-mini`;
+  b.textContent = text;
+  if (title) b.title = title;
+  return b;
 }
 
-// Fill every .agent-f-* field under `root` from meta (+ optional markdown).
-function agentFormFill(root, meta, markdown) {
-  const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
-  // Channels are an open vocabulary: union the server list with the meta's own
-  // ids (known first, then its extra customs) so a stale/closed list can never
-  // drop a custom channel on the edit round-trip.
-  const channels = [...known];
-  const own = [meta.consumes, meta.optionalConsumes, meta.produces];
-  for (const list of own) {
-    for (const id of Array.isArray(list) ? list : []) {
-      if (typeof id === 'string' && id && !channels.includes(id)) channels.push(id);
+/** One port row. `side` is 'in' | 'out'; the two sides carry different fields. */
+function buildPortRow(side, port) {
+  const p = port || {};
+  const row = document.createElement('div');
+  row.className = `port-row port-row-${side}`;
+  // Unsurfaced sidecar keys (label, description, artifactKind, anything a newer
+  // worca ships) ride ALONG so a save can never silently drop them.
+  const extra = {};
+  for (const [k, v] of Object.entries(p)) if (!PORT_OWN_KEYS.includes(k)) extra[k] = v;
+  if (Object.keys(extra).length) row.dataset.extra = JSON.stringify(extra);
+
+  const top = document.createElement('div');
+  top.className = 'port-row-top';
+  top.append(
+    fmField('id', fmInput('pf-id', p.id, { placeholder: 'portId' }), 'pf-f-id'),
+    fmField('type', fmSelect('pf-type', PORT_TYPE_OPTIONS, p.type || 'md'), 'pf-f-type'),
+  );
+  if (side === 'in') {
+    // The blank option is "the store's default" (file on a non-void input,
+    // nothing on a void one) — NOT the empty string. Without it a void input is
+    // unauthorable: the form would always emit as:'file', which the store 400s.
+    top.append(fmField('as', fmSelect('pf-as', [{ value: '', text: '— default' }, ...PORT_AS], p.as || ''), 'pf-f-as'));
+  } else {
+    top.append(
+      fmField('when', fmSelect('pf-when', OUTPUT_WHENS, p.when || 'always'), 'pf-f-when'),
+      fmField('filename', fmInput('pf-filename', p.filename, { placeholder: '{base}.md' }), 'pf-f-filename'),
+      fmField('store', fmSelect('pf-store', PORT_STORES, p.store || 'run'), 'pf-f-store'),
+    );
+  }
+  top.append(
+    fmMini('pf-up', '▲', 'Move this port up'),
+    fmMini('pf-down', '▼', 'Move this port down'),
+    fmMini('pf-remove', '×', 'Remove this port'),
+  );
+  row.appendChild(top);
+
+  if (side === 'in') {
+    const flags = document.createElement('div');
+    flags.className = 'port-row-flags';
+    // loop coerces required:false in the registry — mirror it so the form never
+    // shows a state the store would rewrite under the user.
+    flags.append(
+      fmCheck('pf-required', 'required', p.required !== false && !p.loop),
+      fmCheck('pf-loop', 'loop', p.loop === true),
+      fmCheck('pf-expands', 'expands', p.expands === true),
+      fmMini('pf-directive-toggle', p.directive ? 'directive ✓' : 'directive', 'Prompt text injected when this port fires'),
+    );
+    row.appendChild(flags);
+    const dirWrap = document.createElement('div');
+    dirWrap.className = 'pf-directive-wrap';
+    dirWrap.hidden = true;
+    const dir = document.createElement('textarea');
+    dir.className = 'pf-directive textarea';
+    dir.rows = 4;
+    dir.spellcheck = false;
+    dir.placeholder = 'Markdown appended to the task prompt when this port fires ({path} substituted)';
+    dir.value = p.directive || '';
+    dirWrap.appendChild(dir);
+    row.appendChild(dirWrap);
+  }
+  row.append(fmHint('pf-hint-row'), fmNote('pf-note-row'));
+  syncPortRow(row);
+  return row;
+}
+
+/** Per-row mirroring of the coercions the registry applies anyway. */
+function syncPortRow(row) {
+  const loop = row.querySelector('.pf-loop');
+  const required = row.querySelector('.pf-required');
+  if (loop && required) {
+    required.disabled = loop.checked;
+    if (loop.checked) required.checked = false;
+  }
+  const type = row.querySelector('.pf-type').value;
+  // A void port carries no payload: hide the two fields the store would 400 on.
+  for (const cls of ['.pf-f-filename', '.pf-f-store']) {
+    const f = row.querySelector(cls);
+    if (f) f.hidden = type === 'void';
+  }
+}
+
+/** One ports section (head + list + the section-level hint). */
+function buildPortsSection(side, ports) {
+  const sec = document.createElement('div');
+  sec.className = `agent-ports agent-ports-${side}`;
+  const head = document.createElement('div');
+  head.className = 'agent-ports-head';
+  const title = document.createElement('b');
+  title.textContent = side === 'in' ? 'INPUTS' : 'OUTPUTS';
+  const count = document.createElement('span');
+  count.className = 'pf-count hint';
+  const add = fmMini(`pf-add-${side}`, side === 'in' ? '+ input' : '+ output');
+  head.append(title, add, count);
+  sec.appendChild(head);
+  const list = document.createElement('div');
+  list.className = 'agent-ports-list';
+  for (const p of Array.isArray(ports) ? ports : []) {
+    // The synthesized `await` gate is engine surface, never editable — and the
+    // registry never ships it on a sidecar, so this filter is belt-and-braces.
+    if (p && (p.synthetic || p.id === 'await')) continue;
+    list.appendChild(buildPortRow(side, p));
+  }
+  sec.append(list, fmHint('pf-hint-side'));
+  return sec;
+}
+
+/**
+ * Rebuild every hint + the two counters from the form's CURRENT state.
+ * Wholesale is the point: a rule can be invalidated by an edit three rows away
+ * (a cleared verdict filename invalidates every `when:'blocking'` output), and
+ * recomputing the lot is the only formulation that cannot drift. Cost is bounded
+ * by 2 × MAX_PORTS_PER_SIDE rows. It may mutate AUTHORED state only through the
+ * two coercions the registry applies anyway (loop ⇒ required:false,
+ * !asksQuestions ⇒ locked/default:false) and through `hidden`.
+ */
+function refreshAgentForm(host) {
+  const setText = (el, text) => { el.textContent = text; el.hidden = !text; };
+  const runner = host.querySelector('.agent-f-runner').value;
+  const verdict = host.querySelector('.agent-f-verdict').value.trim();
+  const agentMsgs = [];
+  if (runner === 'verifier' && !verdict) agentMsgs.push('runnerType "verifier" requires verdict: { filename }');
+  if (verdict && BASENAME_BAD(verdict)) agentMsgs.push(`verdict filename "${verdict}" must be a plain basename`);
+  // The form ships BOTH controls side by side, so this 400 is one keystroke away.
+  const variantOf = host.querySelector('.agent-f-ws-variantof').value.trim();
+  if (variantOf && host.querySelector('.agent-f-scope').value !== 'workspace-only') {
+    agentMsgs.push('workspaceVariantOf requires scope "workspace-only"');
+  }
+  for (const side of ['in', 'out']) {
+    const sec = host.querySelector(`.agent-ports-${side}`);
+    const rows = [...sec.querySelectorAll('.port-row')];
+    const label = side === 'in' ? 'inputs' : 'outputs';
+    sec.querySelector('.pf-count').textContent = `(${rows.length}/${MAX_PORTS_PER_SIDE})`;
+    sec.querySelector(`.pf-add-${side}`).disabled = rows.length >= MAX_PORTS_PER_SIDE;
+    const seen = new Set();
+    const sideMsgs = [];
+    for (const row of rows) {
+      syncPortRow(row);
+      const id = row.querySelector('.pf-id').value.trim();
+      const type = row.querySelector('.pf-type').value;
+      const msgs = [];   // rules the store would 400 on
+      const notes = [];  // explanations
+      if (id === 'await') {
+        msgs.push(`${label}: port id "await" is reserved — the engine synthesizes the await gate port on every agent node`);
+      } else if (id && !PORT_ID_RE.test(id)) {
+        msgs.push(`${label}: bad port id "${id}"`);
+      }
+      if (id) {
+        if (seen.has(id)) sideMsgs.push(`${label}: duplicate port id "${id}"`);
+        seen.add(id);
+      }
+      if (side === 'in') {
+        if (row.querySelector('.pf-expands').checked && type !== 'json') {
+          msgs.push(`${label}.${id}: expands is only legal on json inputs`);
+        }
+        // Mirrors readInputs exactly: `file` has no entry in AS_REQUIRES_TYPE,
+        // so its rule is "non-void"; every other renderer names a type.
+        const as = row.querySelector('.pf-as').value;
+        if (as) {
+          const need = Object.hasOwn(AS_REQUIRES_TYPE, as) ? AS_REQUIRES_TYPE[as] : null;
+          if (need ? type !== need : type === 'void') {
+            msgs.push(`${label}.${id}: as "${as}" requires a ${need || 'non-void'} port (got ${type})`);
+          }
+        }
+        if (row.querySelector('.pf-loop').checked) {
+          notes.push('loop inputs are optional; a fresh token on this port re-fires the agent');
+        }
+      } else {
+        const when = row.querySelector('.pf-when').value;
+        if (when !== 'always' && !verdict) {
+          msgs.push(`${label}.${id}: when "${when}" requires the agent to declare verdict: { filename }`);
+        } else if (when !== 'always') {
+          notes.push('"blocking"/"clean" branch on the verdict file above');
+        }
+        const fn = row.querySelector('.pf-filename').value.trim();
+        if (type !== 'void' && !fn) {
+          msgs.push(`${label}.${id}: ${type} outputs require a filename template`);
+        } else if (fn) {
+          if (BASENAME_BAD(fn)) msgs.push(`${label}.${id}: filename "${fn}" must be a plain basename`);
+          const bad = [...fn.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]).filter((t) => !FILENAME_TOKENS.includes(t));
+          if (bad.length) msgs.push(`${label}.${id}: filename "${fn}" uses unknown token(s) ${bad.map((t) => `{${t}}`).join(', ')}`);
+        }
+      }
+      setText(row.querySelector('.pf-hint-row'), msgs.join(' · '));
+      setText(row.querySelector('.pf-note-row'), notes.join(' · '));
+    }
+    if (side === 'out') {
+      if (!rows.length) sideMsgs.push('at least one output port is required');
+      if (runner === 'clarifier' && !rows.some((r) => r.querySelector('.pf-type').value === 'json')) {
+        agentMsgs.push('runnerType "clarifier" requires at least one json output port');
+      }
+    }
+    setText(sec.querySelector('.pf-hint-side'), sideMsgs.join(' · '));
+  }
+  setText(host.querySelector('.pf-hint-agent'), agentMsgs.join(' · '));
+  // The two questions sub-flags are meaningless (and normalizeMeta force-clears
+  // them) when the agent cannot ask; mirror that.
+  const asks = host.querySelector('.agent-f-questions');
+  for (const cls of ['.agent-f-questions-locked', '.agent-f-questions-default']) {
+    const cb = host.querySelector(cls);
+    cb.disabled = !asks.checked;
+    if (!asks.checked) cb.checked = false;
+  }
+}
+
+/**
+ * Build the whole v2 form under `host` from `meta`.
+ * @param {HTMLElement} host  a .agent-form element (or a container holding one)
+ * @param {object} meta       a v2 sidecar (registry-normalized or a gen draft)
+ * @param {{markdown?: string, mockWriterRoles?: string[], registryKeys?: string[]}} [opts]
+ */
+function agentFormRender(host, meta, opts = {}) {
+  const root = formHost(host);
+  const m = meta || {};
+  const roles = Array.isArray(opts.mockWriterRoles) ? opts.mockWriterRoles : state.mockWriterRoles;
+  const keys = Array.isArray(opts.registryKeys) ? opts.registryKeys : state.agentsList.map((a) => a.key);
+  root.dataset.agentKey = m.key || '';
+  const extra = {};
+  for (const [k, v] of Object.entries(m)) if (!AGENT_OWN_KEYS.includes(k)) extra[k] = v;
+  root.dataset.extra = JSON.stringify(extra);
+
+  const frag = document.createDocumentFragment();
+  frag.appendChild(fmField('Display name', fmInput('agent-f-name', m.displayName)));
+  // A description resolved from the .md frontmatter is computed, not authored:
+  // show it as a placeholder, never as a value — pre-filling it would PUT it
+  // straight back and freeze the fallback into the sidecar.
+  const desc = fmInput('agent-f-desc', m.descriptionDerived ? '' : (m.description || ''));
+  if (m.descriptionDerived) desc.placeholder = m.description || '';
+  frag.appendChild(fmField('Description', desc));
+
+  const row1 = document.createElement('div');
+  row1.className = 'row-2';
+  row1.append(
+    fmField('Color', fmSelect('agent-f-color', AGENT_COLORS, m.color || 'amber')),
+    fmField('Runner type', fmSelect('agent-f-runner', RUNNER_TYPES, m.runnerType || 'producer')),
+  );
+  const row2 = document.createElement('div');
+  row2.className = 'row-2';
+  row2.append(
+    fmField('Order', fmInput('agent-f-order', m.order != null ? m.order : 99, { type: 'number' })),
+    fmField('Verdict filename', fmInput('agent-f-verdict', (m.verdict && m.verdict.filename) || '', {
+      placeholder: 'required for verifiers, e.g. review-cycle{cycle}.json',
+    })),
+  );
+  const row3 = document.createElement('div');
+  row3.className = 'row-3';
+  row3.append(
+    fmField('Domain', fmInput('agent-f-domain', m.domain || '', { placeholder: 'general' })),
+    fmField('Scope', fmSelect('agent-f-scope', AGENT_SCOPES, m.scope || 'project')),
+    fmField('Icon (SVG path)', fmInput('agent-f-icon', m.icon || '', { placeholder: '<path d="…"/>' })),
+  );
+  frag.append(row1, row2, row3, fmHint('pf-hint-agent'));
+  frag.append(buildPortsSection('in', m.inputs), buildPortsSection('out', m.outputs));
+
+  const caps = document.createElement('div');
+  caps.className = 'field agent-caps';
+  const capsLabel = document.createElement('label');
+  capsLabel.textContent = 'Capabilities';
+  caps.append(
+    capsLabel,
+    fmCheck('agent-f-fanout', 'Research fan-out', m.fanOut),
+    fmCheck('agent-f-questions', 'Asks questions', m.asksQuestions),
+    fmCheck('agent-f-questions-locked', 'Questions locked', m.questionsLocked),
+    fmCheck('agent-f-questions-default', 'Questions on by default', m.questionsDefault),
+    fmCheck('agent-f-sideeffect', 'Writes code (sideEffect)', m.sideEffect === 'code'),
+    fmCheck('agent-f-wantsrequest', 'Carries the original request', m.wantsRequest === true),
+    fmCheck('agent-f-placeable', 'Placeable on a canvas', m.placeable !== false),
+  );
+  frag.appendChild(caps);
+
+  const row4 = document.createElement('div');
+  row4.className = 'row-2';
+  row4.append(
+    fmField('Mock role', fmSelect('agent-f-mockrole', [{ value: '', text: 'auto' }, ...roles.map((r) => ({ value: r, text: r }))], m.mockRole || '')),
+    fmField('Requires skills', fmInput('agent-f-skills', (m.requiresSkills || []).join(', '), { placeholder: 'skill-one, skill-two' })),
+  );
+  const hints = document.createElement('textarea');
+  hints.className = 'agent-f-hints textarea';
+  hints.rows = 3;
+  hints.spellcheck = false;
+  hints.value = m.promptHints || '';
+  frag.append(row4, fmField('Prompt hints', hints));
+
+  const ws = document.createElement('div');
+  ws.className = 'field agent-workspace';
+  // NB: the heading local is `wsHeadLabel` ON PURPOSE. Do NOT shorten it to the
+  // ws + Label form: test/ui-install-removed.test.mjs guards the removed
+  // WS-status indicator with a naive substring check over app.js as PLAIN TEXT,
+  // so even a comment mentioning that token reds it. Do not weaken the guard.
+  const wsHeadLabel = document.createElement('label');
+  wsHeadLabel.textContent = 'Workspace runs';
+  const variant = fmInput('agent-f-ws-variantof', m.workspaceVariantOf || '', { placeholder: 'agent key' });
+  variant.setAttribute('list', 'agent-f-ws-keys');
+  const datalist = document.createElement('datalist');
+  datalist.id = 'agent-f-ws-keys';
+  for (const k of keys) {
+    const o = document.createElement('option');
+    o.value = k;
+    datalist.appendChild(o);
+  }
+  const wsRow = document.createElement('div');
+  wsRow.className = 'row-2';
+  wsRow.append(
+    fmField('Strategy', fmSelect('agent-f-ws-strategy', ['', ...WORKSPACE_STRATEGIES], m.workspaceStrategy || '')),
+    fmField('Variant of', variant),
+  );
+  ws.append(wsHeadLabel, fmCheck('agent-f-ws-fanout', 'Force fan-out on workspace runs', m.workspaceFanOut === true), wsRow, datalist);
+  frag.appendChild(ws);
+
+  const md = document.createElement('textarea');
+  md.className = 'agent-f-md textarea';
+  md.rows = 16;
+  md.spellcheck = false;
+  md.value = typeof opts.markdown === 'string' ? opts.markdown : '';
+  frag.appendChild(fmField('System prompt (markdown)', md));
+
+  root.replaceChildren(frag);
+  refreshAgentForm(root);
+  bindAgentForm(root);
+}
+
+/** ONE delegated click + one change + one input listener per host — rows come and go. */
+function bindAgentForm(host) {
+  if (host.dataset.bound === '1') return;
+  host.dataset.bound = '1';
+  host.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (!t || !t.closest) return;
+    const add = t.closest('.pf-add-in, .pf-add-out');
+    if (add) {
+      if (add.disabled) return;
+      const side = add.classList.contains('pf-add-in') ? 'in' : 'out';
+      host.querySelector(`.agent-ports-${side} .agent-ports-list`).appendChild(buildPortRow(side, null));
+      refreshAgentForm(host);
+      return;
+    }
+    const row = t.closest('.port-row');
+    if (!row) return;
+    if (t.closest('.pf-remove')) { row.remove(); refreshAgentForm(host); return; }
+    if (t.closest('.pf-up')) {
+      if (row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+      refreshAgentForm(host);
+      return;
+    }
+    if (t.closest('.pf-down')) {
+      if (row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
+      refreshAgentForm(host);
+      return;
+    }
+    if (t.closest('.pf-directive-toggle')) {
+      const wrap = row.querySelector('.pf-directive-wrap');
+      wrap.hidden = !wrap.hidden;
+    }
+  });
+  // One handler for every field: the hint set is a pure function of the form.
+  host.addEventListener('change', () => refreshAgentForm(host));
+  // `change` on a text input only fires on blur; the id/filename/verdict hints
+  // must track typing, so mirror it on input.
+  host.addEventListener('input', (ev) => {
+    if (ev.target && ev.target.matches && ev.target.matches('.pf-id, .pf-filename, .agent-f-verdict')) {
+      refreshAgentForm(host);
+    }
+  });
+}
+
+function readPortRow(row, side) {
+  const extra = readExtra(row);
+  const type = row.querySelector('.pf-type').value;
+  const port = { ...extra, id: row.querySelector('.pf-id').value.trim(), type };
+  if (side === 'in') {
+    const loop = row.querySelector('.pf-loop').checked;
+    port.required = loop ? false : row.querySelector('.pf-required').checked; // loop implies optional
+    if (loop) port.loop = true;
+    if (row.querySelector('.pf-expands').checked) port.expands = true;
+    // Blank means "let the store default it" — which is how a void input is
+    // authored. An explicitly chosen value is emitted as chosen, even when the
+    // hint says the store will reject it: the client never pre-empts the store.
+    const as = row.querySelector('.pf-as').value;
+    if (as) port.as = as;
+    const directive = row.querySelector('.pf-directive').value;
+    if (directive.trim()) port.directive = directive;
+  } else {
+    port.when = row.querySelector('.pf-when').value;
+    // A void port carries no payload — the store 400s on either field.
+    if (type !== 'void') {
+      const filename = row.querySelector('.pf-filename').value.trim();
+      if (filename) port.filename = filename;
+      port.store = row.querySelector('.pf-store').value;
     }
   }
-  const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
-  root.querySelector('.agent-f-name').value = meta.displayName || '';
-  // A description resolved from the .md frontmatter is computed, not authored:
-  // show it as a placeholder so the user knows where the blurb comes from, but
-  // never as a value — pre-filling it would PUT it straight back and freeze the
-  // fallback into the sidecar (and make an empty description unreachable).
-  const descInput = root.querySelector('.agent-f-desc');
-  descInput.value = meta.descriptionDerived ? '' : (meta.description || '');
-  descInput.placeholder = meta.descriptionDerived ? meta.description : '';
-  root.querySelector('.agent-f-color').value = meta.color || 'amber';
-  root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
-  buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
-  buildChipChecks(root.querySelector('.agent-f-optional'), channels, meta.optionalConsumes);
-  buildChipChecks(root.querySelector('.agent-f-produces'), channels, meta.produces);
-  const any = meta.connectsTo === '*' || meta.connectsTo === undefined;
-  root.querySelector('.agent-f-connect-any').checked = any;
-  buildChipChecks(root.querySelector('.agent-f-connects'), agentKeys, any ? [] : meta.connectsTo);
-  root.querySelector('.agent-f-connects').hidden = any;
-  root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
-  root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
-  root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
-  root.querySelector('.agent-f-questions').checked = !!meta.asksQuestions;
-  root.querySelector('.agent-f-questions-locked').checked = !!meta.questionsLocked;
-  root.querySelector('.agent-f-questions-default').checked = !!meta.questionsDefault;
-  syncQuestionFlags(root);
-  root.querySelector('.agent-f-questions').onchange = () => syncQuestionFlags(root);
-  if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
+  return port;
 }
 
-// Read the form back into { meta, markdown }.
-function agentFormRead(root) {
-  const any = root.querySelector('.agent-f-connect-any').checked;
-  return {
-    meta: {
-      displayName: root.querySelector('.agent-f-name').value.trim(),
-      description: root.querySelector('.agent-f-desc').value.trim(),
-      color: root.querySelector('.agent-f-color').value,
-      runnerType: root.querySelector('.agent-f-runner').value,
-      consumes: chipValues(root.querySelector('.agent-f-consumes')),
-      optionalConsumes: chipValues(root.querySelector('.agent-f-optional')),
-      produces: chipValues(root.querySelector('.agent-f-produces')),
-      connectsTo: any ? '*' : chipValues(root.querySelector('.agent-f-connects')),
-      order: Number(root.querySelector('.agent-f-order').value),
-      fanOut: root.querySelector('.agent-f-fanout').checked,
-      loopSource: root.querySelector('.agent-f-loopsource').checked,
-      asksQuestions: root.querySelector('.agent-f-questions').checked,
-      questionsLocked: root.querySelector('.agent-f-questions-locked').checked,
-      questionsDefault: root.querySelector('.agent-f-questions-default').checked,
-    },
-    markdown: root.querySelector('.agent-f-md').value,
+/** Read the form back into { meta, markdown } — a v2 sidecar, nothing else. */
+function agentFormRead(host) {
+  const root = formHost(host);
+  const extra = readExtra(root);
+  const val = (cls) => root.querySelector(`.${cls}`).value;
+  const on = (cls) => root.querySelector(`.${cls}`).checked;
+  // These five are written on EVERY save. agent-store merges {...existing, ...raw},
+  // so a field the form omits keeps its stored value — an omitted `fanOut: false`
+  // could never turn fan-out off, and an omitted `description` would freeze a
+  // derived blurb into the sidecar.
+  const meta = {
+    ...extra,
+    metaVersion: 2,
+    displayName: val('agent-f-name').trim(),
+    description: val('agent-f-desc').trim(),
+    color: val('agent-f-color'),
+    runnerType: val('agent-f-runner'),
+    fanOut: on('agent-f-fanout'),
+    asksQuestions: on('agent-f-questions'),
+    questionsLocked: on('agent-f-questions-locked'),
+    questionsDefault: on('agent-f-questions-default'),
+    inputs: [...root.querySelectorAll('.agent-ports-in .port-row')].map((r) => readPortRow(r, 'in')),
+    outputs: [...root.querySelectorAll('.agent-ports-out .port-row')].map((r) => readPortRow(r, 'out')),
   };
+  // A blank Order reads back as NaN, not 0: `Number('')` is 0, which
+  // agent-store's Number.isFinite check accepts and which silently sorts the
+  // agent ahead of every builtin.
+  const order = Number(val('agent-f-order').trim() === '' ? NaN : val('agent-f-order'));
+  if (Number.isFinite(order)) meta.order = order;
+  if (root.dataset.agentKey) meta.key = root.dataset.agentKey;
+  // Everything below is OPTIONAL: absent when off, never `false`/`''`. The
+  // schema reads presence, and an explicit falsy value is a different (invalid)
+  // thing — `placeable: false` is the one value worth writing. Task 13 makes
+  // this set CLEARABLE by having the store replace it on a metaVersion-2 PUT.
+  const verdict = val('agent-f-verdict').trim();
+  if (verdict) meta.verdict = { filename: verdict };
+  const domain = val('agent-f-domain').trim();
+  if (domain) meta.domain = domain;
+  if (val('agent-f-scope') === 'workspace-only') meta.scope = 'workspace-only';
+  const icon = val('agent-f-icon').trim();
+  if (icon) meta.icon = icon;
+  if (on('agent-f-sideeffect')) meta.sideEffect = 'code';
+  const mockRole = val('agent-f-mockrole');
+  if (mockRole) meta.mockRole = mockRole;
+  if (on('agent-f-wantsrequest')) meta.wantsRequest = true;
+  if (on('agent-f-ws-fanout')) meta.workspaceFanOut = true;
+  const strategy = val('agent-f-ws-strategy');
+  if (strategy) meta.workspaceStrategy = strategy;
+  const variantOf = val('agent-f-ws-variantof').trim();
+  if (variantOf) meta.workspaceVariantOf = variantOf;
+  const skills = val('agent-f-skills').split(',').map((s) => s.trim()).filter(Boolean);
+  if (skills.length) meta.requiresSkills = skills;
+  const promptHints = val('agent-f-hints');
+  if (promptHints.trim()) meta.promptHints = promptHints;
+  if (!on('agent-f-placeable')) meta.placeable = false;
+  return { meta, markdown: root.querySelector('.agent-f-md').value };
 }
 
 async function openAgentEdit(card, a) {
@@ -6706,10 +7198,12 @@ async function openAgentEdit(card, a) {
   const full = await fetchAgentFull(a.key);
   if (!full) { setAgentsMsg('Could not load the agent.', 'err'); return; }
   const pane = card.querySelector('.agent-edit-pane');
-  agentFormFill(pane, full.meta, full.markdown);
+  agentFormRender(pane, full.meta, {
+    markdown: full.markdown,
+    mockWriterRoles: state.mockWriterRoles,
+    registryKeys: state.agentsList.map((x) => x.key).filter((k) => k !== a.key),
+  });
   pane.hidden = false;
-  const anyCb = pane.querySelector('.agent-f-connect-any');
-  anyCb.onchange = () => { pane.querySelector('.agent-f-connects').hidden = anyCb.checked; };
   pane.querySelector('.agent-edit-cancel').onclick = () => { pane.hidden = true; };
   pane.querySelector('.agent-edit-save').onclick = () => saveAgentEdit(card, a, pane);
 }
@@ -6757,7 +7251,8 @@ if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { locat
 
 // Test hook (mirrors window.__ws).
 if (typeof window !== 'undefined') {
-  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
+  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard,
+    duplicateAgentCard, agentFormRender, agentFormRead, bindAgentForm, openAgentEdit };
 }
 
 // ---------------------------------------------------------------------------
@@ -7185,9 +7680,13 @@ function onAgentGenEvent(msg) {
     state.agentWizard.abort = null;
     state.agentWizard.draft = msg.draft || null;
     const root = document.getElementById('agw-step-3');
-    if (root && msg.draft) agentFormFill(root, msg.draft.meta || {}, msg.draft.markdown || '');
-    const anyCb = root && root.querySelector('.agent-f-connect-any');
-    if (anyCb) anyCb.onchange = () => { root.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+    if (root && msg.draft) {
+      agentFormRender(root, msg.draft.meta || {}, {
+        markdown: msg.draft.markdown || '',
+        mockWriterRoles: state.mockWriterRoles,
+        registryKeys: state.agentsList.map((a) => a.key),
+      });
+    }
     showAgentWizardStep(3);
     return;
   }
@@ -7202,6 +7701,10 @@ function onAgentGenEvent(msg) {
 async function saveGeneratedAgent() {
   const root = document.getElementById('agw-step-3');
   const { meta, markdown } = agentFormRead(root);
+  // The wizard derives the key from the FINAL display name (agent-store.mjs:56):
+  // the user may rename the draft on Step 3, and the key must follow. Only the
+  // card editor PUTs an existing key.
+  delete meta.key;
   if (el.agwMsg) { el.agwMsg.textContent = ''; el.agwMsg.className = 'form-msg'; }
   if (el.agwSave) el.agwSave.disabled = true;
   try {
