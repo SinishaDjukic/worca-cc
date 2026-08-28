@@ -8,7 +8,7 @@
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
-import { BOOKEND_EXECUTION_IDS } from '../../../src/shared/graph/constants.mjs';
+import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
 
 /** The run-level warning a run that drained without binding End carries. */
 export const QUIESCENCE_WARNING = 'finished at quiescence — End not reached';
@@ -231,5 +231,113 @@ function buildEndResult(endNode, result) {
   return { nodeId: endNode.id, path, rel, text: path ? rel : '— completed', kind: path ? 'path' : 'void' };
 }
 
-// Task 2 REPLACES this stub with the footer/badge/ant/gate pass (delete this line).
-function decorateExecutions() {}
+/** `cycle 2 · fix` (loop-port re-fire) / `cycle 2` / the task title for slices. */
+export function rowLabel(node, row) {
+  if (row.kind === 'task') {
+    const t = String(row.title || '').trim();
+    return truncate(t || `cycle ${row.ordinal}`);
+  }
+  const base = `cycle ${row.ordinal}`;
+  const loopIns = new Set(((node && node.ports && node.ports.inputs) || []).filter((p) => p && p.loop).map((p) => p.id));
+  const port = ((row.trigger && row.trigger.freshPorts) || []).find((p) => loopIns.has(p));
+  return port ? `${base} · ${port}` : base;
+}
+
+function truncate(s) {
+  return s.length > TITLE_MAX ? `${s.slice(0, TITLE_MAX - 1)}…` : s;
+}
+
+/** Money is CENTS: `0.1 + 0.32 === 0.42000000000000004` in doubles, and the raw
+ *  `costUsd` number is part of the frozen bag shape, so it is rounded here once. */
+const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const sumUsd = (rows) => round2(rows.reduce((a, r) => a + (Number(r.costUsd) || 0), 0));
+
+/** `3 runs · $1.12`; the cost half is dropped when the total is zero. */
+export function stripText(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return '';
+  const total = sumUsd(list);
+  const runs = `${list.length} ${list.length === 1 ? 'run' : 'runs'}`;
+  return total > 0 ? `${runs} · ${fmtUsd(total)}` : runs;
+}
+
+/** The status the 7px leds / row classes use ('start' is the wire's word for active). */
+const ledOf = (status) => (status === 'start' ? 'active' : (status || 'pending'));
+
+function decorateExecutions(decor, ctx) {
+  const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf } = ctx;
+
+  for (const node of nodes) {
+    const list = grouped.get(node.id) || [];
+    // A FLOW node (task/and/or/combine/end) executes instantly and for free: its
+    // rows carry no duration and no cost pill, and its card no header totals.
+    const flow = node.kind !== 'agent';
+    const rows = list.map((row) => {
+      // A flow node executes instantly and for free: the NUMBERS are zeroed with
+      // the pill texts, so `durMs`/`costUsd` never contradict `dur`/`cost` (a
+      // consumer that sums the numbers must not pick up a flow row's real ms).
+      const durMs = flow ? 0 : rowMs(row, now, live);
+      const costUsd = flow ? 0 : round2(row.costUsd);
+      return {
+        executionId: row.executionId, nodeId: node.id,
+        kind: row.kind === 'task' ? 'task' : 'cycle',
+        ordinal: Number(row.ordinal ?? row.cycle) || 1,
+        label: rowLabel(node, row), led: ledOf(row.status),
+        dur: !flow && row.activeMs != null ? fmtDur(durMs) : '',
+        cost: flow ? '' : fmtUsd(costUsd),
+        durMs, costUsd, flow,
+      };
+    });
+
+    const subs = typeof subsOf === 'function' ? (subsOf(node.id) || []) : [];
+    const fan = subs.length
+      ? { leds: subs.slice(0, SUB_SQUARE_CAP).map((s) => (s && s.status === 'running' ? 'run' : 'done')), count: subs.length }
+      : null;
+
+    if (rows.length || fan) {
+      decor.footers[node.id] = { rows, summary: stripText(rows), leds: rows.map((r) => r.led), fan };
+    }
+    if (rows.length && !flow) {
+      const durMs = rows.reduce((a, r) => a + r.durMs, 0);
+      const costUsd = sumUsd(rows);
+      decor.totals[node.id] = {
+        durMs, dur: fmtDur(durMs), costUsd, cost: fmtUsd(costUsd),
+        hasStep: rows.some((r) => r.dur !== ''),
+      };
+    }
+  }
+
+  // Ants: the trigger wires of the IN-FLIGHT executions (a composite parent
+  // marches on its slices' trigger — the slices carry the parent's verbatim).
+  // A resolved run marches nothing: a drain publish after End routes nowhere.
+  // Ants are NEVER restricted to loop wires — a re-fire through an OR valve
+  // names the valve's out wire; only the badges below are loop-wire-only.
+  if (live && !decor.resolved) {
+    const ants = new Set();
+    for (const a of activeList) {
+      const row = rowFor(a);
+      for (const id of (row && row.trigger && row.trigger.wireIds) || []) ants.add(id);
+    }
+    decor.liveWireIds = [...ants];
+  }
+
+  // Loop badges from the scheduler's own delivery counters (authoritative;
+  // `wireDeliveries` is keyed by LOOP wire ids only and counts tokens that went
+  // THROUGH the wire — a held token is not counted).
+  const deliveries = state.wireDeliveries && typeof state.wireDeliveries === 'object' ? state.wireDeliveries : {};
+  for (const w of wires) {
+    if (!w.loop) continue;
+    const n = Number(deliveries[w.id]) || 0;
+    if (n < 1) continue;
+    const max = Number(w.maxCycles) || DEFAULT_MAX_CYCLES;
+    decor.loopBadges[w.id] = { n, max, text: `${n}×`, title: `${n} of ${max} cycles` };
+  }
+
+  // Gate pip: the gate holds at the SOURCE's publish.
+  const g = state.gate && typeof state.gate === 'object' ? state.gate : null;
+  if (g && g.wireId) {
+    const wire = wires.find((w) => w.id === g.wireId) || null;
+    const nodeId = g.fromNode || (wire && wire.from && wire.from.node) || null;
+    if (nodeId) decor.gate = { nodeId, wireId: g.wireId, askId: g.askId || null };
+  }
+}

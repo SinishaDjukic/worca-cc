@@ -188,3 +188,124 @@ test('quiescence needs an EXPLICIT endReached === false; an absent field is neve
   assert.equal(absent.quiescent, false, 'makeRun seeds endReached: undefined — never bannered');
   assert.deepEqual(absent.warnings, []);
 });
+
+// ── executions footer / totals / ants / badges / gate ───────────────────────
+const impl = (n, over = {}) => step({ executionId: `x:n_impl:${n}`, nodeId: 'n_impl', ordinal: n, ...over });
+
+test('footer rows label a loop-port re-fire "cycle N · <port>" and a plain re-fire "cycle N"', () => {
+  const st = S({ steps: [
+    impl(1, { status: 'done', trigger: { wireIds: ['w1'], freshPorts: ['plan'] } }),
+    impl(2, { status: 'done', trigger: { wireIds: ['w3'], freshPorts: ['fix'] } }),
+  ] });
+  const rows = decorFromState(st).footers.n_impl.rows;
+  assert.deepEqual(rows.map((r) => r.label), ['cycle 1', 'cycle 2 · fix']);
+  assert.deepEqual(rows.map((r) => r.executionId), ['x:n_impl:1', 'x:n_impl:2']);
+  assert.equal(rows[1].kind, 'cycle');
+});
+
+test('a kind:"task" row is labelled by its title and truncated at 40 chars', () => {
+  const long = 'Add the schema migration and every single backfill step';
+  const st = S({ steps: [impl(1, { kind: 'task', title: long, status: 'done' })] });
+  const row = decorFromState(st).footers.n_impl.rows[0];
+  assert.equal(row.kind, 'task');
+  assert.equal(row.label.length, 40);
+  assert.ok(row.label.endsWith('…'));
+});
+
+test('flow rows carry neither a duration nor a cost and no header totals; an agent that ran keeps a truthful $0.00', () => {
+  const st = S({ status: 'done', endReached: true, result: { type: 'void' }, steps: [
+    step({ executionId: 'x:n_end:1', nodeId: 'n_end', status: 'done', costUsd: 0.55, activeMs: 3 }),
+    impl(1, { status: 'done', costUsd: 0 }),
+  ] });
+  const d = decorFromState(st);
+  assert.equal(d.footers.n_end.rows[0].cost, '', 'a flow row has no cost pill');
+  assert.equal(d.footers.n_end.rows[0].dur, '', 'a flow execution is instant — no duration either');
+  assert.equal(d.footers.n_end.rows[0].costUsd, 0, 'the NUMBER is zeroed too, not just the pill text');
+  assert.equal(d.footers.n_end.rows[0].durMs, 0, 'and so is durMs — the row carries activeMs 3, but a flow execution took no time');
+  assert.equal(d.footers.n_end.rows[0].flow, true);
+  assert.equal(d.totals.n_end, undefined, 'no header dur · cost on a flow card');
+  assert.equal(d.footers.n_impl.rows[0].cost, '$0.00', 'an agent that ran shows $0.00');
+  assert.equal(d.totals.n_impl.cost, '$0.00');
+});
+
+test('the collapsed summary reads "N runs · $X" and drops the cost when it is zero', () => {
+  const paid = S({ steps: [impl(1, { costUsd: 0.6 }), impl(2, { costUsd: 0.52 })] });
+  assert.equal(decorFromState(paid).footers.n_impl.summary, '2 runs · $1.12');
+  const free = S({ steps: [impl(1, { costUsd: 0 })] });
+  assert.equal(decorFromState(free).footers.n_impl.summary, '1 run');
+});
+
+test('header totals sum the node\'s rows — money rounded to cents past IEEE-754 drift', () => {
+  const st = S({ steps: [impl(1, { activeMs: 63000, costUsd: 0.1 }), impl(2, { activeMs: 67000, costUsd: 0.32 })] });
+  // 0.1 + 0.32 === 0.42000000000000004 in doubles; the bag carries 0.42.
+  assert.deepEqual(decorFromState(st).totals.n_impl, { durMs: 130000, dur: '2m 10s', costUsd: 0.42, cost: '$0.42', hasStep: true });
+});
+
+test('the sub-agent fan rides the footer when subsOf supplies rows', () => {
+  const st = S({ steps: [impl(1, {})] });
+  const d = decorFromState(st, { subsOf: (id) => (id === 'n_impl' ? [{ status: 'running' }, { status: 'finished' }] : []) });
+  assert.deepEqual(d.footers.n_impl.fan, { leds: ['run', 'done'], count: 2 });
+  assert.equal(d.footers.n_plan, undefined, 'no rows and no subs → no footer at all');
+});
+
+test('ants light the trigger wires of ACTIVE executions and nothing on a resolved run', () => {
+  const live = S({ steps: [impl(2, { status: 'start', trigger: { wireIds: ['w3'], freshPorts: ['fix'] } })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+  assert.deepEqual(decorFromState(live).liveWireIds, ['w3']);
+  assert.deepEqual(decorFromState({ ...live, status: 'done' }).liveWireIds, [], 'resolved runs never march');
+  assert.deepEqual(decorFromState(live, { live: false }).liveWireIds, []);
+  // An `active` entry whose own row is already terminal lights nothing (the row wins).
+  const stale = S({ steps: [impl(2, { status: 'done', trigger: { wireIds: ['w3'], freshPorts: ['fix'] } })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+  assert.deepEqual(decorFromState(stale).liveWireIds, [], 'a finished execution never marches');
+});
+
+test('a composite parent (no row of its own) marches on its slices\' trigger wires', () => {
+  const st = S({
+    steps: [step({ executionId: 'x:n_impl:1:p1t1', nodeId: 'n_impl', kind: 'task', title: 'Slice one', parentExecutionId: 'x:n_impl:1',
+      status: 'start', trigger: { wireIds: ['w1'], freshPorts: ['plan'] } })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+  });
+  assert.deepEqual(decorFromState(st).liveWireIds, ['w1'], 'the slice carries the parent\'s trigger verbatim');
+});
+
+test('an OR-valve re-fire marches on the VALVE\'s out wire while the badge sits on the LOOP wire', () => {
+  // Through an OR valve the re-fire's trigger.wireIds names the valve's (non-loop)
+  // out wire; wireDeliveries is keyed by LOOP wire ids only. Ants are never
+  // restricted to loop wires; badges always are.
+  const st = S({ steps: [impl(2, { status: 'start', trigger: { wireIds: ['w1'], freshPorts: ['fix'] } })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], wireDeliveries: { w3: 1 } });
+  const d = decorFromState(st);
+  assert.deepEqual(d.liveWireIds, ['w1']);
+  assert.deepEqual(Object.keys(d.loopBadges), ['w3']);
+  assert.equal(d.footers.n_impl.rows[0].label, 'cycle 2 · fix');
+});
+
+test('loop badges come from wireDeliveries, on loop wires only', () => {
+  const st = S({ wireDeliveries: { w1: 3, w3: 2 } });
+  const badges = decorFromState(st).loopBadges;
+  assert.deepEqual(Object.keys(badges), ['w3'], 'w1 is not a loop wire');
+  assert.deepEqual(badges.w3, { n: 2, max: 3, text: '2×', title: '2 of 3 cycles' });
+});
+
+test('a loop wire with zero deliveries gets no badge, and maxCycles defaults to 3', () => {
+  assert.deepEqual(decorFromState(S({ wireDeliveries: { w3: 0 } })).loopBadges, {}, 'never fired ⇒ no badge');
+  const noMax = JSON.parse(JSON.stringify(MANIFEST));
+  delete noMax.graph.wires[2].maxCycles;                       // w3 loses its explicit cap
+  const badges = decorFromState(S({ stepper: noMax, wireDeliveries: { w3: 2 } })).loopBadges;
+  assert.deepEqual(badges.w3, { n: 2, max: 3, text: '2×', title: '2 of 3 cycles' }, 'DEFAULT_MAX_CYCLES');
+});
+
+test('the gate pip lands on the wire\'s FROM node', () => {
+  const st = S({ gate: { wireId: 'w3', fromNode: 'n_plan', toNode: 'n_impl', askId: 'gate-w3-3' } });
+  assert.deepEqual(decorFromState(st).gate, { nodeId: 'n_plan', wireId: 'w3', askId: 'gate-w3-3' });
+  assert.equal(decorFromState(S()).gate, null);
+});
+
+test("a row's led maps the wire word 'start' onto 'active'", () => {
+  const st = S({ steps: [step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', status: 'start' })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] });
+  const f = decorFromState(st).footers.n_impl;
+  assert.equal(f.rows[0].led, 'active');
+  assert.deepEqual(f.leds, ['active']);
+});
