@@ -6476,8 +6476,10 @@ function agentChip(text, cls) {
   return s;
 }
 
-function fillChannelRow(container, ids, cls) {
-  const list = Array.isArray(ids) ? ids : [];
+// One pill per typed port: `id · type`, void ports dashed, loop inputs marked
+// with ↺ (a loop input is optional and re-fires the agent on a fresh token).
+function fillPortRow(container, ports, cls) {
+  const list = Array.isArray(ports) ? ports : [];
   if (list.length === 0) {
     const none = document.createElement('span');
     none.className = 'agent-io-none';
@@ -6485,7 +6487,11 @@ function fillChannelRow(container, ids, cls) {
     container.appendChild(none);
     return;
   }
-  list.forEach((c) => container.appendChild(agentChip(c, cls)));
+  for (const p of list) {
+    if (!p || p.synthetic || p.id === 'await') continue; // the await gate is engine surface
+    const text = `${p.loop ? '↺ ' : ''}${p.id} · ${p.type}`;
+    container.appendChild(agentChip(text, `${cls}${p.type === 'void' ? ' void' : ''}`));
+  }
 }
 
 function buildAgentCard(a) {
@@ -6495,9 +6501,14 @@ function buildAgentCard(a) {
   node.querySelector('.agent-name').textContent = a.displayName || a.key;
   node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
   node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
-  node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
-  fillChannelRow(node.querySelector('.agent-chips-in'), a.consumes, 'cons');   // INPUT row
-  fillChannelRow(node.querySelector('.agent-chips-out'), a.produces, 'prod');  // OUTPUT row
+  // placeable defaults TRUE; the badge says the agent runs off-pipeline (the
+  // workspace scanner) and can never be dropped on a canvas.
+  node.querySelector('.agent-not-placeable').hidden = a.placeable !== false;
+  // The blurb the user authored wins; a port summary stands in when it is empty.
+  node.querySelector('.agent-sub').textContent =
+    `${a.key} · ${a.runnerType || 'producer'} — ${a.description || a.portSummary || ''}`;
+  fillPortRow(node.querySelector('.agent-chips-in'), a.inputs, 'cons');   // INPUT row
+  fillPortRow(node.querySelector('.agent-chips-out'), a.outputs, 'prod'); // OUTPUT row
   const isUser = a.origin === 'user';
   node.querySelector('.agent-edit').hidden = !isUser;
   node.querySelector('.agent-delete').hidden = !isUser;

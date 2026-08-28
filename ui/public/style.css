@@ -1297,6 +1297,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .agent-chip.prod { background:#E2F3DF; }
 .agent-chip.cons { background:#DEEFF7; }
 .agent-io-none { font-size:11px; opacity:.45; line-height:20px; }
+.agent-chip.void { border-style:dashed; background:transparent; opacity:.75; }
+.agent-not-placeable { background:var(--amber-bg); color:var(--amber-ink); }
+.agent-not-placeable[hidden] { display:none; }
 
 /* (2) space between the header pills and the expanded markdown body */
 .agent-detail { margin-top:14px; }
