@@ -8,12 +8,30 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
 let homeDir, srv, base, prevHome, doneId, pausedNoWtId, app, runs, _testing;
 let resumableId, liveWt;
+
+/** A REAL v2 resume point. The v1 engine is retired, so `resumeRun` refuses any
+ *  point that is not `version: 2`; the graph engine's _engineRehydrate then
+ *  refuses a v2 point with no manifest. `snapshot: null` replays the graph from
+ *  scratch, which is all a guard-level fixture needs to get PAST both checks. */
+async function v2ResumePoint(pipelineDir) {
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { resolveGraph } = await import('../src/core/workflows.mjs');
+  const { buildGraphManifest } = await import('../src/shared/graph/manifest.mjs');
+  const resolved = await resolveGraph(pipelineDir, 'wf_default_v2', loadAgentRegistry());
+  const manifest = buildGraphManifest(resolved.template, resolved.agentsByKey,
+    { overlays: { nodes: resolved.nodes, wires: resolved.wires } });
+  return { version: 2, snapshot: null, manifest, nodes: [], planVersion: 0,
+    stepModels: null, workflowId: 'wf_default_v2', guardrailsId: null, checkpointRef: null,
+    checkpointRefs: {}, workspace: null, pauseReason: null, toolInstruction: '',
+    pipelineDir, pausedAt: '2026-06-09T00:00:00Z' };
+}
+
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-'));
@@ -30,7 +48,7 @@ before(async () => {
   ({ id: pausedNoWtId } = await seedPipeline(projB, {
     title: 'paused run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: goneWt, reusedExisting: false },
-    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+    resumePoint: { version: 2, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
       bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
       pipelineDir: projB, pausedAt: '2026-06-09T00:00:00Z' },
   }));
@@ -43,9 +61,7 @@ before(async () => {
   ({ id: resumableId } = await seedPipeline(projC, {
     title: 'resumable run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: liveWt, reusedExisting: false },
-    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-      bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
-      pipelineDir: projC, pausedAt: '2026-06-09T00:00:00Z' },
+    resumePoint: await v2ResumePoint(projC),
   }));
 
   const mod = await import('../ui/server.mjs');
@@ -145,9 +161,7 @@ test('resumeRun re-attaches the Ask follower of a linked paused run: link moves 
   const { id } = await seedPipeline(projD, {
     title: 'linked paused run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: wtD, reusedExisting: false },
-    resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-      bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
-      pipelineDir: projD, pausedAt: '2026-06-09T00:00:00Z' },
+    resumePoint: await v2ResumePoint(projD),
   });
   const t = createThread();
   linkRun(t.id, { runId: 'dead-lineage-uuid', cardId: null, pipelineId: id, status: 'paused' });
@@ -180,4 +194,25 @@ test('resumeRun re-attaches the Ask follower of a linked paused run: link moves 
   assert.match(final.status, /^(done|error|stopped)$/, `follower reported a terminal status, got ${final.status}`);
   assert.ok(listMessages(t.id).some((m) => /Run finished|Run failed/.test(m.text)), 'terminal notice posted by the re-attached follower');
   await rm(wtD, { recursive: true, force: true });
+});
+
+// P8a: the v1 engine is retired. V24 NULLs the resume points it reaches, but a
+// point a divergent ladder left behind must still be refused HONESTLY (409
+// ENGINE_RETIRED), never replayed on an engine that no longer exists.
+// (Without this test the guard is dead weight — removing it was measured GREEN.)
+test('POST /api/resume: a v1 resume point is refused with 409 ENGINE_RETIRED', async () => {
+  const projE = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-projE-'));
+  const { id } = await seedPipeline(projE, {
+    title: 'v1 point', status: 'paused',
+    resumePoint: { version: 1, kind: 'boundary', pipelineDir: projE },
+  });
+  // POST /api/resume reads req.body.pipelineId — `{ id }` is refused with 400
+  // "pipelineId is required" long before the guard runs.
+  const res = await post('/api/resume', { pipelineId: id });
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.code, 'ENGINE_RETIRED');
+  assert.equal(body.error, 'paused on the v1 engine before the graph rework — not resumable');
+  assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused',
+    'refusing does not mutate the run');
 });

@@ -87,7 +87,7 @@ async function seedPausedPipeline({ totalCostUsd = 0 } = {}) {
     totalCostUsd,
     branch: { source: 'main', feature: 'f', worktreeDir: join(projectDir, 'gone-wt'), reusedExisting: false },
     resumePoint: {
-      version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
+      version: 2, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
       bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
       pipelineDir: projectDir, pausedAt: '2026-08-07T00:00:00Z',
     },

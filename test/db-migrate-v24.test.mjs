@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { buildResidueDb } from './helpers/db-residue-v22.mjs';
-import { getDb, SCHEMA_VERSION } from '../src/core/db.mjs';
+import { getDb, SCHEMA_VERSION, sweepV1Runs } from '../src/core/db.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 
 useTempHome(after);
@@ -124,4 +124,43 @@ test('the alias folds first and wins, overlays remap, budgets copy to wires, arc
   assert.equal(report.overlayNodes, 1, 'one clean NODE_ID_MAP rename (wf_quick-fix/s0_0)');
   assert.equal(report.overlaysDisplaced, 1, 'one stale v1-keyed overlay dropped by the remap');
   assert.equal(report.overlayWires, 2, 'both wf_no-clarify budgets copied onto wires');
+});
+
+test('v1 resume points are swept: status interrupted, resume_point NULL, event logged', () => {
+  const fx = buildResidueDb();
+  const db = getDb();
+  for (const id of [...fx.pausedIds, fx.interruptedId, fx.v1AliasRunId]) {
+    const row = db.prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(id);
+    assert.equal(row.status, 'interrupted', `${id} is no longer resumable`);
+    assert.equal(row.resume_point, null);
+    const ev = db.prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id DESC LIMIT 1').get(id);
+    assert.equal(ev.text, 'paused on the v1 engine before the graph rework — not resumable');
+  }
+  const v2 = db.prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(fx.v2RunId);
+  assert.equal(v2.status, 'paused', 'a v2 resume point is untouched');
+  assert.ok(v2.resume_point);
+  const report = JSON.parse(db.prepare("SELECT data FROM store_meta WHERE key = 'migration:v24'").get().data);
+  assert.deepEqual([...report.sweptRuns].sort(),
+    [...fx.pausedIds, fx.interruptedId, fx.v1AliasRunId].sort());
+});
+
+test('sweepV1Runs also runs on a DIVERGENTLY-stamped DB (boot path) and is idempotent', () => {
+  buildResidueDb();
+  const db = getDb();                                   // V24 already swept
+  db.prepare("UPDATE pipelines SET status = 'paused', resume_point = ? WHERE id = 'run-p1'")
+    .run(JSON.stringify({ version: 1, kind: 'boundary' }));
+  assert.deepEqual(sweepV1Runs(db), ['run-p1']);
+  assert.equal(db.prepare("SELECT status FROM pipelines WHERE id = 'run-p1'").get().status, 'interrupted');
+  assert.deepEqual(sweepV1Runs(db), [], 'idempotent: a second sweep finds nothing');
+});
+
+// Nothing else covers the json_valid guard, and without it a corrupt blob makes
+// json_extract throw INSIDE the migration transaction.
+test('a CORRUPT resume-point blob is swept too (json_valid guard), never thrown on', () => {
+  buildResidueDb();
+  const db = getDb();
+  db.prepare("UPDATE pipelines SET status = 'paused', resume_point = ? WHERE id = 'run-p2'")
+    .run('{not json');
+  assert.deepEqual(sweepV1Runs(db), ['run-p2']);
+  assert.equal(db.prepare("SELECT resume_point FROM pipelines WHERE id = 'run-p2'").get().resume_point, null);
 });

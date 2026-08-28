@@ -45,6 +45,24 @@ function run(args, { cwd } = {}) {
   });
 }
 
+/** A REAL v2 resume point. The v1 engine is retired, so `resumeRun` refuses any
+ *  point that is not `version: 2`; the graph engine's _engineRehydrate then
+ *  refuses a v2 point with no manifest. `snapshot: null` replays the graph from
+ *  scratch, which is all a guard-level fixture needs to get PAST both checks. */
+async function v2ResumePoint(pipelineDir) {
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { resolveGraph } = await import('../src/core/workflows.mjs');
+  const { buildGraphManifest } = await import('../src/shared/graph/manifest.mjs');
+  const resolved = await resolveGraph(pipelineDir, 'wf_default_v2', loadAgentRegistry());
+  const manifest = buildGraphManifest(resolved.template, resolved.agentsByKey,
+    { overlays: { nodes: resolved.nodes, wires: resolved.wires } });
+  return { version: 2, snapshot: null, manifest, nodes: [], planVersion: 0,
+    stepModels: null, workflowId: 'wf_default_v2', guardrailsId: null, checkpointRef: null,
+    checkpointRefs: {}, workspace: null, pauseReason: null, toolInstruction: '',
+    pipelineDir, pausedAt: '2026-06-09T00:00:00Z' };
+}
+
+
 test('resume with no id -> exit 1 + usage', async () => {
   const r = await run(['resume']);
   assert.equal(r.code, 1, r.stderr);
@@ -279,9 +297,7 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
     const { id } = await seedPipeline(projDir, {
       title: 'paused cwd run', status: 'paused',
       branch: { source: 'main', feature: 'f', worktreeDir: goneWt, reusedExisting: false },
-      resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-        bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
-        pipelineDir: projDir, pausedAt: '2026-06-09T00:00:00Z' },
+      resumePoint: await v2ResumePoint(projDir),
     });
     const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
     assert.equal(r.code, 1, r.stderr);
@@ -299,4 +315,24 @@ test('cmdResume routes a v2 resume point to the graph engine', async () => {
   const src = await readFile(new URL('../src/cli/worca-cc.mjs', import.meta.url), 'utf8');
   assert.ok(/createOrchestratorFor/.test(src), 'CLI uses the engine-selecting factory');
   assert.ok(!/\bcreateOrchestrator\(/.test(src), 'CLI has no direct v1 construction left');
+});
+
+// P8a: `worca resume` refuses a v1 point with exit 2 and the honest message.
+// The guard sits ABOVE the sweep on purpose — sweeping first would NULL the
+// point under test and the caller would read "has no resume point" (exit 1).
+// (Without this test the CLI refusal is dead code — it was, measured.)
+test('resume refuses a v1 resume point: exit 2 and the retirement message', async () => {
+  const projDir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-cliresume-v1-')));
+  try {
+    const { id } = await seedPipeline(projDir, {
+      title: 'v1 point run', status: 'paused',
+      resumePoint: { version: 1, kind: 'boundary', pipelineDir: projDir },
+    });
+    const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
+    assert.equal(r.code, 2, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.match(r.stderr, /^worca resume: paused on the v1 engine before the graph rework — not resumable$/m,
+      `stderr: ${r.stderr}`);
+  } finally {
+    await rm(projDir, { recursive: true, force: true });
+  }
 });

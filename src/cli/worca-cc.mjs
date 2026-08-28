@@ -628,6 +628,13 @@ async function cmdDoctor() {
     process.stderr.write(`worca doctor: reconcile failed: ${err?.message || err}\n`);
   }
   try {
+    const { sweepV1Runs } = await import('../core/db.mjs');
+    const swept = sweepV1Runs();
+    if (swept.length) out(`retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch (err) {
+    process.stderr.write(`worca doctor: v1-run sweep failed: ${err?.message || err}\n`);
+  }
+  try {
     // The injected callbacks THROW on a DB failure instead of reporting "no row"
     // (artifacts.mjs#runRootSweepLookups); the sweep records each throw in `failed`
     // and leaves that run root untouched, so a broken sqlite file can never be read
@@ -792,6 +799,19 @@ async function cmdResume(argv) {
     process.stderr.write(`pipeline ${id} has no resume point\n`);
     return 1;
   }
+  if (saved.resumePoint.version !== 2) {
+    const { V1_RUN_RETIRED } = await import('../core/db.mjs');
+    process.stderr.write(`worca resume: ${V1_RUN_RETIRED}\n`);
+    return 2;
+  }
+  // The v1 sweep runs AFTER this run's own guards: sweeping FIRST would NULL the
+  // point under test, so the caller would read "has no resume point" instead of
+  // the honest retirement message above.
+  try {
+    const { sweepV1Runs } = await import('../core/db.mjs');
+    const swept = sweepV1Runs();
+    if (swept.length) out(`retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch { /* best-effort: resume still works if the sweep fails */ }
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;

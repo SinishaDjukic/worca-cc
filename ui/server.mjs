@@ -97,6 +97,7 @@ import {
   graphDefaultAliasTemplate,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
+import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -1530,6 +1531,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });
   if (!saved.resumePoint) throw new ResumeError(400, { error: 'pipeline has no resume point' });
+  if (saved.resumePoint.version !== 2) {
+    throw new ResumeError(409, { code: 'ENGINE_RETIRED', error: V1_RUN_RETIRED });
+  }
 
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
@@ -4935,7 +4939,7 @@ app.use((req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
+  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -4946,6 +4950,16 @@ export async function bootMaintenance({ log } = {}) {
     if (reconciled) console.log(`[worca-ui] reconciled ${reconciled} stale running record(s) -> interrupted`);
   } catch (err) {
     console.error(`[worca-ui] stale-run reconcile failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // A DB stamped past 24 by a divergent ladder can still hold v1 resume points
+  // (crash-reconciled runs keep theirs). One idempotent sweep per boot.
+  try {
+    const swept = sweepV1Runs();
+    summary.sweptV1 = swept.length;
+    if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch (err) {
+    console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
