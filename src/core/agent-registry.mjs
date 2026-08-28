@@ -11,7 +11,6 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
 import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
@@ -32,7 +31,6 @@ export const DEFAULT_AGENTS_DIR = fileURLToPath(new URL('../../agents/', import.
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
-const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
 
 /** Organizational-only domain tag (coding, marketing, financing, …): lowercase
  *  kebab, ≤32 chars. 'shared' is a recognized sentinel that passes this regex and
@@ -79,7 +77,7 @@ function channelList(raw, key, field) {
   for (const s of raw) {
     const id = String(s || '').trim();
     if (!id) continue;
-    if (CHANNEL_IDS.has(id) || CUSTOM_CHANNEL_ID_RE.test(id)) out.push(id);
+    if (CUSTOM_CHANNEL_ID_RE.test(id)) out.push(id);
     else console.warn(`[agent-registry] ${key}.${field}: malformed channel id "${id}" ignored`);
   }
   return out;
@@ -122,10 +120,6 @@ function normalizeChannelDefs(raw, key) {
     const id = typeof d.id === 'string' ? d.id.trim() : '';
     if (!CUSTOM_CHANNEL_ID_RE.test(id)) {
       if (id) console.warn(`[agent-registry] ${key}.channelDefs: bad channel id "${id}" ignored`);
-      continue;
-    }
-    if (CHANNEL_IDS.has(id)) {
-      console.warn(`[agent-registry] ${key}.channelDefs: "${id}" is a built-in channel and cannot be redefined`);
       continue;
     }
     if (seen.has(id)) continue;

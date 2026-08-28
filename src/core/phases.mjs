@@ -17,7 +17,6 @@ import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv } from './config.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
-import { renderAttachmentsBlock } from './channels.mjs';
 
 // ── allowedTools per role ──────────────────────────────────────────────────────
 // `Skill` lets agents invoke project (.claude/skills) and personal (~/.claude/skills)
@@ -236,51 +235,6 @@ export function workspaceFanOutDirective(strategy, ws, { relative = false } = {}
   return '';
 }
 
-// ── inline fallbacks (used only when agents/*.md is missing/empty) ──────────────
-const FALLBACK_PROMPTS = {
-  clarify:
-    'You are the Clarify agent. Before a software task is planned you surface the decisions that ' +
-    'materially change the plan and cannot be resolved from the task text or the codebase — ' +
-    'including things downstream agents would otherwise silently assume. For each, write a ' +
-    'conceptual question offering 2 to 4 options plus a free-text field. Ask up to 8 questions, ' +
-    'but never pad. Output a JSON file (path given in the task) shaped as ' +
-    '{ "questions": [ { "id", "question", "options": [ ... ], "allowFreeText": true } ] }. ' +
-    'If you genuinely have no open questions, write { "questions": [] }. You never write a plan.',
-  'planner-plan':
-    'You are the Planner. Write a thorough implementation plan to the markdown path given in ' +
-    'the task. The plan MUST include concrete code snippets for the features and MUST end with ' +
-    'a "## Clarifications (Q&A)" section listing what was asked and how the user answered. ' +
-    'When done, hand off naming the plan file location.',
-  refiner:
-    'You are the Plan Refiner. Critically review the given plan (including its code snippets), ' +
-    'write a refined version to the output path, and emit a review JSON ' +
-    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }) using ' +
-    'severities critical|major|minor|suggestion. Only critical/major are blocking.',
-  implementer:
-    'You are the Implementer. Follow the latest plan with NO deviation, using TDD ' +
-    '(red-green-refactor). Deviate only if something does not work at all. In fix mode, address ' +
-    'every critical/major issue in the referenced review.',
-  reviewer:
-    'You are the Code Reviewer. Review the git diff of what was implemented against the plan. ' +
-    'Write a human-readable review markdown AND a review JSON ' +
-    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }). ' +
-    'Use severities critical|major|minor|suggestion; only critical/major block.',
-  'manual-tests-checklist':
-    'You are the Manual Tests author. Read the plan and the implemented diff, then write a ' +
-    'markdown checklist of manual test cases (each a `- [ ]` line with steps + expected result) ' +
-    'to the path given in the task.',
-  'manual-web-ui-testing':
-    'You are the Manual Web UI Tester. Run each case in the manual checklist against the live ' +
-    'web UI using the Playwright tools, then write a result markdown AND a review JSON ' +
-    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }). Use severities ' +
-    'critical|major|minor|suggestion; a failing case is at least major.',
-  'plan-review':
-    'You are the Plan Reviewer. Review the implementation PLAN (its structure, correctness, ' +
-    'completeness, feasibility, and code snippets) against the original request and the real ' +
-    'codebase. Do NOT rewrite the plan. Write a human-readable review markdown AND a review JSON ' +
-    '({ "issues": [ { "severity", "title", "detail", "location" } ], "summary" }) using severities ' +
-    'critical|major|minor|suggestion; only critical/major block (the planner then revises).',
-};
 
 /**
  * Build the full appended system prompt: toolInstruction first (if any), then — on
@@ -297,7 +251,10 @@ export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
   const ws = workspaceContextBlock(workspace); // '' when not a workspace run
   if (ws) parts.push(ws);
   const body = (agentBody || '').trim();
-  parts.push(body || FALLBACK_PROMPTS[role] || '');
+  // The agent's .md body IS the contract (spec §1: the engine is generic). The v1
+  // per-role FALLBACK_PROMPTS table died with the v1 engine; a missing body now
+  // yields a body-less system prompt rather than a hard-coded role script.
+  parts.push(body || '');
   return parts.filter(Boolean).join('\n\n');
 }
 
@@ -598,161 +555,6 @@ export function buildClarifyPrompt(ctx, opts = {}) {
 }
 
 /**
- * Clarify agent. Writes clarify.json; returns { questions }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ round?: number, priorAnswers?: Array<{id,question,choice}> }} [opts]
- *   `priorAnswers` are the Q&A already resolved in earlier rounds; injecting them
- *   lets the planner ask only NEW questions, so the loop terminates naturally.
- */
-export async function runClarify(ctx, opts = {}) {
-  const round = Number(opts.round) > 0 ? Number(opts.round) : 1;
-  const priorAnswers = Array.isArray(opts.priorAnswers) ? opts.priorAnswers : [];
-  const role = 'clarify';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'clarify'), role, ctx.workspace);
-  const prompt = buildClarifyPrompt(ctx, { round, priorAnswers });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  // The agent wrote clarify.json into the run dir as transient scratch; parse it
-  // ONCE here, then make the DB the authoritative store. When ctx.pipelineId is
-  // present (every real dispatched run) we ingest the normalized questions into the
-  // clarify row and read them back from the row, so the planner loop consumes the DB
-  // — not the FS file. Absent a pipelineId (pure unit ctx) we return the FS-parsed
-  // value unchanged, so phases.mjs stays independently testable.
-  const clarify = await readClarify(ctx.pipelineDir);
-  if (ctx.pipelineId) {
-    await writeClarify(ctx.pipelineId, { questions: { questions: clarify.questions } });
-    const row = readClarifyRow(ctx.pipelineId);
-    const questions = row.questions?.questions ?? clarify.questions;
-    return { questions };
-  }
-  return { questions: clarify.questions };
-}
-
-/**
- * Planner — plan role. Writes the plan markdown; returns { planPath }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ answers: Array<{id,question,choice}>, planFilePath: string, baseName: string }} opts
- */
-export async function runPlannerPlan(ctx, opts) {
-  const { answers = [], planFilePath, baseName, reviewPath } = opts || {};
-  const role = 'planner-plan';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planner'), role, ctx.workspace);
-  const replanBlock = reviewPath
-    ? '\n## Revise to address the review\n\n' +
-      'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
-      'address EVERY critical and major finding in the review below. Preserve the ' +
-      '"## Clarifications (Q&A)" section.\n\n' +
-      `Review to address: ${reviewPath}\n`
-    : '';
-  const prompt =
-    taskHeader(ctx, reviewPath ? 'Revise the implementation plan' : 'Write the implementation plan') +
-    '\n## What to do\n\n' +
-    'Write a complete, build-ready implementation plan. It MUST contain concrete code snippets ' +
-    'for the features and MUST end with a "## Clarifications (Q&A)" section reproducing the ' +
-    'questions and the user answers below so the reviewer can see them.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    workspaceFanOutDirective('explore', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    `Write the plan markdown to: ${planFilePath}\n` +
-    replanBlock +
-    '\n## Clarifications already answered\n\n' +
-    renderAnswers(answers) +
-    '\n' +
-    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: planFilePath, MOCK_BASE: baseName, MOCK_IN: reviewPath });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  return { planPath: planFilePath };
-}
-
-/**
- * Plan Refiner — one cycle. Reads inPlanPath, writes refined plan to outPlanPath and a
- * review JSON to reviewJsonPath. Returns { outPlanPath, review }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ inPlanPath: string, outPlanPath: string, cycle: number, reviewJsonPath: string }} opts
- */
-export async function runRefiner(ctx, opts) {
-  const { inPlanPath, outPlanPath, cycle, reviewJsonPath } = opts || {};
-  const role = 'refiner';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'refiner'), role, ctx.workspace);
-  const prompt =
-    taskHeader(ctx, `Refine the plan (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    `Read the current plan, critically review it INCLUDING its code snippets, then write an ` +
-    `improved version and a machine-readable review.\n\n` +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    workspaceFanOutDirective('explore', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    `Current plan to refine: ${inPlanPath}\n` +
-    `Write the refined plan to: ${outPlanPath}\n` +
-    `Write the review JSON to: ${reviewJsonPath}\n\n` +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion. Mark a finding critical/major ' +
-    'only if it must be fixed before implementation.\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: outPlanPath,
-      MOCK_JSON: reviewJsonPath,
-      MOCK_CYCLE: cycle,
-      MOCK_IN: inPlanPath,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { outPlanPath, review };
-}
-
-/**
- * Decomposer — breaks the plan into vertical-slice task files + a decomposition.json
- * manifest. Reads planPath; writes tasks/ + decompositionPath. Returns
- * { decompositionPath, decomposition } where decomposition is the parsed manifest.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, decompositionPath: string }} opts
- */
-export async function runDecomposer(ctx, opts) {
-  const { join, dirname } = await import('node:path');
-  const { planPath, decompositionPath } = opts || {};
-  const role = 'decomposer';
-  const tasksDir = join(dirname(decompositionPath), 'tasks');
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'decomposer'), role, ctx.workspace);
-  const prompt =
-    taskHeader(ctx, 'Decompose the plan into vertical-slice tasks') +
-    '\n## What to do\n\n' +
-    'Read the approved plan and break it into tracer-bullet vertical slices grouped into ' +
-    'ordered phases. Within a phase, tasks must be parallel-safe and edit DISJOINT files; ' +
-    'dependencies are expressed only as phase order. Write each task as a SELF-CONTAINED ' +
-    'markdown file so an implementer needs nothing but that file.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    `Plan to decompose: ${planPath}\n` +
-    `Write each task file under: ${tasksDir}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
-    `Write the manifest JSON to: ${decompositionPath}\n\n` +
-    'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
-    'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: decompositionPath,
-      MOCK_TASKS_DIR: tasksDir,
-      MOCK_IN: planPath,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const decomposition = await readDecomposition(decompositionPath);
-  return { decompositionPath, decomposition };
-}
-
-/** Parse a decomposition.json manifest; tolerant ({phases:[]} on any error). */
-async function readDecomposition(path) {
-  const { readFile } = await import('node:fs/promises');
-  try {
-    const raw = JSON.parse(await readFile(path, 'utf8'));
-    return { phases: Array.isArray(raw?.phases) ? raw.phases : [] };
-  } catch {
-    return { phases: [] };
-  }
-}
-
-/**
  * The shared-working-tree warning for a decomposed task that runs alongside phase
  * siblings. Parallel implementers share ONE tree with no locking, so the block
  * pins down the only safe behaviors: own files only, scoped tests, no tree-wide
@@ -815,36 +617,6 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
 }
 
 /**
- * Implementer — implement or fix. Returns { summary }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewPath?: string, taskPath?: string, siblings?: Array<{id:string,title?:string,file?:string}>, mode: "implement"|"fix" }} opts
- */
-export async function runImplementer(ctx, opts) {
-  const { planPath, reviewPath, taskPath, siblings, mode = 'implement' } = opts || {};
-  const role = 'implementer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'implementer'), role, ctx.workspace);
-
-  const body = implementerBody({ mode, planPath, reviewPath, taskPath, siblings });
-
-  const prompt =
-    taskHeader(ctx, mode === 'fix' ? 'Fix the implementation' : 'Implement the plan') +
-    '\n## What to do\n\n' +
-    body +
-    '\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    workspaceFanOutDirective('task', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    'Work inside the project directory (your cwd). Commit nothing; just edit files and tests.\n\n' +
-    mockMarkers({ MOCK_ROLE: role, MOCK_IN: taskPath || planPath, MOCK_OUT: reviewPath });
-
-  const { text } = await runClaude(
-    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: IMPLEMENTER_TOOLS }),
-  );
-
-  const summary = (text || '').trim() || `Implementer (${mode}) completed.`;
-  return { summary };
-}
-
-/**
  * The reviewer's diff instruction — extracted VERBATIM from runReviewer so the v2
  * executor's `as: 'worktree'` renderer resolves to the same bytes. Prefer diffing
  * against the recorded checkpoint commit: new files are made visible via the
@@ -862,124 +634,6 @@ export function diffInstruction(ctx) {
     : 'Inspect the diff with `git diff` and `git status` in your cwd. If `git diff` looks ' +
       'empty, the changes may be newly-created files — confirm with `git status` and ' +
       '`git diff HEAD`.';
-}
-
-/**
- * Code Reviewer — one cycle. Writes review markdown + review JSON. Returns { review }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
- */
-export async function runReviewer(ctx, opts) {
-  const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
-  const role = 'reviewer';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'reviewer'), role, ctx.workspace);
-  const prompt =
-    taskHeader(ctx, `Review the implementation (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    'Review the git diff of what was implemented against the plan. Write a human-readable review ' +
-    'markdown AND a machine-readable review JSON. ' +
-    diffInstruction(ctx) +
-    '\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    workspaceFanOutDirective('review', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    `Plan that was implemented: ${planPath}\n` +
-    `Write the review markdown to: ${reviewMdPath}\n` +
-    `Write the review JSON to: ${reviewJsonPath}\n\n` +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
-    'pipeline.\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: reviewMdPath,
-      MOCK_JSON: reviewJsonPath,
-      MOCK_CYCLE: cycle,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { review };
-}
-
-/**
- * Plan Reviewer — one cycle. Reviews the PLAN markdown (no git diff). Writes a review
- * markdown + review JSON. Returns { review }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
- */
-export async function runPlanReviewer(ctx, opts) {
-  const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
-  const role = 'plan-review';
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'planReviewer'), role, ctx.workspace);
-  const prompt =
-    taskHeader(ctx, `Review the plan (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    'Review the implementation PLAN against the original request and the real codebase. Do NOT ' +
-    'rewrite the plan. Write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    workspaceFanOutDirective('explore', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    `Plan to review: ${planPath}\n` +
-    `Write the review markdown to: ${reviewMdPath}\n` +
-    `Write the review JSON to: ${reviewJsonPath}\n\n` +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block (the ' +
-    'planner then revises).\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: reviewMdPath,
-      MOCK_JSON: reviewJsonPath,
-      MOCK_CYCLE: cycle,
-      MOCK_IN: planPath,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { review };
-}
-
-/**
- * Workspace Reviewer — verifier (in-pipeline, loopSource). The workspace-run
- * replacement for runReviewer: fan out one reviewer sub-agent per CHANGED member
- * (each diffing `checkpointRefs[projectKey]...feature` inside that member's
- * worktree — the `## Workspace projects` block in the task header names each
- * worktree dir + checkpoint), then synthesize ONE review markdown + ONE
- * review-cycleN.json that is the UNION of every critical/major issue, sorted by
- * projectKey then severity. Reuses protocol.readReview / hasBlocking unchanged, so
- * the orchestrator's review->implementer loop gates identically. Returns { review }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
- */
-export async function runWorkspaceReviewer(ctx, opts) {
-  const { planPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
-  const role = 'workspace-reviewer';
-  // The body is the contract (C10: no FALLBACK_PROMPTS entry); the system prompt
-  // ALSO carries the `## Workspace Context` block via ctx.workspace.
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceReviewer'), role, ctx.workspace);
-  const prompt =
-    taskHeader(ctx, `Review the workspace implementation (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    'Review what was implemented across the member projects against the plan. Write a SINGLE ' +
-    'human-readable review markdown AND a SINGLE machine-readable review JSON.\n\n' +
-    workspaceFanOutDirective('review', ctx.workspace, { relative: isDetachedWorkspace(ctx) }) +
-    `Plan that was implemented: ${planPath}\n` +
-    `Write the merged review markdown to: ${reviewMdPath}\n` +
-    `Write the merged review JSON to: ${reviewJsonPath}\n\n` +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
-    'pipeline. The issue list is the UNION of every per-project critical/major issue (never ' +
-    'collapse one), sorted by projectKey then severity, each location prefixed "<projectKey>: ".\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: reviewMdPath,
-      MOCK_JSON: reviewJsonPath,
-      MOCK_CYCLE: cycle,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { review };
 }
 
 /**
@@ -1062,91 +716,6 @@ export async function runWorkspaceScan(ctx, opts = {}) {
   return { description, outPath };
 }
 
-/**
- * Manual Tests Checklist — producer. Reads the plan (and any implementation diff)
- * and writes a markdown checklist of manual test cases as a pipeline artifact.
- * Returns { checklistPath, summary }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ planPath: string, checklistPath: string }} opts
- */
-export async function runManualTestsChecklist(ctx, opts) {
-  const { planPath, checklistPath } = opts || {};
-  const role = 'manual-tests-checklist';
-  const systemPrompt = buildSystemPrompt(
-    ctx.toolInstruction,
-    resolveAgentBody(ctx, 'manualTestsChecklist'),
-    role,
-    ctx.workspace,
-  );
-  // §5.8: at a run-root cwd there is no working tree to `git diff`, so the changes
-  // are named PER MEMBER. Single mode (both modes) and legacy workspace runs keep
-  // today's byte-identical sentence.
-  const perMemberDiff = workspaceDiffInstruction(ctx);
-  const changesInstruction = perMemberDiff
-    ? 'Read the implementation plan and the implemented changes in EVERY member checkout — your ' +
-      'cwd is the worca-cc run root, not a repository, so inspect each member on its own:\n\n' +
-      perMemberDiff +
-      '\n\nThen write a markdown checklist of concrete manual test cases a human can run against ' +
-      'the app. Each case: a `- [ ]` line with steps and the expected result.\n\n'
-    : 'Read the implementation plan and the implemented changes (via `git diff` in your cwd), ' +
-      'then write a markdown checklist of concrete manual test cases a human can run against the ' +
-      'app. Each case: a `- [ ]` line with steps and the expected result.\n\n';
-  const prompt =
-    taskHeader(ctx, 'Draft a manual test checklist') +
-    '\n## What to do\n\n' +
-    changesInstruction +
-    `Plan: ${planPath}\n` +
-    `Write the checklist markdown to: ${checklistPath}\n\n` +
-    mockMarkers({ MOCK_ROLE: role, MOCK_OUT: checklistPath, MOCK_IN: planPath });
-
-  const { text } = await runClaude(
-    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
-  );
-
-  const summary = (text || '').trim() || 'Manual test checklist written.';
-  return { checklistPath, summary };
-}
-
-/**
- * Manual web UI testing — verifier (loopSource). Drives the running web UI through
- * the manual checklist (Playwright MCP, declared in the agent frontmatter) and
- * emits the protocol review verdict JSON. Returns { review }.
- * @param {import('./phases.mjs').PhaseContext} ctx
- * @param {{ checklistPath: string, reviewMdPath: string, reviewJsonPath: string, cycle: number }} opts
- */
-export async function runManualWebUiTesting(ctx, opts) {
-  const { checklistPath, reviewMdPath, reviewJsonPath, cycle } = opts || {};
-  const role = 'manual-web-ui-testing';
-  const systemPrompt = buildSystemPrompt(
-    ctx.toolInstruction,
-    resolveAgentBody(ctx, 'manualWebUiTesting'),
-    role,
-    ctx.workspace,
-  );
-  const prompt =
-    taskHeader(ctx, `Run the manual web UI tests (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    'Execute the manual test checklist against the running web UI using the Playwright tools. ' +
-    'Write a human-readable result markdown AND a machine-readable review JSON.\n\n' +
-    `Checklist to run: ${checklistPath}\n` +
-    `Write the result markdown to: ${reviewMdPath}\n` +
-    `Write the review JSON to: ${reviewJsonPath}\n\n` +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
-    'pipeline (a failing manual case is at least major).\n\n' +
-    mockMarkers({
-      MOCK_ROLE: role,
-      MOCK_OUT: reviewMdPath,
-      MOCK_JSON: reviewJsonPath,
-      MOCK_CYCLE: cycle,
-    });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { review };
-}
-
 // ── generic runners (metadata-declared agents, zero bespoke core code) ──────────
 
 /**
@@ -1193,80 +762,6 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
   );
 }
 
-/**
- * Generic producer — any metadata-declared producer with no bespoke branch.
- * Prompt = taskHeader + role hints + Inputs/Outputs channel->path lists; the
- * system prompt body is the agent's own .md (node.agentPrompt). Returns { summary }.
- */
-export async function runGenericProducer(ctx) {
-  const key = ctx.node?.key || 'agent';
-  const role = `generic:${key}`; // no FALLBACK entry: the .md body is the contract
-  const body = resolveAgentBody(ctx, key);
-  if (!String(body || '').trim()) {
-    console.warn(`[phases] generic producer "${key}": no agent .md body resolved — running with an empty system prompt`);
-  }
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
-  const outputs = ctx.outputs || {};
-  const primary = Object.values(outputs).find((h) => h && h.path)?.path;
-  const hints = (ctx.node?.promptHints || '').trim();
-  const prompt =
-    taskHeader(ctx, `Run agent "${key}"`) +
-    '\n## What to do\n\n' +
-    'You are a pipeline agent. Read every input below, do your job exactly as your role ' +
-    'instructions describe, and write EVERY declared output to its exact path.\n\n' +
-    (hints ? hints + '\n\n' : '') +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    genericIoBlock(ctx.inputs, outputs) +
-    mockMarkers({ MOCK_ROLE: 'generic-producer', MOCK_OUT: primary, MOCK_CYCLE: ctx.cycle });
-
-  const { text } = await runClaude(
-    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
-  );
-  return { summary: (text || '').trim() || `Agent ${key} completed.` };
-}
-
-/**
- * Generic verifier — any metadata-declared verifier with no bespoke branch. Emits
- * the standard protocol review (md + json); paths come from the allocated `review`
- * output (pipeline-local `<key>-review-cycleN.*` when the node mints no review).
- * Returns { review, reviewMdPath } for runners.verifier's verdict wrap.
- */
-export async function runGenericVerifier(ctx) {
-  const key = ctx.node?.key || 'agent';
-  const role = `generic:${key}`;
-  const body = resolveAgentBody(ctx, key);
-  if (!String(body || '').trim()) {
-    console.warn(`[phases] generic verifier "${key}": no agent .md body resolved — running with an empty system prompt`);
-  }
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
-  const cycle = Number(ctx.cycle) > 0 ? Number(ctx.cycle) : 1;
-  const { review: reviewOut, ...otherOutputs } = ctx.outputs || {};
-  const reviewMdPath = reviewOut?.mdPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.md`);
-  const reviewJsonPath = reviewOut?.jsonPath ?? joinPipeline(ctx.pipelineDir, `${key}-review-cycle${cycle}.json`);
-  const hints = (ctx.node?.promptHints || '').trim();
-  // Route the (possibly fallback-pathed) review handle through the IO block so the
-  // Outputs section never renders the "(none — report as final message)" placeholder
-  // in contradiction with the review-write instructions that follow.
-  const ioOutputs = { ...otherOutputs, review: { kind: 'review', mdPath: reviewMdPath, jsonPath: reviewJsonPath } };
-  const prompt =
-    taskHeader(ctx, `Verify: ${key} (cycle ${cycle})`) +
-    '\n## What to do\n\n' +
-    'You are a verifier. Inspect the inputs below exactly as your role instructions describe, ' +
-    'then write a human-readable review markdown AND a machine-readable review JSON.\n\n' +
-    (hints ? hints + '\n\n' : '') +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
-    genericIoBlock(ctx.inputs, ioOutputs) +
-    'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-    '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
-    'pipeline.\n\n' +
-    mockMarkers({ MOCK_ROLE: 'generic-verifier', MOCK_OUT: reviewMdPath, MOCK_JSON: reviewJsonPath, MOCK_CYCLE: cycle });
-
-  await runClaude(runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }));
-
-  const review = await readReview(reviewJsonPath);
-  return { review, reviewMdPath };
-}
-
 // ── small local helpers ────────────────────────────────────────────────────────
 
 /** Join a file name onto the pipeline dir without importing node:path's full surface. */
@@ -1284,5 +779,37 @@ export function renderAnswers(answers) {
     answers
       .map((a) => `- **Q:** ${String(a.question || '').trim()} — **A:** ${String(a.choice || '').trim()}`)
       .join('\n') + '\n'
+  );
+}
+
+/**
+ * Render the `## Attached files` block listing each attachment by path + name.
+ * Single source of truth shared by renderPromptArtifact (the seeded file body) and
+ * phases.mjs taskHeader (the entry agent's inline header) so the two cannot drift.
+ * Returns '' when there are no attachments.
+ * @param {Array<{name:string,path:string}>} [extras]
+ */
+export function renderAttachmentsBlock(extras = []) {
+  if (!Array.isArray(extras) || extras.length === 0) return '';
+  return (
+    `\n## Attached files\n\nThe user attached these files; read any that are relevant:\n\n` +
+    extras.map((e) => `- \`${e.path}\` (${e.name})`).join('\n') +
+    '\n'
+  );
+}
+
+/**
+ * Render the markdown a seeded artifact channel holds: the user's request stands in
+ * for the missing upstream artifact, with any attached files listed by path.
+ * @param {string} promptText
+ * @param {Array<{name:string,path:string}>} [extras]
+ */
+export function renderPromptArtifact(promptText, extras = []) {
+  const body = (promptText || '').trim() || '(no prompt text)';
+  return (
+    `# Task (from the user prompt)\n\n` +
+    `No upstream agent produced this artifact, so the user's request below stands in for it.\n\n` +
+    `## Original request\n\n${body}\n` +
+    renderAttachmentsBlock(extras)
   );
 }

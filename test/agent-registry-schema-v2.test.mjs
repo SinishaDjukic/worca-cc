@@ -51,14 +51,14 @@ test('a malformed channel id is still dropped with a warning', () => {
   } finally { console.warn = orig; }
 });
 
-test('channelDefs normalize: kind defaults md, filename defaults <id>.<ext>, built-ins rejected, paths sanitized', () => {
+test('channelDefs normalize: kind defaults md, filename defaults <id>.<ext>, paths sanitized', () => {
   const dir = tmp();
   writeMeta(dir, 'specWriter', {
     produces: ['spec', 'metrics'],
     channelDefs: [
       { id: 'spec', kind: 'json', filename: 'api-spec.json' },
       { id: 'metrics' },                              // kind/filename defaulted
-      { id: 'plan', kind: 'md' },                     // built-in: rejected
+      { id: 'plan', kind: 'md' },                     // no built-in vocabulary left to reject
       { id: 'evil', filename: '../../etc/passwd' },   // path-y filename: defaulted
       { id: 'bad id!' },                              // malformed id: dropped
     ],
@@ -67,6 +67,7 @@ test('channelDefs normalize: kind defaults md, filename defaults <id>.<ext>, bui
   assert.deepEqual(defs, [
     { id: 'spec', kind: 'json', filename: 'api-spec.json' },
     { id: 'metrics', kind: 'md', filename: 'metrics.md' },
+    { id: 'plan', kind: 'md', filename: 'plan.md' },
     { id: 'evil', kind: 'md', filename: 'evil.md' },
   ]);
 });

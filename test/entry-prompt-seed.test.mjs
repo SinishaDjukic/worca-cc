@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPromptArtifact, renderAttachmentsBlock } from '../src/core/channels.mjs';
+import { renderPromptArtifact, renderAttachmentsBlock } from '../src/core/phases.mjs';
 
 test('renderPromptArtifact embeds the request and lists attachments', () => {
   const md = renderPromptArtifact('BUILD THE THING', [{ name: 'spec.md', path: '/pipe/extras/spec.md' }]);

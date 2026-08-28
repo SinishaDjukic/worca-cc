@@ -24,7 +24,7 @@ import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
-import { renderPromptArtifact } from './channels.mjs';
+import { renderPromptArtifact } from './phases.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
