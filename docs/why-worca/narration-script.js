@@ -52,9 +52,9 @@ window.__NARRATION = {
     // ── 6 · 04 Mixed models ──────────────────────────────────────────────
     { lines: [
       "Number four. Cloud, on-prem, and local, in one pipeline.",
-      "A single Worca pipeline can route planning to a frontier cloud model, bulk implementation to a cheaper one, and anything touching sensitive code to an on-prem or local model. Each step picks the best tool for its job.",
-      "Providers are just configuration. A vendor outage, a price change or a compliance rule becomes a one-line edit, not a rewrite.",
-      "The result is a pipeline that optimises for quality, cost and data residency at the same time. A single-model harness structurally cannot do that."
+      "Complex reasoning is expensive, so you buy it per token. A single Worca pipeline routes planning and review to a frontier cloud model: a few thousand tokens that decide whether the run is any good.",
+      "Bulk work runs cheaper on-prem. Implementation and the fix loop, the step that dominates the bill, go to a model you host yourself.",
+      "Chores run locally. Tests and the P.R. description come from a small local model, and the test runner is the judge. Providers are just configuration: the same pipeline, at a fraction of the bill."
     ] },
 
     // ── 7 · 05 Chat ──────────────────────────────────────────────────────
@@ -67,10 +67,10 @@ window.__NARRATION = {
 
     // ── 8 · 06 Guardrails ────────────────────────────────────────────────
     { lines: [
-      "Number six. Policy is a property of the codebase.",
-      "Guardrails in Worca belong to the project and the pipeline: which commands may run, which paths may be touched, which steps need approval, how much may be spent. Not to whoever happens to be sitting at the keyboard.",
-      "They are checked into the repo alongside the pipeline definitions. So they are reviewed, versioned, and applied identically, whether a senior engineer, an intern or an off-hours scheduler starts the run.",
-      "That is what makes autonomous agents defensible in a real organisation."
+      "Number six. Policy travels with the run, not with the developer.",
+      "In a plain harness, permissions belong to whoever is at the keyboard: their settings file, their machine, their answer to the allow prompt. In Worca you pick a named guardrail set when you start a pipeline: Permissive, Normal, Strict, or one your team defined. Which files are protected, which commands are denied, whether the environment is scrubbed.",
+      "Worca injects that set into every agent the run spawns, as a single settings payload plus a minimal environment. The planner, the implementer, the reviewer and the fixer all run under exactly the same rules, whether a senior engineer, an intern or a scheduler pressed start.",
+      "Lower scopes cannot undo it: a repo's own settings can add restrictions, but never remove Worca's. And the set is recorded on the run, so an audit can say exactly which policy was in force."
     ] },
 
     // ── 9 · 07 Contained ─────────────────────────────────────────────────

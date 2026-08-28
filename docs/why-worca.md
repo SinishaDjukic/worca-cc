@@ -42,13 +42,16 @@ resource: you can plan it, forecast it, and justify it.
 
 ## 4. Mixed Models & Providers in One Pipeline
 
-A single Worca pipeline can route the planning step to a frontier cloud
-model, the bulk implementation to a cheaper one, and anything touching
-sensitive code to an on-prem or local model — each step picks the best tool
-for its job. Providers are just configuration, so a vendor outage, a price
-change or a compliance rule becomes a one-line edit rather than a rewrite.
-The result is a pipeline that optimises for quality, cost and data-residency
-at the same time, which a single-model harness structurally cannot do.
+A single Worca pipeline routes each step by how many tokens it burns and how
+much reasoning it needs: planning and review go to a frontier cloud model,
+paid per token, because a few thousand tokens there decide whether the run
+is any good; the token-heavy implement-and-fix loop is bulk work that runs
+cheaper on an on-prem model; tests and the PR description are chores for a
+small local model, where the test runner — not the model — is the judge. Providers are just
+configuration, so a vendor outage, a price change or a compliance rule
+becomes a one-line edit rather than a rewrite. The result is quality where
+it matters and volume where it is cheap — the same pipeline at a fraction of
+the bill, which a single-model harness structurally cannot do.
 
 ## 5. Pipeline Chat Integration
 
@@ -59,16 +62,20 @@ reports arrive as messages, and replies flow back into the running pipeline
 as input. Agentic work stops being something one developer runs on their
 laptop and becomes a shared, visible activity of the team.
 
-## 6. Project-Level Guardrails
+## 6. Run-Level Guardrails
 
-Guardrails in Worca belong to the project and the pipeline — which commands
-may run, which paths may be touched, which steps need approval, how much may
-be spent — not to whoever happens to be sitting at the keyboard. They are
-checked into the repo alongside the pipeline definitions, so they are
-reviewed, versioned and applied identically whether a senior engineer, an
-intern or an off-hours scheduler starts the run. This is what makes
-autonomous agents defensible in a real organisation: the policy is a
-property of the codebase, not a personal setting. See [guardrails.md](guardrails.md).
+In a bare harness, permissions belong to whoever is at the keyboard — their
+settings file, their machine, their answer to the "allow?" prompt — whereas
+in Worca you pick a named guardrail set (Permissive, Normal, Strict, or one
+your team defined: protected paths, denied commands, environment scrub and
+allowlist) when you start a pipeline, and that policy travels with the run.
+Worca injects the set into every agent the run spawns as a single settings
+payload plus a minimal environment, so the planner, the implementer, the
+reviewer and the fixer all run under exactly the same rules whether a senior
+engineer, an intern or a scheduler pressed start. Lower scopes cannot undo
+it — a repository's own settings can add restrictions but never remove
+Worca's — and the set is recorded on the run, so an audit can say exactly
+which policy was in force. See [guardrails.md](guardrails.md).
 
 ## 7. Contained Operation on Cloned Trees
 
