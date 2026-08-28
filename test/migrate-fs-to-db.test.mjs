@@ -629,6 +629,39 @@ test('a DB error mid-import rolls back ALL rows and leaves the legacy JSON untou
   db.close();
 });
 
+// P8a: the post-import V24 archive pass (db.mjs#reconcileAfterFsImport) runs in
+// its OWN transaction, AFTER the importer has committed. A failure there must
+// ROLL BACK and RETHROW: swallowing it would leave the v1 rows the importer just
+// created LIVE on a DB stamped 24 — runnable templates for an engine that is
+// gone — with no signal at all. Measured: with the rethrow removed the whole
+// suite stayed green, which is why this test exists.
+test('a failure in the post-import archive pass propagates out of getDb()', () => {
+  const home = worcaHome();
+  mkdirSync(home, { recursive: true });
+  buildFixture(home);
+
+  // Arm the trigger BEFORE the open, on a raw handle: getDb() would otherwise run
+  // the importer (and the archive) during its own open. UPDATE, not INSERT — the
+  // importer INSERTs the v1 row and the archive pass is what UPDATEs archived_at,
+  // so an UPDATE trigger fails ONLY in the pass under test.
+  const armed = new DatabaseSync(dbPath());
+  migrate(armed);
+  armed.exec("CREATE TRIGGER _force_archive_fail BEFORE UPDATE ON workflows "
+    + "BEGIN SELECT RAISE(ABORT, 'forced'); END;");
+  armed.close();
+
+  _resetForTests();
+  try {
+    assert.throws(() => getDb(), /forced/, 'the archive failure is not swallowed');
+  } finally {
+    _resetForTests();
+    const cleanup = new DatabaseSync(dbPath());
+    cleanup.exec('DROP TRIGGER IF EXISTS _force_archive_fail');
+    cleanup.close();
+    _resetForTests();
+  }
+});
+
 // ── Task 4.6 — integration: getDb() triggers the migration on first open (e2e) ──────
 //
 // Proves the WHOLE Phase-1.6 wiring (getDb -> migrate -> maybeMigrateFromFs) now drives
